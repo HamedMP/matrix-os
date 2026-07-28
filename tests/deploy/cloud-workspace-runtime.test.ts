@@ -36,6 +36,7 @@ describe("cloud workspace runtime gates", () => {
       expect(source).toContain("matrixos ALL=(ALL) NOPASSWD:ALL");
       expect(source).toContain("chmod 0440 /etc/sudoers.d/matrixos");
     }
+    expect(devDockerfile).toMatch(/hermes-agent\/841a5a744ad115b001a2720bf1eeb6bec3dfcc7d\/scripts\/install\.sh[\s\S]*--commit 841a5a744ad115b001a2720bf1eeb6bec3dfcc7d/);
   });
 
   it("creates workspace-owned recovery directories on startup", () => {
