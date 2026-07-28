@@ -86,6 +86,37 @@ describe('platform/stripe-billing', () => {
     });
   });
 
+  it('retrieves the authoritative selection for a persisted checkout session', async () => {
+    const sessionsRetrieve = vi.fn().mockResolvedValue({
+      status: 'open',
+      url: 'https://checkout.stripe.test/legacy',
+      client_reference_id: 'user_123',
+      metadata: { matrix_region_slug: 'region_fsn1' },
+      line_items: {
+        data: [{ price: { id: 'price_builder_monthly' } }],
+      },
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { retrieve: sessionsRetrieve } } }),
+    });
+
+    await expect((
+      client as unknown as {
+        retrieveCheckoutSession(id: string): Promise<unknown>;
+      }
+    ).retrieveCheckoutSession('cs_legacy')).resolves.toEqual({
+      status: 'open',
+      url: 'https://checkout.stripe.test/legacy',
+      clerkUserId: 'user_123',
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    });
+    expect(sessionsRetrieve).toHaveBeenCalledWith('cs_legacy', {
+      expand: ['line_items.data.price'],
+    });
+  });
+
   it('creates portal sessions with a platform return URL', async () => {
     const portalCreate = vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' });
     const client = createStripeBillingClient({

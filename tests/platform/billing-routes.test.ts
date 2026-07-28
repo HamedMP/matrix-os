@@ -40,6 +40,7 @@ describe('platform billing routes', () => {
     stripe = {
       apiTimeoutMs: 10_000,
       createCheckoutSession: vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session', id: 'cs_test_session' }),
+      retrieveCheckoutSession: vi.fn().mockRejectedValue(new Error('unexpected checkout retrieval')),
       createPortalSession: vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' }),
       constructWebhookEvent: vi.fn(),
     };
@@ -460,6 +461,128 @@ describe('platform billing routes', () => {
       billingInterval: 'monthly',
       regionSlug: 'region_fsn1',
       status: 'open',
+    });
+  });
+
+  it('recovers a younger legacy checkout from its authoritative Stripe selection', async () => {
+    await insertCheckoutAttempt(db, {
+      id: 'attempt_recent_legacy_studio',
+      clerkUserId: 'user_123',
+      stripeSessionId: 'cs_recent_legacy_studio',
+      runtimeSlot: 'studio',
+      createdAt: '2026-05-29T23:00:00.000Z',
+      status: 'open',
+    });
+    vi.mocked(stripe.retrieveCheckoutSession).mockResolvedValue({
+      status: 'open',
+      url: 'https://checkout.stripe.test/recovered-legacy',
+      clerkUserId: 'user_123',
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    });
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      url: 'https://checkout.stripe.test/recovered-legacy',
+    });
+    expect(stripe.retrieveCheckoutSession).toHaveBeenCalledWith('cs_recent_legacy_studio');
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('returns the authoritative selection for a conflicting younger legacy checkout', async () => {
+    await insertCheckoutAttempt(db, {
+      id: 'attempt_conflicting_legacy_studio',
+      clerkUserId: 'user_123',
+      stripeSessionId: 'cs_conflicting_legacy_studio',
+      runtimeSlot: 'studio',
+      createdAt: '2026-05-29T23:00:00.000Z',
+      status: 'open',
+    });
+    vi.mocked(stripe.retrieveCheckoutSession).mockResolvedValue({
+      status: 'open',
+      url: 'https://checkout.stripe.test/conflicting-legacy',
+      clerkUserId: 'user_123',
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    });
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_max',
+        interval: 'annual',
+        regionSlug: 'region_nbg1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      error: 'Checkout selection conflicts with an open session',
+      code: 'checkout_selection_conflict',
+      selection: {
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+      },
+    });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('replaces a younger legacy checkout after Stripe confirms it expired', async () => {
+    await insertCheckoutAttempt(db, {
+      id: 'attempt_expired_legacy_studio',
+      clerkUserId: 'user_123',
+      stripeSessionId: 'cs_expired_legacy_studio',
+      runtimeSlot: 'studio',
+      createdAt: '2026-05-29T23:00:00.000Z',
+      status: 'open',
+    });
+    vi.mocked(stripe.retrieveCheckoutSession).mockResolvedValue({
+      status: 'expired',
+      url: null,
+      clerkUserId: 'user_123',
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    });
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_max',
+        interval: 'annual',
+        regionSlug: 'region_nbg1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+    await expect(
+      db.executor
+        .selectFrom('billing_checkout_attempts')
+        .select(['status', 'resolved_at'])
+        .where('id', '=', 'attempt_expired_legacy_studio')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      status: 'expired',
+      resolved_at: '2026-05-30T00:00:00.000Z',
     });
   });
 

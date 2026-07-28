@@ -59,6 +59,23 @@ export function createStripeBillingClient(options: {
       return { url: session.url, id: session.id };
     },
 
+    async retrieveCheckoutSession(id) {
+      const session = await stripe.checkout.sessions.retrieve(id, {
+        expand: ['line_items.data.price'],
+      });
+      if (session.status !== 'open' && session.status !== 'complete' && session.status !== 'expired') {
+        throw new Error('Stripe checkout session missing status');
+      }
+      const price = session.line_items?.data[0]?.price;
+      return {
+        status: session.status,
+        url: session.url,
+        clerkUserId: session.client_reference_id,
+        priceId: typeof price === 'string' ? price : (price?.id ?? null),
+        regionSlug: session.metadata?.matrix_region_slug ?? null,
+      };
+    },
+
     async createPortalSession(input) {
       const session = await stripe.billingPortal.sessions.create({
         customer: input.customerId,
@@ -80,6 +97,7 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
   return {
     apiTimeoutMs: MATRIX_STRIPE_API_TIMEOUT_MS,
     createCheckoutSession: unavailable,
+    retrieveCheckoutSession: unavailable,
     createPortalSession: unavailable,
     constructWebhookEvent() {
       throw new Error('Stripe billing is not configured');
