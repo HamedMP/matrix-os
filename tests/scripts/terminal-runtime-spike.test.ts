@@ -269,9 +269,8 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
     expect(workflow).toContain('spike_control_deadline=$((SECONDS + 300))');
-    expect(workflow).toContain(
-      'command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"]',
-    );
+    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","status"]');
+    expect(workflow).toContain('.stdout == "Update service: idle\\n"');
     expect(workflow).toContain('Waiting for exact-head spike control.');
     expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 300))');
     expect(workflow).toContain(

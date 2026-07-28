@@ -414,7 +414,7 @@ jobs:
               --data-binary "$body"
           }
           spike_control_body="$(jq -cn '{
-            command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"],
+            command:["/opt/matrix/bin/matrix-update","status"],
             timeoutMs:10000
           }')"
           spike_control_deadline=$((SECONDS + 300))
@@ -427,7 +427,7 @@ jobs:
             if [ "$curl_status" -eq 0 ] && [ "$http_code" = 200 ] &&
               jq -e 'type == "object" and .exitCode == 0 and
                 .timedOut == false and .truncated == false and
-                .signal == null and .stdout == "" and .stderr == ""' \
+                .signal == null and .stdout == "Update service: idle\n" and .stderr == ""' \
                 "$run_response" >/dev/null; then
               spike_control_ready=true
               break
