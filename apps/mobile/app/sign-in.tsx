@@ -150,6 +150,14 @@ export default function SignInScreen() {
     [emailSignIn],
   );
 
+  const handlePasswordChange = useCallback(
+    (value: string) => {
+      emailSignIn.setPassword(value);
+      setGatewayError(null);
+    },
+    [emailSignIn],
+  );
+
   const handleCodeChange = useCallback(
     (value: string) => {
       emailSignIn.setCode(value);
@@ -271,15 +279,20 @@ export default function SignInScreen() {
           ) : (
             <HostedSignInPanel
               loadingProvider={loadingProvider}
+              signingInWithPassword={emailSignIn.signingIn}
               sendingCode={emailSignIn.sending}
               verifyingCode={emailSignIn.verifying}
               onGoogle={handleGoogleSignIn}
               onGithub={handleGithubSignIn}
               email={emailSignIn.email}
               onEmailChange={handleEmailChange}
+              password={emailSignIn.password}
+              onPasswordChange={handlePasswordChange}
+              passwordUnavailable={emailSignIn.passwordUnavailable}
               code={emailSignIn.code}
               onCodeChange={handleCodeChange}
               codeSentTo={emailSignIn.codeSentTo}
+              onSignIn={emailSignIn.signInWithPassword}
               onSendCode={emailSignIn.sendCode}
               onVerify={emailSignIn.verifyCode}
               onUseDifferentEmail={handleUseDifferentEmail}

@@ -116,7 +116,10 @@ function captureBillingTelemetry(
 function CheckoutPanel({
   mode,
   onCheckoutIntent,
+  onCheckoutNavigate,
   checkoutReturnPath,
+  checkoutRuntimeSlot,
+  checkoutBypassed,
   telemetryProperties,
   selectedProfile,
   selectedRegion,
@@ -124,8 +127,11 @@ function CheckoutPanel({
   onBillingIntervalChange,
 }: {
   mode: BillingPanelMode;
-  onCheckoutIntent?: () => void;
+  onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
+  onCheckoutNavigate?: (url: string) => void;
   checkoutReturnPath?: string;
+  checkoutRuntimeSlot?: string;
+  checkoutBypassed?: boolean;
   telemetryProperties: BillingTelemetryProperties;
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
@@ -148,10 +154,27 @@ function CheckoutPanel({
     captureBillingTelemetry("checkout_stripe_available", telemetryPropertiesRef.current);
   }, []);
 
+  function reportCheckoutError(errorKind: string) {
+    setCheckoutError("Checkout is unavailable. Try again in a moment.");
+    captureBillingTelemetry("checkout_error", {
+      ...telemetryPropertiesRef.current,
+      error_kind: errorKind,
+    });
+  }
+
   async function startCheckout() {
+    const selection = {
+      serverType: selectedProfile.hetznerType.toLowerCase(),
+      location: selectedRegion.location,
+    };
+    const checkoutAllowed = onCheckoutIntent?.(selection) !== false;
+    if (!checkoutAllowed) return;
+    if (checkoutBypassed) {
+      captureBillingTelemetry("checkout_bypassed", telemetryPropertiesRef.current);
+      return;
+    }
     setCheckoutLoading(true);
     setCheckoutError(null);
-    onCheckoutIntent?.();
     captureBillingTelemetry("checkout_intent", telemetryPropertiesRef.current);
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
@@ -169,9 +192,14 @@ function CheckoutPanel({
           planSlug,
           interval: billingInterval,
           regionSlug,
+          ...(checkoutRuntimeSlot ? { runtimeSlot: checkoutRuntimeSlot } : {}),
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),
       });
+      if (!response.ok) {
+        reportCheckoutError("http_error");
+        return;
+      }
       const body = (await response.json().catch((err: unknown) => {
         captureBillingTelemetry("checkout_response_parse_error", {
           ...telemetryPropertiesRef.current,
@@ -179,17 +207,13 @@ function CheckoutPanel({
         });
         return null;
       })) as { url?: string } | null;
-      if (!response.ok || !body?.url) {
-        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the throw inside try/catch; intentional control flow routing an unusable checkout response into the catch handler. The code is correct.
-        throw new Error("checkout_unavailable");
+      if (!body?.url) {
+        reportCheckoutError("invalid_response");
+        return;
       }
-      window.location.assign(body.url);
+      (onCheckoutNavigate ?? ((target: string) => window.location.assign(target)))(body.url);
     } catch (error: unknown) {
-      setCheckoutError("Checkout is unavailable. Try again in a moment.");
-      captureBillingTelemetry("checkout_error", {
-        ...telemetryPropertiesRef.current,
-        error_kind: error instanceof Error ? error.message : typeof error,
-      });
+      reportCheckoutError(error instanceof Error ? error.name : typeof error);
     } finally {
       window.clearTimeout(timeoutId);
       setCheckoutLoading(false);
@@ -201,10 +225,16 @@ function CheckoutPanel({
       {mode !== "settings" && (
         <div className="mb-4">
           <p className="text-sm font-semibold text-[#FAFAF5]">
-            {mode === "device-setup" ? "Billing settings" : "Start checkout & provision"}
+            {checkoutBypassed
+              ? "Provision this computer"
+              : mode === "device-setup"
+              ? "Billing settings"
+              : "Start checkout & provision"}
           </p>
           <p className="mt-0.5 text-xs leading-5 text-cream/55">
-            {mode === "device-setup"
+            {checkoutBypassed
+              ? "Your internal Matrix account covers this computer."
+              : mode === "device-setup"
               ? "Review your plan and region here. Stripe opens only after you choose Continue to pay."
               : "Secure checkout opens before Matrix provisions this computer."}
           </p>
@@ -229,13 +259,13 @@ function CheckoutPanel({
             <span aria-hidden="true">{selectedRegion.flag}</span> {selectedRegion.label}
           </dd>
         </div>
-        <div className="flex items-center justify-between gap-3">
+        {!checkoutBypassed && <div className="flex items-center justify-between gap-3">
           <dt className="text-cream/55">Billing</dt>
           <dd className="text-[#FAFAF5]">{billingInterval === "annual" ? "Annual" : "Monthly"}</dd>
-        </div>
+        </div>}
       </dl>
 
-      <div className="mt-4 grid grid-cols-2 rounded-xl bg-black/20 p-1">
+      {!checkoutBypassed && <div className="mt-4 grid grid-cols-2 rounded-xl bg-black/20 p-1">
         {(["monthly", "annual"] as const).map((interval) => (
           <button
             key={interval}
@@ -251,9 +281,9 @@ function CheckoutPanel({
             {interval === "monthly" ? "Monthly" : "Annual"}
           </button>
         ))}
-      </div>
+      </div>}
 
-      <div className="mt-4 flex items-end justify-between gap-3 border-t border-cream/12 pt-4">
+      {!checkoutBypassed && <div className="mt-4 flex items-end justify-between gap-3 border-t border-cream/12 pt-4">
         <div>
           <span className="text-sm text-cream/55">Total</span>
           {billingInterval === "annual" && annualSavings ? (
@@ -266,7 +296,7 @@ function CheckoutPanel({
           <span className="text-3xl font-semibold tracking-tight text-[#FAFAF5]">${price}</span>
           <span className="text-sm text-cream/55">{billingInterval === "annual" ? "/yr" : "/mo"}</span>
         </span>
-      </div>
+      </div>}
 
       <button
         type="button"
@@ -276,13 +306,13 @@ function CheckoutPanel({
       >
         {checkoutLoading ? (
           <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
-        ) : (
+        ) : checkoutBypassed ? null : (
           <CreditCardIcon className="size-4" aria-hidden="true" />
         )}
-        {checkoutLoading ? "Opening checkout" : "Continue to pay"}
+        {checkoutLoading ? "Opening checkout" : checkoutBypassed ? "Continue setup" : "Continue to pay"}
       </button>
 
-      <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-cream/55">
+      {!checkoutBypassed && <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-cream/55">
         <span className="inline-flex items-center gap-1">
           <ShieldCheckIcon className="size-3.5" aria-hidden="true" />
           Secure checkout
@@ -297,10 +327,10 @@ function CheckoutPanel({
             {mark}
           </span>
         ))}
-      </div>
-      <p className="mt-3 text-center text-[11px] leading-5 text-cream/45">
+      </div>}
+      {!checkoutBypassed && <p className="mt-3 text-center text-[11px] leading-5 text-cream/45">
         No trial. Plan changes and coupons are handled in the billing portal.
-      </p>
+      </p>}
       {checkoutError && (
         <p className="mt-2 text-center text-xs text-red-300">{checkoutError}</p>
       )}
@@ -939,17 +969,19 @@ export function BillingPanel({
   accessIssue,
   mode = "settings",
   onCheckoutIntent,
+  onCheckoutNavigate,
   checkoutReturnPath,
-  onComputerSetupContinue,
+  checkoutRuntimeSlot,
 }: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   mode?: BillingPanelMode;
-  onCheckoutIntent?: () => void;
+  onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
+  onCheckoutNavigate?: (url: string) => void;
   checkoutReturnPath?: string;
-  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
+  checkoutRuntimeSlot?: string;
 }) {
   const props = {
     active,
@@ -958,8 +990,9 @@ export function BillingPanel({
     accessIssue,
     mode,
     onCheckoutIntent,
+    onCheckoutNavigate,
     checkoutReturnPath,
-    onComputerSetupContinue,
+    checkoutRuntimeSlot,
   };
   if (isSelfHostedDocument()) {
     return <BillingPanelInner {...props} selectedPlan={undefined} />;
@@ -973,9 +1006,10 @@ function ManagedBillingPanel(props: {
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   mode: BillingPanelMode;
-  onCheckoutIntent?: () => void;
+  onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
+  onCheckoutNavigate?: (url: string) => void;
   checkoutReturnPath?: string;
-  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
+  checkoutRuntimeSlot?: string;
 }) {
   const { user } = useUser();
   return <BillingPanelInner {...props} selectedPlan={user?.publicMetadata?.selectedPlan} />;
@@ -988,8 +1022,9 @@ function BillingPanelInner({
   accessIssue,
   mode = "settings",
   onCheckoutIntent,
+  onCheckoutNavigate,
   checkoutReturnPath,
-  onComputerSetupContinue,
+  checkoutRuntimeSlot,
   selectedPlan,
 }: {
   active: boolean | null;
@@ -997,14 +1032,14 @@ function BillingPanelInner({
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   mode?: BillingPanelMode;
-  onCheckoutIntent?: () => void;
+  onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
+  onCheckoutNavigate?: (url: string) => void;
   checkoutReturnPath?: string;
-  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
+  checkoutRuntimeSlot?: string;
   selectedPlan?: unknown;
 }) {
   const [selectedProfileSlug, setSelectedProfileSlug] = useState<string>(
     () =>
-      (mode === "add-computer" ? resolveMachineProfile(entitlement?.defaultServerType)?.featureSlug : null) ??
       preselectedFeatureSlug(selectedPlan) ??
       MATRIX_BILLING_SERVER_PROFILES[1]?.featureSlug ??
       MATRIX_BILLING_SERVER_PROFILES[0]?.featureSlug ??
@@ -1013,9 +1048,10 @@ function BillingPanelInner({
   const [selectedRegionSlug, setSelectedRegionSlug] = useState(getNearestRegionSlug);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
-  const allowedProfiles = mode === "add-computer"
+  const checkoutBypassed = mode === "add-computer" && entitlement?.source === "override";
+  const allowedProfiles = checkoutBypassed
     ? MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>
-        entitlement?.allowedServerTypes.some(
+        entitlement.allowedServerTypes.some(
           (serverType) => serverType.toLowerCase() === profile.hetznerType.toLowerCase(),
         ),
       )
@@ -1118,72 +1154,10 @@ function BillingPanelInner({
     );
   }
 
-  if (mode === "add-computer") {
-    if (active !== true || allowedProfiles.length === 0 || !onComputerSetupContinue) {
-      return (
-        <div className="rounded-xl border border-ember/25 bg-ember/10 p-4 text-sm text-deep" role="alert">
-          Computer configuration is unavailable for this account. Refresh billing and try again.
-        </div>
-      );
-    }
+  if (checkoutBypassed && allowedProfiles.length === 0) {
     return (
-      <div className="space-y-4">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-forest/55">
-            New computer · 2 of 3
-          </p>
-          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-deep sm:text-3xl">
-            Configure your next computer
-          </h1>
-          <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
-            Choose from the computer strengths included in your active plan, then place it in the region closest to you.
-          </p>
-        </div>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
-          <div className="rounded-3xl border border-forest/12 bg-white p-4 sm:p-5">
-            <SelectionTriggerCards
-              profiles={allowedProfiles}
-              selectedProfile={selectedProfile}
-              selectedRegion={selectedRegion}
-              billingInterval={billingInterval}
-              showPrice={false}
-              openPicker={openPicker}
-              onToggle={(picker) =>
-                setOpenPicker((current) => (current === picker ? null : picker))
-              }
-              onClose={() => setOpenPicker(null)}
-              onSelectProfile={handleProfileSelect}
-              onSelectRegion={handleRegionSelect}
-            />
-          </div>
-          <aside className="rounded-3xl bg-forest p-5 text-cream/80 lg:sticky lg:top-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cream/45">
-              Computer setup
-            </p>
-            <p className="mt-3 text-xl font-semibold tracking-tight text-[#FAFAF5]">
-              {selectedProfile.label}
-            </p>
-            <p className="mt-1 font-mono text-xs text-cream/55">
-              {selectedProfile.hetznerType} · {profileSpec(selectedProfile)}
-            </p>
-            <p className="mt-4 border-t border-cream/12 pt-4 text-sm text-[#FAFAF5]">
-              <span aria-hidden="true">{selectedRegion.flag}</span> {selectedRegion.label}
-            </p>
-            <p className="mt-2 text-xs leading-5 text-cream/55">
-              Capacity is verified by the server before provisioning. If another slot is needed, billing opens after you finish setup.
-            </p>
-            <button
-              type="button"
-              onClick={() => onComputerSetupContinue({
-                serverType: selectedProfile.hetznerType.toLowerCase(),
-                location: selectedRegion.location,
-              })}
-              className="mt-5 inline-flex h-12 w-full items-center justify-center rounded-xl bg-ember px-4 text-sm font-semibold text-ember-foreground transition-colors hover:bg-ember/90"
-            >
-              Continue setup
-            </button>
-          </aside>
-        </div>
+      <div className="rounded-xl border border-ember/25 bg-ember/10 p-4 text-sm text-deep" role="alert">
+        Computer configuration is unavailable for this account. Refresh billing and try again.
       </div>
     );
   }
@@ -1192,12 +1166,16 @@ function BillingPanelInner({
     <div className="space-y-4">
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-forest/55">
-          {mode === "provisioning" ? "Provisioning" : "Billing"}
+          {mode === "provisioning"
+            ? "Provisioning"
+            : mode === "add-computer"
+            ? "New computer"
+            : "Billing"}
         </p>
         <h3 className="mt-1.5 text-xl font-semibold tracking-tight text-deep sm:text-2xl">
           {mode === "device-setup"
             ? "Finish billing to approve CLI login"
-            : mode === "provisioning"
+            : mode === "provisioning" || mode === "add-computer"
             ? "Pick the cloud computer Matrix boots on"
             : "Manage your hosted Matrix computer"}
         </h3>
@@ -1210,7 +1188,7 @@ function BillingPanelInner({
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="rounded-3xl border border-forest/12 bg-white p-4 sm:p-5">
           <SelectionTriggerCards
-            profiles={MATRIX_BILLING_SERVER_PROFILES}
+            profiles={allowedProfiles}
             selectedProfile={selectedProfile}
             selectedRegion={selectedRegion}
             billingInterval={billingInterval}
@@ -1237,7 +1215,10 @@ function BillingPanelInner({
         <CheckoutPanel
           mode={mode}
           onCheckoutIntent={onCheckoutIntent}
+          onCheckoutNavigate={onCheckoutNavigate}
           checkoutReturnPath={checkoutReturnPath}
+          checkoutRuntimeSlot={checkoutRuntimeSlot}
+          checkoutBypassed={checkoutBypassed}
           telemetryProperties={telemetryProperties}
           selectedProfile={selectedProfile}
           selectedRegion={selectedRegion}

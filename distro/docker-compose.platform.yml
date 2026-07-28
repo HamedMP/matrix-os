@@ -104,6 +104,9 @@ services:
       - matrixos-net
 
   platform:
+    # Keep the Compose service tag independent from PLATFORM_IMAGE. The latter
+    # may point the legacy local orchestrator at an operator-supplied image.
+    image: matrixos-user:local
     build:
       context: ..
       dockerfile: Dockerfile
@@ -147,8 +150,6 @@ services:
       - STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=${STRIPE_PRICE_MATRIX_BUILDER_ANNUAL:-}
       - STRIPE_PRICE_MATRIX_MAX_MONTHLY=${STRIPE_PRICE_MATRIX_MAX_MONTHLY:-}
       - STRIPE_PRICE_MATRIX_MAX_ANNUAL=${STRIPE_PRICE_MATRIX_MAX_ANNUAL:-}
-      - STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=${STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY:-}
-      - STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=${STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL:-}
       - STRIPE_CHECKOUT_SUCCESS_URL=${STRIPE_CHECKOUT_SUCCESS_URL:-}
       - STRIPE_CHECKOUT_CANCEL_URL=${STRIPE_CHECKOUT_CANCEL_URL:-}
       - STRIPE_PORTAL_RETURN_URL=${STRIPE_PORTAL_RETURN_URL:-}
@@ -157,7 +158,7 @@ services:
       - PIPEDREAM_PROJECT_ID=${PIPEDREAM_PROJECT_ID:-}
       - PIPEDREAM_ENVIRONMENT=${PIPEDREAM_ENVIRONMENT:-development}
       - PIPEDREAM_WEBHOOK_SECRET=${PIPEDREAM_WEBHOOK_SECRET:-}
-      - PLATFORM_IMAGE=${PLATFORM_IMAGE:-ghcr.io/hamedmp/matrix-os:latest}
+      - PLATFORM_IMAGE=${PLATFORM_IMAGE:-matrixos-user:local}
       - AUTH_SHELL_PORT=3200
       - AUTH_SHELL_HOST=auth-shell
       # Customer VPS (spec 070)

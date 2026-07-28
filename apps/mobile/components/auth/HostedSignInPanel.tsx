@@ -9,15 +9,20 @@ export type HostedAuthProvider = "google" | "github";
 type HostedSignInPanelProps = {
   /** Which OAuth route is mid-flight, or null when idle. */
   loadingProvider: HostedAuthProvider | "basic" | null;
+  signingInWithPassword: boolean;
   sendingCode: boolean;
   verifyingCode: boolean;
   onGoogle: () => void;
   onGithub: () => void;
   email: string;
   onEmailChange: (value: string) => void;
+  password: string;
+  onPasswordChange: (value: string) => void;
+  passwordUnavailable: boolean;
   code: string;
   onCodeChange: (value: string) => void;
   codeSentTo: string | null;
+  onSignIn: () => void;
   onSendCode: () => void;
   onVerify: () => void;
   onUseDifferentEmail: () => void;
@@ -25,21 +30,26 @@ type HostedSignInPanelProps = {
 
 export function HostedSignInPanel({
   loadingProvider,
+  signingInWithPassword,
   sendingCode,
   verifyingCode,
   onGoogle,
   onGithub,
   email,
   onEmailChange,
+  password,
+  onPasswordChange,
+  passwordUnavailable,
   code,
   onCodeChange,
   codeSentTo,
+  onSignIn,
   onSendCode,
   onVerify,
   onUseDifferentEmail,
 }: HostedSignInPanelProps) {
   const { theme } = useUnistyles();
-  const busy = loadingProvider !== null || sendingCode || verifyingCode;
+  const busy = loadingProvider !== null || signingInWithPassword || sendingCode || verifyingCode;
 
   return (
     <View style={styles.panel}>
@@ -90,12 +100,17 @@ export function HostedSignInPanel({
       <EmailCodeForm
         email={email}
         onEmailChange={onEmailChange}
+        password={password}
+        onPasswordChange={onPasswordChange}
+        passwordUnavailable={passwordUnavailable}
         code={code}
         onCodeChange={onCodeChange}
         codeSentTo={codeSentTo}
+        signingIn={signingInWithPassword}
         sending={sendingCode}
         verifying={verifyingCode}
         busy={busy}
+        onSignIn={onSignIn}
         onSendCode={onSendCode}
         onVerify={onVerify}
         onUseDifferentEmail={onUseDifferentEmail}

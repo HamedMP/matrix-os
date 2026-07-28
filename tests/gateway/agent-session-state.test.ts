@@ -87,6 +87,47 @@ describe("agent session state", () => {
     expect(deriveAgentVisualStatus(completed, false)).toBe("idle");
   });
 
+  it("resets enrichment on SessionStart and when the provider changes", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+
+    await store.apply(event("turn-started", "2026-07-18T10:00:00.000Z", {
+      subtitle: "Claude task",
+      action: "Edited registry.ts",
+      model: "claude-opus-4-6",
+      strength: "high",
+    }));
+    const restarted = await store.apply(event("session-started", "2026-07-18T10:00:01.000Z"));
+
+    expect(restarted).not.toHaveProperty("subtitle");
+    expect(restarted).not.toHaveProperty("lastAction");
+    expect(restarted).not.toHaveProperty("model");
+    expect(restarted).not.toHaveProperty("strength");
+
+    await store.apply(event("metadata-updated", "2026-07-18T10:00:02.000Z", {
+      subtitle: "Claude metadata",
+      model: "claude-opus-4-6",
+    }));
+    const changedProvider = await store.apply(event("turn-started", "2026-07-18T10:00:03.000Z", {
+      agent: "claude",
+    }));
+
+    expect(changedProvider.agent).toBe("claude");
+    expect(changedProvider).not.toHaveProperty("subtitle");
+    expect(changedProvider).not.toHaveProperty("lastAction");
+    expect(changedProvider).not.toHaveProperty("model");
+    expect(changedProvider).not.toHaveProperty("strength");
+  });
+
+  it("does not derive an active visual status from an ended snapshot", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+    await store.apply(event("session-ended", "2026-07-18T10:00:00.000Z"));
+
+    expect(deriveAgentVisualStatus(await store.get("calm-otter"), true)).toBeNull();
+    expect(deriveAgentVisualStatus(await store.get("calm-otter"), false)).toBeNull();
+  });
+
   it("rejects events older than the current snapshot", async () => {
     const root = await tempRoot();
     const store = new AgentSessionStateStore({ homePath: root });

@@ -4,6 +4,25 @@ Matrix OS production releases are VPS-native host bundles. R2 stores immutable t
 
 For installable CLI releases, use [CLI Release Process](cli-release.md). CLI versions publish `@finnaai/matrix` and use `cli-v<version>` tags; they are intentionally separate from host-bundle versions.
 
+## Release Artifact Inventory
+
+Matrix OS has five release lanes. They do not all map to GitHub Packages:
+
+| Lane | Artifact | Destination | Release path |
+| --- | --- | --- | --- |
+| Customer runtime | VPS host bundle | Immutable R2 objects plus platform Postgres release/channel rows | `.github/workflows/host-bundle-release.yml` |
+| Platform | Platform service image | Google Artifact Registry and Cloud Run | `.github/workflows/platform-cloud-run.yml` |
+| Mobile | Mobile native builds | EAS Build, App Store Connect/TestFlight, and Google Play | `apps/mobile/eas.json` and [Mobile Shell](mobile-shell.md) |
+| Mobile | Mobile OTA update | EAS Update `production` branch/channel | [Mobile Shell](mobile-shell.md#over-the-air-updates-eas-update) |
+| Desktop | Desktop installers and OTA metadata | GitHub Releases for `dev`, `canary`, `beta`, and `stable` | `.github/workflows/desktop-release.yml` and `desktop-release-canary.yml` |
+| CLI | `@finnaai/matrix` CLI and standalone binaries | npm, GitHub Releases, and Homebrew | `.github/workflows/cli-release.yml` and `release.yml` |
+
+The old `ghcr.io/hamedmp/matrix-os` image is not a release lane and no GitHub
+Actions workflow publishes it. Docker remains available for local development
+and CI validation. The platform service image is intentionally separate: Cloud
+Run requires a container image, but customer VPSes never install or update from
+that image.
+
 ## Engineer Summary
 
 - `main` is the source of truth. A push to `main` runs `.github/workflows/host-bundle-release.yml`.

@@ -16,7 +16,6 @@ import {
   getContainerByClerkId,
   getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
-  getBillingEntitlementState,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
   listActiveUserMachinesByClerkId,
@@ -51,13 +50,11 @@ import {
   type EntitlementAccessDecision,
 } from './profile-routing.js';
 import {
-  computeEffectiveEntitlement,
   getRuntimeAccessDecision,
-  parseBillingEntitlementRecord,
-  parseBillingOverrideRecord,
   type BillingEntitlement,
   type RuntimeAccessDecision,
 } from './billing.js';
+import { resolveEffectiveBillingEntitlementForSlot } from './billing-entitlement-resolver.js';
 import { createBillingRoutes } from './billing-routes.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
 import {
@@ -223,26 +220,34 @@ async function resolveEffectiveBillingEntitlement(
   db: PlatformDB,
   clerkUserId: string,
   now = new Date(),
+  runtimeSlot?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<BillingEntitlement | null> {
-  const { entitlement, override } = await getBillingEntitlementState(db, clerkUserId, now.toISOString());
-  return computeEffectiveEntitlement({
-    stripeEntitlement: parseBillingEntitlementRecord(entitlement),
-    override: parseBillingOverrideRecord(override),
-    now,
-  });
+  return resolveEffectiveBillingEntitlementForSlot(db, clerkUserId, now, runtimeSlot, env);
 }
 
 async function getRuntimeEntitlementDecisionForUser(
   db: PlatformDB,
   clerkUserId: string,
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.ProcessEnv = process.env,
+  runtimeSlot?: string,
+  provisioningClass?: string,
   now = new Date(),
 ): Promise<EntitlementAccessDecision> {
+  if (provisioningClass === 'preview') {
+    return {
+      status: 'active',
+      runtimeProxyAllowed: true,
+      ownerDataPreserved: true,
+      ownerDataExportable: true,
+      remediation: null,
+    };
+  }
   if (!stripeBillingEntitlementsEnabled(env)) {
     return getRuntimeEntitlementDecision(env);
   }
   return billingAccessToProfileDecision(
-    getRuntimeAccessDecision(await resolveEffectiveBillingEntitlement(db, clerkUserId, now), now),
+    getRuntimeAccessDecision(await resolveEffectiveBillingEntitlement(db, clerkUserId, now, runtimeSlot, env), now),
   );
 }
 
@@ -524,7 +529,7 @@ export function createApp(deps: {
     }
     if (stripeBillingEntitlementsEnabled(appEnv)) {
       const checkedAt = new Date();
-      const entitlement = await resolveEffectiveBillingEntitlement(db, clerkUserId, checkedAt);
+      const entitlement = await resolveEffectiveBillingEntitlement(db, clerkUserId, checkedAt, runtimeSlot, appEnv);
       if (!getRuntimeAccessDecision(entitlement, checkedAt).runtimeProxyAllowed) {
         throw new CustomerVpsError(402, 'billing_required', 'Billing upgrade required');
       }
@@ -575,6 +580,7 @@ export function createApp(deps: {
       return machine?.clerkUserId ?? null;
     },
     appOrigin: journeyAppOrigin,
+    env: appEnv,
     maxProvisionAttempts: Number(appEnv.CUSTOMER_VPS_MAX_PROVISION_ATTEMPTS) || 3,
     settlingWindowMs: Number(appEnv.BILLING_SETTLING_WINDOW_MS) || undefined,
   }));

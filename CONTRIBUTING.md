@@ -90,7 +90,9 @@ Screenshots are stored in `shell/e2e/__screenshots__/`. See the Screenshots CI w
 | CI | `ci.yml` | Push/PR to main | Runs unit tests |
 | PR Title | `pr-title.yml` | PR opened/edited | Validates conventional commit format |
 | Screenshots | `screenshots.yml` | PR changing `shell/**` | Runs Playwright, commits updated snapshots |
-| Docker | `docker.yml` | Tag push (`v*`) | Builds and pushes Docker image, deploys to VPS |
+| Host bundle | `host-bundle-release.yml` | Push to main, `v*` tag, or manual | Publishes immutable customer VPS bundles and promotes a release channel |
+| Platform | `platform-cloud-run.yml` | Platform changes on main or manual | Publishes the control-plane image to Google Artifact Registry and deploys Cloud Run |
+| Docker tests | `docker-test.yml` | Relevant pushes and pull requests | Builds ephemeral local-development images for CI validation only |
 | Claude Code Review | `claude-code-review.yml` | PR opened/synced | AI-powered code review |
 | Claude Code | `claude.yml` | `@claude` mention in issues/PRs | On-demand AI assistance |
 
@@ -134,6 +136,8 @@ See `CLAUDE.md` for development rules, and `specs/` for active architecture spec
 ## Deployment
 
 - **Website**: maintained and deployed from the private `FinnaAI/matrix-os-site` repository
-- **Self-hosted**: Docker image via `distro/docker-compose.platform.yml`
+- **Customer runtime**: Customer releases are VPS-native host bundles published by `host-bundle-release.yml`
+- **Platform**: the control plane is deployed to Cloud Run by `platform-cloud-run.yml`
+- **Local development**: Docker Compose remains available, but no customer-runtime image is published
 - **Releases**: SemVer tags (`v0.X.0`), see `docs/dev/releases.md`
 - **VPS deployment**: see `docs/dev/vps-deployment.md`

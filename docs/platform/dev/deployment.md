@@ -94,10 +94,6 @@ STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly
 STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual
 STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly
 STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual
-STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=stripe-price-extra-runtime-monthly
-STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=stripe-price-extra-runtime-annual
-STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY=stripe-portal-configuration-extra-runtime-monthly
-STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL=stripe-portal-configuration-extra-runtime-annual
 ```
 
 The two portal configurations are required to enable the customer-facing

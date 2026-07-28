@@ -11,14 +11,20 @@ import {
 type EmailCodeFormProps = {
   email: string;
   onEmailChange: (value: string) => void;
+  password: string;
+  onPasswordChange: (value: string) => void;
   code: string;
   onCodeChange: (value: string) => void;
-  /** Masked address Clerk sent the code to; null while still collecting the address. */
+  /** Masked address Clerk sent the code to; null while still collecting credentials. */
   codeSentTo: string | null;
+  /** True once Clerk has said this account has no password. */
+  passwordUnavailable: boolean;
+  signingIn: boolean;
   sending: boolean;
   verifying: boolean;
   /** True while any provider on the screen is mid-flight. */
   busy: boolean;
+  onSignIn: () => void;
   onSendCode: () => void;
   onVerify: () => void;
   onUseDifferentEmail: () => void;
@@ -27,12 +33,17 @@ type EmailCodeFormProps = {
 export function EmailCodeForm({
   email,
   onEmailChange,
+  password,
+  onPasswordChange,
   code,
   onCodeChange,
   codeSentTo,
+  passwordUnavailable,
+  signingIn,
   sending,
   verifying,
   busy,
+  onSignIn,
   onSendCode,
   onVerify,
   onUseDifferentEmail,
@@ -40,7 +51,9 @@ export function EmailCodeForm({
   const { theme } = useUnistyles();
 
   if (codeSentTo === null) {
-    const canSend = !busy && isLikelyEmail(email);
+    const emailReady = isLikelyEmail(email);
+    const canSignIn = !busy && emailReady && password.length > 0;
+    const canSendCode = !busy && emailReady;
     return (
       <>
         <View style={styles.inputRow}>
@@ -55,20 +68,61 @@ export function EmailCodeForm({
             autoComplete="email"
             keyboardType="email-address"
             textContentType="emailAddress"
-            returnKeyType="go"
-            onSubmitEditing={onSendCode}
+            returnKeyType="next"
             onBlur={() => onEmailChange(normalizeSignInIdentifier(email))}
             style={styles.input}
             accessibilityLabel="Email address"
           />
         </View>
+        <View style={styles.inputRow}>
+          <Ionicons name="lock-closed-outline" size={17} color={theme.colors.inkMuted} />
+          <TextInput
+            value={password}
+            onChangeText={onPasswordChange}
+            placeholder="Password"
+            placeholderTextColor={theme.colors.inkDim}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="current-password"
+            secureTextEntry
+            textContentType="password"
+            returnKeyType="go"
+            onSubmitEditing={() => {
+              if (canSignIn) onSignIn();
+            }}
+            style={styles.input}
+            accessibilityLabel="Password"
+          />
+        </View>
+        <Pressable
+          onPress={onSignIn}
+          disabled={!canSignIn}
+          style={({ pressed }) => [
+            styles.buttonPrimary,
+            pressed && styles.buttonPressed,
+            !canSignIn && styles.buttonDisabled,
+          ]}
+        >
+          {signingIn ? (
+            <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+          ) : (
+            <Text style={styles.buttonPrimaryText}>Sign in</Text>
+          )}
+        </Pressable>
+        {passwordUnavailable ? (
+          // Clerk told us this account has no password (an OAuth-only signup),
+          // so point at the path that will actually work.
+          <Text style={styles.hint}>
+            That account has no password. Use a code, or continue with Google or GitHub.
+          </Text>
+        ) : null}
         <Pressable
           onPress={onSendCode}
-          disabled={!canSend}
+          disabled={!canSendCode}
           style={({ pressed }) => [
             styles.buttonSecondary,
             pressed && styles.buttonPressed,
-            !canSend && styles.buttonDisabled,
+            !canSendCode && styles.buttonDisabled,
           ]}
         >
           {sending ? (
@@ -76,7 +130,7 @@ export function EmailCodeForm({
           ) : (
             <>
               <Ionicons name="mail-outline" size={19} color={theme.colors.foreground} />
-              <Text style={styles.buttonSecondaryText}>Email me a code</Text>
+              <Text style={styles.buttonSecondaryText}>Email me a code instead</Text>
             </>
           )}
         </Pressable>
@@ -102,7 +156,9 @@ export function EmailCodeForm({
           textContentType="oneTimeCode"
           maxLength={MAX_VERIFICATION_CODE_INPUT_LENGTH}
           returnKeyType="go"
-          onSubmitEditing={onVerify}
+          onSubmitEditing={() => {
+            if (canVerify) onVerify();
+          }}
           style={styles.input}
           accessibilityLabel="Verification code"
         />

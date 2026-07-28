@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
-import { AddComputerOnboarding } from "@/components/runtime/RuntimeManager";
+import { ADD_COMPUTER_ONBOARDING_PATH } from "@/lib/runtime-routes";
 
 export const metadata: Metadata = {
   title: "Add a computer | Matrix OS",
@@ -8,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function AddComputerOnboardingPage() {
-  return <AddComputerOnboarding />;
+  redirect(ADD_COMPUTER_ONBOARDING_PATH);
 }

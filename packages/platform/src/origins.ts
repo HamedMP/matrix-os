@@ -55,6 +55,7 @@ export function wwwOrigin(env: NodeJS.ProcessEnv = process.env): string {
 // to "/", so a client-supplied returnPath can never become an open redirect.
 const RETURN_PATH_ALLOWLIST: RegExp[] = [
   /^\/$/,
+  /^\/\?billing=setup&handoff=add-computer$/,
   /^\/sign-in(?:[/?].*)?$/,
   /^\/sign-up(?:[/?].*)?$/,
   /^\/runtime(?:[/?].*)?$/,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('CI workflows', () => {
@@ -10,8 +10,6 @@ describe('CI workflows', () => {
     ['STRIPE_PRICE_MATRIX_BUILDER_ANNUAL', 'stripe-price-matrix-builder-annual'],
     ['STRIPE_PRICE_MATRIX_MAX_MONTHLY', 'stripe-price-matrix-max-monthly'],
     ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
-    ['STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY', 'stripe-price-extra-runtime-monthly'],
-    ['STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL', 'stripe-price-extra-runtime-annual'],
   ] as const;
 
   it('exposes a stable aggregate CI result job for branch protection', () => {
@@ -62,6 +60,77 @@ describe('CI workflows', () => {
     expect(readme).toContain('React Doctor');
     expect(readme).toContain('Docs Contract Tests');
     expect(readme).toContain('Screenshot workflow removed');
+  });
+
+  it('ships customer runtime bundles without publishing legacy Docker images', () => {
+    const root = process.cwd();
+    const workflowsDirectory = join(root, '.github/workflows');
+    const workflowReadme = readFileSync(join(workflowsDirectory, 'README.md'), 'utf8');
+    const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
+    const datedUpgradeGuide = readFileSync(
+      join(root, 'docs/dev/upgrade-2026-04-02.md'),
+      'utf8',
+    );
+    const contributorGuide = readFileSync(join(root, 'CONTRIBUTING.md'), 'utf8');
+    const orchestrator = readFileSync(join(root, 'packages/platform/src/orchestrator.ts'), 'utf8');
+    const platformCompose = readFileSync(join(root, 'distro/docker-compose.platform.yml'), 'utf8');
+    const deployStatusCommand = readFileSync(
+      join(root, '.claude/commands/deploy-status.md'),
+      'utf8',
+    );
+    const releaseCommand = readFileSync(join(root, '.claude/commands/release.md'), 'utf8');
+    const shipCommand = readFileSync(join(root, '.claude/commands/ship.md'), 'utf8');
+    const workflowSources = readdirSync(workflowsDirectory)
+      .filter((fileName) => fileName.endsWith('.yml') || fileName.endsWith('.yaml'))
+      .map((fileName) => readFileSync(join(workflowsDirectory, fileName), 'utf8'));
+
+    expect(existsSync(join(workflowsDirectory, 'docker.yml'))).toBe(false);
+    expect(existsSync(join(workflowsDirectory, 'host-bundle-release.yml'))).toBe(true);
+    expect(workflowReadme).toContain('Matrix OS does not publish customer runtime Docker images');
+    expect(workflowReadme).toContain('Docker remains supported for local development and CI validation only');
+    expect(workflowReadme).not.toContain('| `docker.yml`');
+    expect(releaseDocs).toContain('## Release Artifact Inventory');
+    expect(releaseDocs).toContain('VPS host bundle');
+    expect(releaseDocs).toContain('Platform service image');
+    expect(releaseDocs).toContain('Mobile native builds');
+    expect(releaseDocs).toContain('Mobile OTA update');
+    expect(releaseDocs).toContain('Desktop installers and OTA metadata');
+    expect(releaseDocs).toContain('`@finnaai/matrix` CLI');
+    expect(datedUpgradeGuide).toContain('procedure is retired');
+    expect(datedUpgradeGuide).toContain('[Release Process](releases.md)');
+    expect(orchestrator).toContain("image = 'matrixos-user:local'");
+    expect(platformCompose).toContain(
+      'PLATFORM_IMAGE=${PLATFORM_IMAGE:-matrixos-user:local}',
+    );
+    expect(platformCompose).toContain('image: matrixos-user:local');
+    expect(platformCompose).not.toContain(
+      'image: ${PLATFORM_IMAGE:-matrixos-user:local}',
+    );
+    expect(contributorGuide).toContain('| Host bundle | `host-bundle-release.yml`');
+    expect(contributorGuide).toContain('| Platform | `platform-cloud-run.yml`');
+    expect(contributorGuide).toContain('Customer releases are VPS-native host bundles');
+    expect(deployStatusCommand).toContain('host-bundle-release.yml');
+    expect(deployStatusCommand).toContain('platform-cloud-run.yml');
+    expect(releaseCommand).toContain('host-bundle-release.yml');
+    expect(shipCommand).toContain('host-bundle-release.yml');
+
+    for (const activeSource of [
+      contributorGuide,
+      datedUpgradeGuide,
+      orchestrator,
+      platformCompose,
+      deployStatusCommand,
+      releaseCommand,
+      shipCommand,
+    ]) {
+      expect(activeSource).not.toContain('ghcr.io/hamedmp/matrix-os');
+      expect(activeSource).not.toContain('docker.yml');
+    }
+
+    for (const workflow of workflowSources) {
+      expect(workflow).not.toContain('ghcr.io/hamedmp/matrix-os');
+      expect(workflow).not.toMatch(/packages:\s*write/);
+    }
   });
 
   it('reuses one Docker test image artifact across scenario jobs', () => {
@@ -199,21 +268,14 @@ describe('CI workflows', () => {
     }
   });
 
-  it('binds focused Stripe portal configurations only when the complete pair exists', () => {
+  it('does not require add-on prices or focused portal configurations for platform deployment', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
-    expect(workflow).toContain('optional_portal_configuration_secrets=(');
-    expect(workflow).toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY=stripe-portal-configuration-extra-runtime-monthly');
-    expect(workflow).toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL=stripe-portal-configuration-extra-runtime-annual');
-    expect(workflow).toContain('available_portal_configuration_secrets=0');
-    expect(workflow).toContain('expected_portal_configuration_secrets="${#optional_portal_configuration_secrets[@]}"');
-    expect(workflow).toContain('[ "$available_portal_configuration_secrets" -lt "$expected_portal_configuration_secrets" ]; then');
-    expect(workflow).toContain('Focused Stripe portal configuration secrets are incomplete');
-    expect(workflow).toContain('if [ "$available_portal_configuration_secrets" -eq 0 ]; then');
-    expect(workflow).toContain('Add-computer billing will remain unavailable');
-    expect(workflow).toContain('PORTAL_CONFIGURATION_SECRET_BINDINGS=');
-    expect(workflow).toContain('${PORTAL_CONFIGURATION_SECRET_BINDINGS:+,${PORTAL_CONFIGURATION_SECRET_BINDINGS}}');
+    expect(workflow).toContain('required_billing_secrets=(');
+    expect(workflow).not.toContain('STRIPE_PRICE_EXTRA_RUNTIME');
+    expect(workflow).not.toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME');
+    expect(workflow).not.toContain('PORTAL_CONFIGURATION_SECRET_BINDINGS');
   });
 
   it('wires Pipedream integration secrets into platform Cloud Run', () => {
@@ -236,7 +298,7 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('Verify Stripe billing secrets');
     expect(workflow).toContain('gcloud secrets describe "$secret_name"');
-    expect(workflow).toContain('price_secret_tmpfile="$(mktemp)"');
+    expect(workflow).toContain('billing_secret_tmpfile="$(mktemp)"');
     expect(workflow).toContain('gcloud secrets versions access latest --secret "$secret_name"');
     expect(workflow).toContain('roles/secretmanager.secretAccessor');
     expect(workflow).toContain('CLOUD_RUN_SERVICE_ACCOUNT');

@@ -40,16 +40,11 @@ export interface RuntimeCatalog {
   profiles: RuntimeCatalogProfile[];
 }
 
-export type StripePriceCatalogEntry =
-  | {
-      kind: 'base_plan';
-      planSlug: MatrixBillingPlanSlug;
-      interval: MatrixBillingInterval;
-    }
-  | {
-      kind: 'extra_runtime_slot';
-      interval: MatrixBillingInterval;
-    };
+export type StripePriceCatalogEntry = {
+  kind: 'base_plan';
+  planSlug: MatrixBillingPlanSlug;
+  interval: MatrixBillingInterval;
+};
 
 export interface StripePriceCatalog {
   priceToPlan: Map<string, StripePriceCatalogEntry>;
@@ -136,7 +131,7 @@ export const DEFAULT_BILLING_PLAN_DEFINITIONS: BillingPlanDefinition[] = [
     marketingName: 'Max',
     monthlyUsd: 49,
     annualUsd: 490,
-    includedRuntimeSlots: 3,
+    includedRuntimeSlots: 1,
     defaultCatalogSku: 'max',
     allowedCatalogSkus: ['starter', 'builder', 'max'],
     rank: 30,
@@ -215,8 +210,6 @@ export function loadStripePriceCatalog(env: NodeJS.ProcessEnv): StripePriceCatal
   addBasePrice(priceToPlan, env.STRIPE_PRICE_MATRIX_BUILDER_ANNUAL, 'matrix_builder', 'annual');
   addBasePrice(priceToPlan, env.STRIPE_PRICE_MATRIX_MAX_MONTHLY, 'matrix_max', 'monthly');
   addBasePrice(priceToPlan, env.STRIPE_PRICE_MATRIX_MAX_ANNUAL, 'matrix_max', 'annual');
-  addAddonPrice(priceToPlan, env.STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY, 'monthly');
-  addAddonPrice(priceToPlan, env.STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL, 'annual');
   return { priceToPlan };
 }
 
@@ -230,15 +223,6 @@ function addBasePrice(
   map.set(priceId, { kind: 'base_plan', planSlug, interval });
 }
 
-function addAddonPrice(
-  map: Map<string, StripePriceCatalogEntry>,
-  priceId: string | undefined,
-  interval: MatrixBillingInterval,
-): void {
-  if (!priceId) return;
-  map.set(priceId, { kind: 'extra_runtime_slot', interval });
-}
-
 export function deriveStripeEntitlement(
   subscription: StripeSubscriptionProjection,
   options: {
@@ -249,16 +233,10 @@ export function deriveStripeEntitlement(
 ): BillingEntitlement {
   let selectedPlan: BillingPlanDefinition | undefined;
   let selectedPriceId: string | null = null;
-  let addonRuntimeSlots = 0;
 
   for (const item of subscription.items) {
     const entry = options.priceCatalog.priceToPlan.get(item.priceId);
     if (!entry) continue;
-    if (entry.kind === 'extra_runtime_slot') {
-      const quantity = Math.max(0, Math.floor(item.quantity ?? 0));
-      addonRuntimeSlots += quantity;
-      continue;
-    }
     const plan = getPlanDefinition(entry.planSlug);
     if (!selectedPlan || plan.rank > selectedPlan.rank) {
       selectedPlan = plan;
@@ -297,9 +275,9 @@ export function deriveStripeEntitlement(
     source: 'stripe',
     planSlug: selectedPlan.slug,
     status: subscription.status,
-    maxRuntimeSlots: selectedPlan.includedRuntimeSlots + addonRuntimeSlots,
+    maxRuntimeSlots: 1,
     includedRuntimeSlots: selectedPlan.includedRuntimeSlots,
-    addonRuntimeSlots,
+    addonRuntimeSlots: 0,
     defaultServerType: defaultServerType ?? '',
     allowedServerTypes,
     stripeSubscriptionId: subscription.stripeSubscriptionId,

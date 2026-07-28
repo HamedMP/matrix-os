@@ -34,11 +34,13 @@ export function createStripeBillingClient(options: {
         metadata: {
           clerk_user_id: input.clerkUserId,
           matrix_region_slug: input.regionSlug,
+          matrix_runtime_slot: input.runtimeSlot,
         },
         subscription_data: {
           metadata: {
             clerk_user_id: input.clerkUserId,
             matrix_region_slug: input.regionSlug,
+            matrix_runtime_slot: input.runtimeSlot,
           },
         },
         tax_id_collection: { enabled: true },
@@ -50,7 +52,7 @@ export function createStripeBillingClient(options: {
             },
           }
           : {}),
-      });
+      }, { idempotencyKey: input.idempotencyKey });
       if (!session.url) {
         throw new Error('Stripe checkout session missing redirect URL');
       }
@@ -61,19 +63,6 @@ export function createStripeBillingClient(options: {
       const session = await stripe.billingPortal.sessions.create({
         customer: input.customerId,
         return_url: input.returnUrl,
-        ...(input.flow
-          ? {
-            configuration: input.flow.configurationId,
-            flow_data: {
-              type: input.flow.type,
-              subscription_update: { subscription: input.flow.subscriptionId },
-              after_completion: {
-                type: 'redirect',
-                redirect: { return_url: input.flow.afterCompletionReturnUrl },
-              },
-            },
-          }
-          : {}),
       });
       return { url: session.url };
     },

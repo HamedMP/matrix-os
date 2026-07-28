@@ -198,7 +198,95 @@ describe("instance CLI command", () => {
     ]);
   });
 
-  it("emits generic JSON errors without exposing response bodies", async () => {
+  it("returns degraded ready info when management fails but execution succeeds", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://platform.example/api/instance") {
+        return new Response("provider exploded", { status: 503 });
+      }
+      if (url === "https://gateway.example/api/terminal/run") {
+        return new Response(JSON.stringify({
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          truncated: false,
+          durationMs: 4,
+        }));
+      }
+      throw new Error(`unexpected URL ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs = captureLogs();
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => errors.push(String(line)));
+
+    await instanceCommand.subCommands!.info.run!({
+      args: {
+        json: true,
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+      },
+    } as never);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(errors).toEqual([]);
+    expect(JSON.parse(logs[0])).toEqual({
+      v: 1,
+      ok: true,
+      data: {
+        status: "running",
+        ready: true,
+        source: "execution_probe",
+        management: {
+          status: "degraded",
+          upstream: "platform_instance_api",
+          cause: "http",
+          httpStatus: 503,
+          retryable: true,
+        },
+        nextStep: "Execution is healthy. Retry `matrix instance info` for full metadata.",
+      },
+    });
+    expect(logs[0]).not.toContain("provider exploded");
+  });
+
+  it("identifies a management timeout when the execution fallback is healthy", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://platform.example/api/instance") {
+        throw new DOMException("timed out", "TimeoutError");
+      }
+      return new Response(JSON.stringify({
+        exitCode: 0,
+        timedOut: false,
+      }));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs = captureLogs();
+
+    await instanceCommand.subCommands!.info.run!({
+      args: {
+        json: true,
+        platform: "https://platform.example",
+        gateway: "https://gateway.example",
+      },
+    } as never);
+
+    expect(JSON.parse(logs[0])).toMatchObject({
+      v: 1,
+      ok: true,
+      data: {
+        ready: true,
+        management: {
+          upstream: "platform_instance_api",
+          cause: "timeout",
+          retryable: true,
+        },
+      },
+    });
+  });
+
+  it("emits actionable sanitized JSON when management and execution both fail", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("provider exploded", { status: 502 })));
     const errors: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
@@ -210,7 +298,22 @@ describe("instance CLI command", () => {
     expect(process.exitCode).toBe(1);
     expect(JSON.parse(errors[0])).toEqual({
       v: 1,
-      error: { code: "instance_request_failed", message: "Request failed" },
+      error: {
+        code: "instance_unavailable",
+        message: "Instance readiness check failed.",
+        management: {
+          upstream: "platform_instance_api",
+          cause: "http",
+          httpStatus: 502,
+          retryable: true,
+        },
+        execution: {
+          upstream: "instance_execution_api",
+          cause: "request_failed",
+          retryable: true,
+        },
+        nextStep: "Run `matrix doctor`, then retry `matrix instance info`.",
+      },
     });
     expect(errors[0]).not.toContain("provider exploded");
   });

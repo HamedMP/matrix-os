@@ -1,8 +1,10 @@
 import { useCallback, useRef, useState } from "react";
 import { useSignIn } from "@clerk/clerk-expo";
 import {
+  PasswordUnavailableError,
   describeSignInFailure,
   requestEmailCode,
+  signInWithPassword,
   submitEmailCode,
   type SignInAttemptLike,
 } from "./clerk-sign-in";
@@ -23,12 +25,18 @@ type EmailCodeSignInOptions = {
 export type EmailCodeSignIn = {
   email: string;
   setEmail: (value: string) => void;
+  password: string;
+  setPassword: (value: string) => void;
   code: string;
   setCode: (value: string) => void;
-  /** Masked address the code went to; null while still collecting the address. */
+  /** Masked address the code went to; null while still collecting credentials. */
   codeSentTo: string | null;
+  /** True once the account has been shown to have no password. */
+  passwordUnavailable: boolean;
+  signingIn: boolean;
   sending: boolean;
   verifying: boolean;
+  signInWithPassword: () => Promise<void>;
   sendCode: () => Promise<void>;
   verifyCode: () => Promise<void>;
   reset: () => void;
@@ -45,15 +53,50 @@ export function useEmailCodeSignIn({
 }: EmailCodeSignInOptions): EmailCodeSignIn {
   const { signIn, setActive, isLoaded } = useSignIn();
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
+  const [passwordUnavailable, setPasswordUnavailable] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   // Only read inside the submit handlers, so a ref keeps it out of the render path.
   const attemptRef = useRef<SignInAttemptLike | null>(null);
+  // State updates are async, so a disabled button is not enough to stop a second
+  // keyboard submit from starting an overlapping Clerk attempt.
+  const inFlightRef = useRef(false);
+
+  const submitPassword = useCallback(async () => {
+    if (!isLoaded || !signIn || !setActive || inFlightRef.current) return;
+    inFlightRef.current = true;
+    setSigningIn(true);
+    try {
+      await prepareGateway();
+      const createdSessionId = await signInWithPassword(signIn, email, password);
+      await setActive({ session: createdSessionId });
+      onSuccess();
+    } catch (err: unknown) {
+      console.warn("[mobile] password sign-in failed:", err);
+      if (err instanceof PasswordUnavailableError) {
+        // OAuth-only account. The form renders its own inline hint pointing at
+        // the code path, so an error banner would just repeat it.
+        setPasswordUnavailable(true);
+        return;
+      }
+      onError(
+        err instanceof SignInStepError
+          ? err.message
+          : describeSignInFailure(err, "We could not sign you in. Try again in a moment."),
+      );
+    } finally {
+      inFlightRef.current = false;
+      setSigningIn(false);
+    }
+  }, [email, isLoaded, onError, onSuccess, password, prepareGateway, setActive, signIn]);
 
   const sendCode = useCallback(async () => {
-    if (!isLoaded || !signIn) return;
+    if (!isLoaded || !signIn || inFlightRef.current) return;
+    inFlightRef.current = true;
     setSending(true);
     try {
       await prepareGateway();
@@ -69,13 +112,15 @@ export function useEmailCodeSignIn({
           : describeSignInFailure(err, "We could not send the code. Try again in a moment."),
       );
     } finally {
+      inFlightRef.current = false;
       setSending(false);
     }
   }, [email, isLoaded, onError, prepareGateway, signIn]);
 
   const verifyCode = useCallback(async () => {
     const attempt = attemptRef.current;
-    if (!attempt || !setActive) return;
+    if (!attempt || !setActive || inFlightRef.current) return;
+    inFlightRef.current = true;
     setVerifying(true);
     try {
       let createdSessionId: string;
@@ -109,24 +154,37 @@ export function useEmailCodeSignIn({
           : describeSignInFailure(err, "Sign-in did not complete. Try again in a moment."),
       );
     } finally {
+      inFlightRef.current = false;
       setVerifying(false);
     }
   }, [code, onError, onSuccess, setActive]);
+
+  const updateEmail = useCallback((value: string) => {
+    setEmail(value);
+    // The "no password" hint describes the previous account, not this one.
+    setPasswordUnavailable(false);
+  }, []);
 
   const reset = useCallback(() => {
     attemptRef.current = null;
     setCodeSentTo(null);
     setCode("");
+    setPasswordUnavailable(false);
   }, []);
 
   return {
     email,
-    setEmail,
+    setEmail: updateEmail,
+    password,
+    setPassword,
     code,
     setCode,
     codeSentTo,
+    passwordUnavailable,
+    signingIn,
     sending,
     verifying,
+    signInWithPassword: submitPassword,
     sendCode,
     verifyCode,
     reset,

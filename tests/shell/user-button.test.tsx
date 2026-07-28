@@ -110,7 +110,7 @@ describe("UserButton", () => {
     await openAccountMenu();
 
     expect(screen.getByRole("menuitem", { name: "Switch computer" }).getAttribute("href")).toBe("/runtime");
-    expect(screen.getByRole("menuitem", { name: "Get another computer" }).getAttribute("href")).toBe("/onboarding/computer");
+    expect(screen.getByRole("menuitem", { name: "Get another computer" }).getAttribute("href")).toBe("/?billing=setup&handoff=add-computer");
   });
 
   it("excludes hosted computer actions in self-hosted mode", async () => {

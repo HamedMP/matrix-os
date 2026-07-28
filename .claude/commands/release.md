@@ -44,7 +44,10 @@ Requested bump: $ARGUMENTS
    gh release create v<version> --title "v<version>" --notes "<changelog>"
    ```
 
-10. Report: tag, GitHub release URL, Docker workflow link.
+10. Report:
+   - Tag and GitHub release URL
+   - `host-bundle-release.yml` run URL and immutable bundle version
+   - Promoted host-bundle channel (`v*` tags promote `canary` by default)
 
 ## Rules
 

@@ -156,12 +156,17 @@ export interface StartPlatformServerOptions {
   resolveEffectiveBillingEntitlement(
     db: PlatformDB,
     clerkUserId: string,
+    now?: Date,
+    runtimeSlot?: string,
+    env?: NodeJS.ProcessEnv,
   ): Promise<BillingEntitlement | null>;
   getRuntimeEntitlementDecision(env?: NodeJS.ProcessEnv): EntitlementAccessDecision;
   getRuntimeEntitlementDecisionForUser(
     db: PlatformDB,
     clerkUserId: string,
     env: NodeJS.ProcessEnv,
+    runtimeSlot?: string,
+    provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
 }
 
@@ -440,7 +445,13 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
       cloudInitTemplate,
       fetchDispatcher: customerVpsProxyDispatcher,
       resolveBillingEntitlement: stripeBillingEntitlementsEnabled(process.env)
-        ? (clerkUserId) => resolveEffectiveBillingEntitlement(db, clerkUserId)
+        ? (billingDb, clerkUserId, runtimeSlot) => resolveEffectiveBillingEntitlement(
+            billingDb,
+            clerkUserId,
+            new Date(),
+            runtimeSlot,
+            process.env,
+          )
         : undefined,
     });
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
@@ -463,7 +474,12 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
             }
             try {
               const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-              await sweepStaleCheckoutAttempts(db, thirtyDaysAgoIso, new Date().toISOString(), 200);
+              await sweepStaleCheckoutAttempts(
+                db,
+                thirtyDaysAgoIso,
+                new Date().toISOString(),
+                200,
+              );
             } catch (err: unknown) {
               logPlatformRouteError('checkout attempt sweep', err);
             }

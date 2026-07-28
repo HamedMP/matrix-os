@@ -1,11 +1,12 @@
 /**
- * Email-code (one-time passcode) sign-in against Clerk.
+ * Password and email-code sign-in against Clerk.
  *
- * The Matrix OS Clerk instance enables `email_code` as its only non-OAuth first
- * factor, which is what the web `<SignIn />` component renders alongside Google
- * and GitHub. These helpers drive the same flow from the native shell and are
- * kept free of React and of `@clerk/clerk-expo` imports so the branching stays
- * unit testable.
+ * Which factors an account can use is decided per account, not per instance:
+ * Clerk returns `password` in `supportedFirstFactors` only for accounts that
+ * have one, and OAuth-only accounts get `email_code` instead. So the flow tries
+ * the password the user typed and falls back to a code when the account has no
+ * password. These helpers stay free of React and of `@clerk/clerk-expo` imports
+ * so the branching stays unit testable.
  */
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
@@ -39,14 +40,32 @@ export type SignInAttemptLike = {
 };
 
 export type SignInResourceLike = {
-  create: (params: { identifier: string }) => Promise<SignInAttemptLike>;
+  create: (params: {
+    identifier: string;
+    strategy?: "password";
+    password?: string;
+  }) => Promise<SignInAttemptLike>;
 };
+
+/** Clerk's code when the account cannot use the strategy that was attempted. */
+const STRATEGY_NOT_AVAILABLE = "strategy_for_user_invalid";
 
 /** A message that is safe to render to the user. */
 export class EmailCodeSignInError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "EmailCodeSignInError";
+  }
+}
+
+/**
+ * The account exists but has no password — typically an OAuth-only signup. The
+ * caller should offer the email-code path rather than reporting a failure.
+ */
+export class PasswordUnavailableError extends EmailCodeSignInError {
+  constructor() {
+    super("That account has no password. We can email you a sign-in code instead.");
+    this.name = "PasswordUnavailableError";
   }
 }
 
@@ -109,6 +128,57 @@ export function describeClerkError(error: unknown, fallback: string): string {
         ? first.message
         : null;
   return message && message.trim().length > 0 ? message : fallback;
+}
+
+/** True when Clerk lists `password` among the account's usable first factors. */
+export function supportsPassword(factors: FirstFactorLike[] | null | undefined): boolean {
+  return Boolean(factors?.some((factor) => factor.strategy === "password"));
+}
+
+function hasClerkErrorCode(error: unknown, code: string): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const errors = (error as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return false;
+  return errors.some((entry) => (entry as { code?: unknown })?.code === code);
+}
+
+/**
+ * Signs in with a password in a single Clerk call. Throws
+ * `PasswordUnavailableError` when the account has no password, so the caller can
+ * offer the email-code path instead of showing a dead end.
+ */
+export async function signInWithPassword(
+  signIn: SignInResourceLike,
+  identifier: string,
+  password: string,
+): Promise<string> {
+  const normalized = normalizeSignInIdentifier(identifier);
+  if (normalized.length === 0) {
+    throw new EmailCodeSignInError("Enter the email address for your Matrix OS account.");
+  }
+  if (password.length === 0) {
+    throw new EmailCodeSignInError("Enter your password.");
+  }
+
+  let attempt: SignInAttemptLike;
+  try {
+    attempt = await signIn.create({ identifier: normalized, strategy: "password", password });
+  } catch (error: unknown) {
+    if (hasClerkErrorCode(error, STRATEGY_NOT_AVAILABLE)) {
+      throw new PasswordUnavailableError();
+    }
+    throw new EmailCodeSignInError(
+      describeClerkError(error, "We could not sign you in. Check your email and password."),
+    );
+  }
+
+  if (attempt.status !== "complete" || !attempt.createdSessionId) {
+    throw new EmailCodeSignInError(
+      "Sign-in could not be completed on this device. Continue in the browser instead.",
+    );
+  }
+
+  return attempt.createdSessionId;
 }
 
 export async function requestEmailCode(
