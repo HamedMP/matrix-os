@@ -445,6 +445,7 @@ export interface UserMachineRecord {
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
 const CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
+const CHECKOUT_SESSION_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 export interface BillingCheckoutAttemptRecord {
   id: string;
@@ -2964,8 +2965,53 @@ export async function claimCheckoutAttempt(
 
   const inserted = await tryInsert();
   if (inserted) return { attempt: mapCheckoutAttempt(inserted), claimed: true, selectionMatches: true };
-  const activeRow = await getActiveAttempt();
+  let activeRow = await getActiveAttempt();
   if (!activeRow) throw new Error('active checkout claim conflict could not be reconciled');
+  const activeAgeMs = Date.parse(record.createdAt) - Date.parse(activeRow.created_at);
+  const isExpiredLegacyAttempt = activeRow.status === 'open'
+    && (
+      activeRow.plan_slug === null
+      || activeRow.billing_interval === null
+      || activeRow.region_slug === null
+    )
+    && Number.isFinite(activeAgeMs)
+    && activeAgeMs >= CHECKOUT_SESSION_MAX_LIFETIME_MS;
+  if (isExpiredLegacyAttempt) {
+    // Stripe Checkout Sessions cannot remain payable beyond 24 hours. Legacy
+    // rows predate persisted selection fields, so retiring only after that
+    // provider window avoids replacing a session that may still accept payment.
+    const legacyAttemptId = activeRow.id;
+    const legacyCutoff = new Date(
+      Date.parse(record.createdAt) - CHECKOUT_SESSION_MAX_LIFETIME_MS,
+    ).toISOString();
+    const replacement = await db.transaction(async (trx) => {
+      const retired = await trx.executor
+        .updateTable('billing_checkout_attempts')
+        .set({ status: 'abandoned', resolved_at: record.createdAt })
+        .where('id', '=', legacyAttemptId)
+        .where('status', '=', 'open')
+        .where('created_at', '<=', legacyCutoff)
+        .where((eb) => eb.or([
+          eb('plan_slug', 'is', null),
+          eb('billing_interval', 'is', null),
+          eb('region_slug', 'is', null),
+        ]))
+        .returning('id')
+        .executeTakeFirst();
+      if (!retired) return undefined;
+      return trx.executor
+        .insertInto('billing_checkout_attempts')
+        .values(row)
+        .onConflict((oc) => oc.doNothing())
+        .returningAll()
+        .executeTakeFirst();
+    });
+    if (replacement) {
+      return { attempt: mapCheckoutAttempt(replacement), claimed: true, selectionMatches: true };
+    }
+    activeRow = await getActiveAttempt();
+    if (!activeRow) throw new Error('legacy checkout replacement conflict could not be reconciled');
+  }
   const sameSelection = activeRow.plan_slug === record.planSlug
     && activeRow.billing_interval === record.billingInterval
     && activeRow.region_slug === record.regionSlug;

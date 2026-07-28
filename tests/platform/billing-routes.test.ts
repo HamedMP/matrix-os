@@ -420,6 +420,49 @@ describe('platform billing routes', () => {
     expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
   });
 
+  it('retires an expired legacy checkout with missing selection before claiming a replacement', async () => {
+    await insertCheckoutAttempt(db, {
+      id: 'attempt_legacy_studio',
+      clerkUserId: 'user_123',
+      stripeSessionId: 'cs_legacy_studio',
+      runtimeSlot: 'studio',
+      createdAt: '2026-05-28T00:00:00.000Z',
+      status: 'open',
+    });
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+    await expect(
+      db.executor
+        .selectFrom('billing_checkout_attempts')
+        .select(['status', 'resolved_at'])
+        .where('id', '=', 'attempt_legacy_studio')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      status: 'abandoned',
+      resolved_at: '2026-05-30T00:00:00.000Z',
+    });
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      status: 'open',
+    });
+  });
+
   it('does not create another subscription for an already entitled runtime slot', async () => {
     await upsertBillingSubscription(db, {
       stripeSubscriptionId: 'sub_studio',
