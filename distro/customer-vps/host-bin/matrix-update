@@ -13,10 +13,57 @@ from typing import Any
 MAX_FRAME_BYTES = 128 * 1024
 SOCKET_PATH = "/run/matrix-update-runtime/update.sock"
 CHANNELS = {"stable", "canary", "beta", "dev"}
+STATUSES = {"accepted", "failed", "idle", "running"}
+PHASES = {
+    "idle",
+    "admitted",
+    "resolving",
+    "downloading",
+    "validating",
+    "extracting",
+    "preparing",
+    "committing",
+    "health_check",
+    "rollback",
+    "failed",
+}
+FAILURE_CODES = {
+    "operation_failed",
+    "prepared_release_metadata_invalid",
+    "staging_invalid",
+    "insufficient_disk_space",
+    "bundle_download_failed",
+    "bundle_size_mismatch",
+    "bundle_checksum_mismatch",
+    "bundle_archive_invalid",
+    "bundle_validation_timeout",
+    "bundle_extraction_failed",
+    "bundle_extraction_timeout",
+    "bundle_shape_invalid",
+    "bundle_ownership_timeout",
+    "rollback_ownership_timeout",
+    "terminal_runtime_candidate_invalid",
+    "terminal_runtime_generation_install_failed",
+    "update_runtime_install_failed",
+    "privilege_boundary_install_failed",
+    "terminal_runtime_wrapper_install_failed",
+    "zellij_candidate_staging_failed",
+    "zellij_candidate_commit_failed",
+    "zellij_candidate_metadata_failed",
+    "zellij_installed_digest_mismatch",
+    "terminal_runtime_legacy_migration_failed",
+    "systemd_unit_install_failed",
+    "terminal_runtime_supervisor_enable_failed",
+    "terminal_runtime_supervisor_start_failed",
+    "terminal_runtime_supervisor_cleanup_failed",
+    "update_runtime_enable_failed",
+    "legacy_update_bridge_disable_failed",
+    "health_check_failed",
+}
 VERSION_RE = re.compile(r"^(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}$")
 USAGE = (
     "Usage: matrix-update "
-    "[apply|rollback|repair|status|stable|canary|beta|dev|v<version>|main-<build>]"
+    "[apply|rollback|repair|status|diagnose|stable|canary|beta|dev|v<version>|main-<build>]"
 )
 
 
@@ -43,11 +90,15 @@ def request_for(argument: str) -> dict[str, Any]:
         "repair": "Repair",
         "rollback": "Rollback",
         "status": "Status",
+        "diagnose": "Status",
     }
     operation = operations.get(argument)
     if operation is None:
         raise ValueError("invalid argument")
-    return {"schemaVersion": 1, "operation": operation}
+    request: dict[str, Any] = {"schemaVersion": 1, "operation": operation}
+    if argument == "diagnose":
+        request["diagnostics"] = True
+    return request
 
 
 def read_exact(connection: socket.socket, size: int) -> bytes:
@@ -100,7 +151,35 @@ def main() -> int:
     if response.get("ok") is not True:
         print("Update request rejected.", file=sys.stderr)
         return 1
-    print(f"Update service: {response.get('status', 'accepted')}")
+    status = response.get("status")
+    if status not in STATUSES:
+        print("Update service unavailable.", file=sys.stderr)
+        return 1
+    if argument == "diagnose":
+        phase = response.get("phase")
+        failure_code = response.get("failureCode")
+        if (
+            phase not in PHASES
+            or (failure_code is not None and failure_code not in FAILURE_CODES)
+            or set(response) != {
+                "schemaVersion",
+                "ok",
+                "status",
+                "phase",
+                "failureCode",
+            }
+        ):
+            print("Update service unavailable.", file=sys.stderr)
+            return 1
+        print(
+            f"Update service: {status} "
+            f"phase={phase} failure={failure_code or 'none'}"
+        )
+        return 0
+    if set(response) != {"schemaVersion", "ok", "status"}:
+        print("Update service unavailable.", file=sys.stderr)
+        return 1
+    print(f"Update service: {status}")
     return 0
 
 

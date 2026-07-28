@@ -215,10 +215,15 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('timeout-minutes: 80');
     expect(workflow).toContain('deadline=$((SECONDS + 2400))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
+    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
+    expect(workflow).toContain('echo "update_diagnostic=${update_diagnostic}"');
+    expect(workflow).toContain(
+      'test("^Update service: (idle|running|failed) phase=(idle|admitted|resolving|downloading|validating|extracting|preparing|committing|health_check|rollback|failed) failure=(none|[a-z0-9_]{1,64})\\\\n$")',
+    );
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
-    expect(workflow.match(/--insecure/g)).toHaveLength(2);
+    expect(workflow.match(/--insecure/g)).toHaveLength(3);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).not.toContain('VPS_SSH_KEY');

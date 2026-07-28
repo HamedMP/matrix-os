@@ -41,6 +41,8 @@ readonly UPDATE_VERSION_FILE="$UPDATE_RUNTIME_DIR/update-version"
 readonly UPDATE_ERROR_MARKER="$UPDATE_RUNTIME_DIR/update-error.json"
 readonly AUTO_APPLY_FAILED_MARKER="$UPDATE_RUNTIME_DIR/auto-apply-failed"
 readonly OPERATION_STATE="$UPDATE_RUNTIME_DIR/operation-state"
+readonly UPDATE_PHASE="$UPDATE_RUNTIME_DIR/operation-phase"
+readonly UPDATE_FAILURE_CODE="$UPDATE_RUNTIME_DIR/last-failure-code"
 readonly LEGACY_UPDATE_TRIGGER="$APP_DIR/.update-now"
 readonly LEGACY_UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
 readonly LEGACY_UPDATE_VERSION_FILE="$APP_DIR/.update-version"
@@ -51,6 +53,8 @@ readonly STAGING_ARTIFACT_TTL_SECONDS="${MATRIX_STAGING_ARTIFACT_TTL_SECONDS:-86
 readonly STAGING_CLEANUP_INTERVAL_SECONDS="${MATRIX_STAGING_CLEANUP_INTERVAL_SECONDS:-3600}"
 readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"
 readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
+readonly UPDATE_LOCAL_PHASE_TIMEOUT_SECONDS="${MATRIX_UPDATE_LOCAL_PHASE_TIMEOUT_SECONDS:-600}"
+readonly STAGING_CLEANUP_ITEM_TIMEOUT_SECONDS="${MATRIX_STAGING_CLEANUP_ITEM_TIMEOUT_SECONDS:-30}"
 readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
 readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
 readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
@@ -62,6 +66,17 @@ readonly SYMPHONY_MANAGED_KEYS="MATRIX_HANDLE PLATFORM_INTERNAL_URL UPGRADE_TOKE
 terminal_runtime_candidate=""
 terminal_runtime_generation_id=""
 terminal_runtime_activation=""
+
+if [[ ! "$UPDATE_LOCAL_PHASE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]{0,3}$ ]] ||
+  [ "$UPDATE_LOCAL_PHASE_TIMEOUT_SECONDS" -gt 3600 ]; then
+  echo "matrix-sync-agent: invalid_local_phase_timeout" >&2
+  exit 1
+fi
+if [[ ! "$STAGING_CLEANUP_ITEM_TIMEOUT_SECONDS" =~ ^[1-9][0-9]{0,2}$ ]] ||
+  [ "$STAGING_CLEANUP_ITEM_TIMEOUT_SECONDS" -gt 300 ]; then
+  echo "matrix-sync-agent: invalid_staging_cleanup_timeout" >&2
+  exit 1
+fi
 
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() {
@@ -721,12 +736,16 @@ apply_update() {
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
   extract_dir="$STAGING_DIR/bundle-${version}"
 
+  set_operation_phase downloading
   log "Downloading bundle..."
   if ! curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
        --connect-timeout 10 --max-time 1800 --http1.1 \
        --max-filesize "$expected_bundle_size" \
        "$bundle_url" -o "$bundle_file"; then
-    log "ERROR: download failed"; rm -f "$bundle_file"; return 1
+    log "ERROR: download failed"
+    write_update_failure_code "bundle_download_failed"
+    rm -f "$bundle_file"
+    return 1
   fi
   actual_bundle_size="$(stat -c %s "$bundle_file")"
   if [ "$actual_bundle_size" != "$expected_bundle_size" ]; then
@@ -739,23 +758,50 @@ apply_update() {
   actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
   if [ "$actual_sha256" != "$sha256" ]; then
     log "ERROR: bundle_checksum_mismatch"
+    write_update_failure_code "bundle_checksum_mismatch"
     rm -f "$bundle_file"; return 1
   fi
   log "Checksum verified"
 
   # Extract and validate
-  if ! "$BIN_DIR/matrix-validate-host-bundle" "$bundle_file"; then
+  local phase_status
+  if run_bounded_phase \
+    "validating" \
+    "bundle_validation_timeout" \
+    "$BIN_DIR/matrix-validate-host-bundle" "$bundle_file"; then
+    :
+  else
+    phase_status=$?
     log "ERROR: bundle_archive_invalid"
+    if [ "$phase_status" -ne 124 ]; then
+      write_update_failure_code "bundle_archive_invalid"
+    fi
     rm -f "$bundle_file"; return 1
   fi
   log "Extracting bundle..."
   install -d -o root -g root -m 0700 "$extract_dir"
-  if ! tar --no-same-owner --no-same-permissions -xzf "$bundle_file" -C "$extract_dir"; then
-    log "ERROR: extraction failed"; rm -rf "$extract_dir" "$bundle_file"; return 1
+  if run_bounded_phase \
+    "extracting" \
+    "bundle_extraction_timeout" \
+    tar --no-same-owner --no-same-permissions \
+      -xzf "$bundle_file" -C "$extract_dir"; then
+    :
+  else
+    phase_status=$?
+    log "ERROR: extraction failed"
+    if [ "$phase_status" -ne 124 ]; then
+      write_update_failure_code "bundle_extraction_failed"
+    fi
+    quarantine_update_tree "$extract_dir" || true
+    rm -f -- "$bundle_file"
+    return 1
   fi
   if [ ! -d "$extract_dir/app" ]; then
     log "ERROR: extracted bundle missing 'app' directory"
-    rm -rf "$extract_dir" "$bundle_file"; return 1
+    write_update_failure_code "bundle_shape_invalid"
+    quarantine_update_tree "$extract_dir" || true
+    rm -f -- "$bundle_file"
+    return 1
   fi
   rm -rf -- "$extract_dir/app/BUNDLE_VERSION"
   printf '%s\n' "$version" >"$extract_dir/app/BUNDLE_VERSION"
@@ -793,12 +839,24 @@ apply_update() {
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
+  if run_bounded_phase \
+    "preparing" \
+    "bundle_ownership_timeout" \
+    chown -R matrix:matrix "$extract_dir/app"; then
+    :
+  else
+    log "ERROR: bundle_ownership_failed"
+    quarantine_update_tree "$extract_dir" || true
+    rm -f -- "$bundle_file"
+    return 1
+  fi
 
   # Any bundle that replaces Zellij extends the existing one-level app rollback
   # to the exact binary and identity record. Candidate status controls only the
   # additional digest checks and atomic candidate install path.
   # Stop services before placing the root-owned snapshot inside the current app;
   # moving that app to app.rollback then commits both as one filesystem rename.
+  set_operation_phase committing
   log "Stopping services..."
   systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   if [ -f "$extract_dir/bin/zellij" ]; then
@@ -822,7 +880,6 @@ apply_update() {
     log "Backed up current app to $APP_DIR.rollback"
   fi
   mv "$extract_dir/app" "$APP_DIR"
-  chown -R matrix:matrix "$APP_DIR"
   log "Installed app $version"
   if [ -f "$extract_dir/release.json" ]; then
     install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"
@@ -986,6 +1043,7 @@ apply_update() {
   # Start services and health-check
   log "Starting services..."
   systemctl start matrix-gateway matrix-shell
+  set_operation_phase health_check
   log "Running health check..."
   local healthy=false
   for _ in $(seq 1 18); do
@@ -1058,6 +1116,7 @@ do_rollback() {
   if [ ! -d "$APP_DIR.rollback" ]; then
     log "ERROR: no rollback available at $APP_DIR.rollback"; return 1
   fi
+  set_operation_phase rollback
   log "Rolling back..."
   systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   if [ -d "$APP_DIR" ]; then
@@ -1071,7 +1130,13 @@ do_rollback() {
   else
     rm -rf -- "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
   fi
-  chown -R matrix:matrix "$APP_DIR"
+  if ! run_bounded_phase \
+    "rollback" \
+    "rollback_ownership_timeout" \
+    chown -R matrix:matrix "$APP_DIR"; then
+    log "ERROR: rollback_ownership_failed"
+    return 1
+  fi
   systemctl start matrix-gateway matrix-shell
   systemctl start --no-block matrix-symphony || true
   local healthy=false
@@ -1224,6 +1289,8 @@ process_legacy_update_request() {
     return 1
   fi
   set_operation_state running
+  set_operation_phase admitted
+  rm -f -- "$UPDATE_FAILURE_CODE"
   IFS='|' read -r kind value <<<"$parsed"
   rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
   if [ "$kind" = "channel" ]; then
@@ -1232,6 +1299,7 @@ process_legacy_update_request() {
     printf '%s' "$value" >"$UPDATE_VERSION_FILE"
   fi
   rm -f "$AUTO_APPLY_FAILED_MARKER"
+  set_operation_phase resolving
   if prepare_triggered_update && apply_update; then
     rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
   else
@@ -1239,6 +1307,7 @@ process_legacy_update_request() {
     result=1
   fi
   set_operation_state idle
+  set_operation_phase idle
   return "$result"
 }
 
@@ -1248,9 +1317,12 @@ process_typed_request() {
     log "WARN: update_request_invalid"
     rm -f -- "$TYPED_REQUEST" "$INFLIGHT_REQUEST"
     set_operation_state failed
+    set_operation_phase failed
     return 1
   fi
   set_operation_state running
+  set_operation_phase admitted
+  rm -f -- "$UPDATE_FAILURE_CODE"
   IFS='|' read -r operation kind value <<<"$parsed"
   case "$operation" in
     Apply)
@@ -1261,6 +1333,7 @@ process_typed_request() {
         printf '%s' "$value" >"$UPDATE_VERSION_FILE"
       fi
       rm -f "$AUTO_APPLY_FAILED_MARKER"
+      set_operation_phase resolving
       if prepare_triggered_update && apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
@@ -1269,7 +1342,9 @@ process_typed_request() {
       fi
       ;;
     Repair)
+      set_operation_phase preparing
       perform_update_repair
+      set_operation_phase resolving
       if prepare_triggered_update && apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
@@ -1278,6 +1353,7 @@ process_typed_request() {
       fi
       ;;
     Rollback)
+      set_operation_phase rollback
       do_rollback explicit || result=1
       ;;
     *)
@@ -1288,8 +1364,13 @@ process_typed_request() {
   if [ "$result" -eq 0 ]; then
     rm -f -- "$INFLIGHT_REQUEST"
     set_operation_state idle
+    set_operation_phase idle
   else
     set_operation_state failed
+    set_operation_phase failed
+    if [ ! -f "$UPDATE_FAILURE_CODE" ]; then
+      write_update_failure_code "operation_failed"
+    fi
     rm -f -- "$INFLIGHT_REQUEST"
   fi
   return "$result"
@@ -1301,6 +1382,32 @@ on_sigusr1() { update_requested=true; }
 trap on_sigusr1 USR1
 
 # ── Staging cleanup ──────────────────────────────────────────────────
+quarantine_update_tree() {
+  local path="$1" quarantine
+  [ -e "$path" ] || return 0
+  case "$path" in
+    "$STAGING_DIR"/bundle-*) ;;
+    *) return 1 ;;
+  esac
+  [ -d "$path" ] && [ ! -L "$path" ] || return 1
+  quarantine="$(
+    mktemp -d --tmpdir="$STAGING_DIR" failed-timeout.XXXXXXXXXX
+  )"
+  rmdir -- "$quarantine"
+  mv -T -- "$path" "$quarantine"
+}
+
+remove_staging_tree_bounded() {
+  local path="$1"
+  if /usr/bin/timeout --signal=TERM --kill-after=5 \
+    "$STAGING_CLEANUP_ITEM_TIMEOUT_SECONDS" \
+    rm -rf -- "$path"; then
+    return 0
+  fi
+  log "WARN: staging_cleanup_item_timeout"
+  return 1
+}
+
 clean_staging() {
   [ -d "$STAGING_DIR" ] || return 0
   local count=0 now cutoff path
@@ -1312,8 +1419,11 @@ clean_staging() {
     if [ "$(stat -c %Y "$path" 2>/dev/null || echo "$now")" -gt "$cutoff" ]; then
       continue
     fi
-    rm -rf -- "$path"
+    remove_staging_tree_bounded "$path" || true
     count=$((count + 1))
+    if [ "$count" -ge 8 ]; then
+      break
+    fi
   done < <(find "$STAGING_DIR" -mindepth 1 -maxdepth 1 \( -name 'failed-*' -o -name 'bundle-*' \) -print0)
   if [ "$count" -gt 0 ]; then
     log "Cleaned $count stale staging artifacts"
@@ -1327,8 +1437,11 @@ clean_staging_now() {
   while IFS= read -r -d '' path; do
     [ -e "$path" ] || continue
     [ ! -L "$path" ] || continue
-    rm -rf -- "$path"
+    remove_staging_tree_bounded "$path" || true
     count=$((count + 1))
+    if [ "$count" -ge 8 ]; then
+      break
+    fi
   done < <(find "$STAGING_DIR" -mindepth 1 -maxdepth 1 \( -name 'failed-*' -o -name 'bundle-*' \) -print0)
   if [ "$count" -gt 0 ]; then
     log "Cleaned $count update staging artifacts"
@@ -1418,6 +1531,92 @@ set_operation_state() {
   temporary="$(mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .operation-state.XXXXXXXXXX)"
   (umask 077; printf '%s' "$state" >"$temporary")
   mv -f -- "$temporary" "$OPERATION_STATE"
+}
+
+set_operation_phase() {
+  local phase="$1" temporary
+  case "$phase" in
+    admitted|resolving|downloading|validating|extracting|preparing|committing|health_check|rollback|failed|idle) ;;
+    *) return 1 ;;
+  esac
+  temporary="$(mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .operation-phase.XXXXXXXXXX)"
+  (umask 077; printf '%s' "$phase" >"$temporary")
+  mv -f -- "$temporary" "$UPDATE_PHASE"
+}
+
+write_update_failure_code() {
+  local code="$1" temporary committed
+  case "$code" in
+    operation_failed|\
+    prepared_release_metadata_invalid|\
+    staging_invalid|\
+    insufficient_disk_space|\
+    bundle_download_failed|\
+    bundle_size_mismatch|\
+    bundle_checksum_mismatch|\
+    bundle_archive_invalid|\
+    bundle_validation_timeout|\
+    bundle_extraction_failed|\
+    bundle_extraction_timeout|\
+    bundle_shape_invalid|\
+    bundle_ownership_timeout|\
+    rollback_ownership_timeout|\
+    terminal_runtime_candidate_invalid|\
+    terminal_runtime_generation_install_failed|\
+    update_runtime_install_failed|\
+    privilege_boundary_install_failed|\
+    terminal_runtime_wrapper_install_failed|\
+    zellij_candidate_staging_failed|\
+    zellij_candidate_commit_failed|\
+    zellij_candidate_metadata_failed|\
+    zellij_installed_digest_mismatch|\
+    terminal_runtime_legacy_migration_failed|\
+    systemd_unit_install_failed|\
+    terminal_runtime_supervisor_enable_failed|\
+    terminal_runtime_supervisor_start_failed|\
+    terminal_runtime_supervisor_cleanup_failed|\
+    update_runtime_enable_failed|\
+    legacy_update_bridge_disable_failed|\
+    health_check_failed) ;;
+    *) return 1 ;;
+  esac
+  if ! temporary="$(
+    mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .last-failure-code.XXXXXXXXXX
+  )"; then
+    log "WARN: update_failure_code_unavailable"
+    return 0
+  fi
+  committed="${temporary}.committed"
+  (umask 077; printf '%s\n' "$code" >"$temporary")
+  if ! install -o root -g matrix -m 0640 "$temporary" "$committed"; then
+    rm -f -- "$temporary" "$committed"
+    log "WARN: update_failure_code_unavailable"
+    return 0
+  fi
+  rm -f -- "$temporary"
+  if ! mv -f -- "$committed" "$UPDATE_FAILURE_CODE"; then
+    rm -f -- "$committed"
+    log "WARN: update_failure_code_unavailable"
+  fi
+  return 0
+}
+
+run_bounded_phase() {
+  local phase="$1" timeout_code="$2"
+  shift 2
+  local status
+  set_operation_phase "$phase"
+  if /usr/bin/timeout --signal=TERM --kill-after=10 \
+    "$UPDATE_LOCAL_PHASE_TIMEOUT_SECONDS" "$@"; then
+    return 0
+  else
+    status=$?
+  fi
+  if [ "$status" -eq 124 ]; then
+    write_update_failure_code "$timeout_code"
+    log "ERROR: ${phase}_timeout"
+  fi
+  return "$status"
 }
 
 perform_update_repair() {

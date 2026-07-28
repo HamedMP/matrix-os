@@ -27,8 +27,56 @@ SOCKET_PATH = RUNTIME_DIR / "update.sock"
 REQUEST_PATH = RUNTIME_DIR / "request.json"
 INFLIGHT_PATH = RUNTIME_DIR / "inflight.json"
 STATE_PATH = RUNTIME_DIR / "operation-state"
+PHASE_PATH = RUNTIME_DIR / "operation-phase"
+FAILURE_CODE_PATH = RUNTIME_DIR / "last-failure-code"
 WORKER_PATH = "/opt/matrix/bin/matrix-sync-agent"
 SO_PEERCRED = getattr(socket, "SO_PEERCRED", 17)
+ALLOWED_PHASES = {
+    "idle",
+    "admitted",
+    "resolving",
+    "downloading",
+    "validating",
+    "extracting",
+    "preparing",
+    "committing",
+    "health_check",
+    "rollback",
+    "failed",
+}
+ALLOWED_FAILURE_CODES = {
+    "operation_failed",
+    "prepared_release_metadata_invalid",
+    "staging_invalid",
+    "insufficient_disk_space",
+    "bundle_download_failed",
+    "bundle_size_mismatch",
+    "bundle_checksum_mismatch",
+    "bundle_archive_invalid",
+    "bundle_validation_timeout",
+    "bundle_extraction_failed",
+    "bundle_extraction_timeout",
+    "bundle_shape_invalid",
+    "bundle_ownership_timeout",
+    "rollback_ownership_timeout",
+    "terminal_runtime_candidate_invalid",
+    "terminal_runtime_generation_install_failed",
+    "update_runtime_install_failed",
+    "privilege_boundary_install_failed",
+    "terminal_runtime_wrapper_install_failed",
+    "zellij_candidate_staging_failed",
+    "zellij_candidate_commit_failed",
+    "zellij_candidate_metadata_failed",
+    "zellij_installed_digest_mismatch",
+    "terminal_runtime_legacy_migration_failed",
+    "systemd_unit_install_failed",
+    "terminal_runtime_supervisor_enable_failed",
+    "terminal_runtime_supervisor_start_failed",
+    "terminal_runtime_supervisor_cleanup_failed",
+    "update_runtime_enable_failed",
+    "legacy_update_bridge_disable_failed",
+    "health_check_failed",
+}
 
 
 class ProtocolError(Exception):
@@ -72,6 +120,16 @@ def parse_request(payload: bytes) -> dict[str, Any]:
                 raise ProtocolError("invalid version")
         else:
             raise ProtocolError("invalid target kind")
+    elif operation == "Status":
+        if set(request) == {"schemaVersion", "operation"}:
+            pass
+        elif (
+            set(request) == {"schemaVersion", "operation", "diagnostics"}
+            and request.get("diagnostics") is True
+        ):
+            pass
+        else:
+            raise ProtocolError("unexpected status field")
     elif set(request) != {"schemaVersion", "operation"}:
         raise ProtocolError("unexpected operation field")
     return request
@@ -194,6 +252,58 @@ def _read_state() -> str:
         return "idle"
 
 
+def _read_root_value(
+    path: Path,
+    allowed: set[str],
+    maximum_bytes: int,
+    allowed_modes: set[int],
+) -> str | None:
+    try:
+        metadata = os.lstat(path)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) not in allowed_modes
+            or metadata.st_size < 1
+            or metadata.st_size > maximum_bytes
+        ):
+            return None
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                opened.st_dev != metadata.st_dev
+                or opened.st_ino != metadata.st_ino
+                or opened.st_nlink != 1
+                or stat.S_IMODE(opened.st_mode) not in allowed_modes
+            ):
+                return None
+            value = os.read(descriptor, maximum_bytes + 1).decode("ascii").strip()
+        finally:
+            os.close(descriptor)
+        return value if value in allowed else None
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+
+
+def _read_diagnostics(status: str) -> tuple[str, str | None]:
+    if status == "idle":
+        return ("idle", None)
+    if status == "failed":
+        failure_code = _read_root_value(
+            FAILURE_CODE_PATH,
+            ALLOWED_FAILURE_CODES,
+            65,
+            {0o600, 0o640},
+        )
+        return ("failed", failure_code)
+    phase = _read_root_value(PHASE_PATH, ALLOWED_PHASES, 16, {0o600})
+    if phase in {None, "idle", "failed"}:
+        phase = "admitted"
+    return (phase, None)
+
+
 def _resume_pending_request(
     worker: subprocess.Popen[bytes],
     expected_owner_uid: int = 0,
@@ -281,7 +391,16 @@ def _serve_connection(
         return
     if request["operation"] == "Status":
         status = "running" if REQUEST_PATH.exists() else _read_state()
-        connection.sendall(_response({"schemaVersion": 1, "ok": True, "status": status}))
+        response: dict[str, Any] = {
+            "schemaVersion": 1,
+            "ok": True,
+            "status": status,
+        }
+        if request.get("diagnostics") is True:
+            phase, failure_code = _read_diagnostics(status)
+            response["phase"] = phase
+            response["failureCode"] = failure_code
+        connection.sendall(_response(response))
         return
     if worker.poll() is not None:
         connection.sendall(_error("unavailable", "Update service unavailable"))

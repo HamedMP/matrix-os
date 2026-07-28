@@ -9,6 +9,52 @@ const UpdateChannelSchema = z.enum(["stable", "canary", "beta", "dev"]);
 const UpdateVersionSchema = z.string().regex(
   /^(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}$/,
 );
+const UpdatePhaseSchema = z.enum([
+  "idle",
+  "admitted",
+  "resolving",
+  "downloading",
+  "validating",
+  "extracting",
+  "preparing",
+  "committing",
+  "health_check",
+  "rollback",
+  "failed",
+]);
+const UpdateFailureCodeSchema = z.enum([
+  "operation_failed",
+  "prepared_release_metadata_invalid",
+  "staging_invalid",
+  "insufficient_disk_space",
+  "bundle_download_failed",
+  "bundle_size_mismatch",
+  "bundle_checksum_mismatch",
+  "bundle_archive_invalid",
+  "bundle_validation_timeout",
+  "bundle_extraction_failed",
+  "bundle_extraction_timeout",
+  "bundle_shape_invalid",
+  "bundle_ownership_timeout",
+  "rollback_ownership_timeout",
+  "terminal_runtime_candidate_invalid",
+  "terminal_runtime_generation_install_failed",
+  "update_runtime_install_failed",
+  "privilege_boundary_install_failed",
+  "terminal_runtime_wrapper_install_failed",
+  "zellij_candidate_staging_failed",
+  "zellij_candidate_commit_failed",
+  "zellij_candidate_metadata_failed",
+  "zellij_installed_digest_mismatch",
+  "terminal_runtime_legacy_migration_failed",
+  "systemd_unit_install_failed",
+  "terminal_runtime_supervisor_enable_failed",
+  "terminal_runtime_supervisor_start_failed",
+  "terminal_runtime_supervisor_cleanup_failed",
+  "update_runtime_enable_failed",
+  "legacy_update_bridge_disable_failed",
+  "health_check_failed",
+]);
 
 const ApplyRequestSchema = z.object({
   schemaVersion: z.literal(1),
@@ -22,7 +68,11 @@ const ApplyRequestSchema = z.object({
 const NoTargetRequestSchema = z.discriminatedUnion("operation", [
   z.object({ schemaVersion: z.literal(1), operation: z.literal("Repair") }).strict(),
   z.object({ schemaVersion: z.literal(1), operation: z.literal("Rollback") }).strict(),
-  z.object({ schemaVersion: z.literal(1), operation: z.literal("Status") }).strict(),
+  z.object({
+    schemaVersion: z.literal(1),
+    operation: z.literal("Status"),
+    diagnostics: z.literal(true).optional(),
+  }).strict(),
 ]);
 
 export const UpdateServiceRequestSchema = z.union([
@@ -38,12 +88,22 @@ const GenericUpdateMessageSchema = z.enum([
   "Update operation failed",
 ]);
 
-const UpdateServiceResponseSchema = z.discriminatedUnion("ok", [
-  z.object({
-    schemaVersion: z.literal(1),
-    ok: z.literal(true),
-    status: z.enum(["accepted", "failed", "idle", "running"]),
-  }).strict(),
+const LegacySuccessResponseSchema = z.object({
+  schemaVersion: z.literal(1),
+  ok: z.literal(true),
+  status: z.enum(["accepted", "failed", "idle", "running"]),
+}).strict();
+
+const DiagnosticSuccessResponseSchema = z.object({
+  schemaVersion: z.literal(1),
+  ok: z.literal(true),
+  status: z.enum(["failed", "idle", "running"]),
+  phase: UpdatePhaseSchema,
+  failureCode: UpdateFailureCodeSchema.nullable(),
+}).strict();
+
+const UpdateServiceResponseSchema = z.union([
+  z.union([LegacySuccessResponseSchema, DiagnosticSuccessResponseSchema]),
   z.object({
     schemaVersion: z.literal(1),
     ok: z.literal(false),

@@ -13,6 +13,7 @@ describe("typed root update service client", () => {
       { schemaVersion: 1, operation: "Repair" },
       { schemaVersion: 1, operation: "Rollback" },
       { schemaVersion: 1, operation: "Status" },
+      { schemaVersion: 1, operation: "Status", diagnostics: true },
     ] as const;
 
     for (const request of requests) {
@@ -34,6 +35,7 @@ describe("typed root update service client", () => {
     { schemaVersion: 1, operation: "Rollback", unit: "ssh.service" },
     { schemaVersion: 1, operation: "Status", command: "systemctl" },
     { schemaVersion: 1, operation: "Status", environment: { TOKEN: "secret" } },
+    { schemaVersion: 1, operation: "Status", diagnostics: false },
     { schemaVersion: 1, operation: "Restart" },
   ])("rejects non-protocol input before connecting: $operation", (request) => {
     expect(() => encodeUpdateServiceRequest(request)).toThrow("Invalid update request");
@@ -83,6 +85,42 @@ describe("typed root update service client", () => {
       ok: true,
       status: "failed",
     });
+
+    const diagnosticPayload = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      ok: true,
+      status: "running",
+      phase: "extracting",
+      failureCode: null,
+    }));
+    const diagnosticFrame = Buffer.alloc(diagnosticPayload.length + 4);
+    diagnosticFrame.writeUInt32BE(diagnosticPayload.length, 0);
+    diagnosticPayload.copy(diagnosticFrame, 4);
+    expect(decodeUpdateServiceResponse(diagnosticFrame)).toEqual({
+      schemaVersion: 1,
+      ok: true,
+      status: "running",
+      phase: "extracting",
+      failureCode: null,
+    });
+
+    for (const diagnosticLeak of [
+      { phase: "/opt/matrix/app" },
+      { phase: "extracting", failureCode: "curl https://secret.invalid" },
+    ]) {
+      const diagnosticLeakPayload = Buffer.from(JSON.stringify({
+        schemaVersion: 1,
+        ok: true,
+        status: "running",
+        ...diagnosticLeak,
+      }));
+      const diagnosticLeakFrame = Buffer.alloc(diagnosticLeakPayload.length + 4);
+      diagnosticLeakFrame.writeUInt32BE(diagnosticLeakPayload.length, 0);
+      diagnosticLeakPayload.copy(diagnosticLeakFrame, 4);
+      expect(() => decodeUpdateServiceResponse(diagnosticLeakFrame)).toThrow(
+        "Invalid update response",
+      );
+    }
 
     const leaked = Buffer.from(JSON.stringify({
       schemaVersion: 1,

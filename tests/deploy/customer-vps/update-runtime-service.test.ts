@@ -65,6 +65,11 @@ except module["ProtocolError"]:
       target: { kind: "version", value: "v2026.07.26-1" },
     });
     expect(spawnSync("python3", ["-c", parser, service, valid]).status).toBe(0);
+    expect(spawnSync("python3", ["-c", parser, service, JSON.stringify({
+      schemaVersion: 1,
+      operation: "Status",
+      diagnostics: true,
+    })]).status).toBe(0);
 
     for (const invalid of [
       '{"schemaVersion":1,"operation":"Status","operation":"Rollback"}',
@@ -73,6 +78,8 @@ except module["ProtocolError"]:
       '{"schemaVersion":1,"operation":"Rollback","unit":"ssh.service"}',
       '{"schemaVersion":1,"operation":"Status","command":"systemctl"}',
       '{"schemaVersion":1,"operation":"Status","environment":{"TOKEN":"secret"}}',
+      '{"schemaVersion":1,"operation":"Status","diagnostics":false}',
+      '{"schemaVersion":1,"operation":"Status","diagnostics":true,"path":"/opt/matrix/app"}',
     ]) {
       expect(spawnSync("python3", ["-c", parser, service, invalid]).status).toBe(1);
     }
@@ -200,6 +207,110 @@ except module["ProtocolError"]:
 
     expect(updater).toContain('mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .operation-state.XXXXXXXXXX');
     expect(updater).not.toContain('.operation-state.$$.tmp');
+  });
+
+  it("keeps legacy status responses stable and exposes only opt-in bounded diagnostics", () => {
+    const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
+    const cli = read("distro/customer-vps/host-bin/matrix-update");
+    const regression = String.raw`
+import json
+import runpy
+import struct
+import sys
+
+module = runpy.run_path(sys.argv[1])
+runtime_globals = module["_serve_connection"].__globals__
+runtime_globals["_peer_uid"] = lambda connection: 1000
+runtime_globals["_read_state"] = lambda: "running"
+runtime_globals["_read_diagnostics"] = lambda status: ("extracting", None)
+
+class Connection:
+    def __init__(self, request):
+        self.request = request
+        self.responses = []
+
+    def settimeout(self, timeout):
+        assert timeout == 10
+
+    def sendall(self, payload):
+        self.responses.append(payload)
+
+class Worker:
+    def poll(self):
+        return None
+
+def response_for(request):
+    connection = Connection(request)
+    runtime_globals["read_frame"] = lambda unused: json.dumps(request).encode("utf-8")
+    module["_serve_connection"](connection, 1000, Worker())
+    assert len(connection.responses) == 1
+    payload = connection.responses[0]
+    size = struct.unpack(">I", payload[:4])[0]
+    return json.loads(payload[4:4 + size])
+
+assert response_for({"schemaVersion": 1, "operation": "Status"}) == {
+    "schemaVersion": 1,
+    "ok": True,
+    "status": "running",
+}
+assert response_for({
+    "schemaVersion": 1,
+    "operation": "Status",
+    "diagnostics": True,
+}) == {
+    "schemaVersion": 1,
+    "ok": True,
+    "status": "running",
+    "phase": "extracting",
+    "failureCode": None,
+}
+`;
+    const diagnosticResult = spawnSync("python3", ["-c", regression, service], {
+      encoding: "utf8",
+    });
+    expect({
+      status: diagnosticResult.status,
+      stderr: diagnosticResult.stderr,
+    }).toEqual({ status: 0, stderr: "" });
+    expect(cli).toContain('"diagnose": "Status"');
+    expect(cli).toContain('request["diagnostics"] = True');
+    expect(cli).toContain("phase=");
+    expect(cli).toContain("failure=");
+  });
+
+  it("bounds archive validation, extraction, and recursive app ownership phases", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+
+    expect(updater).toContain('readonly UPDATE_PHASE="$UPDATE_RUNTIME_DIR/operation-phase"');
+    expect(updater).toContain("set_operation_phase()");
+    expect(updater).toContain("admitted|resolving|downloading|validating|extracting|preparing|committing|health_check|rollback|failed|idle");
+    expect(updater).toMatch(/run_bounded_phase\s+\\?\n?\s*"validating"/);
+    expect(updater).toMatch(/run_bounded_phase\s+\\?\n?\s*"extracting"/);
+    expect(updater).toMatch(/run_bounded_phase\s+\\?\n?\s*"preparing"/);
+    expect(updater).toContain('readonly UPDATE_LOCAL_PHASE_TIMEOUT_SECONDS="${MATRIX_UPDATE_LOCAL_PHASE_TIMEOUT_SECONDS:-600}"');
+    expect(updater).toContain('timeout --signal=TERM --kill-after=10');
+    expect(updater).toContain("bundle_validation_timeout");
+    expect(updater).toContain("bundle_extraction_timeout");
+    expect(updater).toContain("bundle_ownership_timeout");
+  });
+
+  it("quarantines timed-out trees without blocking on recursive cleanup", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+
+    expect(updater).toContain("quarantine_update_tree()");
+    expect(updater).toContain(
+      'readonly STAGING_CLEANUP_ITEM_TIMEOUT_SECONDS="${MATRIX_STAGING_CLEANUP_ITEM_TIMEOUT_SECONDS:-30}"',
+    );
+    expect(updater).toContain('if [ "$count" -ge 8 ]; then');
+    expect(updater).toMatch(
+      /\/usr\/bin\/timeout --signal=TERM --kill-after=5\s+\\?\n?\s*"\$STAGING_CLEANUP_ITEM_TIMEOUT_SECONDS"/,
+    );
+    expect(updater).toMatch(
+      /bundle_extraction_timeout[\s\S]*quarantine_update_tree "\$extract_dir"/,
+    );
+    expect(updater).toMatch(
+      /bundle_ownership_timeout[\s\S]*quarantine_update_tree "\$extract_dir"/,
+    );
   });
 
   it("resumes a root-published request without signaling the worker before its handler is ready", () => {
