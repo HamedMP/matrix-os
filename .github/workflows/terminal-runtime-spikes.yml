@@ -271,12 +271,18 @@ jobs:
               sleep 15
               continue
             fi
-            machine="$(jq -ce --arg handle "$HANDLE" '
-              [.machines[] | select(.handle == $handle and .runtimeSlot == $handle and .status == "running")]
+            machine="$(jq -ce --arg handle "$HANDLE" \
+              --argjson diagnose "$DIAGNOSE_ONLY" '
+              [.machines[] | select(
+                .handle == $handle and .runtimeSlot == $handle and
+                (.status == "running" or ($diagnose and .status != "deleted"))
+              )]
               | if length == 1 then .[0] else {} end
             ' <<<"$fleet")"
             runtime_version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+            machine_status="$(jq -r '.status // "absent"' <<<"$machine")"
             candidate_ipv4="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+            update_diagnostic="unavailable"
             if [ "$DIAGNOSE_ONLY" != true ] &&
               [[ "$runtime_version" == *"-${SHORT_SHA}" ]] &&
               is_public_ipv4 "$candidate_ipv4"; then
@@ -284,10 +290,7 @@ jobs:
               break
             fi
             if ! is_public_ipv4 "$candidate_ipv4"; then
-              if [ "$DIAGNOSE_ONLY" = true ]; then
-                echo "Deployment diagnostic unavailable." >&2
-                exit 1
-              fi
+              :
             elif [ "$DIAGNOSE_ONLY" = true ] ||
               [ $((SECONDS - last_diagnostic)) -ge 60 ]; then
               last_diagnostic="$SECONDS"
@@ -304,7 +307,6 @@ jobs:
                 --data-binary "$diagnostic_body")"
               diagnostic_curl_status=$?
               set -e
-              update_diagnostic="unavailable"
               if [ "$diagnostic_curl_status" -eq 0 ] &&
                 [ "$diagnostic_code" = 200 ] &&
                 jq -e 'type == "object" and .exitCode == 0 and
@@ -319,10 +321,14 @@ jobs:
               echo "update_diagnostic=${update_diagnostic}"
             fi
             if [ "$DIAGNOSE_ONLY" = true ]; then
+              if ! printf '%s' "$machine_status" |
+                grep -Eq '^(provisioning|running|failed|recovering|resizing|absent)$'; then
+                machine_status=unknown
+              fi
               if ! printf '%s' "$runtime_version" | grep -Eq '^[A-Za-z0-9._-]{1,128}$'; then
                 runtime_version=unknown
               fi
-              echo "Deployment diagnostic: runtime=${runtime_version}; ${update_diagnostic}."
+              echo "Deployment diagnostic: status=${machine_status}; runtime=${runtime_version}; ${update_diagnostic}."
               echo "Deployment diagnostic never satisfies S1/S2." >&2
               exit 1
             fi

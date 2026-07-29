@@ -255,6 +255,16 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('timeout-minutes: 180');
     expect(workflow.split('\n')).toContain('          deadline=$((SECONDS + 4500))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
+    expect(workflow).toContain('--argjson diagnose "$DIAGNOSE_ONLY"');
+    expect(workflow).toContain(
+      '.status == "running" or ($diagnose and .status != "deleted")',
+    );
+    expect(workflow).toContain(
+      'Deployment diagnostic: status=${machine_status}; runtime=${runtime_version}; ${update_diagnostic}.',
+    );
+    expect(workflow).not.toContain(
+      'if [ "$DIAGNOSE_ONLY" = true ]; then\n                echo "Deployment diagnostic unavailable." >&2\n                exit 1',
+    );
     expect(workflow).toMatch(
       /if ! fleet="\$\(curl --fail[\s\S]{0,300}\/vps\/fleet"\)"; then\n\s+echo "Fleet query failed; retrying\." >&2\n\s+sleep 15\n\s+continue\n\s+fi/,
     );
