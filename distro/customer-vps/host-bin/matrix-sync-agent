@@ -1111,6 +1111,14 @@ apply_update() {
   fi
 
   log "Starting services..."
+  if ! /opt/matrix/bin/matrix-prepare-gateway-runtime; then
+    log "ERROR: gateway_runtime_preparation_failed"
+    write_update_failure_code "gateway_runtime_preparation_failed"
+    do_rollback failed-update ||
+      log "ERROR: rollback after gateway runtime preparation failure failed"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   if ! systemctl start matrix-gateway matrix-shell; then
     log "ERROR: gateway_start_failed"
     write_update_failure_code "gateway_start_failed"
@@ -1635,6 +1643,7 @@ write_update_failure_code() {
     terminal_runtime_supervisor_cleanup_failed|\
     update_runtime_enable_failed|\
     legacy_update_bridge_disable_failed|\
+    gateway_runtime_preparation_failed|\
     gateway_start_failed|\
     health_check_failed) ;;
     *) return 1 ;;

@@ -263,6 +263,12 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     const cli = read("distro/customer-vps/host-bin/matrix-update");
 
     expect(startBlock).toContain(
+      "if ! /opt/matrix/bin/matrix-prepare-gateway-runtime; then",
+    );
+    expect(startBlock).toContain(
+      'write_update_failure_code "gateway_runtime_preparation_failed"',
+    );
+    expect(startBlock).toContain(
       "if ! systemctl start matrix-gateway matrix-shell; then",
     );
     expect(startBlock).toContain(
@@ -275,6 +281,8 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(rollbackBlock).toContain(
       'log "ERROR: rollback_service_start_failed"',
     );
+    expect(service).toContain('"gateway_runtime_preparation_failed"');
+    expect(cli).toContain('"gateway_runtime_preparation_failed"');
     expect(service).toContain('"gateway_start_failed"');
     expect(cli).toContain('"gateway_start_failed"');
   });
