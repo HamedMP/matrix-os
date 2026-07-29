@@ -179,9 +179,36 @@ describe('terminal runtime spike evidence', () => {
     expect(syncAgent).toContain(
       'if [ -f "$extract_dir/bin/zellij" ]; then\n    backup_zellij_for_rollback',
     );
-    expect(syncAgent.indexOf('systemctl stop matrix-symphony matrix-gateway matrix-shell')).toBeLessThan(
-      syncAgent.lastIndexOf('backup_zellij_for_rollback'),
+    const applyUpdate = syncAgent.slice(
+      syncAgent.indexOf('apply_update()'),
+      syncAgent.indexOf('# ── Rollback'),
     );
+    const serviceStop = applyUpdate.indexOf(
+      'systemctl stop matrix-symphony matrix-gateway matrix-shell',
+    );
+    expect(applyUpdate.indexOf('rm -rf "$APP_DIR.rollback"')).toBeLessThan(serviceStop);
+    expect(applyUpdate.indexOf('chown -R matrix:matrix "$extract_dir/app"')).toBeLessThan(
+      serviceStop,
+    );
+    expect(applyUpdate.indexOf('backup_terminal_runtime_for_failed_update')).toBeLessThan(
+      serviceStop,
+    );
+    expect(applyUpdate.indexOf('install_terminal_runtime_generation')).toBeLessThan(
+      serviceStop,
+    );
+    expect(applyUpdate.lastIndexOf('backup_zellij_for_rollback')).toBeLessThan(serviceStop);
+    for (const staged of [
+      'install_update_runtime_bins',
+      'matrix-terminal-runtime-op migrate-legacy',
+      'systemctl daemon-reload',
+    ]) {
+      expect(applyUpdate.lastIndexOf(staged)).toBeLessThan(serviceStop);
+    }
+    expect(applyUpdate.slice(0, serviceStop)).not.toContain('do_rollback');
+    expect(applyUpdate.indexOf('mv "$extract_dir/app" "$APP_DIR"')).toBeGreaterThan(
+      serviceStop,
+    );
+    expect(applyUpdate).not.toContain('chown -R matrix:matrix "$APP_DIR"');
     expect(syncAgent).toContain(
       'if [ -f "$extract_dir/bin/zellij" ]; then\n        rm -f -- "$ZELLIJ_BUILD_METADATA"',
     );
@@ -189,9 +216,7 @@ describe('terminal runtime spike evidence', () => {
       syncAgent.indexOf('mv -f "$zellij_next" "$BIN_DIR/zellij"'),
     );
     const rollbackBody = syncAgent.slice(syncAgent.indexOf('do_rollback()'));
-    expect(rollbackBody.indexOf('restore_zellij_after_rollback')).toBeLessThan(
-      rollbackBody.indexOf('chown -R matrix:matrix "$APP_DIR"'),
-    );
+    expect(rollbackBody).not.toContain('chown -R matrix:matrix "$APP_DIR"');
     expect(rollbackBody.indexOf('restore_zellij_after_rollback')).toBeLessThan(
       rollbackBody.indexOf('systemctl start matrix-gateway matrix-shell'),
     );

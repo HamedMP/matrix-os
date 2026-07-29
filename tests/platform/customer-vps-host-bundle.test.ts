@@ -1210,7 +1210,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('rm -rf "$APP_DIR.rollback"');
     expect(syncAgent).toContain('mv "$APP_DIR" "$APP_DIR.rollback"');
     expect(syncAgent).toContain('mv "$extract_dir/app" "$APP_DIR"');
-    expect(syncAgent).toContain('chown -R matrix:matrix "$APP_DIR"');
+    expect(syncAgent).toContain('chown -R matrix:matrix "$extract_dir/app"');
     expect(syncAgent).toContain('printf \'%s\\n\' "$version" >"$extract_dir/app/BUNDLE_VERSION"');
     expect(syncAgent).toContain('rm -f -- "$LEGACY_UPDATE_TRIGGER"');
     expect(syncAgent).toContain('prepare_triggered_update');
