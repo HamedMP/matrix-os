@@ -185,7 +185,10 @@ describe('terminal runtime spike evidence', () => {
     expect(syncAgent).toContain(
       'if [ -f "$extract_dir/bin/zellij" ]; then\n    backup_zellij_for_rollback',
     );
-    const applyUpdate = syncAgent.slice(syncAgent.indexOf('apply_update()'), syncAgent.indexOf('# ── Rollback'));
+    const applyUpdate = syncAgent.slice(
+      syncAgent.indexOf('apply_update()'),
+      syncAgent.indexOf('# ── Rollback'),
+    );
     const serviceStop = applyUpdate.indexOf(
       'systemctl stop matrix-symphony matrix-gateway matrix-shell',
     );
