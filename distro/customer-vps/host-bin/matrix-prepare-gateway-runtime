@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+activation_file="/opt/matrix/app/terminal-runtime-activation"
 node_path="/opt/matrix/runtime/node"
 node_modules="$node_path/lib/node_modules"
 node_bin="$node_path/bin"
+
+if [ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]; then
+  exit 0
+fi
+if [ ! -f "$activation_file" ] ||
+  [ -L "$activation_file" ] ||
+  ! cmp -s "$activation_file" <(printf 'supervised-v1\n'); then
+  echo "matrix-prepare-gateway-runtime: invalid_activation" >&2
+  exit 1
+fi
 
 for required in "$node_path" "$node_modules" "$node_bin"; do
   [ -d "$required" ] && [ ! -L "$required" ] || {
