@@ -23,7 +23,8 @@ describe("root-owned typed update service", () => {
     expect(legacyBridge).toContain("ExecStart=/usr/bin/true");
     expect(legacyBridge).toContain("RemainAfterExit=yes");
     expect(legacyBridge).not.toContain("matrix-update-service");
-    expect(gateway).not.toContain("matrix-update-runtime.service");
+    expect(gateway).toContain("Wants=matrix-update-runtime.service");
+    expect(gateway).toContain("After=matrix-update-runtime.service");
     expect(service).toContain("SO_PEERCRED");
     expect(service).toContain("MAX_FRAME_BYTES = 128 * 1024");
     expect(service).toContain('ALLOWED_OPERATIONS = {"Apply", "Repair", "Rollback", "Status"}');
