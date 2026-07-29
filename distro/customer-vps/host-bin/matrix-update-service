@@ -422,6 +422,27 @@ def _stop_legacy_bridge() -> bool:
     return result.returncode == 0 and not _legacy_bridge_active()
 
 
+def _legacy_bridge_enabled() -> bool:
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-enabled", "matrix-sync-agent.service"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("legacy update bridge enablement unavailable")
+    state = result.stdout.strip()
+    if (result.returncode, state) == (0, "enabled"):
+        return True
+    if (result.returncode, state) == (1, "disabled"):
+        return False
+    raise RuntimeError("legacy update bridge enablement invalid")
+
+
 def _spawn_worker() -> subprocess.Popen[bytes]:
     return subprocess.Popen(
         [WORKER_PATH, "--worker"],
@@ -434,6 +455,8 @@ def _advance_legacy_handoff(
     worker: subprocess.Popen[bytes] | None,
 ) -> subprocess.Popen[bytes] | None:
     if worker is not None or _read_state() == "running":
+        return worker
+    if _legacy_bridge_enabled():
         return worker
     if not _stop_legacy_bridge():
         raise RuntimeError("legacy update bridge handoff failed")
