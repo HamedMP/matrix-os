@@ -118,6 +118,34 @@ except module["ProtocolError"]:
     );
   });
 
+  it("does not start the root worker until the legacy updater is idle and stopped", () => {
+    const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
+    const regression = String.raw`
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1])
+runtime_globals = module["_advance_legacy_handoff"].__globals__
+events = []
+states = iter(["running", "idle", "idle"])
+runtime_globals["_read_state"] = lambda: next(states)
+runtime_globals["_stop_legacy_bridge"] = lambda: events.append("stop") or True
+worker = object()
+runtime_globals["_spawn_worker"] = lambda: events.append("spawn") or worker
+runtime_globals["_resume_pending_request"] = lambda value: events.append("resume")
+runtime_globals["_write_state"] = lambda state: events.append(f"state:{state}")
+
+assert module["_advance_legacy_handoff"](None) is None
+assert events == []
+assert module["_advance_legacy_handoff"](None) is worker
+assert events == ["stop", "state:idle", "spawn", "resume"]
+`;
+    expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      '["systemctl", "stop", "matrix-sync-agent.service"]',
+    );
+  });
+
   it("validates checksums and archive paths before extraction", () => {
     const validator = read("distro/customer-vps/host-bin/matrix-validate-host-bundle");
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
