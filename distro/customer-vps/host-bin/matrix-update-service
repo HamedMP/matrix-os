@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import grp
+import http.client
 import json
 import os
 import pwd
@@ -15,6 +16,7 @@ import stat
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,9 @@ STATE_PATH = RUNTIME_DIR / "operation-state"
 PHASE_PATH = RUNTIME_DIR / "operation-phase"
 FAILURE_CODE_PATH = RUNTIME_DIR / "last-failure-code"
 WORKER_PATH = "/opt/matrix/bin/matrix-sync-agent"
+LEGACY_HANDOFF_GRACE_SECONDS = 30
 SO_PEERCRED = getattr(socket, "SO_PEERCRED", 17)
+_legacy_gateway_healthy_since: float | None = None
 ALLOWED_PHASES = {
     "idle",
     "admitted",
@@ -443,6 +447,32 @@ def _legacy_bridge_enabled() -> bool:
     raise RuntimeError("legacy update bridge enablement invalid")
 
 
+def _legacy_gateway_healthy() -> bool:
+    connection = http.client.HTTPConnection("127.0.0.1", 4000, timeout=2)
+    try:
+        connection.request("GET", "/health")
+        return connection.getresponse().status == 200
+    except (OSError, TimeoutError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
+
+
+def _legacy_bridge_retirable() -> bool:
+    global _legacy_gateway_healthy_since
+    if not _legacy_bridge_enabled():
+        _legacy_gateway_healthy_since = None
+        return True
+    if not _legacy_gateway_healthy():
+        _legacy_gateway_healthy_since = None
+        return False
+    current = time.monotonic()
+    if _legacy_gateway_healthy_since is None:
+        _legacy_gateway_healthy_since = current
+        return False
+    return current - _legacy_gateway_healthy_since >= LEGACY_HANDOFF_GRACE_SECONDS
+
+
 def _spawn_worker() -> subprocess.Popen[bytes]:
     return subprocess.Popen(
         [WORKER_PATH, "--worker"],
@@ -456,7 +486,7 @@ def _advance_legacy_handoff(
 ) -> subprocess.Popen[bytes] | None:
     if worker is not None or _read_state() == "running":
         return worker
-    if _legacy_bridge_enabled():
+    if not _legacy_bridge_retirable():
         return worker
     if not _stop_legacy_bridge():
         raise RuntimeError("legacy update bridge handoff failed")

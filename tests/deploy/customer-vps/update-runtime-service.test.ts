@@ -128,9 +128,9 @@ module = runpy.run_path(sys.argv[1])
 runtime_globals = module["_advance_legacy_handoff"].__globals__
 events = []
 states = iter(["idle", "idle", "idle"])
-enabled = iter([True, False])
+retirable = iter([False, True])
 runtime_globals["_read_state"] = lambda: next(states)
-runtime_globals["_legacy_bridge_enabled"] = lambda: next(enabled)
+runtime_globals["_legacy_bridge_retirable"] = lambda: next(retirable)
 runtime_globals["_stop_legacy_bridge"] = lambda: events.append("stop") or True
 worker = object()
 runtime_globals["_spawn_worker"] = lambda: events.append("spawn") or worker
@@ -148,6 +148,15 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     );
     expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
       '"is-enabled", "matrix-sync-agent.service"',
+    );
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      'LEGACY_HANDOFF_GRACE_SECONDS = 30',
+    );
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      'HTTPConnection("127.0.0.1", 4000, timeout=2)',
+    );
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      'connection.request("GET", "/health")',
     );
   });
 
