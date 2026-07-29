@@ -251,6 +251,13 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
 
   it("rolls back a failed gateway activation start instead of exiting under set -e", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const helper = read(
+      "distro/customer-vps/host-bin/matrix-prepare-gateway-runtime",
+    );
+    const stopServices = updater.indexOf('log "Stopping services..."');
+    const prepareBeforeDowntime = updater.indexOf(
+      "--prepare-supervised-v1",
+    );
     const startBlock = updater.slice(
       updater.indexOf('log "Starting services..."'),
       updater.indexOf("set_operation_phase health_check"),
@@ -262,6 +269,11 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     const service = read("distro/customer-vps/host-bin/matrix-update-service");
     const cli = read("distro/customer-vps/host-bin/matrix-update");
 
+    expect(prepareBeforeDowntime).toBeGreaterThan(-1);
+    expect(prepareBeforeDowntime).toBeLessThan(stopServices);
+    expect(updater.slice(prepareBeforeDowntime - 160, stopServices)).toContain(
+      '"gateway_runtime_preparation_timeout"',
+    );
     expect(startBlock).toContain(
       "if ! /opt/matrix/bin/matrix-prepare-gateway-runtime; then",
     );
@@ -283,8 +295,19 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     );
     expect(service).toContain('"gateway_runtime_preparation_failed"');
     expect(cli).toContain('"gateway_runtime_preparation_failed"');
+    expect(service).toContain('"gateway_runtime_preparation_timeout"');
+    expect(cli).toContain('"gateway_runtime_preparation_timeout"');
     expect(service).toContain('"gateway_start_failed"');
     expect(cli).toContain('"gateway_start_failed"');
+    expect(helper).toContain(
+      'prepared_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
+    );
+    expect(helper).toContain('"--prepare-supervised-v1"');
+    expect(helper).toContain(
+      'matrix-prepare-gateway-runtime: runtime_not_prepared',
+    );
+    expect(helper).not.toContain("-type f ! -links 1");
+    expect(helper).not.toContain("-type f -print0");
   });
 
   it("installs and rolls back the optional preview proof helper with the host layer", () => {

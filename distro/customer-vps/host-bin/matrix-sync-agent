@@ -1019,6 +1019,23 @@ apply_update() {
       return 1
     fi
     log "Terminal runtime legacy metadata reconciled"
+    if run_bounded_phase \
+      "preparing" \
+      "gateway_runtime_preparation_timeout" \
+      /opt/matrix/bin/matrix-prepare-gateway-runtime \
+      --prepare-supervised-v1; then
+      log "Gateway runtime ownership prepared"
+    else
+      gateway_preparation_status=$?
+      log "ERROR: gateway_runtime_preparation_failed"
+      if [ "$gateway_preparation_status" -ne 124 ]; then
+        write_update_failure_code "gateway_runtime_preparation_failed"
+      fi
+      restore_staged_runtime_after_failed_update ||
+        log "ERROR: host runtime restore after gateway preparation failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
   fi
   write_symphony_env
   log "Updated Symphony env"
@@ -1643,6 +1660,7 @@ write_update_failure_code() {
     terminal_runtime_supervisor_cleanup_failed|\
     update_runtime_enable_failed|\
     legacy_update_bridge_disable_failed|\
+    gateway_runtime_preparation_timeout|\
     gateway_runtime_preparation_failed|\
     gateway_start_failed|\
     health_check_failed) ;;
