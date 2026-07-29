@@ -209,6 +209,9 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
       'activation_source="$ROOT_DIR/distro/customer-vps/terminal-runtime-activation"',
     );
     expect(build).toContain(
+      'install -m 0644 "$activation_source" "$STAGE_DIR/app/terminal-runtime-activation"',
+    );
+    expect(build).toContain(
       'install -m 0644 "$activation_source" "$STAGE_DIR/terminal-runtime-activation"',
     );
     expect(build).toContain('bundle_members+=(terminal-runtime-activation)');
