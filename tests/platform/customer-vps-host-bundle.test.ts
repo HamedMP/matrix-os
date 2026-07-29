@@ -873,7 +873,21 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain('version_seen=false');
     expect(deployLoop).toContain('if [ "$version_seen" != true ] && [ $((SECONDS - last_signal)) -ge 60 ]; then');
     expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
-    expect(workflow).toContain('test("^Update service: idle phase=idle failure=none\\\\n$")');
+    expect(workflow).toContain(
+      '[ "$diagnostic" = "Update service: idle phase=idle failure=none" ]',
+    );
+    expect(workflow).toContain(
+      'test("^Update service: (?:idle|running|failed) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+)\\\\n$")',
+    );
+    expect(deployLoop).toContain(
+      'updater_diagnostic_result="$(updater_diagnostic "$address")"',
+    );
+    expect(deployLoop).toContain(
+      '"Update service: failed phase=failed failure="*',
+    );
+    expect(deployLoop).toContain(
+      'Preview updater failed after rollback: ${updater_diagnostic_result}',
+    );
     expect(deployLoop).toContain('version_seen=true');
     expect(deployLoop).toContain('Waiting for the preview updater to become idle.');
     expect(deployLoop).toContain('deploy_converged=true');

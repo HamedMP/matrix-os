@@ -442,7 +442,7 @@ jobs:
             process.stdout.write(createHmac("sha256", process.argv[2]).update(process.argv[1]).digest("hex"));' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$gateway_token"
           diagnostic_body="$(jq -cn '{command:["/opt/matrix/bin/matrix-update","diagnose"],timeoutMs:10000}')"
-          updater_idle() {
+          updater_diagnostic() {
             local address="$1" code diagnostic_response="$RUNNER_TEMP/preview-updater-diagnostic.json"
             if ! node -e '
               const parts = process.argv[1].split(".").map(Number);
@@ -453,17 +453,24 @@ jobs:
             ' "$address"; then
               return 1
             fi
+            rm -f -- "$diagnostic_response"
             code="$(curl --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
               --resolve "app.matrix-os.com:443:${address}" -o "$diagnostic_response" -w '%{http_code}' \
               -X POST 'https://app.matrix-os.com/api/terminal/run' \
               -H "authorization: Bearer ${gateway_token}" \
               -H 'content-type: application/json' --data-binary "$diagnostic_body")" || return 1
             [ "$code" = 200 ] &&
-              jq -e 'type == "object" and .exitCode == 0 and
+              jq -er 'if (
+                type == "object" and .exitCode == 0 and
                 .timedOut == false and .truncated == false and
                 .signal == null and .stderr == "" and
-                (.stdout | test("^Update service: idle phase=idle failure=none\\n$"))' \
-                "$diagnostic_response" >/dev/null
+                (.stdout | test("^Update service: (?:idle|running|failed) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+)\\n$"))
+              ) then .stdout | rtrimstr("\n") else empty end' "$diagnostic_response"
+          }
+          updater_idle() {
+            local diagnostic
+            diagnostic="$(updater_diagnostic "$1")" || return 1
+            [ "$diagnostic" = "Update service: idle phase=idle failure=none" ]
           }
           for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"; do
             deploy_deadline=$((SECONDS + 4500))
@@ -510,6 +517,17 @@ jobs:
                     break
                   fi
                   echo "Waiting for the preview updater to become idle."
+                else
+                  address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+                  updater_diagnostic_result=""
+                  if updater_diagnostic_result="$(updater_diagnostic "$address")"; then
+                    case "$updater_diagnostic_result" in
+                      "Update service: failed phase=failed failure="*)
+                        echo "Preview updater failed after rollback: ${updater_diagnostic_result}" >&2
+                        exit 1
+                        ;;
+                    esac
+                  fi
                 fi
               fi
               sleep 15
