@@ -1,7 +1,6 @@
 [Unit]
 Description=Matrix OS customer gateway
-After=matrix-update-runtime.service matrix-restore.service docker.service
-Wants=matrix-update-runtime.service
+After=matrix-restore.service docker.service
 Requires=matrix-restore.service docker.service
 ConditionPathExists=/opt/matrix/restore-complete
 ConditionPathExists=/opt/matrix/bin/matrix-gateway
