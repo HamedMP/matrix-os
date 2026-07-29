@@ -13,6 +13,7 @@ EnvironmentFile=/opt/matrix/env/host.env
 Environment=SYMPHONY_PORT=4766
 Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1
 WorkingDirectory=/opt/matrix
+ExecStartPre=+/opt/matrix/bin/matrix-prepare-gateway-runtime
 ExecStart=/opt/matrix/bin/matrix-gateway
 TimeoutStartSec=720
 Restart=on-failure
