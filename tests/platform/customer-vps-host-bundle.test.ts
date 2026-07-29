@@ -861,7 +861,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
   });
 
-  it('preview VPS workflow re-signals every bundle until fleet convergence', () => {
+  it('preview VPS workflow waits for fleet version and an idle updater before advancing', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
     const deployLoop = workflow.slice(
@@ -870,7 +870,12 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
 
     expect(deployLoop).toContain('last_signal=$((SECONDS - 60))');
-    expect(deployLoop).toContain('if [ $((SECONDS - last_signal)) -ge 60 ]; then');
+    expect(deployLoop).toContain('version_seen=false');
+    expect(deployLoop).toContain('if [ "$version_seen" != true ] && [ $((SECONDS - last_signal)) -ge 60 ]; then');
+    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
+    expect(workflow).toContain('test("^Update service: idle phase=idle failure=none\\\\n$")');
+    expect(deployLoop).toContain('version_seen=true');
+    expect(deployLoop).toContain('Waiting for the preview updater to become idle.');
     expect(deployLoop).toContain('deploy_converged=true');
     expect(deployLoop).toContain('Deployment of ${target_version} did not converge.');
     expect(deployLoop).not.toContain(
