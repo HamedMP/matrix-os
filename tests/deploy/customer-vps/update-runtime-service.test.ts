@@ -229,6 +229,26 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(updater).not.toContain("--force-run-commands");
   });
 
+  it("installs the dormant host layer before gateway downtime and keeps rollback bounded", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const prepare = updater.indexOf('"preparing"');
+    const installGeneration = updater.indexOf(
+      "if ! install_terminal_runtime_generation; then",
+    );
+    const stopServices = updater.indexOf('log "Stopping services..."');
+    const commitApp = updater.indexOf('mv "$extract_dir/app" "$APP_DIR"');
+    const rollback = updater.slice(
+      updater.indexOf("do_rollback() {"),
+      updater.indexOf("# Claims one root-published protocol request"),
+    );
+
+    expect(prepare).toBeGreaterThan(-1);
+    expect(installGeneration).toBeGreaterThan(prepare);
+    expect(stopServices).toBeGreaterThan(installGeneration);
+    expect(commitApp).toBeGreaterThan(stopServices);
+    expect(rollback).not.toContain('chown -R matrix:matrix "$APP_DIR"');
+  });
+
   it("installs and rolls back the optional preview proof helper with the host layer", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
 

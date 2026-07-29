@@ -174,9 +174,13 @@ describe('customer VPS terminal runtime services', () => {
     );
     const startFailure = updater.slice(
       updater.indexOf(
-        'if ! systemctl start matrix-terminal-runtime.service; then',
+        '! systemctl start matrix-terminal-runtime.service; then',
       ),
-      updater.indexOf('log "Terminal runtime supervisor enabled"'),
+      updater.indexOf('log "Terminal runtime supervisor ready"'),
+    );
+    const rollbackBody = updater.slice(
+      updater.indexOf('do_rollback() {'),
+      updater.indexOf('# Claims one root-published protocol request'),
     );
 
     expect(updater).toContain(
@@ -184,7 +188,10 @@ describe('customer VPS terminal runtime services', () => {
     );
     expect(updater).toContain('supervisor-was-active');
     expect(cleanup).toContain(
-      '[ ! -f "$snapshot/supervisor-was-active" ] || return 1',
+      '[ ! -f "$snapshot/supervisor-was-active" ] || return 0',
+    );
+    expect(cleanup).toContain(
+      'if ! systemctl is-active --quiet matrix-terminal-runtime.service; then',
     );
     expect(cleanup).toContain(
       'systemctl stop matrix-terminal-runtime.service',
@@ -200,7 +207,7 @@ describe('customer VPS terminal runtime services', () => {
     )).toBeGreaterThan(startFailure.indexOf(
       'terminal_runtime_supervisor_start_failed',
     ));
-    expect(startFailure.indexOf('do_rollback failed-update')).toBeGreaterThan(
+    expect(startFailure.indexOf('restore_staged_runtime_after_failed_update')).toBeGreaterThan(
       startFailure.indexOf(
         'terminate_new_terminal_runtime_supervisor_after_failed_start',
       ),
@@ -209,15 +216,23 @@ describe('customer VPS terminal runtime services', () => {
       startFailure.indexOf(
         'if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then',
       ),
-      startFailure.indexOf('do_rollback failed-update'),
+      startFailure.indexOf('restore_staged_runtime_after_failed_update'),
     );
-    expect(cleanupFailure).toContain('do_rollback explicit');
+    expect(cleanupFailure).not.toContain(
+      'restore_staged_runtime_after_failed_update',
+    );
     expect(cleanupFailure).toContain(
       'terminal_runtime_supervisor_cleanup_preserved_host_layer',
     );
     expect(
       updater.match(/systemctl stop matrix-terminal-runtime\.service/g),
     ).toHaveLength(1);
+    expect(rollbackBody).toContain(
+      'terminate_new_terminal_runtime_supervisor_after_failed_start',
+    );
+    expect(rollbackBody.indexOf(
+      'terminate_new_terminal_runtime_supervisor_after_failed_start',
+    )).toBeLessThan(rollbackBody.indexOf('mv "$APP_DIR.rollback" "$APP_DIR"'));
     expect(updater).not.toContain('systemctl stop matrix-terminal-session@');
   });
 

@@ -387,7 +387,12 @@ backup_terminal_runtime_for_failed_update() {
 terminate_new_terminal_runtime_supervisor_after_failed_start() {
   local snapshot="$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
   [ -d "$snapshot" ] && [ ! -L "$snapshot" ] || return 1
-  [ ! -f "$snapshot/supervisor-was-active" ] || return 1
+  [ ! -f "$snapshot/supervisor-was-active" ] || return 0
+  if ! systemctl is-active --quiet matrix-terminal-runtime.service; then
+    systemctl reset-failed matrix-terminal-runtime.service ||
+      log "WARN: terminal_runtime_supervisor_reset_failed"
+    return 0
+  fi
   systemctl stop matrix-terminal-runtime.service || return 1
   systemctl reset-failed matrix-terminal-runtime.service ||
     log "WARN: terminal_runtime_supervisor_reset_failed"
@@ -444,6 +449,7 @@ restore_terminal_runtime_after_failed_update() {
     systemctl disable matrix-terminal-runtime.service >/dev/null 2>&1 || true
   fi
   systemctl daemon-reload
+  install_matrix_sudoers || return 1
   rm -rf -- "$snapshot"
 }
 
@@ -531,6 +537,11 @@ restore_zellij_after_rollback() {
   fi
   clear_zellij_rollback
 }
+
+restore_staged_runtime_after_failed_update() {
+  restore_zellij_after_rollback && restore_terminal_runtime_after_failed_update
+}
+
 default_update_channel() {
   local channel="${MATRIX_UPDATE_CHANNEL:-}"
   case "$channel" in
@@ -741,22 +752,32 @@ apply_update() {
   local manifest version sha256 bundle_url cur bundle_file extract_dir
   local expected_bundle_size actual_bundle_size
   local zellij_candidate=false zellij_expected_sha256="" zellij_actual_sha256="" zellij_next=""
-  local terminal_runtime_enable_after_health=false
+  rm -f -- "$UPDATE_FAILURE_CODE"
   if ! manifest="$(sanitize_manifest <"$UPDATE_MARKER")"; then
     log "ERROR: prepared_release_metadata_invalid"
+    write_update_failure_code "prepared_release_metadata_invalid"
     rm -f "$UPDATE_MARKER"
     return 1
   fi
   version="$(json_field "$manifest" version)"
   sha256="$(json_field "$manifest" sha256)"
   expected_bundle_size="$(json_field "$manifest" size)"
-  valid_update_version "$version" || return 1
+  if ! valid_update_version "$version"; then
+    write_update_failure_code "prepared_release_metadata_invalid"
+    return 1
+  fi
   bundle_url="$(platform_url)/system-bundles/${version}/matrix-host-bundle.tar.gz"
   cur="$(current_version)"
   log "Starting update from $cur to $version"
 
-  secure_staging_directory || return 1
-  ensure_update_headroom "$(json_field "$manifest" size)" "$version" || return 1
+  if ! secure_staging_directory; then
+    write_update_failure_code "staging_invalid"
+    return 1
+  fi
+  if ! ensure_update_headroom "$(json_field "$manifest" size)" "$version"; then
+    write_update_failure_code "insufficient_disk_space"
+    return 1
+  fi
   rm -f "$UPDATE_ERROR_MARKER"
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
   extract_dir="$STAGING_DIR/bundle-${version}"
@@ -775,7 +796,9 @@ apply_update() {
   actual_bundle_size="$(stat -c %s "$bundle_file")"
   if [ "$actual_bundle_size" != "$expected_bundle_size" ]; then
     log "ERROR: bundle_size_mismatch"
-    rm -f "$bundle_file"; return 1
+    write_update_failure_code "bundle_size_mismatch"
+    rm -f "$bundle_file"
+    return 1
   fi
 
   # Verify the required release checksum before inspecting or extracting bytes.
@@ -784,7 +807,8 @@ apply_update() {
   if [ "$actual_sha256" != "$sha256" ]; then
     log "ERROR: bundle_checksum_mismatch"
     write_update_failure_code "bundle_checksum_mismatch"
-    rm -f "$bundle_file"; return 1
+    rm -f "$bundle_file"
+    return 1
   fi
   log "Checksum verified"
 
@@ -834,22 +858,29 @@ apply_update() {
     if [ -f "$extract_dir/bin/zellij.build.json" ]; then
       if [ ! -f "$extract_dir/bin/zellij" ]; then
         log "ERROR: zellij candidate metadata has no binary"
-        rm -rf "$extract_dir" "$bundle_file"; return 1
+        write_update_failure_code "bundle_shape_invalid"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
       fi
       if ! zellij_expected_sha256="$(json_field "$(cat "$extract_dir/bin/zellij.build.json")" binarySha256 2>/dev/null)"; then
         log "ERROR: invalid zellij candidate metadata"
-        rm -rf "$extract_dir" "$bundle_file"; return 1
+        write_update_failure_code "bundle_shape_invalid"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
       fi
       zellij_actual_sha256="$(sha256sum "$extract_dir/bin/zellij" | awk '{print $1}')"
       if [[ ! "$zellij_expected_sha256" =~ ^[0-9a-f]{64}$ ]] || [ "$zellij_actual_sha256" != "$zellij_expected_sha256" ]; then
         log "ERROR: zellij_candidate_digest_mismatch"
-        rm -rf "$extract_dir" "$bundle_file"; return 1
+        write_update_failure_code "bundle_shape_invalid"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
       fi
       zellij_candidate=true
     fi
   fi
   if ! prepare_terminal_runtime_candidate "$extract_dir"; then
     log "ERROR: terminal_runtime_candidate_invalid"
+    write_update_failure_code "terminal_runtime_candidate_invalid"
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
@@ -864,6 +895,7 @@ apply_update() {
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
+  rm -rf "$APP_DIR.rollback"
   if run_bounded_phase \
     "preparing" \
     "bundle_ownership_timeout" \
@@ -875,64 +907,48 @@ apply_update() {
     rm -f -- "$bundle_file"
     return 1
   fi
-
-  # Any bundle that replaces Zellij extends the existing one-level app rollback
-  # to the exact binary and identity record. Candidate status controls only the
-  # additional digest checks and atomic candidate install path.
-  # Stop services before placing the root-owned snapshot inside the current app;
-  # moving that app to app.rollback then commits both as one filesystem rename.
-  set_operation_phase committing
-  log "Stopping services..."
-  systemctl stop matrix-symphony matrix-gateway matrix-shell || true
-  if [ -f "$extract_dir/bin/zellij" ]; then
-    backup_zellij_for_rollback
-  fi
   if [ -n "$terminal_runtime_candidate" ]; then
     if ! backup_terminal_runtime_for_failed_update; then
       log "ERROR: terminal_runtime_rollback_snapshot_failed"
       rm -rf -- \
         "${TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT}.next" \
-        "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
-      systemctl start matrix-gateway matrix-shell
-      systemctl start --no-block matrix-symphony || true
+        "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT" \
+        "$extract_dir" "$bundle_file"
+      return 1
+    fi
+    if ! install_terminal_runtime_generation; then
+      log "ERROR: terminal_runtime_generation_install_failed"
+      write_update_failure_code "terminal_runtime_generation_install_failed"
+      restore_terminal_runtime_after_failed_update ||
+        log "ERROR: terminal runtime restore after staging failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
   fi
-  rm -rf "$APP_DIR.rollback"
-  if [ -d "$APP_DIR" ]; then
-    mv "$APP_DIR" "$APP_DIR.rollback"
-    log "Backed up current app to $APP_DIR.rollback"
-  fi
-  mv "$extract_dir/app" "$APP_DIR"
-  log "Installed app $version"
-  if [ -f "$extract_dir/release.json" ]; then
-    install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"
-    log "Updated release metadata"
-  fi
-  if ! install_terminal_runtime_generation; then
-    log "ERROR: terminal_runtime_generation_install_failed"
-    do_rollback failed-update || log "ERROR: rollback after terminal runtime install failure failed"
-    rm -rf "$extract_dir" "$bundle_file"
-    return 1
+
+  if [ -f "$extract_dir/bin/zellij" ]; then
+    backup_zellij_for_rollback
   fi
   if [ -d "$extract_dir/bin" ]; then
     if ! install_update_runtime_bins "$extract_dir/bin"; then
       log "ERROR: update_runtime_install_failed"
-      do_rollback failed-update || log "ERROR: rollback after update runtime install failure failed"
+      write_update_failure_code "update_runtime_install_failed"
+      restore_staged_runtime_after_failed_update || log "ERROR: host runtime restore after update runtime install failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
     if ! install_matrix_sudoers; then
       log "ERROR: privilege_boundary_install_failed"
-      do_rollback failed-update || log "ERROR: rollback after privilege boundary failure failed"
+      write_update_failure_code "privilege_boundary_install_failed"
+      restore_staged_runtime_after_failed_update || log "ERROR: host runtime restore after privilege boundary failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
     if [ -n "$terminal_runtime_candidate" ] &&
       ! install_terminal_runtime_wrappers "$extract_dir/bin"; then
       log "ERROR: terminal_runtime_wrapper_install_failed"
-      do_rollback failed-update || log "ERROR: rollback after terminal wrapper failure failed"
+      write_update_failure_code "terminal_runtime_wrapper_install_failed"
+      restore_staged_runtime_after_failed_update || log "ERROR: host runtime restore after terminal wrapper failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
@@ -941,27 +957,31 @@ apply_update() {
       rm -f -- "$zellij_next"
       if ! install -o root -g root -m 0755 "$extract_dir/bin/zellij" "$zellij_next"; then
         log "ERROR: zellij candidate staging failed"
-        do_rollback failed-update || log "ERROR: rollback after zellij staging failure failed"
+        write_update_failure_code "zellij_candidate_staging_failed"
+        restore_staged_runtime_after_failed_update || log "ERROR: host runtime restore after zellij staging failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
       if ! mv -f "$zellij_next" "$BIN_DIR/zellij"; then
         rm -f -- "$zellij_next"
         log "ERROR: zellij candidate commit failed"
-        do_rollback failed-update || log "ERROR: rollback after zellij commit failure failed"
+        write_update_failure_code "zellij_candidate_commit_failed"
+        restore_staged_runtime_after_failed_update || log "ERROR: host runtime restore after zellij commit failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
       if ! install -o root -g root -m 0644 "$extract_dir/bin/zellij.build.json" "$BIN_DIR/zellij.build.json"; then
         log "ERROR: zellij candidate metadata commit failed"
-        do_rollback failed-update || log "ERROR: rollback after zellij metadata failure failed"
+        write_update_failure_code "zellij_candidate_metadata_failed"
+        restore_staged_runtime_after_failed_update || log "ERROR: host runtime restore after zellij metadata failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
       zellij_actual_sha256="$(sha256sum "$BIN_DIR/zellij" | awk '{print $1}')"
       if [ "$zellij_actual_sha256" != "$zellij_expected_sha256" ]; then
         log "ERROR: zellij_installed_digest_mismatch"
-        do_rollback failed-update || log "ERROR: rollback after zellij digest failure failed"
+        write_update_failure_code "zellij_installed_digest_mismatch"
+        restore_staged_runtime_after_failed_update || log "ERROR: host runtime restore after zellij digest failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
@@ -992,8 +1012,9 @@ apply_update() {
   if [ "$terminal_runtime_activation" = "supervised-v1" ]; then
     if ! /opt/matrix/bin/matrix-terminal-runtime-op migrate-legacy; then
       log "ERROR: terminal_runtime_legacy_migration_failed"
-      do_rollback failed-update ||
-        log "ERROR: rollback after terminal migration failure failed"
+      write_update_failure_code "terminal_runtime_legacy_migration_failed"
+      restore_staged_runtime_after_failed_update ||
+        log "ERROR: host runtime restore after terminal migration failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
@@ -1005,7 +1026,8 @@ apply_update() {
   if [ -d "$extract_dir/systemd" ]; then
     if ! install_systemd_units_atomic "$extract_dir/systemd"; then
       log "ERROR: systemd_unit_install_failed"
-      do_rollback failed-update || log "ERROR: rollback after systemd unit failure failed"
+      write_update_failure_code "systemd_unit_install_failed"
+      restore_staged_runtime_after_failed_update || log "ERROR: host runtime restore after systemd unit failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
@@ -1016,24 +1038,25 @@ apply_update() {
         if ! systemctl is-enabled --quiet matrix-terminal-runtime.service &&
           ! systemctl enable matrix-terminal-runtime.service; then
           log "ERROR: terminal_runtime_supervisor_enable_failed"
-          do_rollback failed-update ||
-            log "ERROR: rollback after terminal supervisor enable failure failed"
+          write_update_failure_code "terminal_runtime_supervisor_enable_failed"
+          restore_staged_runtime_after_failed_update ||
+            log "ERROR: host runtime restore after terminal supervisor enable failure failed"
           rm -rf "$extract_dir" "$bundle_file"
           return 1
         fi
         if ! systemctl is-active --quiet matrix-terminal-runtime.service &&
           ! systemctl start matrix-terminal-runtime.service; then
           log "ERROR: terminal_runtime_supervisor_start_failed"
+          write_update_failure_code "terminal_runtime_supervisor_start_failed"
           if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
             log "ERROR: terminal_runtime_supervisor_cleanup_failed"
+            write_update_failure_code "terminal_runtime_supervisor_cleanup_failed"
             log "WARN: terminal_runtime_supervisor_cleanup_preserved_host_layer"
-            do_rollback explicit ||
-              log "ERROR: application rollback after supervisor cleanup failure failed"
             rm -rf "$extract_dir" "$bundle_file"
             return 1
           fi
-          do_rollback failed-update ||
-            log "ERROR: rollback after terminal supervisor start failure failed"
+          restore_staged_runtime_after_failed_update ||
+            log "ERROR: host runtime restore after terminal supervisor start failure failed"
           rm -rf "$extract_dir" "$bundle_file"
           return 1
         fi
@@ -1071,9 +1094,25 @@ apply_update() {
     fi
   fi
 
-  # Start services and health-check
+  # Commit only the app and release metadata while interactive services are
+  # stopped; all potentially blocking host preparation completed above.
+  set_operation_phase committing
+  log "Stopping services..."
+  systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  if [ -d "$APP_DIR" ]; then
+    mv "$APP_DIR" "$APP_DIR.rollback"
+    log "Backed up current app to $APP_DIR.rollback"
+  fi
+  mv "$extract_dir/app" "$APP_DIR"
+  log "Installed app $version"
+  if [ -f "$extract_dir/release.json" ]; then
+    install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"
+    log "Updated release metadata"
+  fi
+
   log "Starting services..."
   systemctl start matrix-gateway matrix-shell
+  systemctl start --no-block matrix-symphony || true
   set_operation_phase health_check
   log "Running health check..."
   local healthy=false
@@ -1084,33 +1123,9 @@ apply_update() {
     sleep 5
   done
   if [ "$healthy" = true ]; then
-    if [ "$terminal_runtime_enable_after_health" = true ]; then
-      if ! systemctl enable matrix-terminal-runtime.service; then
-        log "ERROR: terminal_runtime_supervisor_enable_failed"
-        do_rollback failed-update ||
-          log "ERROR: rollback after terminal supervisor enable failure failed"
-        rm -rf "$extract_dir" "$bundle_file"
-        return 1
-      fi
-      if ! systemctl start matrix-terminal-runtime.service; then
-        log "ERROR: terminal_runtime_supervisor_start_failed"
-        if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
-          log "ERROR: terminal_runtime_supervisor_cleanup_failed"
-          log "WARN: terminal_runtime_supervisor_cleanup_preserved_host_layer"
-          do_rollback explicit ||
-            log "ERROR: application rollback after supervisor cleanup failure failed"
-          rm -rf "$extract_dir" "$bundle_file"
-          return 1
-        fi
-        do_rollback failed-update ||
-          log "ERROR: rollback after terminal supervisor start failure failed"
-        rm -rf "$extract_dir" "$bundle_file"
-        return 1
-      fi
-      log "Terminal runtime supervisor enabled"
-    fi
     if ! systemctl enable matrix-update-runtime.service; then
       log "ERROR: update_runtime_enable_failed"
+      write_update_failure_code "update_runtime_enable_failed"
       do_rollback failed-update ||
         log "ERROR: rollback after update runtime enable failure failed"
       rm -rf "$extract_dir" "$bundle_file"
@@ -1118,16 +1133,18 @@ apply_update() {
     fi
     if ! systemctl disable matrix-sync-agent.service; then
       log "ERROR: legacy_update_bridge_disable_failed"
+      write_update_failure_code "legacy_update_bridge_disable_failed"
       do_rollback failed-update ||
         log "ERROR: rollback after legacy update bridge disable failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
     log "Health check passed — update to $version complete"
-    rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
+    rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER" "$UPDATE_FAILURE_CODE"
     rm -rf -- "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
   else
     log "ERROR: health check failed — rolling back"
+    write_update_failure_code "health_check_failed"
     do_rollback failed-update
     rm -rf "$extract_dir" "$bundle_file"
     return 1
@@ -1148,6 +1165,13 @@ do_rollback() {
     log "ERROR: no rollback available at $APP_DIR.rollback"; return 1
   fi
   set_operation_phase rollback
+  if [ "$rollback_kind" = "failed-update" ] &&
+    ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
+    log "ERROR: terminal_runtime_supervisor_cleanup_failed"
+    write_update_failure_code "terminal_runtime_supervisor_cleanup_failed"
+    log "WARN: terminal_runtime_supervisor_cleanup_preserved_host_layer"
+    rollback_kind=explicit
+  fi
   log "Rolling back..."
   systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   if [ -d "$APP_DIR" ]; then
@@ -1160,13 +1184,6 @@ do_rollback() {
     restore_terminal_runtime_after_failed_update
   else
     rm -rf -- "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
-  fi
-  if ! run_bounded_phase \
-    "rollback" \
-    "rollback_ownership_timeout" \
-    chown -R matrix:matrix "$APP_DIR"; then
-    log "ERROR: rollback_ownership_failed"
-    return 1
   fi
   systemctl start matrix-gateway matrix-shell
   systemctl start --no-block matrix-symphony || true
