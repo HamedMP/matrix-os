@@ -1111,7 +1111,14 @@ apply_update() {
   fi
 
   log "Starting services..."
-  systemctl start matrix-gateway matrix-shell
+  if ! systemctl start matrix-gateway matrix-shell; then
+    log "ERROR: gateway_start_failed"
+    write_update_failure_code "gateway_start_failed"
+    do_rollback failed-update ||
+      log "ERROR: rollback after gateway start failure failed"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   systemctl start --no-block matrix-symphony || true
   set_operation_phase health_check
   log "Running health check..."
@@ -1185,7 +1192,10 @@ do_rollback() {
   else
     rm -rf -- "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
   fi
-  systemctl start matrix-gateway matrix-shell
+  if ! systemctl start matrix-gateway matrix-shell; then
+    log "ERROR: rollback_service_start_failed"
+    return 1
+  fi
   systemctl start --no-block matrix-symphony || true
   local healthy=false
   for _ in $(seq 1 18); do
@@ -1625,6 +1635,7 @@ write_update_failure_code() {
     terminal_runtime_supervisor_cleanup_failed|\
     update_runtime_enable_failed|\
     legacy_update_bridge_disable_failed|\
+    gateway_start_failed|\
     health_check_failed) ;;
     *) return 1 ;;
   esac

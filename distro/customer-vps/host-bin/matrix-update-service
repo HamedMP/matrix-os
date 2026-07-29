@@ -79,6 +79,7 @@ ALLOWED_FAILURE_CODES = {
     "terminal_runtime_supervisor_cleanup_failed",
     "update_runtime_enable_failed",
     "legacy_update_bridge_disable_failed",
+    "gateway_start_failed",
     "health_check_failed",
 }
 

@@ -249,6 +249,36 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(rollback).not.toContain('chown -R matrix:matrix "$APP_DIR"');
   });
 
+  it("rolls back a failed gateway activation start instead of exiting under set -e", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const startBlock = updater.slice(
+      updater.indexOf('log "Starting services..."'),
+      updater.indexOf("set_operation_phase health_check"),
+    );
+    const rollbackBlock = updater.slice(
+      updater.indexOf("do_rollback() {"),
+      updater.indexOf("# Claims one root-published protocol request"),
+    );
+    const service = read("distro/customer-vps/host-bin/matrix-update-service");
+    const cli = read("distro/customer-vps/host-bin/matrix-update");
+
+    expect(startBlock).toContain(
+      "if ! systemctl start matrix-gateway matrix-shell; then",
+    );
+    expect(startBlock).toContain(
+      'write_update_failure_code "gateway_start_failed"',
+    );
+    expect(startBlock).toContain("do_rollback failed-update");
+    expect(rollbackBlock).toContain(
+      "if ! systemctl start matrix-gateway matrix-shell; then",
+    );
+    expect(rollbackBlock).toContain(
+      'log "ERROR: rollback_service_start_failed"',
+    );
+    expect(service).toContain('"gateway_start_failed"');
+    expect(cli).toContain('"gateway_start_failed"');
+  });
+
   it("installs and rolls back the optional preview proof helper with the host layer", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
 
