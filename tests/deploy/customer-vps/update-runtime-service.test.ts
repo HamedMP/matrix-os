@@ -206,10 +206,7 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
 
     expect(validator).toContain('"terminal-runtime-activation"');
     expect(build).toContain(
-      'activation_source="$ROOT_DIR/distro/customer-vps/terminal-runtime-activation"',
-    );
-    expect(build).toContain(
-      'install -m 0644 "$activation_source" "$STAGE_DIR/app/terminal-runtime-activation"',
+      'install -m 0644 "$ROOT_DIR/distro/customer-vps/terminal-runtime-activation" "$STAGE_DIR/app/terminal-runtime-activation"',
     );
     expect(build).toContain(
       'install -m 0644 "$activation_source" "$STAGE_DIR/terminal-runtime-activation"',

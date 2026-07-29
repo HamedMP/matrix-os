@@ -219,6 +219,13 @@ pnpm --dir "$STAGE_DIR/app" rebuild node-pty better-sqlite3
 install -d -m 0755 "$STAGE_DIR/app/node_modules/.bin"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 
+install -m 0644 "$ROOT_DIR/distro/customer-vps/terminal-runtime-activation" "$STAGE_DIR/app/terminal-runtime-activation"
+# Writes release.json plus the incremental app manifest before packaging, then
+# writes the bundle manifest beside the tarball.
+node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
+HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
+  node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
+cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
 bundle_members=(bin app runtime systemd libexec release.json incremental-manifest.json)
 activation_source="$ROOT_DIR/distro/customer-vps/terminal-runtime-activation"
 if [ -e "$activation_source" ] || [ -L "$activation_source" ]; then
@@ -231,17 +238,9 @@ if [ -e "$activation_source" ] || [ -L "$activation_source" ]; then
     echo "terminal_runtime_activation_invalid" >&2
     exit 1
   }
-  install -m 0644 "$activation_source" "$STAGE_DIR/app/terminal-runtime-activation"
   install -m 0644 "$activation_source" "$STAGE_DIR/terminal-runtime-activation"
   bundle_members+=(terminal-runtime-activation)
 fi
-
-# Writes release.json plus the incremental app manifest before packaging, then
-# writes the bundle manifest beside the tarball.
-node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
-HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
-  node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
-cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
 tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" "${bundle_members[@]}"
 MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS=1 \
   "$STAGE_DIR/bin/matrix-validate-host-bundle" "$DIST_DIR/$BUNDLE_NAME"
