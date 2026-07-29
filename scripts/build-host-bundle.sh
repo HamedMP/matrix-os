@@ -140,12 +140,8 @@ cp -aL --no-preserve=links \
   "$terminal_generation_build/node_modules/zod/v4"
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
   install -d -m 0755 "$terminal_generation_build/spikes"
-  cp -a --no-preserve=links \
-    "$ROOT_DIR/scripts/spikes/terminal-runtime/." \
-    "$terminal_generation_build/spikes/"
-  install -m 0644 \
-    "$ROOT_DIR/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json" \
-    "$terminal_generation_build/spikes/v0.44.3-matrix.1.build.json"
+  cp -a --no-preserve=links "$ROOT_DIR/scripts/spikes/terminal-runtime/." "$terminal_generation_build/spikes/"
+  install -m 0644 "$ROOT_DIR/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json" "$terminal_generation_build/spikes/v0.44.3-matrix.1.build.json"
 fi
 if find "$terminal_generation_build" -type l -print -quit | grep -q .; then
   echo "terminal_runtime_generation_contains_symlink" >&2
@@ -218,7 +214,6 @@ pnpm --dir "$STAGE_DIR/app" rebuild node-pty better-sqlite3
 (cd "$STAGE_DIR/app" && "$STAGE_DIR/runtime/node/bin/node" --input-type=module -e 'await import("@matrix-os/terminal-runtime")')
 install -d -m 0755 "$STAGE_DIR/app/node_modules/.bin"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
-
 install -m 0644 "$ROOT_DIR/distro/customer-vps/terminal-runtime-activation" "$STAGE_DIR/app/terminal-runtime-activation"
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.

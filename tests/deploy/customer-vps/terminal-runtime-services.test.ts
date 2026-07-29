@@ -144,7 +144,7 @@ describe('customer VPS terminal runtime services', () => {
     expect(build).toContain("pnpm --filter '@matrix-os/terminal-runtime' build");
     expect(build).toContain('packages/terminal-runtime/native/supervisor-acceptor.c');
     expect(build).toContain('$STAGE_DIR/libexec/terminal-runtime/v1');
-    expect(build).toContain('libexec release.json');
+    expect(build).toContain('terminal_runtime_package_manifest_invalid');
     expect(build).toContain('runtime-manifest.sha256');
     expect(updater).toContain('/opt/matrix/libexec/terminal-runtime/v1');
     expect(updater).toContain('/opt/matrix/libexec/terminal-runtime/current');
