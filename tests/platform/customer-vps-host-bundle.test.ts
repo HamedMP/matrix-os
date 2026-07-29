@@ -369,7 +369,7 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('MODE="${1:-}"');
     expect(installer).toContain('if [ "$MODE" != "--tools-only" ]; then');
     expect(installer).toContain('if [ "$MODE" = "--sandbox-only" ]; then');
-    expect(gatewayUnit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-install-developer-tools --sandbox-only');
+    expect(gatewayUnit).not.toContain('matrix-install-developer-tools');
     expect(gatewayUnit).toContain('TimeoutStartSec=720');
     expect(codeServerUnit).toContain('Description=Install Matrix OS code-server runtime');
     expect(codeServerUnit).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
