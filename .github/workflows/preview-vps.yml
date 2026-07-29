@@ -440,47 +440,50 @@ jobs:
           }
           for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"; do
             deploy_deadline=$((SECONDS + 4500))
-            deploy_accepted=false
+            deploy_converged=false
+            last_signal=$((SECONDS - 60))
             while [ "$SECONDS" -lt "$deploy_deadline" ]; do
-              if code="$(attempt "$target_version")" && [ "$code" = "200" ] &&
-                jq -e --arg handle "$HANDLE" '
-                  .triggered == 1 and .failed == 0 and (.results | length) == 1
-                  and .results[0].handle == $handle
-                  and .results[0].status == "triggered"
-                ' /tmp/deploy.json >/dev/null; then
-                deploy_accepted=true
-                break
+              if [ $((SECONDS - last_signal)) -ge 60 ]; then
+                last_signal="$SECONDS"
+                code=""
+                if ! code="$(attempt "$target_version")"; then
+                  code=000
+                fi
+                if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                  echo "Preview deploy authorization failed." >&2
+                  exit 1
+                fi
+                if [ "$code" = "200" ] &&
+                  jq -e --arg handle "$HANDLE" '
+                    .triggered == 1 and .failed == 0 and (.results | length) == 1
+                    and .results[0].handle == $handle
+                    and .results[0].status == "triggered"
+                  ' /tmp/deploy.json >/dev/null; then
+                  jq '{triggered, failed, results: [.results[] | {handle, status}]}' \
+                    /tmp/deploy.json
+                else
+                  echo "Waiting for the preview update boundary."
+                fi
               fi
-              if [ "${code:-}" = "401" ] || [ "${code:-}" = "403" ]; then
-                echo "Preview deploy authorization failed." >&2
-                exit 1
+
+              if fleet="$(curl -fsS --max-time 30 \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                "${PLATFORM_PUBLIC_URL}/vps/fleet")"; then
+                deployed="$(jq -r --arg handle "$HANDLE" '
+                    [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+                    | .[0].runtimeVersion // ""
+                  ' <<<"$fleet")"
+                if [ "$deployed" = "$target_version" ]; then
+                  deploy_converged=true
+                  break
+                fi
               fi
-              echo "Waiting for the preview update boundary."
-              sleep 30
+              sleep 15
             done
-            if [ "$deploy_accepted" != true ]; then
-              echo "Preview deploy was not accepted before the deadline." >&2
+            if [ "$deploy_converged" != true ]; then
+              echo "Deployment of ${target_version} did not converge." >&2
               exit 1
             fi
-            if [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then
-              deploy_deadline=$((SECONDS + 4500))
-              while [ "$SECONDS" -lt "$deploy_deadline" ]; do
-                if deployed="$(curl -fsS --max-time 30 \
-                  -H "authorization: Bearer ${PLATFORM_SECRET}" \
-                  "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-                  jq -r --arg handle "$HANDLE" '
-                    [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
-                    | .[0].runtimeVersion // ""')" &&
-                  [ "$deployed" = "$target_version" ]; then break; fi
-                sleep 15
-              done
-              [ "${deployed:-}" = "$target_version" ] || {
-                echo "Dormant bootstrap did not complete." >&2
-                exit 1
-              }
-            fi
-            jq '{triggered, failed, results: [.results[] | {handle, status}]}' \
-              /tmp/deploy.json
           done
 
       - name: Comment preview URL on PR

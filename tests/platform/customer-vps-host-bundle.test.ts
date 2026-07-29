@@ -861,6 +861,23 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
   });
 
+  it('preview VPS workflow re-signals every bundle until fleet convergence', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const deployLoop = workflow.slice(
+      workflow.indexOf('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"'),
+      workflow.indexOf('      - name: Comment preview URL on PR'),
+    );
+
+    expect(deployLoop).toContain('last_signal=$((SECONDS - 60))');
+    expect(deployLoop).toContain('if [ $((SECONDS - last_signal)) -ge 60 ]; then');
+    expect(deployLoop).toContain('deploy_converged=true');
+    expect(deployLoop).toContain('Deployment of ${target_version} did not converge.');
+    expect(deployLoop).not.toContain(
+      'if [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
+    );
+  });
+
   it('preview VPS workflow uses the durable preview provision contract', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
@@ -967,14 +984,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain("VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}");
   });
 
-  it('preview deployment waits for one accepted target instead of trusting aggregate HTTP 200', () => {
+  it('preview deployment validates each target instead of trusting aggregate HTTP 200', () => {
     const workflow = readFileSync(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8');
     expect(workflow).toContain('deploy_deadline=$((SECONDS + 4500))');
     expect(workflow.slice(workflow.indexOf('  deploy:'), workflow.indexOf('  teardown:'))).toContain('timeout-minutes: 180');
     expect(workflow).toContain('.triggered == 1 and .failed == 0 and (.results | length) == 1');
     expect(workflow).toMatch(/\.results\[0\]\.handle == \$handle[\s\S]*\.results\[0\]\.status == "triggered"/);
     expect(workflow).toContain('Waiting for the preview update boundary.');
-    expect(workflow).toContain('Preview deploy was not accepted before the deadline.');
+    expect(workflow).toContain('Deployment of ${target_version} did not converge.');
   });
 
   it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {
