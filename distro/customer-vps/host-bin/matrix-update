@@ -61,6 +61,8 @@ FAILURE_CODES = {
     "terminal_runtime_gateway_projection_failed",
     "terminal_runtime_gateway_request_failed",
     "terminal_runtime_gateway_probe_failed",
+    "terminal_runtime_supervisor_probe_timeout",
+    "terminal_runtime_supervisor_probe_failed",
     "update_runtime_enable_failed",
     "legacy_update_bridge_disable_failed",
     "gateway_runtime_preparation_timeout",

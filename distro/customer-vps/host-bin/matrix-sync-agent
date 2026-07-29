@@ -1079,6 +1079,35 @@ apply_update() {
           return 1
         fi
         log "Terminal runtime supervisor ready"
+        if run_bounded_phase \
+          "preparing" \
+          "terminal_runtime_supervisor_probe_timeout" \
+          /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+          /usr/sbin/runuser --user matrix -- \
+          /usr/bin/env -i \
+          HOME=/home/matrix \
+          MATRIX_HOME=/home/matrix/home \
+          PATH=/opt/matrix/runtime/node/bin:/opt/matrix/bin:/usr/bin:/bin \
+          /opt/matrix/bin/matrix-terminal-runtime-op probe; then
+          log "Terminal runtime supervisor protocol ready"
+        else
+          supervisor_probe_status=$?
+          log "ERROR: terminal_runtime_supervisor_probe_failed"
+          if [ "$supervisor_probe_status" -ne 124 ]; then
+            write_update_failure_code "terminal_runtime_supervisor_probe_failed"
+          fi
+          if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
+            log "ERROR: terminal_runtime_supervisor_cleanup_failed"
+            write_update_failure_code "terminal_runtime_supervisor_cleanup_failed"
+            log "WARN: terminal_runtime_supervisor_cleanup_preserved_host_layer"
+            rm -rf "$extract_dir" "$bundle_file"
+            return 1
+          fi
+          restore_staged_runtime_after_failed_update ||
+            log "ERROR: host runtime restore after terminal supervisor probe failure failed"
+          rm -rf "$extract_dir" "$bundle_file"
+          return 1
+        fi
         candidate_gateway_mount="$UPDATE_RUNTIME_DIR/candidate-gateway-app"
         if (
           install -d -o root -g matrix -m 0750 "$candidate_gateway_mount" &&
@@ -1720,6 +1749,8 @@ write_update_failure_code() {
     terminal_runtime_gateway_projection_failed|\
     terminal_runtime_gateway_request_failed|\
     terminal_runtime_gateway_probe_failed|\
+    terminal_runtime_supervisor_probe_timeout|\
+    terminal_runtime_supervisor_probe_failed|\
     update_runtime_enable_failed|\
     legacy_update_bridge_disable_failed|\
     gateway_runtime_preparation_timeout|\

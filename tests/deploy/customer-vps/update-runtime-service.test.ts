@@ -235,15 +235,24 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
       'log "Terminal runtime supervisor ready"',
       migration,
     );
+    const supervisorProbe = updater.indexOf(
+      "/opt/matrix/bin/matrix-terminal-runtime-op probe",
+      supervisorReady,
+    );
     const gatewayStart = updater.indexOf(
       "systemctl start matrix-gateway matrix-shell",
-      supervisorReady,
+      supervisorProbe,
     );
 
     expect(activationCheck).toBeGreaterThan(-1);
     expect(migration).toBeGreaterThan(activationCheck);
     expect(supervisorReady).toBeGreaterThan(migration);
-    expect(gatewayStart).toBeGreaterThan(supervisorReady);
+    expect(supervisorProbe).toBeGreaterThan(supervisorReady);
+    expect(gatewayStart).toBeGreaterThan(supervisorProbe);
+    expect(updater).toContain('"terminal_runtime_supervisor_probe_timeout"');
+    expect(updater).toContain(
+      'write_update_failure_code "terminal_runtime_supervisor_probe_failed"',
+    );
     expect(updater).not.toContain("--force-run-commands");
   });
 

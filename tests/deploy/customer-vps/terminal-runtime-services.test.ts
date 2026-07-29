@@ -91,10 +91,19 @@ describe('customer VPS terminal runtime services', () => {
 
   it('restricts the one-shot legacy migration operation to the root updater', () => {
     const runtimeOp = read('packages/terminal-runtime/src/runtime-op.ts');
+    const wrapper = read(
+      'distro/customer-vps/host-bin/matrix-terminal-runtime-op',
+    );
 
     expect(runtimeOp).toContain("mode === 'migrate-legacy'");
     expect(runtimeOp).toContain('process.getuid?.() !== 0');
     expect(runtimeOp).toContain("throw new Error('migration_unauthorized')");
+    expect(wrapper).toContain(
+      'serve-peer|serve-keeper|maintenance|migrate-legacy|probe',
+    );
+    expect(runtimeOp).toContain("mode === 'probe'");
+    expect(runtimeOp).toContain("operation: 'List'");
+    expect(runtimeOp).toContain("throw new Error('probe_unauthorized')");
   });
 
   it('compiles a warning-free SO_PEERCRED acceptor with fixed socket and worker paths', () => {

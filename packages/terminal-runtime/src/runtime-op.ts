@@ -22,6 +22,7 @@ import {
   encodeFrame,
   MAX_FRAME_BYTES,
 } from './framing.js';
+import { createSupervisorClient } from './client.js';
 import {
   decodePeerCredentials,
   handleSupervisorFrame,
@@ -404,11 +405,26 @@ async function migrateLegacy(): Promise<void> {
     await host.state.close();
   }
 }
+async function probeSupervisor(): Promise<void> {
+  const owner = await readOwner();
+  if (process.getuid?.() !== owner.uid) {
+    throw new Error('probe_unauthorized');
+  }
+  const response = await createSupervisorClient({ timeoutMs: 5_000 }).request({
+    version: 1,
+    operation: 'List',
+    operationId: createOperationId(),
+    input: {},
+  });
+  if (!response.ok) throw new Error('supervisor_probe_failed');
+  process.stdout.write('terminal_runtime_supervisor_ready\n');
+}
 export async function runRuntimeOp(mode: string | undefined): Promise<void> {
   if (mode === 'serve-peer') return await servePeer();
   if (mode === 'serve-keeper') return await serveKeeper();
   if (mode === 'maintenance') return await maintenance();
   if (mode === 'migrate-legacy') return await migrateLegacy();
+  if (mode === 'probe') return await probeSupervisor();
   throw new Error('runtime_op_invalid');
 }
 if (process.argv[1]?.endsWith('/runtime-op.js')) {
