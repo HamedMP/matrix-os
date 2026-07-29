@@ -335,6 +335,7 @@ describe('customer VPS host bundle', () => {
     const codeServerUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code-server.service'), 'utf8');
     const codeUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code.service'), 'utf8');
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
+    const gatewayRuntime = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-prepare-gateway-runtime'), 'utf8');
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
     expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
@@ -370,6 +371,10 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('if [ "$MODE" != "--tools-only" ]; then');
     expect(installer).toContain('if [ "$MODE" = "--sandbox-only" ]; then');
     expect(gatewayUnit).not.toContain('matrix-install-developer-tools');
+    expect(gatewayUnit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-prepare-gateway-runtime');
+    expect(gatewayRuntime).toContain('find -P "$node_path" -xdev');
+    expect(gatewayRuntime).toContain('chmod g+rwX "$node_modules" "$node_bin"');
+    expect(gatewayRuntime).toContain('chmod g+rws "$directory"');
     expect(gatewayUnit).toContain('TimeoutStartSec=720');
     expect(codeServerUnit).toContain('Description=Install Matrix OS code-server runtime');
     expect(codeServerUnit).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
