@@ -345,7 +345,7 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
       '"gateway_runtime_preparation_timeout"',
     );
     expect(startBlock).toContain(
-      "if ! /opt/matrix/bin/matrix-prepare-gateway-runtime; then",
+      "if ! /opt/matrix/bin/matrix-prepare-gateway-runtime \\\n    --prepare-supervised-v1; then",
     );
     expect(startBlock).toContain(
       'write_update_failure_code "gateway_runtime_preparation_failed"',
@@ -371,13 +371,9 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(cli).toContain('"gateway_start_failed"');
     expect(service).toContain('"terminal_runtime_gateway_probe_failed"');
     expect(cli).toContain('"terminal_runtime_gateway_probe_failed"');
-    expect(helper).toContain(
-      'prepared_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
-    );
     expect(helper).toContain('"--prepare-supervised-v1"');
-    expect(helper).toContain(
-      'matrix-prepare-gateway-runtime: runtime_not_prepared',
-    );
+    expect(helper).not.toContain('prepared_stamp=');
+    expect(helper).not.toContain('runtime_not_prepared');
     expect(helper).not.toContain("-type f ! -links 1");
     expect(helper).not.toContain("-type f -print0");
   });

@@ -376,9 +376,9 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('if [ "$MODE" != "--tools-only" ]; then');
     expect(installer).toContain('if [ "$MODE" = "--sandbox-only" ]; then');
     expect(gatewayUnit).not.toContain('matrix-install-developer-tools');
-    expect(gatewayUnit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-prepare-gateway-runtime');
-    expect(gatewayRuntime).toContain('[ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]');
-    expect(gatewayRuntime).toContain('cmp -s "$activation_file" <(printf');
+    expect(gatewayUnit).not.toContain('ExecStartPre=');
+    expect(gatewayRuntime).not.toContain('prepared_stamp=');
+    expect(gatewayRuntime).not.toContain('runtime_not_prepared');
     expect(gatewayRuntime).toContain('find -P "$node_path" -xdev');
     expect(gatewayRuntime).toContain('chmod g+rwX "$node_modules" "$node_bin"');
     expect(gatewayRuntime).toContain('chmod g+rws "$directory"');
