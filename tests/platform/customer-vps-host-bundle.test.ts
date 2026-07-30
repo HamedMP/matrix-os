@@ -873,10 +873,18 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('Activation watchdog did not prove the candidate healthy.');
     expect(workflow).toContain('BASE_SHA: ${{ needs.gate.outputs.base_sha }}');
     expect(workflow).toContain(
-      'if [ "$target_version" = "$BOOTSTRAP_VERSION" ] &&\n' +
-        '                [[ "$deployed" == *"-${BASE_SHA:0:7}" ]] &&',
+      'if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
     );
     expect(workflow).toContain('Reusing the exact dormant parent already installed on the preview.');
+    expect(workflow).toContain(
+      '[[ "$deployed" =~ ^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-([0-9]+-[0-9]+-)?[0-9a-f]{7}$ ]]',
+    );
+    expect(workflow).toContain('wait_for_preview_gateway "$address"');
+    expect(workflow.indexOf('wait_for_preview_gateway "$address"')).toBeLessThan(
+      workflow.indexOf(
+        'for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"',
+      ),
+    );
   });
 
   it('preview VPS workflow waits for fleet version and an idle updater before advancing', () => {

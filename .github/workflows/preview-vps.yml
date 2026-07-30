@@ -287,6 +287,7 @@ jobs:
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
       HANDLE: ${{ needs.gate.outputs.handle }}
+      PR_NUMBER: ${{ needs.gate.outputs.pr }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
       BOOTSTRAP_VERSION: ${{ needs.build.outputs.bootstrap_version }}
       HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
@@ -447,15 +448,18 @@ jobs:
             process.stdout.write(createHmac("sha256", process.argv[2]).update(process.argv[1]).digest("hex"));' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$gateway_token"
           diagnostic_body="$(jq -cn '{command:["/opt/matrix/bin/matrix-update","diagnose"],timeoutMs:10000}')"
-          updater_diagnostic() {
-            local address="$1" code diagnostic_response="$RUNNER_TEMP/preview-updater-diagnostic.json"
-            if ! node -e '
+          is_public_ipv4() {
+            node -e '
               const parts = process.argv[1].split(".").map(Number);
               const valid = parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
               process.exit(!valid || parts[0] === 0 || parts[0] === 10 || parts[0] === 127 || parts[0] >= 224 ||
                 (parts[0] === 169 && parts[1] === 254) || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
                 (parts[0] === 192 && parts[1] === 168) ? 1 : 0);
-            ' "$address"; then
+            ' "$1"
+          }
+          updater_diagnostic() {
+            local address="$1" code diagnostic_response="$RUNNER_TEMP/preview-updater-diagnostic.json"
+            if ! is_public_ipv4 "$address"; then
               return 1
             fi
             rm -f -- "$diagnostic_response"
@@ -476,6 +480,28 @@ jobs:
             local diagnostic
             diagnostic="$(updater_diagnostic "$1")" || return 1
             [ "$diagnostic" = "Update service: idle phase=idle failure=none" ]
+          }
+          preview_gateway_ready() {
+            local address="$1" response="$RUNNER_TEMP/preview-gateway-ready.json" body
+            is_public_ipv4 "$address" || return 1
+            body="$(jq -cn '{command:["/usr/bin/true"],timeoutMs:10000}')"
+            curl --fail --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" -o "$response" \
+              -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' --data-binary "$body" &&
+              jq -e '
+                .exitCode == 0 and .timedOut == false and .truncated == false and
+                .signal == null and .stdout == "" and .stderr == ""
+              ' "$response" >/dev/null
+          }
+          wait_for_preview_gateway() {
+            local address="$1" deadline=$((SECONDS + 600))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              if preview_gateway_ready "$address"; then return 0; fi
+              sleep 10
+            done
+            return 1
           }
           arm_activation_watch() {
             local address="$1" response="$RUNNER_TEMP/activation-watch.json" code body
@@ -503,6 +529,17 @@ jobs:
               jq -er '.stdout | select(test("^activation_watch_(?:pending|success|timeout state=(?:idle|running|failed|unknown) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+) gateway=[a-z]+ supervisor=[a-z]+ recovery=(?:rollback|reboot))\\n$")) | rtrimstr("\n")' "$response"
           }
           activation_watch_armed=false
+          fleet="$(curl -fsS --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL}/vps/fleet")"
+          address="$(jq -er --arg handle "$HANDLE" '
+            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+            | if length == 1 then .[0].publicIPv4 else error("preview_unavailable") end
+          ' <<<"$fleet")"
+          if ! wait_for_preview_gateway "$address"; then
+            echo "Preview gateway did not become ready before bundle deployment." >&2
+            exit 1
+          fi
           for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"; do
             if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then
               fleet="$(curl -fsS --max-time 30 \
@@ -514,8 +551,10 @@ jobs:
                 ' <<<"$fleet")"
               deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
               address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-              if [ "$target_version" = "$BOOTSTRAP_VERSION" ] &&
-                [[ "$deployed" == *"-${BASE_SHA:0:7}" ]] &&
+              if {
+                [[ "$deployed" == *"-${BASE_SHA:0:7}" ]] ||
+                  [[ "$deployed" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-pr${PR_NUMBER}-([0-9]+-[0-9]+-)?[0-9a-f]{7}$ ]]
+              } &&
                 updater_idle "$address"; then
                 echo "Reusing the exact dormant parent already installed on the preview."
                 continue
