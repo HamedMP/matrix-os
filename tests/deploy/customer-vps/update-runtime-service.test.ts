@@ -344,12 +344,8 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(updater.slice(prepareBeforeDowntime - 160, stopServices)).toContain(
       '"gateway_runtime_preparation_timeout"',
     );
-    expect(startBlock).toContain(
-      "if ! /opt/matrix/bin/matrix-prepare-gateway-runtime \\\n    --prepare-supervised-v1; then",
-    );
-    expect(startBlock).toContain(
-      'write_update_failure_code "gateway_runtime_preparation_failed"',
-    );
+    expect(updater.match(/matrix-prepare-gateway-runtime/g)).toHaveLength(1);
+    expect(startBlock).not.toContain("matrix-prepare-gateway-runtime");
     expect(startBlock).toContain(
       "if ! systemctl start matrix-gateway matrix-shell; then",
     );

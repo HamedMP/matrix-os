@@ -37,11 +37,6 @@ on:
         required: false
         default: false
         type: boolean
-      diagnose_host:
-        description: "Read fixed updater diagnostics from the disposable preview host"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -82,7 +77,6 @@ jobs:
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
-          DIAGNOSE_HOST: ${{ inputs.diagnose_host }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -106,9 +100,7 @@ jobs:
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ "$DIAGNOSE_HOST" = "true" ]; then
-              action="diagnose_host"
-            elif [ "$VERIFY_INVENTORY" = "true" ]; then
+            if [ "$VERIFY_INVENTORY" = "true" ]; then
               action="verify"
             elif [ -n "$REQUESTED_VERSION" ]; then
               action="deploy_existing"
@@ -649,37 +641,8 @@ jobs:
               echo "Preview computer is not selectable in the authenticated inventory." >&2
               exit 1
             fi
-           echo "Verified ${HANDLE} in the authenticated computer inventory for ${preview_user_id}."
+            echo "Verified ${HANDLE} in the authenticated computer inventory for ${preview_user_id}."
           done
-
-  diagnose_host:
-    name: Diagnose preview host updater
-    needs: gate
-    if: needs.gate.outputs.action == 'diagnose_host'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://api.matrix-os.com' }}
-      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
-      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-      HANDLE: ${{ needs.gate.outputs.handle }}
-    steps:
-      - name: Read fixed updater diagnostics
-        run: |
-          set -euo pipefail
-          address="$(curl -fsS --max-time 30 \
-            -H "authorization: Bearer ${PLATFORM_SECRET}" \
-            "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-            jq -er --arg h "$HANDLE" \
-              '[.machines[] | select(.handle == $h and .runtimeSlot == $h)] | .[0].publicIPv4')"
-          node -e 'const p=process.argv[1].split(".").map(Number); process.exit(
-            p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255) ? 1 : 0)' "$address"
-          install -m 0700 -d ~/.ssh
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/preview-diagnostic
-          chmod 0600 ~/.ssh/preview-diagnostic
-          ssh -i ~/.ssh/preview-diagnostic -o BatchMode=yes -o ConnectTimeout=10 \
-            -o StrictHostKeyChecking=accept-new "root@${address}" \
-            'systemctl show matrix-update-runtime.service matrix-gateway.service matrix-terminal-runtime.service -p Id -p ActiveState -p SubState -p Result --no-pager; for file in /run/matrix-update-runtime/state.json /run/matrix-update-runtime/update-failure-code; do [ ! -f "$file" ] || { echo "==${file}=="; head -c 4096 "$file"; echo; }; done; journalctl -u matrix-update-runtime.service -n 200 --no-pager -o cat'
 
   teardown:
     name: Teardown preview VPS

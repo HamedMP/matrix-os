@@ -897,16 +897,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
   });
 
-  it('preview VPS workflow can diagnose a failed root updater without the gateway', () => {
-    const workflow = readFileSync(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8');
-
-    expect(workflow).toContain('diagnose_host:');
-    expect(workflow).toContain('action="diagnose_host"');
-    expect(workflow).toContain("needs.gate.outputs.action == 'diagnose_host'");
-    expect(workflow).toContain('journalctl -u matrix-update-runtime.service -n 200');
-    expect(workflow).not.toContain('inputs.command');
-  });
-
   it('preview VPS workflow uses the durable preview provision contract', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');

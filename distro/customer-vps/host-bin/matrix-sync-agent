@@ -1214,15 +1214,6 @@ exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
   fi
 
   log "Starting services..."
-  if ! /opt/matrix/bin/matrix-prepare-gateway-runtime \
-    --prepare-supervised-v1; then
-    log "ERROR: gateway_runtime_preparation_failed"
-    write_update_failure_code "gateway_runtime_preparation_failed"
-    do_rollback failed-update ||
-      log "ERROR: rollback after gateway runtime preparation failure failed"
-    rm -rf "$extract_dir" "$bundle_file"
-    return 1
-  fi
   if ! systemctl start matrix-gateway matrix-shell; then
     log "ERROR: gateway_start_failed"
     write_update_failure_code "gateway_start_failed"
