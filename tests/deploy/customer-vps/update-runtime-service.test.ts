@@ -258,6 +258,9 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     const prepareBeforeDowntime = updater.indexOf(
       "--prepare-supervised-v1",
     );
+    const candidateGatewayProbe = updater.indexOf(
+      "terminal_runtime_gateway_probe_timeout",
+    );
     const startBlock = updater.slice(
       updater.indexOf('log "Starting services..."'),
       updater.indexOf("set_operation_phase health_check"),
@@ -271,6 +274,20 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
 
     expect(prepareBeforeDowntime).toBeGreaterThan(-1);
     expect(prepareBeforeDowntime).toBeLessThan(stopServices);
+    expect(candidateGatewayProbe).toBeGreaterThan(prepareBeforeDowntime);
+    expect(candidateGatewayProbe).toBeLessThan(stopServices);
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      'packages/gateway/dist/shell/runtime-client.js',
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      "terminate_new_terminal_runtime_supervisor_after_failed_start",
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      'if [ "$gateway_probe_status" -ne 124 ]; then',
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      "terminal_runtime_gateway_probe_preserved_host_layer",
+    );
     expect(updater.slice(prepareBeforeDowntime - 160, stopServices)).toContain(
       '"gateway_runtime_preparation_timeout"',
     );
@@ -299,6 +316,8 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(cli).toContain('"gateway_runtime_preparation_timeout"');
     expect(service).toContain('"gateway_start_failed"');
     expect(cli).toContain('"gateway_start_failed"');
+    expect(service).toContain('"terminal_runtime_gateway_probe_failed"');
+    expect(cli).toContain('"terminal_runtime_gateway_probe_failed"');
     expect(helper).toContain(
       'prepared_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
     );
