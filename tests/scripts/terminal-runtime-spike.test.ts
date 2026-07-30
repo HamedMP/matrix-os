@@ -239,7 +239,17 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain('types: [labeled, synchronize');
     expect(workflow).toContain('head_sha:\n        description: Exact 40-character PR head SHA to approve');
     expect(workflow).toContain('diagnose_only:');
+    expect(workflow).toContain('watch_sha:');
     expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
+    expect(workflow).toContain(
+      'command:["/usr/bin/systemctl","show",$unit]',
+    );
+    expect(workflow).toContain(
+      'watch_diagnostic=load:${load_state},active:${active_state},sub:${sub_state},result:${unit_result},status:${exec_status}',
+    );
+    expect(workflow).toContain(
+      '[[ "$WATCH_SHA" =~ ^[0-9a-f]{40}$ ]]',
+    );
     expect(workflow).toContain("github.event.label.name == 'terminal-updater-bootstrap'");
     expect(workflow).toContain(
       'command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"]',
@@ -284,7 +294,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('echo "update_status=${update_status}" >&2');
     expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 300))');
     expect(workflow).toContain('[ "$diagnostic" = "spike_control_unavailable" ]');
-    expect(workflow.match(/--insecure/g)).toHaveLength(4);
+    expect(workflow.match(/--insecure/g)).toHaveLength(5);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).toContain(

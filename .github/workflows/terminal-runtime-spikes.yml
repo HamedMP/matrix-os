@@ -17,6 +17,10 @@ on:
         required: false
         default: false
         type: boolean
+      watch_sha:
+        description: Optional exact activation-watch SHA for bounded diagnose-only inspection
+        required: false
+        type: string
 permissions:
   contents: read
   pull-requests: write
@@ -231,10 +235,17 @@ jobs:
           HANDLE: ${{ steps.resolve.outputs.handle }}
           SHORT_SHA: ${{ steps.resolve.outputs.short_sha }}
           DIAGNOSE_ONLY: ${{ inputs.diagnose_only || false }}
+          WATCH_SHA: ${{ inputs.watch_sha }}
         run: |
           set -euo pipefail
           if [ -z "${PLATFORM_SECRET:-}" ]; then
             echo "Required preview operator secrets are unavailable." >&2
+            exit 1
+          fi
+          if [ -n "$WATCH_SHA" ] &&
+            { [ "$DIAGNOSE_ONLY" != true ] ||
+              ! [[ "$WATCH_SHA" =~ ^[0-9a-f]{40}$ ]]; }; then
+            echo "Activation-watch diagnostics require a valid diagnose-only SHA." >&2
             exit 1
           fi
           deadline=$((SECONDS + 4500))
@@ -319,6 +330,54 @@ jobs:
                 )"
               fi
               echo "update_diagnostic=${update_diagnostic}"
+              if [ -n "$WATCH_SHA" ]; then
+                unit="matrix-terminal-activation-watch@${WATCH_SHA}.service"
+                watch_body="$(jq -cn --arg unit "$unit" '{
+                  command:["/usr/bin/systemctl","show",$unit],
+                  timeoutMs:10000
+                }')"
+                watch_response="$RUNNER_TEMP/terminal-runtime-watch-diagnostic.json"
+                watch_code="000"
+                set +e
+                watch_code="$(curl --silent --show-error --max-time 30 \
+                  --connect-timeout 10 --insecure \
+                  --resolve "app.matrix-os.com:443:${candidate_ipv4}" \
+                  -o "$watch_response" -w '%{http_code}' \
+                  -X POST 'https://app.matrix-os.com/api/terminal/run' \
+                  -H "authorization: Bearer ${gateway_token}" \
+                  -H 'content-type: application/json' \
+                  --data-binary "$watch_body")"
+                watch_curl_status=$?
+                set -e
+                watch_values=""
+                if [ "$watch_curl_status" -eq 0 ] &&
+                  [ "$watch_code" = 200 ]; then
+                  watch_values="$(jq -r '
+                    if type == "object" and
+                      (.exitCode == 0 or .exitCode == 1) and
+                      .timedOut == false and .truncated == false and
+                      .signal == null and (.stdout | type == "string")
+                    then
+                      [
+                        (.stdout | capture("(?m)^LoadState=(?<v>[a-z0-9_.-]{1,64})$").v),
+                        (.stdout | capture("(?m)^ActiveState=(?<v>[a-z0-9_.-]{1,64})$").v),
+                        (.stdout | capture("(?m)^SubState=(?<v>[a-z0-9_.-]{1,64})$").v),
+                        (.stdout | capture("(?m)^Result=(?<v>[a-z0-9_.-]{1,64})$").v),
+                        (.stdout | capture("(?m)^ExecMainStatus=(?<v>[0-9]{1,10})$").v)
+                      ] | @tsv
+                    else empty end
+                  ' "$watch_response" 2>/dev/null || true)"
+                fi
+                if IFS=$'\t' read -r load_state active_state sub_state unit_result exec_status \
+                  <<<"$watch_values" &&
+                  [ -n "$load_state" ] && [ -n "$active_state" ] &&
+                  [ -n "$sub_state" ] && [ -n "$unit_result" ] &&
+                  [ -n "$exec_status" ]; then
+                  echo "watch_diagnostic=load:${load_state},active:${active_state},sub:${sub_state},result:${unit_result},status:${exec_status}"
+                else
+                  echo "watch_diagnostic=unavailable"
+                fi
+              fi
             fi
             if [ "$DIAGNOSE_ONLY" = true ]; then
               if ! printf '%s' "$machine_status" |
