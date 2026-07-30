@@ -181,7 +181,7 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(updater).toContain('if [ "$actual_bundle_size" != "$expected_bundle_size" ]');
     expect(updater).not.toContain("WARNING: no SHA-256 available");
     expect(build).toContain(
-      '"$STAGE_DIR/bin/matrix-validate-host-bundle" "$DIST_DIR/$BUNDLE_NAME"',
+      'MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS=1 \\\n  "$STAGE_DIR/bin/matrix-validate-host-bundle" "$DIST_DIR/$BUNDLE_NAME"',
     );
     expect(build.lastIndexOf('tar -C "$STAGE_DIR"')).toBeLessThan(
       build.lastIndexOf('"$STAGE_DIR/bin/matrix-validate-host-bundle"'),
@@ -770,6 +770,22 @@ with tarfile.open(output, "w:gz") as archive:
         expect(create.status).toBe(0);
         const result = spawnSync(validator, [archive], { encoding: "utf8" });
         expect(result.status).toBe(kind === "valid" ? 0 : 1);
+        if (kind === "traversal") {
+          expect(result.stderr).toBe(
+            "matrix-validate-host-bundle: invalid_archive\n",
+          );
+          const diagnostic = spawnSync(validator, [archive], {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS: "1",
+            },
+          });
+          expect(diagnostic.status).toBe(1);
+          expect(diagnostic.stderr).toBe(
+            "matrix-validate-host-bundle: invalid_archive: link target escapes archive\n",
+          );
+        }
       }
     } finally {
       rmSync(directory, { recursive: true, force: true });

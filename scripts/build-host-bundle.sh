@@ -236,7 +236,8 @@ if [ -e "$activation_source" ] || [ -L "$activation_source" ]; then
   bundle_members+=(terminal-runtime-activation)
 fi
 tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" "${bundle_members[@]}"
-"$STAGE_DIR/bin/matrix-validate-host-bundle" "$DIST_DIR/$BUNDLE_NAME"
+MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS=1 \
+  "$STAGE_DIR/bin/matrix-validate-host-bundle" "$DIST_DIR/$BUNDLE_NAME"
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"
