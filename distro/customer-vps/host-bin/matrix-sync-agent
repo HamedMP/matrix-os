@@ -1085,14 +1085,23 @@ apply_update() {
             "terminal_runtime_gateway_probe_timeout" \
             /usr/sbin/runuser --user matrix -- \
             /opt/matrix/runtime/node/bin/node --input-type=module --eval \
-            'const { initializeGatewayTerminalRuntime } = await import("./packages/gateway/dist/shell/runtime-client.js"); await initializeGatewayTerminalRuntime({ mode: "supervised", nodeEnv: "production", homePath: "/home/matrix/home" });'
+            'let initializeGatewayTerminalRuntime; try { ({ initializeGatewayTerminalRuntime } = await import("./packages/gateway/dist/shell/runtime-client.js")); } catch (error) { process.exitCode = error instanceof Error ? 41 : 44; } if (typeof initializeGatewayTerminalRuntime === "function") { try { await initializeGatewayTerminalRuntime({ mode: "supervised", nodeEnv: "production", homePath: "/home/matrix/home" }); } catch (error) { const cause = error instanceof Error ? error.cause : undefined; if (cause?.name === "ZodError") process.exitCode = 42; else if (cause instanceof Error && (cause.message === "supervisor_unavailable" || cause.message === "supervisor_timeout")) process.exitCode = 43; else process.exitCode = 44; } }'
         ); then
           log "Candidate gateway terminal runtime ready"
         else
           gateway_probe_status=$?
           log "ERROR: terminal_runtime_gateway_probe_failed"
-          if [ "$gateway_probe_status" -ne 124 ]; then
-            write_update_failure_code "terminal_runtime_gateway_probe_failed"
+          gateway_failure_code=""
+          case "$gateway_probe_status" in
+            41) gateway_failure_code="terminal_runtime_gateway_import_failed" ;;
+            42) gateway_failure_code="terminal_runtime_gateway_projection_failed" ;;
+            43) gateway_failure_code="terminal_runtime_gateway_request_failed" ;;
+            44) gateway_failure_code="terminal_runtime_gateway_probe_failed" ;;
+            124) ;;
+            *) gateway_failure_code="terminal_runtime_gateway_probe_failed" ;;
+          esac
+          if [ -n "$gateway_failure_code" ]; then
+            write_update_failure_code "$gateway_failure_code"
           fi
           if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
             log "ERROR: terminal_runtime_supervisor_cleanup_failed"
@@ -1687,6 +1696,9 @@ write_update_failure_code() {
     terminal_runtime_supervisor_start_failed|\
     terminal_runtime_supervisor_cleanup_failed|\
     terminal_runtime_gateway_probe_timeout|\
+    terminal_runtime_gateway_import_failed|\
+    terminal_runtime_gateway_projection_failed|\
+    terminal_runtime_gateway_request_failed|\
     terminal_runtime_gateway_probe_failed|\
     update_runtime_enable_failed|\
     legacy_update_bridge_disable_failed|\

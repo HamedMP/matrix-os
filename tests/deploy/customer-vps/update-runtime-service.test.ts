@@ -282,12 +282,21 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
       "terminate_new_terminal_runtime_supervisor_after_failed_start",
     );
-    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
-      'if [ "$gateway_probe_status" -ne 124 ]; then',
-    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain("124) ;;");
     expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
       "terminal_runtime_gateway_probe_preserved_host_layer",
     );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      'cause?.name === "ZodError"',
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      '42) gateway_failure_code="terminal_runtime_gateway_projection_failed"',
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      '43) gateway_failure_code="terminal_runtime_gateway_request_failed"',
+    );
+    expect(service).toContain('"terminal_runtime_gateway_projection_failed"');
+    expect(cli).toContain('"terminal_runtime_gateway_projection_failed"');
     expect(updater.slice(prepareBeforeDowntime - 160, stopServices)).toContain(
       '"gateway_runtime_preparation_timeout"',
     );
