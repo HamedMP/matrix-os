@@ -863,8 +863,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
     expect(workflow).toContain('cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"');
+    expect(workflow).toContain('cp distro/customer-vps/systemd/matrix-terminal-activation-watch@.service "$RUNNER_TEMP/"');
     expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
+    expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-activation-watch@.service" distro/customer-vps/systemd/');
     expect(workflow).toContain('rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control');
+    expect(workflow).toContain('rm -f distro/customer-vps/systemd/matrix-terminal-activation-watch@.service');
     expect(workflow).toContain('command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-arm",$head]');
     expect(workflow).toContain('activation_watch_armed=false');
     expect(workflow).toContain('if arm_activation_watch "$address"; then');

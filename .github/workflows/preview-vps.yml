@@ -232,11 +232,14 @@ jobs:
         run: |
           set -euo pipefail
           cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"
+          cp distro/customer-vps/systemd/matrix-terminal-activation-watch@.service "$RUNNER_TEMP/"
           git checkout --detach "${{ needs.gate.outputs.base_sha }}"
           cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/
+          cp "$RUNNER_TEMP/matrix-terminal-activation-watch@.service" distro/customer-vps/systemd/
           ./scripts/build-host-bundle.sh
           mv dist/host-bundle dist/bootstrap
           rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control
+          rm -f distro/customer-vps/systemd/matrix-terminal-activation-watch@.service
           git checkout --detach "${{ needs.gate.outputs.head_sha }}"
       - name: Build host bundle
         env:

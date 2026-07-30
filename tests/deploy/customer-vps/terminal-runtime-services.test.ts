@@ -190,6 +190,9 @@ describe('customer VPS terminal runtime services', () => {
     const helper = read(
       'distro/customer-vps/host-bin/matrix-terminal-spike-control',
     );
+    const activationWatch = read(
+      'distro/customer-vps/systemd/matrix-terminal-activation-watch@.service',
+    );
     const launch = read('scripts/spikes/terminal-runtime/launch-remote.sh');
     const pack = read('scripts/spikes/terminal-runtime/pack-evidence.sh');
     const runner = read('scripts/spikes/terminal-runtime/run-remote.sh');
@@ -198,6 +201,9 @@ describe('customer VPS terminal runtime services', () => {
     expect(build).toContain('$terminal_generation_build/spikes');
     expect(build).toContain(
       '$STAGE_DIR/bin/matrix-terminal-spike-control',
+    );
+    expect(build).toContain(
+      '$STAGE_DIR/systemd/matrix-terminal-activation-watch@.service',
     );
     expect(build).not.toContain(
       '$STAGE_DIR/app/scripts/spikes/terminal-runtime',
@@ -221,7 +227,11 @@ describe('customer VPS terminal runtime services', () => {
       '/opt/matrix/libexec/terminal-runtime/current/spikes/',
     );
     expect(helper).toContain('activation-watch-arm | activation-watch-run | activation-watch-status');
-    expect(helper).toContain('matrix-terminal-activation-watch.service');
+    expect(helper).toContain(
+      'watch_unit="matrix-terminal-activation-watch@${pr_head_sha}.service"',
+    );
+    expect(helper).toContain('systemctl start "$watch_unit"');
+    expect(helper).not.toContain('systemd-run');
     expect(helper).toContain('/var/lib/matrix-terminal-activation-watch/result');
     expect(helper).toContain('systemctl restart matrix-update-runtime.service');
     expect(helper).toContain('/opt/matrix/bin/matrix-update rollback');
@@ -229,6 +239,13 @@ describe('customer VPS terminal runtime services', () => {
     expect(helper).not.toContain('--force-run-commands');
     expect(helper).not.toContain('eval ');
     expect(helper).not.toContain('/opt/matrix/app');
+    expect(activationWatch).toContain(
+      'ExecStart=/run/matrix-terminal-activation-watch activation-watch-run %i',
+    );
+    expect(activationWatch).toContain('Type=exec');
+    expect(activationWatch).toContain('MemoryMax=64M');
+    expect(activationWatch).toContain('TasksMax=32');
+    expect(activationWatch).not.toContain('[Install]');
     expect(launch).not.toContain('/opt/matrix/app');
     expect(pack).not.toContain('/opt/matrix/app');
     expect(runner).not.toContain('/opt/matrix/app');

@@ -33,7 +33,8 @@ fi
 watch_copy="/run/matrix-terminal-activation-watch"
 watch_root="/var/lib/matrix-terminal-activation-watch"
 watch_result="/var/lib/matrix-terminal-activation-watch/result"
-watch_unit="matrix-terminal-activation-watch.service"
+watch_unit="matrix-terminal-activation-watch@${pr_head_sha}.service"
+legacy_watch_unit="matrix-terminal-activation-watch.service"
 write_watch_result() {
   temporary="$(mktemp --tmpdir="$watch_root" .result.XXXXXXXXXX)"
   printf '%s\n' "$1" >"$temporary"
@@ -43,15 +44,17 @@ write_watch_result() {
   sync -f "$watch_root"
 }
 if [ "$operation" = activation-watch-arm ]; then
+  systemctl stop "$legacy_watch_unit" >/dev/null 2>&1 || true
   systemctl stop "$watch_unit" >/dev/null 2>&1 || true
+  systemctl reset-failed "$watch_unit" >/dev/null 2>&1 || true
   [ ! -L "$watch_root" ] || { echo spike_control_invalid_state >&2; exit 3; }
   install -d -o root -g root -m 0700 "$watch_root"
   rm -f -- "$watch_result"
   install -o root -g root -m 0700 "$0" "$watch_copy"
-  systemd-run --unit="$watch_unit" --collect --property=Type=exec \
-    --property=KillMode=control-group --property=MemoryMax=64M \
-    --property=TasksMax=32 --property=StandardOutput=null \
-    "$watch_copy" activation-watch-run "$pr_head_sha" >/dev/null
+  if ! systemctl start "$watch_unit"; then
+    echo spike_control_watch_start_failed >&2
+    exit 3
+  fi
   echo activation_watch_armed
   exit 0
 fi
