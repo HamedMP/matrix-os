@@ -866,6 +866,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
     expect(workflow).toContain('rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control');
     expect(workflow).toContain('command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-arm",$head]');
+    expect(workflow).toContain('activation_watch_armed=false');
+    expect(workflow).toContain('if arm_activation_watch "$address"; then');
+    expect(workflow).toContain('activation_watch_armed=true');
     expect(workflow).toContain('if [ "$watch" != activation_watch_success ]; then');
     expect(workflow).toContain('Activation watchdog did not prove the candidate healthy.');
   });
@@ -901,11 +904,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain('Waiting for the preview updater to become idle.');
     expect(deployLoop).toContain('deploy_converged=true');
     expect(deployLoop).toContain('Deployment of ${target_version} did not converge.');
-    expect(deployLoop).toContain(
-      '[ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
-    );
-    expect(deployLoop.indexOf('deploy_converged" != true')).toBeLessThan(
-      deployLoop.lastIndexOf('arm_activation_watch "$address"'),
+    expect(deployLoop).toContain('Waiting for the activation helper boundary.');
+    expect(deployLoop.indexOf('arm_activation_watch "$address"')).toBeLessThan(
+      deployLoop.indexOf('activation_watch_status "$address"'),
     );
   });
 
