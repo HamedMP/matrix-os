@@ -932,6 +932,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain(
       'Activation watchdog could not be armed before deployment: ${activation_watch_diagnostic}.',
     );
+    expect(workflow).toContain('recovery=(?:rollback|rescue)');
     expect(workflow).toContain(
       'activation_watch_diagnostic="$(classify_activation_watch_response "$response" "$code")"',
     );

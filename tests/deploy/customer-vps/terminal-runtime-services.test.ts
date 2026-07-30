@@ -235,7 +235,22 @@ describe('customer VPS terminal runtime services', () => {
     expect(helper).toContain('/var/lib/matrix-terminal-activation-watch/result');
     expect(helper).toContain('systemctl restart matrix-update-runtime.service');
     expect(helper).toContain('/opt/matrix/bin/matrix-update rollback');
-    expect(helper).toContain('systemctl reboot');
+    expect(helper).toContain('activation_watch_rescue()');
+    expect(helper).toContain('HTTPServer(("127.0.0.1", 4000), Handler)');
+    expect(helper).toContain('hmac.compare_digest');
+    expect(helper).toContain('0 < length <= 128 * 1024');
+    expect(helper).toContain('metadata.st_uid != 0');
+    expect(helper).toContain('metadata.st_mode & 0o022');
+    expect(helper).toContain('metadata.st_nlink != 1');
+    expect(helper).toContain('os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)');
+    expect(helper).toContain(
+      '(metadata.st_dev, metadata.st_ino) != (opened.st_dev, opened.st_ino)',
+    );
+    expect(helper).toContain(
+      '["/usr/bin/sudo", "/opt/matrix/bin/matrix-terminal-spike-control", "activation-watch-status", head_sha]',
+    );
+    expect(helper).toContain('systemctl stop matrix-gateway.service');
+    expect(helper).not.toContain('systemctl reboot');
     expect(helper).not.toContain('--force-run-commands');
     expect(helper).not.toContain('eval ');
     expect(helper).not.toContain('/opt/matrix/app');

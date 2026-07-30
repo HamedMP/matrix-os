@@ -43,6 +43,128 @@ write_watch_result() {
   sync -f "$watch_result"
   sync -f "$watch_root"
 }
+activation_watch_rescue() {
+  exec /usr/bin/python3 - "$pr_head_sha" "$watch_result" \
+    /opt/matrix/env/host.env <<'PY'
+import hmac
+import json
+import os
+import re
+import stat
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+head_sha, result_path, environment_path = sys.argv[1:4]
+
+def read_pinned(path, metadata, maximum):
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(descriptor)
+        if (metadata.st_dev, metadata.st_ino) != (opened.st_dev, opened.st_ino):
+            raise ValueError("replaced file")
+        payload = os.read(descriptor, maximum + 1)
+    finally:
+        os.close(descriptor)
+    if len(payload) > maximum:
+        raise ValueError("oversized file")
+    return payload
+
+def load_token(path):
+    metadata = os.lstat(path)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_mode & 0o022
+        or metadata.st_nlink != 1
+        or metadata.st_size < 1
+        or metadata.st_size > 64 * 1024
+    ):
+        raise ValueError("invalid environment")
+    for line in read_pinned(path, metadata, 64 * 1024).decode().splitlines():
+        if line.startswith("UPGRADE_TOKEN="):
+            token = line.removeprefix("UPGRADE_TOKEN=").strip()
+            if re.fullmatch(r"[0-9a-f]{64}", token):
+                return token
+    raise ValueError("missing token")
+
+def load_result(path):
+    metadata = os.lstat(path)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or metadata.st_size < 1
+        or metadata.st_size > 256
+    ):
+        raise ValueError("invalid result")
+    result = read_pinned(path, metadata, 256).decode().strip()
+    if not re.fullmatch(
+        r"activation_watch_timeout state=(idle|running|failed|unknown) "
+        r"phase=[a-z_]{1,32} failure=(none|[a-z0-9_]{1,64}) "
+        r"gateway=[a-z]+ supervisor=[a-z]+ recovery=rescue",
+        result,
+    ):
+        raise ValueError("invalid result")
+    return result
+
+token = load_token(environment_path)
+result = load_result(result_path)
+expected_command = ["/usr/bin/sudo", "/opt/matrix/bin/matrix-terminal-spike-control", "activation-watch-status", head_sha]
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "MatrixPreviewRescue/1"
+    sys_version = ""
+
+    def log_message(self, _format, *_args):
+        return
+
+    def respond(self, status, payload):
+        encoded = json.dumps(payload, separators=(",", ":")).encode()
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(encoded)))
+        self.send_header("connection", "close")
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def do_POST(self):
+        authorization = self.headers.get("authorization", "")
+        supplied = authorization.removeprefix("Bearer ")
+        try:
+            length = int(self.headers.get("content-length", "0"))
+        except ValueError:
+            length = 0
+        if (
+            self.path != "/api/terminal/run"
+            or not hmac.compare_digest(supplied, token)
+            or not 0 < length <= 128 * 1024
+        ):
+            self.respond(404, {"error": "unavailable"})
+            return
+        try:
+            request = json.loads(self.rfile.read(length))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.respond(400, {"error": "invalid_request"})
+            return
+        if request != {"command": expected_command, "timeoutMs": 10000}:
+            self.respond(400, {"error": "invalid_request"})
+            return
+        self.respond(
+            200,
+            {
+                "exitCode": 0,
+                "timedOut": False,
+                "truncated": False,
+                "signal": None,
+                "stdout": f"{result}\n",
+                "stderr": "",
+            },
+        )
+
+HTTPServer(("127.0.0.1", 4000), Handler).serve_forever()
+PY
+}
 if [ "$operation" = activation-watch-arm ]; then
   systemctl stop "$legacy_watch_unit" >/dev/null 2>&1 || true
   systemctl stop "$watch_unit" >/dev/null 2>&1 || true
@@ -107,10 +229,13 @@ if [ "$operation" = activation-watch-run ]; then
       sleep 1
     done
   fi
-  if [ "$recovery" = failed ]; then recovery=reboot; fi
+  if [ "$recovery" = failed ]; then recovery=rescue; fi
   write_watch_result \
     "activation_watch_timeout state=$state phase=$phase failure=$failure gateway=$gateway supervisor=$supervisor recovery=$recovery"
-  if [ "$recovery" = reboot ]; then systemctl reboot; fi
+  if [ "$recovery" = rescue ]; then
+    systemctl stop matrix-gateway.service >/dev/null 2>&1 || true
+    activation_watch_rescue
+  fi
   exit 1
 fi
 case "$operation" in
