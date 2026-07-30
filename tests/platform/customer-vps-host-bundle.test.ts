@@ -864,6 +864,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
     expect(workflow).toContain('cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"');
     expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
+    expect(workflow).toContain('rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control');
     expect(workflow).toContain('"activation-watch-arm"');
   });
 

@@ -236,6 +236,7 @@ jobs:
           cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/
           ./scripts/build-host-bundle.sh
           mv dist/host-bundle dist/bootstrap
+          rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control
           git checkout --detach "${{ needs.gate.outputs.head_sha }}"
       - name: Build host bundle
         env:
