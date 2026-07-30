@@ -926,7 +926,16 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       deployLoop.indexOf('code="$(attempt "$target_version")"'),
     );
     expect(deployLoop).toContain('activation_arm_deadline=$((SECONDS + 120))');
-    expect(deployLoop).toContain('Activation watchdog could not be armed before deployment.');
+    expect(deployLoop).toContain(
+      'Activation watchdog could not be armed before deployment: ${activation_watch_diagnostic}.',
+    );
+    expect(workflow).toContain(
+      'activation_watch_diagnostic="$(classify_activation_watch_response "$response" "$code")"',
+    );
+    expect(workflow).toContain('then "sudo_rejected"');
+    expect(workflow).toContain('then "helper_unavailable"');
+    expect(workflow).toContain('then "helper_failed"');
+    expect(workflow).not.toContain('${stderr}');
   });
 
   it('preview VPS workflow uses the durable preview provision contract', () => {

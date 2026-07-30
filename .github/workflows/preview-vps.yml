@@ -503,6 +503,28 @@ jobs:
             done
             return 1
           }
+          classify_activation_watch_response() {
+            local response="$1" code="$2"
+            if [ "$code" != 200 ] || ! jq -e 'type == "object"' "$response" >/dev/null 2>&1; then
+              echo gateway_unavailable
+              return
+            fi
+            jq -r '
+              if .exitCode == 0 and .timedOut == false and .truncated == false and
+                .signal == null and .stderr == "" and .stdout == "activation_watch_armed\n"
+              then "armed"
+              elif ((.stderr // "") | test("spike_control_[a-z0-9_]+"))
+              then ((.stderr // "") | capture("(?<code>spike_control_[a-z0-9_]+)").code)
+              elif ((.stderr // "") | test("sudo:"))
+              then "sudo_rejected"
+              elif .exitCode == 127
+              then "helper_unavailable"
+              elif ((.exitCode // 0) != 0)
+              then "helper_failed"
+              else "invalid_response"
+              end
+            ' "$response" 2>/dev/null || echo invalid_response
+          }
           arm_activation_watch() {
             local address="$1" response="$RUNNER_TEMP/activation-watch.json" code body
             body="$(jq -cn --arg head "$HEAD_SHA" \
@@ -511,11 +533,10 @@ jobs:
               --resolve "app.matrix-os.com:443:${address}" -o "$response" -w '%{http_code}' \
               -X POST 'https://app.matrix-os.com/api/terminal/run' \
               -H "authorization: Bearer ${gateway_token}" \
-              -H 'content-type: application/json' --data-binary "$body")" || return 1
-            [ "$code" = 200 ] && jq -e '
-              .exitCode == 0 and .timedOut == false and .truncated == false and
-              .signal == null and .stderr == "" and .stdout == "activation_watch_armed\n"
-            ' "$response" >/dev/null
+              -H 'content-type: application/json' --data-binary "$body")" ||
+              code=000
+            activation_watch_diagnostic="$(classify_activation_watch_response "$response" "$code")"
+            [ "$activation_watch_diagnostic" = armed ]
           }
           activation_watch_status() {
             local address="$1" response="$RUNNER_TEMP/activation-watch-status.json" body
@@ -529,6 +550,7 @@ jobs:
               jq -er '.stdout | select(test("^activation_watch_(?:pending|success|timeout state=(?:idle|running|failed|unknown) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+) gateway=[a-z]+ supervisor=[a-z]+ recovery=(?:rollback|reboot))\\n$")) | rtrimstr("\n")' "$response"
           }
           activation_watch_armed=false
+          activation_watch_diagnostic=unavailable
           fleet="$(curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet")"
@@ -571,7 +593,7 @@ jobs:
                 if arm_activation_watch "$address"; then
                   activation_watch_armed=true
                 elif [ "$SECONDS" -ge "$activation_arm_deadline" ]; then
-                  echo "Activation watchdog could not be armed before deployment." >&2
+                  echo "Activation watchdog could not be armed before deployment: ${activation_watch_diagnostic}." >&2
                   exit 1
                 else
                   echo "Waiting for the activation helper boundary."
