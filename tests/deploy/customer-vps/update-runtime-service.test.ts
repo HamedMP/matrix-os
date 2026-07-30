@@ -189,6 +189,9 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(build.lastIndexOf('"$STAGE_DIR/bin/matrix-validate-host-bundle"')).toBeLessThan(
       build.indexOf('write-manifest'),
     );
+    expect(build).not.toContain(
+      'find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +',
+    );
   });
 
   it("keeps supervised activation dormant unless the bundle carries the fixed marker", () => {

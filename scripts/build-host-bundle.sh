@@ -95,7 +95,6 @@ INSTALLER_NO_MODIFY_PATH=1 UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin" sh "$DIS
 # Customer VPS terminals run as the matrix user. Keep the runtime prefix
 # group-writable so selectable boot-time tool packs can install in place.
 chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
-find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 terminal_generation_build="$STAGE_DIR/libexec/terminal-runtime/v1/payload"
 install -d -m 0755 \
