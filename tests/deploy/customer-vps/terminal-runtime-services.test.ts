@@ -240,6 +240,9 @@ describe('customer VPS terminal runtime services', () => {
     expect(helper).not.toContain('eval ');
     expect(helper).not.toContain('/opt/matrix/app');
     expect(activationWatch).toContain(
+      'ExecStart=/bin/bash /run/matrix-terminal-activation-watch activation-watch-run %i',
+    );
+    expect(activationWatch).not.toContain(
       'ExecStart=/run/matrix-terminal-activation-watch activation-watch-run %i',
     );
     expect(activationWatch).toContain('Type=exec');

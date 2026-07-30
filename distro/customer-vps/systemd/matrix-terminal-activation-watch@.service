@@ -4,7 +4,7 @@ After=network-online.target matrix-update-runtime.service
 
 [Service]
 Type=exec
-ExecStart=/run/matrix-terminal-activation-watch activation-watch-run %i
+ExecStart=/bin/bash /run/matrix-terminal-activation-watch activation-watch-run %i
 KillMode=control-group
 MemoryMax=64M
 TasksMax=32
