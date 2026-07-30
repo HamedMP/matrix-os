@@ -222,8 +222,10 @@ describe('customer VPS terminal runtime services', () => {
     );
     expect(helper).toContain('activation-watch-arm | activation-watch-run | activation-watch-status');
     expect(helper).toContain('matrix-terminal-activation-watch.service');
+    expect(helper).toContain('/var/lib/matrix-terminal-activation-watch/result');
     expect(helper).toContain('systemctl restart matrix-update-runtime.service');
     expect(helper).toContain('/opt/matrix/bin/matrix-update rollback');
+    expect(helper).toContain('systemctl reboot');
     expect(helper).not.toContain('--force-run-commands');
     expect(helper).not.toContain('eval ');
     expect(helper).not.toContain('/opt/matrix/app');

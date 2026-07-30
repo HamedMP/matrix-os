@@ -866,6 +866,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
     expect(workflow).toContain('rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control');
     expect(workflow).toContain('command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-arm",$head]');
+    expect(workflow).toContain('if [ "$watch" != activation_watch_success ]; then');
+    expect(workflow).toContain('Activation watchdog did not prove the candidate healthy.');
   });
 
   it('preview VPS workflow waits for fleet version and an idle updater before advancing', () => {
