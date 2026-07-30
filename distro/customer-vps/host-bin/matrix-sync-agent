@@ -750,6 +750,7 @@ apply_update() {
     log "No update available — nothing to apply"; return 1
   fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
+  local candidate_gateway_mount
   local expected_bundle_size actual_bundle_size
   local zellij_candidate=false zellij_expected_sha256="" zellij_actual_sha256="" zellij_next=""
   rm -f -- "$UPDATE_FAILURE_CODE"
@@ -1078,13 +1079,32 @@ apply_update() {
           return 1
         fi
         log "Terminal runtime supervisor ready"
+        candidate_gateway_mount="$UPDATE_RUNTIME_DIR/candidate-gateway-app"
         if (
-          cd "$extract_dir/app"
+          install -d -o root -g matrix -m 0750 "$candidate_gateway_mount" &&
           run_bounded_phase \
             "preparing" \
             "terminal_runtime_gateway_probe_timeout" \
-            /usr/sbin/runuser --user matrix -- \
-            /opt/matrix/runtime/node/bin/node --input-type=module --eval \
+            /usr/bin/unshare --mount --fork --kill-child \
+            /bin/bash -c \
+            'set -euo pipefail
+source_path="$1"
+target_path="$2"
+/usr/bin/mount --make-rprivate /
+/usr/bin/mount --bind "$source_path" "$target_path"
+/usr/bin/mount -o remount,bind,ro,nosuid,nodev "$target_path"
+cd "$target_path"
+exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+  /usr/sbin/runuser --user matrix -- \
+  /usr/bin/env -i \
+  HOME=/home/matrix \
+  MATRIX_HOME=/home/matrix/home \
+  NODE_ENV=production \
+  PATH=/opt/matrix/runtime/node/bin:/opt/matrix/bin:/usr/bin:/bin \
+  /opt/matrix/runtime/node/bin/node --input-type=module --eval "$3"' \
+            candidate-gateway-probe \
+            "$extract_dir/app" \
+            "$candidate_gateway_mount" \
             'let initializeGatewayTerminalRuntime; try { ({ initializeGatewayTerminalRuntime } = await import("./packages/gateway/dist/shell/runtime-client.js")); } catch (error) { process.exitCode = error instanceof Error ? 41 : 44; } if (typeof initializeGatewayTerminalRuntime === "function") { try { await initializeGatewayTerminalRuntime({ mode: "supervised", nodeEnv: "production", homePath: "/home/matrix/home" }); } catch (error) { const cause = error instanceof Error ? error.cause : undefined; if (cause?.name === "ZodError") process.exitCode = 42; else if (cause instanceof Error && (cause.message === "supervisor_unavailable" || cause.message === "supervisor_timeout")) process.exitCode = 43; else process.exitCode = 44; } }'
         ); then
           log "Candidate gateway terminal runtime ready"

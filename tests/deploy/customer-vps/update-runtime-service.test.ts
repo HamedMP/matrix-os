@@ -271,6 +271,10 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     const candidateGatewayProbe = updater.indexOf(
       "terminal_runtime_gateway_probe_timeout",
     );
+    const candidateProbeBlock = updater.slice(
+      updater.indexOf('log "Terminal runtime supervisor ready"'),
+      stopServices,
+    );
     const startBlock = updater.slice(
       updater.indexOf('log "Starting services..."'),
       updater.indexOf("set_operation_phase health_check"),
@@ -289,6 +293,19 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
       'packages/gateway/dist/shell/runtime-client.js',
     );
+    expect(candidateProbeBlock).toContain(
+      'candidate_gateway_mount="$UPDATE_RUNTIME_DIR/candidate-gateway-app"',
+    );
+    expect(candidateProbeBlock).toContain(
+      "/usr/bin/unshare --mount --fork --kill-child",
+    );
+    expect(candidateProbeBlock).toContain("/usr/bin/mount --make-rprivate /");
+    expect(candidateProbeBlock).toContain(
+      '/usr/bin/mount -o remount,bind,ro,nosuid,nodev "$target_path"',
+    );
+    expect(candidateProbeBlock).toContain("/usr/bin/env -i");
+    expect(candidateProbeBlock).toContain("MATRIX_HOME=/home/matrix/home");
+    expect(candidateProbeBlock).not.toContain('cd "$extract_dir/app"');
     expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
       "terminate_new_terminal_runtime_supervisor_after_failed_start",
     );
