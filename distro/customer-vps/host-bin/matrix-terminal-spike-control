@@ -10,6 +10,9 @@ case "$operation" in
   launch | pack)
     [ "$#" -eq 2 ] || { echo "spike_control_invalid_request" >&2; exit 2; }
     ;;
+  activation-watch-arm | activation-watch-run | activation-watch-status)
+    [ "$#" -eq 2 ] || { echo "spike_control_invalid_request" >&2; exit 2; }
+    ;;
   acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack)
     [ "$#" -eq 3 ] && [[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]] ||
       { echo "spike_control_invalid_request" >&2; exit 2; }
@@ -26,6 +29,75 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "spike_control_requires_root" >&2
   exit 3
+fi
+watch_copy="/run/matrix-terminal-activation-watch"
+watch_result="/run/matrix-terminal-activation-watch.result"
+watch_unit="matrix-terminal-activation-watch.service"
+if [ "$operation" = activation-watch-arm ]; then
+  systemctl stop "$watch_unit" >/dev/null 2>&1 || true
+  rm -f -- "$watch_result"
+  install -o root -g root -m 0700 "$0" "$watch_copy"
+  systemd-run --unit="$watch_unit" --collect --property=Type=exec \
+    --property=KillMode=control-group --property=MemoryMax=64M \
+    --property=TasksMax=32 --property=StandardOutput=null \
+    "$watch_copy" activation-watch-run "$pr_head_sha" >/dev/null
+  echo activation_watch_armed
+  exit 0
+fi
+if [ "$operation" = activation-watch-status ]; then
+  metadata="$(stat -c '%U:%G:%a:%h:%s' "$watch_result" 2>/dev/null || true)"
+  if [ ! -f "$watch_result" ] || [ -L "$watch_result" ] ||
+    [[ ! "$metadata" =~ ^root:root:600:1:([1-9][0-9]{0,2})$ ]] ||
+    [ "${BASH_REMATCH[1]:-257}" -gt 256 ]; then
+    echo activation_watch_pending
+    exit 0
+  fi
+  exec /bin/cat "$watch_result"
+fi
+if [ "$operation" = activation-watch-run ]; then
+  seen_running=false
+  for _ in $(seq 1 300); do
+    state="$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)"
+    [ "$state" = running ] && seen_running=true
+    if [ "$seen_running" = true ] && [ "$state" = idle ] &&
+      systemctl is-active --quiet matrix-gateway.service &&
+      systemctl is-active --quiet matrix-terminal-runtime.service &&
+      curl --fail --silent --max-time 2 http://127.0.0.1:4000/health >/dev/null; then
+      printf 'activation_watch_success\n' >"$watch_result"
+      chmod 0600 "$watch_result"
+      exit 0
+    fi
+    sleep 1
+  done
+  state="$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)"
+  phase="$(cat /run/matrix-update-runtime/operation-phase 2>/dev/null || true)"
+  [[ "$state" =~ ^(idle|running|failed)$ ]] || state=unknown
+  [[ "$phase" =~ ^[a-z_]{1,32}$ ]] || phase=unknown
+  gateway="$(systemctl is-active matrix-gateway.service 2>/dev/null || true)"
+  supervisor="$(systemctl is-active matrix-terminal-runtime.service 2>/dev/null || true)"
+  systemctl restart matrix-update-runtime.service
+  recovery=failed
+  for _ in $(seq 1 30); do
+    [ -S /run/matrix-update-runtime/update.sock ] && break
+    sleep 1
+  done
+  if /opt/matrix/bin/matrix-update rollback >/dev/null 2>&1; then
+    for _ in $(seq 1 180); do
+      if [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = idle ] &&
+        systemctl is-active --quiet matrix-gateway.service &&
+        curl --fail --silent --max-time 2 http://127.0.0.1:4000/health >/dev/null; then
+        recovery=rollback
+        break
+      fi
+      sleep 1
+    done
+  fi
+  temporary="${watch_result}.next"
+  printf 'activation_watch_timeout state=%s phase=%s gateway=%s supervisor=%s recovery=%s\n' \
+    "$state" "$phase" "$gateway" "$supervisor" "$recovery" >"$temporary"
+  chmod 0600 "$temporary"
+  mv -f -- "$temporary" "$watch_result"
+  exit 1
 fi
 case "$operation" in
   launch)

@@ -862,6 +862,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).not.toContain('dist/activation/**');
     expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
+    expect(workflow).toContain('cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"');
+    expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
+    expect(workflow).toContain('"activation-watch-arm"');
   });
 
   it('preview VPS workflow waits for fleet version and an idle updater before advancing', () => {
@@ -895,8 +898,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain('Waiting for the preview updater to become idle.');
     expect(deployLoop).toContain('deploy_converged=true');
     expect(deployLoop).toContain('Deployment of ${target_version} did not converge.');
-    expect(deployLoop).not.toContain(
-      'if [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
+    expect(deployLoop).toContain(
+      '[ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
+    );
+    expect(deployLoop.indexOf('deploy_converged" != true')).toBeLessThan(
+      deployLoop.lastIndexOf('arm_activation_watch "$address"'),
     );
   });
 

@@ -220,6 +220,11 @@ describe('customer VPS terminal runtime services', () => {
     expect(helper).toContain(
       '/opt/matrix/libexec/terminal-runtime/current/spikes/',
     );
+    expect(helper).toContain('activation-watch-arm | activation-watch-run | activation-watch-status');
+    expect(helper).toContain('matrix-terminal-activation-watch.service');
+    expect(helper).toContain('systemctl restart matrix-update-runtime.service');
+    expect(helper).toContain('/opt/matrix/bin/matrix-update rollback');
+    expect(helper).not.toContain('--force-run-commands');
     expect(helper).not.toContain('eval ');
     expect(helper).not.toContain('/opt/matrix/app');
     expect(launch).not.toContain('/opt/matrix/app');
