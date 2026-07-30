@@ -2,29 +2,37 @@
 set -euo pipefail
 
 activation_file="/opt/matrix/app/terminal-runtime-activation"
-compatibility_root="/run/matrix-update-runtime"
-compatibility_stamp="/run/matrix-update-runtime/gateway-runtime-prepared-v1"
+boot_id_file="/proc/sys/kernel/random/boot_id"
+compatibility_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"
 node_path="/opt/matrix/runtime/node"
 node_modules="$node_path/lib/node_modules"
 node_bin="$node_path/bin"
 runtime_root="/opt/matrix/runtime"
 mode="${1:-}"
+boot_id=""
+
+load_boot_id() {
+  [ -f "$boot_id_file" ] && [ ! -L "$boot_id_file" ] || return 1
+  IFS= read -r boot_id <"$boot_id_file" || return 1
+  [[ "$boot_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+}
 
 case "$mode" in
   "")
     if [ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]; then
       exit 0
     fi
-    if [ ! -f "$activation_file" ] || [ -L "$activation_file" ] ||
+    if ! load_boot_id ||
+      [ ! -f "$activation_file" ] || [ -L "$activation_file" ] ||
       ! cmp -s "$activation_file" <(printf 'supervised-v1\n') ||
       [ ! -f "$compatibility_stamp" ] || [ -L "$compatibility_stamp" ] ||
       [ "$(stat -c '%U:%G:%a:%h' "$compatibility_stamp")" != "root:root:600:1" ] ||
-      find -P "$compatibility_stamp" -mmin +15 -print -quit | grep -q . ||
-      ! cmp -s "$compatibility_stamp" <(printf 'supervised-v1\n'); then
+      ! cmp -s "$compatibility_stamp" <(
+        printf 'supervised-v1\n%s\n' "$boot_id"
+      ); then
       echo "matrix-prepare-gateway-runtime: runtime_not_prepared" >&2
       exit 1
     fi
-    rm -f -- "$compatibility_stamp"
     exit 0
     ;;
   "--prepare-supervised-v1") ;;
@@ -58,14 +66,13 @@ done < <(
     -type d -print0
 )
 
-if [ ! -d "$compatibility_root" ] || [ -L "$compatibility_root" ] ||
-  [ "$(stat -c '%U:%G:%a' "$compatibility_root")" != "root:matrix:750" ]; then
-  echo "matrix-prepare-gateway-runtime: invalid_compatibility_root" >&2
+if ! load_boot_id; then
+  echo "matrix-prepare-gateway-runtime: invalid_boot_id" >&2
   exit 1
 fi
-temporary="$(mktemp --tmpdir="$compatibility_root" .gateway-runtime-prepared-v1.XXXXXXXXXX)"
+temporary="$(mktemp --tmpdir="$runtime_root" .gateway-runtime-supervised-v1.XXXXXXXXXX)"
 trap 'rm -f -- "$temporary"' EXIT
-printf 'supervised-v1\n' >"$temporary"
+printf 'supervised-v1\n%s\n' "$boot_id" >"$temporary"
 chown root:root "$temporary"
 chmod 0600 "$temporary"
 mv -f -- "$temporary" "$compatibility_stamp"

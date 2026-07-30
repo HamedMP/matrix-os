@@ -378,9 +378,10 @@ describe('customer VPS host bundle', () => {
     expect(gatewayUnit).not.toContain('matrix-install-developer-tools');
     expect(gatewayUnit).not.toContain('ExecStartPre=');
     expect(gatewayRuntime).toContain(
-      'compatibility_stamp="/run/matrix-update-runtime/gateway-runtime-prepared-v1"',
+      'compatibility_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
     );
-    expect(gatewayRuntime).toContain('rm -f -- "$compatibility_stamp"');
+    expect(gatewayRuntime).toContain('boot_id_file="/proc/sys/kernel/random/boot_id"');
+    expect(gatewayRuntime).not.toContain('rm -f -- "$compatibility_stamp"');
     expect(gatewayRuntime).toContain('find -P "$node_path" -xdev');
     expect(gatewayRuntime).toContain('chmod g+rwX "$node_modules" "$node_bin"');
     expect(gatewayRuntime).toContain('chmod g+rws "$directory"');
