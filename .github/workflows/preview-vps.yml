@@ -564,7 +564,21 @@ jobs:
             deploy_converged=false
             version_seen=false
             last_signal=$((SECONDS - 60))
+            activation_arm_deadline=$((SECONDS + 120))
             while [ "$SECONDS" -lt "$deploy_deadline" ]; do
+              if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$VERSION" ] &&
+                [ "$activation_watch_armed" != true ]; then
+                if arm_activation_watch "$address"; then
+                  activation_watch_armed=true
+                elif [ "$SECONDS" -ge "$activation_arm_deadline" ]; then
+                  echo "Activation watchdog could not be armed before deployment." >&2
+                  exit 1
+                else
+                  echo "Waiting for the activation helper boundary."
+                  sleep 2
+                  continue
+                fi
+              fi
               if [ "$version_seen" != true ] && [ $((SECONDS - last_signal)) -ge 60 ]; then
                 last_signal="$SECONDS"
                 code=""
@@ -585,16 +599,6 @@ jobs:
                     /tmp/deploy.json
                 else
                   echo "Waiting for the preview update boundary."
-                fi
-              fi
-              if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$VERSION" ] &&
-                [ "$activation_watch_armed" != true ]; then
-                if arm_activation_watch "$address"; then
-                  activation_watch_armed=true
-                else
-                  echo "Waiting for the activation helper boundary."
-                  sleep 2
-                  continue
                 fi
               fi
 

@@ -922,6 +922,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop.indexOf('arm_activation_watch "$address"')).toBeLessThan(
       deployLoop.indexOf('activation_watch_status "$address"'),
     );
+    expect(deployLoop.indexOf('arm_activation_watch "$address"')).toBeLessThan(
+      deployLoop.indexOf('code="$(attempt "$target_version")"'),
+    );
+    expect(deployLoop).toContain('activation_arm_deadline=$((SECONDS + 120))');
+    expect(deployLoop).toContain('Activation watchdog could not be armed before deployment.');
   });
 
   it('preview VPS workflow uses the durable preview provision contract', () => {
