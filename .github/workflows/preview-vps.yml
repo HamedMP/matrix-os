@@ -290,6 +290,7 @@ jobs:
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
       BOOTSTRAP_VERSION: ${{ needs.build.outputs.bootstrap_version }}
       HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+      BASE_SHA: ${{ needs.gate.outputs.base_sha }}
     steps:
       - uses: actions/checkout@v6
         if: needs.gate.outputs.action == 'deploy'
@@ -503,6 +504,23 @@ jobs:
           }
           activation_watch_armed=false
           for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"; do
+            if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then
+              fleet="$(curl -fsS --max-time 30 \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                "${PLATFORM_PUBLIC_URL}/vps/fleet")"
+              machine="$(jq -ce --arg handle "$HANDLE" '
+                  [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+                  | if length == 1 then .[0] else {} end
+                ' <<<"$fleet")"
+              deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+              address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+              if [ "$target_version" = "$BOOTSTRAP_VERSION" ] &&
+                [[ "$deployed" == *"-${BASE_SHA:0:7}" ]] &&
+                updater_idle "$address"; then
+                echo "Reusing the exact dormant parent already installed on the preview."
+                continue
+              fi
+            fi
             deploy_deadline=$((SECONDS + 4500))
             deploy_converged=false
             version_seen=false
