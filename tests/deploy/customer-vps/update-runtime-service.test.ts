@@ -163,8 +163,9 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
   it("validates checksums and archive paths before extraction", () => {
     const validator = read("distro/customer-vps/host-bin/matrix-validate-host-bundle");
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const build = read("scripts/build-host-bundle.sh");
 
-    expect(validator).toContain("MAX_ARCHIVE_MEMBERS");
+    expect(validator).toContain("MAX_ARCHIVE_MEMBERS = 200_000");
     expect(validator).toContain("MAX_ARCHIVE_BYTES");
     expect(validator).not.toContain("getmembers()");
     expect(validator).toContain("member_count > MAX_ARCHIVE_MEMBERS");
@@ -179,6 +180,15 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(updater).toContain('actual_bundle_size="$(stat -c %s "$bundle_file")"');
     expect(updater).toContain('if [ "$actual_bundle_size" != "$expected_bundle_size" ]');
     expect(updater).not.toContain("WARNING: no SHA-256 available");
+    expect(build).toContain(
+      '"$STAGE_DIR/bin/matrix-validate-host-bundle" "$DIST_DIR/$BUNDLE_NAME"',
+    );
+    expect(build.lastIndexOf('tar -C "$STAGE_DIR"')).toBeLessThan(
+      build.lastIndexOf('"$STAGE_DIR/bin/matrix-validate-host-bundle"'),
+    );
+    expect(build.lastIndexOf('"$STAGE_DIR/bin/matrix-validate-host-bundle"')).toBeLessThan(
+      build.indexOf('write-manifest'),
+    );
   });
 
   it("keeps supervised activation dormant unless the bundle carries the fixed marker", () => {
@@ -350,6 +360,27 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     );
     expect(updater).toContain(
       'matrix-terminal-runtime-op \\\n    matrix-terminal-spike-control; do',
+    );
+  });
+
+  it("packages only the production VPS dependency closure within the archive member cap", () => {
+    const build = read("scripts/build-host-bundle.sh");
+
+    expect(build).not.toContain(
+      'cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"',
+    );
+    expect(build).toContain(
+      "pnpm --dir \"$STAGE_DIR/app\" --config.enable-global-virtual-store=false --filter '@matrix-os/gateway...' --filter 'shell...' install --prod --frozen-lockfile",
+    );
+    expect(build).toContain(
+      'find "$STAGE_DIR/app" -name node_modules -prune -exec rm -rf -- {} +',
+    );
+    expect(build).toContain(
+      'pnpm --dir "$STAGE_DIR/app" rebuild node-pty better-sqlite3',
+    );
+    expect(build).toContain("terminal_runtime_package_manifest_invalid");
+    expect(build).toContain(
+      'await import("@matrix-os/terminal-runtime")',
     );
   });
 
