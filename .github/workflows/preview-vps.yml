@@ -479,7 +479,7 @@ jobs:
           arm_activation_watch() {
             local address="$1" response="$RUNNER_TEMP/activation-watch.json" code body
             body="$(jq -cn --arg head "$HEAD_SHA" \
-              '{command:["sudo","--non-interactive","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-arm",$head],timeoutMs:10000}')"
+              '{command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-arm",$head],timeoutMs:10000}')"
             code="$(curl --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
               --resolve "app.matrix-os.com:443:${address}" -o "$response" -w '%{http_code}' \
               -X POST 'https://app.matrix-os.com/api/terminal/run' \
@@ -493,7 +493,7 @@ jobs:
           activation_watch_status() {
             local address="$1" response="$RUNNER_TEMP/activation-watch-status.json" body
             body="$(jq -cn --arg head "$HEAD_SHA" \
-              '{command:["sudo","--non-interactive","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-status",$head],timeoutMs:10000}')"
+              '{command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-status",$head],timeoutMs:10000}')"
             curl --fail --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
               --resolve "app.matrix-os.com:443:${address}" -o "$response" \
               -X POST 'https://app.matrix-os.com/api/terminal/run' \
