@@ -148,12 +148,16 @@ start_runtime() {
 release_pane() {
   install -o root -g root -m 0644 /dev/null "$runtime_root/pane-release/matrix-t-$1"
 }
+unit_state() {
+  /usr/bin/timeout 2s systemctl is-active "$1" 2>/dev/null || true
+}
 wait_state() {
   unit="$1"
   desired="$2"
   limit="${3:-300}"
-  for _ in $(seq 1 "$limit"); do
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+  deadline=$((SECONDS + (limit + 9) / 10))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    state="$(unit_state "$unit")"
     [ "$state" = "$desired" ] && return 0
     sleep 0.1
   done
@@ -161,8 +165,9 @@ wait_state() {
 }
 wait_not_active() {
   unit="$1"
-  for _ in $(seq 1 300); do
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+  deadline=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    state="$(unit_state "$unit")"
     [ "$state" != "active" ] && [ "$state" != "activating" ] && return 0
     sleep 0.1
   done
@@ -202,7 +207,7 @@ wait_main_pid_changed() {
   unit="$1"
   previous="$2"
   for _ in $(seq 1 600); do
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    state="$(unit_state "$unit")"
     current="$(systemctl show "$unit" -p MainPID --value 2>/dev/null || true)"
     if [ "$state" = active ] && printf '%s' "$current" | grep -Eq '^[1-9][0-9]*$' &&
       [ "$current" != "$previous" ] && { [ "$unit" != matrix-gateway.service ] ||
@@ -230,7 +235,7 @@ wait_cgroup_empty() {
   unit="$3"
   for _ in $(seq 1 300); do
     if grep -Eq '^populated 0$' "/proc/self/fd/${events_fd}" 2>/dev/null; then return 0; fi
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    state="$(unit_state "$unit")"
     if [ ! -e "$cgroup_path/cgroup.events" ] && [ "$state" != active ] && [ "$state" != activating ] && [ "$state" != deactivating ]; then return 0; fi
     sleep 0.1
   done
@@ -242,14 +247,14 @@ start_runtime "$base_id"
 record_preflight s1_launch_requested
 base_unit="${unit_prefix}${base_id}.service"
 sleep 0.3
-if [ "$(systemctl is-active "$base_unit" 2>/dev/null || true)" = "activating" ] && [ ! -e "$runtime_root/readiness/${base_id}.json" ]; then
+if [ "$(unit_state "$base_unit")" = "activating" ] && [ ! -e "$runtime_root/readiness/${base_id}.json" ]; then
   mark_pass s1 readinessGated
 fi
 release_pane "$base_id"
 record_preflight s1_waiting_active
 if ! wait_state "$base_unit" active; then
   wait_not_active "$base_unit" || true
-  systemctl show "$base_unit" -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus >"$evidence_root/s1/base-startup-unit.txt" || true
+  /usr/bin/timeout 5s systemctl show "$base_unit" -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus >"$evidence_root/s1/base-startup-unit.txt" || true
   if [ -f "$runtime_root/startup-failures/${base_id}.json" ]; then
     cp "$runtime_root/startup-failures/${base_id}.json" "$evidence_root/s1/base-startup-failure.json"
   fi
@@ -550,7 +555,7 @@ if wait_state "$recovery_unit" active; then
       zellij_cmd --session "$recovery_session" action save-session >/dev/null 2>&1 || true
       sleep 6
       freeze_after="$(find "$recovery_cache_dir" -type f -printf '%P %s %T@\n' | sort | sha256sum)"
-      if [ "$freeze_before" = "$freeze_after" ] && [ "$(systemctl is-active "$recovery_unit")" = active ] && ! runuser -u matrix -- mv "$recovery_cache_dir" "${recovery_cache_dir}.replaced" 2>/dev/null; then mark_pass s2 liveSerializationDisableSafe; fi
+      if [ "$freeze_before" = "$freeze_after" ] && [ "$(unit_state "$recovery_unit")" = active ] && ! runuser -u matrix -- mv "$recovery_cache_dir" "${recovery_cache_dir}.replaced" 2>/dev/null; then mark_pass s2 liveSerializationDisableSafe; fi
       chown -R matrix:matrix "$recovery_cache_dir"
       find "$recovery_cache_dir" -type d -exec chmod 0700 {} + && find "$recovery_cache_dir" -type f -exec chmod 0600 {} +
     fi
