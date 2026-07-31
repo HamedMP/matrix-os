@@ -534,6 +534,7 @@ jobs:
             deploy_deadline=$((SECONDS + 4500))
             deploy_converged=false
             version_seen=false
+            last_updater_diagnostic=""
             last_signal=$((SECONDS - 60))
             while [ "$SECONDS" -lt "$deploy_deadline" ]; do
               if [ "$version_seen" != true ] && [ $((SECONDS - last_signal)) -ge 60 ]; then
@@ -578,6 +579,10 @@ jobs:
                 else
                   updater_diagnostic_result=""
                   if updater_diagnostic_result="$(updater_diagnostic "$address")"; then
+                    if [ "$updater_diagnostic_result" != "$last_updater_diagnostic" ]; then
+                      echo "Preview updater state: ${updater_diagnostic_result}"
+                      last_updater_diagnostic="$updater_diagnostic_result"
+                    fi
                     case "$updater_diagnostic_result" in
                       "Update service: failed phase=failed failure="*)
                         echo "Preview updater failed after rollback: ${updater_diagnostic_result}" >&2
@@ -590,6 +595,9 @@ jobs:
               sleep 15
             done
             if [ "$deploy_converged" != true ]; then
+              final_diagnostic="$(updater_diagnostic "$address" || true)"
+              [ -z "$final_diagnostic" ] ||
+                echo "Preview updater state at timeout: ${final_diagnostic}" >&2
               echo "Deployment of ${target_version} did not converge." >&2
               exit 1
             fi

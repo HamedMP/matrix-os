@@ -909,6 +909,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain(
       'Preview updater failed after rollback: ${updater_diagnostic_result}',
     );
+    expect(deployLoop).toContain('Preview updater state: ${updater_diagnostic_result}');
+    expect(deployLoop).toContain('Preview updater state at timeout: ${final_diagnostic}');
     expect(deployLoop).toContain('version_seen=true');
     expect(deployLoop).toContain('Waiting for the preview updater to become idle.');
     expect(deployLoop).toContain('deploy_converged=true');
