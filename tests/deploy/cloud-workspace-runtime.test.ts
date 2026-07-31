@@ -24,7 +24,21 @@ describe("cloud workspace runtime gates", () => {
       expect(dockerfile).toContain(agentCli);
     }
     expect(dockerfile).toContain("npm install -g --ignore-scripts");
-    expect(dockerfile).toContain("hermes-agent/main/scripts/install.sh");
+    expect(dockerfile).toContain("hermes-agent/${HERMES_VERSION}/scripts/install.sh");
+  });
+
+  it("pins the Alpine-compatible Hermes release in legacy Docker images", () => {
+    const dockerfiles = [
+      readFileSync(join(root, "Dockerfile"), "utf-8"),
+      readFileSync(join(root, "Dockerfile.dev"), "utf-8"),
+    ];
+
+    for (const dockerfile of dockerfiles) {
+      expect(dockerfile).toContain("ARG HERMES_VERSION=v2026.7.20");
+      expect(dockerfile).toContain("hermes-agent/${HERMES_VERSION}/scripts/install.sh");
+      expect(dockerfile).toContain('hermes-agent-install.sh --branch "${HERMES_VERSION}" --skip-setup');
+      expect(dockerfile).not.toContain("hermes-agent/main/scripts/install.sh");
+    }
   });
 
   it("lets the non-root Matrix user run sudo-based project installers", () => {
