@@ -20,7 +20,7 @@ export function hasUnsupportedLongTtySpelling(rawArgs: string[] | undefined): bo
   }
   const separator = rawArgs.indexOf("--");
   const matrixArgs = separator >= 0 ? rawArgs.slice(0, separator) : rawArgs;
-  return matrixArgs.includes("--t");
+  return matrixArgs.some((arg) => arg === "--t" || arg.startsWith("--t="));
 }
 
 export function parseRunCommand(rawArgs: string[] | undefined): string[] {
