@@ -95,6 +95,34 @@ except module["ProtocolError"]:
     expect(updater).not.toMatch(/systemctl (?:stop|restart)[^\n]*matrix-sync-agent/);
   });
 
+  it("atomically installs ordinary host executables with fixed root permissions", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const service = read("distro/customer-vps/host-bin/matrix-update-service");
+    const cli = read("distro/customer-vps/host-bin/matrix-update");
+
+    expect(updater).toContain("install_host_bins_atomic()");
+    expect(updater).toContain(
+      'install -o root -g root -m 0755 "$source" "$next"',
+    );
+    expect(updater).toContain(
+      'mv -f -- "$next" "$BIN_DIR/$name"',
+    );
+    expect(updater).toContain(
+      'rm -f -- "$next"',
+    );
+    expect(updater).not.toContain(
+      '-exec cp -a {} "$BIN_DIR/"',
+    );
+    expect(updater).not.toContain(
+      'find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +',
+    );
+    expect(updater).toContain(
+      'write_update_failure_code "host_bin_install_failed"',
+    );
+    expect(service).toContain('"host_bin_install_failed"');
+    expect(cli).toContain('"host_bin_install_failed"');
+  });
+
   it("retires the enabled legacy bridge only after a healthy root-service update", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
     const healthy = updater.indexOf('if [ "$healthy" = true ]; then');

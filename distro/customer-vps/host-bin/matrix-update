@@ -45,6 +45,7 @@ FAILURE_CODES = {
     "terminal_runtime_candidate_invalid",
     "terminal_runtime_generation_install_failed",
     "update_runtime_install_failed",
+    "host_bin_install_failed",
     "privilege_boundary_install_failed",
     "terminal_runtime_wrapper_install_failed",
     "zellij_candidate_staging_failed",
