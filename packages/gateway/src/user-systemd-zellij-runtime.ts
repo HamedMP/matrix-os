@@ -18,6 +18,22 @@ const LaunchEnvironmentSchema = z.record(
   z.string().max(8192).refine((value) => !value.includes("\0")),
 ).refine((value) => Object.keys(value).length <= 64);
 
+function isErrnoCode(err: unknown, code: string): boolean {
+  return err instanceof Error
+    && "code" in err
+    && (err as NodeJS.ErrnoException).code === code;
+}
+
+async function removeTemporaryRuntimeFile(path: string): Promise<void> {
+  try {
+    await rm(path, { force: true });
+  } catch (err: unknown) {
+    if (!isErrnoCode(err, "ENOENT")) {
+      console.warn("[terminal-runtime] failed to remove temporary workspace runtime file");
+    }
+  }
+}
+
 async function writeImmutableFileExclusive(path: string, content: string, maxBytes: number): Promise<void> {
   if (Buffer.byteLength(content) > maxBytes) throw new Error("Workspace runtime file is too large");
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -30,10 +46,8 @@ async function writeImmutableFileExclusive(path: string, content: string, maxByt
       if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST")) throw err;
       if (await readFile(path, "utf8") !== content) throw new Error("Workspace runtime file conflicts");
     }
-  } catch (err: unknown) {
-    throw err;
   } finally {
-    await rm(tempPath, { force: true }).catch(() => undefined);
+    await removeTemporaryRuntimeFile(tempPath);
   }
 }
 
@@ -141,7 +155,14 @@ export function createUserSystemdZellijRuntime(options: {
           environmentPath,
         });
       } catch (err: unknown) {
-        const persisted = await options.controller.get(runtimeId).catch(() => null);
+        let persisted: UserSystemdTerminalDescriptor | null;
+        try {
+          persisted = await options.controller.get(runtimeId);
+        } catch (lookupErr: unknown) {
+          if (!(lookupErr instanceof Error)) throw lookupErr;
+          console.warn("[terminal-runtime] failed to reconcile workspace runtime after create failure");
+          throw err;
+        }
         if (persisted?.layoutPath !== layoutPath) await rm(layoutPath, { force: true });
         if (persisted?.environmentPath !== environmentPath) await rm(environmentPath, { force: true });
         throw err;

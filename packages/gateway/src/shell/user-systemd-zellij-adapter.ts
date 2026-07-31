@@ -73,10 +73,14 @@ async function writeTextExclusive(path: string, content: string): Promise<void> 
       if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST")) throw err;
       if (await readFile(path, "utf8") !== content) throw shellError("session_exists", "Session already exists", 409);
     }
-  } catch (err: unknown) {
-    throw err;
   } finally {
-    await rm(tempPath, { force: true }).catch(() => undefined);
+    try {
+      await rm(tempPath, { force: true });
+    } catch (err: unknown) {
+      if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+        console.warn("[terminal-runtime] failed to remove temporary shell runtime file");
+      }
+    }
   }
 }
 
@@ -199,7 +203,14 @@ export function createUserSystemdZellijAdapter(options: {
           layoutPath,
         });
       } catch (err: unknown) {
-        const persisted = await options.controller.get(nextRuntimeId).catch(() => null);
+        let persisted: UserSystemdTerminalDescriptor | null;
+        try {
+          persisted = await options.controller.get(nextRuntimeId);
+        } catch (lookupErr: unknown) {
+          if (!(lookupErr instanceof Error)) throw lookupErr;
+          console.warn("[terminal-runtime] failed to reconcile shell runtime after create failure");
+          throw err;
+        }
         if (persisted?.layoutPath !== layoutPath) await rm(layoutPath, { force: true });
         throw err;
       }
