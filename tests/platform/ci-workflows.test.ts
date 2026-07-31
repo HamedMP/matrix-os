@@ -85,6 +85,16 @@ describe('CI workflows', () => {
     expect(dockerBuildActionUses).toHaveLength(1);
   });
 
+  it('never deploys the legacy Docker image from a manual validation run', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/docker.yml'), 'utf8');
+
+    expect(workflow).toContain(
+      "push: ${{ startsWith(github.ref, 'refs/tags/v') }}",
+    );
+    expect(workflow).toContain("if: startsWith(github.ref, 'refs/tags/v')");
+  });
+
   it('keeps Docker push checks green while reserving smoke execution for pull requests', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/docker-test.yml'), 'utf8');

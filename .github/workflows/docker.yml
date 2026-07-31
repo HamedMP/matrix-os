@@ -67,7 +67,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          push: true
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
@@ -78,6 +78,7 @@ jobs:
 
   deploy:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS
