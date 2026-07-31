@@ -3817,6 +3817,85 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("starts the pagehide keepalive save while an earlier layout write is pending", async () => {
+    let resolvePendingLayoutWrite: ((response: Response) => void) | null = null;
+    let layoutWriteCount = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        layoutWriteCount += 1;
+        if (layoutWriteCount === 1) {
+          return new Promise<Response>((resolve) => {
+            resolvePendingLayoutWrite = resolve;
+          });
+        }
+        return Promise.resolve(mockJsonResponse({ ok: true }));
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve(mockJsonResponse({}));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    }));
+
+    render(<TerminalApp />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(paneGridSpy).toHaveBeenCalled();
+    });
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+
+    act(() => {
+      props.onSessionAttached(props.paneTree.id, "session-pending");
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+    });
+    expect(layoutWriteCount).toBe(1);
+
+    act(() => {
+      props.onSessionAttached(props.paneTree.id, "session-pagehide");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const layoutPutCalls = vi.mocked(fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/layout") && init?.method === "PUT"
+    ));
+    expect(layoutPutCalls).toHaveLength(2);
+    expect(layoutPutCalls[0]?.[1]?.signal).toMatchObject({ aborted: true });
+    expect(layoutPutCalls[1]?.[1]?.keepalive).toBe(true);
+    expect(JSON.parse(String(layoutPutCalls[1]?.[1]?.body))).toMatchObject({
+      tabs: [
+        {
+          paneTree: {
+            sessionId: "session-pagehide",
+          },
+        },
+      ],
+    });
+
+    await act(async () => {
+      resolvePendingLayoutWrite?.(mockJsonResponse({ ok: true }));
+      await Promise.resolve();
+    });
+  });
+
   it("creates toolbar shell launches as two-word canonical shell sessions", async () => {
     render(<TerminalApp />);
 

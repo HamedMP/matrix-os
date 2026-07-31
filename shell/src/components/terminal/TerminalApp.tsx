@@ -108,6 +108,11 @@ let shellSessionsListInflight: {
 // save cannot complete before an older migration and then be overwritten by
 // that migration finishing last.
 let terminalLayoutWriteTail: Promise<void> = Promise.resolve();
+let terminalLayoutWriteGeneration = 0;
+let activeTerminalLayoutWrite: {
+  generation: number;
+  controller: AbortController;
+} | null = null;
 
 function enqueueTerminalLayoutWrite(
   layout: TerminalLayout,
@@ -118,6 +123,49 @@ function enqueueTerminalLayoutWrite(
 ): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const body = JSON.stringify(layout);
+  const generation = ++terminalLayoutWriteGeneration;
+  const performWrite = async () => {
+    if (generation < terminalLayoutWriteGeneration) {
+      return;
+    }
+    const controller = new AbortController();
+    activeTerminalLayoutWrite = { generation, controller };
+    try {
+      const response = await fetch(`${gatewayUrl}/api/terminal/layout`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: options.keepalive,
+        signal: AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(10_000),
+        ]),
+      });
+      if (!response.ok) {
+        console.warn(options.failureMessage);
+      }
+    } catch (err: unknown) {
+      if (!(controller.signal.aborted && generation < terminalLayoutWriteGeneration)) {
+        console.warn(
+          `${options.failureMessage}:`,
+          err instanceof Error ? err.name : "unknown",
+        );
+      }
+    } finally {
+      if (activeTerminalLayoutWrite?.generation === generation) {
+        activeTerminalLayoutWrite = null;
+      }
+    }
+  };
+
+  if (options.keepalive) {
+    const priorTail = terminalLayoutWriteTail;
+    activeTerminalLayoutWrite?.controller.abort();
+    const write = performWrite();
+    terminalLayoutWriteTail = Promise.allSettled([priorTail, write]).then(() => undefined);
+    return write;
+  }
+
   const write = terminalLayoutWriteTail
     .catch((err: unknown) => {
       console.warn(
@@ -125,25 +173,7 @@ function enqueueTerminalLayoutWrite(
         err instanceof Error ? err.name : "unknown",
       );
     })
-    .then(async () => {
-      try {
-        const response = await fetch(`${gatewayUrl}/api/terminal/layout`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body,
-          keepalive: options.keepalive,
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!response.ok) {
-          console.warn(options.failureMessage);
-        }
-      } catch (err: unknown) {
-        console.warn(
-          `${options.failureMessage}:`,
-          err instanceof Error ? err.name : "unknown",
-        );
-      }
-    });
+    .then(performWrite);
   terminalLayoutWriteTail = write;
   return write;
 }
