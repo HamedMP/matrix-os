@@ -13,6 +13,7 @@ import {
   upsertBillingEntitlement,
 } from "../../packages/platform/src/db.js";
 import {
+  buildBillingSetupPath,
   buildPostAuthRedirectPath,
   createApp,
   escapeInlineScriptJson,
@@ -65,6 +66,20 @@ describe("platform proxy routing", () => {
     expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-up/verify-email-address?session=secret")).toBe("/");
     expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-in/sso-callback?runtime=staging&session=secret")).toBe(
       "/?runtime=staging",
+    );
+  });
+
+  it("preserves only the exact T3 Connect handoff through auth and billing", () => {
+    const handoff = "launch=__terminal__&terminal_action=t3-connect";
+
+    expect(buildPostAuthRedirectPath(`https://app.matrix-os.com/?${handoff}&session=secret`)).toBe(
+      `/?${handoff}`,
+    );
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/?launch=__terminal__")).toBe("/");
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/?terminal_action=t3-connect")).toBe("/");
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/?launch=__terminal__&terminal_action=other")).toBe("/");
+    expect(buildBillingSetupPath(`https://app.matrix-os.com/?${handoff}&session=secret`)).toBe(
+      `/?billing=setup&${handoff}`,
     );
   });
 
@@ -923,6 +938,30 @@ describe("platform proxy routing", () => {
     expect(html).toContain("window.location.replace(signOutTarget)");
     expect(html).toContain("[matrix] Clerk.signOut did not finish");
     expect(html).not.toContain("window.location.replace(redirectTarget)");
+  });
+
+  it("keeps the exact T3 Connect request in the signed-out Clerk handoff", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/?launch=__terminal__&terminal_action=t3-connect&session=secret",
+      { headers: { host: "app.matrix-os.com" } },
+    );
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      String.raw`var redirectTarget = "/?launch=__terminal__\u0026terminal_action=t3-connect";`,
+    );
+    expect(html).not.toContain("session=secret");
   });
 
   it("serves authenticated runtime management from the platform app shell", async () => {
@@ -2684,6 +2723,12 @@ describe("platform proxy routing", () => {
       "https://app.matrix-os.com",
       "/?device_return=https%3A%2F%2Fevil.example%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
     )).toBe("https://app.matrix-os.com/?billing=setup");
+    expect(buildBillingSetupTarget(
+      "https://app.matrix-os.com",
+      "/?launch=__terminal__&terminal_action=t3-connect&session=secret",
+    )).toBe(
+      "https://app.matrix-os.com/?billing=setup&launch=__terminal__&terminal_action=t3-connect",
+    );
   });
 
   it("sends code-domain billing setup handoffs back to the app shell origin", async () => {

@@ -17,6 +17,10 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
+import {
+  parseTerminalLaunchActionFromSearch,
+  type TerminalLaunchAction,
+} from "@/lib/terminal-launch";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -33,12 +37,18 @@ function readLaunchPathFromLocation(): string | null {
   return launch && LAUNCHABLE_BUILT_IN_PATHS.has(launch) ? launch : null;
 }
 
+function readTerminalActionFromLocation(): TerminalLaunchAction | null {
+  if (typeof window === "undefined") return null;
+  return parseTerminalLaunchActionFromSearch(window.location.search)?.action ?? null;
+}
+
 // The launch path lives in window.location.search (read once at load). useSyncExternalStore
 // returns null on the server and during hydration (matching the server snapshot) and the real
 // value on the client, so it is applied without a setState-in-effect mount cascade or a
 // hydration mismatch. The URL is not mutated after load, so the subscription is a noop.
 const subscribeLaunchPathNoop = () => () => {};
 const getLaunchPathServerSnapshot = (): string | null => null;
+const getTerminalActionServerSnapshot = (): TerminalLaunchAction | null => null;
 
 export function ShellHome() {
   const isMobile = useMobileViewport();
@@ -54,6 +64,11 @@ export function ShellHome() {
     subscribeLaunchPathNoop,
     readLaunchPathFromLocation,
     getLaunchPathServerSnapshot,
+  );
+  const terminalLaunchAction = useSyncExternalStore(
+    subscribeLaunchPathNoop,
+    readTerminalActionFromLocation,
+    getTerminalActionServerSnapshot,
   );
   const shellLoadedCaptured = useRef(false);
 
@@ -95,12 +110,14 @@ export function ShellHome() {
             {isMobile ? (
               <MobileShell
                 launchAppPath={launchAppPath}
+                terminalLaunchAction={terminalLaunchAction}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 cacheScope={cacheScope}
               />
             ) : (
               <Desktop
                 launchAppPath={launchAppPath}
+                terminalLaunchAction={terminalLaunchAction}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 chat={chat}
                 cacheScope={cacheScope}

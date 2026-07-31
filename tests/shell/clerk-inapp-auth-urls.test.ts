@@ -52,11 +52,13 @@ describe("Clerk in-app auth URLs are baked into shell builds", () => {
     expect(layout).not.toMatch(/<ClerkProvider[^>]*signUpUrl=/);
   });
 
-  it("forces shell Clerk completion back into the app shell", () => {
+  it("forces shell Clerk completion through the bounded app-shell handoff", () => {
     const signIn = read("shell/src/app/sign-in/[[...sign-in]]/page.tsx");
     const signUp = read("shell/src/app/sign-up/[[...sign-up]]/page.tsx");
 
-    expect(signIn).toContain('forceRedirectUrl="/"');
-    expect(signUp).toContain('forceRedirectUrl="/"');
+    expect(signIn).toContain("forceRedirectUrl={redirectPath}");
+    expect(signIn).toContain("fallbackRedirectUrl={redirectPath}");
+    expect(signUp).toContain("forceRedirectUrl={redirectPath}");
+    expect(signUp).toContain("fallbackRedirectUrl={redirectPath}");
   });
 });

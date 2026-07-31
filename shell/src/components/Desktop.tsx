@@ -54,7 +54,13 @@ import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
-import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
+import {
+  consumeTerminalLaunchActionFromLocation,
+  enqueueTerminalLaunch,
+  enqueueTerminalLaunchAction,
+  TERMINAL_SETUP_WINDOW_PATH,
+  type TerminalLaunchAction,
+} from "@/lib/terminal-launch";
 import {
   loadShellSnapshot,
   saveShellSnapshot,
@@ -158,13 +164,14 @@ const MIN_HEIGHT = 200;
 
 interface DesktopProps {
   launchAppPath?: string | null;
+  terminalLaunchAction?: TerminalLaunchAction | null;
   onOpenCommandPalette?: () => void;
   chat?: import("@/hooks/useChatState").ChatState;
   cacheScope?: ShellSnapshotScope | null;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
-export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
+export function Desktop({ launchAppPath, terminalLaunchAction, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
   const cacheKey = cacheScope?.storageKey;
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
@@ -473,7 +480,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
   }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
-  const openSetupTerminal = (launchPath: string) => {
+  const openTerminalWithAction = useCallback((enqueueAction: (targetId?: string) => void) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
     const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
@@ -506,8 +513,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           );
         }
       }
-      enqueueTerminalLaunch(launchPath, win?.id);
+      enqueueAction(win?.id);
     });
+  }, [dockXOffset, wmOpenWindow, wmRestoreAndFocusWindow]);
+
+  const openSetupTerminal = (launchPath: string) => {
+    openTerminalWithAction((targetId) => enqueueTerminalLaunch(launchPath, targetId));
   };
 
   // Vocal mode's open_app tool and auto-open-after-build both go through
@@ -525,12 +536,23 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   };
 
   useEffect(() => {
-    if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
+    const launchKey = terminalLaunchAction
+      ? `${launchAppPath ?? ""}:${terminalLaunchAction}`
+      : launchAppPath;
+    if (!launchAppPath || !launchKey || launchPathConsumedRef.current === launchKey) return;
     const match = useWindowManager.getState().apps.find((app) => app.path === launchAppPath);
     if (!match) return;
-    launchPathConsumedRef.current = launchAppPath;
+    launchPathConsumedRef.current = launchKey;
+    if (launchAppPath === TERMINAL_SETUP_WINDOW_PATH && terminalLaunchAction) {
+      openTerminalWithAction((targetId) => {
+        if (enqueueTerminalLaunchAction(terminalLaunchAction, targetId)) {
+          consumeTerminalLaunchActionFromLocation();
+        }
+      });
+      return;
+    }
     focusOrOpen(match.name, match.path);
-  }, [apps, focusOrOpen, launchAppPath]);
+  }, [apps, focusOrOpen, launchAppPath, openTerminalWithAction, terminalLaunchAction]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async (signal?: AbortSignal) => {

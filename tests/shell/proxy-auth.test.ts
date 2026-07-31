@@ -796,7 +796,7 @@ describe("proxy auth: sign-in redirects", () => {
     vi.doUnmock("next/server");
   });
 
-  it("uses the configured public HTTPS app origin for anonymous redirects", async () => {
+  it("uses the public HTTPS origin and preserves the fixed handoff for anonymous redirects", async () => {
     vi.resetModules();
     vi.stubEnv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "pk_test_proxy_auth");
     vi.stubEnv("NEXT_PUBLIC_MATRIX_APP_URL", "https://app.matrix-os.com");
@@ -826,14 +826,14 @@ describe("proxy auth: sign-in redirects", () => {
         host: "127.0.0.1:3200",
         pathname: "/",
         protocol: "http:",
-        search: "",
+        search: "?launch=__terminal__&terminal_action=t3-connect",
       },
     } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
 
     expect(response).toEqual({
       kind: "redirect",
       url: new URL(
-        "https://app.matrix-os.com/sign-in?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F",
+        "https://app.matrix-os.com/sign-in?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F%3Flaunch%3D__terminal__%26terminal_action%3Dt3-connect",
       ),
     });
     expect(nextResponseRedirect).toHaveBeenCalledTimes(1);
