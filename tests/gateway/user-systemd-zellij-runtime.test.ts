@@ -11,7 +11,7 @@ const SESSION_ID = "sess_demo";
 function fakeAdapter(): ZellijAdapter {
   return {
     health: vi.fn(async () => ({ ok: true, code: "ok" })), listSessions: vi.fn(async () => []),
-    focusedPaneCwd: vi.fn(async () => null), createSession: vi.fn(async () => undefined),
+    focusedPaneRuntime: vi.fn(async () => ({ cwd: null, command: null, observed: false })), createSession: vi.fn(async () => undefined),
     deleteSession: vi.fn(async () => undefined), renameSession: vi.fn(async () => undefined),
     validateLayout: vi.fn(async () => undefined), attachSession: vi.fn() as never,
     sendInput: vi.fn(async () => undefined), listTabs: vi.fn(async () => []),
