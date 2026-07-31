@@ -28,7 +28,7 @@ memory_ids=("4${pr_head_sha:0:31}" "5${pr_head_sha:0:31}" "6${pr_head_sha:0:31}"
 recovery_id="7${pr_head_sha:0:31}"
 cleanup() {
   for runtime_id in "$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id"; do
-    systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
+    /usr/bin/timeout 35s systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
     /usr/bin/timeout 15s runuser -u matrix -- env \
       HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" \
       XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$config_home_root" \
@@ -45,7 +45,7 @@ build_summary() {
 }
 sleep 2
 cleanup
-trap 'status=$?; cleanup; build_summary; exit $status' EXIT
+trap 'status=$?; build_summary; cleanup; exit $status' EXIT
 rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"
 install -d -o root -g root -m 0700 "$evidence_root" "$evidence_root/s1" "$evidence_root/s1/checks" "$evidence_root/s2" "$evidence_root/s2/checks"
 record_preflight() {

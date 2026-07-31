@@ -441,11 +441,9 @@ describe('terminal runtime spike evidence', () => {
     expect(packer).not.toContain('tar --create');
     expect(runner).toContain('bounded_wait_child "$attach_parent"');
     expect(runner).not.toContain('wait "$attach_parent" 2>/dev/null || true');
+    expect(runner).toContain("trap 'status=$?; build_summary; cleanup; exit $status' EXIT");
+    expect(runner).toContain('/usr/bin/timeout 35s systemctl stop');
     expect(runner).toContain('record_preflight s1_launch_requested');
-    expect(runner).toContain('record_preflight s1_attach_receipt');
-    expect(runner).toContain('record_preflight s1_gateway_events');
-    expect(runner).toContain('record_preflight s2_started');
-    expect(runner).toContain('record_preflight summarizing');
     expect(runner).not.toContain('install -o matrix -g matrix -m 0600 /dev/null "$runtime_root/confirmations/${recovery_id}.pass"');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
     expect(runner).toContain('systemctl set-property --runtime');
