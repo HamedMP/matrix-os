@@ -118,6 +118,7 @@ function enqueueTerminalLayoutWrite(
   layout: TerminalLayout,
   options: {
     keepalive: boolean;
+    startImmediately?: boolean;
     failureMessage: string;
   },
 ): Promise<void> {
@@ -158,7 +159,7 @@ function enqueueTerminalLayoutWrite(
     }
   };
 
-  if (options.keepalive) {
+  if (options.startImmediately) {
     const priorTail = terminalLayoutWriteTail;
     activeTerminalLayoutWrite?.controller.abort();
     const write = performWrite();
@@ -510,7 +511,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, [mobile, mobileTerminalInputId]);
 
-  const persistLayoutNow = () => {
+  const persistLayoutNow = (startImmediately = false) => {
     const layout: TerminalLayout = {
       tabs: tabsRef.current,
       activeTabId: activeTabIdRef.current,
@@ -519,6 +520,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
     return enqueueTerminalLayoutWrite(layout, {
       keepalive: true,
+      startImmediately,
       failureMessage: "Failed to save terminal layout",
     });
   };
@@ -850,8 +852,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return () => window.removeEventListener(TERMINAL_LAUNCH_EVENT, handleLaunch);
   }, [initialized, launchTargetId]);
 
-  const flushLayout = useEffectEvent(() => {
-    void persistLayoutNow();
+  const flushLayout = useEffectEvent((startImmediately = false) => {
+    void persistLayoutNow(startImmediately);
   });
 
   useEffect(() => {
@@ -897,7 +899,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         layoutSaveTimerRef.current = null;
       }
 
-      flushLayout();
+      flushLayout(true);
       terminalLayoutDirtyRef.current = false;
     };
 
