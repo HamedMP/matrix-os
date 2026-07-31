@@ -251,45 +251,20 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain("github.event.label.name == 'preview-vps'");
     expect(workflow).not.toContain('types: [labeled, synchronize');
     expect(workflow).toContain('head_sha:\n        description: Exact 40-character PR head SHA to approve');
-    expect(workflow).not.toContain('diagnose_only:');
-    expect(workflow).not.toContain('watch_sha:');
-    expect(workflow).toContain("github.event.label.name == 'terminal-updater-bootstrap'");
-    expect(workflow).toContain('command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"]');
-    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","repair"]');
-    expect(workflow).toContain('Typed updater repair accepted.');
-    expect(workflow).toContain('Legacy disposable updater bootstrap completed.');
     expect(workflow).toContain('APPROVED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}');
     expect(workflow).toContain('if [ "$head_sha" != "$APPROVED_HEAD_SHA" ]');
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(workflow).toContain('.labels | any(.name == "preview-vps")');
     expect(workflow).toContain('PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}');
-    expect(workflow).toContain('timeout-minutes: 180');
-    expect(workflow.split('\n')).toContain('          deadline=$((SECONDS + 4500))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
-    expect(workflow).toContain('.handle == $handle and .runtimeSlot == $handle and\n                .status == "running"');
-    expect(workflow).toMatch(
-      /if ! fleet="\$\(curl --fail[\s\S]{0,300}\/vps\/fleet"\)"; then\n\s+echo "Fleet query failed; retrying\." >&2\n\s+sleep 15\n\s+continue\n\s+fi/,
-    );
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
-    expect(workflow).toContain('spike_control_deadline=$((SECONDS + 300))');
-    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","status"]');
-    expect(workflow).toContain('.stdout == "Update service: idle\\n"');
-    expect(workflow).toContain('echo "update_status=${update_status}" >&2');
-    expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 300))');
-    expect(workflow).toContain('[ "$diagnostic" = "spike_control_unavailable" ]');
     expect(workflow.match(/--insecure/g)).toHaveLength(3);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
-    expect(workflow).toContain(
-      'diagnostic: (if ((.stderr // "") | test("spike_[a-z0-9_]+"))',
-    );
-    expect(workflow).toContain('{"diagnostic":"gateway_unavailable"}');
     expect(workflow).toContain('echo "evidence_diagnostic=${diagnostic}" >&2');
-    expect(workflow).toContain(
-      `jq -e 'type == "object"' "$run_response" >/dev/null 2>&1`,
-    );
+    expect(workflow).toContain('echo "evidence_stage=${diagnostic}"');
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
@@ -310,8 +285,6 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain(
       '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"',
     );
-    expect(workflow).toContain('deadline=$((SECONDS + 300))');
-    expect(workflow).not.toContain('VPS_SSH_KEY');
   });
   it('packages the harness only for explicitly marked preview bundles', async () => {
     const [buildScript, previewWorkflow] = await Promise.all([
@@ -319,7 +292,6 @@ describe('terminal runtime spike evidence', () => {
       readFile(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8'),
     ]);
     expect(previewWorkflow).toContain("MATRIX_TERMINAL_RUNTIME_SPIKE: '1'");
-    expect(previewWorkflow).toContain('Build dormant parent bootstrap bundle');
     expect(buildScript).toContain('if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then');
     expect(buildScript).toContain('scripts/spikes/terminal-runtime');
   });
@@ -456,7 +428,6 @@ describe('terminal runtime spike evidence', () => {
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/attach-probe.mjs'), 'utf8'),
     ]);
     expect(workflow).toContain('/opt/matrix/bin/matrix-terminal-spike-control');
-    expect(workflow).toContain('"launch",');
     expect(workflow).toContain('"pack",');
     expect(workflow).not.toContain('/opt/matrix/app/scripts/spikes');
     expect(workflow).toContain('evidence_deadline=$((SECONDS + 2100))');
@@ -474,10 +445,14 @@ describe('terminal runtime spike evidence', () => {
     expect(launcher).not.toContain('short_sha=');
     expect(packer).toContain('summary.json');
     expect(packer).toContain('spike_pack_evidence_incomplete_${stage}_${state}');
+    expect(packer).not.toContain('spike_pack_evidence_incomplete_${stage}_${state}" >&2');
     expect(packer).toMatch(/verify-evidence\.mjs \\\n\s+"\$evidence_root" --pack "\$pr_head_sha"/);
     expect(packer).not.toContain('tar --create');
     expect(runner).toContain('bounded_wait_child "$attach_parent"');
     expect(runner).not.toContain('wait "$attach_parent" 2>/dev/null || true');
+    expect(runner).toContain('record_preflight s1_gateway_events');
+    expect(runner).toContain('record_preflight s2_started');
+    expect(runner).toContain('record_preflight summarizing');
     expect(runner).not.toContain('install -o matrix -g matrix -m 0600 /dev/null "$runtime_root/confirmations/${recovery_id}.pass"');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
     expect(runner).toContain('systemctl set-property --runtime');

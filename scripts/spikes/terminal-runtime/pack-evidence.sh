@@ -20,8 +20,8 @@ if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" 
   [[ "$stage" =~ ^[a-z0-9_]{1,32}$ ]] || stage=unknown
   state="$(systemctl is-active "matrix-terminal-runtime-spike-${pr_head_sha}.service" 2>/dev/null || true)"
   [[ "$state" =~ ^(active|activating|failed|inactive)$ ]] || state=unknown
-  echo "spike_pack_evidence_incomplete_${stage}_${state}" >&2
-  exit 3
+  echo "spike_pack_evidence_incomplete_${stage}_${state}"
+  exit 0
 fi
 /opt/matrix/runtime/node/bin/node \
   /opt/matrix/libexec/terminal-runtime/current/spikes/verify-evidence.mjs \

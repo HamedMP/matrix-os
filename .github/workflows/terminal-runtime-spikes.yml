@@ -440,6 +440,7 @@ jobs:
           pack_response="$RUNNER_TEMP/terminal-runtime-spike-pack.json"
           evidence_deadline=$((SECONDS + 2100))
           pack_ready=false
+          diagnostic=unavailable
           http_code="000"
           while [ "$SECONDS" -lt "$evidence_deadline" ]; do
             if http_code="$(curl --silent --max-time 45 --connect-timeout 15 \
@@ -449,20 +450,30 @@ jobs:
               -X POST 'https://app.matrix-os.com/api/terminal/run' \
               -H "authorization: Bearer ${gateway_token}" \
               -H 'content-type: application/json' \
-              --data-binary "$pack_body")" && [ "$http_code" = 200 ] && jq -e '
+              --data-binary "$pack_body")" && [ "$http_code" = 200 ]; then
+              next_diagnostic="$(jq -r 'if .exitCode == 0 and .timedOut == false and
+                .truncated == false and .signal == null and
+                (.stdout | test("^spike_pack_evidence_incomplete_[a-z0-9_]+\\n?$"))
+                then (.stdout | rtrimstr("\n")) else "unavailable" end' "$pack_response" 2>/dev/null || printf unavailable)"
+              if [ "$next_diagnostic" != unavailable ]; then
+                if [ "$next_diagnostic" != "$diagnostic" ]; then
+                  diagnostic="$next_diagnostic"
+                  echo "evidence_stage=${diagnostic}"
+                fi
+              elif jq -e '
                 type == "object" and .exitCode == 0 and .timedOut == false and
                 .truncated == false and .signal == null and
                 (.stdout | type == "string" and length > 0 and length <= 700000)
               ' "$pack_response" >/dev/null; then
-              pack_ready=true
-              break
+                pack_ready=true
+                break
+              fi
             fi
             echo "Waiting for detached spike evidence."
             sleep 15
           done
           echo "gateway_http_status=$http_code"
           if [ "$pack_ready" != true ]; then
-            diagnostic="$(jq -r 'if ((.stderr // "") | test("spike_[a-z0-9_]+")) then ((.stderr // "") | capture("(?<code>spike_[a-z0-9_]+)").code) else "unavailable" end' "$pack_response" 2>/dev/null || printf unavailable)"
             echo "evidence_diagnostic=${diagnostic}" >&2
             echo "Bounded evidence retrieval failed." >&2
             exit 1

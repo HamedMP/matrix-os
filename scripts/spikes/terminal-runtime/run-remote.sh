@@ -332,6 +332,7 @@ if printf '%s' "$gateway_pid" | grep -Eq '^[1-9][0-9]*$'; then
     mark_pass s1 gatewayCrashPreservesPids
   fi
 fi
+record_preflight s1_gateway_events
 shell_before_pid="$(systemctl show matrix-shell.service -p MainPID --value 2>/dev/null || true)"
 record_pid_cgroup shell-service-before "$shell_before_pid" "$pid_cgroups" || true
 if systemctl restart matrix-shell.service >/dev/null 2>&1; then
@@ -352,6 +353,7 @@ if wait_cgroup_empty "$base_events_fd" "/sys/fs/cgroup${base_cgroup}" "$base_uni
   mark_pass s1 stopEmptiesCgroup
 fi
 exec {base_events_fd}<&-
+record_preflight s1_base_stopped
 # S1: deterministic keeper and server failures.
 start_runtime "$keeper_id"
 release_pane "$keeper_id"
@@ -384,6 +386,7 @@ if wait_state "$server_unit" active; then
   fi
   exec {server_events_fd}<&-
 fi
+record_preflight s1_failures
 # S1: layered percentage controls and pressure events.
 memory_ready=true
 memory_stage=not_ready
@@ -434,7 +437,9 @@ if [ "$memory_ready" = true ]; then
 fi
 printf '%s\n' "$memory_stage" >"$evidence_root/s1/memory-stage.txt"
 for runtime_id in "${memory_ids[@]}"; do systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true; done
+record_preflight s1_complete
 # S2: bounded serialized state and explicit resurrection.
+record_preflight s2_started
 start_runtime "$recovery_id"
 release_pane "$recovery_id"
 recovery_unit="${unit_prefix}${recovery_id}.service"
@@ -479,10 +484,12 @@ if wait_state "$recovery_unit" active; then
   if [ "$mapped_count" -gt 0 ]; then mark_pass s2 cacheMappedByRuntime; fi
   if [ "$mapped_bytes" -le 67108864 ]; then mark_pass s2 diskAccountingBounded; fi
   systemctl stop "$recovery_unit" >/dev/null 2>&1 || true
+  record_preflight s2_saved
   start_runtime "$recovery_id" recover
   if wait_file "$runtime_root/confirmations/${recovery_id}.gated"; then mark_pass s2 commandsConfirmationGated; fi
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
   if wait_state "$recovery_unit" active 300; then
+    record_preflight s2_recovered
     panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
     pane_count="$(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const v=JSON.parse(s);process.stdout.write(String(Array.isArray(v)?v.filter(p=>!p.is_plugin).length:0))}catch(error){process.stdout.write("0")}})' )"
     if [ "$pane_count" -ge 2 ]; then mark_pass s2 layoutRestored; fi
@@ -547,6 +554,7 @@ if wait_state "$recovery_unit" active; then
     fi
   fi
   if [ -n "$corrupt_target" ] && [[ "$corrupt_target" == "$cache_root"/* ]]; then
+    record_preflight s2_corruption
     # An arbitrary identifier is valid KDL and therefore does not prove the
     # corruption path. Leave both nested nodes unclosed so the exact production
     # parser must reject this state before the fresh-shell fallback is exercised.
@@ -568,6 +576,7 @@ if wait_state "$recovery_unit" active; then
   if [ "$remaining" -eq 0 ]; then mark_pass s2 deletionComplete; fi
   rm -f -- "/tmp/matrix-terminal-mapped-${run_key}.txt"
 fi
+record_preflight summarizing
 build_summary
 summary_status="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");const v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(`${v.s1.status}:${v.s2.status}`)' "$evidence_root/summary.json")"
 if [ "$summary_status" != 'pass:pass' ]; then
