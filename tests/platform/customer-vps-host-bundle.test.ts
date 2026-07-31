@@ -85,7 +85,9 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}"');
     expect(script).toContain('scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');
-    expect(script).toContain('bin app runtime systemd release.json incremental-manifest.json');
+    expect(script).toContain(
+      'bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json',
+    );
     expect(script).toContain('manifest.json');
     expect(script).toContain('release.json');
     expect(script).toContain('incremental-manifest.json');
@@ -103,7 +105,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
     expect(script).toContain('matrix-messaging-health');
     expect(script).toContain('"$STAGE_DIR/runtime/node/bin/gh"');
-    expect(script).toContain('bin app runtime systemd release.json');
+    expect(script).toContain('bin app runtime systemd user-systemd terminal-runtime release.json');
   });
 
   it('pins, verifies, smoke-tests, and packages the configured Zellij binary', () => {
