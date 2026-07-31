@@ -14,13 +14,13 @@ stopEmptiesCgroup keeperLossDeterministic serverLossDeterministic readinessGated
 const REQUIRED_S2_CHECKS = `exactOptionSyntax cacheMappedByRuntime layoutRestored viewportRestored
 scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
 deletionComplete diskAccountingBounded liveSerializationDisableSafe`.split(/\s+/);
-const CANDIDATE_BUILD_RECORD_URL = new URL(
-  '../../terminal-runtime/zellij/v0.44.3-matrix.1.build.json',
-  import.meta.url,
-);
-const EXPECTED_ZELLIJ_BUILD = Object.freeze(
-  JSON.parse(await readFile(CANDIDATE_BUILD_RECORD_URL, 'utf8')),
-);
+const CANDIDATE_BUILD_RECORD = 'v0.44.3-matrix.1.build.json'; let candidateBuildRecord;
+try { candidateBuildRecord = await readFile(new URL(`./${CANDIDATE_BUILD_RECORD}`, import.meta.url), 'utf8'); } catch (error) {
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+  if (code !== 'ENOENT') throw error;
+  candidateBuildRecord = await readFile(new URL(`../../terminal-runtime/zellij/${CANDIDATE_BUILD_RECORD}`, import.meta.url), 'utf8');
+}
+const EXPECTED_ZELLIJ_BUILD = Object.freeze(JSON.parse(candidateBuildRecord));
 const SUMMARY_KEYS = `schemaVersion prHeadSha zellijVersion zellijBuild ubuntuVersion systemdVersion kernelVersion
 s1 s2 privacyScan files totalBytes`.split(/\s+/);
 const PRIVACY_PATTERNS = [

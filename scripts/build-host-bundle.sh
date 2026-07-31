@@ -129,9 +129,7 @@ install -m 0644 \
 cp -aL --no-preserve=links \
   "$(readlink -f "$ROOT_DIR/node_modules/node-pty")/lib/." \
   "$terminal_generation_build/node_modules/node-pty/lib/"
-install -m 0755 \
-  "$(readlink -f "$ROOT_DIR/node_modules/node-pty")/build/Release/pty.node" \
-  "$terminal_generation_build/node_modules/node-pty/build/Release/pty.node"
+install -m 0755 "$(readlink -f "$ROOT_DIR/node_modules/node-pty")/build/Release/pty.node" "$terminal_generation_build/node_modules/node-pty/build/Release/pty.node"
 install -m 0644 \
   "$(readlink -f "$ROOT_DIR/node_modules/zod")/package.json" \
   "$terminal_generation_build/node_modules/zod/package.json"
@@ -180,6 +178,7 @@ cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
   chmod 0755 "$STAGE_DIR/bin/matrix-terminal-spike-control"
+  install -m 0644 "$ROOT_DIR/scripts/spikes/terminal-runtime/matrix-terminal-spike.slice" "$STAGE_DIR/systemd/matrix-terminal-spike.slice"; install -m 0644 "$ROOT_DIR/scripts/spikes/terminal-runtime/matrix-terminal-spike-template.service" "$STAGE_DIR/systemd/matrix-terminal-spike@.service"
 else
   rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-control"
 fi

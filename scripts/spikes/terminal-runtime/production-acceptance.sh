@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-operation="${1:-}"
-head_sha="${2:-}"
-run_nonce="${3:-}"
+operation="${1:-}"; head_sha="${2:-}"; run_nonce="${3:-}"
 if [ "$(id -u)" -ne 0 ] || [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]] ||
   [[ ! "$run_nonce" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]]; then
   echo "production_acceptance_invalid_request" >&2
@@ -12,107 +10,44 @@ case "$operation" in
   launch|status|reboot|resume|pack|phase1|phase2) ;;
   *) echo "production_acceptance_invalid_request" >&2; exit 2 ;;
 esac
-readonly root_parent=/var/lib/matrix-terminal-acceptance
-readonly state_root="${root_parent}/${head_sha}-${run_nonce}"
-readonly evidence_root="${state_root}/evidence"
-readonly checks_root="${evidence_root}/checks"
-readonly state_file="${state_root}/state"
-readonly probe=/opt/matrix/libexec/terminal-runtime/current/spikes/production-probe.mjs
-readonly verifier=/opt/matrix/libexec/terminal-runtime/current/spikes/verify-production-evidence.mjs
-readonly version_a="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-a"
-readonly version_b="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-b"
-readonly unit_prefix=matrix-terminal-session@
-readonly home=/home/matrix/home
-readonly cache_root="${home}/system/terminal-runtime/zellij-cache"
-readonly uid="$(id -u matrix)"
+readonly root_parent=/var/lib/matrix-terminal-acceptance; readonly state_root="${root_parent}/${head_sha}-${run_nonce}"
+readonly evidence_root="${state_root}/evidence"; readonly checks_root="${evidence_root}/checks"
+readonly state_file="${state_root}/state"; readonly probe=/opt/matrix/libexec/terminal-runtime/current/spikes/production-probe.mjs
+readonly verifier=/opt/matrix/libexec/terminal-runtime/current/spikes/verify-production-evidence.mjs; readonly version_a="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-a"
+readonly version_b="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-b"; readonly unit_prefix=matrix-terminal-session@
+readonly home=/home/matrix/home; readonly cache_root="${home}/system/terminal-runtime/zellij-cache"; readonly uid="$(id -u matrix)"
 readonly -a zellij_env=(
-  env HOME="$home" MATRIX_HOME="$home"
+  env HOME="$home" MATRIX_HOME="$home" LANG=C.UTF-8 TERM=xterm-256color
   PATH="$home/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin"
-  LANG=C.UTF-8 TERM=xterm-256color XDG_RUNTIME_DIR="/run/user/${uid}"
-  XDG_CACHE_HOME="$cache_root"
-  XDG_CONFIG_HOME="$home/system/terminal-runtime/zellij-config-home"
-  XDG_DATA_HOME="$home/system/terminal-runtime/zellij-data"
-  ZELLIJ_CONFIG_DIR=/opt/matrix/libexec/terminal-runtime/current
-  ZELLIJ_CONFIG_FILE=/opt/matrix/libexec/terminal-runtime/current/config.kdl
+  XDG_RUNTIME_DIR="/run/user/${uid}" XDG_CACHE_HOME="$cache_root"
+  XDG_CONFIG_HOME="$home/system/terminal-runtime/zellij-config-home" XDG_DATA_HOME="$home/system/terminal-runtime/zellij-data"
+  ZELLIJ_CONFIG_DIR=/opt/matrix/libexec/terminal-runtime/current ZELLIJ_CONFIG_FILE=/opt/matrix/libexec/terminal-runtime/current/config.kdl
 )
-write_state() {
-  install -d -o root -g root -m 0700 "$state_root"
-  local next="${state_file}.next"
-  printf '%s\n' "$1" >"$next"
-  chmod 0600 "$next"
-  mv -f -- "$next" "$state_file"
-}
-mark() { install -m 0600 /dev/null "$checks_root/$1"; }
-probe_owner() {
-  runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" "$@"
-}
-json_field() {
-  /opt/matrix/runtime/node/bin/node -e '
-    let raw=""; process.stdin.on("data",d=>raw+=d);
-    process.stdin.on("end",()=>{const value=JSON.parse(raw); const keys=process.argv[1].split(".");
-      let current=value; for(const key of keys) current=current?.[key];
-      if(current===undefined || current===null) process.exit(1);
-      process.stdout.write(String(current));});
-  ' "$1"
-}
-wait_active() {
-  local unit="$1"
-  for _ in $(seq 1 180); do
-    [ "$(systemctl is-active "$unit" 2>/dev/null || true)" = active ] && return 0
-    sleep 1
-  done
-  return 1
-}
-wait_absent() {
-  local unit="$1"
-  for _ in $(seq 1 60); do
-    local state
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-    [ "$state" != active ] && [ "$state" != activating ] && return 0
-    sleep 1
-  done
-  return 1
-}
-roles() {
-  /opt/matrix/runtime/node/bin/node "$probe" roles "$1"
-}
-roles_match() {
-  local current
-  current="$(roles "$1")"
-  [ "$current" = "$(cat "$state_root/roles.json")" ]
-}
-request_update() {
-  runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null
-}
+write_state() { install -d -o root -g root -m 0700 "$state_root"; local next="${state_file}.next"; printf '%s\n' "$1" >"$next"; chmod 0600 "$next"; mv -f -- "$next" "$state_file"; }
+mark() { install -m 0600 /dev/null "$checks_root/$1"; }; probe_owner() { runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" "$@"; }
+json_field() { /opt/matrix/runtime/node/bin/node -e '
+    let raw=""; process.stdin.on("data",d=>raw+=d); process.stdin.on("end",()=>{
+      const value=JSON.parse(raw),keys=process.argv[1].split(".");let current=value;for(const key of keys)current=current?.[key];
+      if(current===undefined||current===null)process.exit(1);process.stdout.write(String(current));});
+  ' "$1"; }
+wait_active() { local unit="$1"; for _ in $(seq 1 180); do [ "$(systemctl is-active "$unit" 2>/dev/null || true)" = active ] && return 0; sleep 1; done; return 1; }
+wait_absent() { local unit="$1"; for _ in $(seq 1 60); do local state; state="$(systemctl is-active "$unit" 2>/dev/null || true)"; [ "$state" != active ] && [ "$state" != activating ] && return 0; sleep 1; done; return 1; }
+roles() { /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }
+roles_match() { local current; current="$(roles "$1")"; [ "$current" = "$(cat "$state_root/roles.json")" ]; }
+request_update() { runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
 wait_update() {
-  local expected="$1"
-  for _ in $(seq 1 4500); do
+  local expected="$1"; for _ in $(seq 1 4500); do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
       [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = idle ] &&
-      systemctl is-active --quiet matrix-gateway.service; then
-      return 0
-    fi
+      systemctl is-active --quiet matrix-gateway.service; then return 0; fi
     sleep 1
-  done
-  return 1
-}
-wait_failed_update() {
-  for _ in $(seq 1 4500); do
-    [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] &&
-      return 0
-    sleep 1
-  done
-  return 1
-}
-zellij() {
-  runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"
-}
+  done; return 1; }
+wait_failed_update() { for _ in $(seq 1 4500); do [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] && return 0; sleep 1; done; return 1; }
+zellij() { runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
 fail_phase() {
-  rm -f -- /etc/systemd/system/matrix-gateway.service.d/zz-terminal-acceptance.conf
-  systemctl daemon-reload >/dev/null 2>&1 || true
+  rm -f -- /etc/systemd/system/matrix-gateway.service.d/zz-terminal-acceptance.conf; systemctl daemon-reload >/dev/null 2>&1 || true
   systemctl start matrix-gateway.service matrix-shell.service >/dev/null 2>&1 || true
-  write_state failed
-  exit 1
+  write_state failed; exit 1
 }
 phase1() {
   trap fail_phase ERR
@@ -122,13 +57,10 @@ phase1() {
   install -d -o root -g root -m 0700 "$checks_root"
   write_state phase1-running
   local created runtime_id unit session_name
-  created="$(probe_owner create "$head_sha")"
-  runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
+  created="$(probe_owner create "$head_sha")"; runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
   [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]
-  printf '%s\n' "$runtime_id" >"$state_root/runtime-id"
-  chmod 0600 "$state_root/runtime-id"
-  unit="${unit_prefix}${runtime_id}.service"
-  session_name="matrix-t-${runtime_id}"
+  printf '%s\n' "$runtime_id" >"$state_root/runtime-id"; chmod 0600 "$state_root/runtime-id"
+  unit="${unit_prefix}${runtime_id}.service"; session_name="matrix-t-${runtime_id}"
   wait_active "$unit"; mark runtimeLive
   zellij --session "$session_name" action write-chars -- \
     "exec bash -lc 'while true; do printf \"MATRIX_ACCEPT_LOOP\\n\"; sleep 1; done'"
@@ -142,21 +74,17 @@ phase1() {
   for _ in $(seq 1 30); do
     local baseline shell_pid agent_pid
     baseline="$(roles "$runtime_id" 2>/dev/null || true)"
-    shell_pid="$(printf '%s' "$baseline" | json_field shell 2>/dev/null || true)"
-    agent_pid="$(printf '%s' "$baseline" | json_field agent 2>/dev/null || true)"
+    shell_pid="$(printf '%s' "$baseline" | json_field shell 2>/dev/null || true)"; agent_pid="$(printf '%s' "$baseline" | json_field agent 2>/dev/null || true)"
     if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]] && [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]]; then
-      printf '%s\n' "$baseline" >"$state_root/roles.json"
-      chmod 0600 "$state_root/roles.json"
+      printf '%s\n' "$baseline" >"$state_root/roles.json"; chmod 0600 "$state_root/roles.json"
       break
     fi
     sleep 1
   done
   roles_match "$runtime_id"
   mark continuousOutput; mark codingAgentPreserved
-  local runtime_cgroup
-  runtime_cgroup="$(systemctl show "$unit" -p ControlGroup --value)"
-  local attach_one=/run/matrix-terminal-accept-"${head_sha}"-1.json
-  local attach_two=/run/matrix-terminal-accept-"${head_sha}"-2.json
+  local runtime_cgroup; runtime_cgroup="$(systemctl show "$unit" -p ControlGroup --value)"
+  local attach_one=/run/matrix-terminal-accept-"${head_sha}"-1.json attach_two=/run/matrix-terminal-accept-"${head_sha}"-2.json
   rm -f -- "$attach_one" "$attach_two"
   runuser -u matrix -- /opt/matrix/runtime/node/bin/node \
     /opt/matrix/libexec/terminal-runtime/current/spikes/production-attach.mjs \
@@ -168,8 +96,7 @@ phase1() {
   local attach_parent_two=$!
   for _ in $(seq 1 30); do [ -f "$attach_one" ] && [ -f "$attach_two" ] && break; sleep 1; done
   local attach_cgroup_one attach_cgroup_two
-  attach_cgroup_one="$(cat "$attach_one" | json_field cgroup)"
-  attach_cgroup_two="$(cat "$attach_two" | json_field cgroup)"
+  attach_cgroup_one="$(cat "$attach_one" | json_field cgroup)"; attach_cgroup_two="$(cat "$attach_two" | json_field cgroup)"
   [ "$attach_cgroup_one" != "$runtime_cgroup" ]
   [ "$attach_cgroup_two" != "$runtime_cgroup" ]
   roles_match "$runtime_id"; mark twoDevicesOneRuntime
@@ -177,12 +104,10 @@ phase1() {
   wait "$attach_parent_one" "$attach_parent_two" 2>/dev/null || true
   rm -f -- "$attach_one" "$attach_two"
   roles_match "$runtime_id"; mark detachPreservesRuntime
-  local renamed
-  renamed="$(probe_owner rename "$runtime_id" "renamed-${head_sha:0:12}")"
+  local renamed; renamed="$(probe_owner rename "$runtime_id" "renamed-${head_sha:0:12}")"
   [ "$(printf '%s' "$renamed" | json_field runtimeId)" = "$runtime_id" ]
   roles_match "$runtime_id"; mark renamePreservesIdentity
-  local supervisor_pid
-  supervisor_pid="$(systemctl show matrix-terminal-runtime.service -p MainPID --value)"
+  local supervisor_pid; supervisor_pid="$(systemctl show matrix-terminal-runtime.service -p MainPID --value)"
   printf '%s\n' "$supervisor_pid" >"$state_root/supervisor-pid"
   request_update "$version_a"; wait_update "$version_a"; roles_match "$runtime_id"; mark bundleOnePreservesRuntime
   request_update "$version_b"; wait_update "$version_b"; roles_match "$runtime_id"; mark bundleTwoPreservesRuntime
@@ -299,8 +224,7 @@ case "$operation" in
     echo production_acceptance_started
     ;;
   status)
-    [ -f "$state_file" ] || { echo unavailable; exit 3; }
-    cat "$state_file"
+    [ -f "$state_file" ] || { echo unavailable; exit 3; }; cat "$state_file"
     ;;
   reboot)
     [ "$(cat "$state_file")" = phase1-ready ]

@@ -454,12 +454,17 @@ jobs:
               next_diagnostic="$(jq -r 'if .exitCode == 0 and .timedOut == false and
                 .truncated == false and .signal == null and
                 (.stdout | test("^spike_pack_evidence_incomplete_[a-z0-9_]+\\n?$"))
-                then (.stdout | rtrimstr("\n")) else "unavailable" end' "$pack_response" 2>/dev/null || printf unavailable)"
+                then (.stdout | rtrimstr("\n"))
+                elif .timedOut == true then "spike_pack_command_timeout" elif .truncated == true then "spike_pack_command_truncated"
+                elif ((.stderr // "") | test("^(?:spike|evidence)_[a-z0-9_]+\\n?$"))
+                then ((.stderr // "") | rtrimstr("\n"))
+                elif .exitCode != 0 then "spike_pack_command_failed" else "unavailable" end' "$pack_response" 2>/dev/null || printf unavailable)"
               if [ "$next_diagnostic" != unavailable ]; then
                 if [ "$next_diagnostic" != "$diagnostic" ]; then
                   diagnostic="$next_diagnostic"
                   echo "evidence_stage=${diagnostic}"
                 fi
+                if [[ "$diagnostic" =~ ^spike_pack_evidence_incomplete_[a-z0-9_]+_(descriptor|launch|cgroup|readiness|notify)_[a-z0-9_]+$ ]]; then echo "evidence_diagnostic=${diagnostic}" >&2; exit 1; fi
               elif jq -e '
                 type == "object" and .exitCode == 0 and .timedOut == false and
                 .truncated == false and .signal == null and

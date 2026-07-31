@@ -33,7 +33,6 @@ describe("gateway terminal runtime client", () => {
     expect(() => resolveGatewayTerminalRuntimeMode("fallback", "production"))
       .toThrow("terminal_runtime_mode_invalid");
   });
-
   it("retains direct spawn when the dormant production mode is legacy", async () => {
     await expect(initializeGatewayTerminalRuntime({
       mode: "legacy",

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -12,11 +13,9 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "terminal-legacy-migration-"));
   roots.push(root);
   const homePath = join(root, "home");
-  const durableRoot = join(homePath, "system", "terminal-runtime");
-  const runtimeRoot = join(root, "run");
   await mkdir(join(homePath, "system", "sessions"), { recursive: true });
   await mkdir(join(homePath, "projects", "example"), { recursive: true });
-  const state = await createRuntimeState({ durableRoot, runtimeRoot });
+  const state = await createRuntimeState({ durableRoot: join(homePath, "system", "terminal-runtime"), runtimeRoot: join(root, "run") });
   return { root, homePath, state };
 }
 function cwdResolver(homePath: string) {
@@ -208,7 +207,49 @@ describe("legacy terminal migration", () => {
     expect(nextId).toBe(2);
     await state.close();
   });
-  it("reuses a colliding workspace runtime after interruption before its legacy marker update", async () => {
+  it.each([false, true])("never assigns a colliding workspace to an unrelated derived-name runtime", async (indexed) => {
+    const { homePath, state } = await fixture();
+    await writeFile(join(homePath, "system", "shell-sessions.json"),
+      JSON.stringify({ sessions: {
+        main: { name: "main", status: "active", cwd: homePath },
+      } }));
+    await writeFile(join(homePath, "system", "sessions", "main.json"),
+      JSON.stringify({ id: "main", kind: "agent",
+        runtime: { type: "zellij", status: "running" } }));
+    const collisionName = `main-agent-${createHash("sha256")
+      .update(["workspace", "main.json", "main"].join("\0"))
+      .digest("hex")
+      .slice(0, 12)}`;
+    await state.receipts.create({ schemaVersion: 1, runtimeId: IDS[0],
+      displayName: collisionName,
+      cwd: { kind: "home-relative", path: "" },
+      createdAt: "2026-07-20T10:00:00.000Z",
+      metadataRevision: 1,
+      lastKnown: { state: "exited", at: "2026-07-20T10:00:00.000Z",
+        bootId: "unrelated-boot" },
+      zellij: { sessionName: `matrix-t-${IDS[0]}` },
+    });
+    if (indexed) await state.names.register(collisionName, IDS[0], 1, Date.now());
+    let nextId = 1;
+    await expect(migrateLegacyTerminalState({
+      homePath,
+      state,
+      resolveCwd: cwdResolver(homePath),
+      now: () => new Date("2026-07-26T10:00:00.000Z"),
+      bootId: "migration-boot",
+      createId: () => IDS[nextId++]!,
+    })).resolves.toMatchObject({ migrated: 2, existing: 0 });
+    const workspace = JSON.parse(await readFile(
+      join(homePath, "system", "sessions", "main.json"), "utf8"),
+    ) as { runtime: { runtimeId: string } };
+    expect(workspace.runtime.runtimeId).toBe(IDS[2]);
+    expect(workspace.runtime.runtimeId).not.toBe(IDS[0]);
+    const workspaceReceipt = await state.receipts.read(IDS[2]);
+    expect(workspaceReceipt?.kind === "supported" ? workspaceReceipt.receipt.displayName : null).not.toBe(collisionName);
+    expect(await state.receipts.list()).toHaveLength(3);
+    await state.close();
+  });
+  it("finishes a colliding workspace receipt after interruption following its durable intent", async () => {
     const { homePath, state } = await fixture();
     await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
       sessions: {
@@ -231,23 +272,30 @@ describe("legacy terminal migration", () => {
     const workspacePath = join(homePath, "system", "sessions", "main.json");
     await writeFile(workspacePath, JSON.stringify(legacyWorkspace));
     let nextId = 0;
+    let failWorkspace = true;
     const migrate = async () => await migrateLegacyTerminalState({
       homePath,
       state,
-      resolveCwd: cwdResolver(homePath),
+      resolveCwd: async (candidate) => {
+        if (failWorkspace && candidate !== homePath) throw new Error("cwd_unavailable");
+        return await cwdResolver(homePath)(candidate);
+      },
+      resolveWorkspaceCwd: async () => "/unavailable",
       now: () => new Date("2026-07-26T10:00:00.000Z"),
       bootId: "migration-boot",
       createId: () => IDS[nextId++]!,
     });
+    await expect(migrate()).rejects.toThrow("cwd_unavailable");
+    expect(await state.receipts.list()).toHaveLength(1);
+    expect(JSON.parse(await readFile(workspacePath, "utf8"))).toHaveProperty(
+      "terminalRuntimeMigration.runtimeId", IDS[1],
+    );
+    await writeFile(join(homePath, "system", "shell-sessions.json"),
+      JSON.stringify({ sessions: {} }));
+    failWorkspace = false;
     await expect(migrate()).resolves.toMatchObject({
-      migrated: 2,
+      migrated: 1,
       existing: 0,
-    });
-    // Recreate a crash after receipt/name commit but before replacing the legacy marker.
-    await writeFile(workspacePath, JSON.stringify(legacyWorkspace));
-    await expect(migrate()).resolves.toMatchObject({
-      migrated: 0,
-      existing: 2,
       workspaceRecordsUpdated: 1,
     });
     expect(nextId).toBe(2);

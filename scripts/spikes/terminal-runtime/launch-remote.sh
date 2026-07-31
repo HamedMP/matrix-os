@@ -32,6 +32,7 @@ else
     --no-block \
     --property=Type=exec \
     --property=KillMode=control-group \
+    --property=RuntimeMaxSec=1800 \
     --property=StandardOutput=null \
     --property=StandardError=null \
     --property=TimeoutStopSec=30 \
