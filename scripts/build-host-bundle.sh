@@ -141,6 +141,7 @@ cp -aL --no-preserve=links \
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
   install -d -m 0755 "$terminal_generation_build/spikes"
   cp -a --no-preserve=links "$ROOT_DIR/scripts/spikes/terminal-runtime/." "$terminal_generation_build/spikes/"
+  chmod 0755 "$terminal_generation_build/spikes/"{launch-remote,pack-evidence,run-remote,production-acceptance}.sh
   install -m 0644 "$ROOT_DIR/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json" "$terminal_generation_build/spikes/v0.44.3-matrix.1.build.json"
 fi
 if find "$terminal_generation_build" -type l -print -quit | grep -q .; then

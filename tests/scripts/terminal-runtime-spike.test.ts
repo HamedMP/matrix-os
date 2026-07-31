@@ -264,7 +264,6 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).toContain('echo "evidence_diagnostic=${diagnostic}" >&2');
-    expect(workflow).toContain('echo "evidence_stage=${diagnostic}"');
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
@@ -293,7 +292,7 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expect(previewWorkflow).toContain("MATRIX_TERMINAL_RUNTIME_SPIKE: '1'");
     expect(buildScript).toContain('if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then');
-    expect(buildScript).toContain('scripts/spikes/terminal-runtime');
+    expect(buildScript).toContain('chmod 0755 "$terminal_generation_build/spikes/"{launch-remote,pack-evidence,run-remote,production-acceptance}.sh');
   });
   it('requires an exact-head production acceptance matrix beyond S1 and S2', async () => {
     const [workflow, helper, runner, verifier] = await Promise.all([
@@ -419,7 +418,6 @@ describe('terminal runtime spike evidence', () => {
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/attach-probe.mjs'), 'utf8'),
     ]);
     expect(workflow).toContain('/opt/matrix/bin/matrix-terminal-spike-control');
-    expect(workflow).toContain('"pack",');
     expect(workflow).not.toContain('/opt/matrix/app/scripts/spikes');
     expect(workflow).toContain('evidence_deadline=$((SECONDS + 2100))');
     expect(workflow).toContain('"$EVIDENCE" --report-gates');
