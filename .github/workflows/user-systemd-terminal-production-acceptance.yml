@@ -1,0 +1,382 @@
+name: User-systemd Terminal Production Acceptance
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: user-systemd-terminal-production-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    if: >-
+      github.event.label.name == 'user-systemd-production-acceptance' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.resolve.outputs.pr }}
+      head: ${{ steps.resolve.outputs.head }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      handle: ${{ steps.resolve.outputs.handle }}
+    steps:
+      - id: resolve
+        name: Resolve immutable same-repository head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}")"
+          head="$(jq -r .head.sha <<<"$pr_json")"
+          ref="$(jq -r .head.ref <<<"$pr_json")"
+          repo="$(jq -r .head.repo.full_name <<<"$pr_json")"
+          if [ "$repo" != "$GITHUB_REPOSITORY" ] ||
+            [ "$head" != "$EVENT_HEAD" ] ||
+            ! printf '%s' "$head" | grep -Eq '^[0-9a-f]{40}$' ||
+            ! jq -e '.labels | any(.name == "preview-vps") and
+              any(.name == "user-systemd-production-acceptance")' <<<"$pr_json" >/dev/null; then
+            echo "Acceptance requires the immutable same-repository preview head." >&2
+            exit 1
+          fi
+          {
+            echo "pr=$PR"
+            echo "head=$head"
+            echo "ref=$ref"
+            echo "handle=pr-$PR"
+          } >>"$GITHUB_OUTPUT"
+
+  build:
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+      NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
+      NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: 28
+          elixir-version: 1.19
+      - name: Build two exact-head user-systemd acceptance bundles
+        env:
+          HEAD_SHA: ${{ needs.gate.outputs.head }}
+          HEAD_REF: ${{ needs.gate.outputs.ref }}
+          RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ] ||
+            [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "A real Clerk publishable key is required." >&2
+            exit 1
+          fi
+          for suffix in a b; do
+            version="v0.0.0-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
+            HOST_BUNDLE_VERSION="$version" HOST_BUNDLE_CHANNEL=none \
+              MATRIX_BUILD_SHA="$HEAD_SHA" MATRIX_BUILD_REF="$HEAD_REF" \
+              ./scripts/build-host-bundle.sh
+            mv dist/host-bundle "dist/user-systemd-acceptance-${suffix}"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: user-systemd-terminal-bundles-${{ needs.gate.outputs.head }}
+          path: |
+            dist/user-systemd-acceptance-a/matrix-host-bundle.tar.gz
+            dist/user-systemd-acceptance-a/matrix-host-bundle.tar.gz.sha256
+            dist/user-systemd-acceptance-a/manifest.json
+            dist/user-systemd-acceptance-a/incremental-manifest.json
+            dist/user-systemd-acceptance-a/objects/**
+            dist/user-systemd-acceptance-b/matrix-host-bundle.tar.gz
+            dist/user-systemd-acceptance-b/matrix-host-bundle.tar.gz.sha256
+            dist/user-systemd-acceptance-b/manifest.json
+            dist/user-systemd-acceptance-b/incremental-manifest.json
+            dist/user-systemd-acceptance-b/objects/**
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BUNDLES_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}
+      R2_ENDPOINT: ${{ vars.R2_BUNDLES_ENDPOINT || vars.R2_ENDPOINT || format('https://{0}.r2.cloudflarestorage.com', secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID) }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: user-systemd-terminal-bundles-${{ needs.gate.outputs.head }}
+          path: dist
+      - name: Publish both immutable register-only bundles
+        env:
+          HEAD_SHA: ${{ needs.gate.outputs.head }}
+          PR: ${{ needs.gate.outputs.pr }}
+          RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          for suffix in a b; do
+            rm -rf dist/host-bundle
+            cp -a "dist/user-systemd-acceptance-${suffix}" dist/host-bundle
+            version="v0.0.0-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
+            ./scripts/publish-release.sh "$version" --channel none \
+              --changelog "User-systemd terminal acceptance for PR #${PR}"
+          done
+
+  prove:
+    needs: [gate, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      HANDLE: ${{ needs.gate.outputs.handle }}
+      HEAD_SHA: ${{ needs.gate.outputs.head }}
+      PR: ${{ needs.gate.outputs.pr }}
+      RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+      TEST_ONLY_ACTIVATION: MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - name: Resolve exact-head disposable preview
+        id: preview
+        run: |
+          set -euo pipefail
+          [ "$TEST_ONLY_ACTIVATION" = "MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1" ]
+          deadline=$((SECONDS + 3600))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            fleet="$(curl --fail --silent --show-error --max-time 30 \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+            machine="$(jq -ce --arg handle "$HANDLE" '
+              [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+                and .status == "running")] | if length == 1 then .[0] else {} end
+            ' <<<"$fleet")"
+            version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+            address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+            if [[ "$version" == *"-${HEAD_SHA:0:7}"* ]] &&
+              printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+              echo "::add-mask::$address"
+              echo "address=$address" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Exact-head preview was unavailable." >&2
+          exit 1
+      - name: Install bounded acceptance assets through the authenticated runtime
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+        run: |
+          set -euo pipefail
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          endpoint='https://app.matrix-os.com/api/terminal/run'
+          send_command() {
+            local body="$1" response="$RUNNER_TEMP/user-systemd-command.json"
+            curl --fail --silent --show-error --max-time 90 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -o "$response" -X POST "$endpoint" \
+              -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
+              --data-binary "$body"
+            jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
+              "$response" >/dev/null
+          }
+          upload_asset() {
+            local source="$1" remote="$2" suffix="$3" payload offset chunk script body
+            local encoded="/tmp/matrix-user-systemd-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}.b64"
+            local decoded="/tmp/matrix-user-systemd-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
+            payload="$(gzip -9 -c "$source" | base64 --wrap=0)"
+            body="$(jq -cn --arg file "$encoded" '{command:["/usr/bin/truncate","--size","0",$file]}')"
+            send_command "$body"
+            offset=0
+            while [ "$offset" -lt "${#payload}" ]; do
+              chunk="${payload:$offset:3000}"
+              script="$(jq -nr --arg file "$encoded" --arg chunk "$chunk" \
+                '"printf %s " + ($chunk|@sh) + " >> " + ($file|@sh)')"
+              body="$(jq -cn --arg script "$script" '{command:["/bin/bash","-c",$script]}')"
+              send_command "$body"
+              offset=$((offset + 3000))
+            done
+            script="$(jq -nr --arg input "$encoded" --arg output "$decoded" \
+              '"umask 077; base64 --decode " + ($input|@sh) + " | gzip --decompress > " + ($output|@sh)')"
+            body="$(jq -cn --arg script "$script" '{command:["/bin/bash","-c",$script]}')"
+            send_command "$body"
+            body="$(jq -cn --arg source "$decoded" --arg target "$remote" \
+              '{command:["/usr/bin/sudo","/usr/bin/install","-o","root","-g","root","-m","0700",$source,$target]}')"
+            send_command "$body"
+            body="$(jq -cn --arg first "$encoded" --arg second "$decoded" \
+              '{command:["/usr/bin/rm","-f","--",$first,$second]}')"
+            send_command "$body"
+          }
+          remote_base="/var/tmp/matrix-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}"
+          upload_asset scripts/spikes/user-systemd-terminal/production-acceptance.sh \
+            "${remote_base}.sh" helper
+          upload_asset scripts/spikes/user-systemd-terminal/production-probe.mjs \
+            "${remote_base}-probe.mjs" probe
+          printf '%s\n' "$remote_base" >"$RUNNER_TEMP/user-systemd-remote-base"
+      - name: Run two-bundle, gateway-failure, rollback, and pre-reboot matrix
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+        run: |
+          set -euo pipefail
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          helper="$(cat "$RUNNER_TEMP/user-systemd-remote-base").sh"
+          call_helper() {
+            local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
+            body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
+              --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
+              command:["/usr/bin/sudo",$helper,$op,$sha,$nonce],timeoutMs:30000}')"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
+              --data-binary "$body"
+            jq -er 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) | .stdout' \
+              "$response"
+          }
+          call_helper prepare
+          sleep 5
+          deadline=$((SECONDS + 300))
+          until state="$(call_helper status 2>/dev/null)" && grep -q '^prepared$' <<<"$state"; do
+            [ "$SECONDS" -lt "$deadline" ] || exit 1
+            sleep 5
+          done
+          call_helper launch
+          deadline=$((SECONDS + 14400))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if state="$(call_helper status 2>/dev/null)" && grep -q '^phase1-ready$' <<<"$state"; then
+              break
+            fi
+            if grep -q '^failed$' <<<"${state:-}"; then exit 1; fi
+            sleep 15
+          done
+          grep -q '^phase1-ready$' <<<"${state:-}"
+          call_helper reboot
+      - name: Verify zero automatic execution after reboot
+        id: evidence
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+        run: |
+          set -euo pipefail
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          helper="$(cat "$RUNNER_TEMP/user-systemd-remote-base").sh"
+          call_helper() {
+            local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
+            body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
+              --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
+              command:["/usr/bin/sudo",$helper,$op,$sha,$nonce],timeoutMs:30000}')"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
+              --data-binary "$body"
+            jq -er 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) | .stdout' \
+              "$response"
+          }
+          sleep 20
+          deadline=$((SECONDS + 900))
+          until call_helper status >/dev/null 2>&1; do
+            [ "$SECONDS" -lt "$deadline" ] || exit 1
+            sleep 15
+          done
+          call_helper resume
+          deadline=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if state="$(call_helper status 2>/dev/null)" && grep -q '^complete$' <<<"$state"; then
+              break
+            fi
+            if grep -q '^failed$' <<<"${state:-}"; then exit 1; fi
+            sleep 10
+          done
+          grep -q '^complete$' <<<"${state:-}"
+          call_helper pack >"$RUNNER_TEMP/user-systemd-terminal-evidence.json"
+          jq -e --arg head "$HEAD_SHA" '
+            .schemaVersion == 1 and .headSha == $head and
+            (.summarySha256 | test("^[0-9a-f]{64}$")) and
+            .checks == ([
+              "bundleOnePreservesRuntimes",
+              "bundleTwoPreservesRuntimes",
+              "corruptAndSymlinkStateFailsClosed",
+              "deleteRemovesExactRuntime",
+              "detachPreservesRuntimes",
+              "gatewayRestartPreservesRuntimes",
+              "gatewaySigkillPreservesRuntimes",
+              "generationGcIsReferenceAndSymlinkSafe",
+              "independentRuntimeCgroups",
+              "ordinaryShellRuntime",
+              "realCodingAgentRuntime",
+              "rebootProducesNoOutput",
+              "rebootStartsNoRuntime",
+              "resourceControlsPresent",
+              "resourceLimitIsolatesFailure",
+              "rollbackPreservesRuntimes"
+            ] | sort)
+          ' "$RUNNER_TEMP/user-systemd-terminal-evidence.json" >/dev/null
+          node --input-type=module - "$RUNNER_TEMP/user-systemd-terminal-evidence.json" <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFile } from "node:fs/promises";
+          const evidence = JSON.parse(await readFile(process.argv[2], "utf8"));
+          const { summarySha256, ...payload } = evidence;
+          const expected = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+          if (summarySha256 !== expected) process.exit(1);
+          NODE
+          digest="$(jq -er .summarySha256 "$RUNNER_TEMP/user-systemd-terminal-evidence.json")"
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: user-systemd-terminal-production-${{ needs.gate.outputs.head }}
+          path: ${{ runner.temp }}/user-systemd-terminal-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Comment exact-head production evidence
+        env:
+          DIGEST: ${{ steps.evidence.outputs.digest }}
+        run: |
+          set -euo pipefail
+          body="**User-systemd terminal production acceptance passed**
+
+          - Commit: \`${HEAD_SHA}\`
+          - Shell and real Codex runtimes, disconnect, gateway restart/SIGKILL, two bundles, rollback, exact deletion, hostile-state GC, resource isolation, and reboot: pass
+          - Evidence SHA-256: \`${DIGEST}\`
+          - Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          The bounded artifact contains check names only; terminal contents, credentials, paths, names, PIDs, and host addresses are excluded. Production activation remains a separate decision."
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" >/dev/null

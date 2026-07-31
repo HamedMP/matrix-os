@@ -106,4 +106,54 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(updater).not.toMatch(/systemctl stop[^\n]*(matrix-zellij|matrix-terminal\.slice|user@)/);
     expect(updater).not.toMatch(/systemctl restart[^\n]*(matrix-zellij|matrix-terminal\.slice|user@)/);
   });
+
+  it("gates exact-head disposable-VPS acceptance behind an explicit same-repository label", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/user-systemd-terminal-production-acceptance.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("github.event.label.name == 'user-systemd-production-acceptance'");
+    expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
+    expect(workflow).toContain('any(.name == "preview-vps")');
+    expect(workflow).toContain('any(.name == "user-systemd-production-acceptance")');
+    expect(workflow).toContain("ref: ${{ needs.gate.outputs.head }}");
+    expect(workflow).toContain("--channel none");
+    expect(workflow).not.toMatch(/--channel\s+(dev|canary|beta|stable)/);
+  });
+
+  it("requires two immutable bundles and the complete dormant-runtime host matrix", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/user-systemd-terminal-production-acceptance.yml"),
+      "utf8",
+    );
+    const acceptance = readFileSync(
+      join(root, "scripts/spikes/user-systemd-terminal/production-acceptance.sh"),
+      "utf8",
+    );
+    const probe = readFileSync(
+      join(root, "scripts/spikes/user-systemd-terminal/production-probe.mjs"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("Build two exact-head user-systemd acceptance bundles");
+    expect(workflow).toContain('for suffix in a b; do');
+    expect(workflow).toContain("MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1");
+    expect(acceptance).toContain("gatewayRestartPreservesRuntimes");
+    expect(acceptance).toContain("gatewaySigkillPreservesRuntimes");
+    expect(acceptance).toContain("bundleOnePreservesRuntimes");
+    expect(acceptance).toContain("bundleTwoPreservesRuntimes");
+    expect(acceptance).toContain("rollbackPreservesRuntimes");
+    expect(acceptance).toContain("detachPreservesRuntimes");
+    expect(acceptance).toContain("deleteRemovesExactRuntime");
+    expect(acceptance).toContain("corruptAndSymlinkStateFailsClosed");
+    expect(acceptance).toContain("generationGcIsReferenceAndSymlinkSafe");
+    expect(acceptance).toContain("resourceLimitIsolatesFailure");
+    expect(acceptance).toContain("rebootStartsNoRuntime");
+    expect(acceptance).toContain("rebootProducesNoOutput");
+    expect(probe).toContain("matrix-zellij@");
+    expect(probe).toContain("ControlGroup");
+    expect(probe).toContain("MemoryMax");
+    expect(probe).toContain("TasksMax");
+  });
 });
