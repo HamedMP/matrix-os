@@ -13,6 +13,10 @@ import {
   validateEvidenceDirectory,
 } from '../../scripts/spikes/terminal-runtime/verify-evidence.mjs';
 const roots: string[] = [];
+const expectAll = (source: string, expected: string[]) => {
+  for (const value of expected) expect(source).toContain(value);
+};
+const readRepo = (path: string) => readFile(join(process.cwd(), path), 'utf8');
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -23,9 +27,7 @@ stopEmptiesCgroup keeperLossDeterministic serverLossDeterministic readinessGated
 const s2Checks = passing(`exactOptionSyntax cacheMappedByRuntime layoutRestored viewportRestored
 scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
 deletionComplete diskAccountingBounded liveSerializationDisableSafe`);
-const productionChecks = passing(`runtimeLive continuousOutput codingAgentPreserved twoDevicesOneRuntime
-detachPreservesRuntime renamePreservesIdentity bundleOnePreservesRuntime bundleTwoPreservesRuntime
-supervisorPreserved failedUpdatePreservesRuntime explicitRollbackPreservesRuntime daemonReloadPreservesRuntime forceRunAbsent journalPrivacy
+const productionChecks = passing(`runtimeLive continuousOutput codingAgentPreserved twoDevicesOneRuntime detachPreservesRuntime renamePreservesIdentity bundleOnePreservesRuntime bundleTwoPreservesRuntime supervisorPreserved failedUpdatePreservesRuntime explicitRollbackPreservesRuntime daemonReloadPreservesRuntime forceRunAbsent journalPrivacy
 rebootStartsNoRuntime rebootShowsInterrupted explicitRecoverRestoresRuntime concurrentRecoverSingleUnit corruptionFallsBackFresh recoverDeleteCannotResurrect deleteWaitsForEmptyCgroup deleteRemovesRecoveryState`);
 async function evidence(overrides: Record<string, unknown> = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-evidence-'));
@@ -118,60 +120,33 @@ describe('terminal runtime spike evidence', () => {
       workRoot: '/tmp/matrix-zellij-build-v0.44.3-matrix.1',
       binarySha256: '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4',
     });
-    expect(builder).toContain('v0.44.3-matrix.1.build.json');
-    expect(builder).toContain('cp -- "$candidate_record" "$output_dir/build.json"');
-    expect(remoteRunner).toContain(
-      'candidate_build_record="$source_dir/v0.44.3-matrix.1.build.json"',
-    );
+    expectAll(builder, ['v0.44.3-matrix.1.build.json', 'cp -- "$candidate_record" "$output_dir/build.json"',
+      'ZELLIJ_SOURCE_VERSION="$(jq -er .sourceVersion "$candidate_record")"', 'cargo test -p zellij-server',
+      'serialized_pane_restores_bounded_viewport_offset', 'ZELLIJ_TARGET="$(jq -er .target "$candidate_record")"',
+      'zellij_binary_digest_mismatch', '--target "$ZELLIJ_TARGET"', 'export CARGO_HOME="$work_dir/cargo-home"',
+      'work_dir="$ZELLIJ_WORK_ROOT"', 'mkdir -m 0700 -- "$work_dir"', 'export CARGO_INCREMENTAL=0',
+      'export SOURCE_DATE_EPOCH="$ZELLIJ_SOURCE_DATE_EPOCH"', '--remap-path-prefix=$work_dir=$ZELLIJ_PATH_REMAP',
+      'command_panes_serialize_initial_contents_for_gated_resurrection']);
+    expectAll(remoteRunner, ['candidate_build_record="$source_dir/v0.44.3-matrix.1.build.json"',
+      'record_preflight binary_manifest_read',
+      'rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"']);
     expect(remoteRunner).not.toContain('/opt/matrix/app');
     expect(remoteRunner).not.toMatch(/\bjq\b/);
-    expect(remoteRunner).toContain('record_preflight binary_manifest_read');
-    expect(remoteRunner).toContain(
-      'rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"',
-    );
     expect(verifier).toContain('terminal-runtime/zellij/v0.44.3-matrix.1.build.json');
-    expect(builder).toContain('ZELLIJ_SOURCE_VERSION="$(jq -er .sourceVersion "$candidate_record")"');
-    expect(builder).toContain('cargo test -p zellij-server');
-    expect(builder).toContain('serialized_pane_restores_bounded_viewport_offset');
-    expect(builder).toContain('ZELLIJ_TARGET="$(jq -er .target "$candidate_record")"');
-    expect(builder).toContain('zellij_binary_digest_mismatch');
-    expect(builder).toContain('--target "$ZELLIJ_TARGET"');
-    expect(builder).toContain('export CARGO_HOME="$work_dir/cargo-home"');
-    expect(builder).toContain('work_dir="$ZELLIJ_WORK_ROOT"');
-    expect(builder).toContain('mkdir -m 0700 -- "$work_dir"');
-    expect(builder).toContain('export CARGO_INCREMENTAL=0');
-    expect(builder).toContain('export SOURCE_DATE_EPOCH="$ZELLIJ_SOURCE_DATE_EPOCH"');
-    expect(builder).toContain('--remap-path-prefix=$work_dir=$ZELLIJ_PATH_REMAP');
-    expect(zellijPatch).toContain('grid_before_banner');
-    expect(zellijPatch).toContain('scrollback_lines_to_serialize.saturating_sub(viewport_lines_to_serialize)');
-    expect(zellijPatch).toContain('.take(lines_below_to_serialize)');
-    expect(zellijPatch).toContain('matrix-zellij-viewport-offset-v1=');
-    expect(zellijPatch).toContain('held_resurrected_pane_preserves_viewport_and_history_across_reflow');
-    expect(zellijPatch).toContain('serialized_pane_content_is_bounded_including_the_viewport');
-    expect(zellijPatch).toContain('serialized_pane_restores_bounded_viewport_offset');
-    expect(zellijPatch).toContain('restore_serialized_contents');
-    expect(zellijPatch).toContain(
-      'command_panes_serialize_initial_contents_for_gated_resurrection',
-    );
-    expect(zellijPatch).toContain('+        if edit.is_none() {');
-    expect(builder).toContain(
-      'command_panes_serialize_initial_contents_for_gated_resurrection',
-    );
-    expect(previewWorkflow).toContain('Build verified production Zellij');
-    expect(previewWorkflow).toContain('runs-on: ubuntu-24.04');
-    expect(previewWorkflow).toContain('HOST_BUNDLE_ZELLIJ_BUILD_DIR:');
+    expectAll(zellijPatch, ['grid_before_banner', 'scrollback_lines_to_serialize.saturating_sub(viewport_lines_to_serialize)',
+      '.take(lines_below_to_serialize)', 'matrix-zellij-viewport-offset-v1=',
+      'held_resurrected_pane_preserves_viewport_and_history_across_reflow',
+      'serialized_pane_content_is_bounded_including_the_viewport', 'serialized_pane_restores_bounded_viewport_offset',
+      'restore_serialized_contents', 'command_panes_serialize_initial_contents_for_gated_resurrection',
+      '+        if edit.is_none() {']);
+    expectAll(previewWorkflow, ['Build verified production Zellij', 'runs-on: ubuntu-24.04',
+      'HOST_BUNDLE_ZELLIJ_BUILD_DIR:']);
     expect(buildScript).toContain('HOST_BUNDLE_ZELLIJ_BUILD_DIR');
-    expect(syncAgent).toContain('zellij_candidate_digest_mismatch');
-    expect(syncAgent).toContain('mv -f "$zellij_next" "$BIN_DIR/zellij"');
-    expect(syncAgent).toContain('zellij_installed_digest_mismatch');
-    expect(syncAgent).toContain("! -name 'zellij'");
-    expect(syncAgent).toContain("! -name 'zellij.build.json'");
-    expect(syncAgent).toContain("! -name 'matrix-terminal-*'");
-    expect(syncAgent).toContain('backup_zellij_for_rollback');
-    expect(syncAgent).toContain('restore_zellij_after_rollback');
-    expect(syncAgent).toContain('readonly ZELLIJ_ROLLBACK_DIR="$ROLLBACK_STATE_DIR/zellij.rollback"');
-    expect(syncAgent).toContain('local rollback_next="${ZELLIJ_ROLLBACK_DIR}.next"');
-    expect(syncAgent).toContain('mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"');
+    expectAll(syncAgent, ['zellij_candidate_digest_mismatch', 'mv -f "$zellij_next" "$BIN_DIR/zellij"',
+      'zellij_installed_digest_mismatch', "! -name 'zellij'", "! -name 'zellij.build.json'",
+      "! -name 'matrix-terminal-*'", 'backup_zellij_for_rollback', 'restore_zellij_after_rollback',
+      'readonly ZELLIJ_ROLLBACK_DIR="$ROLLBACK_STATE_DIR/zellij.rollback"',
+      'local rollback_next="${ZELLIJ_ROLLBACK_DIR}.next"', 'mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"']);
     const rollbackBackup = syncAgent.slice(
       syncAgent.indexOf('backup_zellij_for_rollback()'),
       syncAgent.indexOf('restore_zellij_after_rollback()'),
@@ -272,18 +247,8 @@ describe('terminal runtime spike evidence', () => {
       join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'),
       'utf8',
     );
-    expect(workflow).toContain(
-      "github.event.label.name == 'terminal-preview-reprovision'",
-    );
-    expect(workflow).toContain(
-      'any(.name == "terminal-preview-reprovision")',
-    );
-    expect(workflow).toContain(
-      'if length == 1 then .[0].machineId else error("preview_unavailable") end',
-    );
-    expect(workflow).toContain(
-      '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"',
-    );
+    expectAll(workflow, ["github.event.label.name == 'terminal-preview-reprovision'", 'any(.name == "terminal-preview-reprovision")',
+      'if length == 1 then .[0].machineId else error("preview_unavailable") end', '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"']);
   });
   it('packages the harness only for explicitly marked preview bundles', async () => {
     const [buildScript, previewWorkflow] = await Promise.all([
@@ -296,71 +261,24 @@ describe('terminal runtime spike evidence', () => {
   });
   it('requires an exact-head production acceptance matrix beyond S1 and S2', async () => {
     const [workflow, helper, runner, verifier] = await Promise.all([
-      readFile(
-        join(
-          process.cwd(),
-          '.github/workflows/terminal-runtime-production-acceptance.yml',
-        ),
-        'utf8',
-      ),
-      readFile(
-        join(
-          process.cwd(),
-          'distro/customer-vps/host-bin/matrix-terminal-spike-control',
-        ),
-        'utf8',
-      ),
-      readFile(
-        join(
-          process.cwd(),
-          'scripts/spikes/terminal-runtime/production-acceptance.sh',
-        ),
-        'utf8',
-      ),
-      readFile(
-        join(
-          process.cwd(),
-          'scripts/spikes/terminal-runtime/verify-production-evidence.mjs',
-        ),
-        'utf8',
-      ),
+      readRepo('.github/workflows/terminal-runtime-production-acceptance.yml'),
+      readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-control'), readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh'),
+      readRepo('scripts/spikes/terminal-runtime/verify-production-evidence.mjs'),
     ]);
-    expect(workflow).toContain("github.event.label.name == 'terminal-production-acceptance'");
-    expect(workflow).toContain('timeout-minutes: 360');
+    expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 18000))',
+      'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
+      'call_helper acceptance-pack', 'Validate the complete production matrix']);
     expect(runner).toContain('for _ in $(seq 1 4500)');
-    expect(workflow).toContain('deadline=$((SECONDS + 18000))');
-    expect(workflow).toContain('call_helper acceptance-launch');
-    expect(workflow).toContain('call_helper acceptance-reboot');
-    expect(workflow).toContain('call_helper acceptance-resume');
-    expect(workflow).toContain('call_helper acceptance-pack');
-    expect(workflow).toContain('Validate the complete production matrix');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
-    expect(helper).toContain(
-      'acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack',
-    );
+    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack', 'exec /usr/bin/bash "$target"']);
     expect(helper).not.toContain('[ ! -x "$target" ]');
-    expect(helper).toContain('exec /usr/bin/bash "$target"');
-    for (const check of [
-      'bundleOnePreservesRuntime',
-      'bundleTwoPreservesRuntime',
-      'failedUpdatePreservesRuntime',
-      'explicitRollbackPreservesRuntime',
-      'rebootStartsNoRuntime',
-      'explicitRecoverRestoresRuntime',
-      'concurrentRecoverSingleUnit',
-      'recoverDeleteCannotResurrect',
-      'corruptionFallsBackFresh',
-      'deleteWaitsForEmptyCgroup',
-    ]) {
+    for (const check of `bundleOnePreservesRuntime bundleTwoPreservesRuntime failedUpdatePreservesRuntime explicitRollbackPreservesRuntime rebootStartsNoRuntime
+explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotResurrect corruptionFallsBackFresh deleteWaitsForEmptyCgroup`.split(/\s+/)) {
       expect(runner).toContain(check);
       expect(verifier).toContain(check);
     }
-    expect(runner).toContain(
-      "pgrep -a zellij | grep -F -- '--force-run-commands'",
-    );
-    expect(runner).not.toMatch(
-      /zellij(?:_cmd)?\s[^|\n]*--force-run-commands/,
-    );
+    expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
+    expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
     expect(workflow).not.toContain('VPS_SSH_KEY');
   });
   it('fails closed on incomplete, stale, or extended production evidence', async () => {
@@ -371,6 +289,8 @@ describe('terminal runtime spike evidence', () => {
       process.cwd(),
       'scripts/spikes/terminal-runtime/verify-production-evidence.mjs',
     );
+    const verify = (expectedHead: string) =>
+      spawnSync(process.execPath, [verifier, root, '--expected-head', expectedHead]).status;
     const summary = {
       schemaVersion: 1,
       prHeadSha: head,
@@ -381,26 +301,18 @@ describe('terminal runtime spike evidence', () => {
       privacyScan: { status: 'pass', findings: 0 },
     };
     await writeFile(join(root, 'summary.json'), `${JSON.stringify(summary)}\n`);
-    expect(spawnSync(process.execPath, [
-      verifier, root, '--expected-head', head,
-    ]).status).toBe(0);
+    expect(verify(head)).toBe(0);
     const missing = structuredClone(summary);
     delete missing.checks.bundleTwoPreservesRuntime;
     await writeFile(join(root, 'summary.json'), `${JSON.stringify(missing)}\n`);
-    expect(spawnSync(process.execPath, [
-      verifier, root, '--expected-head', head,
-    ]).status).not.toBe(0);
+    expect(verify(head)).not.toBe(0);
     await writeFile(join(root, 'summary.json'), `${JSON.stringify({
       ...summary,
       extra: true,
     })}\n`);
-    expect(spawnSync(process.execPath, [
-      verifier, root, '--expected-head', head,
-    ]).status).not.toBe(0);
+    expect(verify(head)).not.toBe(0);
     await writeFile(join(root, 'summary.json'), `${JSON.stringify(summary)}\n`);
-    expect(spawnSync(process.execPath, [
-      verifier, root, '--expected-head', 'b'.repeat(40),
-    ]).status).not.toBe(0);
+    expect(verify('b'.repeat(40))).not.toBe(0);
   });
   it('keeps every embedded spike asset inside the immutable-manifest path contract', async () => {
     const assetRoot = join(process.cwd(), 'scripts/spikes/terminal-runtime');
