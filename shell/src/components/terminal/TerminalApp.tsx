@@ -109,10 +109,16 @@ let shellSessionsListInflight: {
 // that migration finishing last.
 let terminalLayoutWriteTail: Promise<void> = Promise.resolve();
 let terminalLayoutWriteGeneration = 0;
+let terminalLayoutMutationRevision = 0;
 let activeTerminalLayoutWrite: {
   generation: number;
   controller: AbortController;
   startImmediately: boolean;
+  layoutRevision: number;
+} | null = null;
+let pendingImmediateTerminalLayoutWrite: {
+  layoutRevision: number;
+  start: () => Promise<void>;
 } | null = null;
 
 function enqueueTerminalLayoutWrite(
@@ -120,6 +126,7 @@ function enqueueTerminalLayoutWrite(
   options: {
     keepalive: boolean;
     startImmediately?: boolean;
+    layoutRevision?: number;
     failureMessage: string;
   },
 ): Promise<void> {
@@ -127,7 +134,7 @@ function enqueueTerminalLayoutWrite(
   const body = JSON.stringify(layout);
   const generation = ++terminalLayoutWriteGeneration;
   const performWrite = async () => {
-    if (generation < terminalLayoutWriteGeneration) {
+    if (!options.startImmediately && generation < terminalLayoutWriteGeneration) {
       return;
     }
     const controller = new AbortController();
@@ -135,6 +142,7 @@ function enqueueTerminalLayoutWrite(
       generation,
       controller,
       startImmediately: options.startImmediately === true,
+      layoutRevision: options.layoutRevision ?? generation,
     };
     try {
       const response = await fetch(`${gatewayUrl}/api/terminal/layout`, {
@@ -165,13 +173,38 @@ function enqueueTerminalLayoutWrite(
   };
 
   if (options.startImmediately) {
-    const priorTail = terminalLayoutWriteTail;
-    if (!activeTerminalLayoutWrite?.startImmediately) {
-      activeTerminalLayoutWrite?.controller.abort();
+    const scheduleFlush = pendingImmediateTerminalLayoutWrite === null;
+    const layoutRevision = options.layoutRevision ?? generation;
+    if (
+      pendingImmediateTerminalLayoutWrite === null ||
+      layoutRevision >= pendingImmediateTerminalLayoutWrite.layoutRevision
+    ) {
+      pendingImmediateTerminalLayoutWrite = {
+        layoutRevision,
+        start: performWrite,
+      };
     }
-    const write = performWrite();
-    terminalLayoutWriteTail = Promise.allSettled([priorTail, write]).then(() => undefined);
-    return write;
+    if (scheduleFlush) {
+      queueMicrotask(() => {
+        const pending = pendingImmediateTerminalLayoutWrite;
+        pendingImmediateTerminalLayoutWrite = null;
+        if (!pending) {
+          return;
+        }
+        if (
+          activeTerminalLayoutWrite?.startImmediately &&
+          activeTerminalLayoutWrite.layoutRevision >= pending.layoutRevision
+        ) {
+          return;
+        }
+        const priorTail = terminalLayoutWriteTail;
+        activeTerminalLayoutWrite?.controller.abort();
+        const write = pending.start();
+        terminalLayoutWriteTail = Promise.allSettled([priorTail, write])
+          .then(() => undefined);
+      });
+    }
+    return Promise.resolve();
   }
 
   const write = terminalLayoutWriteTail
@@ -485,6 +518,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const terminalLayoutHydratedRef = useRef(false);
   const terminalLayoutDirtyRef = useRef(false);
+  const layoutMutationRevisionRef = useRef(0);
   const markTerminalLayoutDirty = () => {
     terminalLayoutDirtyRef.current = true;
   };
@@ -528,6 +562,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return enqueueTerminalLayoutWrite(layout, {
       keepalive: true,
       startImmediately,
+      layoutRevision: layoutMutationRevisionRef.current,
       failureMessage: "Failed to save terminal layout",
     });
   };
@@ -872,6 +907,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       terminalLayoutHydratedRef.current = true;
       if (!terminalLayoutDirtyRef.current) return;
     }
+    terminalLayoutMutationRevision += 1;
+    layoutMutationRevisionRef.current = terminalLayoutMutationRevision;
     terminalLayoutDirtyRef.current = true;
 
     if (layoutSaveTimerRef.current) {

@@ -3896,7 +3896,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("does not cancel a sibling terminal surface pagehide save", async () => {
+  it("coalesces sibling pagehide saves to the most recently changed surface", async () => {
     const finishLayoutWrites: Array<(response: Response) => void> = [];
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -3940,6 +3940,11 @@ describe("TerminalApp", () => {
         paneProps[0]!.paneTree.id,
         "session-first-pagehide",
       );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
       paneProps[1]!.onSessionAttached(
         paneProps[1]!.paneTree.id,
         "session-second-pagehide",
@@ -3958,9 +3963,15 @@ describe("TerminalApp", () => {
     const layoutPutCalls = vi.mocked(fetch).mock.calls.filter(([input, init]) => (
       String(input).includes("/api/terminal/layout") && init?.method === "PUT"
     ));
-    expect(layoutPutCalls).toHaveLength(2);
+    expect(layoutPutCalls).toHaveLength(1);
     expect(layoutPutCalls[0]?.[1]?.signal).toMatchObject({ aborted: false });
-    expect(layoutPutCalls[1]?.[1]?.signal).toMatchObject({ aborted: false });
+    expect(JSON.parse(String(layoutPutCalls[0]?.[1]?.body))).toMatchObject({
+      tabs: [{
+        paneTree: {
+          sessionId: "session-second-pagehide",
+        },
+      }],
+    });
 
     await act(async () => {
       for (const finish of finishLayoutWrites) {
