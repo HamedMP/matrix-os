@@ -8,6 +8,7 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useDesktopConfigStore } from "../../shell/src/stores/desktop-config.js";
 import { useVocalStore } from "../../shell/src/stores/vocal.js";
+import { drainTerminalLaunchQueue } from "../../shell/src/lib/terminal-launch.js";
 
 const originalConsoleError = console.error;
 
@@ -169,6 +170,31 @@ describe("Desktop shell notifications", () => {
     });
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    window.history.replaceState({}, "", "/");
+    window.sessionStorage.clear();
+  });
+
+  it("opens and targets the canonical Canvas Terminal for the T3 handoff", async () => {
+    act(() => {
+      useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });
+    });
+    window.history.replaceState(
+      {},
+      "",
+      "/?launch=__terminal__&terminal_action=t3-connect",
+    );
+
+    render(<Desktop launchAppPath="__terminal__" terminalLaunchAction="t3-connect" />);
+
+    await waitFor(() => {
+      expect(
+        useWindowManager.getState().windows.some((win) => win.path === "__terminal__"),
+      ).toBe(true);
+    });
+    await waitFor(() => {
+      expect(drainTerminalLaunchQueue().map((launch) => launch.action)).toEqual(["t3-connect"]);
+    });
+    expect(window.location.search).toBe("");
   });
 
   it("renders connection, runtime, and vocal notices in the shared top-right stack outside the dock", async () => {

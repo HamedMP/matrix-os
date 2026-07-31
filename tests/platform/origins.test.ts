@@ -38,6 +38,7 @@ describe('platform/origins', () => {
       expect(resolveReturnPath('/onboarding/computer')).toBe('/onboarding/computer');
       expect(resolveReturnPath('/vm/alice')).toBe('/vm/alice');
       expect(resolveReturnPath('/auth/device?user_code=BCDF-GHJK')).toBe('/auth/device?user_code=BCDF-GHJK');
+      expect(resolveReturnPath('/?launch=__terminal__&terminal_action=t3-connect')).toBe('/?launch=__terminal__&terminal_action=t3-connect');
     });
 
     it('rejects off-allowlist and malicious paths, falling back to "/"', () => {
@@ -46,6 +47,10 @@ describe('platform/origins', () => {
       expect(resolveReturnPath('/admin')).toBe('/');          // not on the allowlist
       expect(resolveReturnPath('/?billing=setup&handoff=add-computer&next=/admin')).toBe('/');
       expect(resolveReturnPath('/?handoff=add-computer&billing=setup')).toBe('/');
+      expect(resolveReturnPath('/?launch=__terminal__')).toBe('/');
+      expect(resolveReturnPath('/?terminal_action=t3-connect')).toBe('/');
+      expect(resolveReturnPath('/?launch=__terminal__&terminal_action=other')).toBe('/');
+      expect(resolveReturnPath('/?launch=__terminal__&terminal_action=t3-connect&next=/admin')).toBe('/');
       expect(resolveReturnPath('/onboarding/computer/other')).toBe('/');
       expect(resolveReturnPath('https://evil.com')).toBe('/'); // absolute URL
       expect(resolveReturnPath('//evil.com')).toBe('/');       // protocol-relative

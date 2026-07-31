@@ -50,6 +50,11 @@ import { AppViewer } from "@/components/AppViewer";
 import { Settings } from "@/components/Settings";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
+import {
+  consumeTerminalLaunchActionFromLocation,
+  enqueueTerminalLaunchAction,
+  type TerminalLaunchAction,
+} from "@/lib/terminal-launch";
 
 interface MobileApp {
   id: string;
@@ -183,12 +188,13 @@ const DOCK_BADGE_STYLE: CSSProperties = {
 
 interface MobileShellProps {
   launchAppPath?: string | null;
+  terminalLaunchAction?: TerminalLaunchAction | null;
   onOpenCommandPalette?: () => void;
   cacheScope?: ShellSnapshotScope | null;
 }
 
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (apps, openStack, view, settingsOpen, time) are independent concerns with separate update sites and lifecycles (registry load, foreground stack, view mode, settings dialog, clock tick), not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
-export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }: MobileShellProps) {
+export function MobileShell({ launchAppPath, terminalLaunchAction, onOpenCommandPalette, cacheScope }: MobileShellProps) {
   const chat = useChatContext();
 
   const [apps, setApps] = useState<MobileApp[]>(() => mergeMobileApps(
@@ -302,14 +308,41 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     setView("app");
   }, []);
 
+  const openTerminalLaunch = useCallback((app: MobileApp, action: TerminalLaunchAction) => {
+    const id = `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    setOpenStack((prev) => {
+      const withoutOldestTerminal = prev.filter((entry, index) => {
+        if (entry.app.path !== "__terminal__") return true;
+        const terminalCount = prev.filter((candidate) => candidate.app.path === "__terminal__").length;
+        if (terminalCount < MAX_TERMINAL_INSTANCES) return true;
+        return index !== prev.findIndex((candidate) => candidate.app.path === "__terminal__");
+      });
+      return [...withoutOldestTerminal, { id, app, openedAt: Date.now() }];
+    });
+    setView("app");
+    requestAnimationFrame(() => {
+      if (enqueueTerminalLaunchAction(action, id)) {
+        consumeTerminalLaunchActionFromLocation();
+      }
+    });
+  }, []);
+
   useEffect(() => {
-    if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
+    const launchKey = terminalLaunchAction
+      ? `${launchAppPath ?? ""}:${terminalLaunchAction}`
+      : launchAppPath;
+    if (!launchAppPath || !launchKey || launchPathConsumedRef.current === launchKey) return;
     const app = apps.find((candidate) => candidate.path === launchAppPath);
     if (!app) return;
-    launchPathConsumedRef.current = launchAppPath;
+    launchPathConsumedRef.current = launchKey;
+    if (launchAppPath === "__terminal__" && terminalLaunchAction) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- imperative one-shot launch: the external URL requests a new canonical Terminal instance and queues its fixed action. The dedupe ref prevents repeated launches.
+      openTerminalLaunch(app, terminalLaunchAction);
+      return;
+    }
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state, react-doctor/no-adjust-state-on-prop-change -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
     openApp(app);
-  }, [apps, launchAppPath, openApp]);
+  }, [apps, launchAppPath, openApp, openTerminalLaunch, terminalLaunchAction]);
 
   const closeApp = (openId: string) => {
     const closed = stackRef.current.find((o) => o.id === openId);

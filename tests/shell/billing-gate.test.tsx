@@ -430,6 +430,40 @@ describe("BillingGate", () => {
     );
   });
 
+  it("sends the fixed T3 Connect handoff path when setup starts checkout", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?billing=setup&launch=__terminal__&terminal_action=t3-connect");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    vi.resetModules();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to pay" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/billing/checkout",
+        expect.objectContaining({
+          body: JSON.stringify({
+            planSlug: "matrix_builder",
+            interval: "monthly",
+            regionSlug: "region_fsn1",
+            returnPath: "/?launch=__terminal__&terminal_action=t3-connect",
+          }),
+        }),
+      ),
+    );
+  });
+
   it("shows confirmation feedback after a completed checkout redirect", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?checkout=success");
@@ -516,6 +550,32 @@ describe("BillingGate", () => {
 
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(navigationState.replace).toHaveBeenCalledWith("/");
+  });
+
+  it("returns to the fixed T3 Connect handoff after checkout becomes active", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState(
+      {},
+      "",
+      "/?launch=__terminal__&terminal_action=t3-connect&billing=success&checkout=success",
+    );
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = "matrix_starter";
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    expect(navigationState.replace).toHaveBeenCalledWith(
+      "/?launch=__terminal__&terminal_action=t3-connect",
+    );
   });
 
   it("shows default installs before provisioning with the CLI device return path once billing is active", async () => {

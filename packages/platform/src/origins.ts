@@ -64,6 +64,17 @@ const RETURN_PATH_ALLOWLIST: RegExp[] = [
   /^\/auth\/device(?:[/?].*)?$/,
 ];
 
+function isExactT3ConnectReturnPath(url: URL): boolean {
+  return (
+    url.pathname === '/' &&
+    url.searchParams.size === 2 &&
+    url.searchParams.getAll('launch').length === 1 &&
+    url.searchParams.get('launch') === '__terminal__' &&
+    url.searchParams.getAll('terminal_action').length === 1 &&
+    url.searchParams.get('terminal_action') === 't3-connect'
+  );
+}
+
 // Rejects any control character or space (code point <= 0x20). Implemented with
 // charCodeAt rather than a regex literal to keep control chars out of source.
 function hasUnsafePathChar(path: string): boolean {
@@ -85,7 +96,9 @@ export function resolveReturnPath(path: string | undefined | null): string {
   try {
     const url = new URL(path, 'https://return-path.invalid');
     const candidate = `${url.pathname}${url.search}`;
-    return RETURN_PATH_ALLOWLIST.some((re) => re.test(candidate)) ? candidate : '/';
+    return isExactT3ConnectReturnPath(url) || RETURN_PATH_ALLOWLIST.some((re) => re.test(candidate))
+      ? candidate
+      : '/';
   } catch (err: unknown) {
     // Unparseable path → safe default. The fallback IS the handling.
     return '/';
