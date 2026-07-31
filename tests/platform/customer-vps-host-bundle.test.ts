@@ -934,6 +934,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
     expect(workflow).toContain('recovery=(?:rollback|rescue)');
     expect(workflow).toContain(
+      'gateway_reason=(?:none|supervisor_unavailable|permission_denied|module_unavailable|native_module_unavailable|schema_invalid|address_in_use|type_error|reference_error|syntax_error|resource_exhausted|unknown)',
+    );
+    expect(workflow).toContain(
+      'gateway_status=(?:0|[1-9][0-9]{0,2})',
+    );
+    expect(workflow).toContain(
+      'supervisor_during_health=(?:active|activating|failed|inactive|unknown)',
+    );
+    expect(workflow).toContain(
       'activation_watch_diagnostic="$(classify_activation_watch_response "$response" "$code")"',
     );
     expect(workflow).toContain('then "sudo_rejected"');

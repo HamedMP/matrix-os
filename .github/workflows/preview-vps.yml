@@ -550,7 +550,7 @@ jobs:
               -X POST 'https://app.matrix-os.com/api/terminal/run' \
               -H "authorization: Bearer ${gateway_token}" \
               -H 'content-type: application/json' --data-binary "$body" &&
-              jq -er '.stdout | select(test("^activation_watch_(?:pending|success|timeout state=(?:idle|running|failed|unknown) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+) gateway=[a-z]+ supervisor=[a-z]+ recovery=(?:rollback|rescue))\\n$")) | rtrimstr("\n")' "$response"
+              jq -er '.stdout | select(test("^activation_watch_(?:pending|success|timeout state=(?:idle|running|failed|unknown) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+) gateway=(?:active|activating|failed|inactive|unknown) supervisor=(?:active|activating|failed|inactive|unknown) recovery=(?:rollback|rescue) gateway_reason=(?:none|supervisor_unavailable|permission_denied|module_unavailable|native_module_unavailable|schema_invalid|address_in_use|type_error|reference_error|syntax_error|resource_exhausted|unknown) gateway_status=(?:0|[1-9][0-9]{0,2}) supervisor_during_health=(?:active|activating|failed|inactive|unknown))\\n$")) | rtrimstr("\n")' "$response"
           }
           activation_watch_armed=false
           activation_watch_diagnostic=unavailable

@@ -43,6 +43,43 @@ write_watch_result() {
   sync -f "$watch_result"
   sync -f "$watch_root"
 }
+classify_gateway_failure() {
+  case "$gateway_log" in
+    *terminal_supervisor_unavailable* | *terminal_runtime_request_failed*)
+      printf '%s\n' supervisor_unavailable
+      ;;
+    *ERR_DLOPEN_FAILED*)
+      printf '%s\n' native_module_unavailable
+      ;;
+    *ERR_MODULE_NOT_FOUND* | *"Cannot find package"* | *"Cannot find module"*)
+      printf '%s\n' module_unavailable
+      ;;
+    *EACCES* | *"permission denied"* | *"Permission denied"*)
+      printf '%s\n' permission_denied
+      ;;
+    *ZodError*)
+      printf '%s\n' schema_invalid
+      ;;
+    *EADDRINUSE*)
+      printf '%s\n' address_in_use
+      ;;
+    *"heap out of memory"* | *ENOMEM* | *ENOSPC*)
+      printf '%s\n' resource_exhausted
+      ;;
+    *TypeError:*)
+      printf '%s\n' type_error
+      ;;
+    *ReferenceError:*)
+      printf '%s\n' reference_error
+      ;;
+    *SyntaxError:*)
+      printf '%s\n' syntax_error
+      ;;
+    *)
+      printf '%s\n' unknown
+      ;;
+  esac
+}
 activation_watch_rescue() {
   exec /usr/bin/python3 - "$pr_head_sha" "$watch_result" \
     /opt/matrix/env/host.env <<'PY'
@@ -101,8 +138,14 @@ def load_result(path):
     result = read_pinned(path, metadata, 256).decode().strip()
     if not re.fullmatch(
         r"activation_watch_timeout state=(idle|running|failed|unknown) "
-        r"phase=[a-z_]{1,32} failure=(none|[a-z0-9_]{1,64}) "
-        r"gateway=[a-z]+ supervisor=[a-z]+ recovery=rescue",
+        r"phase=[a-z_]{1,16} failure=(none|[a-z0-9_]{1,24}) "
+        r"gateway=(active|activating|failed|inactive|unknown) "
+        r"supervisor=(active|activating|failed|inactive|unknown) recovery=rescue "
+        r"gateway_reason=(none|supervisor_unavailable|permission_denied|"
+        r"module_unavailable|native_module_unavailable|schema_invalid|"
+        r"address_in_use|type_error|reference_error|syntax_error|"
+        r"resource_exhausted|unknown) gateway_status=(0|[1-9][0-9]{0,2}) "
+        r"supervisor_during_health=(active|activating|failed|inactive|unknown)",
         result,
     ):
         raise ValueError("invalid result")
@@ -192,9 +235,40 @@ if [ "$operation" = activation-watch-status ]; then
 fi
 if [ "$operation" = activation-watch-run ]; then
   seen_running=false
+  observed_gateway_reason=none
+  observed_gateway_status=0
+  observed_supervisor_during_health=unknown
+  watch_started="$(date +%s)"
   for _ in $(seq 1 300); do
     state="$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)"
+    phase="$(cat /run/matrix-update-runtime/operation-phase 2>/dev/null || true)"
     [ "$state" = running ] && seen_running=true
+    if [ "$state" = running ] && [ "$phase" = health_check ] &&
+      ! curl --fail --silent --max-time 2 http://127.0.0.1:4000/health >/dev/null; then
+      observed_supervisor_during_health="$(
+        systemctl is-active matrix-terminal-runtime.service 2>/dev/null || true
+      )"
+      case "$observed_supervisor_during_health" in
+        active | activating | failed | inactive) ;;
+        *) observed_supervisor_during_health=unknown ;;
+      esac
+      observed_gateway_status="$(
+        systemctl show matrix-gateway.service --property=ExecMainStatus --value 2>/dev/null ||
+          true
+      )"
+      [[ "$observed_gateway_status" =~ ^(0|[1-9][0-9]{0,2})$ ]] ||
+        observed_gateway_status=0
+      gateway_log="$(
+        journalctl -u matrix-gateway.service --since "@$watch_started" -n 256 --no-pager -o cat |
+          tail -c 65536 || true
+      )"
+      classified_gateway_reason="$(classify_gateway_failure)"
+      if [ "$observed_gateway_reason" = none ] ||
+        [ "$observed_gateway_reason" = unknown ]; then
+        observed_gateway_reason="$classified_gateway_reason"
+      fi
+      unset gateway_log
+    fi
     if [ "$seen_running" = true ] && [ "$state" = idle ] &&
       systemctl is-active --quiet matrix-gateway.service &&
       systemctl is-active --quiet matrix-terminal-runtime.service &&
@@ -207,11 +281,19 @@ if [ "$operation" = activation-watch-run ]; then
   state="$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)"
   phase="$(cat /run/matrix-update-runtime/operation-phase 2>/dev/null || true)"
   [[ "$state" =~ ^(idle|running|failed)$ ]] || state=unknown
-  [[ "$phase" =~ ^[a-z_]{1,32}$ ]] || phase=unknown
+  [[ "$phase" =~ ^[a-z_]{1,16}$ ]] || phase=unknown
   failure="$(cat /run/matrix-update-runtime/last-failure-code 2>/dev/null || true)"
-  [[ "$failure" =~ ^[a-z0-9_]{1,64}$ ]] || failure=none
+  [[ "$failure" =~ ^[a-z0-9_]{1,24}$ ]] || failure=none
   gateway="$(systemctl is-active matrix-gateway.service 2>/dev/null || true)"
   supervisor="$(systemctl is-active matrix-terminal-runtime.service 2>/dev/null || true)"
+  case "$gateway" in
+    active | activating | failed | inactive) ;;
+    *) gateway=unknown ;;
+  esac
+  case "$supervisor" in
+    active | activating | failed | inactive) ;;
+    *) supervisor=unknown ;;
+  esac
   systemctl restart matrix-update-runtime.service
   recovery=failed
   for _ in $(seq 1 30); do
@@ -231,7 +313,7 @@ if [ "$operation" = activation-watch-run ]; then
   fi
   if [ "$recovery" = failed ]; then recovery=rescue; fi
   write_watch_result \
-    "activation_watch_timeout state=$state phase=$phase failure=$failure gateway=$gateway supervisor=$supervisor recovery=$recovery"
+    "activation_watch_timeout state=$state phase=$phase failure=$failure gateway=$gateway supervisor=$supervisor recovery=$recovery gateway_reason=$observed_gateway_reason gateway_status=$observed_gateway_status supervisor_during_health=$observed_supervisor_during_health"
   if [ "$recovery" = rescue ]; then
     systemctl stop matrix-gateway.service >/dev/null 2>&1 || true
     activation_watch_rescue

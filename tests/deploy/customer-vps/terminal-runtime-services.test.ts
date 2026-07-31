@@ -236,6 +236,15 @@ describe('customer VPS terminal runtime services', () => {
     expect(helper).toContain('systemctl restart matrix-update-runtime.service');
     expect(helper).toContain('/opt/matrix/bin/matrix-update rollback');
     expect(helper).toContain('activation_watch_rescue()');
+    expect(helper).toContain('classify_gateway_failure()');
+    expect(helper).toContain('terminal_supervisor_unavailable');
+    expect(helper).toContain('ERR_MODULE_NOT_FOUND');
+    expect(helper).toContain('ERR_DLOPEN_FAILED');
+    expect(helper).toContain('gateway_reason=$observed_gateway_reason');
+    expect(helper).toContain('gateway_status=$observed_gateway_status');
+    expect(helper).toContain(
+      'supervisor_during_health=$observed_supervisor_during_health',
+    );
     expect(helper).toContain('HTTPServer(("127.0.0.1", 4000), Handler)');
     expect(helper).toContain('hmac.compare_digest');
     expect(helper).toContain('0 < length <= 128 * 1024');
@@ -252,6 +261,7 @@ describe('customer VPS terminal runtime services', () => {
     expect(helper).toContain('systemctl stop matrix-gateway.service');
     expect(helper).not.toContain('systemctl reboot');
     expect(helper).not.toContain('--force-run-commands');
+    expect(helper).not.toContain('echo "$gateway_log"');
     expect(helper).not.toContain('eval ');
     expect(helper).not.toContain('/opt/matrix/app');
     expect(activationWatch).toContain(
