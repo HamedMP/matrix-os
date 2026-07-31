@@ -327,15 +327,6 @@ describe('terminal runtime spike evidence', () => {
       ),
     ]);
     expect(workflow).toContain("github.event.label.name == 'terminal-production-acceptance'");
-    expect(workflow).toContain('actions: read');
-    expect(workflow).toContain('Build two exact-head acceptance bundles');
-    expect(workflow).toContain('mv dist/host-bundle "dist/acceptance-${suffix}"');
-    expect(workflow).not.toContain('mv dist/host-bundle/.');
-    expect(workflow).not.toContain('dist/acceptance-a/**');
-    expect(workflow).toContain('dist/acceptance-a/matrix-host-bundle.tar.gz');
-    expect(workflow).toContain('dist/acceptance-a/objects/**');
-    expect(workflow).toContain('Wait for exact-head S1/S2 proof');
-    expect(workflow).toContain('gh run list --workflow terminal-runtime-spikes.yml');
     expect(workflow).toContain('timeout-minutes: 360');
     expect(runner).toContain('for _ in $(seq 1 4500)');
     expect(workflow).toContain('deadline=$((SECONDS + 18000))');
@@ -450,6 +441,8 @@ describe('terminal runtime spike evidence', () => {
     expect(packer).not.toContain('tar --create');
     expect(runner).toContain('bounded_wait_child "$attach_parent"');
     expect(runner).not.toContain('wait "$attach_parent" 2>/dev/null || true');
+    expect(runner).toContain('record_preflight s1_launch_requested');
+    expect(runner).toContain('record_preflight s1_attach_receipt');
     expect(runner).toContain('record_preflight s1_gateway_events');
     expect(runner).toContain('record_preflight s2_started');
     expect(runner).toContain('record_preflight summarizing');

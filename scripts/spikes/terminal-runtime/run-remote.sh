@@ -239,12 +239,14 @@ wait_cgroup_empty() {
 # S1: readiness and stable ownership.
 record_preflight s1_started
 start_runtime "$base_id"
+record_preflight s1_launch_requested
 base_unit="${unit_prefix}${base_id}.service"
 sleep 0.3
 if [ "$(systemctl is-active "$base_unit" 2>/dev/null || true)" = "activating" ] && [ ! -e "$runtime_root/readiness/${base_id}.json" ]; then
   mark_pass s1 readinessGated
 fi
 release_pane "$base_id"
+record_preflight s1_waiting_active
 if ! wait_state "$base_unit" active; then
   wait_not_active "$base_unit" || true
   systemctl show "$base_unit" -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus >"$evidence_root/s1/base-startup-unit.txt" || true
@@ -253,6 +255,7 @@ if ! wait_state "$base_unit" active; then
   fi
   exit 10
 fi
+record_preflight s1_active
 cp "$runtime_root/readiness/${base_id}.json" "$evidence_root/s1/base-readiness.json"
 systemctl show "$base_unit" -p MainPID -p ControlGroup -p ActiveState -p SubState -p MemoryHigh -p TasksMax >"$evidence_root/s1/base-unit.txt"
 pid_cgroups="$evidence_root/s1/pid-cgroups.tsv"
@@ -282,6 +285,7 @@ if roles_alive "$base_id"; then
 else
   /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" initial || true
 fi
+record_preflight s1_roles_checked
 gateway_before_pid="$(systemctl show matrix-gateway.service -p MainPID --value 2>/dev/null || true)"
 gateway_before_cgroup="$(sed -n 's/^0:://p' "/proc/${gateway_before_pid}/cgroup" 2>/dev/null || true)"
 if [ -n "$gateway_before_cgroup" ] && [ "$gateway_before_cgroup" != "$base_cgroup" ]; then
@@ -292,10 +296,12 @@ attach_receipt="$runtime_root/attach-${base_id}.json"
 rm -f -- "$attach_receipt"
 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/runtime/node/bin/node "$support_root/attach-probe.mjs" "$base_id" &
 attach_parent=$!
+record_preflight s1_attach_started
 for _ in $(seq 1 100); do
   [ -f "$attach_receipt" ] && break
   sleep 0.1
 done
+record_preflight s1_attach_receipt
 attach_pid="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).client))' "$attach_receipt")"
 attach_helper="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).helper))' "$attach_receipt")"
 membership="$(/opt/matrix/runtime/node/bin/node -e '
@@ -304,6 +310,7 @@ membership="$(/opt/matrix/runtime/node/bin/node -e '
   if(typeof value.clientCgroup!=="string" || value.clientCgroup.length>512 || !/^\/[A-Za-z0-9_.@\/-]+$/.test(value.clientCgroup)) process.exit(1);
   process.stdout.write(value.clientCgroup);
 ' "$attach_receipt" 2>/dev/null || true)"
+record_preflight s1_attach_resolved
 if [ -n "$membership" ] && [ "$membership" != "$base_cgroup" ]; then
   printf 'attach-client\t%s\t%s\n' "$attach_pid" "$membership" >>"$pid_cgroups"
   mark_pass s1 attachOutsideCgroup
