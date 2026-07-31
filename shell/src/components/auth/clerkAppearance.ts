@@ -1,4 +1,5 @@
 import { shadcn } from "@clerk/ui/themes";
+import { fonts } from "@matrix-os/brand";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 
 export const matrixClerkAppearance = {
@@ -8,6 +9,10 @@ export const matrixClerkAppearance = {
     socialButtonsVariant: "blockButton",
     logoImageUrl: platformShellAssetPath("/rabbit.svg"),
     logoLinkUrl: "https://matrix-os.com",
+  },
+  variables: {
+    fontFamily: fonts.sans,
+    fontFamilyButtons: fonts.sans,
   },
   elements: {
     rootBox: "w-full",

@@ -44,7 +44,12 @@ describe("platform signup billing handoff fallback", () => {
     expect(html).toContain("<title>Anthropic</title>");
     expect(html).toContain("<title>OpenAI</title>");
     expect(html).toContain("<title>Cursor</title>");
+    expect(html).toContain('<span class="wordmark-text">Matrix OS</span>');
+    expect(html).toContain(
+      'font-family: var(--font-orbitron), Orbitron, sans-serif',
+    );
     expect(html).not.toContain(">M</span>");
+    expect(html).not.toContain(">matrix-os</span>");
     expect(html).not.toContain("Welcome back to Matrix");
     expect(html).not.toContain('data-matrix-platform-fallback-auth="true"');
   });

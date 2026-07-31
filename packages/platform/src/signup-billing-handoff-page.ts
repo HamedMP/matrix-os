@@ -15,7 +15,7 @@ function renderFeatureShowcase(): string {
   return `<section class="showcase" data-matrix-feature-showcase="product">
       <div class="wordmark">
         <span class="wordmark-icon">${renderOfficialRabbitSvg('rabbit wordmark-rabbit')}</span>
-        <span>matrix-os</span>
+        <span class="wordmark-text">Matrix OS</span>
       </div>
       <h1>A computer in the cloud for your AI agents</h1>
       <p class="lede">Create your free account. Your private machine spins up only when you provision it.</p>
@@ -84,7 +84,8 @@ export function getSignupBillingHandoffPage(input: {
     body { margin: 0; min-height: 100vh; background: ${c.pageBg}; color: ${c.deep}; font-family: ${fonts.sans}; }
     .layout { width: min(72rem, 100%); min-height: 100vh; margin: 0 auto; padding: 2.5rem 1.25rem; display: grid; align-items: center; gap: 2rem; grid-template-columns: minmax(0, 1fr) minmax(380px, 430px); }
     .showcase { min-width: 0; }
-    .wordmark { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; color: ${c.forest}; font-size: 0.875rem; font-weight: 500; letter-spacing: -0.01em; }
+    .wordmark { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; color: ${c.deep}; }
+    .wordmark-text { font-family: var(--font-orbitron), Orbitron, sans-serif; font-size: 0.9375rem; font-weight: 700; letter-spacing: -0.025em; }
     .wordmark-icon { width: 34px; height: 34px; display: grid; place-items: center; overflow: hidden; border: 1px solid ${c.border}; border-radius: 0.5rem; background: ${c.card}; padding: 0.375rem; }
     .rabbit { display: block; max-width: 100%; max-height: 100%; }
     .wordmark-rabbit { width: 100%; height: 100%; }

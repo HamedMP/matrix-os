@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { palette as c, cardShadow } from "@matrix-os/brand";
+import { palette as c, cardShadow, fonts } from "@matrix-os/brand";
 
 interface AuthLayoutProps {
   featureContent: ReactNode;
@@ -13,7 +13,7 @@ export function AuthLayout({ featureContent, formContent }: AuthLayoutProps) {
     <main
       data-matrix-auth-layout="true"
       className="relative min-h-screen overflow-hidden"
-      style={{ backgroundColor: c.pageBg, color: c.deep }}
+      style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: fonts.sans }}
     >
       <div className="relative mx-auto grid min-h-screen w-full max-w-6xl items-center gap-8 px-5 py-10 lg:grid-cols-[minmax(0,1fr)_minmax(380px,430px)] lg:gap-20 lg:px-10 xl:px-0">
         <div

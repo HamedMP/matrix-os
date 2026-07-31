@@ -25,8 +25,14 @@ function Wordmark() {
         className="size-[34px] rounded-lg border p-1.5"
         style={{ borderColor: c.border, backgroundColor: c.card }}
       />
-      <span className="text-sm font-medium tracking-tight" style={{ color: c.forest }}>
-        matrix-os
+      <span
+        className="text-[15px] font-bold tracking-tight"
+        style={{
+          color: c.deep,
+          fontFamily: "var(--font-orbitron), Orbitron, sans-serif",
+        }}
+      >
+        Matrix OS
       </span>
     </div>
   );
@@ -98,6 +104,7 @@ export function FeatureShowcase({
                 backgroundColor: c.forestDeep,
                 minHeight: 116,
                 fontFamily: "var(--font-mono, monospace)",
+                // react-doctor-disable-next-line react-doctor/no-tiny-text -- decorative terminal mockup matching the marketing signup reference, not body copy; enlarging it changes the approved two-column preview proportions.
                 fontSize: 11,
                 lineHeight: 1.7,
               }}

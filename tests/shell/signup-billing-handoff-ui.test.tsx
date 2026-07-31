@@ -23,6 +23,7 @@ import {
   isSignupBillingHandoffSearch,
   isSignupBillingHandoffValues,
 } from "../../shell/src/lib/signup-billing-handoff";
+import { matrixClerkAppearance } from "../../shell/src/components/auth/clerkAppearance";
 
 const OFFICIAL_ASSET_HASHES = {
   "shell/public/rabbit.svg":
@@ -73,6 +74,32 @@ describe("signup billing handoff surface", () => {
     expect(rabbitImages).toHaveLength(3);
     expect(container.querySelector('[data-matrix-boot-mark="true"]')).toBeNull();
     expect(screen.queryByText("Welcome back to Matrix")).toBeNull();
+  });
+
+  it("uses the landing wordmark and signup typography contract", () => {
+    const { container } = render(
+      <SignupBillingHandoff startedAt={Date.now()} onRetry={vi.fn()} />,
+    );
+
+    const layout = container.querySelector<HTMLElement>('[data-matrix-auth-layout="true"]');
+    const wordmark = screen.getByText("Matrix OS");
+    expect(layout?.style.fontFamily).toContain("var(--font-instrument)");
+    expect(wordmark.style.fontFamily).toContain("var(--font-orbitron)");
+    expect(wordmark.className).toContain("font-bold");
+    expect(screen.queryByText("matrix-os")).toBeNull();
+
+    const shellLayoutSource = readFileSync(
+      join(process.cwd(), "shell/src/app/layout.tsx"),
+      "utf8",
+    );
+    expect(shellLayoutSource).toContain("Instrument_Serif");
+    expect(shellLayoutSource).toContain('variable: "--font-serif-display"');
+    expect(shellLayoutSource).toContain("${instrumentSerif.variable}");
+
+    expect(matrixClerkAppearance.variables.fontFamily).toContain("var(--font-instrument)");
+    expect(matrixClerkAppearance.variables.fontFamilyButtons).toContain(
+      "var(--font-instrument)",
+    );
   });
 
   it("replaces the spinner with the generic inline retry state after 12 seconds", async () => {
