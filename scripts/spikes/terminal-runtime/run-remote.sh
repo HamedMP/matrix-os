@@ -172,6 +172,14 @@ wait_file() {
   for _ in $(seq 1 300); do [ -f "$1" ] && return 0; sleep 0.1; done
   return 1
 }
+bounded_wait_child() {
+  child="$1"
+  if /usr/bin/timeout 10s tail --pid="$child" -f /dev/null; then wait "$child" 2>/dev/null || true; return; fi
+  kill -TERM "$child" 2>/dev/null || true
+  if /usr/bin/timeout 5s tail --pid="$child" -f /dev/null; then wait "$child" 2>/dev/null || true; return; fi
+  kill -KILL "$child" 2>/dev/null || true
+  wait "$child" 2>/dev/null || true
+}
 roles_alive() {
   readiness_path="$runtime_root/readiness/$1.json"
   /opt/matrix/runtime/node/bin/node -e '
@@ -301,7 +309,9 @@ if [ -n "$membership" ] && [ "$membership" != "$base_cgroup" ]; then
   mark_pass s1 attachOutsideCgroup
 fi
 kill "$attach_helper" 2>/dev/null || true
-wait "$attach_parent" 2>/dev/null || true
+record_preflight s1_attach_wait
+bounded_wait_child "$attach_parent"
+record_preflight s1_detached
 sleep 0.5
 if roles_alive "$base_id"; then mark_pass s1 detachPreservesPids; else
   /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" detach || true

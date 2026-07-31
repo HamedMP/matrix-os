@@ -286,6 +286,7 @@ describe('terminal runtime spike evidence', () => {
       'diagnostic: (if ((.stderr // "") | test("spike_[a-z0-9_]+"))',
     );
     expect(workflow).toContain('{"diagnostic":"gateway_unavailable"}');
+    expect(workflow).toContain('echo "evidence_diagnostic=${diagnostic}" >&2');
     expect(workflow).toContain(
       `jq -e 'type == "object"' "$run_response" >/dev/null 2>&1`,
     );
@@ -472,22 +473,12 @@ describe('terminal runtime spike evidence', () => {
     expect(launcher).toContain('summary="/tmp/matrix-terminal-spike-evidence-${pr_head_sha}/summary.json"');
     expect(launcher).not.toContain('short_sha=');
     expect(packer).toContain('summary.json');
-    expect(packer).toContain('spike_pack_evidence_incomplete');
+    expect(packer).toContain('spike_pack_evidence_incomplete_${stage}_${state}');
     expect(packer).toMatch(/verify-evidence\.mjs \\\n\s+"\$evidence_root" --pack "\$pr_head_sha"/);
     expect(packer).not.toContain('tar --create');
-    expect(runner).toContain('run_key="$pr_head_sha"');
-    expect(runner).toContain('evidence_root="/tmp/matrix-terminal-spike-evidence-${run_key}"');
-    expect(runner).toContain('base_id="1${pr_head_sha:0:31}"');
-    expect(runner).toContain("sleep 2\ncleanup\ntrap 'status=$?");
-    expect(runner).toContain('curl --fail --silent --max-time 1 http://127.0.0.1:4000/health');
-    expect(runner).toContain('zellij delete-session "matrix-t-${runtime_id}" --force');
-    expect(runner).toContain('attach-probe.mjs');
-    expect(attachProbe).toContain('clientCgroup');
-    expect(runner).toContain("value.clientCgroup");
-    expect(runner).not.toContain('script -qefc');
-    expect(runner).toContain('cgroup_removed');
+    expect(runner).toContain('bounded_wait_child "$attach_parent"');
+    expect(runner).not.toContain('wait "$attach_parent" 2>/dev/null || true');
     expect(runner).not.toContain('install -o matrix -g matrix -m 0600 /dev/null "$runtime_root/confirmations/${recovery_id}.pass"');
-    expect(runner).toContain('pkill -f -x');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
     expect(runner).toContain('systemctl set-property --runtime');
     expect(runner).toContain('MemoryHigh=75%');

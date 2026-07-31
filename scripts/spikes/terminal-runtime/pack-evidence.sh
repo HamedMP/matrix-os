@@ -16,7 +16,11 @@ if [ ! -d "$evidence_root" ] || [ -L "$evidence_root" ]; then
   exit 3
 fi
 if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" ]; then
-  echo "spike_pack_evidence_incomplete" >&2
+  stage="$(cat "$evidence_root/preflight-stage.txt" 2>/dev/null || true)"
+  [[ "$stage" =~ ^[a-z0-9_]{1,32}$ ]] || stage=unknown
+  state="$(systemctl is-active "matrix-terminal-runtime-spike-${pr_head_sha}.service" 2>/dev/null || true)"
+  [[ "$state" =~ ^(active|activating|failed|inactive)$ ]] || state=unknown
+  echo "spike_pack_evidence_incomplete_${stage}_${state}" >&2
   exit 3
 fi
 /opt/matrix/runtime/node/bin/node \

@@ -462,6 +462,8 @@ jobs:
           done
           echo "gateway_http_status=$http_code"
           if [ "$pack_ready" != true ]; then
+            diagnostic="$(jq -r 'if ((.stderr // "") | test("spike_[a-z0-9_]+")) then ((.stderr // "") | capture("(?<code>spike_[a-z0-9_]+)").code) else "unavailable" end' "$pack_response" 2>/dev/null || printf unavailable)"
+            echo "evidence_diagnostic=${diagnostic}" >&2
             echo "Bounded evidence retrieval failed." >&2
             exit 1
           fi
