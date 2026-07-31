@@ -871,7 +871,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       'if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
     );
     expect(workflow).toContain('Reusing the exact dormant parent already installed on the preview.');
-    expect(workflow).toContain(
+    expect(workflow).not.toContain(
       '[[ "$deployed" =~ ^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-([0-9]+-[0-9]+-)?[0-9a-f]{7}$ ]]',
     );
     expect(workflow).toContain('wait_for_preview_gateway "$address"');
