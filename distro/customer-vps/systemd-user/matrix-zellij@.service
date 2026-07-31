@@ -1,0 +1,20 @@
+[Unit]
+Description=Matrix OS terminal runtime %i
+ConditionPathExists=/home/matrix/home/system/terminal-runtimes/%i.json
+
+[Service]
+Type=exec
+Environment=MATRIX_HOME=/home/matrix/home
+Environment=MATRIX_TERMINAL_RUNTIME_ROOT=/opt/matrix/terminal-runtime
+ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/terminal-runtime/current/matrix-terminal-user-keeper.mjs %i
+Slice=matrix-terminal.slice
+KillMode=control-group
+Restart=no
+TimeoutStartSec=15
+TimeoutStopSec=10
+SendSIGKILL=yes
+TasksAccounting=yes
+TasksMax=1024
+MemoryAccounting=yes
+MemoryHigh=60%
+MemoryMax=75%

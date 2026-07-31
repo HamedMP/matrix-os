@@ -96,6 +96,7 @@ describe("agent-session-manager", () => {
         fallbackReason: null,
         version: "zellij 0.41.0",
       })),
+      isAlive: vi.fn(async () => true),
     };
   }
 
@@ -380,6 +381,28 @@ describe("agent-session-manager", () => {
         },
         writeMode: "closed",
       },
+    });
+  });
+
+  it("marks only a session whose independently supervised unit is no longer alive as degraded", async () => {
+    const { manager } = createManager({
+      zellijRuntime: { isAlive: vi.fn(async () => false) },
+    });
+    await manager.startSession({
+      kind: "agent",
+      agent: "opencode",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+
+    const result = await manager.reconcileStartup();
+
+    expect(result).toMatchObject({ degraded: 1, releasedLeases: 1 });
+    await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
+      ok: true,
+      session: { runtime: { status: "degraded", fallbackReason: "runtime_not_running" } },
     });
   });
 });

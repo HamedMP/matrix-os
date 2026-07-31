@@ -27,9 +27,12 @@ function isAttachable(session: WorkspaceSession): boolean {
   return ["starting", "running", "idle", "waiting"].includes(session.runtime.status);
 }
 
-function splitCommand(command: string[]): { command: "zellij" | "tmux"; args: string[] } | null {
+function splitCommand(command: string[]): {
+  command: "zellij" | "tmux" | "matrix-terminal-attach";
+  args: string[];
+} | null {
   const [binary, ...args] = command;
-  if (binary === "zellij" || binary === "tmux") {
+  if (binary === "zellij" || binary === "tmux" || binary === "matrix-terminal-attach") {
     return { command: binary, args };
   }
   return null;
@@ -55,7 +58,10 @@ export function createSessionRuntimeBridge(options: {
         return failure(409, "session_unavailable", "Session is not attachable");
       }
 
-      let command: { command: "zellij" | "tmux"; args: string[] } | null = null;
+      let command: {
+        command: "zellij" | "tmux" | "matrix-terminal-attach";
+        args: string[];
+      } | null = null;
       if (session.runtime.type === "zellij") {
         if (!session.runtime.zellijSession) {
           return failure(409, "session_unavailable", "Session is not attachable");

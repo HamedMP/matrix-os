@@ -48,6 +48,7 @@ import { createWorkspaceSessionOrchestrator } from "./workspace-session-orchestr
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
+import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
@@ -252,6 +253,9 @@ import {
   createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
+  createUserSystemdTerminalRuntime,
+  createUserSystemdZellijAdapter,
+  loadInstalledTerminalRuntimeGeneration,
   ShellRegistry as ZellijShellRegistry,
   shellWsMessageDataToString,
 } from "./shell/index.js";
@@ -353,7 +357,20 @@ export async function createGateway(config: GatewayConfig) {
     persistPath: terminalSessionsPersistPath,
     autoRestore: false,
   });
-  const workspaceZellijRuntime = createZellijRuntime({ homePath });
+  const userSystemdTerminalsEnabled = process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED === "1";
+  const terminalRuntimeGeneration = userSystemdTerminalsEnabled
+    ? await loadInstalledTerminalRuntimeGeneration(process.env.MATRIX_APP_DIR ?? process.cwd())
+    : null;
+  const userSystemdTerminalController = terminalRuntimeGeneration
+    ? createUserSystemdTerminalRuntime({ homePath, generation: terminalRuntimeGeneration })
+    : null;
+  const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
+    ? createUserSystemdZellijRuntime({
+        homePath,
+        generation: terminalRuntimeGeneration,
+        controller: userSystemdTerminalController,
+      })
+    : createZellijRuntime({ homePath });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge({
     homePath,
     registry: sessionRegistry,
@@ -361,7 +378,13 @@ export async function createGateway(config: GatewayConfig) {
   });
   const shellScrollbackStore = new ScrollbackStore({ homePath });
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
-  const zellijAdapter = createZellijAdapter({ homePath });
+  const zellijAdapter = userSystemdTerminalController && terminalRuntimeGeneration
+    ? createUserSystemdZellijAdapter({
+        homePath,
+        generation: terminalRuntimeGeneration,
+        controller: userSystemdTerminalController,
+      })
+    : createZellijAdapter({ homePath });
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
@@ -2881,6 +2904,7 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({
     homePath,
     eventPublisher: workspaceEventPublisher,
+    zellijRuntime: workspaceZellijRuntime,
   }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
