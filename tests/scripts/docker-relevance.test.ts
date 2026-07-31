@@ -129,6 +129,24 @@ describe("Docker CI relevance classifier", () => {
     ).toThrow(/ETIMEDOUT/);
   });
 
+  it("parses NUL-delimited git paths without trimming significant whitespace", () => {
+    const paths = readChangedPaths(
+      { base: "origin/main", head: "head-sha", commit: "" },
+      {
+        spawnGit: (_command, args) => {
+          expect(args).toContain("-z");
+          return {
+            status: 0,
+            stdout: "shell/path with space.tsx\0 packages/gateway/leading.ts\0",
+            stderr: "",
+          };
+        },
+      },
+    );
+
+    expect(paths).toEqual(["shell/path with space.tsx", " packages/gateway/leading.ts"]);
+  });
+
   it("bounds git diagnostics before surfacing a failure", () => {
     const message = formatGitFailure(["diff"], {
       status: 128,

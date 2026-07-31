@@ -102,10 +102,7 @@ export function readChangedPaths(
   }
 
   const stdout = typeof result.stdout === "string" ? result.stdout : "";
-  const paths = stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const paths = stdout.split("\0").filter(Boolean);
 
   if (paths.length > MAX_CHANGED_PATHS) {
     throw new Error(`Git returned more than ${MAX_CHANGED_PATHS} changed paths`);
@@ -127,7 +124,7 @@ function buildGitArgs({ base, head, commit }) {
       throw new Error("--commit cannot be combined with --base or --head");
     }
     validateGitRef(commit, "--commit");
-    return ["show", "--pretty=", "--name-only", "--no-renames", commit, "--"];
+    return ["show", "--pretty=", "--name-only", "--no-renames", "-z", commit, "--"];
   }
 
   if (!base || !head) {
@@ -135,7 +132,7 @@ function buildGitArgs({ base, head, commit }) {
   }
   validateGitRef(base, "--base");
   validateGitRef(head, "--head");
-  return ["diff", "--name-only", "--no-renames", `${base}..${head}`, "--"];
+  return ["diff", "--name-only", "--no-renames", "-z", `${base}..${head}`, "--"];
 }
 
 function validateGitRef(ref, flag) {
