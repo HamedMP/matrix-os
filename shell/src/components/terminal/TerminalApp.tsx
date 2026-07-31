@@ -112,6 +112,7 @@ let terminalLayoutWriteGeneration = 0;
 let activeTerminalLayoutWrite: {
   generation: number;
   controller: AbortController;
+  startImmediately: boolean;
 } | null = null;
 
 function enqueueTerminalLayoutWrite(
@@ -130,7 +131,11 @@ function enqueueTerminalLayoutWrite(
       return;
     }
     const controller = new AbortController();
-    activeTerminalLayoutWrite = { generation, controller };
+    activeTerminalLayoutWrite = {
+      generation,
+      controller,
+      startImmediately: options.startImmediately === true,
+    };
     try {
       const response = await fetch(`${gatewayUrl}/api/terminal/layout`, {
         method: "PUT",
@@ -161,7 +166,9 @@ function enqueueTerminalLayoutWrite(
 
   if (options.startImmediately) {
     const priorTail = terminalLayoutWriteTail;
-    activeTerminalLayoutWrite?.controller.abort();
+    if (!activeTerminalLayoutWrite?.startImmediately) {
+      activeTerminalLayoutWrite?.controller.abort();
+    }
     const write = performWrite();
     terminalLayoutWriteTail = Promise.allSettled([priorTail, write]).then(() => undefined);
     return write;

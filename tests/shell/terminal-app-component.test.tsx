@@ -3896,6 +3896,80 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("does not cancel a sibling terminal surface pagehide save", async () => {
+    const finishLayoutWrites: Array<(response: Response) => void> = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return new Promise<Response>((resolve) => {
+          finishLayoutWrites.push(resolve);
+        });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve(mockJsonResponse({}));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    }));
+
+    render(
+      <>
+        <TerminalApp initialSessionId="canvas-first" />
+        <TerminalApp initialSessionId="canvas-second" />
+      </>,
+    );
+    await vi.waitFor(() => {
+      const paneIds = new Set(paneGridSpy.mock.calls.map(([props]) => (
+        (props as { paneTree: { id: string } }).paneTree.id
+      )));
+      expect(paneIds.size).toBeGreaterThanOrEqual(2);
+    });
+
+    const paneProps = Array.from(
+      new Map(paneGridSpy.mock.calls.map(([props]) => {
+        const typedProps = props as {
+          paneTree: { id: string };
+          onSessionAttached: (paneId: string, sessionId: string) => void;
+        };
+        return [typedProps.paneTree.id, typedProps] as const;
+      })).values(),
+    );
+    expect(paneProps).toHaveLength(2);
+
+    act(() => {
+      paneProps[0]!.onSessionAttached(
+        paneProps[0]!.paneTree.id,
+        "session-first-pagehide",
+      );
+      paneProps[1]!.onSessionAttached(
+        paneProps[1]!.paneTree.id,
+        "session-second-pagehide",
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const layoutPutCalls = vi.mocked(fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/layout") && init?.method === "PUT"
+    ));
+    expect(layoutPutCalls).toHaveLength(2);
+    expect(layoutPutCalls[0]?.[1]?.signal).toMatchObject({ aborted: false });
+    expect(layoutPutCalls[1]?.[1]?.signal).toMatchObject({ aborted: false });
+
+    await act(async () => {
+      for (const finish of finishLayoutWrites) {
+        finish(mockJsonResponse({ ok: true }));
+      }
+      await Promise.resolve();
+    });
+  });
+
   it("creates toolbar shell launches as two-word canonical shell sessions", async () => {
     render(<TerminalApp />);
 
