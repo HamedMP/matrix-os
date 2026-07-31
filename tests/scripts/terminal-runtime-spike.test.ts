@@ -351,7 +351,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).toContain('bounded_wait_child "$attach_parent"');
     expect(runner).not.toContain('wait "$attach_parent" 2>/dev/null || true');
     expect(runner).toContain("trap 'status=$?; build_summary; cleanup; exit $status' EXIT");
-    expect(runner).toContain('/usr/bin/timeout 35s systemctl stop');
+    expect(runner).toContain(
+      '/usr/bin/timeout --signal=TERM --kill-after=2s 35s systemctl stop',
+    );
+    expect(runner).toContain('--kill-after=1s 5s systemctl reset-failed');
+    expect(runner).toContain('--kill-after=1s 5s systemctl set-property');
     expect(runner).toContain(
       '/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl is-active',
     );
