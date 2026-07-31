@@ -149,7 +149,7 @@ release_pane() {
   install -o root -g root -m 0644 /dev/null "$runtime_root/pane-release/matrix-t-$1"
 }
 unit_state() {
-  /usr/bin/timeout 2s systemctl is-active "$1" 2>/dev/null || true
+  /usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl is-active "$1" 2>/dev/null || true
 }
 wait_state() {
   unit="$1"
