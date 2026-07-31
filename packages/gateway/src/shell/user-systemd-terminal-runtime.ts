@@ -56,6 +56,7 @@ export interface UserSystemdRuntimeResult extends UserSystemdTerminalDescriptor 
 const SYSTEMCTL_TIMEOUT_MS = 10_000;
 const READINESS_TIMEOUT_MS = 10_000;
 const READINESS_INTERVAL_MS = 100;
+const MAX_RUNTIME_DESCRIPTORS = 256;
 export async function loadInstalledTerminalRuntimeGeneration(appDir = "/opt/matrix/app"): Promise<string> {
   const markerPath = join(resolve(appDir), "TERMINAL_RUNTIME_GENERATION");
   try {
@@ -251,6 +252,7 @@ export function createUserSystemdTerminalRuntime(options: {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const now = options.now ?? (() => new Date().toISOString());
   const descriptorRoot = join(homePath, "system", "terminal-runtimes");
+  let mutationTail = Promise.resolve();
   const systemdEnv: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: homePath,
@@ -260,6 +262,20 @@ export function createUserSystemdTerminalRuntime(options: {
       DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus`,
     }),
   };
+
+  async function withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = mutationTail;
+    let release!: () => void;
+    mutationTail = new Promise<void>((resolveRelease) => {
+      release = resolveRelease;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
 
   async function ensureDescriptorRoot(): Promise<void> {
     await mkdir(descriptorRoot, { recursive: true, mode: 0o700 });
@@ -358,6 +374,9 @@ export function createUserSystemdTerminalRuntime(options: {
     const descriptorEntries = entries
       .filter((entry) => entry.isFile() && !entry.isSymbolicLink() && /^rt_[0-9a-f]{32}\.json$/.test(entry.name))
       .sort((left, right) => left.name.localeCompare(right.name));
+    if (descriptorEntries.length > MAX_RUNTIME_DESCRIPTORS) {
+      throw new TerminalRuntimeUnavailableError();
+    }
     for (const entry of descriptorEntries) {
       try {
         const descriptor = await readDescriptor(entry.name.slice(0, -".json".length));
@@ -417,14 +436,29 @@ export function createUserSystemdTerminalRuntime(options: {
         generation,
         createdAt: now(),
       });
-      await ensureDescriptorRoot();
-      const persisted = await writeDescriptorExclusive(
-        join(descriptorRoot, `${descriptor.runtimeId}.json`),
-        descriptor,
-      );
-      await runSystemctl(["start", unitName(persisted.runtimeId)]);
-      await waitUntilReady(persisted);
-      return { ...persisted, lifecycle: "running" };
+      return withMutationLock(async () => {
+        const descriptors = await listDescriptors();
+        if (descriptors.some((entry) => (
+          entry.runtimeId !== descriptor.runtimeId
+          && entry.scope === descriptor.scope
+          && entry.displayName === descriptor.displayName
+        ))) {
+          throw new TerminalRuntimeIdentityExistsError();
+        }
+        if (
+          descriptors.length >= MAX_RUNTIME_DESCRIPTORS
+          && !descriptors.some((entry) => entry.runtimeId === descriptor.runtimeId)
+        ) {
+          throw new TerminalRuntimeUnavailableError();
+        }
+        const persisted = await writeDescriptorExclusive(
+          join(descriptorRoot, `${descriptor.runtimeId}.json`),
+          descriptor,
+        );
+        await runSystemctl(["start", unitName(persisted.runtimeId)]);
+        await waitUntilReady(persisted);
+        return { ...persisted, lifecycle: "running" };
+      });
     },
 
     async start(runtimeId: string): Promise<UserSystemdRuntimeResult> {
@@ -479,35 +513,39 @@ export function createUserSystemdTerminalRuntime(options: {
     async renameDisplayName(runtimeId: string, displayName: string): Promise<UserSystemdTerminalDescriptor> {
       const parsedName = DisplayNameSchema.safeParse(displayName);
       if (!parsedName.success) throw new InvalidTerminalRuntimeRequestError();
-      const existing = await readDescriptor(runtimeId);
-      if (!existing || existing.scope !== "terminal") throw new InvalidTerminalRuntimeRequestError();
-      const conflict = (await listDescriptors()).some((entry) => (
-        entry.scope === "terminal"
-        && entry.runtimeId !== existing.runtimeId
-        && entry.displayName === parsedName.data
-      ));
-      if (conflict) throw new TerminalRuntimeIdentityExistsError();
-      const next = DescriptorSchema.parse({ ...existing, displayName: parsedName.data });
-      await writeDescriptorAtomic(join(descriptorRoot, `${existing.runtimeId}.json`), next);
-      return next;
+      return withMutationLock(async () => {
+        const existing = await readDescriptor(runtimeId);
+        if (!existing || existing.scope !== "terminal") throw new InvalidTerminalRuntimeRequestError();
+        const conflict = (await listDescriptors()).some((entry) => (
+          entry.scope === "terminal"
+          && entry.runtimeId !== existing.runtimeId
+          && entry.displayName === parsedName.data
+        ));
+        if (conflict) throw new TerminalRuntimeIdentityExistsError();
+        const next = DescriptorSchema.parse({ ...existing, displayName: parsedName.data });
+        await writeDescriptorAtomic(join(descriptorRoot, `${existing.runtimeId}.json`), next);
+        return next;
+      });
     },
 
     async delete(runtimeId: string): Promise<{ ok: true }> {
       const parsed = RuntimeIdSchema.safeParse(runtimeId);
       if (!parsed.success) throw new InvalidTerminalRuntimeRequestError();
-      const descriptor = await readDescriptor(parsed.data);
-      await runSystemctl(["stop", unitName(parsed.data)]);
-      await rm(join(descriptorRoot, `${parsed.data}.json`), { force: true });
-      if (descriptor?.environmentPath) await rm(descriptor.environmentPath, { force: true });
-      const generatedLayoutRoot = join(homePath, "system", "zellij", "runtime-layouts");
-      if (
-        descriptor
-        && dirname(descriptor.layoutPath) === generatedLayoutRoot
-        && basename(descriptor.layoutPath).startsWith(`${descriptor.runtimeId}`)
-      ) {
-        await rm(descriptor.layoutPath, { force: true });
-      }
-      return { ok: true };
+      return withMutationLock(async () => {
+        const descriptor = await readDescriptor(parsed.data);
+        await runSystemctl(["stop", unitName(parsed.data)]);
+        await rm(join(descriptorRoot, `${parsed.data}.json`), { force: true });
+        if (descriptor?.environmentPath) await rm(descriptor.environmentPath, { force: true });
+        const generatedLayoutRoot = join(homePath, "system", "zellij", "runtime-layouts");
+        if (
+          descriptor
+          && dirname(descriptor.layoutPath) === generatedLayoutRoot
+          && basename(descriptor.layoutPath).startsWith(`${descriptor.runtimeId}`)
+        ) {
+          await rm(descriptor.layoutPath, { force: true });
+        }
+        return { ok: true };
+      });
     },
   };
 }

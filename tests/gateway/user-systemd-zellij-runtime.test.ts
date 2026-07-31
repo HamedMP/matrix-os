@@ -89,6 +89,29 @@ describe("user-systemd workspace Zellij runtime", () => {
     });
   });
 
+  it("rejects launch environment keys outside the fixed runtime allowlist", async () => {
+    const controller = { create: vi.fn(), delete: vi.fn(), get: vi.fn(), isRunning: vi.fn() };
+    const runtime = createUserSystemdZellijRuntime({
+      homePath,
+      generation: GENERATION,
+      controller,
+      layoutRuntime: {
+        generateLayout: vi.fn(async () => ({
+          sessionName: "legacy",
+          layoutPath: join(homePath, "system", "zellij", "layouts", `${SESSION_ID}.kdl`),
+        })),
+      },
+      baseAdapter: fakeAdapter(),
+    });
+
+    await expect(runtime.start({
+      sessionId: SESSION_ID,
+      launch: { command: "codex", args: [], cwd: homePath, env: { LD_PRELOAD: "/tmp/hostile.so" } },
+    })).rejects.toThrow();
+
+    expect(controller.create).not.toHaveBeenCalled();
+  });
+
   it("uses the fixed attach helper and descriptor-pinned binary for input and deletion", async () => {
     const runtimeId = workspaceRuntimeId(SESSION_ID);
     const stored = {

@@ -13,10 +13,13 @@ type RuntimeController = Pick<
 >;
 type LayoutRuntime = Pick<ReturnType<typeof createZellijRuntime>, "generateLayout">;
 const MAX_GENERATION_ADAPTERS = 8;
-const LaunchEnvironmentSchema = z.record(
-  z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
-  z.string().max(8192).refine((value) => !value.includes("\0")),
-).refine((value) => Object.keys(value).length <= 64);
+const RuntimeEnvironmentValueSchema = z.string().max(8192).refine((value) => !value.includes("\0"));
+const LaunchEnvironmentSchema = z.object({
+  HOME: RuntimeEnvironmentValueSchema.optional(),
+  MATRIX_HOME: RuntimeEnvironmentValueSchema.optional(),
+  MATRIX_NODE_PREFIX: RuntimeEnvironmentValueSchema.optional(),
+  PATH: RuntimeEnvironmentValueSchema.optional(),
+}).strict();
 
 function isErrnoCode(err: unknown, code: string): boolean {
   return err instanceof Error

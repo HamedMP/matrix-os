@@ -2,10 +2,16 @@
 import { spawn } from "node:child_process";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
 const RUNTIME_ID_PATTERN = /^rt_[0-9a-f]{32}$/;
 const GENERATION_PATTERN = /^gen_[0-9a-f]{64}$/;
+const DESCRIPTOR_KEYS = new Set([
+  "version", "runtimeId", "sessionName", "scope", "kind", "displayName",
+  "cwd", "layoutPath", "environmentPath", "generation", "createdAt",
+]);
+const ENVIRONMENT_KEYS = new Set(["HOME", "MATRIX_HOME", "MATRIX_NODE_PREFIX", "PATH"]);
 const runtimeId = process.argv[2] ?? "";
 const homePath = resolve(process.env.MATRIX_HOME || process.env.HOME || "/home/matrix/home");
 const runtimeRoot = resolve(process.env.MATRIX_TERMINAL_RUNTIME_ROOT || "/opt/matrix/terminal-runtime");
@@ -34,6 +40,13 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+function hasExactDescriptorKeys(value) {
+  if (!value || Array.isArray(value) || typeof value !== "object") return false;
+  const keys = Object.keys(value);
+  return keys.every((key) => DESCRIPTOR_KEYS.has(key))
+    && keys.length === (value.environmentPath === undefined ? 10 : 11);
+}
+
 if (!RUNTIME_ID_PATTERN.test(runtimeId)) fail("runtime_id_invalid");
 
 const descriptorPath = join(homePath, "system", "terminal-runtimes", `${runtimeId}.json`);
@@ -50,17 +63,49 @@ try {
 }
 
 if (
-  descriptor?.version !== 1
+  !hasExactDescriptorKeys(descriptor)
+  || descriptor.version !== 1
   || descriptor.runtimeId !== runtimeId
   || descriptor.sessionName !== `matrix-${runtimeId}`
   || (descriptor.scope !== "terminal" && descriptor.scope !== "workspace")
   || (descriptor.kind !== "shell" && descriptor.kind !== "agent")
+  || typeof descriptor.displayName !== "string"
   || typeof descriptor.cwd !== "string"
   || typeof descriptor.layoutPath !== "string"
   || (descriptor.environmentPath !== undefined && typeof descriptor.environmentPath !== "string")
   || !GENERATION_PATTERN.test(descriptor.generation ?? "")
+  || typeof descriptor.createdAt !== "string"
 ) {
   fail("descriptor_invalid");
+}
+
+const pinnedKeeperPath = join(
+  runtimeRoot,
+  "generations", descriptor.generation, "matrix-terminal-user-keeper.mjs",
+);
+try {
+  const currentKeeper = realpathSync(fileURLToPath(import.meta.url));
+  const pinnedKeeper = realpathSync(pinnedKeeperPath);
+  if (currentKeeper !== pinnedKeeper) {
+    const pinned = spawn("/opt/matrix/runtime/node/bin/node", [pinnedKeeper, runtimeId], {
+      env: process.env,
+      stdio: "inherit",
+    });
+    const forwardPinnedSignal = (signal) => {
+      if (pinned.exitCode === null && pinned.signalCode === null) pinned.kill(signal);
+    };
+    process.on("SIGTERM", () => forwardPinnedSignal("SIGTERM"));
+    process.on("SIGINT", () => forwardPinnedSignal("SIGINT"));
+    pinned.once("error", () => fail("keeper_generation_unavailable"));
+    pinned.once("exit", (code, signal) => {
+      if (signal) process.kill(process.pid, signal);
+      else process.exit(code ?? 1);
+    });
+    await new Promise(() => undefined);
+  }
+} catch (error) {
+  if (!(error instanceof Error)) fail("keeper_generation_unavailable");
+  fail("keeper_generation_unavailable");
 }
 
 let cwd;
@@ -90,15 +135,16 @@ try {
       fail("environment_invalid");
     }
     const entries = Object.entries(parsedEnvironment);
-    if (entries.length > 64 || entries.some(([key, value]) => (
-      !/^[A-Z][A-Z0-9_]{0,63}$/.test(key)
+    if (entries.length > ENVIRONMENT_KEYS.size || entries.some(([key, value]) => (
+      !ENVIRONMENT_KEYS.has(key)
       || typeof value !== "string"
       || value.length > 8192
       || value.includes("\0")
     ))) fail("environment_invalid");
     launchEnvironment = parsedEnvironment;
   }
-} catch {
+} catch (error) {
+  if (!(error instanceof Error)) fail("runtime_asset_unavailable");
   fail("runtime_asset_unavailable");
 }
 

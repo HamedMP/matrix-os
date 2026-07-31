@@ -332,22 +332,35 @@ jobs:
             .schemaVersion == 1 and .headSha == $head and
             (.summarySha256 | test("^[0-9a-f]{64}$")) and
             .checks == ([
+              "browserAttachmentPtysRemainGatewayOwned",
               "bundleOnePreservesRuntimes",
               "bundleTwoPreservesRuntimes",
+              "conflictingDescriptorReuseFailsClosed",
               "corruptAndSymlinkStateFailsClosed",
+              "deleteIsIdempotent",
               "deleteRemovesExactRuntime",
+              "deleteRemovesSocketAndSnapshots",
               "detachPreservesRuntimes",
               "gatewayRestartPreservesRuntimes",
+              "gatewayMemoryIsolation",
               "gatewaySigkillPreservesRuntimes",
               "generationGcIsReferenceAndSymlinkSafe",
+              "generationRetentionIsBounded",
+              "hostileDescriptorFieldsFailClosed",
               "independentRuntimeCgroups",
+              "invalidRuntimeIdsFailClosed",
+              "newRuntimesUseCurrentGeneration",
               "ordinaryShellRuntime",
+              "postRollbackRuntimeUsesCompatibleGeneration",
               "realCodingAgentRuntime",
+              "rebootCreatesNoReplacementPids",
               "rebootProducesNoOutput",
               "rebootStartsNoRuntime",
               "resourceControlsPresent",
+              "resourceControlsEffective",
               "resourceLimitIsolatesFailure",
-              "rollbackPreservesRuntimes"
+              "rollbackPreservesRuntimes",
+              "staleInactiveStateIsRecoverable"
             ] | sort)
           ' "$RUNNER_TEMP/user-systemd-terminal-evidence.json" >/dev/null
           node --input-type=module - "$RUNNER_TEMP/user-systemd-terminal-evidence.json" <<'NODE'
@@ -374,6 +387,8 @@ jobs:
           body="**User-systemd terminal production acceptance passed**
 
           - Commit: \`${HEAD_SHA}\`
+          - Bundle A: \`v0.0.0-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-a\`
+          - Bundle B: \`v0.0.0-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-b\`
           - Shell and real Codex runtimes, disconnect, gateway restart/SIGKILL, two bundles, rollback, exact deletion, hostile-state GC, resource isolation, and reboot: pass
           - Evidence SHA-256: \`${DIGEST}\`
           - Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}

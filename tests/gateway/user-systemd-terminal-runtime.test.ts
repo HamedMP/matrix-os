@@ -9,6 +9,7 @@ import {
 } from "../../packages/gateway/src/shell/user-systemd-terminal-runtime.js";
 
 const RUNTIME_ID = "rt_0123456789abcdef0123456789abcdef";
+const OTHER_RUNTIME_ID = "rt_fedcba9876543210fedcba9876543210";
 const GENERATION = "gen_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 describe("user-systemd terminal runtime", () => {
@@ -180,6 +181,29 @@ describe("user-systemd terminal runtime", () => {
     expect(runCommand).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects a second runtime identity in the same scope with the same display name", async () => {
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe: vi.fn(async () => true),
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+    const input = { scope: "terminal" as const, kind: "shell" as const, displayName: "Main", cwd, layoutPath };
+
+    await runtime.create({ ...input, runtimeId: RUNTIME_ID });
+    await expect(runtime.create({ ...input, runtimeId: OTHER_RUNTIME_ID })).rejects.toThrow(
+      "Terminal runtime identity already exists",
+    );
+
+    await expect(readFile(
+      join(homePath, "system", "terminal-runtimes", `${OTHER_RUNTIME_ID}.json`),
+      "utf8",
+    )).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("reconciles a durable inactive descriptor through the exact immutable unit", async () => {
     const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
     const runtime = createUserSystemdTerminalRuntime({
@@ -311,6 +335,18 @@ describe("user-systemd terminal runtime", () => {
       ["--user", "is-active", `matrix-zellij@${RUNTIME_ID}.service`],
       expect.any(Object),
     );
+  });
+
+  it("fails closed when owner state exceeds the bounded descriptor inventory", async () => {
+    const descriptorRoot = join(homePath, "system", "terminal-runtimes");
+    await mkdir(descriptorRoot, { recursive: true });
+    await Promise.all(Array.from({ length: 257 }, async (_value, index) => {
+      const id = `rt_${index.toString(16).padStart(32, "0")}`;
+      await writeFile(join(descriptorRoot, `${id}.json`), "{}\n");
+    }));
+    const runtime = createUserSystemdTerminalRuntime({ homePath, uid: 1001, generation: GENERATION });
+
+    await expect(runtime.list()).rejects.toThrow("Terminal runtime unavailable");
   });
 
   it("renames only terminal display metadata while preserving immutable runtime identity", async () => {

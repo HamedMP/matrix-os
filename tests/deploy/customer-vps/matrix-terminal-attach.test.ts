@@ -73,4 +73,25 @@ describe("matrix-terminal-attach", () => {
     })).rejects.toMatchObject({ code: 1 });
     await expect(readFile(capturePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("rejects descriptors containing caller-selected command or unit fields", async () => {
+    const descriptorPath = join(homePath, "system", "terminal-runtimes", `${RUNTIME_ID}.json`);
+    const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
+    await writeFile(descriptorPath, JSON.stringify({
+      ...descriptor,
+      command: "/bin/sh",
+      unit: "matrix-gateway.service",
+    }));
+
+    await expect(execFileAsync(process.execPath, [helperPath, RUNTIME_ID], {
+      env: {
+        ...process.env,
+        MATRIX_HOME: homePath,
+        MATRIX_TERMINAL_RUNTIME_ROOT: runtimeRoot,
+        CAPTURE_PATH: capturePath,
+      },
+      timeout: 5_000,
+    })).rejects.toMatchObject({ code: 1 });
+    await expect(readFile(capturePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
