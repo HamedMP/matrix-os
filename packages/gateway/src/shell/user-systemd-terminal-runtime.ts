@@ -184,8 +184,9 @@ async function writeDescriptorExclusive(
       let parsedExisting: unknown;
       try {
         parsedExisting = JSON.parse(await readFile(path, "utf8"));
-      } catch {
-        throw new TerminalRuntimeIdentityExistsError();
+      } catch (err: unknown) {
+        if (err instanceof SyntaxError) throw new TerminalRuntimeIdentityExistsError();
+        throw err;
       }
       const existing = DescriptorSchema.safeParse(parsedExisting);
       if (!existing.success || !descriptorIdentityMatches(existing.data, descriptor)) {
@@ -213,7 +214,11 @@ async function writeDescriptorAtomic(
     await writeFile(tempPath, `${JSON.stringify(descriptor, null, 2)}\n`, { flag: "wx", mode: 0o600 });
     await rename(tempPath, path);
   } catch (err: unknown) {
-    await rm(tempPath, { force: true }).catch(() => undefined);
+    await rm(tempPath, { force: true }).catch((cleanupErr: unknown) => {
+      if (!isErrnoCode(cleanupErr, "ENOENT")) {
+        console.warn("[terminal-runtime] failed to remove descriptor temp file");
+      }
+    });
     throw err;
   }
 }
@@ -282,8 +287,9 @@ export function createUserSystemdTerminalRuntime(options: {
         timeoutMs: 2_000,
       });
       return stdout.split(/\r?\n/).some((line) => line.trim().split(/\s+/)[0] === descriptor.sessionName);
-    } catch {
-      return false;
+    } catch (err: unknown) {
+      if (err instanceof Error) return false;
+      throw err;
     }
   }
 
@@ -315,21 +321,28 @@ export function createUserSystemdTerminalRuntime(options: {
     if (!parsed.success) throw new InvalidTerminalRuntimeRequestError();
     await ensureDescriptorRoot();
     const path = join(descriptorRoot, `${parsed.data}.json`);
+    let stats;
     try {
-      const stats = await lstat(path);
-      if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 64 * 1024) {
-        throw new InvalidTerminalRuntimeRequestError();
-      }
-      const descriptor = DescriptorSchema.safeParse(JSON.parse(await readFile(path, "utf8")));
-      if (!descriptor.success || descriptor.data.runtimeId !== parsed.data) {
-        throw new InvalidTerminalRuntimeRequestError();
-      }
-      return descriptor.data;
+      stats = await lstat(path);
     } catch (err: unknown) {
       if (isErrnoCode(err, "ENOENT")) return null;
-      if (err instanceof InvalidTerminalRuntimeRequestError) throw err;
+      throw new TerminalRuntimeUnavailableError(err);
+    }
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 64 * 1024) {
       throw new InvalidTerminalRuntimeRequestError();
     }
+    let rawDescriptor: unknown;
+    try {
+      rawDescriptor = JSON.parse(await readFile(path, "utf8"));
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) throw new InvalidTerminalRuntimeRequestError();
+      throw new TerminalRuntimeUnavailableError(err);
+    }
+    const descriptor = DescriptorSchema.safeParse(rawDescriptor);
+    if (!descriptor.success || descriptor.data.runtimeId !== parsed.data) {
+      throw new InvalidTerminalRuntimeRequestError();
+    }
+    return descriptor.data;
   }
 
   async function listDescriptors(): Promise<UserSystemdTerminalDescriptor[]> {
@@ -349,7 +362,8 @@ export function createUserSystemdTerminalRuntime(options: {
       try {
         const descriptor = await readDescriptor(entry.name.slice(0, -".json".length));
         if (descriptor) descriptors.push(descriptor);
-      } catch {
+      } catch (err: unknown) {
+        if (!(err instanceof InvalidTerminalRuntimeRequestError)) throw err;
         console.warn("[terminal-runtime] ignoring an invalid runtime descriptor");
       }
     }
