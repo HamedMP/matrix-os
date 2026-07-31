@@ -28,7 +28,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect source changes
+      - name: Classify Docker/local-runtime changes
         id: changed
         env:
           PR_ACTION: ${{ github.event.action || '' }}
@@ -59,29 +59,23 @@ jobs:
 
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
-            changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
+            node scripts/ci/docker-relevance.mjs \
+              --base "origin/$GITHUB_BASE_REF" \
+              --head "$GITHUB_SHA" \
+              --format github >> "$GITHUB_OUTPUT"
           else
             zero_sha="0000000000000000000000000000000000000000"
             if [ -n "${GITHUB_EVENT_BEFORE:-}" ] && [ "$GITHUB_EVENT_BEFORE" != "$zero_sha" ] && git cat-file -e "${GITHUB_EVENT_BEFORE}^{commit}" 2>/dev/null; then
-              changed_files="$(git diff --name-only "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA")"
+              node scripts/ci/docker-relevance.mjs \
+                --base "$GITHUB_EVENT_BEFORE" \
+                --head "$GITHUB_SHA" \
+                --format github >> "$GITHUB_OUTPUT"
             else
-              changed_files="$(git show --pretty= --name-only "$GITHUB_SHA")"
+              node scripts/ci/docker-relevance.mjs \
+                --commit "$GITHUB_SHA" \
+                --format github >> "$GITHUB_OUTPUT"
             fi
           fi
-
-          should_run=false
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            case "$file" in
-              docs/*|specs/*|*.md) ;;
-              *) should_run=true; break ;;
-            esac
-          done <<EOF
-          $changed_files
-          EOF
-
-          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
-          echo "Docker relevant changes: $should_run"
 
   docker-build:
     name: Build Docker Test Image

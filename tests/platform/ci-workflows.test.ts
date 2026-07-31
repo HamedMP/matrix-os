@@ -172,7 +172,8 @@ describe('CI workflows', () => {
     const readme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
 
     expect(workflow).toContain('node scripts/ci/docker-relevance.mjs');
-    expect(workflow).toContain('--base "origin/$GITHUB_BASE_REF" --head "$GITHUB_SHA"');
+    expect(workflow).toContain('--base "origin/$GITHUB_BASE_REF"');
+    expect(workflow).toContain('--head "$GITHUB_SHA"');
     expect(workflow).toContain('--commit "$GITHUB_SHA"');
     expect(workflow).toContain('--format github >> "$GITHUB_OUTPUT"');
     expect(workflow).toContain('[ "$GITHUB_EVENT_NAME" = "merge_group" ]');
@@ -180,7 +181,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('[ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]');
     expect(workflow).not.toContain('case "$file" in');
     expect(readme).toContain('scripts/ci/docker-relevance.mjs');
-    expect(readme).toContain('merge queue, nightly, and manual runs remain comprehensive');
+    expect(readme).toMatch(/merge\s+queue, nightly, and manual runs remain comprehensive/);
   });
 
   it('gives Docker scenario jobs enough timeout for slow artifact transfer before tests start', () => {

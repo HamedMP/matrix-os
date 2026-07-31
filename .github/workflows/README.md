@@ -58,7 +58,7 @@ OTA payloads.
 | Workflow | Owner | When it runs | Required? |
 | --- | --- | --- | --- |
 | `ci.yml` | Core code validation | `ready-for-ci`, ready PRs, merge queue, `main`, manual | Yes, via `CI Results` |
-| `docker-test.yml` | Legacy/local Docker scenario validation | `ready-for-ci`, ready PRs, merge queue, `main`, nightly, manual | Required when Docker/runtime paths are touched |
+| `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on `ready-for-ci`, ready PRs, and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
@@ -84,6 +84,21 @@ Workflows must fail closed if the script exits non-zero, emits invalid JSON, or
 returns an unknown lane. `runtime/*` tags are intentionally invalid until the
 host-bundle release workflow migrates away from the existing `v*` runtime tag
 contract.
+
+## Docker Relevance Router
+
+Use `scripts/ci/docker-relevance.mjs` as the source of truth for whether a PR or
+`main` push needs the legacy/local Docker validation. It includes the dev image,
+Compose and startup configuration, Docker scenario harness, root workspace
+metadata, gateway/kernel/shell dependencies, home templates, and the shared
+sync-client protocol imported by the gateway. Platform-only, proxy-only,
+installable CLI, desktop/mobile, docs/specs, and unrelated workflow changes do
+not spend a Docker runner.
+
+The PR and `main` paths are relevance-filtered for cost and signal. The merge
+queue, nightly, and manual runs remain comprehensive so an incomplete path rule
+cannot silently remove the recurring full scenario coverage. Classification
+errors fail the workflow instead of being interpreted as an irrelevant change.
 
 ## Release Rules
 

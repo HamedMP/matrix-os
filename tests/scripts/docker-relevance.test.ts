@@ -25,6 +25,7 @@ describe("Docker CI relevance classifier", () => {
     "scripts/docker-test/fresh-install.sh",
     "scripts/build-default-apps.mjs",
     "scripts/branch-dev.sh",
+    "scripts/ci/docker-relevance.mjs",
     "scripts/fix-node-pty-perms.mjs",
     "scripts/sync-matrix-agent-skills.sh",
     "distro/docker-dev-entrypoint.sh",
@@ -61,7 +62,7 @@ describe("Docker CI relevance classifier", () => {
     "packages/neo-worker/src/index.ts",
     "packages/symphony-elixir/lib/symphony.ex",
     "desktop/src/main.ts",
-    "mobile/app/index.tsx",
+    "apps/mobile/app/index.tsx",
     "docs/dev/docker-development.md",
     "specs/001-example/spec.md",
     "README.md",
@@ -153,11 +154,11 @@ describe("Docker CI relevance classifier", () => {
   });
 
   it.each([
-    [],
-    ["--base", "origin/main"],
-    ["--commit", "HEAD", "--path", "shell/app/page.tsx"],
-    ["--path", "shell/app/page.tsx", "--format", "xml"],
-    ["--unknown"],
+    [[]],
+    [["--base", "origin/main"]],
+    [["--commit", "HEAD", "--path", "shell/app/page.tsx"]],
+    [["--path", "shell/app/page.tsx", "--format", "xml"]],
+    [["--unknown"]],
   ])("rejects invalid CLI arguments: %j", (args) => {
     const script = join(process.cwd(), "scripts/ci/docker-relevance.mjs");
     const result = spawnSync(process.execPath, [script, ...args], {
