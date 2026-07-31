@@ -390,8 +390,8 @@ describe("ShellSocket server frames", () => {
     );
   });
 
-  it("treats session_not_found, invalid_request, and attach_failed as fatal and never reconnects", () => {
-    for (const code of ["session_not_found", "invalid_request", "attach_failed"]) {
+  it("treats non-recoverable server errors as fatal and never reconnects", () => {
+    for (const code of ["session_not_found", "invalid_request", "attach_failed", "replay_unavailable"]) {
       const h = createHarness();
       h.socket.connect();
       h.latest().open();

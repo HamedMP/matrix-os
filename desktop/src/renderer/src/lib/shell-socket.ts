@@ -63,6 +63,7 @@ const FATAL_ERROR_CODES: ReadonlySet<string> = new Set([
   "session_not_found",
   "invalid_request",
   "attach_failed",
+  "replay_unavailable",
 ]);
 
 type TimerHandle = ReturnType<typeof setTimeout>;

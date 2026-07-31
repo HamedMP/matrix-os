@@ -953,6 +953,101 @@ describe("TerminalPane scrolling", () => {
     expect(terminal.write.mock.calls.filter(([data]) => data === "missed-once\r\n")).toHaveLength(1);
   });
 
+  it("rejects a forward gap, reconnects from the first missing sequence, and deduplicates replay", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-output-gap-recovery-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId="main"
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    const staleMessage = firstSocket.onmessage;
+    await act(async () => {
+      firstSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 10 }),
+      });
+      firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 10, data: "N\r\n" }) });
+      firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 12, data: "N+2-early\r\n" }) });
+      firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 13, data: "later-early\r\n" }) });
+    });
+
+    expect(firstSocket.close).toHaveBeenCalledOnce();
+    expect(terminal.write.mock.calls.filter(([data]) => data === "N\r\n")).toHaveLength(1);
+    expect(terminal.write.mock.calls.filter(([data]) => data === "N+2-early\r\n")).toHaveLength(0);
+    expect(terminal.write.mock.calls.filter(([data]) => data === "later-early\r\n")).toHaveLength(0);
+
+    await act(async () => {
+      firstSocket.onclose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const replaySocket = WebSocketMock.instances[1]!;
+    expect(new URL(replaySocket.url).searchParams.get("fromSeq")).toBe("11");
+
+    await act(async () => {
+      replaySocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 11 }),
+      });
+      staleMessage?.({ data: JSON.stringify({ type: "output", seq: 11, data: "stale-race\r\n" }) });
+      replaySocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 11, data: "N+1\r\n" }) });
+      replaySocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 12, data: "N+2\r\n" }) });
+      replaySocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 12, data: "N+2-duplicate\r\n" }) });
+    });
+
+    expect(terminal.write.mock.calls.filter(([data]) => data === "stale-race\r\n")).toHaveLength(0);
+    expect(terminal.write.mock.calls.filter(([data]) => data === "N+1\r\n")).toHaveLength(1);
+    expect(terminal.write.mock.calls.filter(([data]) => data === "N+2\r\n")).toHaveLength(1);
+    expect(terminal.write.mock.calls.filter(([data]) => data === "N+2-duplicate\r\n")).toHaveLength(0);
+  });
+
+  it("stops on unavailable replay and shows only a generic client error", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-replay-unavailable-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId="main"
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const ws = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      ws.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "error",
+          code: "replay_unavailable",
+          message: "Postgres failed at /opt/matrix/private/scrollback.jsonl",
+        }),
+      });
+      ws.onmessage?.({ data: JSON.stringify({ type: "output", seq: 0, data: "must-not-render\r\n" }) });
+    });
+
+    expect(ws.close).toHaveBeenCalledOnce();
+    expect(terminal.write.mock.calls.some(([data]) => String(data).includes("Terminal history unavailable"))).toBe(true);
+    expect(terminal.write.mock.calls.some(([data]) => String(data).includes("Postgres"))).toBe(false);
+    expect(terminal.write.mock.calls.filter(([data]) => data === "must-not-render\r\n")).toHaveLength(0);
+  });
+
   it("preserves the xterm buffer and replay cursor across cached tab switching", async () => {
     const props = {
       paneId: "pane-cached-replay-test",

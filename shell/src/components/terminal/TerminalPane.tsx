@@ -1076,6 +1076,7 @@ export function TerminalPane({
         wsRef.current = ws;
         const alreadyAttached = options.alreadyAttached === true;
         const isColdReplay = options.replayRequest?.mode === "cold-replay";
+        let sequenceInterrupted = false;
         const isCurrentWs = () => (
           wsRef.current === ws
           && wsGenerationRef.current === generation
@@ -1101,6 +1102,16 @@ export function TerminalPane({
           },
         });
         coldReplayVisibility = replayVisibility;
+        const interruptForOutputGap = (expectedSeq: number, receivedSeq: number) => {
+          if (sequenceInterrupted || !isCurrentWs()) {
+            return;
+          }
+          sequenceInterrupted = true;
+          log("output-gap", { expectedSeq, receivedSeq });
+          track("output-gap", { expectedSeq, receivedSeq });
+          setConnectionNotice("reconnecting");
+          ws.close();
+        };
         log("bind-ws", {
           attachOnOpen,
           alreadyAttached,
@@ -1282,7 +1293,14 @@ export function TerminalPane({
               });
               sessionIdRef.current = msg.sessionId;
               if (msg.fromSeq !== null) {
-                lastSeqRef.current = Math.max(lastSeqRef.current, msg.fromSeq);
+                if (
+                  options.replayRequest?.mode === "cursor-resume"
+                  && msg.fromSeq !== options.replayRequest.requestedSeq
+                ) {
+                  interruptForOutputGap(options.replayRequest.requestedSeq, msg.fromSeq);
+                  break;
+                }
+                lastSeqRef.current = msg.fromSeq;
                 hasReplayCursorRef.current = true;
               }
               onSessionAttachedRef.current?.(paneId, msg.sessionId);
@@ -1293,13 +1311,25 @@ export function TerminalPane({
               break;
 
             case "output":
+              if (sequenceInterrupted) {
+                break;
+              }
+              if (msg.seq !== null) {
+                if (msg.seq < lastSeqRef.current) {
+                  break;
+                }
+                if (msg.seq > lastSeqRef.current) {
+                  interruptForOutputGap(lastSeqRef.current, msg.seq);
+                  break;
+                }
+              }
               term.write(transformTerminalOutputForCompat(
                 msg.data,
                 compatModeRef.current,
                 codexCompatTransformRef.current ?? createCodexTuiCompatTransform(buildXtermTheme(theme, terminalThemeId)),
               ));
               if (msg.seq !== null) {
-                lastSeqRef.current = Math.max(lastSeqRef.current, msg.seq + 1);
+                lastSeqRef.current = msg.seq + 1;
                 hasReplayCursorRef.current = true;
               }
               outputBufferRef.current += msg.data;
@@ -1330,9 +1360,12 @@ export function TerminalPane({
               break;
 
             case "block-mark":
-              if (msg.seq !== null) {
-                lastSeqRef.current = Math.max(lastSeqRef.current, msg.seq + 1);
-                hasReplayCursorRef.current = true;
+              if (sequenceInterrupted) {
+                break;
+              }
+              if (msg.seq !== null && msg.seq > lastSeqRef.current) {
+                interruptForOutputGap(lastSeqRef.current, msg.seq);
+                break;
               }
               if (msg.mark.code === "B" || msg.mark.code === "C") {
                 activeCommandBlockRef.current = true;
@@ -1357,6 +1390,15 @@ export function TerminalPane({
             }
 
             case "error": {
+              if (msg.code === "replay_unavailable") {
+                sequenceInterrupted = true;
+                reconnectAttemptRef.current = 3;
+                setConnectionNotice("disconnected");
+                term.write("\r\n\x1b[31m[Error: Terminal history unavailable]\x1b[0m\r\n");
+                replayVisibility.revealAfterWrites();
+                ws.close();
+                break;
+              }
               const safeMsg = stripTerminalControls(msg.message);
               log("server-error", { message: safeMsg });
               track("server-error", {

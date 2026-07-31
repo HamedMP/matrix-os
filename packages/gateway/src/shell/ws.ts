@@ -47,7 +47,7 @@ export const SHELL_ATTACH_RECENT_REPLAY_EVENTS = 50;
 
 export interface ShellWsSocket {
   send(data: string): void;
-  close?: () => void;
+  close?: (code?: number, reason?: string) => void;
   /** Backpressure signal; Hono WSContext exposes it on the raw socket. */
   bufferedAmount?: number;
   raw?: { bufferedAmount?: number };
@@ -134,7 +134,8 @@ interface ConnState {
   openedAt: number;
   lastActivityAt: number;
   closed: boolean;
-  close: () => void;
+  replaying: boolean;
+  close: (code?: number, reason?: string) => void;
 }
 
 interface SessionRuntime {
@@ -161,6 +162,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   const attachStartupGraceMs = options.attachStartupGraceMs ?? 75;
   const earlyAttachOutputLimit = Math.min(options.maxReplayBytes ?? 1024 * 1024, 64 * 1024);
   const highWaterMark = options.flowControl?.highWaterMark ?? 1024 * 1024;
+  const maxReplayCatchUpPasses = 8;
 
   const runtimes = new Map<string, SessionRuntime>();
   let connCounter = 0;
@@ -253,11 +255,18 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   }
 
   function deliver(conn: ConnState, msg: unknown): boolean {
-    if (socketBufferedAmount(conn.ws) > highWaterMark) {
+    if (conn.closed) {
       return false;
     }
-    sendJson(conn.ws, msg);
-    return true;
+    if (socketBufferedAmount(conn.ws) > highWaterMark) {
+      conn.close(1013, "Reconnect to resume");
+      return false;
+    }
+    if (sendJson(conn.ws, msg)) {
+      return true;
+    }
+    conn.close(1011, "Connection interrupted");
+    return false;
   }
 
   function emitOutput(runtime: SessionRuntime, data: string, finalConn?: ConnState): void {
@@ -267,7 +276,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     const result = runtime.buffer.writeLive(data);
     const frame = { type: "output", seq: result.seq, data };
     for (const conn of runtime.conns) {
-      if (!conn.closed || conn === finalConn) {
+      if ((!conn.closed || conn === finalConn) && !conn.replaying) {
         deliver(conn, frame);
       }
     }
@@ -639,49 +648,10 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
-    const conn: ConnState = {
-      ws,
-      openedAt: Date.now(),
-      lastActivityAt: Date.now(),
-      closed: false,
-      close: () => {
-        void closeSession().finally(() => {
-          ws.close?.();
-        });
-      },
-    };
-    runtime.conns.add(conn);
-    cancelIdleClose(runtime);
-
     const effectiveFromSeq = fromSeq === SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
       ? (await replayBuffer.latestSeq() ?? -1) + 1
       : fromSeq;
-
-    sendJson(ws, {
-      type: "attached",
-      session: safeName,
-      state: info.status === "exited" ? "exited" : "running",
-      fromSeq: effectiveFromSeq,
-    });
-
-    const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
-    for (const event of await replayBuffer.replayFromSeq(effectiveFromSeq)) {
-      if (event.type === "replay-evicted") {
-        continue;
-      }
-      if (event.type === "output") {
-        const data = replayOutputCompat.write(event.data);
-        if (data.length > 0) {
-          sendJson(ws, { ...event, data });
-        }
-        // A replay chunk can contain only the start of an escape sequence. The
-        // compat stream buffers it and emits bytes with the later completing
-        // chunk, matching the live-output path even when delivered seqs skip.
-        continue;
-      }
-      sendJson(ws, event);
-    }
-
+    let conn!: ConnState;
     const detachConn = () => {
       runtime.conns.delete(conn);
       sizing.detach(connId);
@@ -690,26 +660,116 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
     };
 
-    const closeSession = async () => {
+    const closeSession = async (flushFinalOutput = true) => {
       if (conn.closed) {
         return;
       }
-      conn.closed = true;
       const isLastConn = runtime.conns.size === 1 && runtime.conns.has(conn);
       if (isLastConn && idleAttachGraceMs <= 0) {
-        if (runtime.outputCompat) {
+        if (flushFinalOutput && runtime.outputCompat) {
           const pendingOutput = runtime.outputCompat.flush();
           if (pendingOutput.length > 0) {
             emitOutput(runtime, pendingOutput, conn);
           }
         }
+        conn.closed = true;
         runtime.conns.delete(conn);
         sizing.detach(connId);
         await closeSharedAttach(runtime);
         return;
       }
+      conn.closed = true;
       detachConn();
     };
+
+    conn = {
+      ws,
+      openedAt: Date.now(),
+      lastActivityAt: Date.now(),
+      closed: false,
+      replaying: true,
+      close: (code?: number, reason?: string) => {
+        void closeSession(false);
+        ws.close?.(code, reason);
+      },
+    };
+    runtime.conns.add(conn);
+    cancelIdleClose(runtime);
+
+    if (deliver(conn, {
+      type: "attached",
+      session: safeName,
+      state: info.status === "exited" ? "exited" : "running",
+      fromSeq: effectiveFromSeq,
+    })) {
+      const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
+      let nextSeq = effectiveFromSeq;
+      let replayComplete = false;
+      deliver(conn, { type: "replay-start", fromSeq: effectiveFromSeq });
+
+      try {
+        for (let pass = 0; pass < maxReplayCatchUpPasses && !conn.closed; pass += 1) {
+          const events = await replayBuffer.replayFromSeq(nextSeq);
+          if (conn.closed) {
+            break;
+          }
+          const outputs = events.filter((event) => event.type === "output");
+          const marks = events.filter((event) => event.type === "block-mark");
+          let unavailable = false;
+
+          for (const event of outputs) {
+            if (event.seq < nextSeq) {
+              continue;
+            }
+            if (event.seq > nextSeq) {
+              unavailable = true;
+              break;
+            }
+            const data = replayOutputCompat.write(event.data);
+            if (!deliver(conn, { ...event, data })) {
+              break;
+            }
+            for (const mark of marks) {
+              if (mark.seq === event.seq && !deliver(conn, mark)) {
+                break;
+              }
+            }
+            nextSeq = event.seq + 1;
+          }
+
+          if (conn.closed) {
+            break;
+          }
+          const latestSeq = await replayBuffer.latestSeq();
+          if (unavailable || (outputs.length === 0 && latestSeq !== null && latestSeq >= nextSeq)) {
+            sendJson(conn.ws, {
+              type: "error",
+              code: "replay_unavailable",
+              message: "Terminal history unavailable",
+            });
+            conn.close(1008, "Terminal history unavailable");
+            break;
+          }
+          if (latestSeq === null || nextSeq > latestSeq) {
+            conn.replaying = false;
+            replayComplete = deliver(conn, { type: "replay-end", toSeq: latestSeq });
+            break;
+          }
+        }
+      } catch (err: unknown) {
+        console.warn("[shell] terminal replay failed:", err instanceof Error ? err.message : String(err));
+        sendJson(conn.ws, {
+          type: "error",
+          code: "replay_unavailable",
+          message: "Terminal history unavailable",
+        });
+        conn.close(1011, "Connection interrupted");
+      }
+
+      if (!conn.closed && !replayComplete) {
+        conn.close(1013, "Reconnect to resume");
+      }
+    }
 
     return {
       onMessage(raw: string) {
@@ -794,10 +854,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   return { open, dispose, pendingPersistBytes };
 }
 
-function sendJson(ws: ShellWsSocket, msg: unknown): void {
+function sendJson(ws: ShellWsSocket, msg: unknown): boolean {
   try {
     ws.send(JSON.stringify(msg));
+    return true;
   } catch (err: unknown) {
     console.warn("[shell] terminal websocket send failed:", err instanceof Error ? err.message : String(err));
+    return false;
   }
 }
