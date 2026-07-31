@@ -63,6 +63,7 @@ ENV NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
 ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 ENV NEXT_PUBLIC_POSTHOG_API_HOST=$NEXT_PUBLIC_POSTHOG_API_HOST
 RUN pnpm --filter '@matrix-os/observability' build
+RUN pnpm --filter '@matrix-os/brand' build
 RUN cd shell && node ../node_modules/next/dist/bin/next build
 
 # --------------------------------------------------
