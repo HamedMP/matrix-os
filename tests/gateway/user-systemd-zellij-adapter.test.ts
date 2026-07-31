@@ -158,6 +158,21 @@ describe("user-systemd zellij adapter", () => {
     expect(controller.delete).toHaveBeenCalledWith(RUNTIME_ID);
   });
 
+  it("makes repeated forced deletion succeed after the descriptor is already absent", async () => {
+    controller.findByDisplayName.mockResolvedValue(null);
+    const adapter = createUserSystemdZellijAdapter({
+      homePath,
+      generation: GENERATION,
+      controller,
+      baseAdapter: base,
+      adapterFactory: vi.fn(() => pinned),
+    });
+
+    await expect(adapter.deleteSession("already-gone", { force: true })).resolves.toBeUndefined();
+
+    expect(controller.delete).not.toHaveBeenCalled();
+  });
+
   it("reconciles an existing inactive descriptor instead of allocating a replacement identity", async () => {
     const existing = descriptor({ cwd: homePath });
     controller.findByDisplayName.mockResolvedValue(existing);

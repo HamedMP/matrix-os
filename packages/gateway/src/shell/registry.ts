@@ -451,10 +451,6 @@ export class ShellRegistry {
         if (!options.force) {
           throw shellError("session_not_found", "Session not found", 404);
         }
-        const live = new Set(await this.options.adapter.listSessions());
-        if (!live.has(targetName)) {
-          throw shellError("session_not_found", "Session not found", 404);
-        }
       }
       await this.options.adapter.deleteSession(targetName, options);
       delete file.sessions[targetName];

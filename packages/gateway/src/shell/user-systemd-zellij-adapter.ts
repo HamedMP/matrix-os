@@ -217,8 +217,12 @@ export function createUserSystemdZellijAdapter(options: {
       cacheDescriptor(created);
     },
 
-    async deleteSession(name) {
-      const descriptor = await descriptorFor(name);
+    async deleteSession(name, deleteOptions = {}) {
+      const descriptor = await options.controller.findByDisplayName("terminal", name);
+      if (!descriptor) {
+        if (deleteOptions.force) return;
+        throw shellError("session_not_found", "Session not found", 404);
+      }
       await options.controller.delete(descriptor.runtimeId);
       descriptorCache = descriptorCache.filter((entry) => entry.runtimeId !== descriptor.runtimeId);
       const generatedLayout = join(homePath, "system", "zellij", "runtime-layouts", `${descriptor.runtimeId}.kdl`);

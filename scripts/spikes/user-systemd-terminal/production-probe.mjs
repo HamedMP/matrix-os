@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const [operation = "", displayName = "", workloadKind = ""] = process.argv.slice(2);
+const [operation = "", displayName = "", workloadKind = "", readyPath = ""] = process.argv.slice(2);
 const home = "/home/matrix/home";
 const descriptorRoot = `${home}/system/terminal-runtimes`;
 const uid = process.getuid?.() === 0
@@ -16,12 +16,44 @@ function fail(code) {
   process.exit(1);
 }
 
-if (
-  operation !== "snapshot"
-  || !/^[a-z0-9][a-z0-9-]{0,30}$/.test(displayName)
-  || (workloadKind !== "shell" && workloadKind !== "agent")
-  || !Number.isInteger(uid)
-) {
+if (!Number.isInteger(uid) || !/^[a-z0-9][a-z0-9-]{0,30}$/.test(displayName)) {
+  fail("production_probe_invalid_request");
+}
+
+if (operation === "attach") {
+  const token = process.env.MATRIX_AUTH_TOKEN ?? "";
+  const readyPrefix = `${home}/system/terminal-acceptance/`;
+  if (
+    !/^[A-Za-z0-9._~+/=-]{16,512}$/.test(token)
+    || !readyPath.startsWith(readyPrefix)
+    || readyPath.includes("..")
+    || readyPath.length > 4096
+  ) fail("production_probe_invalid_request");
+  const url = new URL("ws://127.0.0.1:4000/ws/terminal");
+  url.searchParams.set("session", displayName);
+  url.searchParams.set("fromSeq", "0");
+  url.searchParams.set("token", token);
+  const socket = new WebSocket(url);
+  const outcome = await new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve("timeout"), 15_000);
+    socket.addEventListener("open", () => {
+      setTimeout(() => {
+        void writeFile(readyPath, "ready\n", { flag: "wx", mode: 0o600 })
+          .then(() => setTimeout(() => socket.close(), 8_000))
+          .catch(() => resolve("write_failed"));
+      }, 1_000);
+    });
+    socket.addEventListener("error", () => resolve("socket_failed"));
+    socket.addEventListener("close", () => {
+      clearTimeout(timeout);
+      resolve("closed");
+    });
+  });
+  if (outcome !== "closed") fail("production_probe_attach_failed");
+  process.exit(0);
+}
+
+if (operation !== "snapshot" || (workloadKind !== "shell" && workloadKind !== "agent")) {
   fail("production_probe_invalid_request");
 }
 
@@ -137,8 +169,11 @@ if (!processes.some((entry) => entry.pid === mainPid) || zellij.length < 2 || !w
 
 process.stdout.write(`${JSON.stringify({
   runtimeId: descriptor.runtimeId,
+  workloadKind,
   sessionName: descriptor.sessionName,
   generation: descriptor.generation,
+  layoutPath: descriptor.layoutPath,
+  environmentPath: descriptor.environmentPath ?? null,
   unit,
   cgroup: properties.ControlGroup,
   mainPid,

@@ -31,6 +31,8 @@ readonly agent_name="u-a-${run_nonce}"
 readonly delete_name="u-d-${run_nonce}"
 readonly limit_name="u-l-${run_nonce}"
 readonly post_rollback_name="u-p-${run_nonce}"
+readonly current_generation_name="u-c-${run_nonce}"
+readonly conflict_id=rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 readonly owner_uid="$(id -u matrix)"
 readonly loop_root="${home}/system/terminal-acceptance/${head_sha:0:7}-${run_nonce}"
 readonly loop_script="${loop_root}/production-loop.mjs"
@@ -113,7 +115,7 @@ create_session() {
 }
 
 delete_session() {
-  api_call DELETE "/api/terminal/sessions/$1" "" 200
+  api_call DELETE "/api/terminal/sessions/$1?force=1" "" 200
 }
 
 snapshot() {
@@ -147,19 +149,157 @@ roles_match() {
   ' >/dev/null
 }
 
-attach_once() {
-  local runtime_id="$1" result
-  set +e
-  timeout --signal=TERM --kill-after=1s 3s \
-    runuser -u matrix -- env \
-      HOME="$home" MATRIX_HOME="$home" TERM=xterm-256color \
-      XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
-      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
-      /usr/bin/script -qefc "/usr/local/bin/matrix-terminal-attach ${runtime_id} --index 0" /dev/null \
-      >/dev/null 2>&1
-  result=$?
-  set -e
-  [ "$result" -eq 124 ] || [ "$result" -eq 137 ]
+websocket_attach_owned_by_gateway() {
+  local name="$1" snapshot_file="$2" runtime_id session_name gateway_cgroup ready client_pid found=0
+  runtime_id="$(jq -r .runtimeId "$snapshot_file")"
+  session_name="$(jq -r .sessionName "$snapshot_file")"
+  gateway_cgroup="$(systemctl show matrix-gateway.service -p ControlGroup --value)"
+  ready="${loop_root}/ws-${runtime_id}.ready"
+  rm -f -- "$ready"
+  load_host_auth
+  runuser -u matrix -- env \
+    HOME="$home" MATRIX_HOME="$home" MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN" \
+    XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
+    /opt/matrix/runtime/node/bin/node "$probe_path" attach "$name" unused "$ready" \
+    >/dev/null 2>&1 &
+  client_pid=$!
+  for _ in $(seq 1 30); do [ -f "$ready" ] && break; sleep 1; done
+  [ -f "$ready" ]
+  local proc pid cmdline cgroup
+  for proc in /proc/[0-9]*; do
+    [ -r "$proc/cmdline" ] || continue
+    cmdline="$(tr '\0' ' ' <"$proc/cmdline")"
+    [[ "$cmdline" == *"/zellij attach ${session_name}"* ]] || continue
+    pid="${proc#/proc/}"
+    cgroup="$(awk -F: '$1 == "0" { print $3 }' "$proc/cgroup")"
+    [ "$cgroup" = "$gateway_cgroup" ]
+    [ "$cgroup" != "$(jq -r .cgroup "$snapshot_file")" ]
+    found=$((found + 1))
+  done
+  [ "$found" -ge 1 ]
+  wait "$client_pid"
+  rm -f -- "$ready"
+  roles_match "$name" "$(jq -r .workloadKind "$snapshot_file")" "$snapshot_file"
+}
+
+verify_gateway_memory_isolation() {
+  local shell_baseline="$1" agent_baseline="$2" gateway_cgroup memory_max memory_current memory_high target_high body pressure_status=0
+  gateway_cgroup="$(systemctl show matrix-gateway.service -p ControlGroup --value)"
+  memory_max="$(systemctl show matrix-gateway.service -p MemoryMax --value)"
+  memory_current="$(systemctl show matrix-gateway.service -p MemoryCurrent --value)"
+  memory_high="$(systemctl show matrix-gateway.service -p MemoryHigh --value)"
+  [[ "$memory_max" =~ ^[1-9][0-9]*$ ]]
+  [[ "$memory_current" =~ ^[0-9]+$ ]]
+  [ "$(jq -r .cgroup "$shell_baseline")" != "$gateway_cgroup" ]
+  [ "$(jq -r .cgroup "$agent_baseline")" != "$gateway_cgroup" ]
+  grep -qw memory "/sys/fs/cgroup${gateway_cgroup%/*}/cgroup.controllers"
+  target_high=$((memory_current + 16 * 1024 * 1024))
+  systemctl set-property --runtime matrix-gateway.service "MemoryHigh=${target_high}"
+  body="$(jq -cn '{command:["/opt/matrix/runtime/node/bin/node","-e","const b=Buffer.alloc(32*1024*1024,1);setTimeout(()=>{},1000)"],timeoutMs:5000}')"
+  api_call POST /api/terminal/run "$body" 200 || pressure_status=$?
+  systemctl set-property --runtime matrix-gateway.service "MemoryHigh=${memory_high}"
+  [ "$pressure_status" -eq 0 ]
+  roles_match "$shell_name" shell "$shell_baseline"
+  roles_match "$agent_name" agent "$agent_baseline"
+  wait_gateway
+}
+
+verify_resource_controls() {
+  local baseline cgroup slice_cgroup memory_max tasks_max slice_memory_max slice_tasks_max
+  for baseline in "$@"; do
+    cgroup="$(jq -r .cgroup "$baseline")"
+    memory_max="$(jq -r .memoryMax "$baseline")"
+    tasks_max="$(jq -r .tasksMax "$baseline")"
+    [ "$(cat "/sys/fs/cgroup${cgroup}/memory.max")" = "$memory_max" ]
+    [ "$(cat "/sys/fs/cgroup${cgroup}/pids.max")" = "$tasks_max" ]
+  done
+  slice_cgroup="$(jq -r .sliceCgroup "$1")"
+  slice_memory_max="$(jq -r .sliceMemoryMax "$1")"
+  slice_tasks_max="$(jq -r .sliceTasksMax "$1")"
+  [ "$(cat "/sys/fs/cgroup${slice_cgroup}/memory.max")" = "$slice_memory_max" ]
+  [ "$(cat "/sys/fs/cgroup${slice_cgroup}/pids.max")" = "$slice_tasks_max" ]
+  grep -qw memory "/sys/fs/cgroup${slice_cgroup}/cgroup.controllers"
+  grep -qw pids "/sys/fs/cgroup${slice_cgroup}/cgroup.controllers"
+}
+
+run_controller_adversarial_checks() {
+  local layout_path="${home}/system/zellij/layouts/default.kdl"
+  runuser -u matrix -- env \
+    HOME="$home" MATRIX_HOME="$home" \
+    XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
+    /opt/matrix/runtime/node/bin/node --input-type=module - \
+    "$home" "$conflict_id" "$layout_path" <<'NODE'
+import { execFile } from "node:child_process";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
+import {
+  createUserSystemdTerminalRuntime,
+  loadInstalledTerminalRuntimeGeneration,
+} from "/opt/matrix/app/packages/gateway/dist/shell/user-systemd-terminal-runtime.js";
+
+const execFileAsync = promisify(execFile);
+const [homePath, runtimeId, layoutPath] = process.argv.slice(2);
+const generation = await loadInstalledTerminalRuntimeGeneration("/opt/matrix/app");
+const runtime = createUserSystemdTerminalRuntime({ homePath, generation });
+const base = {
+  runtimeId,
+  scope: "terminal",
+  kind: "shell",
+  displayName: "acceptance-conflict-a",
+  cwd: homePath,
+  layoutPath,
+};
+async function mustReject(operation) {
+  let rejected = false;
+  try { await operation(); } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    rejected = true;
+  }
+  if (!rejected) process.exit(1);
+}
+await mustReject(() => runtime.create({ ...base, runtimeId: "../../matrix-gateway" }));
+await mustReject(() => runtime.create({ ...base, cwd: "/etc" }));
+const created = await runtime.create(base);
+await mustReject(() => runtime.create({ ...base, displayName: "acceptance-conflict-b" }));
+await execFileAsync("systemctl", ["--user", "stop", `matrix-zellij@${runtimeId}.service`]);
+const restarted = await runtime.start(runtimeId);
+if (restarted.runtimeId !== created.runtimeId || restarted.sessionName !== created.sessionName) process.exit(1);
+await execFileAsync("systemctl", ["--user", "stop", `matrix-zellij@${runtimeId}.service`]);
+const descriptorPath = `${homePath}/system/terminal-runtimes/${runtimeId}.json`;
+const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
+await writeFile(descriptorPath, `${JSON.stringify({
+  ...descriptor,
+  command: "/bin/sh",
+  unit: "matrix-gateway.service",
+  url: "file:///etc/passwd",
+  environment: { PATH: "/tmp" },
+})}\n`, { mode: 0o600 });
+await mustReject(() => runtime.start(runtimeId));
+try {
+  await execFileAsync("systemctl", ["--user", "start", `matrix-zellij@${runtimeId}.service`]);
+} catch (error) {
+  if (!(error instanceof Error)) throw error;
+}
+await new Promise((resolve) => setTimeout(resolve, 500));
+await mustReject(() => execFileAsync("systemctl", ["--user", "is-active", `matrix-zellij@${runtimeId}.service`]));
+await execFileAsync("systemctl", ["--user", "reset-failed", `matrix-zellij@${runtimeId}.service`]);
+const environmentPath = `${homePath}/system/terminal-runtimes/hostile-environment.json`;
+await writeFile(environmentPath, `${JSON.stringify({ LD_PRELOAD: "/tmp/hostile.so" })}\n`, { mode: 0o600 });
+await writeFile(descriptorPath, `${JSON.stringify({ ...descriptor, environmentPath })}\n`, { mode: 0o600 });
+try {
+  await execFileAsync("systemctl", ["--user", "start", `matrix-zellij@${runtimeId}.service`]);
+} catch (error) {
+  if (!(error instanceof Error)) throw error;
+}
+await new Promise((resolve) => setTimeout(resolve, 500));
+await mustReject(() => execFileAsync("systemctl", ["--user", "is-active", `matrix-zellij@${runtimeId}.service`]));
+await rm(environmentPath, { force: true });
+await writeFile(descriptorPath, `${JSON.stringify(descriptor)}\n`, { mode: 0o600 });
+await runtime.delete(runtimeId);
+await runtime.delete(runtimeId);
+NODE
 }
 
 request_update() {
@@ -209,8 +349,18 @@ hostile_state_fails_closed() {
 }
 
 generation_gc_safe() {
-  local initial_generation="$1" removed=0 digit generation
+  local initial_generation="$1" removed=0 digit generation installed_count current_generation referenced_generation descriptor
   [ -d "${runtime_root}/generations/${initial_generation}" ]
+  current_generation="$(basename "$(readlink "${runtime_root}/current")")"
+  [ -d "${runtime_root}/generations/${current_generation}" ]
+  [ -d "${runtime_root}/generations/$(cat /opt/matrix/app/TERMINAL_RUNTIME_GENERATION)" ]
+  [ -d "${runtime_root}/generations/$(cat /opt/matrix/app.rollback/TERMINAL_RUNTIME_GENERATION)" ]
+  for descriptor in "$descriptor_root"/rt_*.json; do
+    [ -f "$descriptor" ] && [ ! -L "$descriptor" ] || continue
+    referenced_generation="$(jq -er .generation "$descriptor" 2>/dev/null || true)"
+    [[ "$referenced_generation" =~ ^gen_[0-9a-f]{64}$ ]] || continue
+    [ -d "${runtime_root}/generations/${referenced_generation}" ]
+  done
   [ -L "$generation_symlink" ]
   [ -f "${generation_sentinel}/sentinel" ]
   for digit in 1 2 3 4 5 6 7 8; do
@@ -218,6 +368,8 @@ generation_gc_safe() {
     [ ! -e "$generation" ] && removed=$((removed + 1))
   done
   [ "$removed" -ge 1 ]
+  installed_count="$(find "${runtime_root}/generations" -mindepth 1 -maxdepth 1 -type d -name 'gen_*' | wc -l)"
+  [ "$installed_count" -le 8 ]
 }
 
 remove_hostile_state() {
@@ -232,10 +384,14 @@ remove_hostile_state() {
 }
 
 verify_deleted() {
-  local snapshot_file="$1" runtime_id unit cgroup pid
+  local snapshot_file="$1" runtime_id unit cgroup pid generation session_name layout_path environment_path sessions
   runtime_id="$(jq -r .runtimeId "$snapshot_file")"
   unit="$(jq -r .unit "$snapshot_file")"
   cgroup="$(jq -r .cgroup "$snapshot_file")"
+  generation="$(jq -r .generation "$snapshot_file")"
+  session_name="$(jq -r .sessionName "$snapshot_file")"
+  layout_path="$(jq -r .layoutPath "$snapshot_file")"
+  environment_path="$(jq -r '.environmentPath // ""' "$snapshot_file")"
   for _ in $(seq 1 60); do
     if ! owner_systemctl is-active --quiet "$unit" && [ ! -e "/sys/fs/cgroup${cgroup}/cgroup.procs" ]; then break; fi
     sleep 1
@@ -243,6 +399,17 @@ verify_deleted() {
   ! owner_systemctl is-active --quiet "$unit"
   [ ! -e "${descriptor_root}/${runtime_id}.json" ]
   [ ! -e "/sys/fs/cgroup${cgroup}/cgroup.procs" ]
+  sessions="$(runuser -u matrix -- env HOME="$home" MATRIX_HOME="$home" \
+    XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
+    "${runtime_root}/generations/${generation}/zellij" list-sessions --no-formatting 2>/dev/null || true)"
+  ! grep -Eq "^${session_name}([[:space:]]|$)" <<<"$sessions"
+  if [[ "$layout_path" == "${home}/system/zellij/runtime-layouts/${runtime_id}"* ]]; then
+    [ ! -e "$layout_path" ]
+  fi
+  [ -z "$environment_path" ] || [ ! -e "$environment_path" ]
+  if [ -d "/run/user/${owner_uid}/zellij" ]; then
+    ! find "/run/user/${owner_uid}/zellij" -maxdepth 1 -type s -name "${session_name}*" | grep -q .
+  fi
   for pid in "$(jq -r .mainPid "$snapshot_file")" \
     "$(jq -r .zellijServerPid "$snapshot_file")" \
     "$(jq -r .workloadPid "$snapshot_file")"; do
@@ -254,7 +421,7 @@ verify_deleted() {
 
 cleanup_runtime_sessions() {
   wait_gateway || return 0
-  for name in "$shell_name" "$agent_name" "$delete_name" "$limit_name" "$post_rollback_name"; do
+  for name in "$shell_name" "$agent_name" "$delete_name" "$limit_name" "$post_rollback_name" "$current_generation_name"; do
     delete_session "$name" >/dev/null 2>&1 || true
   done
 }
@@ -306,12 +473,13 @@ EOF
   [ "$shell_cgroup" != "$gateway_cgroup" ]
   [ "$agent_cgroup" != "$gateway_cgroup" ]
   mark independentRuntimeCgroups
+  verify_resource_controls "$shell_baseline" "$agent_baseline"
   mark resourceControlsPresent
+  mark resourceControlsEffective
 
-  attach_once "$(jq -r .runtimeId "$shell_baseline")"
-  attach_once "$(jq -r .runtimeId "$agent_baseline")"
-  roles_match "$shell_name" shell "$shell_baseline"
-  roles_match "$agent_name" agent "$agent_baseline"
+  websocket_attach_owned_by_gateway "$shell_name" "$shell_baseline"
+  websocket_attach_owned_by_gateway "$agent_name" "$agent_baseline"
+  mark browserAttachmentPtysRemainGatewayOwned
   mark detachPreservesRuntimes
 
   systemctl restart matrix-gateway.service
@@ -328,6 +496,15 @@ EOF
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
   mark gatewaySigkillPreservesRuntimes
+  verify_gateway_memory_isolation "$shell_baseline" "$agent_baseline"
+  mark gatewayMemoryIsolation
+
+  run_controller_adversarial_checks
+  mark invalidRuntimeIdsFailClosed
+  mark conflictingDescriptorReuseFailsClosed
+  mark staleInactiveStateIsRecoverable
+  mark hostileDescriptorFieldsFailClosed
+  mark deleteIsIdempotent
 
   create_hostile_state
   hostile_state_fails_closed
@@ -337,32 +514,44 @@ EOF
   wait_update "$version_a"
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
-  attach_once "$(jq -r .runtimeId "$shell_baseline")"
+  websocket_attach_owned_by_gateway "$shell_name" "$shell_baseline"
   mark bundleOnePreservesRuntimes
 
   request_update "$version_b"
   wait_update "$version_b"
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
-  attach_once "$(jq -r .runtimeId "$agent_baseline")"
+  websocket_attach_owned_by_gateway "$agent_name" "$agent_baseline"
   mark bundleTwoPreservesRuntimes
+
+  create_session "$current_generation_name" "/opt/matrix/runtime/node/bin/node $loop_script $output_file"
+  local current_snapshot="${state_root}/current-generation.json"
+  wait_snapshot "$current_generation_name" shell "$current_snapshot"
+  [ "$(jq -r .generation "$current_snapshot")" = "$(cat /opt/matrix/app/TERMINAL_RUNTIME_GENERATION)" ]
+  mark newRuntimesUseCurrentGeneration
+  delete_session "$current_generation_name"
+  verify_deleted "$current_snapshot"
+  delete_session "$current_generation_name"
+  mark deleteRemovesExactRuntime
+  mark deleteRemovesSocketAndSnapshots
   generation_gc_safe "$(jq -r .generation "$shell_baseline")"
   mark generationGcIsReferenceAndSymlinkSafe
+  mark generationRetentionIsBounded
 
   request_update rollback
   wait_update "$version_a"
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
-  attach_once "$(jq -r .runtimeId "$shell_baseline")"
+  websocket_attach_owned_by_gateway "$shell_name" "$shell_baseline"
   mark rollbackPreservesRuntimes
 
   create_session "$post_rollback_name" "/opt/matrix/runtime/node/bin/node $loop_script $output_file"
   local post_snapshot="${state_root}/post-rollback.json"
   wait_snapshot "$post_rollback_name" shell "$post_snapshot"
   [ "$(jq -r .generation "$post_snapshot")" = "$(cat /opt/matrix/app/TERMINAL_RUNTIME_GENERATION)" ]
+  mark postRollbackRuntimeUsesCompatibleGeneration
   delete_session "$post_rollback_name"
   verify_deleted "$post_snapshot"
-  mark deleteRemovesExactRuntime
 
   create_session "$limit_name" "/opt/matrix/runtime/node/bin/node $loop_script $output_file"
   local limit_snapshot="${state_root}/limit.json" limit_unit
@@ -376,6 +565,7 @@ EOF
   ! owner_systemctl is-active --quiet "$limit_unit"
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
+  wait_gateway
   delete_session "$limit_name"
   owner_systemctl reset-failed "$limit_unit" >/dev/null 2>&1 || true
   mark resourceLimitIsolatesFailure
@@ -387,16 +577,27 @@ phase2() {
   trap fail_phase ERR
   [ "$(cat "$state_file")" = reboot-scheduled ]
   write_state phase2-running
-  local baseline unit pid
+  local baseline unit pid old_cgroup
   for baseline in "${state_root}/shell-baseline.json" "${state_root}/agent-baseline.json"; do
     unit="$(jq -r .unit "$baseline")"
+    old_cgroup="$(jq -r .cgroup "$baseline")"
     ! owner_systemctl is-active --quiet "$unit"
-    [ ! -e "/sys/fs/cgroup$(jq -r .cgroup "$baseline")/cgroup.procs" ]
+    [ ! -e "/sys/fs/cgroup${old_cgroup}/cgroup.procs" ]
+    [ -f "${descriptor_root}/$(jq -r .runtimeId "$baseline").json" ]
+    for pid in "$(jq -r .mainPid "$baseline")" \
+      "$(jq -r .zellijServerPid "$baseline")" \
+      "$(jq -r .workloadPid "$baseline")"; do
+      if [ -r "/proc/${pid}/cgroup" ]; then
+        ! grep -F -- "$old_cgroup" "/proc/${pid}/cgroup" >/dev/null
+      fi
+    done
   done
   if owner_systemctl list-units 'matrix-zellij@*.service' --state=active --no-legend | grep -q .; then
     return 1
   fi
   mark rebootStartsNoRuntime
+  ! pgrep -f -- "$loop_script" >/dev/null
+  mark rebootCreatesNoReplacementPids
 
   local size_before size_after
   size_before="$(stat -c %s "$output_file")"

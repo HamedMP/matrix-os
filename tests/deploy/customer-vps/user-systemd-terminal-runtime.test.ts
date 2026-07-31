@@ -145,15 +145,55 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("bundleTwoPreservesRuntimes");
     expect(acceptance).toContain("rollbackPreservesRuntimes");
     expect(acceptance).toContain("detachPreservesRuntimes");
+    expect(acceptance).toContain("browserAttachmentPtysRemainGatewayOwned");
+    expect(acceptance).toContain("gatewayMemoryIsolation");
     expect(acceptance).toContain("deleteRemovesExactRuntime");
+    expect(acceptance).toContain("deleteIsIdempotent");
+    expect(acceptance).toContain("deleteRemovesSocketAndSnapshots");
     expect(acceptance).toContain("corruptAndSymlinkStateFailsClosed");
+    expect(acceptance).toContain("invalidRuntimeIdsFailClosed");
+    expect(acceptance).toContain("conflictingDescriptorReuseFailsClosed");
+    expect(acceptance).toContain("staleInactiveStateIsRecoverable");
+    expect(acceptance).toContain("hostileDescriptorFieldsFailClosed");
     expect(acceptance).toContain("generationGcIsReferenceAndSymlinkSafe");
+    expect(acceptance).toContain("generationRetentionIsBounded");
+    expect(acceptance).toContain("newRuntimesUseCurrentGeneration");
+    expect(acceptance).toContain("postRollbackRuntimeUsesCompatibleGeneration");
+    expect(acceptance).toContain("resourceControlsEffective");
     expect(acceptance).toContain("resourceLimitIsolatesFailure");
     expect(acceptance).toContain("rebootStartsNoRuntime");
+    expect(acceptance).toContain("rebootCreatesNoReplacementPids");
     expect(acceptance).toContain("rebootProducesNoOutput");
+    expect(probe).toContain("/ws/terminal");
+    expect(acceptance).toContain("MemoryCurrent");
+    expect(acceptance).toContain("cgroup.controllers");
+    expect(acceptance).toContain("list-sessions");
     expect(probe).toContain("matrix-zellij@");
     expect(probe).toContain("ControlGroup");
     expect(probe).toContain("MemoryMax");
     expect(probe).toContain("TasksMax");
+  });
+
+  it("rejects permissive descriptor parsers and pins the keeper helper to the descriptor generation", () => {
+    const keeper = readFileSync(
+      join(root, "distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs"),
+      "utf8",
+    );
+    const attach = readFileSync(
+      join(root, "distro/customer-vps/host-bin/matrix-terminal-attach.mjs"),
+      "utf8",
+    );
+    const unit = readFileSync(
+      join(root, "distro/customer-vps/systemd-user/matrix-zellij@.service"),
+      "utf8",
+    );
+
+    expect(keeper).toContain("DESCRIPTOR_KEYS");
+    expect(attach).toContain("DESCRIPTOR_KEYS");
+    expect(keeper).not.toMatch(/\}\s*catch\s*\{/);
+    expect(attach).not.toMatch(/\}\s*catch\s*\{/);
+    expect(keeper).toContain("pinnedKeeperPath");
+    expect(keeper).toContain('"generations", descriptor.generation, "matrix-terminal-user-keeper.mjs"');
+    expect(unit).toContain("/terminal-runtime/current/matrix-terminal-user-keeper.mjs");
   });
 });

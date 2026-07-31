@@ -6,6 +6,10 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
 const RUNTIME_ID_PATTERN = /^rt_[0-9a-f]{32}$/;
 const GENERATION_PATTERN = /^gen_[0-9a-f]{64}$/;
+const DESCRIPTOR_KEYS = new Set([
+  "version", "runtimeId", "sessionName", "scope", "kind", "displayName",
+  "cwd", "layoutPath", "environmentPath", "generation", "createdAt",
+]);
 const runtimeId = process.argv[2] ?? "";
 const remainingArgs = process.argv.slice(3);
 const homePath = resolve(process.env.MATRIX_HOME || process.env.HOME || "/home/matrix/home");
@@ -19,6 +23,13 @@ function fail(code) {
 function isWithin(base, candidate) {
   const rel = relative(base, candidate);
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+function hasExactDescriptorKeys(value) {
+  if (!value || Array.isArray(value) || typeof value !== "object") return false;
+  const keys = Object.keys(value);
+  return keys.every((key) => DESCRIPTOR_KEYS.has(key))
+    && keys.length === (value.environmentPath === undefined ? 10 : 11);
 }
 
 if (!RUNTIME_ID_PATTERN.test(runtimeId)) fail("runtime_id_invalid");
@@ -38,12 +49,18 @@ try {
 }
 
 if (
-  descriptor?.version !== 1
+  !hasExactDescriptorKeys(descriptor)
+  || descriptor.version !== 1
   || descriptor.runtimeId !== runtimeId
   || descriptor.sessionName !== `matrix-${runtimeId}`
   || (descriptor.scope !== "terminal" && descriptor.scope !== "workspace")
   || (descriptor.kind !== "shell" && descriptor.kind !== "agent")
+  || typeof descriptor.displayName !== "string"
+  || typeof descriptor.cwd !== "string"
+  || typeof descriptor.layoutPath !== "string"
+  || (descriptor.environmentPath !== undefined && typeof descriptor.environmentPath !== "string")
   || !GENERATION_PATTERN.test(descriptor.generation ?? "")
+  || typeof descriptor.createdAt !== "string"
 ) fail("descriptor_invalid");
 
 let zellijPath;
@@ -64,7 +81,8 @@ try {
     || zellijStats.isSymbolicLink()
     || (zellijStats.mode & 0o111) === 0
   ) fail("generation_invalid");
-} catch {
+} catch (error) {
+  if (!(error instanceof Error)) fail("runtime_asset_unavailable");
   fail("runtime_asset_unavailable");
 }
 
