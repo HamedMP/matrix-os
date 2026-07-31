@@ -9,7 +9,7 @@ import { applyTerminalDesignTheme, resolveTerminalDesign } from "./terminal-desi
 import { TerminalDesignTabStrip } from "./TerminalDesignTabStrip";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
-import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
+import { createCanonicalTerminalLaunchCommand, drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { getTerminalAppChromeCssVars, getTerminalAppChromeTheme, getTerminalAppThemeOption } from "./terminal-app-chrome-theme";
@@ -596,6 +596,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const eventTargetId = event instanceof CustomEvent ? event.detail?.targetId : undefined;
     if (typeof eventTargetId === "string" && eventTargetId !== launchTargetId) return;
     for (const launch of drainTerminalLaunchQueue(launchTargetId)) {
+      if (launch.action === "t3-connect") {
+        void createShellSessionTab(
+          launch.label,
+          DEFAULT_CWD,
+          { cmd: createCanonicalTerminalLaunchCommand(launch.command) },
+        );
+        continue;
+      }
       addTab(DEFAULT_CWD, launch.label, launch.claudeMode, launch.command);
     }
   });
