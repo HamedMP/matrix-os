@@ -112,7 +112,10 @@ describe('customer VPS terminal runtime services', () => {
       expect(source).toContain('getsockopt');
       expect(source).toContain('/run/matrix-terminal-runtime/supervisor.sock');
       expect(source).toContain('/run/matrix-terminal-runtime/keeper.sock');
-      expect(source).toContain('/opt/matrix/bin/matrix-terminal-runtime-op');
+      expect(source).toContain('/proc/self/exe');
+      expect(source).toContain('/opt/matrix/runtime/node/bin/node');
+      expect(source).toContain('runtime-op.js');
+      expect(source).not.toContain('/opt/matrix/bin/matrix-terminal-runtime-op');
       expect(source).toContain('NOTIFY_SOCKET');
       expect(source).toContain('READY=1');
       expect(source).toContain('#define MAX_WORKERS 128');

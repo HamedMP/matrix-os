@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <pwd.h>
 #include <signal.h>
@@ -19,7 +20,8 @@
 
 #define PUBLIC_SOCKET "/run/matrix-terminal-runtime/supervisor.sock"
 #define KEEPER_SOCKET "/run/matrix-terminal-runtime/keeper.sock"
-#define WORKER "/opt/matrix/bin/matrix-terminal-runtime-op"
+#define NODE "/opt/matrix/runtime/node/bin/node"
+#define GENERATION_PREFIX "/opt/matrix/libexec/terminal-runtime/v1/"
 #define MAX_WORKERS 128
 
 static volatile sig_atomic_t stopping = 0;
@@ -33,6 +35,29 @@ static int set_cloexec(int fd) {
   int flags = fcntl(fd, F_GETFD);
   if (flags < 0) return -1;
   return fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+static int resolve_worker(char worker[PATH_MAX]) {
+  static const char self_name[] = "/supervisor-acceptor", worker_name[] = "/runtime-op.js";
+  char executable[PATH_MAX];
+  ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+  size_t prefix_length = strlen(GENERATION_PREFIX);
+  if (length < 0 || (size_t)length != prefix_length + 64 +
+      sizeof(self_name) - 1) return -1;
+  executable[length] = '\0';
+  if (memcmp(executable, GENERATION_PREFIX, prefix_length) != 0 ||
+      strcmp(executable + prefix_length + 64, self_name) != 0) return -1;
+  for (size_t index = prefix_length; index < prefix_length + 64; index += 1) {
+    if (!((executable[index] >= '0' && executable[index] <= '9') ||
+          (executable[index] >= 'a' && executable[index] <= 'f'))) return -1;
+  }
+  memcpy(worker, executable, prefix_length + 64);
+  memcpy(worker + prefix_length + 64, worker_name, sizeof(worker_name));
+  struct stat metadata;
+  if (lstat(worker, &metadata) < 0 || !S_ISREG(metadata.st_mode) ||
+      metadata.st_uid != 0 || metadata.st_nlink != 1 ||
+      (metadata.st_mode & 0022) != 0) return -1;
+  return 0;
 }
 
 static int notify_ready(void) {
@@ -120,7 +145,8 @@ static int write_all(int fd, const void *buffer, size_t length) {
   return 0;
 }
 
-static pid_t serve_connection(int connection, const char *mode,
+static pid_t serve_connection(int connection, const char *worker,
+                              const char *mode,
                               uid_t matrix_uid) {
   struct ucred credentials;
   socklen_t credentials_length = sizeof(credentials);
@@ -168,8 +194,8 @@ static pid_t serve_connection(int connection, const char *mode,
         _exit(126);
       }
     }
-    char *const arguments[] = {(char *)WORKER, (char *)mode, NULL};
-    execv(WORKER, arguments);
+    char *const arguments[] = {(char *)NODE, (char *)worker, (char *)mode, NULL};
+    execv(NODE, arguments);
     _exit(127);
   }
 
@@ -185,12 +211,12 @@ static pid_t serve_connection(int connection, const char *mode,
   return child;
 }
 
-static pid_t spawn_maintenance(void) {
+static pid_t spawn_maintenance(const char *worker) {
   pid_t child = fork();
   if (child != 0) return child;
   char *const arguments[] = {
-      (char *)WORKER, (char *)"maintenance", NULL};
-  execv(WORKER, arguments);
+      (char *)NODE, (char *)worker, (char *)"maintenance", NULL};
+  execv(NODE, arguments);
   _exit(127);
 }
 
@@ -206,6 +232,8 @@ static void reap_children(pid_t *maintenance, size_t *workers) {
 }
 
 int main(void) {
+  char worker[PATH_MAX];
+  if (resolve_worker(worker) < 0) return fputs("terminal_runtime_generation_invalid\n", stderr), 1;
   struct passwd *matrix = getpwnam("matrix");
   if (matrix == NULL || matrix->pw_uid == 0) {
     fputs("terminal_runtime_owner_unavailable\n", stderr);
@@ -237,7 +265,7 @@ int main(void) {
       {.fd = public_listener, .events = POLLIN, .revents = 0},
       {.fd = keeper_listener, .events = POLLIN, .revents = 0},
   };
-  pid_t maintenance = spawn_maintenance();
+  pid_t maintenance = spawn_maintenance(worker);
   size_t workers = 0;
   int exit_status = 0;
   if (maintenance < 0 || notify_ready() < 0) {
@@ -252,7 +280,7 @@ int main(void) {
     }
     reap_children(&maintenance, &workers);
     if (maintenance < 0 && !stopping) {
-      maintenance = spawn_maintenance();
+      maintenance = spawn_maintenance(worker);
       if (maintenance < 0) {
         stopping = 1;
         break;
@@ -271,11 +299,12 @@ int main(void) {
         close(connection);
         continue;
       }
-      pid_t worker = serve_connection(
+      pid_t child = serve_connection(
           connection,
+          worker,
           index == 0 ? "serve-peer" : "serve-keeper",
           matrix->pw_uid);
-      if (worker > 0) workers += 1;
+      if (child > 0) workers += 1;
     }
   }
 
