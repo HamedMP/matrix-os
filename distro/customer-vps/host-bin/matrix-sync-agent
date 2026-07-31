@@ -32,6 +32,9 @@ readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
 readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
 readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
 readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
+readonly TERMINAL_RUNTIME_ROOT="/opt/matrix/terminal-runtime"
+readonly TERMINAL_RUNTIME_GENERATION_FILE="TERMINAL_RUNTIME_GENERATION"
+readonly TERMINAL_RUNTIME_MAX_GENERATIONS="${MATRIX_TERMINAL_RUNTIME_MAX_GENERATIONS:-8}"
 # Keys this agent owns and rewrites on every sync from platform-provided values.
 # Any other key in symphony.env (e.g. an operator-set SYMPHONY_LINEAR_PROJECT_SLUG)
 # is preserved across updates instead of being wiped.
@@ -105,6 +108,119 @@ release_url_for_version() { echo "$(platform_url)/system-bundles/releases/$1.jso
 release_url_for_channel() { echo "$(platform_url)/system-bundles/channels/$1.json"; }
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
+
+terminal_runtime_generation_for_dir() {
+  local generation_dir="$1"
+  [ -d "$generation_dir" ] && [ ! -L "$generation_dir" ] || return 1
+  [ -f "$generation_dir/zellij" ] && [ ! -L "$generation_dir/zellij" ] || return 1
+  [ -f "$generation_dir/matrix-terminal-user-keeper.mjs" ] && [ ! -L "$generation_dir/matrix-terminal-user-keeper.mjs" ] || return 1
+  [ -f "$generation_dir/matrix-terminal-attach.mjs" ] && [ ! -L "$generation_dir/matrix-terminal-attach.mjs" ] || return 1
+  printf 'gen_%s\n' "$({
+    sha256sum "$generation_dir/zellij"
+    sha256sum "$generation_dir/matrix-terminal-user-keeper.mjs"
+    sha256sum "$generation_dir/matrix-terminal-attach.mjs"
+  } | sha256sum | awk '{print $1}')"
+}
+
+activate_terminal_runtime_generation() {
+  local generation="$1" generation_dir="$TERMINAL_RUNTIME_ROOT/generations/$1" link_tmp
+  [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || {
+    log "ERROR: invalid terminal runtime generation marker"
+    return 1
+  }
+  [ "$(terminal_runtime_generation_for_dir "$generation_dir")" = "$generation" ] || {
+    log "ERROR: terminal runtime generation verification failed"
+    return 1
+  }
+  link_tmp="$TERMINAL_RUNTIME_ROOT/.current.$$"
+  sudo rm -f -- "$link_tmp"
+  sudo ln -s "generations/$generation" "$link_tmp"
+  sudo mv -Tf "$link_tmp" "$TERMINAL_RUNTIME_ROOT/current"
+  sudo install -o root -g root -m 0755 \
+    "$generation_dir/matrix-terminal-attach.mjs" \
+    /usr/local/bin/matrix-terminal-attach
+}
+
+reload_terminal_user_manager() {
+  local matrix_uid
+  matrix_uid="$(id -u matrix)"
+  sudo -u matrix env \
+    HOME=/home/matrix/home \
+    XDG_RUNTIME_DIR="/run/user/$matrix_uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$matrix_uid/bus" \
+    systemctl --user daemon-reload
+}
+
+cleanup_terminal_runtime_generations() {
+  local max_generations="$TERMINAL_RUNTIME_MAX_GENERATIONS" candidate installed_count
+  if [[ ! "$max_generations" =~ ^[0-9]+$ ]] || [ "$max_generations" -lt 2 ] || [ "$max_generations" -gt 32 ]; then
+    max_generations=8
+  fi
+  while IFS= read -r candidate; do
+    [[ "$candidate" =~ ^gen_[0-9a-f]{64}$ ]] || continue
+    [ -d "$TERMINAL_RUNTIME_ROOT/generations/$candidate" ] || continue
+    [ ! -L "$TERMINAL_RUNTIME_ROOT/generations/$candidate" ] || continue
+    sudo rm -rf -- "$TERMINAL_RUNTIME_ROOT/generations/$candidate"
+    log "Removed unreferenced terminal runtime generation $candidate"
+  done < <(python3 "$BIN_DIR/matrix-terminal-generation-gc.py" \
+    "$TERMINAL_RUNTIME_ROOT" \
+    "/home/matrix/home/system/terminal-runtimes" \
+    "$APP_DIR" \
+    "$APP_DIR.rollback" \
+    "$max_generations")
+  installed_count="$(find "$TERMINAL_RUNTIME_ROOT/generations" -mindepth 1 -maxdepth 1 -type d -name 'gen_*' -print 2>/dev/null | wc -l)"
+  if [ "$installed_count" -gt "$max_generations" ]; then
+    log "ERROR: terminal runtime generation cap reached by active or recoverable sessions"
+    return 1
+  fi
+}
+
+install_terminal_runtime_payload() {
+  local extract_dir="$1" generation source_dir destination_dir incoming_dir
+  [ -f "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE" ] || return 0
+  generation="$(cat "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE")"
+  [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || {
+    log "ERROR: invalid terminal runtime generation in bundle"
+    return 1
+  }
+  source_dir="$extract_dir/terminal-runtime/generations/$generation"
+  [ "$(terminal_runtime_generation_for_dir "$source_dir")" = "$generation" ] || {
+    log "ERROR: bundled terminal runtime generation verification failed"
+    return 1
+  }
+
+  sudo install -d -o root -g root -m 0755 "$TERMINAL_RUNTIME_ROOT/generations"
+  destination_dir="$TERMINAL_RUNTIME_ROOT/generations/$generation"
+  if [ -e "$destination_dir" ]; then
+    [ ! -L "$destination_dir" ] && [ "$(terminal_runtime_generation_for_dir "$destination_dir")" = "$generation" ] || {
+      log "ERROR: installed terminal runtime generation is inconsistent"
+      return 1
+    }
+  else
+    incoming_dir="$TERMINAL_RUNTIME_ROOT/generations/.incoming-${generation}-$$"
+    sudo rm -rf -- "$incoming_dir"
+    if ! sudo cp -a "$source_dir" "$incoming_dir"; then
+      sudo rm -rf -- "$incoming_dir"
+      return 1
+    fi
+    if ! sudo chown -R root:root "$incoming_dir" \
+      || ! sudo chmod 0755 "$incoming_dir" "$incoming_dir/zellij" "$incoming_dir/matrix-terminal-user-keeper.mjs" "$incoming_dir/matrix-terminal-attach.mjs" \
+      || ! sudo mv "$incoming_dir" "$destination_dir"; then
+      sudo rm -rf -- "$incoming_dir"
+      return 1
+    fi
+  fi
+
+  if [ -d "$extract_dir/user-systemd" ]; then
+    sudo install -d -o root -g root -m 0755 /etc/systemd/user
+    sudo find "$extract_dir/user-systemd" -maxdepth 1 -type f \( -name 'matrix-*.service' -o -name 'matrix-*.slice' \) \
+      -exec install -o root -g root -m 0644 {} /etc/systemd/user/ \;
+    reload_terminal_user_manager
+  fi
+  activate_terminal_runtime_generation "$generation"
+  cleanup_terminal_runtime_generations || return 1
+  log "Installed terminal runtime generation $generation"
+}
 
 write_update_error() {
   local code="$1" message="$2" version="${3:-}" available_kb="${4:-}" required_kb="${5:-}"
@@ -290,6 +406,7 @@ apply_update() {
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
+  install_terminal_runtime_payload "$extract_dir"
   write_symphony_env
   log "Updated Symphony env"
 
@@ -366,6 +483,10 @@ do_rollback() {
   fi
   sudo mv "$APP_DIR.rollback" "$APP_DIR"
   sudo chown -R matrix:matrix "$APP_DIR"
+  if [ -f "$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE" ]; then
+    activate_terminal_runtime_generation "$(cat "$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE")"
+  fi
+  cleanup_terminal_runtime_generations || log "WARN: terminal generation cleanup remains above cap after rollback"
   sudo systemctl start matrix-gateway matrix-shell
   sudo systemctl start --no-block matrix-symphony || true
   local healthy=false

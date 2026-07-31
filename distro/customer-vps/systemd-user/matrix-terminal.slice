@@ -1,0 +1,10 @@
+[Unit]
+Description=Matrix OS terminal runtime aggregate slice
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+MemoryHigh=75%
+MemoryMax=90%
+TasksAccounting=yes
+TasksMax=4096

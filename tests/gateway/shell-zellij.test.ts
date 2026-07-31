@@ -51,6 +51,24 @@ function ptyProcess() {
 }
 
 describe("zellij adapter", () => {
+  it("uses an explicitly pinned Zellij binary for commands and attachment PTYs", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+      return child;
+    });
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const binaryPath = "/opt/matrix/terminal-runtime/generations/gen_abc/zellij";
+    const adapter = createZellijAdapter({ execFile, spawnPty, binaryPath });
+
+    await adapter.health();
+    adapter.attachSession("matrix-rt_0123456789abcdef0123456789abcdef");
+
+    expect(execFile.mock.calls[0]?.[0]).toBe(binaryPath);
+    expect(spawnPty.mock.calls[0]?.[0]).toBe(binaryPath);
+  });
+
   it("uses execFile with argument arrays and bounded timeouts", async () => {
     const child = childProcess();
     const execFile = vi.fn((_file, _args, _opts, cb) => {

@@ -74,6 +74,8 @@ export interface ZellijAdapterDeps {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   homePath?: string;
+  binaryPath?: string;
+  manageConfig?: boolean;
 }
 
 export interface CreateSessionOptions {
@@ -282,6 +284,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   const maxRetainedPtys = deps.maxRetainedPtys ?? DEFAULT_MAX_RETAINED_PTYS;
   const nowMs = deps.nowMs ?? Date.now;
   const cwd = deps.cwd ?? process.cwd();
+  const binaryPath = deps.binaryPath ?? "zellij";
   const spawnPty = deps.spawnPty ?? defaultPtySpawn();
   const retainedCreatePtys = new Map<string, RetainedCreatePty>();
   const focusedPaneCwdCache = new Map<string, { expiresAt: number; value: string | null }>();
@@ -290,7 +293,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   let shellThemeId: MatrixZellijShellThemeId = "dark";
 
   async function ensureMatrixZellijConfig(): Promise<void> {
-    if (!zellijConfigPaths) {
+    if (!zellijConfigPaths || deps.manageConfig === false) {
       return;
     }
     if (!ensureConfigPromise) {
@@ -361,7 +364,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     const controller = new AbortController();
     return new Promise((resolve, reject) => {
       const child = execFile(
-        "zellij",
+        binaryPath,
         args,
         {
           timeout,
@@ -382,7 +385,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   }
 
   function attachProcess(name: string, options: AttachOptions = {}): ShellAttachProcess {
-    const pty = spawnPty("zellij", ["attach", name], {
+    const pty = spawnPty(binaryPath, ["attach", name], {
       name: "xterm-256color",
       cols: options.size?.cols ?? 120,
       rows: options.size?.rows ?? 40,
@@ -492,7 +495,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         }
 
         let pty: ShellAttachProcess;
-        pty = spawnPty("zellij", args, {
+        pty = spawnPty(binaryPath, args, {
           name: "xterm-256color",
           cols: 120,
           rows: 40,
