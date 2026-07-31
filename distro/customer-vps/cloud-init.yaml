@@ -636,8 +636,8 @@ runcmd:
 
     systemctl daemon-reload
     loginctl enable-linger matrix
+    systemctl start "user@$(id -u matrix).service"
     matrix_uid="$(id -u matrix)"
-    systemctl start "user@${matrix_uid}.service"
     runuser -u matrix -- env HOME=/home/matrix/home XDG_RUNTIME_DIR="/run/user/${matrix_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" systemctl --user daemon-reload
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
