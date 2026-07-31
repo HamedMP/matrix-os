@@ -39,6 +39,7 @@ describe('platform billing entitlements', () => {
       [19, 190],
       [49, 490],
     ]);
+    expect(DEFAULT_BILLING_PLAN_DEFINITIONS.map((plan) => plan.includedRuntimeSlots)).toEqual([1, 1, 1]);
   });
 
   it('loads Stripe price ids without trusting client submitted prices', () => {
@@ -49,10 +50,7 @@ describe('platform billing entitlements', () => {
       planSlug: 'matrix_builder',
       interval: 'annual',
     });
-    expect(catalog.priceToPlan.get('price_extra_runtime_monthly')).toMatchObject({
-      kind: 'extra_runtime_slot',
-      interval: 'monthly',
-    });
+    expect(catalog.priceToPlan.has('price_extra_runtime_monthly')).toBe(false);
     expect(catalog.priceToPlan.has('price_unknown')).toBe(false);
   });
 
@@ -85,7 +83,7 @@ describe('platform billing entitlements', () => {
     expect(overridden.profiles[0]?.serverType).toBe('cx22');
   });
 
-  it('projects Stripe base plan and add-on prices into runtime capacity', () => {
+  it('projects one full Stripe plan into exactly one runtime slot', () => {
     const entitlement = deriveStripeEntitlement({
       clerkUserId: 'user_123',
       stripeCustomerId: 'cus_123',
@@ -108,8 +106,8 @@ describe('platform billing entitlements', () => {
       planSlug: 'matrix_builder',
       status: 'active',
       includedRuntimeSlots: 1,
-      addonRuntimeSlots: 2,
-      maxRuntimeSlots: 3,
+      addonRuntimeSlots: 0,
+      maxRuntimeSlots: 1,
       defaultServerType: 'cpx32',
       allowedServerTypes: ['cpx22', 'cpx32'],
       stripeSubscriptionId: 'sub_123',
@@ -117,7 +115,7 @@ describe('platform billing entitlements', () => {
     });
   });
 
-  it('does not count zero or null add-on quantities as runtime slots', () => {
+  it('never grants capacity from legacy add-on quantities', () => {
     const entitlement = deriveStripeEntitlement({
       clerkUserId: 'user_123',
       stripeCustomerId: 'cus_123',

@@ -405,6 +405,9 @@ describe('platform/orchestrator', () => {
     expect(mockContainer.remove).toHaveBeenCalledOnce();
     expect(docker.createContainer).toHaveBeenCalledOnce();
     expect(mockContainer.start).toHaveBeenCalledOnce();
+    expect(docker.pull).not.toHaveBeenCalled();
+    expect(docker.createContainer.mock.calls[0][0].Image).toBe('matrixos-user:local');
+    expect(orch.getImage()).toBe('matrixos-user:local');
     expect((await orch.getInfo('alice'))!.status).toBe('running');
   });
 
@@ -492,7 +495,11 @@ describe('platform/orchestrator', () => {
       stop: vi.fn().mockResolvedValue(undefined),
       remove: vi.fn().mockResolvedValue(undefined),
     };
-    const orch = createOrchestrator({ db, docker: docker as any });
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      image: 'registry.example.com/matrix-os:test',
+    });
 
     await orch.provision('alice', 'clerk_1');
     const before = (await orch.getInfo('alice'))!;
@@ -549,7 +556,11 @@ describe('platform/orchestrator', () => {
         stop: vi.fn().mockResolvedValue(undefined),
         remove: vi.fn().mockResolvedValue(undefined),
       }));
-      const orch = createOrchestrator({ db, docker: docker as any });
+      const orch = createOrchestrator({
+        db,
+        docker: docker as any,
+        image: 'registry.example.com/matrix-os:test',
+      });
 
       await orch.provision('alice', 'clerk_1');
       await orch.provision('bob', 'clerk_2');

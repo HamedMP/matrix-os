@@ -24,6 +24,29 @@ describe("AppDb connection", () => {
     expect(tables.rows.map((r) => r.table_name)).toEqual(["_apps", "_kv", "users"]);
   });
 
+  it("tracks the immutable installed app version for first-run migrations", async () => {
+    const columns = await db.raw(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '_apps' ORDER BY ordinal_position",
+    );
+    expect(columns.rows.map((row) => row.column_name)).toContain("installed_version");
+  });
+
+  it("adds install-version tracking without classifying legacy apps as new", async () => {
+    await db.raw("ALTER TABLE public._apps DROP COLUMN installed_version");
+    await db.raw(
+      "INSERT INTO public._apps (slug, name, version, tables) VALUES ($1, $2, $3, $4::jsonb)",
+      ["legacy-clock", "Clock", "1.0.0", "{}"],
+    );
+
+    await db.bootstrap();
+
+    const app = await db.raw(
+      "SELECT installed_version FROM public._apps WHERE slug = $1",
+      ["legacy-clock"],
+    );
+    expect(app.rows[0]?.installed_version).toBeNull();
+  });
+
   it("creates a schema for an app", async () => {
     await db.createAppSchema("test-app");
     const schemas = await db.raw(

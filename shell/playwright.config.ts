@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+const port = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "3000", 10);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -16,7 +17,7 @@ export default defineConfig({
     timeout: 15_000,
   },
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: `http://localhost:${port}`,
     screenshot: "only-on-failure",
     trace: "on-first-retry",
     ...devices["Desktop Chrome"],
@@ -26,8 +27,8 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    command: "pnpm start",
-    port: 3000,
+    command: `pnpm start -p ${port}`,
+    port,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     env: {

@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import {
+  UNAVAILABLE_FOCUSED_PANE_RUNTIME,
+  type FocusedPaneRuntimeObservation,
+} from "./focused-pane-runtime.js";
+import {
   AgentKindSchema,
   AgentSessionStateStore,
   deriveAgentVisualStatus,
@@ -31,7 +35,7 @@ const MAX_CONCURRENT_SESSION_DECORATIONS = 8;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
-  focusedPaneCwd?(name: string): Promise<string | null>;
+  focusedPaneRuntime?(name: string): Promise<FocusedPaneRuntimeObservation>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession?(name: string, nextName: string): Promise<void>;
@@ -95,6 +99,7 @@ export type ShellSession = Omit<PersistedShellSession, "cwd"> & {
   references: ShellSessionReference[];
   recoverable: boolean;
   recoveryReason?: "missing_runtime_session";
+  /** Agent currently observed in the focused pane, not the persisted launch provider. */
   agent?: AgentKind;
   subtitle?: string;
   lastAction?: string;
@@ -518,28 +523,53 @@ export class ShellRegistry {
   }
 
   private async decorateSession(session: PersistedShellSession, file?: RegistryFile): Promise<ShellSession> {
-    const [activity, agentSnapshot, focusedPaneCwd] = await Promise.all([
+    const [activity, agentSnapshot, focusedPaneRuntime] = await Promise.all([
       this.options.scrollbackStore?.latestActivity?.(session.name),
       this.readAgentSnapshot(session.name),
-      this.readFocusedPaneCwd(session.name),
+      this.readFocusedPaneRuntime(session.name),
     ]);
     const latestSeq = activity?.latestSeq ?? await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
     const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
     const references = file ? this.referencesForTarget(file, session.name) : [];
     const recoverable = session.status === "exited" && references.length > 0;
-    const gitContext = await this.readGitContext({ sessionName: session.name, cwd: focusedPaneCwd ?? session.cwd });
-    const visualStatus = deriveAgentVisualStatus(agentSnapshot, unread)
+    const gitContext = await this.readGitContext({
+      sessionName: session.name,
+      cwd: focusedPaneRuntime.cwd ?? session.cwd,
+    });
+    const observedAgent = focusedPaneRuntime.observed
+      ? inferAgentFromCommand(focusedPaneRuntime.command ?? undefined)
+      : undefined;
+    const compatibleSnapshot = agentSnapshot
+      && agentSnapshot.phase !== "ended"
+      && (!focusedPaneRuntime.observed || (
+        observedAgent !== undefined && agentSnapshot.agent === observedAgent
+      ))
+      ? agentSnapshot
+      : null;
+    const launchHintAgent = !focusedPaneRuntime.observed
+      && !agentSnapshot
+      && session.agent
+      && isRecentShellTimestamp(session.updatedAt, SHELL_RUNNING_FALLBACK_WINDOW_MS)
+      ? session.agent
+      : undefined;
+    const liveAgent = focusedPaneRuntime.observed
+      ? observedAgent
+      : compatibleSnapshot?.agent ?? launchHintAgent;
+    const agentVisualStatus = liveAgent
+      ? deriveAgentVisualStatus(compatibleSnapshot, unread) ?? "running"
+      : null;
+    const visualStatus = agentVisualStatus
       ?? this.deriveVisualStatus(session, unread, activity);
-    const { cwd: _internalCwd, ...publicSession } = session;
+    const { cwd: _internalCwd, agent: _launchHint, ...publicSession } = session;
     return {
       ...publicSession,
-      ...(agentSnapshot?.agent ? { agent: agentSnapshot.agent } : {}),
-      ...(agentSnapshot?.subtitle ? { subtitle: agentSnapshot.subtitle } : {}),
-      ...(agentSnapshot?.lastAction ? { lastAction: agentSnapshot.lastAction } : {}),
-      ...(agentSnapshot?.agentUpdatedAt ? { agentUpdatedAt: agentSnapshot.agentUpdatedAt } : {}),
-      ...(agentSnapshot?.model ? { model: agentSnapshot.model } : {}),
-      ...(agentSnapshot?.strength ? { strength: agentSnapshot.strength } : {}),
+      ...(liveAgent ? { agent: liveAgent } : {}),
+      ...(compatibleSnapshot?.subtitle ? { subtitle: compatibleSnapshot.subtitle } : {}),
+      ...(compatibleSnapshot?.lastAction ? { lastAction: compatibleSnapshot.lastAction } : {}),
+      ...(compatibleSnapshot?.agentUpdatedAt ? { agentUpdatedAt: compatibleSnapshot.agentUpdatedAt } : {}),
+      ...(compatibleSnapshot?.model ? { model: compatibleSnapshot.model } : {}),
+      ...(compatibleSnapshot?.strength ? { strength: compatibleSnapshot.strength } : {}),
       ...(gitContext?.project ? { project: gitContext.project } : {}),
       ...(gitContext?.repository ? { repository: gitContext.repository } : {}),
       ...(gitContext?.branch ? { branch: gitContext.branch } : {}),
@@ -806,17 +836,26 @@ export class ShellRegistry {
     }
   }
 
-  private async readFocusedPaneCwd(name: string): Promise<string | null> {
-    if (!this.options.adapter.focusedPaneCwd) return null;
+  private async readFocusedPaneRuntime(name: string): Promise<FocusedPaneRuntimeObservation> {
+    if (!this.options.adapter.focusedPaneRuntime) return UNAVAILABLE_FOCUSED_PANE_RUNTIME;
     try {
-      const cwd = await this.options.adapter.focusedPaneCwd(name);
-      return cwd ? await resolveShellCwd(cwd, this.options.homePath) : null;
+      const runtime = await this.options.adapter.focusedPaneRuntime(name);
+      if (!runtime.cwd) return runtime;
+      try {
+        return { ...runtime, cwd: await resolveShellCwd(runtime.cwd, this.options.homePath) };
+      } catch (err: unknown) {
+        console.warn(
+          "[shell] focused pane cwd unavailable:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return { ...runtime, cwd: null };
+      }
     } catch (err: unknown) {
       console.warn(
-        "[shell] focused pane cwd unavailable:",
+        "[shell] focused pane runtime unavailable:",
         err instanceof Error ? err.message : String(err),
       );
-      return null;
+      return UNAVAILABLE_FOCUSED_PANE_RUNTIME;
     }
   }
 
@@ -848,17 +887,53 @@ export function inferAgentFromCommand(command: string | undefined): AgentKind | 
     token.replace(/^(?:"(.*)"|'(.*)')$/, "$1$2")
   )) ?? [];
   let index = 0;
-  const usesEnv = tokens[index]?.split("/").pop() === "env";
-  if (usesEnv) index += 1;
-  while (
-    index < tokens.length &&
-    (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]) || (usesEnv && tokens[index].startsWith("-")))
-  ) {
+  if (tokens[index]?.split("/").pop() === "env") {
     index += 1;
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+        index += 1;
+        continue;
+      }
+      if (token === "--") {
+        index += 1;
+        break;
+      }
+      if (token === "-i" || token === "--ignore-environment" || token === "-0" || token === "--null") {
+        index += 1;
+        continue;
+      }
+      if (/^(?:--unset|--chdir)=/.test(token) || /^-[uC].+/.test(token)) {
+        index += 1;
+        continue;
+      }
+      if (token === "-u" || token === "--unset" || token === "-C" || token === "--chdir") {
+        if (tokens[index + 1] === undefined) return undefined;
+        index += 2;
+        continue;
+      }
+      if (token.startsWith("-")) return undefined;
+      break;
+    }
   }
   const executable = tokens[index]?.split("/").pop();
   const parsed = AgentKindSchema.safeParse(executable);
-  return parsed.success ? parsed.data : undefined;
+  if (parsed.success) return parsed.data;
+
+  const wrappedScript = tokens[index + 1];
+  const matrixNodePrefix = process.env.MATRIX_NODE_PREFIX?.trim() || "/opt/matrix/runtime/node";
+  const managedCodexLaunchers = [
+    join(matrixNodePrefix, "bin", "codex"),
+    join(matrixNodePrefix, "lib", "node_modules", "@openai", "codex", "bin", "codex.js"),
+  ];
+  if (
+    executable === "node"
+    && wrappedScript !== undefined
+    && managedCodexLaunchers.includes(wrappedScript)
+  ) {
+    return "codex";
+  }
+  return undefined;
 }
 
 function inferAliasSource(name: string): ShellSessionAliasSource {

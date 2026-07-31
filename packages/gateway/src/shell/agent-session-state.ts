@@ -105,6 +105,7 @@ export function deriveAgentVisualStatus(
   unread: boolean,
 ): AgentDerivedVisualStatus | null {
   if (!snapshot) return null;
+  if (snapshot.phase === "ended") return null;
   if (snapshot.phase === "started") return "idle";
   if (snapshot.phase === "waiting") return "waiting";
   if (snapshot.phase === "running") return "running";
@@ -149,15 +150,17 @@ export class AgentSessionStateStore {
         return current;
       }
 
+      const resetEnrichment = event.type === "session-started" || current?.agent !== event.agent;
+
       const next: AgentSessionSnapshot = AgentSessionSnapshotSchema.parse({
         version: 1,
         sessionName,
         agent: event.agent,
         phase: phaseForEvent(event.type, current?.phase),
-        ...(current?.subtitle ? { subtitle: current.subtitle } : {}),
-        ...(current?.lastAction ? { lastAction: current.lastAction } : {}),
-        ...(current?.model ? { model: current.model } : {}),
-        ...(current?.strength ? { strength: current.strength } : {}),
+        ...(!resetEnrichment && current?.subtitle ? { subtitle: current.subtitle } : {}),
+        ...(!resetEnrichment && current?.lastAction ? { lastAction: current.lastAction } : {}),
+        ...(!resetEnrichment && current?.model ? { model: current.model } : {}),
+        ...(!resetEnrichment && current?.strength ? { strength: current.strength } : {}),
         ...(event.subtitle !== undefined
           ? optionalProperty("subtitle", sanitizeAgentSubtitle(event.subtitle))
           : {}),

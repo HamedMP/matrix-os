@@ -8,6 +8,7 @@ import {
   computeLaunchpadColumns,
   computeLaunchpadRows,
 } from "../../shell/src/components/launchpad/launchpad-utils.js";
+import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
 vi.mock("@/hooks/useTaskBoard", () => ({
   useTaskBoard: () => ({
@@ -85,7 +86,38 @@ describe("Launchpad (macos-glass launcher)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     document.body.style.overflow = "";
+    act(() => useWindowManager.setState({ appLaunchTimes: {} }));
   });
+
+  it.each(["flat", "macos-glass"])(
+    "keeps the canonical app order after apps are launched under %s",
+    async (style) => {
+      setDesign(style);
+      const apps: TestApp[] = [
+        { name: "Terminal", path: "__terminal__", iconUrl: "/icons/terminal.png" },
+        { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/notes.png" },
+        { name: "Calculator", path: "apps/calculator/index.html", iconUrl: "/icons/calculator.png" },
+        { name: "Chess", path: "apps/games/chess/index.html", iconUrl: "/icons/chess.png" },
+        { name: "2048", path: "apps/games/2048/index.html", iconUrl: "/icons/game-center.png" },
+      ];
+      act(() => {
+        useWindowManager.setState({
+          appLaunchTimes: {
+            "apps/notes/index.html": 200,
+            "apps/games/chess/index.html": 100,
+          },
+        });
+      });
+
+      const { container } = await renderLauncher({ apps });
+      const selector = style === "macos-glass" ? "[data-launchpad-tile]" : "[data-app-tile]";
+      const names = Array.from(container.querySelectorAll<HTMLElement>(selector)).map((tile) =>
+        tile.textContent?.trim(),
+      );
+
+      expect(names).toEqual(["Terminal", "Notes", "Calculator", "Chess", "2048"]);
+    },
+  );
 
   it("renders the classic launcher for non-macOS designs", async () => {
     for (const style of ["flat", "winxp", "win11", "neumorphic"]) {

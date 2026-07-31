@@ -69,12 +69,21 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
           name        text NOT NULL,
           description text,
           version     text DEFAULT '1.0.0',
+          installed_version text,
           author      text,
           category    text,
           tables      jsonb NOT NULL DEFAULT '{}',
           created_at  timestamptz DEFAULT now(),
           updated_at  timestamptz DEFAULT now()
         )
+      `.execute(kysely);
+
+      // Existing installations predate immutable install-version tracking.
+      // Their NULL value is intentional: apps use it to distinguish legacy
+      // user state from a genuinely fresh installation.
+      await sql`
+        ALTER TABLE public._apps
+        ADD COLUMN IF NOT EXISTS installed_version text
       `.execute(kysely);
 
       await sql`

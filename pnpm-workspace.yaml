@@ -27,13 +27,9 @@ minimumReleaseAgeExclude:
 
 shamefullyHoist: true
 
-# Expo config plugins are loaded from the plugin package's own module scope.
-# Declare the package's implicit dependency so local global-store worktrees can
-# evaluate app.json before EAS uploads the project.
-packageExtensions:
-  "react-native-edge-to-edge@1.8.1":
-    dependencies:
-      "@expo/config-plugins": 57.0.2
+# NOTE: packageExtensions live in the root package.json under `pnpm`, not here.
+# With `enableGlobalVirtualStore` this file's `packageExtensions` block was
+# silently ignored, so the entries there had no effect on the installed tree.
 
 # Tests at the workspace root (tests/integrations/*) import packages that
 # are direct dependencies of workspace sub-packages (e.g. hono, @pipedream/sdk,

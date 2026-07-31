@@ -24,6 +24,18 @@ export interface ZoneTime {
 const MS_PER_MINUTE = 60_000;
 
 /**
+ * Cities seeded into the world clock on first run (before the user has saved
+ * or deleted anything). Never re-seeded once storage has been written, so a
+ * user who removes every city keeps an empty list.
+ */
+export const DEFAULT_WORLD_ZONES: readonly string[] = [
+  "America/Los_Angeles", // Cupertino
+  "Europe/London",
+  "Europe/Berlin",
+  "Asia/Tokyo",
+];
+
+/**
  * Return the wall-clock parts for a timezone using Intl. `now` defaults to the
  * current instant; pass an explicit Date for deterministic tests.
  */

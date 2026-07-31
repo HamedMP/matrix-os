@@ -5,8 +5,12 @@ import { createPortal } from "react-dom";
 import { Trash2Icon } from "lucide-react";
 
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { formatShellDisplayName, getShellStatusDotClassName, getShellStatusDotStyle } from "./TerminalSidebarItems";
-import type { ShellSessionSummary } from "./terminal-session-state";
+import { formatShellDisplayName } from "./TerminalSidebarItems";
+import {
+  SHELL_WAITING_STATUS_DOT_STYLE,
+  shouldShowShellStatusDot,
+  type ShellSessionSummary,
+} from "./terminal-session-state";
 
 const POPOVER_GAP = 12;
 const POPOVER_MARGIN = 12;
@@ -136,6 +140,7 @@ export function ShellCloseConfirmation({
       : readPopoverPosition(anchorElement, null)
   ));
   const displayName = formatShellDisplayName(shell.name);
+  const showStatusDot = shouldShowShellStatusDot(shell);
   const bodyCopy = mobile
     ? "Closing permanently deletes this session and its transcript. This can't be undone."
     : "Closing ends the session and permanently deletes it and its transcript. You won't be able to reopen or recover it — this can't be undone.";
@@ -356,17 +361,19 @@ export function ShellCloseConfirmation({
             padding: mobile ? "0 14px" : "0 10px",
           }}
         >
-          <span
-            className={getShellStatusDotClassName(shell)}
-            aria-hidden="true"
-            style={{
-              ...getShellStatusDotStyle(shell),
-              borderRadius: 999,
-              flexShrink: 0,
-              height: mobile ? 8 : 6,
-              width: mobile ? 8 : 6,
-            }}
-          />
+          {showStatusDot ? (
+            <span
+              aria-hidden="true"
+              data-testid={`terminal-close-session-status-${shell.name}`}
+              style={{
+                ...SHELL_WAITING_STATUS_DOT_STYLE,
+                borderRadius: 999,
+                flexShrink: 0,
+                height: mobile ? 8 : 6,
+                width: mobile ? 8 : 6,
+              }}
+            />
+          ) : null}
           <span
             className="truncate"
             style={{

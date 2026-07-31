@@ -1,0 +1,27 @@
+{
+  "name": "Widgets",
+  "description": "Windows 11 style widget board with clock, calendar, notes, and weather glance cards",
+  "runtime": "vite",
+  "category": "utility",
+  "icon": "widgets",
+  "author": "system",
+  "version": "1.0.0",
+  "slug": "widgets",
+  "designs": ["win11"],
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "build": {
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../_shared/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts"
+    ]
+  }
+}

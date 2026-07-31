@@ -10,6 +10,14 @@ import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
+let fileChangeHandler: ((path: string, event: "add" | "change" | "unlink") => void) | null = null;
+
+vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
+  useFileWatcher: (handler: typeof fileChangeHandler) => {
+    fileChangeHandler = handler;
+  },
+}));
+
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: ({ launchTargetId }: { launchTargetId?: string }) => (
     <div data-testid="terminal-app">
@@ -98,6 +106,7 @@ async function loadMobileShell() {
 
 describe("mobile shell", () => {
   beforeEach(() => {
+    fileChangeHandler = null;
     const storage = createMemoryStorage();
     Object.defineProperty(window, "localStorage", {
       value: storage,
@@ -294,6 +303,81 @@ describe("mobile shell", () => {
 
     expect(await screen.findByTestId("mobile-launcher-app-apps/notes/index.html")).toBeTruthy();
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/shell/bootstrap");
+  });
+
+  it("replaces design-scoped launcher apps when theme.json changes", async () => {
+    let apps = [
+      { name: "XP Minesweeper", path: "/files/apps/winxp-minesweeper/index.html", icon: "minesweeper" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => ({ layout: { windows: [] }, modules: [], apps, icons: {} }),
+    })));
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell />);
+
+    expect(await screen.findByTestId("mobile-launcher-app-apps/winxp-minesweeper/index.html")).toBeTruthy();
+
+    apps = [
+      { name: "Sticky Notes", path: "/files/apps/win-sticky-notes/index.html", icon: "sticky-notes" },
+    ];
+    await act(async () => {
+      fileChangeHandler?.("system/theme.json", "change");
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByTestId("mobile-launcher-app-apps/win-sticky-notes/index.html")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.queryByTestId("mobile-launcher-app-apps/winxp-minesweeper/index.html")).toBeNull();
+    });
+  });
+
+  it("ignores an older bootstrap response after a newer theme refresh wins", async () => {
+    let resolveInitial: ((response: Response) => void) | undefined;
+    let resolveThemeRefresh: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveInitial = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveThemeRefresh = resolve;
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    act(() => {
+      fileChangeHandler?.("system/theme.json", "change");
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    resolveThemeRefresh?.({
+      ok: true,
+      json: async () => ({
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "Sticky Notes", path: "/files/apps/win-sticky-notes/index.html" }],
+        icons: {},
+      }),
+    } as Response);
+    expect(await screen.findByTestId("mobile-launcher-app-apps/win-sticky-notes/index.html")).toBeTruthy();
+
+    resolveInitial?.({
+      ok: true,
+      json: async () => ({
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "XP Minesweeper", path: "/files/apps/winxp-minesweeper/index.html" }],
+        icons: {},
+      }),
+    } as Response);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("mobile-launcher-app-apps/win-sticky-notes/index.html")).toBeTruthy();
+    expect(screen.queryByTestId("mobile-launcher-app-apps/winxp-minesweeper/index.html")).toBeNull();
   });
 
   it("hydrates installed mobile apps from the scoped shell snapshot before network refresh", async () => {

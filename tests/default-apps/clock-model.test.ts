@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   alarmMinuteKey,
   computeLaps,
+  DEFAULT_WORLD_ZONES,
   formatClock,
   formatStopwatch,
   formatZoneTime,
@@ -21,6 +22,18 @@ import {
 
 // A fixed instant: 2026-06-01T12:00:00Z (Monday).
 const FIXED = new Date("2026-06-01T12:00:00.000Z");
+
+describe("default world-clock zones", () => {
+  it("seeds valid, unique IANA time zones", () => {
+    expect(DEFAULT_WORLD_ZONES.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(DEFAULT_WORLD_ZONES).size).toBe(DEFAULT_WORLD_ZONES.length);
+    for (const tz of DEFAULT_WORLD_ZONES) {
+      // Throws RangeError on an unknown IANA zone.
+      expect(() => new Intl.DateTimeFormat("en-US", { timeZone: tz })).not.toThrow();
+      expect(zoneCityLabel(tz).length).toBeGreaterThan(0);
+    }
+  });
+});
 
 describe("timezone helpers", () => {
   it("UTC offset is zero", () => {

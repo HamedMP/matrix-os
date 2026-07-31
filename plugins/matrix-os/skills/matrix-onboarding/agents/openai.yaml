@@ -1,0 +1,4 @@
+interface:
+  display_name: "Matrix OS Setup and Recovery"
+  short_description: "Set up and recover a Matrix computer"
+  default_prompt: "Use $matrix-onboarding to set up or recover my Matrix computer."

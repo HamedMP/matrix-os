@@ -1,0 +1,184 @@
+:root {
+  --app-bg: var(--matrix-bg, #f3f3f3);
+  --app-fg: var(--matrix-fg, #1b1b1b);
+  --app-muted-fg: var(--matrix-muted-fg, #616161);
+  --app-card: var(--matrix-card, #ffffff);
+  --app-border: var(--matrix-border, rgba(0, 0, 0, 0.08));
+  --app-accent: var(--matrix-accent, #0067c0);
+  --app-accent-fg: var(--matrix-accent-fg, #ffffff);
+  --app-font: var(--matrix-font-sans, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif);
+  color-scheme: light;
+}
+
+/* Fluent flourishes when the bridge reports the win11 design system. */
+:root[data-matrix-design="win11"] {
+  --app-accent: var(--matrix-accent, #0067c0);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body {
+  background:
+    radial-gradient(1200px 500px at 85% -10%, rgba(0, 103, 192, 0.10), transparent 60%),
+    var(--app-bg);
+  color: var(--app-fg);
+  font-family: var(--app-font);
+  overflow: auto;
+  -webkit-font-smoothing: antialiased;
+}
+button, textarea { font: inherit; }
+
+.widgets-app {
+  min-height: 100%;
+  padding: 20px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+}
+
+.widgets-header h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.widgets-header p {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--app-muted-fg);
+}
+
+.widgets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+
+.widget-card {
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+  padding: 14px 16px 16px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 150px;
+}
+
+.widget-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.widget-card-header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.widget-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-accent) 12%, transparent);
+  color: var(--app-accent);
+}
+
+/* Clock */
+.clock-time {
+  font-size: 40px;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+.clock-date {
+  font-size: 13px;
+  color: var(--app-muted-fg);
+}
+
+/* Calendar */
+.cal-month {
+  font-size: 13px;
+  font-weight: 600;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+}
+.cal-weekday {
+  font-size: 11px;
+  color: var(--app-muted-fg);
+  padding: 3px 0;
+}
+.cal-day {
+  font-size: 12px;
+  padding: 4px 0;
+  border-radius: 50%;
+  font-variant-numeric: tabular-nums;
+}
+.cal-day.today {
+  background: var(--app-accent);
+  color: var(--app-accent-fg);
+  font-weight: 600;
+}
+
+/* Notes */
+.notes-input {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--app-card) 60%, var(--app-bg));
+  color: var(--app-fg);
+  outline: none;
+}
+.notes-input:focus {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent) 25%, transparent);
+}
+.notes-status {
+  font-size: 11px;
+  color: var(--app-muted-fg);
+  min-height: 14px;
+  text-align: right;
+}
+.notes-status.error {
+  color: #c42b1c;
+}
+
+/* Weather placeholder */
+.weather-offline {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 10px 6px;
+  color: var(--app-muted-fg);
+}
+.weather-offline strong {
+  color: var(--app-fg);
+  font-size: 14px;
+  font-weight: 600;
+}
+.weather-offline p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

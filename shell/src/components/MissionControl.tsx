@@ -5,8 +5,6 @@ import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { groupLauncherApps } from "@/lib/dock-sections";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppTile } from "./AppTile";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { Launchpad } from "./launchpad/Launchpad";
@@ -208,12 +206,7 @@ function LauncherGrid({
   visible: boolean;
   closingRef: React.RefObject<boolean>;
 }) {
-  // Share the dock's ordering so launcher and dock display in the same order.
-  // Reorder itself happens only in the dock (single-row, Reorder math stable).
-  const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
-  const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
-
-  const { mainApps, generatedApps, gameApps } = groupLauncherApps(apps, dockOrder, appLaunchTimes);
+  const { mainApps, generatedApps, gameApps } = groupLauncherApps(apps);
 
   // Launcher is an overview — dock (Desktop.tsx) is the reorder surface, which
   // uses a single-row flex layout where framer-motion Reorder's axis math works.

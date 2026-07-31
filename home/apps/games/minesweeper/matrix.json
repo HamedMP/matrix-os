@@ -12,6 +12,7 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "slug": "minesweeper",
+  "designs": ["flat", "neumorphic", "macos-glass", "win11"],
   "storage": {
     "tables": {
       "times": {

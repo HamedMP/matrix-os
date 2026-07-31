@@ -84,6 +84,130 @@ terminals the QR may not render; use the URL above, or generate a QR for the
 deep link and scan it from the dev-client launcher. If the phone cannot reach
 the Mac on LAN, retry Metro with `--host tunnel`.
 
+## Workspace Gotchas (read before debugging tooling)
+
+`pnpm-workspace.yaml` sets `enableGlobalVirtualStore: true`, so packages are
+linked from `~/Library/pnpm/store/v10/links/...` — **outside the repo**. Any
+package that `require()`s a dependency it never declared cannot resolve it.
+Three separate failures come from this, and all of them look like broken code
+until you recognise the pattern.
+
+**`packageExtensions` only work in the root `package.json`.** pnpm silently
+ignores the `packageExtensions:` block in `pnpm-workspace.yaml` in this
+configuration. An entry there has no effect on the installed tree. Add
+extensions under `pnpm.packageExtensions` in the root `package.json` instead;
+`apps/mobile/__tests__/mobile-app-config.test.ts` asserts the workspace file
+stays free of them. This is what broke `eas build` (see below).
+
+**`eas build` fails at `expo config --json`** if a config plugin cannot load its
+own dependencies. EAS resolves the project config by shelling out to the expo
+CLI *from the store*, not from `apps/mobile/node_modules`. The symptom:
+
+```
+expo/bin/cli config --json exited with non-zero code: 1
+  PluginError: Cannot find module '@expo/config-plugins'
+```
+
+Fix by declaring the missing edge in root `package.json` `pnpm.packageExtensions`,
+keyed with `@*` so a later upgrade of the plugin package does not silently
+un-match and reintroduce the failure.
+
+**Metro's dev server cannot bundle** — it rejects modules whose realpath sits
+outside `projectRoot`/`watchFolders`, so the app shows
+`Unable to resolve module ./apps/mobile/node_modules/expo-router/entry`. For
+local device work only, add the store to `watchFolders` in
+`apps/mobile/metro.config.js`; **do not commit it**. Production bundling
+(`expo export`, and therefore EAS builds) is unaffected, so a green EAS build
+does not prove the dev server works, and vice versa.
+
+**Jest needs the `modulePaths` fallback.** `apps/mobile/jest.config.js` adds the
+hoisted root `node_modules` as a resolution root, and the root `package.json`
+carries `packageExtensions` for `@react-native/jest-preset` and
+`react-native-worklets`. Without these the suite cannot start at all — it fails
+during config load, before any test runs.
+
+Other environment notes:
+
+- Run everything through `flox activate -d <repo root> --` so you get Node 24.
+- `pnpm install` fails building `sharp` from source on macOS; use
+  `--ignore-scripts`. Native mobile builds do not need it.
+- Start Metro and EAS commands with cwd `apps/mobile`. From the repo root Metro
+  picks the wrong project root and every bundle request 404s.
+- `pnpm --filter matrix-os-mobile exec tsc --noEmit` reports **31 pre-existing**
+  `'X' cannot be used as a JSX component` errors on `main`. Compare against base
+  dependencies before attributing them to your change.
+
+## Sign-In and Auth
+
+Which sign-in factors an account can use is decided **per account**, not per
+instance. Read the live truth instead of guessing — this endpoint is public:
+
+```bash
+curl -s "https://clerk.matrix-os.com/v1/environment?__clerk_api_version=2025-04-10&_clerk_js_version=5.90.0"
+```
+
+To see what a *specific* account can use, create a sign-in attempt (harmless —
+nothing is sent until you call prepare):
+
+```bash
+curl -s -X POST "https://clerk.matrix-os.com/v1/client/sign_ins?__clerk_api_version=2025-04-10&_clerk_js_version=5.90.0" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Origin: https://app.matrix-os.com" \
+  --data-urlencode "identifier=someone@example.com"
+```
+
+`supported_first_factors` is the answer. An account with a password returns
+`['password', 'email_code', 'reset_password_email_code']`; an OAuth-only signup
+returns `['email_code', 'oauth_google', 'reset_password_email_code']` with **no**
+`password` entry. Attempting `strategy=password` against the latter fails with
+`strategy_for_user_invalid` — "not valid for this account", which is an account
+fact, not an instance misconfiguration.
+
+The mobile sign-in therefore tries the typed password first and falls back to an
+email code when Clerk reports the account has none. Apple App Review requires
+demo credentials that work, so the review account **must have a password set**;
+an OAuth-only account cannot log in with a username and password.
+
+Sign-**up** by email is deliberately not implemented on mobile: the instance
+requires a username and legal consent at signup. New users go through OAuth or
+the web.
+
+## Over-the-Air Updates (EAS Update)
+
+OTA landed in v0.2.1. Builds published before it shipped without `expo-updates`
+and can **never** receive an update.
+
+- `expo-updates` is a dependency; `app.json` sets `updates.url` to the project's
+  EAS endpoint and `runtimeVersion.policy` to `appVersion`.
+- Every `eas.json` build profile declares a `channel`. A build with no channel
+  can never receive an update.
+- Publish with `eas update --branch production --message "..."`.
+
+**The `appVersion` policy has a sharp edge**: the runtime version tracks
+`version` in `app.json`, so a release that changes native code (new native
+module, plugin, or SDK bump) **must** bump `version`. Otherwise the update is
+delivered to builds whose native code no longer matches the JS, which crashes at
+runtime. If that guarantee needs to be automatic, switch the policy to
+`fingerprint` — at the cost that any dependency change stops OTA from reaching
+existing builds.
+
+## iOS TestFlight Release
+
+From a clean manual worktree on the latest `origin/main`, with cwd `apps/mobile`:
+
+```bash
+eas build --platform ios --profile production --auto-submit --non-interactive
+```
+
+`appVersionSource: remote` means EAS owns the build number and increments it;
+`version` in `app.json` is still the marketing version and is yours to bump.
+Bump it whenever the release changes native code (see the OTA note above) or
+when you want the TestFlight build to be distinguishable from the previous one.
+
+Auto-submit uploads to App Store Connect using the stored API key; Apple then
+takes about 5-10 minutes to process before the build appears in TestFlight.
+Verify at https://appstoreconnect.apple.com/apps/6785629815/testflight/ios.
+
 ## Android Store Release
 
 Use a clean manual worktree based on the latest `origin/main`. From the mobile

@@ -218,7 +218,7 @@ jobs:
     needs: [gate, build]
     if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
@@ -388,6 +388,44 @@ jobs:
             exit 1
           fi
           jq . /tmp/deploy.json
+
+          echo "Waiting for ${HANDLE} to install ${VERSION}"
+          deadline=$((SECONDS + 600))
+          while true; do
+            runtime="$(curl -fsS --max-time 30 \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              "${PLATFORM_PUBLIC_URL}/vps/fleet" |
+              jq -c --arg h "$HANDLE" \
+                '[.machines[]
+                  | select(.handle == $h and .runtimeSlot == $h and .status != "deleted")
+                  | . + { _preview_rank:
+                      (if .status == "running" then 0
+                       elif .status == "provisioning" then 1
+                       elif .status == "failed" then 2
+                       else 3 end) }]
+                 | sort_by(._preview_rank, .provisionedAt)
+                 | (.[0] // {status: "absent", healthy: false, runtimeVersion: null})
+                 | del(._preview_rank)')"
+            status="$(jq -r '.status' <<< "$runtime")"
+            healthy="$(jq -r '.healthy == true' <<< "$runtime")"
+            runtime_version="$(jq -r '.runtimeVersion // "pending"' <<< "$runtime")"
+            echo "Runtime for ${HANDLE}: status=${status} healthy=${healthy} version=${runtime_version}"
+
+            if jq -e --arg v "$VERSION" \
+              '.healthy == true and .runtimeVersion == $v' <<< "$runtime" > /dev/null; then
+              echo "Preview ready: ${HANDLE} is healthy on ${VERSION}"
+              break
+            fi
+            if [ "$status" = "failed" ]; then
+              echo "Preview ${HANDLE} failed while installing ${VERSION}." >&2
+              exit 1
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for ${HANDLE} to install ${VERSION} (last: status=${status}, healthy=${healthy}, version=${runtime_version})." >&2
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Comment preview URL on PR
         if: github.event_name == 'pull_request'

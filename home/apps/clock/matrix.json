@@ -5,7 +5,7 @@
   "category": "utility",
   "icon": "clock",
   "author": "system",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "slug": "clock",
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",

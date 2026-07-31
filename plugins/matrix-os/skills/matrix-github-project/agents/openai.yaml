@@ -1,0 +1,4 @@
+interface:
+  display_name: "Matrix GitHub Project"
+  short_description: "Change GitHub projects on Matrix safely"
+  default_prompt: "Use $matrix-github-project to clone this repository on Matrix and make my change."

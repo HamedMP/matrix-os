@@ -189,7 +189,16 @@ export function TerminalSessionHoverCard({
             </span>
           </div>
           {shell.model || shell.strength ? (
-            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+            <div
+              data-testid={`terminal-session-agent-metadata-grid-${shell.name}`}
+              style={{
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns: shell.model && shell.strength
+                  ? "repeat(2, minmax(0, 1fr))"
+                  : "minmax(0, 1fr)",
+              }}
+            >
               {shell.model ? (
                 <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
                   <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Model</span>

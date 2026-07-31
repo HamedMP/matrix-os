@@ -130,6 +130,14 @@ describe("run CLI command", () => {
   it("exports the developer run command", () => {
     expect(runCommand.meta?.name).toBe("run");
     expect(runCommand.args).toHaveProperty("noRichPaste");
+    expect(runCommand.args).not.toHaveProperty("t");
+    expect(runCommand.args).toMatchObject({
+      tty: {
+        type: "boolean",
+        alias: "t",
+        description: "Request a TTY; combine with -i as -it",
+      },
+    });
     expect(PUBLISHED_CLI_COMMANDS.has("run")).toBe(true);
     expect(resolvePublishedCliRedirect(["run", "-it", "--", "claude"])).toEqual([
       "run",
@@ -148,6 +156,16 @@ describe("run CLI command", () => {
     expect(parseRunCommand(["-it", "--cwd", "projects/app", "pnpm", "test"])).toEqual(["pnpm", "test"]);
     expect(parseRunCommand(["-it", "--cwd=projects/app", "pnpm", "test"])).toEqual(["pnpm", "test"]);
     expect(parseRunCommand(["-it", "--session=setup", "claude"])).toEqual(["claude"]);
+    expect(parseRunCommand(["--tty", "--", "claude"])).toEqual(["claude"]);
+  });
+
+  it("shows the standard -t and --tty flags in help", async () => {
+    const result = await runMatrixCli(["run", "--help"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toMatch(/-t, --tty/);
+    expect(result.stdout).not.toMatch(/\s--t(?:\s|$)/m);
   });
 
   it("infers agents behind env and inline environment assignments", () => {

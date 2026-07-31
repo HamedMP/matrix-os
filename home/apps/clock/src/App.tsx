@@ -27,6 +27,7 @@ import "./styles.css";
 import {
   alarmMinuteKey,
   computeLaps,
+  DEFAULT_WORLD_ZONES,
   formatClock,
   formatStopwatch,
   formatZoneTime,
@@ -45,6 +46,9 @@ import {
 
 const ZONES_TABLE = "zones";
 const ALARMS_TABLE = "alarms";
+const ZONES_KEY = "clock.zones";
+const ALARMS_KEY = "clock.alarms";
+const SEED_MARKER_KEY = "clock.seeded-v1";
 const SNOOZE_MS = 5 * 60_000;
 const MAX_BEEPED_TIMERS = 200;
 
@@ -147,28 +151,56 @@ function beep(times = 1): void {
 
 const fallbackData: Record<string, unknown> = {};
 
-async function readAppData<T>(key: string, fallback: T): Promise<T> {
+type AppDataRead<T> = { ok: true; value: T } | { ok: false };
+
+function decodeAppData<T>(value: unknown): T {
+  if (typeof value !== "string" || value.length > 1_000_000) return value as T;
   try {
-    if (window.MatrixOS?.readData) {
-      const value = await window.MatrixOS.readData(key);
-      return value === undefined || value === null ? fallback : (value as T);
-    }
-  } catch (err) {
-    console.warn("[clock] MatrixOS data read failed:", err instanceof Error ? err.message : String(err));
+    return JSON.parse(value) as T;
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) return value as T;
+    throw err;
   }
-  return Object.prototype.hasOwnProperty.call(fallbackData, key) ? (fallbackData[key] as T) : fallback;
 }
 
-async function writeAppData<T>(key: string, value: T): Promise<void> {
+async function tryReadAppData<T>(key: string, fallback: T): Promise<AppDataRead<T>> {
+  if (window.MatrixOS?.readData) {
+    try {
+      const value = await window.MatrixOS.readData(key);
+      return {
+        ok: true,
+        value: value === undefined || value === null ? fallback : decodeAppData<T>(value),
+      };
+    } catch (err: unknown) {
+      console.warn("[clock] MatrixOS data read failed:", err instanceof Error ? err.message : String(err));
+      return { ok: false };
+    }
+  }
+  return {
+    ok: true,
+    value: Object.prototype.hasOwnProperty.call(fallbackData, key)
+      ? (fallbackData[key] as T)
+      : fallback,
+  };
+}
+
+async function readAppData<T>(key: string, fallback: T): Promise<T> {
+  const result = await tryReadAppData(key, fallback);
+  return result.ok ? result.value : fallback;
+}
+
+async function writeAppData<T>(key: string, value: T): Promise<boolean> {
   try {
     if (window.MatrixOS?.writeData) {
       await window.MatrixOS.writeData(key, value);
-      return;
+      return true;
     }
   } catch (err) {
     console.warn("[clock] MatrixOS data write failed:", err instanceof Error ? err.message : String(err));
+    return false;
   }
   fallbackData[key] = value;
+  return true;
 }
 
 // --- shared types --------------------------------------------------------------
@@ -212,6 +244,24 @@ function dedupeZones(rows: ZoneRow[]): ZoneRow[] {
     deduped.push(zone);
   }
   return deduped;
+}
+
+/** First-run seeding needs a persistent marker, which only the KV bridge provides. */
+function hasKvBridge(): boolean {
+  return Boolean(window.MatrixOS?.readData && window.MatrixOS?.writeData);
+}
+
+function defaultZoneRows(): ZoneRow[] {
+  return DEFAULT_WORLD_ZONES.map((tz, position) => ({ id: `seed-${tz}`, tz, position }));
+}
+
+function hasAllDefaultZones(zones: readonly ZoneRow[]): boolean {
+  const timeZones = new Set(zones.map((zone) => zone.tz));
+  return DEFAULT_WORLD_ZONES.every((timeZone) => timeZones.has(timeZone));
+}
+
+function coerceZones(rows: unknown[]): ZoneRow[] {
+  return dedupeZones(rows.map(coerceZone).filter((z): z is ZoneRow => z !== null));
 }
 
 function storageLabel(): string {
@@ -291,6 +341,7 @@ export default function App() {
 function WorldClock({ now }: { now: Date }) {
   const [zones, setZones] = useState<ZoneRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [setupReady, setSetupReady] = useState(false);
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
@@ -301,14 +352,75 @@ function WorldClock({ now }: { now: Date }) {
 
   const reload = useCallback(async () => {
     setError(null);
+    setSetupReady(false);
     if (!window.MatrixOS?.db) {
-      const stored = await readAppData<ZoneRow[]>("clock.zones", []);
-      setZones(dedupeZones(stored.map(coerceZone).filter((z): z is ZoneRow => z !== null)));
+      const readResult = await tryReadAppData<ZoneRow[] | null>(ZONES_KEY, null);
+      if (!readResult.ok) {
+        setError("Saved cities could not be loaded.");
+        return;
+      }
+      const stored = readResult.value;
+      // First run on KV storage: nothing ever written, so seed the default cities.
+      if (stored === null && hasKvBridge()) {
+        const seeded = defaultZoneRows();
+        setZones(seeded);
+        if (!(await writeAppData(ZONES_KEY, seeded))) {
+          setError("Default cities could not be saved.");
+          return;
+        }
+        setSetupReady(true);
+        return;
+      }
+      setZones(coerceZones(stored ?? []));
+      setSetupReady(true);
       return;
     }
     try {
       const rows = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
-      setZones(dedupeZones(rows.map(coerceZone).filter((z): z is ZoneRow => z !== null)));
+      let zones = coerceZones(rows);
+      const hadExistingZones = zones.length > 0;
+      const appInfo = await window.MatrixOS.db.appInfo?.();
+      const isLegacyInstall = !appInfo || appInfo.installedVersion === null;
+      if (hasKvBridge() && !isLegacyInstall) {
+        const markerRead = await tryReadAppData<boolean>(SEED_MARKER_KEY, false);
+        if (!markerRead.ok) {
+          setZones(zones);
+          setError("Saved cities could not be loaded.");
+          return;
+        }
+        if (!markerRead.value) {
+          // Only a brand-new table gets the atomic, idempotent multi-row
+          // insert. Any existing row is user state and only needs the marker.
+          if (!hadExistingZones) {
+            try {
+              await window.MatrixOS.db.bulkInsert(
+                ZONES_TABLE,
+                defaultZoneRows().map((zone) => ({ tz: zone.tz, position: zone.position })),
+              );
+            } catch (insertErr: unknown) {
+              console.warn(
+                "[clock] default cities insert failed or raced:",
+                insertErr instanceof Error ? insertErr.message : String(insertErr),
+              );
+            }
+            const fresh = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
+            zones = coerceZones(fresh);
+          }
+          if (hadExistingZones || hasAllDefaultZones(zones)) {
+            if (!(await writeAppData(SEED_MARKER_KEY, true))) {
+              setZones(zones);
+              setError("Default cities setup could not finish.");
+              return;
+            }
+          } else {
+            setZones(zones);
+            setError("Default cities setup could not finish.");
+            return;
+          }
+        }
+      }
+      setZones(zones);
+      setSetupReady(true);
     } catch (err: unknown) {
       console.warn("[clock] zones load failed:", err instanceof Error ? err.message : String(err));
       setError("Saved cities could not be loaded.");
@@ -321,11 +433,12 @@ function WorldClock({ now }: { now: Date }) {
   }, [reload]);
 
   const persistLocal = useCallback(async (next: ZoneRow[]) => {
-    await writeAppData("clock.zones", next);
+    await writeAppData(ZONES_KEY, next);
   }, []);
 
   const addZone = useCallback(
     async (tz: string) => {
+      if (!setupReady) return;
       const alreadyVisible = zones.some((z) => z.tz === tz);
       let existingRows: Record<string, unknown>[] = [];
       try {
@@ -368,11 +481,12 @@ function WorldClock({ now }: { now: Date }) {
         void reload().finally(() => setError("City could not be saved."));
       }
     },
-    [persistLocal, reload, zones],
+    [persistLocal, reload, setupReady, zones],
   );
 
   const removeZone = useCallback(
     async (zone: ZoneRow) => {
+      if (!setupReady) return;
       const next = zones.filter((z) => z.id !== zone.id);
       setZones(next);
       if (!window.MatrixOS?.db) {
@@ -386,11 +500,12 @@ function WorldClock({ now }: { now: Date }) {
         void reload().finally(() => setError("City could not be removed."));
       }
     },
-    [persistLocal, reload, zones],
+    [persistLocal, reload, setupReady, zones],
   );
 
   const reorder = useCallback(
     async (fromId: string, toId: string) => {
+      if (!setupReady) return;
       if (fromId === toId) return;
       const fromIdx = zones.findIndex((z) => z.id === fromId);
       const toIdx = zones.findIndex((z) => z.id === toId);
@@ -420,7 +535,7 @@ function WorldClock({ now }: { now: Date }) {
         void reload().finally(() => setError("New order could not be saved."));
       }
     },
-    [persistLocal, reload, zones],
+    [persistLocal, reload, setupReady, zones],
   );
 
   const results = useMemo(() => searchZones(allZones, query, 60), [allZones, query]);
@@ -436,19 +551,33 @@ function WorldClock({ now }: { now: Date }) {
           <p className="eyebrow">{persistenceLabel}</p>
           <h1>World Clock</h1>
         </div>
-        <button className="primary-btn" type="button" onClick={() => setAdding(true)}>
+        <button className="primary-btn" type="button" onClick={() => setAdding(true)} disabled={!setupReady}>
           <Plus size={16} /> Add city
         </button>
       </div>
 
-      {error && <div className="banner banner--error">{error}</div>}
+      {error && (
+        <div className="banner banner--error" role="alert">
+          <span>{error}</span>
+          {!setupReady ? (
+            <button className="ghost-btn" type="button" onClick={() => void reload()}>
+              Retry setup
+            </button>
+          ) : null}
+        </div>
+      )}
 
-      {zones.length === 0 ? (
+      {!setupReady && !error ? (
+        <div className="empty" aria-live="polite">
+          <Globe2 size={28} />
+          <strong>Loading cities…</strong>
+        </div>
+      ) : zones.length === 0 ? (
         <div className="empty">
           <Globe2 size={28} />
           <strong>No cities yet</strong>
           <span>Track the time anywhere. Add your first city to get started.</span>
-          <button className="primary-btn" type="button" onClick={() => setAdding(true)}>
+          <button className="primary-btn" type="button" onClick={() => setAdding(true)} disabled={!setupReady}>
             <Plus size={16} /> Add city
           </button>
         </div>
@@ -605,7 +734,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
   const reload = useCallback(async () => {
     setError(null);
     if (!window.MatrixOS?.db) {
-      const stored = await readAppData<AlarmModel[]>("clock.alarms", []);
+      const stored = await readAppData<AlarmModel[]>(ALARMS_KEY, []);
       setAlarms(stored.map((a) => ({ ...a, repeat: parseRepeat(a.repeat) })));
       return;
     }
@@ -625,7 +754,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
 
   const persistLocal = useCallback(async (next: AlarmModel[]) => {
     await writeAppData(
-      "clock.alarms",
+      ALARMS_KEY,
       next.map((a) => ({ ...a, repeat: serializeRepeat(a.repeat) })),
     );
   }, []);

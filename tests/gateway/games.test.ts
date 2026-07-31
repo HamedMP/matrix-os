@@ -34,9 +34,11 @@ function expectPlayableGameApp(appDir: string) {
   expect(existsSync(join(appDir, "src/App.tsx"))).toBe(true);
 
   const source = readFileSync(join(appDir, "src/main.tsx"), "utf-8");
+  const appSource = readFileSync(join(appDir, "src/App.tsx"), "utf-8");
   expect(source).toContain("createRoot");
   expect(source).toContain('from "./App"');
   expect(source).not.toContain("renderDefaultApp");
+  expect(appSource).toContain('import "./styles.css"');
 }
 
 describe("T1420-T1427: Pre-installed games", () => {

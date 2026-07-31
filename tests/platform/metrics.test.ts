@@ -97,7 +97,7 @@ describe('platform/metrics', () => {
     expect(normalizePlatformMetricPath('/')).toBe('/');
   });
 
-  it.each(['/health', '/metrics', '/containers', '/vps', '/runtime'])(
+  it.each(['/health', '/metrics', '/containers', '/vps', '/runtime', '/onboarding/computer'])(
     'keeps exact platform metric path %s distinct',
     (path) => {
       expect(normalizePlatformMetricPath(path)).toBe(path);

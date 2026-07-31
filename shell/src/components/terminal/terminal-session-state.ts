@@ -30,6 +30,15 @@ export function getShellVisualStatus(
   return shell.unread ? "finished" : "idle";
 }
 
+export const SHELL_WAITING_STATUS_DOT_STYLE = {
+  background: "#E0A12E",
+  boxShadow: "0 0 0 4px rgba(224,161,46,0.25)",
+} as const;
+
+export function shouldShowShellStatusDot(shell: ShellSessionSummary): boolean {
+  return getShellVisualStatus(shell) === "waiting";
+}
+
 export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
 type ShellUiStatePatchKey = keyof ShellUiStatePatch;
 

@@ -5,16 +5,21 @@ import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { z } from 'zod/v4';
 import { appOrigin, resolveReturnPath } from './origins.js';
 import {
+  claimCheckoutAttempt,
+  finalizeCheckoutAttempt,
   getBillingCustomerByClerkUserId,
   getBillingCustomerByStripeCustomerId,
   getBillingEntitlement,
   getBillingEntitlementState,
+  getBillingSubscription,
+  getSettlingCheckoutAttempt,
   insertBillingWebhookEvent,
-  insertCheckoutAttempt,
   resolveCheckoutAttempt,
   runBillingWebhookTransaction,
+  listCurrentBillingSubscriptions,
   upsertBillingCustomer,
   upsertBillingEntitlement,
+  upsertBillingSubscription,
   type PlatformDB,
 } from './db.js';
 import {
@@ -34,6 +39,7 @@ import {
   type StripeSubscriptionProjection,
 } from './billing.js';
 import { DeveloperToolsWithDefaultSchema } from './developer-tools.js';
+import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -55,12 +61,19 @@ const BILLING_CHECKOUT_EXPIRED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_EXPIRED ?? 'matrix_billing_checkout_expired';
 const BILLING_SUBSCRIPTION_UPDATED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED ?? 'matrix_billing_subscription_updated';
+const BillingRegionSlugSchema = z.enum([
+  'region_fsn1',
+  'region_nbg1',
+  'region_ash',
+  'region_hil',
+]);
 
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.enum(['monthly', 'annual']).default('monthly'),
-  regionSlug: z.enum(['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil']).default('region_fsn1'),
+  regionSlug: BillingRegionSlugSchema.default('region_fsn1'),
   developerTools: DeveloperToolsWithDefaultSchema,
+  runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   returnPath: z.string().min(1).max(2048).optional().refine(
     // Safe iff it is already a same-origin allowlisted path (origins.ts is the
     // single source of truth for redirect-target validation).
@@ -71,14 +84,19 @@ const CheckoutRequestSchema = z.object({
 type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>;
 
 const PortalRequestSchema = z.object({
-  intent: z.enum(['manage', 'add_computer']).default('manage'),
+  intent: z.literal('manage').default('manage'),
   returnPath: z.string().min(1).max(2048).optional().refine(
     (value) => value === undefined || resolveReturnPath(value) === value,
     { message: 'Invalid return path' },
   ),
 }).strict();
 
+const BillingStatusQuerySchema = z.object({
+  runtimeSlot: RuntimeSlotSchema.optional(),
+}).strict();
+
 export interface StripeCheckoutSessionInput {
+  idempotencyKey: string;
   clerkUserId: string;
   customerId?: string;
   priceId: string;
@@ -86,8 +104,17 @@ export interface StripeCheckoutSessionInput {
   automaticTax: boolean;
   allowPromotionCodes: boolean;
   regionSlug: string;
+  runtimeSlot: string;
   successUrl: string;
   cancelUrl: string;
+}
+
+export interface StripeCheckoutSessionProjection {
+  status: 'open' | 'complete' | 'expired';
+  url: string | null;
+  clerkUserId: string | null;
+  priceId: string | null;
+  regionSlug: string | null;
 }
 
 export interface StripeBillingClient {
@@ -98,17 +125,10 @@ export interface StripeBillingClient {
    * to the Clerk user from server-written metadata.
    */
   createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{ url: string; id: string }>;
+  retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;
   createPortalSession(input: {
     customerId: string;
     returnUrl: string;
-    flow?: {
-      type: 'subscription_update';
-      subscriptionId: string;
-      priceId: string;
-      interval: MatrixBillingInterval;
-      configurationId: string;
-      afterCompletionReturnUrl: string;
-    };
   }): Promise<{ url: string }>;
   constructWebhookEvent(rawBody: string, signature: string, webhookSecret: string): StripeWebhookEvent;
 }
@@ -201,8 +221,156 @@ export function createBillingRoutes(options: {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
         throw new Error('stripe_timeout_exceeds_budget');
       }
+      const currentTime = now();
+      const existingSubscription = await getBillingSubscription(
+        options.db,
+        clerkUserId,
+        parsed.data.runtimeSlot,
+        currentTime.toISOString(),
+      );
+      if (existingSubscription) {
+        const existingEntitlement = deriveStripeEntitlement({
+          clerkUserId: existingSubscription.clerkUserId,
+          stripeCustomerId: existingSubscription.stripeCustomerId,
+          stripeSubscriptionId: existingSubscription.stripeSubscriptionId,
+          status: existingSubscription.status,
+          currentPeriodEnd: existingSubscription.currentPeriodEnd,
+          items: [{ priceId: existingSubscription.stripePriceId, quantity: 1 }],
+        }, {
+          priceCatalog: loadStripePriceCatalog(env),
+          runtimeCatalog: loadRuntimeCatalog(env),
+          now: currentTime,
+        });
+        if (getRuntimeAccessDecision(existingEntitlement, currentTime).runtimeProxyAllowed) {
+          return c.json({
+            error: 'Computer already has billing',
+            code: 'runtime_already_subscribed',
+          }, 409);
+        }
+      }
+      const settlingAttempt = await getSettlingCheckoutAttempt(
+        options.db,
+        clerkUserId,
+        parsed.data.runtimeSlot,
+      );
+      if (
+        settlingAttempt?.status === 'paid'
+        && (
+          !existingSubscription
+          || Date.parse(settlingAttempt.createdAt) > Date.parse(existingSubscription.latestEventCreatedAt)
+        )
+      ) {
+        return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+      }
+      const selectedPlan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((plan) => plan.slug === parsed.data.planSlug);
+      const serverType = selectedPlan
+        ? loadRuntimeCatalog(env).profiles.find((profile) => profile.sku === selectedPlan.defaultCatalogSku)?.serverType
+        : undefined;
+      const checkoutClaim = {
+        clerkUserId,
+        createdAt: currentTime.toISOString(),
+        developerTools: parsed.data.developerTools,
+        runtimeSlot: parsed.data.runtimeSlot,
+        planSlug: parsed.data.planSlug,
+        billingInterval: parsed.data.interval,
+        regionSlug: parsed.data.regionSlug,
+        ...(serverType ? { serverType } : {}),
+      };
+      let attempt = await claimCheckoutAttempt(options.db, {
+        id: randomUUID(),
+        ...checkoutClaim,
+      });
+      if (!attempt.claimed) {
+        const isLegacyOpenAttempt = attempt.attempt.status === 'open'
+          && attempt.attempt.stripeSessionId !== null
+          && (
+            !attempt.attempt.planSlug
+            || !attempt.attempt.billingInterval
+            || !attempt.attempt.regionSlug
+          );
+        if (isLegacyOpenAttempt) {
+          const legacyStripeSessionId = attempt.attempt.stripeSessionId;
+          if (!legacyStripeSessionId) throw new Error('checkout_session_id_missing');
+          const session = await options.stripe.retrieveCheckoutSession(legacyStripeSessionId);
+          if (session.clerkUserId !== clerkUserId) {
+            throw new Error('checkout_session_owner_mismatch');
+          }
+          if (session.status === 'complete') {
+            await resolveCheckoutAttempt(
+              options.db,
+              legacyStripeSessionId,
+              'paid',
+              currentTime.toISOString(),
+            );
+            return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+          }
+          if (session.status === 'expired') {
+            await resolveCheckoutAttempt(
+              options.db,
+              legacyStripeSessionId,
+              'expired',
+              currentTime.toISOString(),
+            );
+            attempt = await claimCheckoutAttempt(options.db, {
+              id: randomUUID(),
+              ...checkoutClaim,
+            });
+          } else {
+            const recoveredPlan = session.priceId
+              ? loadStripePriceCatalog(env).priceToPlan.get(session.priceId)
+              : undefined;
+            const recoveredRegion = BillingRegionSlugSchema.safeParse(session.regionSlug);
+            if (!session.url || !recoveredPlan || !recoveredRegion.success) {
+              throw new Error('checkout_session_selection_missing');
+            }
+            if (
+              recoveredPlan.planSlug === parsed.data.planSlug
+              && recoveredPlan.interval === parsed.data.interval
+              && recoveredRegion.data === parsed.data.regionSlug
+            ) {
+              return c.json({ url: session.url }, 200);
+            }
+            return c.json({
+              error: 'Checkout selection conflicts with an open session',
+              code: 'checkout_selection_conflict',
+              selection: {
+                planSlug: recoveredPlan.planSlug,
+                interval: recoveredPlan.interval,
+                regionSlug: recoveredRegion.data,
+              },
+            }, 409);
+          }
+        }
+      }
+      if (!attempt.claimed) {
+        if (attempt.selectionMatches && attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl) {
+          return c.json({ url: attempt.attempt.checkoutUrl }, 200);
+        }
+        if (
+          !attempt.selectionMatches
+          && attempt.attempt.status === 'open'
+          && attempt.attempt.planSlug
+          && attempt.attempt.billingInterval
+          && attempt.attempt.regionSlug
+        ) {
+          return c.json({
+            error: 'Checkout selection conflicts with an open session',
+            code: 'checkout_selection_conflict',
+            selection: {
+              planSlug: attempt.attempt.planSlug,
+              interval: attempt.attempt.billingInterval,
+              regionSlug: attempt.attempt.regionSlug,
+            },
+          }, 409);
+        }
+        return c.json({
+          error: 'Checkout is already starting',
+          code: 'checkout_pending',
+        }, 409);
+      }
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
       const session = await options.stripe.createCheckoutSession({
+        idempotencyKey: attempt.attempt.id,
         clerkUserId,
         customerId: customer?.stripeCustomerId,
         priceId,
@@ -210,21 +378,12 @@ export function createBillingRoutes(options: {
         automaticTax: true,
         allowPromotionCodes: true,
         regionSlug: parsed.data.regionSlug,
+        runtimeSlot: parsed.data.runtimeSlot,
         successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
       });
-      // Record the attempt so the journey can derive payment_settling without a
-      // client-side marker. Best-effort: never block the user's checkout on it.
-      try {
-        await insertCheckoutAttempt(options.db, {
-          id: randomUUID(),
-          clerkUserId,
-          stripeSessionId: session.id,
-          createdAt: now().toISOString(),
-          developerTools: parsed.data.developerTools,
-        });
-      } catch (err: unknown) {
-        console.error('[billing] checkout attempt record failed:', err instanceof Error ? err.message : String(err));
+      if (!await finalizeCheckoutAttempt(options.db, attempt.attempt.id, session.id, session.url)) {
+        throw new Error('checkout_attempt_finalize_failed');
       }
       emitTelemetry(BILLING_CHECKOUT_CREATED_EVENT, {
         distinctId: clerkUserId,
@@ -266,51 +425,6 @@ export function createBillingRoutes(options: {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
         throw new Error('stripe_timeout_exceeds_budget');
       }
-      if (parsed.data.intent === 'add_computer') {
-        const currentTime = now();
-        const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
-        const entitlement = computeEffectiveEntitlement({
-          stripeEntitlement: parseBillingEntitlementRecord(state.entitlement),
-          override: parseBillingOverrideRecord(state.override),
-          now: currentTime,
-        });
-        if (entitlement?.source === 'override') {
-          return c.json({ error: 'Account managed internally', code: 'managed_account' }, 409);
-        }
-        if (!entitlement?.stripeSubscriptionId || !entitlement.stripePriceId) {
-          return c.json(BILLING_UNAVAILABLE_RESPONSE, 404);
-        }
-        const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
-        if (!customer) return c.json({ error: 'Billing unavailable' }, 404);
-        const priceEntry = loadStripePriceCatalog(env).priceToPlan.get(entitlement.stripePriceId);
-        if (!priceEntry || priceEntry.kind !== 'base_plan') {
-          return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-        }
-        const interval = priceEntry.interval;
-        const priceId = interval === 'annual'
-          ? env.STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL
-          : env.STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY;
-        if (!priceId) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-        const returnUrl = resolveBillingReturnUrl(env, 'portal', parsed.data.returnPath ?? '/runtime?new=1');
-        const configurationId = interval === 'annual'
-          ? env.STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL
-          : env.STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY;
-        if (!configurationId) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-        const session = await options.stripe.createPortalSession({
-          customerId: customer.stripeCustomerId,
-          returnUrl,
-          flow: {
-            type: 'subscription_update',
-            subscriptionId: entitlement.stripeSubscriptionId,
-            priceId,
-            interval,
-            configurationId,
-            afterCompletionReturnUrl: returnUrl,
-          },
-        });
-        return c.json({ url: session.url }, 200);
-      }
-
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
       if (!customer) return c.json({ error: 'Billing unavailable' }, 404);
       const session = await options.stripe.createPortalSession({
@@ -329,9 +443,34 @@ export function createBillingRoutes(options: {
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
     try {
       const currentTime = now();
+      const query = BillingStatusQuerySchema.safeParse(c.req.query());
+      if (!query.success) return c.json({ error: 'Invalid request' }, 400);
       const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
+      let stripeEntitlement = parseBillingEntitlementRecord(state.entitlement);
+      if (query.data.runtimeSlot) {
+        const subscription = await getBillingSubscription(
+          options.db,
+          clerkUserId,
+          query.data.runtimeSlot,
+          currentTime.toISOString(),
+        );
+        stripeEntitlement = subscription
+          ? deriveStripeEntitlement({
+            clerkUserId: subscription.clerkUserId,
+            stripeCustomerId: subscription.stripeCustomerId,
+            stripeSubscriptionId: subscription.stripeSubscriptionId,
+            status: subscription.status,
+            currentPeriodEnd: subscription.currentPeriodEnd,
+            items: [{ priceId: subscription.stripePriceId, quantity: 1 }],
+          }, {
+            priceCatalog: loadStripePriceCatalog(env),
+            runtimeCatalog: loadRuntimeCatalog(env),
+            now: currentTime,
+          })
+          : null;
+      }
       const entitlement = computeEffectiveEntitlement({
-        stripeEntitlement: parseBillingEntitlementRecord(state.entitlement),
+        stripeEntitlement,
         override: parseBillingOverrideRecord(state.override),
         now: currentTime,
       });
@@ -413,7 +552,29 @@ export function createBillingRoutes(options: {
           runtimeCatalog: loadRuntimeCatalog(env),
           now: webhookProcessedAt,
         });
-        await persistEntitlement(trx, entitlement);
+        const priceEntry = entitlement.stripePriceId
+          ? priceCatalog.priceToPlan.get(entitlement.stripePriceId)
+          : undefined;
+        if (!priceEntry || !entitlement.stripePriceId) {
+          return { received: true, ignored: true };
+        }
+        await upsertBillingSubscription(trx, {
+          stripeSubscriptionId: projection.stripeSubscriptionId,
+          stripeCustomerId: projection.stripeCustomerId,
+          clerkUserId: projection.clerkUserId,
+          runtimeSlot: projection.runtimeSlot,
+          planSlug: priceEntry.planSlug,
+          stripePriceId: entitlement.stripePriceId,
+          billingInterval: priceEntry.interval,
+          status: entitlement.status,
+          currentPeriodEnd: projection.currentPeriodEnd ?? null,
+          gracePeriodEndsAt: entitlement.gracePeriodEndsAt,
+          latestEventCreatedAt: epochSecondsToIso(event.created),
+          latestEventId: event.id,
+          updatedAt: webhookProcessedAt.toISOString(),
+        });
+        const summary = await recomputeStripeSummary(trx, projection.clerkUserId, priceCatalog, env, webhookProcessedAt);
+        if (summary) await persistEntitlement(trx, summary);
         emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
           distinctId: entitlement.clerkUserId,
           properties: buildSubscriptionTelemetryProperties(entitlement, priceCatalog),
@@ -521,7 +682,7 @@ async function projectSubscription(
   db: PlatformDB,
   value: unknown,
   currentTime: Date,
-): Promise<StripeSubscriptionProjection | null> {
+): Promise<(StripeSubscriptionProjection & { runtimeSlot: string }) | null> {
   if (!value || typeof value !== 'object') return null;
   const sub = value as {
     id?: unknown;
@@ -547,11 +708,13 @@ async function projectSubscription(
     if (!customer) return null;
   }
   const status = normalizeSubscriptionStatus(sub.status);
+  const runtimeSlot = readRuntimeSlotFromStripeMetadata(sub.metadata) ?? 'primary';
   const data = Array.isArray(sub.items?.data) ? sub.items.data : [];
   return {
     clerkUserId: customer.clerkUserId,
     stripeCustomerId: customer.stripeCustomerId,
     stripeSubscriptionId: sub.id,
+    runtimeSlot,
     status,
     currentPeriodEnd: typeof sub.current_period_end === 'number'
       ? epochSecondsToIso(sub.current_period_end)
@@ -565,6 +728,48 @@ async function projectSubscription(
         quantity: typeof candidate.quantity === 'number' ? candidate.quantity : 1,
       }];
     }),
+  };
+}
+
+function readRuntimeSlotFromStripeMetadata(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const parsed = RuntimeSlotSchema.safeParse((metadata as { matrix_runtime_slot?: unknown }).matrix_runtime_slot);
+  return parsed.success ? parsed.data : null;
+}
+
+async function recomputeStripeSummary(
+  db: PlatformDB,
+  clerkUserId: string,
+  priceCatalog: StripePriceCatalog,
+  env: NodeJS.ProcessEnv,
+  now: Date,
+): Promise<BillingEntitlement | null> {
+  const subscriptions = await listCurrentBillingSubscriptions(db, clerkUserId, now.toISOString());
+  if (subscriptions.length === 0) return null;
+  const runtimeCatalog = loadRuntimeCatalog(env);
+  const projected = subscriptions.map((subscription) => ({
+    runtimeSlot: subscription.runtimeSlot,
+    entitlement: deriveStripeEntitlement({
+      clerkUserId: subscription.clerkUserId,
+      stripeCustomerId: subscription.stripeCustomerId,
+      stripeSubscriptionId: subscription.stripeSubscriptionId,
+      status: subscription.status,
+      currentPeriodEnd: subscription.currentPeriodEnd,
+      items: [{ priceId: subscription.stripePriceId, quantity: 1 }],
+    }, { priceCatalog, runtimeCatalog, now }),
+  }));
+  const accessible = projected.filter(({ entitlement }) => getRuntimeAccessDecision(entitlement, now).runtimeProxyAllowed);
+  const representative = accessible.find(({ runtimeSlot }) => runtimeSlot === 'primary')
+    ?? accessible[0]
+    ?? projected.find(({ runtimeSlot }) => runtimeSlot === 'primary')
+    ?? projected[0];
+  if (!representative) return null;
+  return {
+    ...representative.entitlement,
+    maxRuntimeSlots: accessible.length,
+    includedRuntimeSlots: accessible.length,
+    addonRuntimeSlots: 0,
+    updatedAt: now.toISOString(),
   };
 }
 

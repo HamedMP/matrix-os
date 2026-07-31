@@ -28,6 +28,31 @@ logs and artifacts.
 Docs-only changes still run targeted docs contract tests through `Docs Contract Tests`.
 Expensive jobs remain path-aware.
 
+## Release Artifacts
+
+Matrix OS does not publish customer runtime Docker images. The customer runtime
+ships only as immutable VPS host bundles registered in platform Postgres.
+Docker remains supported for local development and CI validation only;
+`docker-test.yml` build artifacts are ephemeral and are never pushed to a
+container registry.
+
+The platform service still uses a container image because Cloud Run consumes
+one. That image is a control-plane deployment artifact in Google Artifact
+Registry, not a Matrix customer-runtime package.
+
+| Surface | Released artifact | Destination | Publisher |
+| --- | --- | --- | --- |
+| Customer runtime | VPS host bundle | R2 bundle storage plus platform release/channel metadata | `host-bundle-release.yml` |
+| Platform | Platform service image | Google Artifact Registry, then Cloud Run | `platform-cloud-run.yml` |
+| Mobile native | Mobile native builds | EAS Build, then App Store Connect/TestFlight or Google Play | EAS operator flow in `docs/dev/mobile-shell.md` |
+| Mobile OTA | Mobile OTA update | EAS Update branch/channel | EAS operator flow in `docs/dev/mobile-shell.md` |
+| Desktop | Desktop installers and OTA metadata | GitHub Releases | `desktop-release.yml` and `desktop-release-canary.yml` |
+| CLI | `@finnaai/matrix` CLI plus standalone binaries | npm, GitHub Releases, and Homebrew | `release.yml` and `cli-release.yml` |
+
+Only `@finnaai/matrix` is a language package published to a package registry.
+The other rows are bundles, service deployment artifacts, native installers, or
+OTA payloads.
+
 ## Workflow Ownership
 
 | Workflow | Owner | When it runs | Required? |
@@ -38,7 +63,6 @@ Expensive jobs remain path-aware.
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
-| `docker.yml` | Legacy Docker image publishing/deploy path | `v*` tags, manual | Legacy only, not the customer runtime path |
 
 ## Delivery Lane Router
 

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, it, expect, vi } from "vitest";
 import {
   APP_IFRAME_SANDBOX,
@@ -6,6 +7,18 @@ import {
 import { isAllowedBridgeFetchUrl } from "../../shell/src/components/app-viewer-bridge-policy.js";
 
 describe("AppViewer bridged runtime loading", () => {
+  it("shares app-data serialization across AppViewer lifetimes", async () => {
+    const source = await readFile("shell/src/components/AppViewer.tsx", "utf8");
+    const componentStart = source.indexOf("export function AppViewer");
+    const moduleScope = source.slice(0, componentStart);
+    const componentScope = source.slice(componentStart);
+
+    expect(moduleScope).toContain(
+      "const bridgeDataHandler = createCoalescedBridgeDataHandler(requestBridgeData);",
+    );
+    expect(componentScope).not.toContain("createCoalescedBridgeDataHandler(requestBridgeData)");
+  });
+
   describe("bridge guarantee: slug apps only ever load via bridged srcDoc", () => {
     // Mirrors AppViewer's iframeSrc decision. Runtime (slug) apps must NEVER load
     // the raw /apps/{slug}/ document directly, because that runs un-bridged in the

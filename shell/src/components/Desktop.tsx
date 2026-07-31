@@ -585,11 +585,22 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       // Load pre-installed apps from /api/apps (apps/ directory)
       if (Array.isArray(bootstrap.apps)) {
         const appsList = bootstrap.apps;
-        // Baseline for the design-switch reconcile effect: removals only ever
-        // apply to entries that came from /api/apps.
-        designApiPathsRef.current = new Set(
+        const nextApiPaths = new Set(
           appsList.map((app) => normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""))),
         );
+        const previousApiPaths = designApiPathsRef.current;
+        // A cached bootstrap is applied before the authoritative network
+        // bootstrap. Remove API-owned entries that disappeared from the fresh
+        // list before adding its apps, otherwise an app from the cached OS
+        // design survives a reload alongside the active design's apps.
+        if (previousApiPaths.size > 0) {
+          wmSetApps((current) => current.filter(
+            (entry) => !previousApiPaths.has(entry.path) || nextApiPaths.has(entry.path),
+          ));
+        }
+        // Baseline for the design-switch reconcile effect: removals only ever
+        // apply to entries that came from /api/apps.
+        designApiPathsRef.current = nextApiPaths;
         for (const app of appsList) {
           if (isLoadAborted()) return;
           // path from API is like "/files/apps/calculator/index.html"

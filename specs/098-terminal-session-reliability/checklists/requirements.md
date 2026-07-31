@@ -35,3 +35,4 @@
 - Reviewed against `specs/099-shell-connection-resilience/`; this spec owns terminal runtime/session lifecycle, while 099 owns browser-shell live connection resilience.
 - `.specify/feature.json` is intentionally treated as a local active-feature pointer rather than a durable spec artifact.
 - Ready for implementation planning and task generation one slice at a time.
+- Focused-pane live agent precedence and the complete provider-switch lifecycle are specified with degraded fallback, resource bounds, and compatibility criteria.
