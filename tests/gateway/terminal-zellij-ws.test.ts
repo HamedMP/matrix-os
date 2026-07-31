@@ -1003,7 +1003,8 @@ describe("zellij terminal WebSocket", () => {
     const readSince = vi.fn()
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
-      .mockImplementationOnce(() => replayRead.promise);
+      .mockImplementationOnce(() => replayRead.promise)
+      .mockResolvedValue([]);
     const handler = createShellWsHandler({
       registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
       adapter: { attachSession: vi.fn(() => pty) },
@@ -1033,6 +1034,74 @@ describe("zellij terminal WebSocket", () => {
     expect(replayWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
       { type: "output", seq: 0, data: "zero" },
       { type: "output", seq: 1, data: "one" },
+    ]);
+    await handler.dispose();
+  });
+
+  it("closes the final replay-to-live handoff race without skipping a concurrent frame", async () => {
+    const pty = new FakePty();
+    const replayRead = deferred<Array<{ type: "output"; seq: number; data: string }>>();
+    const readSince = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => replayRead.promise)
+      .mockResolvedValue([]);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince,
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const firstWs = socket();
+    const first = await handler.open({ ws: firstWs, session: "main", fromSeq: 0 });
+    pty.emitData("zero");
+    first.onClose();
+
+    const replayWs = socket();
+    const opening = handler.open({ ws: replayWs, session: "main", fromSeq: 0 });
+    await vi.waitFor(() => expect(readSince).toHaveBeenCalledTimes(3));
+    replayRead.resolve([]);
+    queueMicrotask(() => {
+      queueMicrotask(() => pty.emitData("one"));
+    });
+    await opening;
+    pty.emitData("two");
+
+    expect(replayWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
+      { type: "output", seq: 0, data: "zero" },
+      { type: "output", seq: 1, data: "one" },
+      { type: "output", seq: 2, data: "two" },
+    ]);
+    await handler.dispose();
+  });
+
+  it("flushes a trailing partial escape sequence into its final replay frame", async () => {
+    const pty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "codex-main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => 0),
+        readSince: vi.fn(async () => [{ type: "output" as const, seq: 0, data: "prompt\x1b[" }]),
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const replayWs = socket();
+    await handler.open({ ws: replayWs, session: "codex-main", fromSeq: 0 });
+
+    expect(replayWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
+      { type: "output", seq: 0, data: "prompt\x1b[" },
     ]);
     await handler.dispose();
   });

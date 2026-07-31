@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "@finnaai/matrix/shell-protocol";
-import { ShellReplayBuffer } from "./replay-buffer.js";
+import { ShellReplayBuffer, type ReplayEvent } from "./replay-buffer.js";
 import { PendingPersistQueue } from "./output-pipeline.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
@@ -705,6 +705,28 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
       let nextSeq = effectiveFromSeq;
       let replayComplete = false;
+      let pendingReplayOutput: {
+        event: Extract<ReplayEvent, { type: "output" }>;
+        data: string;
+        marks: Array<Extract<ReplayEvent, { type: "block-mark" }>>;
+      } | null = null;
+      const deliverPendingReplayOutput = (flush: boolean): boolean => {
+        if (!pendingReplayOutput) {
+          return true;
+        }
+        const pending = pendingReplayOutput;
+        pendingReplayOutput = null;
+        const data = flush ? pending.data + replayOutputCompat.flush() : pending.data;
+        if (!deliver(conn, { ...pending.event, data })) {
+          return false;
+        }
+        for (const mark of pending.marks) {
+          if (!deliver(conn, mark)) {
+            return false;
+          }
+        }
+        return true;
+      };
       deliver(conn, { type: "replay-start", fromSeq: effectiveFromSeq });
 
       try {
@@ -726,21 +748,25 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
               break;
             }
             const data = replayOutputCompat.write(event.data);
-            if (!deliver(conn, { ...event, data })) {
+            if (!deliverPendingReplayOutput(false)) {
               break;
             }
-            for (const mark of marks) {
-              if (mark.seq === event.seq && !deliver(conn, mark)) {
-                break;
-              }
-            }
+            pendingReplayOutput = {
+              event,
+              data,
+              marks: marks.filter((mark) => mark.seq === event.seq),
+            };
             nextSeq = event.seq + 1;
           }
 
           if (conn.closed) {
             break;
           }
-          const latestSeq = await replayBuffer.latestSeq();
+          const replaySnapshotLatestSeq = await replayBuffer.latestSeq();
+          // Once seeded, hot writes advance lastSeq synchronously. Re-read it
+          // after the awaited snapshot so output recorded in that handoff
+          // window forces another replay pass before live delivery begins.
+          const latestSeq = replayBuffer.lastSeq ?? replaySnapshotLatestSeq;
           if (unavailable || (outputs.length === 0 && latestSeq !== null && latestSeq >= nextSeq)) {
             sendJson(conn.ws, {
               type: "error",
@@ -751,7 +777,13 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
             break;
           }
           if (latestSeq === null || nextSeq > latestSeq) {
+            // Hold at most one bounded replay frame so a trailing partial
+            // escape sequence can be flushed into that frame before its seq
+            // is committed to the subscriber.
             conn.replaying = false;
+            if (!deliverPendingReplayOutput(true)) {
+              break;
+            }
             replayComplete = deliver(conn, { type: "replay-end", toSeq: latestSeq });
             break;
           }
