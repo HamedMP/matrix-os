@@ -179,10 +179,8 @@ cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
   chmod 0755 "$STAGE_DIR/bin/matrix-terminal-spike-control"
-  chmod 0644 "$STAGE_DIR/systemd/matrix-terminal-activation-watch@.service"
 else
   rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-control"
-  rm -f -- "$STAGE_DIR/systemd/matrix-terminal-activation-watch@.service"
 fi
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.

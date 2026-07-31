@@ -398,36 +398,24 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(helper).toContain(
       'compatibility_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
     );
-    expect(helper).toContain('"")');
-    expect(helper).toContain(
+    for (const fragment of [
+      '"")',
       'matrix-prepare-gateway-runtime: runtime_not_prepared',
-    );
-    expect(helper).toContain('boot_id_file="/proc/sys/kernel/random/boot_id"');
-    expect(helper).toContain('printf \'supervised-v1\\n%s\\n\' "$boot_id"');
-    expect(helper).toContain(
+      'boot_id_file="/proc/sys/kernel/random/boot_id"',
+      'printf \'supervised-v1\\n%s\\n\' "$boot_id"',
       '"$(stat -c \'%U:%G:%a:%h\' "$compatibility_stamp")" != "root:root:600:1"',
-    );
-    expect(helper).not.toContain('rm -f -- "$compatibility_stamp"');
-    expect(helper).toContain('"--prepare-supervised-v1"');
-    expect(helper).toContain('host_bin_dir="/opt/matrix/bin"');
-    expect(helper).toContain(
+      '"--prepare-supervised-v1"',
+      'host_bin_dir="/opt/matrix/bin"',
       'matrix-prepare-gateway-runtime: invalid_host_bin',
-    );
-    expect(helper).toContain(
       'for launcher in matrix-gateway matrix-shell matrix-code matrix-symphony matrix-agent-bridge matrix-sync-bundled-home-assets; do',
-    );
-    expect(helper).toContain(
       '"$(stat -c \'%U:%h\' "$host_bin_dir/$launcher")" != "root:1"',
-    );
-    expect(helper).toContain(
       'chown root:root "$host_bin_dir/$launcher"',
-    );
-    expect(helper).toContain(
       'chmod 0755 "$host_bin_dir/$launcher"',
-    );
-    expect(helper).toContain(
       'chmod 0644 "$host_bin_dir/matrix-owner-env"',
-    );
+    ]) {
+      expect(helper).toContain(fragment);
+    }
+    expect(helper).not.toContain('rm -f -- "$compatibility_stamp"');
     expect(helper).not.toContain("-type f ! -links 1");
     expect(helper).not.toContain("-type f -print0");
   });

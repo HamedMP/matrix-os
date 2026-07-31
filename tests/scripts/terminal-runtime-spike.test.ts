@@ -251,28 +251,13 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain("github.event.label.name == 'preview-vps'");
     expect(workflow).not.toContain('types: [labeled, synchronize');
     expect(workflow).toContain('head_sha:\n        description: Exact 40-character PR head SHA to approve');
-    expect(workflow).toContain('diagnose_only:');
-    expect(workflow).toContain('watch_sha:');
-    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
-    expect(workflow).toContain(
-      'command:["/usr/bin/systemctl","show",$unit]',
-    );
-    expect(workflow).toContain(
-      'watch_diagnostic=load:${load_state},active:${active_state},sub:${sub_state},result:${unit_result},status:${exec_status}',
-    );
-    expect(workflow).toContain(
-      '[[ "$WATCH_SHA" =~ ^[0-9a-f]{40}$ ]]',
-    );
+    expect(workflow).not.toContain('diagnose_only:');
+    expect(workflow).not.toContain('watch_sha:');
     expect(workflow).toContain("github.event.label.name == 'terminal-updater-bootstrap'");
-    expect(workflow).toContain(
-      'command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"]',
-    );
-    expect(workflow).toContain(
-      'command:["/opt/matrix/bin/matrix-update","repair"]',
-    );
+    expect(workflow).toContain('command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"]');
+    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","repair"]');
     expect(workflow).toContain('Typed updater repair accepted.');
     expect(workflow).toContain('Legacy disposable updater bootstrap completed.');
-    expect(workflow).toContain('Deployment diagnostic never satisfies S1/S2.');
     expect(workflow).toContain('APPROVED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}');
     expect(workflow).toContain('if [ "$head_sha" != "$APPROVED_HEAD_SHA" ]');
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
@@ -281,22 +266,9 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('timeout-minutes: 180');
     expect(workflow.split('\n')).toContain('          deadline=$((SECONDS + 4500))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
-    expect(workflow).toContain('--argjson diagnose "$DIAGNOSE_ONLY"');
-    expect(workflow).toContain(
-      '.status == "running" or ($diagnose and .status != "deleted")',
-    );
-    expect(workflow).toContain(
-      'Deployment diagnostic: status=${machine_status}; runtime=${runtime_version}; ${update_diagnostic}.',
-    );
-    expect(workflow).not.toContain(
-      'if [ "$DIAGNOSE_ONLY" = true ]; then\n                echo "Deployment diagnostic unavailable." >&2\n                exit 1',
-    );
+    expect(workflow).toContain('.handle == $handle and .runtimeSlot == $handle and\n                .status == "running"');
     expect(workflow).toMatch(
       /if ! fleet="\$\(curl --fail[\s\S]{0,300}\/vps\/fleet"\)"; then\n\s+echo "Fleet query failed; retrying\." >&2\n\s+sleep 15\n\s+continue\n\s+fi/,
-    );
-    expect(workflow).toContain('echo "update_diagnostic=${update_diagnostic}"');
-    expect(workflow).toContain(
-      'test("^Update service: (idle|running|failed) phase=(idle|admitted|resolving|downloading|validating|extracting|preparing|committing|health_check|rollback|failed) failure=(none|[a-z0-9_]{1,64})\\\\n$")',
     );
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
@@ -307,7 +279,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('echo "update_status=${update_status}" >&2');
     expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 300))');
     expect(workflow).toContain('[ "$diagnostic" = "spike_control_unavailable" ]');
-    expect(workflow.match(/--insecure/g)).toHaveLength(5);
+    expect(workflow.match(/--insecure/g)).toHaveLength(3);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).toContain(

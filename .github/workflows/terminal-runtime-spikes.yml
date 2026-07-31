@@ -12,15 +12,6 @@ on:
         description: Exact 40-character PR head SHA to approve
         required: true
         type: string
-      diagnose_only:
-        description: Report bounded deployment/update state and fail without running S1/S2
-        required: false
-        default: false
-        type: boolean
-      watch_sha:
-        description: Optional exact activation-watch SHA for bounded diagnose-only inspection
-        required: false
-        type: string
 permissions:
   contents: read
   pull-requests: write
@@ -234,18 +225,10 @@ jobs:
         env:
           HANDLE: ${{ steps.resolve.outputs.handle }}
           SHORT_SHA: ${{ steps.resolve.outputs.short_sha }}
-          DIAGNOSE_ONLY: ${{ inputs.diagnose_only || false }}
-          WATCH_SHA: ${{ inputs.watch_sha }}
         run: |
           set -euo pipefail
           if [ -z "${PLATFORM_SECRET:-}" ]; then
             echo "Required preview operator secrets are unavailable." >&2
-            exit 1
-          fi
-          if [ -n "$WATCH_SHA" ] &&
-            { [ "$DIAGNOSE_ONLY" != true ] ||
-              ! [[ "$WATCH_SHA" =~ ^[0-9a-f]{40}$ ]]; }; then
-            echo "Activation-watch diagnostics require a valid diagnose-only SHA." >&2
             exit 1
           fi
           deadline=$((SECONDS + 4500))
@@ -255,12 +238,6 @@ jobs:
             process.stdout.write(createHmac("sha256", process.argv[2]).update(process.argv[1]).digest("hex"));
           ' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$gateway_token"
-          diagnostic_body="$(jq -cn '{
-            command:["/opt/matrix/bin/matrix-update","diagnose"],
-            timeoutMs:10000
-          }')"
-          diagnostic_response="$RUNNER_TEMP/terminal-runtime-update-diagnostic.json"
-          last_diagnostic=0
           is_public_ipv4() {
             node -e '
               const parts = process.argv[1].split(".").map(Number);
@@ -282,114 +259,19 @@ jobs:
               sleep 15
               continue
             fi
-            machine="$(jq -ce --arg handle "$HANDLE" \
-              --argjson diagnose "$DIAGNOSE_ONLY" '
+            machine="$(jq -ce --arg handle "$HANDLE" '
               [.machines[] | select(
                 .handle == $handle and .runtimeSlot == $handle and
-                (.status == "running" or ($diagnose and .status != "deleted"))
+                .status == "running"
               )]
               | if length == 1 then .[0] else {} end
             ' <<<"$fleet")"
             runtime_version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
-            machine_status="$(jq -r '.status // "absent"' <<<"$machine")"
             candidate_ipv4="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-            update_diagnostic="unavailable"
-            if [ "$DIAGNOSE_ONLY" != true ] &&
-              [[ "$runtime_version" == *"-${SHORT_SHA}" ]] &&
+            if [[ "$runtime_version" == *"-${SHORT_SHA}" ]] &&
               is_public_ipv4 "$candidate_ipv4"; then
               public_ipv4="$candidate_ipv4"
               break
-            fi
-            if ! is_public_ipv4 "$candidate_ipv4"; then
-              :
-            elif [ "$DIAGNOSE_ONLY" = true ] ||
-              [ $((SECONDS - last_diagnostic)) -ge 60 ]; then
-              last_diagnostic="$SECONDS"
-              echo "::add-mask::$candidate_ipv4"
-              diagnostic_code="000"
-              set +e
-              diagnostic_code="$(curl --silent --show-error --max-time 30 \
-                --connect-timeout 10 --insecure \
-                --resolve "app.matrix-os.com:443:${candidate_ipv4}" \
-                -o "$diagnostic_response" -w '%{http_code}' \
-                -X POST 'https://app.matrix-os.com/api/terminal/run' \
-                -H "authorization: Bearer ${gateway_token}" \
-                -H 'content-type: application/json' \
-                --data-binary "$diagnostic_body")"
-              diagnostic_curl_status=$?
-              set -e
-              if [ "$diagnostic_curl_status" -eq 0 ] &&
-                [ "$diagnostic_code" = 200 ] &&
-                jq -e 'type == "object" and .exitCode == 0 and
-                  .timedOut == false and .truncated == false and
-                  .signal == null and .stderr == "" and
-                  (.stdout | test("^Update service: (idle|running|failed) phase=(idle|admitted|resolving|downloading|validating|extracting|preparing|committing|health_check|rollback|failed) failure=(none|[a-z0-9_]{1,64})\\n$"))' \
-                  "$diagnostic_response" >/dev/null; then
-                update_diagnostic="$(
-                  jq -r '.stdout | rtrimstr("\n")' "$diagnostic_response"
-                )"
-              fi
-              echo "update_diagnostic=${update_diagnostic}"
-              if [ -n "$WATCH_SHA" ]; then
-                unit="matrix-terminal-activation-watch@${WATCH_SHA}.service"
-                watch_body="$(jq -cn --arg unit "$unit" '{
-                  command:["/usr/bin/systemctl","show",$unit],
-                  timeoutMs:10000
-                }')"
-                watch_response="$RUNNER_TEMP/terminal-runtime-watch-diagnostic.json"
-                watch_code="000"
-                set +e
-                watch_code="$(curl --silent --show-error --max-time 30 \
-                  --connect-timeout 10 --insecure \
-                  --resolve "app.matrix-os.com:443:${candidate_ipv4}" \
-                  -o "$watch_response" -w '%{http_code}' \
-                  -X POST 'https://app.matrix-os.com/api/terminal/run' \
-                  -H "authorization: Bearer ${gateway_token}" \
-                  -H 'content-type: application/json' \
-                  --data-binary "$watch_body")"
-                watch_curl_status=$?
-                set -e
-                watch_values=""
-                if [ "$watch_curl_status" -eq 0 ] &&
-                  [ "$watch_code" = 200 ]; then
-                  watch_values="$(jq -r '
-                    if type == "object" and
-                      (.exitCode == 0 or .exitCode == 1) and
-                      .timedOut == false and .truncated == false and
-                      .signal == null and (.stdout | type == "string")
-                    then
-                      [
-                        (.stdout | capture("(?m)^LoadState=(?<v>[a-z0-9_.-]{1,64})$").v),
-                        (.stdout | capture("(?m)^ActiveState=(?<v>[a-z0-9_.-]{1,64})$").v),
-                        (.stdout | capture("(?m)^SubState=(?<v>[a-z0-9_.-]{1,64})$").v),
-                        (.stdout | capture("(?m)^Result=(?<v>[a-z0-9_.-]{1,64})$").v),
-                        (.stdout | capture("(?m)^ExecMainStatus=(?<v>[0-9]{1,10})$").v)
-                      ] | @tsv
-                    else empty end
-                  ' "$watch_response" 2>/dev/null || true)"
-                fi
-                if IFS=$'\t' read -r load_state active_state sub_state unit_result exec_status \
-                  <<<"$watch_values" &&
-                  [ -n "$load_state" ] && [ -n "$active_state" ] &&
-                  [ -n "$sub_state" ] && [ -n "$unit_result" ] &&
-                  [ -n "$exec_status" ]; then
-                  echo "watch_diagnostic=load:${load_state},active:${active_state},sub:${sub_state},result:${unit_result},status:${exec_status}"
-                else
-                  echo "watch_diagnostic=unavailable"
-                fi
-              fi
-            fi
-            if [ "$DIAGNOSE_ONLY" = true ]; then
-              if ! printf '%s' "$machine_status" |
-                grep -Eq '^(provisioning|running|failed|recovering|resizing|absent)$'; then
-                machine_status=unknown
-              fi
-              if ! printf '%s' "$runtime_version" | grep -Eq '^[A-Za-z0-9._-]{1,128}$'; then
-                runtime_version=unknown
-              fi
-              echo "Deployment diagnostic: status=${machine_status}; runtime=${runtime_version}; ${update_diagnostic}."
-              echo "Deployment diagnostic never satisfies S1/S2." >&2
-              exit 1
             fi
             echo "Waiting for exact-head preview deployment."
             sleep 15

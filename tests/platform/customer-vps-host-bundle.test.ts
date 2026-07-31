@@ -863,17 +863,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
     expect(workflow).toContain('cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"');
-    expect(workflow).toContain('cp distro/customer-vps/systemd/matrix-terminal-activation-watch@.service "$RUNNER_TEMP/"');
     expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
-    expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-activation-watch@.service" distro/customer-vps/systemd/');
     expect(workflow).toContain('rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control');
-    expect(workflow).toContain('rm -f distro/customer-vps/systemd/matrix-terminal-activation-watch@.service');
-    expect(workflow).toContain('command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-arm",$head]');
-    expect(workflow).toContain('activation_watch_armed=false');
-    expect(workflow).toContain('if arm_activation_watch "$address"; then');
-    expect(workflow).toContain('activation_watch_armed=true');
-    expect(workflow).toContain('if [ "$watch" != activation_watch_success ]; then');
-    expect(workflow).toContain('Activation watchdog did not prove the candidate healthy.');
+    expect(workflow).not.toContain('activation_watch');
     expect(workflow).toContain('BASE_SHA: ${{ needs.gate.outputs.base_sha }}');
     expect(workflow).toContain(
       'if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
@@ -921,33 +913,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain('Waiting for the preview updater to become idle.');
     expect(deployLoop).toContain('deploy_converged=true');
     expect(deployLoop).toContain('Deployment of ${target_version} did not converge.');
-    expect(deployLoop).toContain('Waiting for the activation helper boundary.');
-    expect(deployLoop.indexOf('arm_activation_watch "$address"')).toBeLessThan(
-      deployLoop.indexOf('activation_watch_status "$address"'),
-    );
-    expect(deployLoop.indexOf('arm_activation_watch "$address"')).toBeLessThan(
-      deployLoop.indexOf('code="$(attempt "$target_version")"'),
-    );
-    expect(deployLoop).toContain('activation_arm_deadline=$((SECONDS + 120))');
-    expect(deployLoop).toContain(
-      'Activation watchdog could not be armed before deployment: ${activation_watch_diagnostic}.',
-    );
-    expect(workflow).toContain('recovery=(?:rollback|rescue)');
-    expect(workflow).toContain(
-      'gateway_reason=(?:none|supervisor_unavailable|permission_denied|module_unavailable|native_module_unavailable|schema_invalid|address_in_use|type_error|reference_error|syntax_error|resource_exhausted|unknown)',
-    );
-    expect(workflow).toContain(
-      'gateway_status=(?:0|[1-9][0-9]{0,2})',
-    );
-    expect(workflow).toContain(
-      'supervisor_during_health=(?:active|activating|failed|inactive|unknown)',
-    );
-    expect(workflow).toContain(
-      'activation_watch_diagnostic="$(classify_activation_watch_response "$response" "$code")"',
-    );
-    expect(workflow).toContain('then "sudo_rejected"');
-    expect(workflow).toContain('then "helper_unavailable"');
-    expect(workflow).toContain('then "helper_failed"');
     expect(workflow).not.toContain('${stderr}');
   });
 

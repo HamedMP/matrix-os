@@ -190,9 +190,6 @@ describe('customer VPS terminal runtime services', () => {
     const helper = read(
       'distro/customer-vps/host-bin/matrix-terminal-spike-control',
     );
-    const activationWatch = read(
-      'distro/customer-vps/systemd/matrix-terminal-activation-watch@.service',
-    );
     const launch = read('scripts/spikes/terminal-runtime/launch-remote.sh');
     const pack = read('scripts/spikes/terminal-runtime/pack-evidence.sh');
     const runner = read('scripts/spikes/terminal-runtime/run-remote.sh');
@@ -201,9 +198,6 @@ describe('customer VPS terminal runtime services', () => {
     expect(build).toContain('$terminal_generation_build/spikes');
     expect(build).toContain(
       '$STAGE_DIR/bin/matrix-terminal-spike-control',
-    );
-    expect(build).toContain(
-      '$STAGE_DIR/systemd/matrix-terminal-activation-watch@.service',
     );
     expect(build).not.toContain(
       '$STAGE_DIR/app/scripts/spikes/terminal-runtime',
@@ -226,54 +220,13 @@ describe('customer VPS terminal runtime services', () => {
     expect(helper).toContain(
       '/opt/matrix/libexec/terminal-runtime/current/spikes/',
     );
-    expect(helper).toContain('activation-watch-arm | activation-watch-run | activation-watch-status');
-    expect(helper).toContain(
-      'watch_unit="matrix-terminal-activation-watch@${pr_head_sha}.service"',
-    );
-    expect(helper).toContain('systemctl start "$watch_unit"');
-    expect(helper).not.toContain('systemd-run');
-    expect(helper).toContain('/var/lib/matrix-terminal-activation-watch/result');
-    expect(helper).toContain('systemctl restart matrix-update-runtime.service');
-    expect(helper).toContain('/opt/matrix/bin/matrix-update rollback');
-    expect(helper).toContain('activation_watch_rescue()');
-    expect(helper).toContain('classify_gateway_failure()');
-    expect(helper).toContain('terminal_supervisor_unavailable');
-    expect(helper).toContain('ERR_MODULE_NOT_FOUND');
-    expect(helper).toContain('ERR_DLOPEN_FAILED');
-    expect(helper).toContain('gateway_reason=$observed_gateway_reason');
-    expect(helper).toContain('gateway_status=$observed_gateway_status');
-    expect(helper).toContain(
-      'supervisor_during_health=$observed_supervisor_during_health',
-    );
-    expect(helper).toContain('HTTPServer(("127.0.0.1", 4000), Handler)');
-    expect(helper).toContain('hmac.compare_digest');
-    expect(helper).toContain('0 < length <= 128 * 1024');
-    expect(helper).toContain('metadata.st_uid != 0');
-    expect(helper).toContain('metadata.st_mode & 0o022');
-    expect(helper).toContain('metadata.st_nlink != 1');
-    expect(helper).toContain('os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)');
-    expect(helper).toContain(
-      '(metadata.st_dev, metadata.st_ino) != (opened.st_dev, opened.st_ino)',
-    );
-    expect(helper).toContain(
-      '["/usr/bin/sudo", "/opt/matrix/bin/matrix-terminal-spike-control", "activation-watch-status", head_sha]',
-    );
-    expect(helper).toContain('systemctl stop matrix-gateway.service');
+    expect(helper).not.toContain('activation-watch');
+    expect(helper).not.toContain('systemctl restart matrix-update-runtime.service');
+    expect(helper).not.toContain('/opt/matrix/bin/matrix-update rollback');
     expect(helper).not.toContain('systemctl reboot');
     expect(helper).not.toContain('--force-run-commands');
-    expect(helper).not.toContain('echo "$gateway_log"');
     expect(helper).not.toContain('eval ');
     expect(helper).not.toContain('/opt/matrix/app');
-    expect(activationWatch).toContain(
-      'ExecStart=/bin/bash /run/matrix-terminal-activation-watch activation-watch-run %i',
-    );
-    expect(activationWatch).not.toContain(
-      'ExecStart=/run/matrix-terminal-activation-watch activation-watch-run %i',
-    );
-    expect(activationWatch).toContain('Type=exec');
-    expect(activationWatch).toContain('MemoryMax=64M');
-    expect(activationWatch).toContain('TasksMax=32');
-    expect(activationWatch).not.toContain('[Install]');
     expect(launch).not.toContain('/opt/matrix/app');
     expect(pack).not.toContain('/opt/matrix/app');
     expect(runner).not.toContain('/opt/matrix/app');

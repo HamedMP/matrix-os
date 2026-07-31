@@ -232,14 +232,11 @@ jobs:
         run: |
           set -euo pipefail
           cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"
-          cp distro/customer-vps/systemd/matrix-terminal-activation-watch@.service "$RUNNER_TEMP/"
           git checkout --detach "${{ needs.gate.outputs.base_sha }}"
           cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/
-          cp "$RUNNER_TEMP/matrix-terminal-activation-watch@.service" distro/customer-vps/systemd/
           ./scripts/build-host-bundle.sh
           mv dist/host-bundle dist/bootstrap
           rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control
-          rm -f distro/customer-vps/systemd/matrix-terminal-activation-watch@.service
           git checkout --detach "${{ needs.gate.outputs.head_sha }}"
       - name: Build host bundle
         env:
@@ -506,54 +503,6 @@ jobs:
             done
             return 1
           }
-          classify_activation_watch_response() {
-            local response="$1" code="$2"
-            if [ "$code" != 200 ] || ! jq -e 'type == "object"' "$response" >/dev/null 2>&1; then
-              echo gateway_unavailable
-              return
-            fi
-            jq -r '
-              if .exitCode == 0 and .timedOut == false and .truncated == false and
-                .signal == null and .stderr == "" and .stdout == "activation_watch_armed\n"
-              then "armed"
-              elif ((.stderr // "") | test("spike_control_[a-z0-9_]+"))
-              then ((.stderr // "") | capture("(?<code>spike_control_[a-z0-9_]+)").code)
-              elif ((.stderr // "") | test("sudo:"))
-              then "sudo_rejected"
-              elif .exitCode == 127
-              then "helper_unavailable"
-              elif ((.exitCode // 0) != 0)
-              then "helper_failed"
-              else "invalid_response"
-              end
-            ' "$response" 2>/dev/null || echo invalid_response
-          }
-          arm_activation_watch() {
-            local address="$1" response="$RUNNER_TEMP/activation-watch.json" code body
-            body="$(jq -cn --arg head "$HEAD_SHA" \
-              '{command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-arm",$head],timeoutMs:10000}')"
-            code="$(curl --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
-              --resolve "app.matrix-os.com:443:${address}" -o "$response" -w '%{http_code}' \
-              -X POST 'https://app.matrix-os.com/api/terminal/run' \
-              -H "authorization: Bearer ${gateway_token}" \
-              -H 'content-type: application/json' --data-binary "$body")" ||
-              code=000
-            activation_watch_diagnostic="$(classify_activation_watch_response "$response" "$code")"
-            [ "$activation_watch_diagnostic" = armed ]
-          }
-          activation_watch_status() {
-            local address="$1" response="$RUNNER_TEMP/activation-watch-status.json" body
-            body="$(jq -cn --arg head "$HEAD_SHA" \
-              '{command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","activation-watch-status",$head],timeoutMs:10000}')"
-            curl --fail --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
-              --resolve "app.matrix-os.com:443:${address}" -o "$response" \
-              -X POST 'https://app.matrix-os.com/api/terminal/run' \
-              -H "authorization: Bearer ${gateway_token}" \
-              -H 'content-type: application/json' --data-binary "$body" &&
-              jq -er '.stdout | select(test("^activation_watch_(?:pending|success|timeout state=(?:idle|running|failed|unknown) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+) gateway=(?:active|activating|failed|inactive|unknown) supervisor=(?:active|activating|failed|inactive|unknown) recovery=(?:rollback|rescue) gateway_reason=(?:none|supervisor_unavailable|permission_denied|module_unavailable|native_module_unavailable|schema_invalid|address_in_use|type_error|reference_error|syntax_error|resource_exhausted|unknown) gateway_status=(?:0|[1-9][0-9]{0,2}) supervisor_during_health=(?:active|activating|failed|inactive|unknown))\\n$")) | rtrimstr("\n")' "$response"
-          }
-          activation_watch_armed=false
-          activation_watch_diagnostic=unavailable
           fleet="$(curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet")"
@@ -589,21 +538,7 @@ jobs:
             deploy_converged=false
             version_seen=false
             last_signal=$((SECONDS - 60))
-            activation_arm_deadline=$((SECONDS + 120))
             while [ "$SECONDS" -lt "$deploy_deadline" ]; do
-              if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$VERSION" ] &&
-                [ "$activation_watch_armed" != true ]; then
-                if arm_activation_watch "$address"; then
-                  activation_watch_armed=true
-                elif [ "$SECONDS" -ge "$activation_arm_deadline" ]; then
-                  echo "Activation watchdog could not be armed before deployment: ${activation_watch_diagnostic}." >&2
-                  exit 1
-                else
-                  echo "Waiting for the activation helper boundary."
-                  sleep 2
-                  continue
-                fi
-              fi
               if [ "$version_seen" != true ] && [ $((SECONDS - last_signal)) -ge 60 ]; then
                 last_signal="$SECONDS"
                 code=""
@@ -636,23 +571,6 @@ jobs:
                   ' <<<"$fleet")"
                 deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
                 address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-                if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$VERSION" ]; then
-                  if [ "$activation_watch_armed" != true ]; then
-                    echo "Activation watchdog has not been armed."
-                    sleep 2
-                    continue
-                  fi
-                  watch="$(activation_watch_status "$address" || true)"
-                  if [[ "$watch" == activation_watch_timeout* ]]; then
-                    echo "$watch" >&2
-                    exit 1
-                  fi
-                  if [ "$watch" != activation_watch_success ]; then
-                    echo "Activation watchdog did not prove the candidate healthy."
-                    sleep 15
-                    continue
-                  fi
-                fi
                 if [ "$deployed" = "$target_version" ]; then
                   version_seen=true
                   if updater_idle "$address"; then
