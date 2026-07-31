@@ -33,6 +33,7 @@ const EXACT_DOCKER_INPUTS = Object.freeze([
   "scripts/ci/docker-relevance.mjs",
   "scripts/fix-node-pty-perms.mjs",
   "scripts/sync-matrix-agent-skills.sh",
+  "packages/sync-client/package.json",
 ]);
 
 const DOCKER_INPUT_PREFIXES = Object.freeze([

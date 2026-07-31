@@ -41,6 +41,7 @@ describe("Docker CI relevance classifier", () => {
     "shell/app/page.tsx",
     "home/system/config.json",
     "skills/matrix/SKILL.md",
+    "packages/sync-client/package.json",
     "packages/sync-client/src/protocol/messages.ts",
   ])("runs for Docker/local-runtime input %s", (path) => {
     expect(classifyDockerChanges([path])).toMatchObject({
@@ -53,7 +54,6 @@ describe("Docker CI relevance classifier", () => {
     "Dockerfile.platform",
     "distro/docker-compose.platform.yml",
     "packages/cli/src/index.ts",
-    "packages/sync-client/package.json",
     "packages/sync-client/src/commands/login.ts",
     "packages/platform/src/index.ts",
     "packages/proxy/src/index.ts",

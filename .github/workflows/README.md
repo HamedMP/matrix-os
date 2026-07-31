@@ -91,9 +91,9 @@ Use `scripts/ci/docker-relevance.mjs` as the source of truth for whether a PR or
 `main` push needs the legacy/local Docker validation. It includes the dev image,
 Compose and startup configuration, Docker scenario harness, root workspace
 metadata, gateway/kernel/shell dependencies, home templates, and the shared
-sync-client protocol imported by the gateway. Platform-only, proxy-only,
-installable CLI, desktop/mobile, docs/specs, and unrelated workflow changes do
-not spend a Docker runner.
+sync-client protocol and package export manifest imported by the gateway.
+Platform-only, proxy-only, installable CLI, desktop/mobile, docs/specs, and
+unrelated workflow changes do not spend a Docker runner.
 
 The PR and `main` paths are relevance-filtered for cost and signal. The merge
 queue, nightly, and manual runs remain comprehensive so an incomplete path rule
