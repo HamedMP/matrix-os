@@ -108,6 +108,8 @@ skills-lock.json
 !.agents/skills/push/**
 !.agents/skills/worktree-pr-monitor/
 !.agents/skills/worktree-pr-monitor/**
+!.agents/skills/matrix-handoff/
+!.agents/skills/matrix-handoff/**
 # Matrix OS seeds its own skills under home/ -- track them explicitly
 !home/agents/skills/
 !home/agents/skills/**
