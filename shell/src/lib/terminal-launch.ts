@@ -30,18 +30,26 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
   },
   "t3-connect": {
     action: "t3-connect",
-    label: "Connect T3 Code",
+    label: "Set up T3 Code",
     command: [
       'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
       'export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"',
       'export MATRIX_T3_HOME="${MATRIX_HOME:-$HOME}/system/t3code"',
       'mkdir -p "$MATRIX_T3_HOME"',
-      "printf 'T3 Code wants to install its pinned official CLI (t3@0.0.31) and connect this Matrix OS computer.\\nNo Matrix credentials are shared. Continue? [y/N] '",
+      "printf 'T3 Code wants to install its pinned official CLI (t3@0.0.31), link this Matrix OS computer, and keep it online in this Terminal session.\\nNo Matrix credentials are shared. Continue? [y/N] '",
       "read -r MATRIX_T3_CONFIRM",
-      'case "$MATRIX_T3_CONFIRM" in [yY]|[yY][eE][sS]) printf \'\\nStarting T3 Connect. Follow the browser authorization prompts.\\n\\n\'; exec npx --yes t3@0.0.31 connect --headless --base-dir "$MATRIX_T3_HOME" ;; *) printf \'T3 Connect canceled.\\n\' ;; esac',
+      'case "$MATRIX_T3_CONFIRM" in [yY]|[yY][eE][sS]) printf \'\\nLinking this computer to T3 Connect. Follow the browser authorization prompts.\\n\\n\'; npx --yes t3@0.0.31 connect link --headless --base-dir "$MATRIX_T3_HOME" && printf \'\\nLinked. Keeping T3 Code online in this Matrix Terminal session.\\n\\n\' && exec npx --yes t3@0.0.31 serve --base-dir "$MATRIX_T3_HOME" ;; *) printf \'T3 Connect canceled.\\n\' ;; esac',
     ].join(" && "),
   },
 };
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function createCanonicalTerminalLaunchCommand(command: string): string {
+  return `bash -lc ${shellSingleQuote(command)}`;
+}
 
 const TERMINAL_LAUNCH_QUEUE_KEY = "matrix:terminal-launch-queue";
 export const TERMINAL_SETUP_WINDOW_PATH = "__terminal__";

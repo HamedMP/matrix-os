@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createCanonicalTerminalLaunchCommand,
   createTerminalLaunchPath,
   consumeTerminalLaunchActionFromLocation,
   drainTerminalLaunchQueue,
@@ -57,11 +58,13 @@ describe("terminal launch paths", () => {
 
     expect(config).toMatchObject({
       action: "t3-connect",
-      label: "Connect T3 Code",
+      label: "Set up T3 Code",
     });
     expect(config?.command).toContain('MATRIX_T3_HOME="${MATRIX_HOME:-$HOME}/system/t3code"');
     expect(config?.command).toContain("read -r MATRIX_T3_CONFIRM");
-    expect(config?.command).toContain("npx --yes t3@0.0.31 connect --headless");
+    expect(config?.command).toContain("npx --yes t3@0.0.31 connect link --headless");
+    expect(config?.command).toContain("npx --yes t3@0.0.31 serve");
+    expect(config?.command).not.toContain("t3@0.0.31 connect --headless");
     expect(config?.command).not.toContain("t3@latest");
     expect(config?.command.indexOf("read -r MATRIX_T3_CONFIRM")).toBeLessThan(
       config?.command.indexOf("npx --yes t3@0.0.31") ?? -1,
@@ -92,9 +95,10 @@ describe("terminal launch paths", () => {
     const bin = join(prefix, "bin");
     const marker = join(root, "invoked");
     const fakeNpx = join(bin, "npx");
+    const canonicalCommand = createCanonicalTerminalLaunchCommand(config?.command ?? "");
     try {
       mkdirSync(bin, { recursive: true });
-      writeFileSync(fakeNpx, '#!/bin/sh\nprintf "%s\\n" "$*" > "$MATRIX_T3_TEST_MARKER"\n');
+      writeFileSync(fakeNpx, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$MATRIX_T3_TEST_MARKER"\n');
       chmodSync(fakeNpx, 0o755);
       const env = {
         ...process.env,
@@ -103,7 +107,7 @@ describe("terminal launch paths", () => {
         MATRIX_T3_TEST_MARKER: marker,
       };
 
-      const declined = spawnSync("sh", ["-c", config?.command ?? ""], {
+      const declined = spawnSync("sh", ["-c", canonicalCommand], {
         encoding: "utf8",
         env,
         input: "n\n",
@@ -111,15 +115,16 @@ describe("terminal launch paths", () => {
       expect(declined.status).toBe(0);
       expect(existsSync(marker)).toBe(false);
 
-      const approved = spawnSync("sh", ["-c", config?.command ?? ""], {
+      const approved = spawnSync("sh", ["-c", canonicalCommand], {
         encoding: "utf8",
         env,
         input: "y\n",
       });
       expect(approved.status).toBe(0);
-      expect(readFileSync(marker, "utf8").trim()).toBe(
-        `--yes t3@0.0.31 connect --headless --base-dir ${join(root, "system/t3code")}`,
-      );
+      expect(readFileSync(marker, "utf8").trim().split("\n")).toEqual([
+        `--yes t3@0.0.31 connect link --headless --base-dir ${join(root, "system/t3code")}`,
+        `--yes t3@0.0.31 serve --base-dir ${join(root, "system/t3code")}`,
+      ]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
