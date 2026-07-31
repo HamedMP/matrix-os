@@ -163,8 +163,8 @@ export function createUserSystemdZellijAdapter(options: {
       return descriptors.map((descriptor) => descriptor.displayName);
     },
 
-    focusedPaneCwd(name) {
-      return delegate(name, (adapter, sessionName) => adapter.focusedPaneCwd(sessionName));
+    focusedPaneRuntime(name) {
+      return delegate(name, (adapter, sessionName) => adapter.focusedPaneRuntime(sessionName));
     },
 
     async createSession(input) {
