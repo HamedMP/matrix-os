@@ -4,6 +4,7 @@ set -euo pipefail
 activation_file="/opt/matrix/app/terminal-runtime-activation"
 boot_id_file="/proc/sys/kernel/random/boot_id"
 compatibility_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"
+host_bin_dir="/opt/matrix/bin"
 node_path="/opt/matrix/runtime/node"
 node_modules="$node_path/lib/node_modules"
 node_bin="$node_path/bin"
@@ -41,6 +42,32 @@ case "$mode" in
     exit 1
     ;;
 esac
+
+if [ ! -d "$host_bin_dir" ] || [ -L "$host_bin_dir" ] ||
+  [ "$(stat -c '%U' "$host_bin_dir")" != "root" ]; then
+  echo "matrix-prepare-gateway-runtime: invalid_host_bin" >&2
+  exit 1
+fi
+chown root:matrix "$host_bin_dir"
+chmod 0750 "$host_bin_dir"
+for launcher in matrix-gateway matrix-shell matrix-code matrix-symphony matrix-agent-bridge matrix-sync-bundled-home-assets; do
+  if [ ! -f "$host_bin_dir/$launcher" ] ||
+    [ -L "$host_bin_dir/$launcher" ] ||
+    [ "$(stat -c '%U:%h' "$host_bin_dir/$launcher")" != "root:1" ]; then
+    echo "matrix-prepare-gateway-runtime: invalid_host_bin" >&2
+    exit 1
+  fi
+  chown root:root "$host_bin_dir/$launcher"
+  chmod 0755 "$host_bin_dir/$launcher"
+done
+if [ ! -f "$host_bin_dir/matrix-owner-env" ] ||
+  [ -L "$host_bin_dir/matrix-owner-env" ] ||
+  [ "$(stat -c '%U:%h' "$host_bin_dir/matrix-owner-env")" != "root:1" ]; then
+  echo "matrix-prepare-gateway-runtime: invalid_host_bin" >&2
+  exit 1
+fi
+chown root:root "$host_bin_dir/matrix-owner-env"
+chmod 0644 "$host_bin_dir/matrix-owner-env"
 
 for required in "$runtime_root" "$node_path" "$node_modules" "$node_bin"; do
   [ -d "$required" ] && [ ! -L "$required" ] || {

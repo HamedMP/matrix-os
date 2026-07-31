@@ -409,6 +409,25 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     );
     expect(helper).not.toContain('rm -f -- "$compatibility_stamp"');
     expect(helper).toContain('"--prepare-supervised-v1"');
+    expect(helper).toContain('host_bin_dir="/opt/matrix/bin"');
+    expect(helper).toContain(
+      'matrix-prepare-gateway-runtime: invalid_host_bin',
+    );
+    expect(helper).toContain(
+      'for launcher in matrix-gateway matrix-shell matrix-code matrix-symphony matrix-agent-bridge matrix-sync-bundled-home-assets; do',
+    );
+    expect(helper).toContain(
+      '"$(stat -c \'%U:%h\' "$host_bin_dir/$launcher")" != "root:1"',
+    );
+    expect(helper).toContain(
+      'chown root:root "$host_bin_dir/$launcher"',
+    );
+    expect(helper).toContain(
+      'chmod 0755 "$host_bin_dir/$launcher"',
+    );
+    expect(helper).toContain(
+      'chmod 0644 "$host_bin_dir/matrix-owner-env"',
+    );
     expect(helper).not.toContain("-type f ! -links 1");
     expect(helper).not.toContain("-type f -print0");
   });

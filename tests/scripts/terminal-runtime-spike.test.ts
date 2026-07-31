@@ -215,8 +215,21 @@ describe('terminal runtime spike evidence', () => {
       serviceStop,
     );
     expect(applyUpdate).not.toContain('chown -R matrix:matrix "$APP_DIR"');
-    expect(syncAgent).toContain(
-      'if [ -f "$extract_dir/bin/zellij" ]; then\n        rm -f -- "$ZELLIJ_BUILD_METADATA"',
+    const legacyZellijInstall = syncAgent.indexOf(
+      'if [ -f "$extract_dir/bin/zellij" ]; then',
+      syncAgent.indexOf('if [ "$zellij_candidate" = true ]; then'),
+    );
+    expect(legacyZellijInstall).toBeGreaterThan(-1);
+    expect(
+      syncAgent.indexOf(
+        'install -o root -g root -m 0755',
+        legacyZellijInstall,
+      ),
+    ).toBeLessThan(
+      syncAgent.indexOf(
+        'rm -f -- "$ZELLIJ_BUILD_METADATA"',
+        legacyZellijInstall,
+      ),
     );
     expect(syncAgent.indexOf('backup_zellij_for_rollback')).toBeLessThan(
       syncAgent.indexOf('mv -f "$zellij_next" "$BIN_DIR/zellij"'),
