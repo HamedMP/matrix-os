@@ -13,7 +13,7 @@ import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
-import { buildXtermTheme } from "./terminal-themes";
+import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, removeCached, takeCached, type CachedTerminal } from "./terminal-cache";
@@ -933,6 +933,7 @@ export function TerminalPane({
           logger: createXtermLogger(),
           fontSize: terminalFontSize,
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
+          minimumContrastRatio: getTerminalMinimumContrastRatio(xtermTheme),
           theme: xtermTheme,
           // Make ⌥ (Option) on macOS act as Meta — without this, Option+Left/Right
           // never reaches the shell as ESC-b / ESC-f, so word-jump is broken.
@@ -1699,6 +1700,7 @@ export function TerminalPane({
         fitAddonRef.current as Parameters<typeof applyTerminalAppearance>[1],
         {
           theme: xtermTheme,
+          minimumContrastRatio: getTerminalMinimumContrastRatio(xtermTheme),
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           fontSize: terminalFontSize,
           cursorBlink,

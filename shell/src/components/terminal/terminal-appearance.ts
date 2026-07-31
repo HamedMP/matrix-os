@@ -3,6 +3,7 @@ export interface TerminalAppearanceTarget {
   rows: number;
   options: {
     theme: unknown;
+    minimumContrastRatio: number;
     fontFamily: string;
     fontSize: number;
     cursorBlink: boolean;
@@ -18,6 +19,7 @@ export interface TerminalFitTarget {
 
 interface TerminalAppearanceOptions {
   theme: unknown;
+  minimumContrastRatio: number;
   fontFamily: string;
   fontSize: number;
   cursorBlink: boolean;
@@ -32,6 +34,7 @@ export function applyTerminalAppearance(
   options: TerminalAppearanceOptions,
 ): void {
   term.options.theme = options.theme;
+  term.options.minimumContrastRatio = options.minimumContrastRatio;
   term.options.fontFamily = options.fontFamily;
   term.options.fontSize = options.fontSize;
   term.options.cursorBlink = options.cursorBlink;

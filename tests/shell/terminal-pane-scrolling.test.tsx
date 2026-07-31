@@ -228,6 +228,12 @@ const theme = {
   fonts: {},
 } as unknown as Parameters<typeof TerminalPane>[0]["theme"];
 
+const lightTheme = {
+  mode: "light",
+  colors: { background: "#FBF1C7", foreground: "#3C3836", primary: "#79740E" },
+  fonts: {},
+} as unknown as Parameters<typeof TerminalPane>[0]["theme"];
+
 class ResizeObserverMock {
   observe() {}
   unobserve() {}
@@ -638,6 +644,47 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
     expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+  });
+
+  it("enforces light-theme contrast in both the default and WebGL renderers", async () => {
+    const { unmount } = render(
+      <TerminalPane
+        paneId="pane-light-webgl-contrast-test"
+        cwd=""
+        theme={lightTheme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
+    expect(createdTerminals[0].options.minimumContrastRatio).toBe(4.5);
+    expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+    unmount();
+
+    createdTerminals.length = 0;
+    createdWebglAddons.length = 0;
+    render(
+      <TerminalPane
+        paneId="pane-light-dom-contrast-test"
+        cwd=""
+        theme={lightTheme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        suppressNativeKeyboard
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    expect(createdTerminals[0].options.minimumContrastRatio).toBe(4.5);
+    expect(createdWebglAddons).toHaveLength(0);
   });
 
   it("requests retained scrollback from zero for a fresh canonical browser session", async () => {
