@@ -229,9 +229,10 @@ const workload = workloadKind === "shell"
       || entry.args.some((argument) => /(?:^|\/)codex(?:-|$)/.test(argument))
     ));
 const mainPid = Number(properties.MainPID);
-if (!processes.some((entry) => entry.pid === mainPid) || zellij.length < 2 || !workload) {
-  fail("production_probe_roles_invalid");
-}
+if (!processes.some((entry) => entry.pid === mainPid)) fail("production_probe_roles_main_missing");
+if (zellij.length === 0) fail("production_probe_roles_zellij_0");
+if (zellij.length === 1) fail("production_probe_roles_zellij_1");
+if (!workload) fail("production_probe_roles_workload_missing");
 
 process.stdout.write(`${JSON.stringify({
   runtimeId: descriptor.runtimeId,
