@@ -41,6 +41,7 @@ readonly corrupt_id=rt_cccccccccccccccccccccccccccccccc
 readonly symlink_id=rt_dddddddddddddddddddddddddddddddd
 readonly generation_symlink="${runtime_root}/generations/gen_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 readonly generation_sentinel="${state_root}/generation-sentinel"
+readonly phase1_unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-phase1.service"
 current_progress=initializing
 current_state_prefix=phase1-running
 
@@ -128,12 +129,13 @@ delete_session() {
 }
 
 snapshot() {
-  /opt/matrix/runtime/node/bin/node "$probe_path" snapshot "$1" "$2"
+  /usr/bin/timeout --signal=KILL 15 \
+    /opt/matrix/runtime/node/bin/node "$probe_path" snapshot "$1" "$2"
 }
 
 wait_snapshot() {
   local name="$1" kind="$2" target="$3" current=""
-  for _ in $(seq 1 90); do
+  for _ in $(seq 1 30); do
     if current="$(snapshot "$name" "$kind" 2>/dev/null)"; then
       printf '%s\n' "$current" >"$target"
       chmod 0600 "$target"
@@ -465,11 +467,15 @@ EOF
   chmod 0600 "$loop_script"
   install -o matrix -g matrix -m 0600 /dev/null "$output_file"
 
+  write_progress runtime-shell-create
   create_session "$shell_name" "/opt/matrix/runtime/node/bin/node $loop_script $output_file"
+  write_progress runtime-agent-create
   create_session "$agent_name" codex codex
   local shell_baseline="${state_root}/shell-baseline.json"
   local agent_baseline="${state_root}/agent-baseline.json"
+  write_progress runtime-shell-snapshot
   wait_snapshot "$shell_name" shell "$shell_baseline"
+  write_progress runtime-agent-snapshot
   wait_snapshot "$agent_name" agent "$agent_baseline"
   mark ordinaryShellRuntime
   mark realCodingAgentRuntime
@@ -670,7 +676,12 @@ EOF
     ;;
   status)
     [ -f "$state_file" ] || { echo unavailable; exit 3; }
-    cat "$state_file"
+    state="$(cat "$state_file")"
+    if [[ "$state" == phase1-running:* ]] && ! systemctl is-active --quiet "$phase1_unit"; then
+      echo "failed:phase-worker-exited:${state#phase1-running:}"
+    else
+      printf '%s\n' "$state"
+    fi
     ;;
   reboot)
     [ "$(cat "$state_file")" = phase1-ready ]
