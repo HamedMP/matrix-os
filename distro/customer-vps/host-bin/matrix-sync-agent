@@ -453,6 +453,7 @@ apply_update() {
     actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
     if [ "$actual_sha256" != "$sha256" ]; then
       log "ERROR: checksum mismatch (expected $sha256, got $actual_sha256)"
+      write_update_error "checksum_mismatch" "The release bundle checksum did not match." "$version"
       rm -f "$bundle_file"; return 1
     fi
     log "Checksum verified"
@@ -464,14 +465,18 @@ apply_update() {
   log "Extracting bundle..."
   mkdir -p "$extract_dir"
   if ! tar -xzf "$bundle_file" -C "$extract_dir"; then
-    log "ERROR: extraction failed"; rm -rf "$extract_dir" "$bundle_file"; return 1
+    log "ERROR: extraction failed"
+    write_update_error "bundle_extract_failed" "The release bundle could not be extracted." "$version"
+    rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
   if [ ! -d "$extract_dir/app" ]; then
     log "ERROR: extracted bundle missing 'app' directory"
+    write_update_error "bundle_layout_invalid" "The release bundle layout was invalid." "$version"
     rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
   if ! install_terminal_runtime_payload "$extract_dir"; then
     log "ERROR: Terminal runtime installation failed; aborting before app replacement"
+    write_update_error "terminal_runtime_install_failed" "The terminal runtime assets could not be installed." "$version"
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
@@ -541,7 +546,16 @@ apply_update() {
 
   # Start services and health-check
   log "Starting services..."
-  sudo systemctl start matrix-gateway matrix-shell
+  if ! sudo systemctl start matrix-gateway matrix-shell; then
+    log "ERROR: updated services failed to start — rolling back"
+    if do_rollback; then
+      write_update_error "post_install_service_start_failed" "The updated services failed to start and the previous release was restored." "$version"
+    else
+      write_update_error "post_install_rollback_failed" "The updated services failed to start and rollback did not complete." "$version"
+    fi
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   log "Running health check..."
   local healthy=false
   for _ in $(seq 1 18); do
@@ -555,7 +569,11 @@ apply_update() {
     rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
   else
     log "ERROR: health check failed — rolling back"
-    do_rollback
+    if do_rollback; then
+      write_update_error "post_install_health_failed" "The updated gateway failed its health check and the previous release was restored." "$version"
+    else
+      write_update_error "post_install_rollback_failed" "The updated gateway failed its health check and rollback did not complete." "$version"
+    fi
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
