@@ -199,6 +199,11 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(probe).toContain("writeFileSync(attachStatusPath");
     expect(acceptance).toContain("read_probe_diagnostic");
     expect(acceptance).toContain("read_controller_diagnostic");
+    expect(acceptance).toContain('readonly conflict_id="rt_$(printf');
+    expect(acceptance).toContain("cleanup_controller_runtime");
+    expect(acceptance).toContain('owner_systemctl stop "matrix-zellij@${runtime_id}.service"');
+    expect(acceptance).toContain('rm -f -- "${descriptor_root}/${runtime_id}.json"');
+    expect(acceptance).not.toContain("readonly conflict_id=rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     expect(acceptance).toContain('controller_diagnostic="${state_root}/hostile-controller.diagnostic"');
     expect(acceptance).toContain('progress("hostile-controller-invalid-runtime-id")');
     expect(acceptance).toContain('current_failure="${controller_status:-hostile-controller-runtime-unavailable}"');
