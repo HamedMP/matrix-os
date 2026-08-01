@@ -39,7 +39,8 @@ readonly delete_name="u-d-${run_nonce}"
 readonly limit_name="u-l-${run_nonce}"
 readonly post_rollback_name="u-p-${run_nonce}"
 readonly current_generation_name="u-c-${run_nonce}"
-readonly conflict_id=rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+readonly conflict_id="rt_$(printf '%s\0%s' "$head_sha" "$run_nonce" | sha256sum | cut -c1-32)"
+readonly legacy_conflict_id=rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 readonly owner_uid="$(id -u matrix)"
 readonly loop_root="${home}/system/terminal-acceptance/${head_sha:0:7}-${run_nonce}"
 readonly loop_script="${loop_root}/production-loop.mjs"
@@ -48,6 +49,8 @@ readonly corrupt_id=rt_cccccccccccccccccccccccccccccccc
 readonly symlink_id=rt_dddddddddddddddddddddddddddddddd
 readonly generation_symlink="${runtime_root}/generations/gen_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 readonly generation_sentinel="${state_root}/generation-sentinel"
+readonly controller_environment_path="${descriptor_root}/hostile-environment-${conflict_id}.json"
+readonly legacy_controller_environment_path="${descriptor_root}/hostile-environment.json"
 readonly phase1_unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-phase1.service"
 readonly prepare_unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-prepare.service"
 current_progress=initializing
@@ -81,6 +84,16 @@ owner_systemctl() {
     XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
     systemctl --user "$@"
+}
+
+cleanup_controller_runtime() {
+  local runtime_id
+  for runtime_id in "$conflict_id" "$legacy_conflict_id"; do
+    owner_systemctl stop "matrix-zellij@${runtime_id}.service" >/dev/null 2>&1 || true
+    owner_systemctl reset-failed "matrix-zellij@${runtime_id}.service" >/dev/null 2>&1 || true
+    rm -f -- "${descriptor_root}/${runtime_id}.json"
+  done
+  rm -f -- "$controller_environment_path" "$legacy_controller_environment_path"
 }
 
 json_field() {
@@ -505,13 +518,15 @@ verify_resource_controls() {
 run_controller_adversarial_checks() {
   local layout_path="${home}/system/zellij/layouts/default.kdl"
   local controller_diagnostic="${state_root}/hostile-controller.diagnostic" controller_status
+  cleanup_controller_runtime
   install -m 0600 /dev/null "$controller_diagnostic"
   if ! runuser -u matrix -- env \
     HOME="$home" MATRIX_HOME="$home" \
     XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
     /opt/matrix/runtime/node/bin/node --input-type=module - \
-    "$home" "$conflict_id" "$layout_path" 2>"$controller_diagnostic" <<'NODE'
+    "$home" "$conflict_id" "$layout_path" "$controller_environment_path" \
+    2>"$controller_diagnostic" <<'NODE'
 import { execFile } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -521,7 +536,7 @@ import {
 } from "/opt/matrix/app/packages/gateway/dist/shell/user-systemd-terminal-runtime.js";
 
 const execFileAsync = promisify(execFile);
-const [homePath, runtimeId, layoutPath] = process.argv.slice(2);
+const [homePath, runtimeId, layoutPath, environmentPath] = process.argv.slice(2);
 const progress = (stage) => process.stderr.write(`${stage}\n`);
 async function mustReject(operation) {
   let rejected = false;
@@ -575,7 +590,6 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 500));
   await mustReject(() => execFileAsync("systemctl", ["--user", "is-active", `matrix-zellij@${runtimeId}.service`]));
   await execFileAsync("systemctl", ["--user", "reset-failed", `matrix-zellij@${runtimeId}.service`]);
-  const environmentPath = `${homePath}/system/terminal-runtimes/hostile-environment.json`;
   await writeFile(environmentPath, `${JSON.stringify({ LD_PRELOAD: "/tmp/hostile.so" })}\n`, { mode: 0o600 });
   await writeFile(descriptorPath, `${JSON.stringify({ ...descriptor, environmentPath })}\n`, { mode: 0o600 });
   progress("hostile-controller-unit-environment-reject");
@@ -860,6 +874,7 @@ fail_phase() {
   diagnose_runtime_failure || true
   write_state "failed:${current_progress}:${current_failure}"
   cleanup_runtime_sessions || true
+  cleanup_controller_runtime || true
   remove_hostile_state || true
   disable_acceptance_runtime || true
   exit "$status"
@@ -1063,6 +1078,7 @@ phase2() {
 case "$operation" in
   prepare)
     install -d -o root -g root -m 0700 "$root_parent"
+    cleanup_controller_runtime || true
     find "$root_parent" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf -- {} +
     rm -rf -- "$state_root"
     install -d -o root -g root -m 0700 "$checks_root"
