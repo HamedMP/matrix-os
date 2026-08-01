@@ -162,6 +162,9 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(workflow).toContain("Build two exact-head user-systemd acceptance bundles");
     expect(workflow).toContain('for suffix in a b; do');
     expect(workflow).toContain("MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1");
+    expect(workflow).toContain('"${remote_base}.sh" helper root 0700');
+    expect(workflow).toContain('"${remote_base}-probe.mjs" probe matrix 0640');
+    expect(workflow).toContain('--arg group "$group" --arg mode "$mode"');
     expect(acceptance).toContain("gatewayRestartPreservesRuntimes");
     expect(acceptance).toContain("gatewaySigkillPreservesRuntimes");
     expect(acceptance).toContain("bundleOnePreservesRuntimes");

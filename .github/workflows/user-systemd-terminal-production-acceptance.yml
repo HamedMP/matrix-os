@@ -213,7 +213,10 @@ jobs:
               "$response" >/dev/null
           }
           upload_asset() {
-            local source="$1" remote="$2" suffix="$3" payload offset chunk script body
+            local source="$1" remote="$2" suffix="$3" group="$4" mode="$5"
+            local payload offset chunk script body
+            [[ "$group" == root || "$group" == matrix ]]
+            [[ "$mode" == 0700 || "$mode" == 0640 ]]
             local encoded="/tmp/matrix-user-systemd-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}.b64"
             local decoded="/tmp/matrix-user-systemd-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
             payload="$(gzip -9 -c "$source" | base64 --wrap=0)"
@@ -233,7 +236,8 @@ jobs:
             body="$(jq -cn --arg script "$script" '{command:["/bin/bash","-c",$script]}')"
             send_command "$body"
             body="$(jq -cn --arg source "$decoded" --arg target "$remote" \
-              '{command:["/usr/bin/sudo","/usr/bin/install","-o","root","-g","root","-m","0700",$source,$target]}')"
+              --arg group "$group" --arg mode "$mode" \
+              '{command:["/usr/bin/sudo","/usr/bin/install","-o","root","-g",$group,"-m",$mode,$source,$target]}')"
             send_command "$body"
             body="$(jq -cn --arg first "$encoded" --arg second "$decoded" \
               '{command:["/usr/bin/rm","-f","--",$first,$second]}')"
@@ -241,9 +245,9 @@ jobs:
           }
           remote_base="/var/tmp/matrix-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}"
           upload_asset scripts/spikes/user-systemd-terminal/production-acceptance.sh \
-            "${remote_base}.sh" helper
+            "${remote_base}.sh" helper root 0700
           upload_asset scripts/spikes/user-systemd-terminal/production-probe.mjs \
-            "${remote_base}-probe.mjs" probe
+            "${remote_base}-probe.mjs" probe matrix 0640
           printf '%s\n' "$remote_base" >"$RUNNER_TEMP/user-systemd-remote-base"
       - name: Run two-bundle, gateway-failure, rollback, and pre-reboot matrix
         env:
