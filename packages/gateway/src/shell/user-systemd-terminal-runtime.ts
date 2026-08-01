@@ -229,10 +229,7 @@ function unitName(runtimeId: string): string {
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolveDelay) => {
-    const timer = setTimeout(resolveDelay, ms);
-    timer.unref?.();
-  });
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 export function createUserSystemdTerminalRuntime(options: {

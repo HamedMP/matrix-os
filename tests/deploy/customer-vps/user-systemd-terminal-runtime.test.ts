@@ -44,6 +44,16 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(keeper).not.toContain("eval(");
   });
 
+  it("keeps awaited readiness retries alive for one-shot controller callers", () => {
+    const controller = readFileSync(
+      join(root, "packages/gateway/src/shell/user-systemd-terminal-runtime.ts"),
+      "utf8",
+    );
+
+    expect(controller).toContain("await delay(READINESS_INTERVAL_MS)");
+    expect(controller).not.toContain("timer.unref");
+  });
+
   it("ships immutable helper/Zellij generations and globally installed user units", () => {
     const build = readFileSync(join(root, "scripts/build-host-bundle.sh"), "utf8");
     const cloudInit = readFileSync(join(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
