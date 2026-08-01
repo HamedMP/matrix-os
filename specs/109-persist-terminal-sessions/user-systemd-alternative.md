@@ -105,6 +105,13 @@ generation and user units; it is an explicit activation prerequisite, not a
 default-on or customer rollout side effect. Later updates use the loaded
 installer directly.
 
+Full-bundle transfer is independently bounded from runtime continuity. If the
+first transfer fails, the sync agent refreshes the exact-version signed
+manifest, requires the immutable version, checksum, and size to match, and
+resumes the partial bundle once. Exhausting both attempts fails closed with a
+structured updater error; it never weakens the requirement that active runtime
+PIDs and cgroups remain unchanged.
+
 Reference-aware generation garbage collection keeps
 the current app generation, rollback app generation, and every generation
 referenced by a valid descriptor, skip symlinks, and enforce a bounded retained

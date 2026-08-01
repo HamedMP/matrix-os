@@ -723,7 +723,7 @@ diagnose_update_failure() {
   if [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; then
     error_code="$(read_update_error_code 2>/dev/null || true)"
     case "$error_code" in
-      insufficient_disk_space|unknown) ;;
+      download_failed|download_metadata_changed|insufficient_disk_space|unknown) ;;
       *) error_code=unknown ;;
     esac
   fi
@@ -740,7 +740,7 @@ diagnose_update_failure() {
 }
 
 wait_update() {
-  local expected="$1" deadline=$((SECONDS + 1800)) error_code=none
+  local expected="$1" deadline=$((SECONDS + 3900)) error_code=none
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
       [ ! -e /opt/matrix/app/.update-now ] &&
@@ -752,7 +752,7 @@ wait_update() {
       { [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; }; then
       error_code="$(read_update_error_code 2>/dev/null || true)"
       case "$error_code" in
-        insufficient_disk_space|unknown) ;;
+        download_failed|download_metadata_changed|insufficient_disk_space|unknown) ;;
         *) error_code=unknown ;;
       esac
       if [ "$error_code" != none ]; then

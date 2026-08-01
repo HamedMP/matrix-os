@@ -281,6 +281,58 @@ fetch_manifest() {
   printf '%s' "$manifest"
 }
 
+download_bundle() {
+  local version="$1" expected_sha256="$2" expected_size="$3" bundle_url="$4" bundle_file="$5"
+  local attempt refreshed refreshed_version refreshed_sha256 refreshed_size refreshed_url partial_size
+  local -a continue_args
+  rm -f -- "$bundle_file"
+  for attempt in 1 2; do
+    continue_args=()
+    if [ "$attempt" -eq 2 ]; then
+      if ! refreshed="$(fetch_manifest "$(release_url_for_version "$version")")"; then
+        continue
+      fi
+      refreshed_version="$(json_field "$refreshed" version)"
+      refreshed_sha256="$(json_field "$refreshed" sha256)"
+      refreshed_size="$(json_field "$refreshed" size)"
+      refreshed_url="$(json_field "$refreshed" url)"
+      if ! [ "$refreshed_version" = "$version" ] ||
+        ! [ "$refreshed_sha256" = "$expected_sha256" ] ||
+        ! [ "$refreshed_size" = "$expected_size" ] || [ -z "$refreshed_url" ]; then
+        write_update_error "download_metadata_changed" \
+          "The immutable release metadata changed during download." "$version"
+        rm -f -- "$bundle_file"
+        return 1
+      fi
+      bundle_url="$refreshed_url"
+      if [ -f "$bundle_file" ] && [ ! -L "$bundle_file" ]; then
+        partial_size="$(stat -c %s "$bundle_file" 2>/dev/null || true)"
+        if [[ "$expected_size" =~ ^[0-9]+$ ]] && [[ "$partial_size" =~ ^[0-9]+$ ]] &&
+          [ "$partial_size" -eq "$expected_size" ]; then
+          return 0
+        fi
+        if [[ "$partial_size" =~ ^[1-9][0-9]*$ ]] &&
+          { [[ ! "$expected_size" =~ ^[0-9]+$ ]] || [ "$partial_size" -lt "$expected_size" ]; }; then
+          continue_args=(--continue-at -)
+        else
+          rm -f -- "$bundle_file"
+        fi
+      else
+        rm -f -- "$bundle_file"
+      fi
+    fi
+    if /usr/bin/timeout --signal=KILL 1800 curl --fail --location \
+      --connect-timeout 10 --max-time 1770 --http1.1 \
+      "${continue_args[@]}" "$bundle_url" -o "$bundle_file"; then
+      [ -f "$bundle_file" ] && [ ! -L "$bundle_file" ] && return 0
+    fi
+    log "WARN: bundle download attempt $attempt failed"
+  done
+  write_update_error "download_failed" "The release bundle download failed." "$version"
+  rm -f -- "$bundle_file"
+  return 1
+}
+
 prepare_triggered_update() {
   local url="" target=""
   if [ -f "$UPDATE_VERSION_FILE" ]; then
@@ -390,10 +442,9 @@ apply_update() {
   extract_dir="$STAGING_DIR/bundle-${version}"
 
   log "Downloading bundle..."
-  if ! curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
-       --connect-timeout 10 --max-time 1800 --http1.1 \
-       "$bundle_url" -o "$bundle_file"; then
-    log "ERROR: download failed"; rm -f "$bundle_file"; return 1
+  if ! download_bundle "$version" "$sha256" "$(json_field "$manifest" size)" "$bundle_url" "$bundle_file"; then
+    log "ERROR: download failed"
+    return 1
   fi
 
   # Verify checksum
