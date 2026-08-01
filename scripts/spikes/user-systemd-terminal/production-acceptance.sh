@@ -41,6 +41,8 @@ readonly corrupt_id=rt_cccccccccccccccccccccccccccccccc
 readonly symlink_id=rt_dddddddddddddddddddddddddddddddd
 readonly generation_symlink="${runtime_root}/generations/gen_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 readonly generation_sentinel="${state_root}/generation-sentinel"
+current_progress=initializing
+current_state_prefix=phase1-running
 
 write_state() {
   install -d -o root -g root -m 0700 "$state_root"
@@ -48,6 +50,13 @@ write_state() {
   printf '%s\n' "$1" >"$next"
   chmod 0600 "$next"
   mv -f -- "$next" "$state_file"
+}
+
+write_progress() {
+  local progress="$1"
+  [[ "$progress" =~ ^[a-z][a-z0-9-]{0,63}$ ]]
+  current_progress="$progress"
+  write_state "${current_state_prefix}:${current_progress}"
 }
 
 mark() {
@@ -307,8 +316,8 @@ request_update() {
 }
 
 wait_update() {
-  local expected="$1"
-  for _ in $(seq 1 1800); do
+  local expected="$1" deadline=$((SECONDS + 1800))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
       [ ! -e /opt/matrix/app/.update-now ] &&
       systemctl is-active --quiet matrix-gateway.service &&
@@ -435,16 +444,16 @@ disable_acceptance_runtime() {
 fail_phase() {
   local status=$?
   trap - ERR
+  write_state "failed:${current_progress}"
   cleanup_runtime_sessions || true
   remove_hostile_state || true
   disable_acceptance_runtime || true
-  write_state failed
   exit "$status"
 }
 
 phase1() {
   trap fail_phase ERR
-  write_state phase1-running
+  write_progress runtime-creation
   install -d -o matrix -g matrix -m 0700 "$loop_root"
   cat >"$loop_script" <<'EOF'
 import { appendFileSync } from "node:fs";
@@ -465,6 +474,7 @@ EOF
   mark ordinaryShellRuntime
   mark realCodingAgentRuntime
 
+  write_progress resource-controls
   local gateway_cgroup shell_cgroup agent_cgroup
   gateway_cgroup="$(systemctl show matrix-gateway.service -p ControlGroup --value)"
   shell_cgroup="$(jq -r .cgroup "$shell_baseline")"
@@ -477,17 +487,20 @@ EOF
   mark resourceControlsPresent
   mark resourceControlsEffective
 
+  write_progress browser-attachments
   websocket_attach_owned_by_gateway "$shell_name" "$shell_baseline"
   websocket_attach_owned_by_gateway "$agent_name" "$agent_baseline"
   mark browserAttachmentPtysRemainGatewayOwned
   mark detachPreservesRuntimes
 
+  write_progress gateway-restart
   systemctl restart matrix-gateway.service
   wait_gateway
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
   mark gatewayRestartPreservesRuntimes
 
+  write_progress gateway-crash
   local old_gateway_pid
   old_gateway_pid="$(systemctl show matrix-gateway.service -p MainPID --value)"
   kill -KILL "$old_gateway_pid"
@@ -496,9 +509,11 @@ EOF
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
   mark gatewaySigkillPreservesRuntimes
+  write_progress gateway-memory
   verify_gateway_memory_isolation "$shell_baseline" "$agent_baseline"
   mark gatewayMemoryIsolation
 
+  write_progress hostile-controller
   run_controller_adversarial_checks
   mark invalidRuntimeIdsFailClosed
   mark conflictingDescriptorReuseFailsClosed
@@ -506,24 +521,30 @@ EOF
   mark hostileDescriptorFieldsFailClosed
   mark deleteIsIdempotent
 
+  write_progress hostile-state
   create_hostile_state
   hostile_state_fails_closed
   mark corruptAndSymlinkStateFailsClosed
 
+  write_progress bundle-a-update
   request_update "$version_a"
   wait_update "$version_a"
+  write_progress bundle-a-continuity
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
   websocket_attach_owned_by_gateway "$shell_name" "$shell_baseline"
   mark bundleOnePreservesRuntimes
 
+  write_progress bundle-b-update
   request_update "$version_b"
   wait_update "$version_b"
+  write_progress bundle-b-continuity
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
   websocket_attach_owned_by_gateway "$agent_name" "$agent_baseline"
   mark bundleTwoPreservesRuntimes
 
+  write_progress new-generation
   create_session "$current_generation_name" "/opt/matrix/runtime/node/bin/node $loop_script $output_file"
   local current_snapshot="${state_root}/current-generation.json"
   wait_snapshot "$current_generation_name" shell "$current_snapshot"
@@ -534,17 +555,21 @@ EOF
   delete_session "$current_generation_name"
   mark deleteRemovesExactRuntime
   mark deleteRemovesSocketAndSnapshots
+  write_progress generation-gc
   generation_gc_safe "$(jq -r .generation "$shell_baseline")"
   mark generationGcIsReferenceAndSymlinkSafe
   mark generationRetentionIsBounded
 
+  write_progress rollback-update
   request_update rollback
   wait_update "$version_a"
+  write_progress rollback-continuity
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
   websocket_attach_owned_by_gateway "$shell_name" "$shell_baseline"
   mark rollbackPreservesRuntimes
 
+  write_progress post-rollback-runtime
   create_session "$post_rollback_name" "/opt/matrix/runtime/node/bin/node $loop_script $output_file"
   local post_snapshot="${state_root}/post-rollback.json"
   wait_snapshot "$post_rollback_name" shell "$post_snapshot"
@@ -553,6 +578,7 @@ EOF
   delete_session "$post_rollback_name"
   verify_deleted "$post_snapshot"
 
+  write_progress resource-limit-breach
   create_session "$limit_name" "/opt/matrix/runtime/node/bin/node $loop_script $output_file"
   local limit_snapshot="${state_root}/limit.json" limit_unit
   wait_snapshot "$limit_name" shell "$limit_snapshot"
@@ -576,7 +602,8 @@ EOF
 phase2() {
   trap fail_phase ERR
   [ "$(cat "$state_file")" = reboot-scheduled ]
-  write_state phase2-running
+  current_state_prefix=phase2-running
+  write_progress reboot-verification
   local baseline unit pid old_cgroup
   for baseline in "${state_root}/shell-baseline.json" "${state_root}/agent-baseline.json"; do
     unit="$(jq -r .unit "$baseline")"

@@ -172,6 +172,12 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(probe).toContain("ControlGroup");
     expect(probe).toContain("MemoryMax");
     expect(probe).toContain("TasksMax");
+    expect(acceptance).toContain("write_progress");
+    expect(acceptance).toContain('write_state "failed:${current_progress}"');
+    expect(acceptance).toContain("deadline=$((SECONDS + 1800))");
+    expect(acceptance).not.toContain("for _ in $(seq 1 1800)");
+    expect(workflow).toContain("Acceptance stalled at ${state:-unavailable}");
+    expect(workflow).toContain("Acceptance failed at ${state}");
   });
 
   it("rejects permissive descriptor parsers and pins the keeper helper to the descriptor generation", () => {
