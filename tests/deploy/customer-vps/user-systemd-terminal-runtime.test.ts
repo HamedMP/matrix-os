@@ -277,7 +277,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-updater-${updater_state}-bundle-${bundle_state}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"');
     expect(acceptance).toContain('if [ "$error_code" != none ]; then');
     expect(acceptance).toContain('case "$error_code" in');
-    expect(acceptance).toContain('download_failed|download_metadata_changed|insufficient_disk_space|unknown)');
+    expect(acceptance).toContain('download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|unknown)');
     expect(acceptance).not.toContain("journalctl -u matrix-sync-agent");
     expect(workflow).toContain("Acceptance stalled at ${state:-unavailable}");
     expect(workflow).toContain("Acceptance failed at ${state}");

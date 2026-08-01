@@ -1047,6 +1047,26 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('Repair complete; retrying pending update');
   });
 
+  it('sync agent persists bounded errors for destructive update phase failures', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('write_update_error "checksum_mismatch"');
+    expect(syncAgent).toContain('write_update_error "bundle_extract_failed"');
+    expect(syncAgent).toContain('write_update_error "bundle_layout_invalid"');
+    expect(syncAgent).toContain('write_update_error "terminal_runtime_install_failed"');
+    expect(syncAgent).toContain('write_update_error "post_install_service_start_failed"');
+    expect(syncAgent).toContain('write_update_error "post_install_health_failed"');
+    expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
+
+    const healthFailure = syncAgent.indexOf('log "ERROR: health check failed — rolling back"');
+    const healthRollback = syncAgent.indexOf('if do_rollback; then', healthFailure);
+    const durableHealthError = syncAgent.indexOf('write_update_error "post_install_health_failed"', healthFailure);
+    expect(healthFailure).toBeGreaterThan(-1);
+    expect(healthRollback).toBeGreaterThan(healthFailure);
+    expect(durableHealthError).toBeGreaterThan(healthRollback);
+  });
+
   it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');

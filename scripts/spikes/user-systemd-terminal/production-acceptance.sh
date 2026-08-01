@@ -771,7 +771,7 @@ diagnose_update_failure() {
   if [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; then
     error_code="$(read_update_error_code 2>/dev/null || true)"
     case "$error_code" in
-      download_failed|download_metadata_changed|insufficient_disk_space|unknown) ;;
+      download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|unknown) ;;
       *) error_code=unknown ;;
     esac
   fi
@@ -802,7 +802,7 @@ wait_update() {
       { [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; }; then
       error_code="$(read_update_error_code 2>/dev/null || true)"
       case "$error_code" in
-        download_failed|download_metadata_changed|insufficient_disk_space|unknown) ;;
+        download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|unknown) ;;
         *) error_code=unknown ;;
       esac
       if [ "$error_code" != none ]; then
