@@ -261,6 +261,11 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("write_progress runtime-shell-snapshot");
     expect(acceptance).toContain("write_progress runtime-agent-snapshot");
     expect(acceptance).toContain('/usr/bin/timeout --signal=KILL 15');
+    expect(probe).toContain('production_probe_roles_main_missing');
+    expect(probe).toContain('production_probe_roles_zellij_0');
+    expect(probe).toContain('production_probe_roles_zellij_1');
+    expect(probe).toContain('production_probe_roles_workload_missing');
+    expect(probe).not.toContain('production_probe_roles_invalid');
     expect(acceptance).toContain("failed:phase-worker-exited:");
     expect(acceptance).toContain("deadline=$((SECONDS + 5400))");
     expect(acceptance).not.toContain("for _ in $(seq 1 5400)");
