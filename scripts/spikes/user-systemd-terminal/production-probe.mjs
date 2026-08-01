@@ -16,6 +16,15 @@ function fail(code) {
   process.exit(1);
 }
 
+process.on("uncaughtException", (error) => {
+  if (!(error instanceof Error)) process.stderr.write("production_probe_uncaught_non_error\n");
+  fail("production_probe_runtime_unavailable");
+});
+process.on("unhandledRejection", (reason) => {
+  if (!(reason instanceof Error)) process.stderr.write("production_probe_rejection_non_error\n");
+  fail("production_probe_runtime_unavailable");
+});
+
 if (!Number.isInteger(uid) || !/^[a-z0-9][a-z0-9-]{0,30}$/.test(displayName)) {
   fail("production_probe_invalid_request");
 }

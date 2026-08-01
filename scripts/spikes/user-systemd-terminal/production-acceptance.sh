@@ -199,7 +199,7 @@ print(runtime_id)
 PY
 }
 
-read_attach_status() {
+read_probe_status() {
   python3 - "$1" <<'PY'
 import os
 import re
@@ -213,9 +213,9 @@ if not stat.S_ISREG(status_stat.st_mode) or status_stat.st_size > 128:
     raise SystemExit(1)
 with os.fdopen(status_fd, encoding="utf-8") as source:
     value = source.read().strip()
-if re.fullmatch(r"[a-z][a-z0-9-]{0,63}", value) is None:
+if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value) is None:
     raise SystemExit(1)
-print(value)
+print(value.replace("_", "-"))
 PY
 }
 
@@ -296,20 +296,29 @@ delete_session() {
 }
 
 snapshot() {
+  local snapshot_status="${3:-/dev/null}"
   /usr/bin/timeout --signal=KILL 15 \
-    /opt/matrix/runtime/node/bin/node "$probe_path" snapshot "$1" "$2"
+    /opt/matrix/runtime/node/bin/node "$probe_path" snapshot "$1" "$2" 2>"$snapshot_status"
 }
 
 wait_snapshot() {
-  local name="$1" kind="$2" target="$3" current=""
+  local name="$1" kind="$2" target="$3" current="" probe_status=unknown
+  local snapshot_status="${target}.status"
   for _ in $(seq 1 30); do
-    if current="$(snapshot "$name" "$kind" 2>/dev/null)"; then
+    rm -f -- "$snapshot_status"
+    if current="$(snapshot "$name" "$kind" "$snapshot_status")"; then
       printf '%s\n' "$current" >"$target"
       chmod 0600 "$target"
+      rm -f -- "$snapshot_status"
       return 0
     fi
     sleep 1
   done
+  probe_status="$(read_probe_status "$snapshot_status" 2>/dev/null || true)"
+  [ -n "$probe_status" ] || probe_status=timeout
+  [[ "$probe_status" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || probe_status=unknown
+  current_failure="snapshot-${probe_status}"
+  rm -f -- "$snapshot_status"
   return 1
 }
 
@@ -343,7 +352,7 @@ websocket_attach_owned_by_gateway() {
     sleep 1
   done
   if [ ! -f "$ready" ]; then
-    attach_status="$(read_attach_status "$status" 2>/dev/null || true)"
+    attach_status="$(read_probe_status "$status" 2>/dev/null || true)"
     [[ "$attach_status" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || attach_status=unknown
     current_failure="attachment-ready-${attach_status}"
     kill "$client_pid" >/dev/null 2>&1 || true

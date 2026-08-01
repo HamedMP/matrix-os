@@ -191,9 +191,13 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(probe).toContain('message?.type === "attached"');
     expect(probe).toContain('message?.type === "error"');
     expect(probe).toContain('`server-${safeCode}`');
+    expect(probe).toContain("production_probe_runtime_unavailable");
     expect(acceptance).toContain('attachment-ready-${attach_status}');
     expect(acceptance).toContain('kill -0 "$client_pid"');
-    expect(acceptance).toContain("read_attach_status");
+    expect(acceptance).toContain("read_probe_status");
+    expect(acceptance).toContain('current_failure="snapshot-${probe_status}"');
+    expect(acceptance).toContain('snapshot_status="${target}.status"');
+    expect(acceptance).toContain("probe_status=timeout");
     expect(acceptance).toContain("MemoryCurrent");
     expect(acceptance).toContain("cgroup.controllers");
     expect(acceptance).toContain("list-sessions");
