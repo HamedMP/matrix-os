@@ -516,7 +516,7 @@ verify_resource_controls() {
 }
 
 run_controller_adversarial_checks() {
-  local layout_path="${home}/system/zellij/layouts/default.kdl"
+  local layout_path="${home}/system/zellij/layouts/matrix.kdl"
   local controller_diagnostic="${state_root}/hostile-controller.diagnostic" controller_status
   cleanup_controller_runtime
   install -m 0600 /dev/null "$controller_diagnostic"
