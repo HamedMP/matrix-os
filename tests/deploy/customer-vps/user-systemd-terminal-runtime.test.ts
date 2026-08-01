@@ -188,6 +188,12 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("rebootCreatesNoReplacementPids");
     expect(acceptance).toContain("rebootProducesNoOutput");
     expect(probe).toContain("/ws/terminal");
+    expect(probe).toContain('message?.type === "attached"');
+    expect(probe).toContain('message?.type === "error"');
+    expect(probe).toContain('`server-${safeCode}`');
+    expect(acceptance).toContain('attachment-ready-${attach_status}');
+    expect(acceptance).toContain('kill -0 "$client_pid"');
+    expect(acceptance).toContain("read_attach_status");
     expect(acceptance).toContain("MemoryCurrent");
     expect(acceptance).toContain("cgroup.controllers");
     expect(acceptance).toContain("list-sessions");
@@ -201,6 +207,11 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("api-http-${code}-${safe_code}");
     expect(acceptance).toContain("auth-env-missing");
     expect(acceptance).toContain("auth-token-invalid");
+    expect(acceptance).toContain("attachment-ready-timeout");
+    expect(acceptance).toContain("attachment-process-missing");
+    expect(acceptance).toContain("attachment-cgroup-mismatch");
+    expect(acceptance).toContain("attachment-client-exit");
+    expect(acceptance).toContain("attachment-runtime-continuity");
     expect(acceptance).toContain("request-body-invalid");
     expect(acceptance).toContain("preflight-zellij-");
     expect(acceptance).toContain("preflight-user-bus-");

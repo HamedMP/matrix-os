@@ -199,6 +199,26 @@ print(runtime_id)
 PY
 }
 
+read_attach_status() {
+  python3 - "$1" <<'PY'
+import os
+import re
+import stat
+import sys
+
+status_fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+status_stat = os.fstat(status_fd)
+if not stat.S_ISREG(status_stat.st_mode) or status_stat.st_size > 128:
+    os.close(status_fd)
+    raise SystemExit(1)
+with os.fdopen(status_fd, encoding="utf-8") as source:
+    value = source.read().strip()
+if re.fullmatch(r"[a-z][a-z0-9-]{0,63}", value) is None:
+    raise SystemExit(1)
+print(value)
+PY
+}
+
 load_host_auth() {
   local line token
   current_failure=auth-env-missing
@@ -300,12 +320,14 @@ roles_match() {
 }
 
 websocket_attach_owned_by_gateway() {
-  local name="$1" snapshot_file="$2" runtime_id session_name gateway_cgroup ready client_pid found=0
+  local name="$1" snapshot_file="$2" runtime_id session_name gateway_cgroup ready status client_pid found=0
+  local attach_status=unknown
   runtime_id="$(json_field "$snapshot_file" runtimeId)"
   session_name="$(json_field "$snapshot_file" sessionName)"
   gateway_cgroup="$(systemctl show matrix-gateway.service -p ControlGroup --value)"
   ready="${loop_root}/ws-${runtime_id}.ready"
-  rm -f -- "$ready"
+  status="${ready}.status"
+  rm -f -- "$ready" "$status"
   load_host_auth
   runuser -u matrix -- env \
     HOME="$home" MATRIX_HOME="$home" MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN" \
@@ -314,8 +336,21 @@ websocket_attach_owned_by_gateway() {
     /opt/matrix/runtime/node/bin/node "$probe_path" attach "$name" unused "$ready" \
     >/dev/null 2>&1 &
   client_pid=$!
-  for _ in $(seq 1 30); do [ -f "$ready" ] && break; sleep 1; done
-  [ -f "$ready" ]
+  current_failure=attachment-ready-timeout
+  for _ in $(seq 1 30); do
+    [ -f "$ready" ] && break
+    kill -0 "$client_pid" >/dev/null 2>&1 || break
+    sleep 1
+  done
+  if [ ! -f "$ready" ]; then
+    attach_status="$(read_attach_status "$status" 2>/dev/null || true)"
+    [[ "$attach_status" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || attach_status=unknown
+    current_failure="attachment-ready-${attach_status}"
+    kill "$client_pid" >/dev/null 2>&1 || true
+    wait "$client_pid" >/dev/null 2>&1 || true
+    rm -f -- "$status"
+    return 1
+  fi
   local proc pid cmdline cgroup
   for proc in /proc/[0-9]*; do
     [ -r "$proc/cmdline" ] || continue
@@ -323,13 +358,25 @@ websocket_attach_owned_by_gateway() {
     [[ "$cmdline" == *"/zellij attach ${session_name}"* ]] || continue
     pid="${proc#/proc/}"
     cgroup="$(awk -F: '$1 == "0" { print $3 }' "$proc/cgroup")"
-    [ "$cgroup" = "$gateway_cgroup" ]
-    [ "$cgroup" != "$(json_field "$snapshot_file" cgroup)" ]
+    current_failure=attachment-cgroup-mismatch
+    if [ "$cgroup" != "$gateway_cgroup" ] ||
+      [ "$cgroup" = "$(json_field "$snapshot_file" cgroup)" ]; then
+      kill "$client_pid" >/dev/null 2>&1 || true
+      wait "$client_pid" >/dev/null 2>&1 || true
+      return 1
+    fi
     found=$((found + 1))
   done
-  [ "$found" -ge 1 ]
-  wait "$client_pid"
-  rm -f -- "$ready"
+  current_failure=attachment-process-missing
+  if [ "$found" -lt 1 ]; then
+    kill "$client_pid" >/dev/null 2>&1 || true
+    wait "$client_pid" >/dev/null 2>&1 || true
+    return 1
+  fi
+  current_failure=attachment-client-exit
+  if ! wait "$client_pid"; then return 1; fi
+  rm -f -- "$ready" "$status"
+  current_failure=attachment-runtime-continuity
   roles_match "$name" "$(json_field "$snapshot_file" workloadKind)" "$snapshot_file"
 }
 

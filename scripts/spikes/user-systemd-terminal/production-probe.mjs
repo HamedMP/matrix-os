@@ -23,6 +23,7 @@ if (!Number.isInteger(uid) || !/^[a-z0-9][a-z0-9-]{0,30}$/.test(displayName)) {
 if (operation === "attach") {
   const token = process.env.MATRIX_AUTH_TOKEN ?? "";
   const readyPrefix = `${home}/system/terminal-acceptance/`;
+  const statusPath = `${readyPath}.status`;
   if (
     !/^[A-Za-z0-9._~+/=-]{16,512}$/.test(token)
     || !readyPath.startsWith(readyPrefix)
@@ -35,18 +36,63 @@ if (operation === "attach") {
   url.searchParams.set("token", token);
   const socket = new WebSocket(url);
   const outcome = await new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve("timeout"), 15_000);
-    socket.addEventListener("open", () => {
-      setTimeout(() => {
-        void writeFile(readyPath, "ready\n", { flag: "wx", mode: 0o600 })
-          .then(() => setTimeout(() => socket.close(), 8_000))
-          .catch(() => resolve("write_failed"));
-      }, 1_000);
-    });
-    socket.addEventListener("error", () => resolve("socket_failed"));
-    socket.addEventListener("close", () => {
+    let attached = false;
+    let failureStarted = false;
+    let closeTimer;
+    const finish = (result) => {
       clearTimeout(timeout);
-      resolve("closed");
+      if (closeTimer) clearTimeout(closeTimer);
+      resolve(result);
+    };
+    const failAttach = (code) => {
+      if (failureStarted || attached) return;
+      failureStarted = true;
+      void writeFile(statusPath, `${code}\n`, { flag: "wx", mode: 0o600 })
+        .then(() => {
+          socket.close();
+          finish(code);
+        })
+        .catch((error) => {
+          if (!(error instanceof Error)) process.stderr.write("production_probe_status_write_non_error\n");
+          process.stderr.write("production_probe_status_write_failed\n");
+          socket.close();
+          finish("status-write-failed");
+        });
+    };
+    const timeout = setTimeout(() => failAttach("timeout"), 15_000);
+    socket.addEventListener("message", (event) => {
+      if (attached || failureStarted || typeof event.data !== "string" || event.data.length > 4096) return;
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) process.stderr.write("production_probe_message_parse_non_syntax_error\n");
+        failAttach("message-invalid");
+        return;
+      }
+      if (message?.type === "attached") {
+        attached = true;
+        void writeFile(readyPath, "ready\n", { flag: "wx", mode: 0o600 })
+          .then(() => {
+            closeTimer = setTimeout(() => socket.close(), 8_000);
+          })
+          .catch((error) => {
+            if (!(error instanceof Error)) process.stderr.write("production_probe_ready_write_non_error\n");
+            process.stderr.write("production_probe_ready_write_failed\n");
+            socket.close();
+            finish("ready-write-failed");
+          });
+      } else if (message?.type === "error") {
+        const safeCode = typeof message.code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(message.code)
+          ? message.code.replaceAll("_", "-")
+          : "unknown";
+        failAttach(`server-${safeCode}`);
+      }
+    });
+    socket.addEventListener("error", () => failAttach("socket-failed"));
+    socket.addEventListener("close", () => {
+      if (attached) finish("closed");
+      else failAttach("closed-before-attached");
     });
   });
   if (outcome !== "closed") fail("production_probe_attach_failed");
