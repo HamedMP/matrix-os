@@ -77,9 +77,15 @@ owner_systemctl() {
 
 load_host_auth() {
   local line token
-  line="$(grep -m1 '^MATRIX_AUTH_TOKEN=' /opt/matrix/env/host.env)"
+  current_failure=auth-env-missing
+  if ! line="$(grep -m1 '^MATRIX_AUTH_TOKEN=' /opt/matrix/env/host.env)"; then
+    return 1
+  fi
   token="${line#MATRIX_AUTH_TOKEN=}"
-  [[ "$token" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]]
+  current_failure=auth-token-invalid
+  if [[ ! "$token" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]]; then
+    return 1
+  fi
   export MATRIX_AUTH_TOKEN="$token"
 }
 
@@ -87,6 +93,7 @@ api_call() {
   local method="$1" path="$2" body="${3:-}" expected="${4:-200}"
   local response="${state_root}/api-response.json" code safe_code
   load_host_auth
+  current_failure=api-transport
   if [ -n "$body" ]; then
     if ! code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
       -X "$method" "http://127.0.0.1:4000${path}" \
@@ -127,11 +134,16 @@ wait_gateway() {
 create_session() {
   local name="$1" command="$2" agent="${3:-}"
   local body
+  current_failure=request-body-invalid
   if [ -n "$agent" ]; then
-    body="$(jq -cn --arg name "$name" --arg cmd "$command" --arg agent "$agent" \
-      '{name:$name,cmd:$cmd,agent:$agent}')"
+    if ! body="$(jq -cn --arg name "$name" --arg cmd "$command" --arg agent "$agent" \
+      '{name:$name,cmd:$cmd,agent:$agent}')"; then
+      return 1
+    fi
   else
-    body="$(jq -cn --arg name "$name" --arg cmd "$command" '{name:$name,cmd:$cmd}')"
+    if ! body="$(jq -cn --arg name "$name" --arg cmd "$command" '{name:$name,cmd:$cmd}')"; then
+      return 1
+    fi
   fi
   api_call POST /api/terminal/sessions "$body" 201
 }
@@ -457,11 +469,32 @@ disable_acceptance_runtime() {
 
 diagnose_runtime_failure() {
   local target_name descriptor runtime_id="" unit unit_result exec_status keeper_code
+  local generation="" generation_dir="" zellij_path="" zellij_state=failed user_bus_state=failed
   case "$current_progress" in
     runtime-shell-create) target_name="$shell_name" ;;
     runtime-agent-create) target_name="$agent_name" ;;
     *) return 0 ;;
   esac
+  if [ -f /opt/matrix/app/TERMINAL_RUNTIME_GENERATION ] &&
+    [ ! -L /opt/matrix/app/TERMINAL_RUNTIME_GENERATION ] &&
+    generation="$(cat /opt/matrix/app/TERMINAL_RUNTIME_GENERATION 2>/dev/null)" &&
+    [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]]; then
+    generation_dir="${runtime_root}/generations/${generation}"
+    zellij_path="${generation_dir}/zellij"
+    if [ -d "$generation_dir" ] && [ ! -L "$generation_dir" ] &&
+      [ -f "$zellij_path" ] && [ ! -L "$zellij_path" ] && [ -x "$zellij_path" ] &&
+      runuser -u matrix -- env \
+        HOME="$home" MATRIX_HOME="$home" \
+        XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
+        "$zellij_path" --version >/dev/null 2>&1; then
+      zellij_state=ok
+    fi
+  fi
+  if owner_systemctl show-environment >/dev/null 2>&1; then
+    user_bus_state=ok
+  fi
+  current_failure="${current_failure}-preflight-zellij-${zellij_state}-preflight-user-bus-${user_bus_state}"
   for descriptor in "$descriptor_root"/rt_*.json; do
     [ -f "$descriptor" ] && [ ! -L "$descriptor" ] || continue
     if jq -e --arg name "$target_name" '
