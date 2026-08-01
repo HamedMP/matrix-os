@@ -33,7 +33,6 @@ export const TERMINAL_CANONICAL_SIZE_PROBE_ATTEMPTS = 3;
 export const TERMINAL_CANONICAL_SIZE_SETTLE_MS = 650;
 export const TERMINAL_METADATA_FETCH_TIMEOUT_MS = 2_500;
 export const MAX_TERMINAL_SESSION_METADATA_BYTES = 256 * 1024;
-export const MAX_TERMINAL_SESSION_METADATA_ROWS = 200;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -152,9 +151,12 @@ async function observeSessionMetadata(
     return { kind: "invalid" };
   }
   const sessions = (parsed as { sessions?: unknown }).sessions;
-  if (!Array.isArray(sessions) || sessions.length > MAX_TERMINAL_SESSION_METADATA_ROWS) {
+  if (!Array.isArray(sessions)) {
     return { kind: "invalid" };
   }
+  // The gateway contract is unpaginated and does not cap session count. The
+  // response byte limit above bounds JSON allocation and this traversal, so a
+  // separate row cap would reject valid registries before locating the target.
   const session = sessions.find((candidate) => (
     Boolean(candidate)
     && typeof candidate === "object"

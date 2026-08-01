@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   MAX_TERMINAL_SESSION_METADATA_BYTES,
-  MAX_TERMINAL_SESSION_METADATA_ROWS,
   TERMINAL_METADATA_FETCH_TIMEOUT_MS,
   initialTerminalProtocolState,
   isTerminalCanonicalGridSize,
@@ -210,20 +209,29 @@ describe("terminal gateway compatibility negotiation", () => {
     }
   });
 
-  it("rejects oversized response bytes and row counts", async () => {
+  it("rejects oversized response bytes", async () => {
     const oversizedBody = `{"sessions":[],"padding":"${"x".repeat(MAX_TERMINAL_SESSION_METADATA_BYTES)}"}`;
-    const oversizedRows = Array.from(
-      { length: MAX_TERMINAL_SESSION_METADATA_ROWS + 1 },
-      (_, index) => ({ name: `session-${index}` }),
-    );
     const bodyProbe = probeOptions([new Response(oversizedBody, { status: 200 })]);
-    const rowProbe = probeOptions([jsonResponse({ sessions: oversizedRows })]);
 
     await expect(resolveTerminalGatewayCompatibility(bodyProbe.options)).resolves.toEqual({
       kind: "incompatible",
     });
-    await expect(resolveTerminalGatewayCompatibility(rowProbe.options)).resolves.toEqual({
-      kind: "incompatible",
+  });
+
+  it("finds the target in a valid byte-bounded registry larger than 200 sessions", async () => {
+    const sessions = [
+      ...Array.from({ length: 250 }, (_, index) => ({ name: `other-${index}` })),
+      { name: "main", canonicalSize: { cols: 140, rows: 40 } },
+    ];
+    const { options } = probeOptions([
+      jsonResponse({ sessions }),
+      jsonResponse({ sessions }),
+      jsonResponse({ sessions }),
+    ]);
+
+    await expect(resolveTerminalGatewayCompatibility(options)).resolves.toEqual({
+      kind: "canonical-compatibility",
+      size: { cols: 140, rows: 40 },
     });
   });
 });
