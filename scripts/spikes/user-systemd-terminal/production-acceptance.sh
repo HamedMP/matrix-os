@@ -96,6 +96,32 @@ cleanup_controller_runtime() {
   rm -f -- "$controller_environment_path" "$legacy_controller_environment_path"
 }
 
+diagnose_controller_failure() {
+  local controller_status="$1" descriptor_path="${descriptor_root}/${conflict_id}.json"
+  local descriptor_state=missing unit="matrix-zellij@${conflict_id}.service"
+  local unit_result exec_status keeper_code
+  if [ -L "$descriptor_path" ]; then
+    descriptor_state=symlink
+  elif [ -f "$descriptor_path" ]; then
+    descriptor_state=present
+  elif [ -e "$descriptor_path" ]; then
+    descriptor_state=invalid
+  fi
+  unit_result="$(owner_systemctl show "$unit" -p Result --value 2>/dev/null || true)"
+  exec_status="$(owner_systemctl show "$unit" -p ExecMainStatus --value 2>/dev/null || true)"
+  keeper_code="$(runuser -u matrix -- env \
+    HOME="$home" MATRIX_HOME="$home" \
+    XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
+    journalctl --user -u "$unit" --no-pager -n 20 -o cat 2>/dev/null |
+    sed -n 's/^matrix-terminal-user-keeper: \([a-z][a-z_]*\)$/\1/p' | tail -n 1)"
+  [[ "$unit_result" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || unit_result=unknown
+  [[ "$exec_status" =~ ^[0-9]{1,3}$ ]] || exec_status=unknown
+  [[ "$keeper_code" =~ ^[a-z][a-z_]{0,63}$ ]] || keeper_code=unknown
+  keeper_code="${keeper_code//_/-}"
+  current_failure="${controller_status}-descriptor-${descriptor_state}-unit-${unit_result}-exit-${exec_status}-keeper-${keeper_code}"
+}
+
 json_field() {
   python3 - "$1" "$2" <<'PY'
 import json
@@ -282,6 +308,10 @@ allowed = {
     "hostile-controller-invalid-runtime-id",
     "hostile-controller-invalid-cwd",
     "hostile-controller-create",
+    "hostile-controller-create-invalid-request",
+    "hostile-controller-create-identity-exists",
+    "hostile-controller-create-unavailable",
+    "hostile-controller-create-unexpected-error",
     "hostile-controller-conflicting-descriptor-reuse",
     "hostile-controller-inactive-restart",
     "hostile-controller-descriptor-reject",
@@ -562,7 +592,21 @@ try {
   progress("hostile-controller-invalid-cwd");
   await mustReject(() => runtime.create({ ...base, cwd: "/etc" }));
   progress("hostile-controller-create");
-  const created = await runtime.create(base);
+  let created;
+  try {
+    created = await runtime.create(base);
+  } catch (error) {
+    const safeCreateFailures = new Map([
+      ["InvalidTerminalRuntimeRequestError", "invalid-request"],
+      ["TerminalRuntimeIdentityExistsError", "identity-exists"],
+      ["TerminalRuntimeUnavailableError", "unavailable"],
+    ]);
+    const safeCreateFailure = error instanceof Error
+      ? (safeCreateFailures.get(error.name) ?? "unexpected-error")
+      : "unexpected-error";
+    progress(`hostile-controller-create-${safeCreateFailure}`);
+    throw error;
+  }
   progress("hostile-controller-conflicting-descriptor-reuse");
   await mustReject(() => runtime.create({ ...base, displayName: "acceptance-conflict-b" }));
   progress("hostile-controller-inactive-restart");
@@ -613,6 +657,7 @@ NODE
   then
     controller_status="$(read_controller_diagnostic "$controller_diagnostic" 2>/dev/null || true)"
     current_failure="${controller_status:-hostile-controller-runtime-unavailable}"
+    diagnose_controller_failure "$current_failure"
     rm -f -- "$controller_diagnostic"
     return 1
   fi
