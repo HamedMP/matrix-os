@@ -176,6 +176,11 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("set -Eeuo pipefail");
     expect(acceptance).toContain('write_state "failed:${current_progress}:${current_failure}"');
     expect(acceptance).toContain("api-http-${code}-${safe_code}");
+    expect(acceptance).toContain("auth-env-missing");
+    expect(acceptance).toContain("auth-token-invalid");
+    expect(acceptance).toContain("request-body-invalid");
+    expect(acceptance).toContain("preflight-zellij-");
+    expect(acceptance).toContain("preflight-user-bus-");
     expect(acceptance).toContain("matrix-terminal-user-keeper:");
     expect(acceptance).toContain("ExecMainStatus");
     expect(acceptance).toContain("write_progress runtime-shell-create");
