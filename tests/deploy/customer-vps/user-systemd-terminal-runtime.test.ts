@@ -173,7 +173,11 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(probe).toContain("MemoryMax");
     expect(probe).toContain("TasksMax");
     expect(acceptance).toContain("write_progress");
-    expect(acceptance).toContain('write_state "failed:${current_progress}"');
+    expect(acceptance).toContain("set -Eeuo pipefail");
+    expect(acceptance).toContain('write_state "failed:${current_progress}:${current_failure}"');
+    expect(acceptance).toContain("api-http-${code}-${safe_code}");
+    expect(acceptance).toContain("matrix-terminal-user-keeper:");
+    expect(acceptance).toContain("ExecMainStatus");
     expect(acceptance).toContain("write_progress runtime-shell-create");
     expect(acceptance).toContain("write_progress runtime-agent-create");
     expect(acceptance).toContain("write_progress runtime-shell-snapshot");

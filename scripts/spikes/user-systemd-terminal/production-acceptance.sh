@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 operation="${1:-}"
 head_sha="${2:-}"
@@ -44,6 +44,7 @@ readonly generation_sentinel="${state_root}/generation-sentinel"
 readonly phase1_unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-phase1.service"
 current_progress=initializing
 current_state_prefix=phase1-running
+current_failure=assertion
 
 write_state() {
   install -d -o root -g root -m 0700 "$state_root"
@@ -57,6 +58,7 @@ write_progress() {
   local progress="$1"
   [[ "$progress" =~ ^[a-z][a-z0-9-]{0,63}$ ]]
   current_progress="$progress"
+  current_failure=assertion
   write_state "${current_state_prefix}:${current_progress}"
 }
 
@@ -83,19 +85,29 @@ load_host_auth() {
 
 api_call() {
   local method="$1" path="$2" body="${3:-}" expected="${4:-200}"
-  local response="${state_root}/api-response.json" code
+  local response="${state_root}/api-response.json" code safe_code
   load_host_auth
   if [ -n "$body" ]; then
-    code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
+    if ! code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
       -X "$method" "http://127.0.0.1:4000${path}" \
       -H "authorization: Bearer ${MATRIX_AUTH_TOKEN}" \
-      -H 'content-type: application/json' --data-binary "$body")"
+      -H 'content-type: application/json' --data-binary "$body")"; then
+      current_failure=api-transport
+      return 1
+    fi
   else
-    code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
+    if ! code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
       -X "$method" "http://127.0.0.1:4000${path}" \
-      -H "authorization: Bearer ${MATRIX_AUTH_TOKEN}")"
+      -H "authorization: Bearer ${MATRIX_AUTH_TOKEN}")"; then
+      current_failure=api-transport
+      return 1
+    fi
   fi
   if [ "$code" != "$expected" ]; then
+    safe_code="$(jq -r '.error.code // empty' "$response" 2>/dev/null || true)"
+    if [[ ! "$safe_code" =~ ^[a-z][a-z0-9_]{0,63}$ ]]; then safe_code=unknown; fi
+    safe_code="${safe_code//_/-}"
+    current_failure="api-http-${code}-${safe_code}"
     echo "user_systemd_acceptance_api_failed" >&2
     return 1
   fi
@@ -443,10 +455,46 @@ disable_acceptance_runtime() {
   systemctl restart matrix-gateway.service >/dev/null 2>&1 || true
 }
 
+diagnose_runtime_failure() {
+  local target_name descriptor runtime_id="" unit unit_result exec_status keeper_code
+  case "$current_progress" in
+    runtime-shell-create) target_name="$shell_name" ;;
+    runtime-agent-create) target_name="$agent_name" ;;
+    *) return 0 ;;
+  esac
+  for descriptor in "$descriptor_root"/rt_*.json; do
+    [ -f "$descriptor" ] && [ ! -L "$descriptor" ] || continue
+    if jq -e --arg name "$target_name" '
+      type == "object"
+      and .displayName == $name
+      and (.runtimeId | type == "string" and test("^rt_[0-9a-f]{32}$"))
+    ' "$descriptor" >/dev/null 2>&1; then
+      runtime_id="$(jq -r .runtimeId "$descriptor")"
+      break
+    fi
+  done
+  [ -n "$runtime_id" ] || return 0
+  unit="matrix-zellij@${runtime_id}.service"
+  unit_result="$(owner_systemctl show "$unit" -p Result --value 2>/dev/null || true)"
+  exec_status="$(owner_systemctl show "$unit" -p ExecMainStatus --value 2>/dev/null || true)"
+  keeper_code="$(runuser -u matrix -- env \
+    HOME="$home" MATRIX_HOME="$home" \
+    XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
+    journalctl --user -u "$unit" --no-pager -n 20 -o cat 2>/dev/null |
+    sed -n 's/^matrix-terminal-user-keeper: \([a-z][a-z_]*\)$/\1/p' | tail -n 1)"
+  [[ "$unit_result" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || unit_result=unknown
+  [[ "$exec_status" =~ ^[0-9]{1,3}$ ]] || exec_status=unknown
+  [[ "$keeper_code" =~ ^[a-z][a-z_]{0,63}$ ]] || keeper_code=unknown
+  keeper_code="${keeper_code//_/-}"
+  current_failure="${current_failure}-unit-${unit_result}-exit-${exec_status}-keeper-${keeper_code}"
+}
+
 fail_phase() {
   local status=$?
   trap - ERR
-  write_state "failed:${current_progress}"
+  diagnose_runtime_failure || true
+  write_state "failed:${current_progress}:${current_failure}"
   cleanup_runtime_sessions || true
   remove_hostile_state || true
   disable_acceptance_runtime || true
