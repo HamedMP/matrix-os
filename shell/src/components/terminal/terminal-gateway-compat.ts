@@ -142,7 +142,10 @@ async function observeSessionMetadata(
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (_err: unknown) {
+  } catch (err: unknown) {
+    console.warn("[terminal] invalid session metadata JSON", {
+      category: err instanceof SyntaxError ? "syntax" : "unexpected",
+    });
     return { kind: "invalid" };
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {

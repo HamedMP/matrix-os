@@ -4,6 +4,7 @@ import {
   MAX_TERMINAL_SESSION_METADATA_ROWS,
   TERMINAL_METADATA_FETCH_TIMEOUT_MS,
   initialTerminalProtocolState,
+  isTerminalCanonicalGridSize,
   resolveTerminalGatewayCompatibility,
   transitionTerminalProtocolState,
 } from "../../shell/src/components/terminal/terminal-gateway-compat.js";
@@ -121,6 +122,13 @@ describe("terminal gateway compatibility negotiation", () => {
     await expect(resolveTerminalGatewayCompatibility(options)).resolves.toEqual({
       kind: "incompatible",
     });
+  });
+
+  it("accepts only the inclusive protocol boundary values", () => {
+    expect(isTerminalCanonicalGridSize({ cols: 1, rows: 1 })).toBe(true);
+    expect(isTerminalCanonicalGridSize({ cols: 500, rows: 200 })).toBe(true);
+    expect(isTerminalCanonicalGridSize({ cols: 0, rows: 1 })).toBe(false);
+    expect(isTerminalCanonicalGridSize({ cols: 500, rows: 201 })).toBe(false);
   });
 
   it.each([
