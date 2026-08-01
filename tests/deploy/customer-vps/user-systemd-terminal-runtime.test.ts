@@ -204,6 +204,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('owner_systemctl stop "matrix-zellij@${runtime_id}.service"');
     expect(acceptance).toContain('rm -f -- "${descriptor_root}/${runtime_id}.json"');
     expect(acceptance).not.toContain("readonly conflict_id=rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(acceptance).toContain('local layout_path="${home}/system/zellij/layouts/matrix.kdl"');
     expect(acceptance).toContain('controller_diagnostic="${state_root}/hostile-controller.diagnostic"');
     expect(acceptance).toContain('progress("hostile-controller-invalid-runtime-id")');
     expect(acceptance).toContain('current_failure="${controller_status:-hostile-controller-runtime-unavailable}"');
