@@ -342,24 +342,63 @@ load_host_auth() {
   export MATRIX_AUTH_TOKEN="$token"
 }
 
+diagnose_api_transport() {
+  local curl_status="$1" gateway_pid_before="$2" curl_state=other
+  local gateway_pid_after pid_state=unknown gateway_state=inactive health_state=failed
+  case "$curl_status" in
+    5) curl_state=proxy-dns ;;
+    6) curl_state=dns ;;
+    7) curl_state=connect ;;
+    23) curl_state=write ;;
+    28) curl_state=timeout ;;
+    52) curl_state=empty-reply ;;
+    55) curl_state=send ;;
+    56) curl_state=receive ;;
+  esac
+  gateway_pid_after="$(systemctl show matrix-gateway.service -p MainPID --value 2>/dev/null || true)"
+  if [[ "$gateway_pid_before" =~ ^[1-9][0-9]*$ ]] && [[ "$gateway_pid_after" =~ ^[1-9][0-9]*$ ]]; then
+    if [ "$gateway_pid_before" = "$gateway_pid_after" ]; then
+      pid_state=same
+    else
+      pid_state=changed
+    fi
+  fi
+  if systemctl is-active --quiet matrix-gateway.service; then
+    gateway_state=active
+  elif systemctl is-failed --quiet matrix-gateway.service; then
+    gateway_state=failed
+  fi
+  if curl --fail --silent --max-time 5 http://127.0.0.1:4000/health >/dev/null 2>&1; then
+    health_state=ok
+  fi
+  current_failure="api-transport-${curl_state}-gateway-pid-${pid_state}-gateway-${gateway_state}-health-${health_state}"
+}
+
 api_call() {
   local method="$1" path="$2" body="${3:-}" expected="${4:-200}"
-  local response="${state_root}/api-response.json" code safe_code
+  local response="${state_root}/api-response.json" code safe_code curl_status gateway_pid_before
   load_host_auth
   current_failure=api-transport
+  gateway_pid_before="$(systemctl show matrix-gateway.service -p MainPID --value 2>/dev/null || true)"
   if [ -n "$body" ]; then
-    if ! code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
+    if code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
       -X "$method" "http://127.0.0.1:4000${path}" \
       -H "authorization: Bearer ${MATRIX_AUTH_TOKEN}" \
       -H 'content-type: application/json' --data-binary "$body")"; then
-      current_failure=api-transport
+      :
+    else
+      curl_status=$?
+      diagnose_api_transport "$curl_status" "$gateway_pid_before"
       return 1
     fi
   else
-    if ! code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
+    if code="$(curl --silent --show-error --max-time 45 -o "$response" -w '%{http_code}' \
       -X "$method" "http://127.0.0.1:4000${path}" \
       -H "authorization: Bearer ${MATRIX_AUTH_TOKEN}")"; then
-      current_failure=api-transport
+      :
+    else
+      curl_status=$?
+      diagnose_api_transport "$curl_status" "$gateway_pid_before"
       return 1
     fi
   fi
