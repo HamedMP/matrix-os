@@ -240,6 +240,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("set -Eeuo pipefail");
     expect(acceptance).toContain('write_state "failed:${current_progress}:${current_failure}"');
     expect(acceptance).toContain("api-http-${code}-${safe_code}");
+    expect(acceptance).toContain("diagnose_api_transport");
+    expect(acceptance).toContain('current_failure="api-transport-${curl_state}-gateway-pid-${pid_state}-gateway-${gateway_state}-health-${health_state}"');
+    expect(acceptance).toContain('7) curl_state=connect');
+    expect(acceptance).toContain('56) curl_state=receive');
     expect(acceptance).toContain("auth-env-missing");
     expect(acceptance).toContain("auth-token-invalid");
     expect(acceptance).toContain("attachment-ready-timeout");
