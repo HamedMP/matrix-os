@@ -665,11 +665,82 @@ NODE
 }
 
 request_update() {
+  rm -f -- /opt/matrix/app/.update-error.json
   runuser -u matrix -- /opt/matrix/bin/matrix-update --no-tail "$1" >/dev/null
 }
 
+read_update_error_code() {
+  python3 - /opt/matrix/app/.update-error.json <<'PY'
+import json
+import os
+import re
+import stat
+import sys
+
+error_fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+error_stat = os.fstat(error_fd)
+if not stat.S_ISREG(error_stat.st_mode) or error_stat.st_size > 2048:
+    os.close(error_fd)
+    raise SystemExit(1)
+with os.fdopen(error_fd, encoding="utf-8") as source:
+    code = json.load(source).get("code")
+if not isinstance(code, str) or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None:
+    raise SystemExit(1)
+print(code)
+PY
+}
+
+path_state() {
+  local path="$1"
+  if [ -L "$path" ]; then
+    echo symlink
+  elif [ -f "$path" ]; then
+    echo present
+  elif [ -e "$path" ]; then
+    echo invalid
+  else
+    echo missing
+  fi
+}
+
+diagnose_update_failure() {
+  local expected="$1" version_state=missing trigger_state manifest_state error_code=none
+  local sync_state=inactive gateway_state=inactive health_state=failed installed
+  if [ -f /opt/matrix/app/BUNDLE_VERSION ] && [ ! -L /opt/matrix/app/BUNDLE_VERSION ]; then
+    installed="$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)"
+    if [ "$installed" = "$expected" ]; then
+      version_state=expected
+    elif [[ "$installed" =~ ^v[0-9][A-Za-z0-9._-]{0,126}$ ]]; then
+      version_state=other
+    else
+      version_state=invalid
+    fi
+  elif [ -e /opt/matrix/app/BUNDLE_VERSION ] || [ -L /opt/matrix/app/BUNDLE_VERSION ]; then
+    version_state=invalid
+  fi
+  trigger_state="$(path_state /opt/matrix/app/.update-now)"
+  manifest_state="$(path_state /opt/matrix/app/.update-available.json)"
+  if [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; then
+    error_code="$(read_update_error_code 2>/dev/null || true)"
+    case "$error_code" in
+      insufficient_disk_space|unknown) ;;
+      *) error_code=unknown ;;
+    esac
+  fi
+  if systemctl is-active --quiet matrix-sync-agent.service; then
+    sync_state=active
+  elif systemctl is-failed --quiet matrix-sync-agent.service; then
+    sync_state=failed
+  fi
+  if systemctl is-active --quiet matrix-gateway.service; then gateway_state=active; fi
+  if curl --fail --silent --max-time 5 http://127.0.0.1:4000/health >/dev/null 2>&1; then
+    health_state=ok
+  fi
+  current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"
+}
+
 wait_update() {
-  local expected="$1" deadline=$((SECONDS + 1800))
+  local expected="$1" deadline=$((SECONDS + 1800)) error_code=none
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
       [ ! -e /opt/matrix/app/.update-now ] &&
@@ -677,8 +748,21 @@ wait_update() {
       curl --fail --silent --max-time 5 http://127.0.0.1:4000/health >/dev/null 2>&1; then
       return 0
     fi
+    if [ ! -e /opt/matrix/app/.update-now ] && [ ! -L /opt/matrix/app/.update-now ] &&
+      { [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; }; then
+      error_code="$(read_update_error_code 2>/dev/null || true)"
+      case "$error_code" in
+        insufficient_disk_space|unknown) ;;
+        *) error_code=unknown ;;
+      esac
+      if [ "$error_code" != none ]; then
+        diagnose_update_failure "$expected"
+        return 1
+      fi
+    fi
     sleep 1
   done
+  diagnose_update_failure "$expected"
   return 1
 }
 
