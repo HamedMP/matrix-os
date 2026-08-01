@@ -24,6 +24,7 @@ interface TerminalAppearanceOptions {
   cursorStyle: "block" | "bar" | "underline";
   smoothScrollDuration: number;
   ligatures: boolean;
+  fit?: boolean;
 }
 
 export function applyTerminalAppearance(
@@ -40,7 +41,9 @@ export function applyTerminalAppearance(
   if (term.element) {
     term.element.style.fontVariantLigatures = options.ligatures ? "normal" : "none";
   }
-  fitAddon.fit();
+  if (options.fit !== false) {
+    fitAddon.fit();
+  }
   if (term.rows > 0) {
     term.refresh(0, term.rows - 1);
   }
