@@ -302,7 +302,7 @@ jobs:
               last_state="$state"
               case "$state" in
                 phase1-running:bundle-a-update|phase1-running:bundle-b-update|phase1-running:rollback-update)
-                  progress_timeout=2100
+                  progress_timeout=4200
                   ;;
                 phase1-running:gateway-restart)
                   progress_timeout=900

@@ -1047,6 +1047,23 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('Repair complete; retrying pending update');
   });
 
+  it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('download_bundle()');
+    expect(syncAgent).toContain('for attempt in 1 2; do');
+    expect(syncAgent).toContain('/usr/bin/timeout --signal=KILL 1800 curl');
+    expect(syncAgent).toContain('continue_args=(--continue-at -)');
+    expect(syncAgent).toContain('fetch_manifest "$(release_url_for_version "$version")"');
+    expect(syncAgent).toContain('[ "$refreshed_version" = "$version" ]');
+    expect(syncAgent).toContain('[ "$refreshed_sha256" = "$expected_sha256" ]');
+    expect(syncAgent).toContain('[ "$refreshed_size" = "$expected_size" ]');
+    expect(syncAgent).toContain('write_update_error "download_metadata_changed"');
+    expect(syncAgent).toContain('write_update_error "download_failed"');
+    expect(syncAgent).toContain('download_bundle "$version" "$sha256" "$(json_field "$manifest" size)" "$bundle_url" "$bundle_file"');
+  });
+
   it('sync agent replaces the app tree with root permissions', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
