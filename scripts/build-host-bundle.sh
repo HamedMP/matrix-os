@@ -92,11 +92,12 @@ ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
   exit 1
 }
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
-TERMINAL_RUNTIME_GENERATION="gen_$({
-  sha256sum "$STAGE_DIR/bin/zellij"
-  sha256sum "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs"
-  sha256sum "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-attach.mjs"
-} | sha256sum | awk '{print $1}')"
+TERMINAL_RUNTIME_GENERATION="$(
+  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
+    "$STAGE_DIR/bin/zellij" \
+    "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs" \
+    "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-attach.mjs"
+)"
 TERMINAL_RUNTIME_GENERATION_DIR="$STAGE_DIR/terminal-runtime/generations/$TERMINAL_RUNTIME_GENERATION"
 mkdir -p "$TERMINAL_RUNTIME_GENERATION_DIR"
 install -m 0755 "$STAGE_DIR/bin/zellij" "$TERMINAL_RUNTIME_GENERATION_DIR/zellij"

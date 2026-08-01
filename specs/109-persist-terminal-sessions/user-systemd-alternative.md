@@ -89,9 +89,21 @@ Each bundle carries a content-addressed directory:
 new unit starts. Every descriptor pins its exact generation, so an already
 running keeper and later explicit recovery do not silently switch Zellij
 versions. Updates add and verify a generation before switching `current`.
+Generation IDs hash the three ordered content digests, not `sha256sum` output
+paths, so verification is stable across build, extraction, and installation
+directories. The helper rejects symlinked or non-regular inputs.
 Rollback switches `current` to the generation recorded by the restored app.
 No update or rollback stops `matrix-zellij@*`, `matrix-terminal.slice`, or
 `user@<uid>.service`.
+
+The first bundle that introduces this installer can be applied by an older,
+already-running sync-agent process that does not yet know about terminal
+generations. Before the dormant flag is activated, the activation/acceptance
+path must reload the newly installed sync agent and perform one supported
+exact-version reapply. That idempotent reapply installs and verifies the
+generation and user units; it is an explicit activation prerequisite, not a
+default-on or customer rollout side effect. Later updates use the loaded
+installer directly.
 
 Reference-aware generation garbage collection keeps
 the current app generation, rollback app generation, and every generation

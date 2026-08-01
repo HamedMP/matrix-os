@@ -51,11 +51,23 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(build).toContain('"$STAGE_DIR/terminal-runtime/generations/$TERMINAL_RUNTIME_GENERATION"');
     expect(build).toContain('"$STAGE_DIR/user-systemd"');
     expect(build).toContain("TERMINAL_RUNTIME_GENERATION");
+    expect(build).toContain("matrix-terminal-generation-id");
     expect(build).toContain("matrix-terminal-attach.mjs");
     expect(build).toContain("bin app runtime systemd user-systemd terminal-runtime release.json");
     expect(cloudInit).toContain("/etc/systemd/user");
     expect(cloudInit).toContain("systemctl --user daemon-reload");
     expect(cloudInit).toContain("loginctl enable-linger matrix");
+  });
+
+  it("derives terminal generation IDs from bytes rather than staging paths", () => {
+    const generationId = readFileSync(
+      join(root, "distro/customer-vps/host-bin/matrix-terminal-generation-id"),
+      "utf8",
+    );
+
+    expect(generationId).toContain("sha256sum \"$asset\" | awk '{print $1}'");
+    expect(generationId).toContain("sha256sum | awk '{print \"gen_\" $1}'");
+    expect(generationId).not.toContain("sha256sum \"$@\"");
   });
 
   it("keeps the production adapter dormant behind one exact activation flag", () => {
@@ -93,8 +105,17 @@ describe("customer VPS user-systemd terminal runtime", () => {
       join(root, "distro/customer-vps/host-bin/matrix-terminal-generation-gc.py"),
       "utf8",
     );
+    const decision = readFileSync(
+      join(root, "specs/109-persist-terminal-sessions/user-systemd-alternative.md"),
+      "utf8",
+    );
 
     expect(updater).toContain("install_terminal_runtime_payload");
+    expect(updater).toContain('if ! install_terminal_runtime_payload "$extract_dir"; then');
+    expect(updater).toContain("Terminal runtime installation failed; aborting before app replacement");
+    expect(updater.indexOf('if ! install_terminal_runtime_payload "$extract_dir"; then')).toBeLessThan(
+      updater.indexOf('sudo mv "$extract_dir/app" "$APP_DIR"'),
+    );
     expect(updater).toContain("activate_terminal_runtime_generation");
     expect(updater).toContain("cleanup_terminal_runtime_generations");
     expect(updater).toContain("TERMINAL_RUNTIME_MAX_GENERATIONS");
@@ -105,6 +126,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(updater).toContain("terminal runtime generation cap reached by active or recoverable sessions");
     expect(updater).not.toMatch(/systemctl stop[^\n]*(matrix-zellij|matrix-terminal\.slice|user@)/);
     expect(updater).not.toMatch(/systemctl restart[^\n]*(matrix-zellij|matrix-terminal\.slice|user@)/);
+    expect(decision).toContain("ordered content digests");
+    expect(decision).toContain("exact-version reapply");
   });
 
   it("gates exact-head disposable-VPS acceptance behind an explicit same-repository label", () => {
@@ -181,6 +204,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("request-body-invalid");
     expect(acceptance).toContain("preflight-zellij-");
     expect(acceptance).toContain("preflight-user-bus-");
+    expect(acceptance).toContain("os.O_NOFOLLOW");
+    expect(acceptance).toContain("prepare-exact-head-runtime");
+    expect(acceptance).toContain("matrix-sync-agent.service");
+    expect(acceptance).not.toMatch(/\bjq\b/);
     expect(acceptance).toContain("matrix-terminal-user-keeper:");
     expect(acceptance).toContain("ExecMainStatus");
     expect(acceptance).toContain("write_progress runtime-shell-create");
@@ -195,6 +222,9 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(workflow).toContain("Acceptance failed at ${state}");
     expect(workflow).toContain("progress_deadline=$((SECONDS + progress_timeout))");
     expect(workflow).toContain("Acceptance phase stalled at ${state}");
+    expect(workflow).toContain('echo "version=$version" >>"$GITHUB_OUTPUT"');
+    expect(workflow).toContain("PREVIEW_VERSION: ${{ steps.preview.outputs.version }}");
+    expect(workflow).toContain("$op,$sha,$nonce,$version");
   });
 
   it("rejects permissive descriptor parsers and pins the keeper helper to the descriptor generation", () => {

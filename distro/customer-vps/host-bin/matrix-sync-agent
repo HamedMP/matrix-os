@@ -140,11 +140,10 @@ terminal_runtime_generation_for_dir() {
   [ -f "$generation_dir/zellij" ] && [ ! -L "$generation_dir/zellij" ] || return 1
   [ -f "$generation_dir/matrix-terminal-user-keeper.mjs" ] && [ ! -L "$generation_dir/matrix-terminal-user-keeper.mjs" ] || return 1
   [ -f "$generation_dir/matrix-terminal-attach.mjs" ] && [ ! -L "$generation_dir/matrix-terminal-attach.mjs" ] || return 1
-  printf 'gen_%s\n' "$({
-    sha256sum "$generation_dir/zellij"
-    sha256sum "$generation_dir/matrix-terminal-user-keeper.mjs"
-    sha256sum "$generation_dir/matrix-terminal-attach.mjs"
-  } | sha256sum | awk '{print $1}')"
+  "$BIN_DIR/matrix-terminal-generation-id" \
+    "$generation_dir/zellij" \
+    "$generation_dir/matrix-terminal-user-keeper.mjs" \
+    "$generation_dir/matrix-terminal-attach.mjs"
 }
 
 activate_terminal_runtime_generation() {
@@ -158,12 +157,12 @@ activate_terminal_runtime_generation() {
     return 1
   }
   link_tmp="$TERMINAL_RUNTIME_ROOT/.current.$$"
-  sudo rm -f -- "$link_tmp"
-  sudo ln -s "generations/$generation" "$link_tmp"
-  sudo mv -Tf "$link_tmp" "$TERMINAL_RUNTIME_ROOT/current"
+  sudo rm -f -- "$link_tmp" || return 1
+  sudo ln -s "generations/$generation" "$link_tmp" || return 1
+  sudo mv -Tf "$link_tmp" "$TERMINAL_RUNTIME_ROOT/current" || return 1
   sudo install -o root -g root -m 0755 \
     "$generation_dir/matrix-terminal-attach.mjs" \
-    /usr/local/bin/matrix-terminal-attach
+    /usr/local/bin/matrix-terminal-attach || return 1
 }
 
 reload_terminal_user_manager() {
@@ -185,7 +184,7 @@ cleanup_terminal_runtime_generations() {
     [[ "$candidate" =~ ^gen_[0-9a-f]{64}$ ]] || continue
     [ -d "$TERMINAL_RUNTIME_ROOT/generations/$candidate" ] || continue
     [ ! -L "$TERMINAL_RUNTIME_ROOT/generations/$candidate" ] || continue
-    sudo rm -rf -- "$TERMINAL_RUNTIME_ROOT/generations/$candidate"
+    sudo rm -rf -- "$TERMINAL_RUNTIME_ROOT/generations/$candidate" || return 1
     log "Removed unreferenced terminal runtime generation $candidate"
   done < <(python3 "$BIN_DIR/matrix-terminal-generation-gc.py" \
     "$TERMINAL_RUNTIME_ROOT" \
@@ -203,7 +202,7 @@ cleanup_terminal_runtime_generations() {
 install_terminal_runtime_payload() {
   local extract_dir="$1" generation source_dir destination_dir incoming_dir
   [ -f "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE" ] || return 0
-  generation="$(cat "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE")"
+  generation="$(cat "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE")" || return 1
   [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || {
     log "ERROR: invalid terminal runtime generation in bundle"
     return 1
@@ -214,7 +213,7 @@ install_terminal_runtime_payload() {
     return 1
   }
 
-  sudo install -d -o root -g root -m 0755 "$TERMINAL_RUNTIME_ROOT/generations"
+  sudo install -d -o root -g root -m 0755 "$TERMINAL_RUNTIME_ROOT/generations" || return 1
   destination_dir="$TERMINAL_RUNTIME_ROOT/generations/$generation"
   if [ -e "$destination_dir" ]; then
     [ ! -L "$destination_dir" ] && [ "$(terminal_runtime_generation_for_dir "$destination_dir")" = "$generation" ] || {
@@ -237,12 +236,12 @@ install_terminal_runtime_payload() {
   fi
 
   if [ -d "$extract_dir/user-systemd" ]; then
-    sudo install -d -o root -g root -m 0755 /etc/systemd/user
+    sudo install -d -o root -g root -m 0755 /etc/systemd/user || return 1
     sudo find "$extract_dir/user-systemd" -maxdepth 1 -type f \( -name 'matrix-*.service' -o -name 'matrix-*.slice' \) \
-      -exec install -o root -g root -m 0644 {} /etc/systemd/user/ \;
-    reload_terminal_user_manager
+      -exec install -o root -g root -m 0644 {} /etc/systemd/user/ \; || return 1
+    reload_terminal_user_manager || return 1
   fi
-  activate_terminal_runtime_generation "$generation"
+  activate_terminal_runtime_generation "$generation" || return 1
   cleanup_terminal_runtime_generations || return 1
   log "Installed terminal runtime generation $generation"
 }
@@ -420,6 +419,11 @@ apply_update() {
     log "ERROR: extracted bundle missing 'app' directory"
     rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
+  if ! install_terminal_runtime_payload "$extract_dir"; then
+    log "ERROR: Terminal runtime installation failed; aborting before app replacement"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
 
   # Stop services, backup, install
   log "Stopping services..."
@@ -442,7 +446,6 @@ apply_update() {
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
-  install_terminal_runtime_payload "$extract_dir"
   write_symphony_env
   log "Updated Symphony env"
 
