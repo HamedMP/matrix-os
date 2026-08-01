@@ -252,6 +252,39 @@ raise SystemExit(1)
 PY
 }
 
+read_controller_diagnostic() {
+  python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+diagnostic_fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+diagnostic_stat = os.fstat(diagnostic_fd)
+if not stat.S_ISREG(diagnostic_stat.st_mode) or diagnostic_stat.st_size > 2048:
+    os.close(diagnostic_fd)
+    raise SystemExit(1)
+with os.fdopen(diagnostic_fd, encoding="utf-8") as source:
+    lines = source.read().splitlines()
+allowed = {
+    "hostile-controller-invalid-runtime-id",
+    "hostile-controller-invalid-cwd",
+    "hostile-controller-create",
+    "hostile-controller-conflicting-descriptor-reuse",
+    "hostile-controller-inactive-restart",
+    "hostile-controller-descriptor-reject",
+    "hostile-controller-unit-descriptor-reject",
+    "hostile-controller-unit-environment-reject",
+    "hostile-controller-idempotent-delete",
+    "hostile-controller-non-error",
+}
+for candidate in reversed(lines):
+    if candidate in allowed:
+        print(candidate)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 load_host_auth() {
   local line token
   current_failure=auth-env-missing
@@ -471,12 +504,14 @@ verify_resource_controls() {
 
 run_controller_adversarial_checks() {
   local layout_path="${home}/system/zellij/layouts/default.kdl"
-  runuser -u matrix -- env \
+  local controller_diagnostic="${state_root}/hostile-controller.diagnostic" controller_status
+  install -m 0600 /dev/null "$controller_diagnostic"
+  if ! runuser -u matrix -- env \
     HOME="$home" MATRIX_HOME="$home" \
     XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
     /opt/matrix/runtime/node/bin/node --input-type=module - \
-    "$home" "$conflict_id" "$layout_path" <<'NODE'
+    "$home" "$conflict_id" "$layout_path" 2>"$controller_diagnostic" <<'NODE'
 import { execFile } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -487,16 +522,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const [homePath, runtimeId, layoutPath] = process.argv.slice(2);
-const generation = await loadInstalledTerminalRuntimeGeneration("/opt/matrix/app");
-const runtime = createUserSystemdTerminalRuntime({ homePath, generation });
-const base = {
-  runtimeId,
-  scope: "terminal",
-  kind: "shell",
-  displayName: "acceptance-conflict-a",
-  cwd: homePath,
-  layoutPath,
-};
+const progress = (stage) => process.stderr.write(`${stage}\n`);
 async function mustReject(operation) {
   let rejected = false;
   try { await operation(); } catch (error) {
@@ -505,47 +531,78 @@ async function mustReject(operation) {
   }
   if (!rejected) process.exit(1);
 }
-await mustReject(() => runtime.create({ ...base, runtimeId: "../../matrix-gateway" }));
-await mustReject(() => runtime.create({ ...base, cwd: "/etc" }));
-const created = await runtime.create(base);
-await mustReject(() => runtime.create({ ...base, displayName: "acceptance-conflict-b" }));
-await execFileAsync("systemctl", ["--user", "stop", `matrix-zellij@${runtimeId}.service`]);
-const restarted = await runtime.start(runtimeId);
-if (restarted.runtimeId !== created.runtimeId || restarted.sessionName !== created.sessionName) process.exit(1);
-await execFileAsync("systemctl", ["--user", "stop", `matrix-zellij@${runtimeId}.service`]);
-const descriptorPath = `${homePath}/system/terminal-runtimes/${runtimeId}.json`;
-const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
-await writeFile(descriptorPath, `${JSON.stringify({
-  ...descriptor,
-  command: "/bin/sh",
-  unit: "matrix-gateway.service",
-  url: "file:///etc/passwd",
-  environment: { PATH: "/tmp" },
-})}\n`, { mode: 0o600 });
-await mustReject(() => runtime.start(runtimeId));
 try {
-  await execFileAsync("systemctl", ["--user", "start", `matrix-zellij@${runtimeId}.service`]);
+  const generation = await loadInstalledTerminalRuntimeGeneration("/opt/matrix/app");
+  const runtime = createUserSystemdTerminalRuntime({ homePath, generation });
+  const base = {
+    runtimeId,
+    scope: "terminal",
+    kind: "shell",
+    displayName: "acceptance-conflict-a",
+    cwd: homePath,
+    layoutPath,
+  };
+  progress("hostile-controller-invalid-runtime-id");
+  await mustReject(() => runtime.create({ ...base, runtimeId: "../../matrix-gateway" }));
+  progress("hostile-controller-invalid-cwd");
+  await mustReject(() => runtime.create({ ...base, cwd: "/etc" }));
+  progress("hostile-controller-create");
+  const created = await runtime.create(base);
+  progress("hostile-controller-conflicting-descriptor-reuse");
+  await mustReject(() => runtime.create({ ...base, displayName: "acceptance-conflict-b" }));
+  progress("hostile-controller-inactive-restart");
+  await execFileAsync("systemctl", ["--user", "stop", `matrix-zellij@${runtimeId}.service`]);
+  const restarted = await runtime.start(runtimeId);
+  if (restarted.runtimeId !== created.runtimeId || restarted.sessionName !== created.sessionName) process.exit(1);
+  await execFileAsync("systemctl", ["--user", "stop", `matrix-zellij@${runtimeId}.service`]);
+  const descriptorPath = `${homePath}/system/terminal-runtimes/${runtimeId}.json`;
+  const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
+  await writeFile(descriptorPath, `${JSON.stringify({
+    ...descriptor,
+    command: "/bin/sh",
+    unit: "matrix-gateway.service",
+    url: "file:///etc/passwd",
+    environment: { PATH: "/tmp" },
+  })}\n`, { mode: 0o600 });
+  progress("hostile-controller-descriptor-reject");
+  await mustReject(() => runtime.start(runtimeId));
+  progress("hostile-controller-unit-descriptor-reject");
+  try {
+    await execFileAsync("systemctl", ["--user", "start", `matrix-zellij@${runtimeId}.service`]);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await mustReject(() => execFileAsync("systemctl", ["--user", "is-active", `matrix-zellij@${runtimeId}.service`]));
+  await execFileAsync("systemctl", ["--user", "reset-failed", `matrix-zellij@${runtimeId}.service`]);
+  const environmentPath = `${homePath}/system/terminal-runtimes/hostile-environment.json`;
+  await writeFile(environmentPath, `${JSON.stringify({ LD_PRELOAD: "/tmp/hostile.so" })}\n`, { mode: 0o600 });
+  await writeFile(descriptorPath, `${JSON.stringify({ ...descriptor, environmentPath })}\n`, { mode: 0o600 });
+  progress("hostile-controller-unit-environment-reject");
+  try {
+    await execFileAsync("systemctl", ["--user", "start", `matrix-zellij@${runtimeId}.service`]);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await mustReject(() => execFileAsync("systemctl", ["--user", "is-active", `matrix-zellij@${runtimeId}.service`]));
+  await rm(environmentPath, { force: true });
+  await writeFile(descriptorPath, `${JSON.stringify(descriptor)}\n`, { mode: 0o600 });
+  progress("hostile-controller-idempotent-delete");
+  await runtime.delete(runtimeId);
+  await runtime.delete(runtimeId);
 } catch (error) {
-  if (!(error instanceof Error)) throw error;
+  if (!(error instanceof Error)) progress("hostile-controller-non-error");
+  process.exit(1);
 }
-await new Promise((resolve) => setTimeout(resolve, 500));
-await mustReject(() => execFileAsync("systemctl", ["--user", "is-active", `matrix-zellij@${runtimeId}.service`]));
-await execFileAsync("systemctl", ["--user", "reset-failed", `matrix-zellij@${runtimeId}.service`]);
-const environmentPath = `${homePath}/system/terminal-runtimes/hostile-environment.json`;
-await writeFile(environmentPath, `${JSON.stringify({ LD_PRELOAD: "/tmp/hostile.so" })}\n`, { mode: 0o600 });
-await writeFile(descriptorPath, `${JSON.stringify({ ...descriptor, environmentPath })}\n`, { mode: 0o600 });
-try {
-  await execFileAsync("systemctl", ["--user", "start", `matrix-zellij@${runtimeId}.service`]);
-} catch (error) {
-  if (!(error instanceof Error)) throw error;
-}
-await new Promise((resolve) => setTimeout(resolve, 500));
-await mustReject(() => execFileAsync("systemctl", ["--user", "is-active", `matrix-zellij@${runtimeId}.service`]));
-await rm(environmentPath, { force: true });
-await writeFile(descriptorPath, `${JSON.stringify(descriptor)}\n`, { mode: 0o600 });
-await runtime.delete(runtimeId);
-await runtime.delete(runtimeId);
 NODE
+  then
+    controller_status="$(read_controller_diagnostic "$controller_diagnostic" 2>/dev/null || true)"
+    current_failure="${controller_status:-hostile-controller-runtime-unavailable}"
+    rm -f -- "$controller_diagnostic"
+    return 1
+  fi
+  rm -f -- "$controller_diagnostic"
 }
 
 request_update() {

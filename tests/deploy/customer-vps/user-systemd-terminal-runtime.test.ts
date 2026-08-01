@@ -198,6 +198,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(probe).toContain("recordAttachStatus");
     expect(probe).toContain("writeFileSync(attachStatusPath");
     expect(acceptance).toContain("read_probe_diagnostic");
+    expect(acceptance).toContain("read_controller_diagnostic");
+    expect(acceptance).toContain('controller_diagnostic="${state_root}/hostile-controller.diagnostic"');
+    expect(acceptance).toContain('progress("hostile-controller-invalid-runtime-id")');
+    expect(acceptance).toContain('current_failure="${controller_status:-hostile-controller-runtime-unavailable}"');
     expect(acceptance).toContain('attach_diagnostic="${state_root}/attach-${runtime_id}.diagnostic"');
     expect(acceptance).toContain('2>"$attach_diagnostic"');
     expect(acceptance).toContain('attachment-ready-${attach_status}');
