@@ -184,6 +184,7 @@ jobs:
               printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
               echo "::add-mask::$address"
               echo "address=$address" >>"$GITHUB_OUTPUT"
+              echo "version=$version" >>"$GITHUB_OUTPUT"
               exit 0
             fi
             sleep 15
@@ -247,6 +248,7 @@ jobs:
       - name: Run two-bundle, gateway-failure, rollback, and pre-reboot matrix
         env:
           ADDRESS: ${{ steps.preview.outputs.address }}
+          PREVIEW_VERSION: ${{ steps.preview.outputs.version }}
         run: |
           set -euo pipefail
           token="$(node --input-type=module -e '
@@ -258,8 +260,8 @@ jobs:
           call_helper() {
             local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
             body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
-              --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
-              command:["/usr/bin/sudo",$helper,$op,$sha,$nonce],timeoutMs:30000}')"
+              --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" --arg version "$PREVIEW_VERSION" '{
+              command:["/usr/bin/sudo",$helper,$op,$sha,$nonce,$version],timeoutMs:30000}')"
             curl --fail --silent --show-error --max-time 45 --insecure \
               --resolve "app.matrix-os.com:443:${ADDRESS}" \
               -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
@@ -270,8 +272,12 @@ jobs:
           }
           call_helper prepare
           sleep 5
-          deadline=$((SECONDS + 300))
+          deadline=$((SECONDS + 2100))
           until state="$(call_helper status 2>/dev/null)" && grep -q '^prepared$' <<<"$state"; do
+            if [[ "${state:-}" == failed:* ]] || [ "${state:-}" = failed ]; then
+              echo "Acceptance failed at ${state}" >&2
+              exit 1
+            fi
             [ "$SECONDS" -lt "$deadline" ] || exit 1
             sleep 5
           done
@@ -317,6 +323,7 @@ jobs:
         id: evidence
         env:
           ADDRESS: ${{ steps.preview.outputs.address }}
+          PREVIEW_VERSION: ${{ steps.preview.outputs.version }}
         run: |
           set -euo pipefail
           token="$(node --input-type=module -e '
@@ -328,8 +335,8 @@ jobs:
           call_helper() {
             local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
             body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
-              --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
-              command:["/usr/bin/sudo",$helper,$op,$sha,$nonce],timeoutMs:30000}')"
+              --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" --arg version "$PREVIEW_VERSION" '{
+              command:["/usr/bin/sudo",$helper,$op,$sha,$nonce,$version],timeoutMs:30000}')"
             curl --fail --silent --show-error --max-time 45 --insecure \
               --resolve "app.matrix-os.com:443:${ADDRESS}" \
               -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
