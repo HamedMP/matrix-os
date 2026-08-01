@@ -192,6 +192,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(probe).toContain('message?.type === "error"');
     expect(probe).toContain('`server-${safeCode}`');
     expect(probe).toContain("production_probe_runtime_unavailable");
+    expect(probe).toContain("recordAttachStatus");
+    expect(probe).toContain("writeFileSync(attachStatusPath");
     expect(acceptance).toContain('attachment-ready-${attach_status}');
     expect(acceptance).toContain('kill -0 "$client_pid"');
     expect(acceptance).toContain("read_probe_status");
