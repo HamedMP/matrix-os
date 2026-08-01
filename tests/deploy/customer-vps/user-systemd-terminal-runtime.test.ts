@@ -262,11 +262,14 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("write_progress runtime-agent-snapshot");
     expect(acceptance).toContain('/usr/bin/timeout --signal=KILL 15');
     expect(acceptance).toContain("failed:phase-worker-exited:");
-    expect(acceptance).toContain("deadline=$((SECONDS + 3900))");
-    expect(acceptance).not.toContain("for _ in $(seq 1 3900)");
+    expect(acceptance).toContain("deadline=$((SECONDS + 5400))");
+    expect(acceptance).not.toContain("for _ in $(seq 1 5400)");
     expect(acceptance).toContain("read_update_error_code");
     expect(acceptance).toContain("diagnose_update_failure");
-    expect(acceptance).toContain('current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"');
+    expect(acceptance).toContain("classify_updater_phase");
+    expect(acceptance).toContain("installed_bounded_updater_is_ready");
+    expect(acceptance).toContain("/usr/bin/timeout --signal=KILL 1800 curl");
+    expect(acceptance).toContain('current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-updater-${updater_state}-bundle-${bundle_state}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"');
     expect(acceptance).toContain('if [ "$error_code" != none ]; then');
     expect(acceptance).toContain('case "$error_code" in');
     expect(acceptance).toContain('download_failed|download_metadata_changed|insufficient_disk_space|unknown)');
@@ -274,7 +277,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(workflow).toContain("Acceptance stalled at ${state:-unavailable}");
     expect(workflow).toContain("Acceptance failed at ${state}");
     expect(workflow).toContain("progress_deadline=$((SECONDS + progress_timeout))");
-    expect(workflow).toContain("progress_timeout=4200");
+    expect(workflow).toContain("progress_timeout=5700");
     expect(workflow).toContain("Acceptance phase stalled at ${state}");
     expect(workflow).toContain('echo "version=$version" >>"$GITHUB_OUTPUT"');
     expect(workflow).toContain("PREVIEW_VERSION: ${{ steps.preview.outputs.version }}");
