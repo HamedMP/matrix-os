@@ -1,11 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -155,6 +157,12 @@ describe('customer VPS terminal runtime services', () => {
     expect(build).toContain('$STAGE_DIR/libexec/terminal-runtime/v1');
     expect(build).toContain('terminal_runtime_package_manifest_invalid');
     expect(build).toContain('runtime-manifest.sha256');
+    expect(build).toContain(
+      'find "$terminal_generation_build" -type f -exec chmod 0644 {} +',
+    );
+    expect(build).toContain(
+      'chmod 0755 "$terminal_generation_build/supervisor-acceptor"',
+    );
     expect(updater).toContain('/opt/matrix/libexec/terminal-runtime/v1');
     expect(updater).toContain('/opt/matrix/libexec/terminal-runtime/current');
     expect(updater).toContain('ln -s');
@@ -207,6 +215,13 @@ describe('customer VPS terminal runtime services', () => {
       [],
       ['launch'],
       ['pack', 'main'],
+      ['launch', 'a'.repeat(40)],
+      ['pack', 'a'.repeat(40)],
+      ['launch', 'a'.repeat(40), '0-1'],
+      ['launch', 'a'.repeat(40), '1-0'],
+      ['launch', 'a'.repeat(40), '1-1/../2'],
+      ['pack', 'a'.repeat(40), `${'1'.repeat(21)}-1`],
+      ['pack', 'a'.repeat(40), `1-${'1'.repeat(7)}`],
       ['acceptance-launch', 'main'],
       ['acceptance-launch', 'a'.repeat(40)],
       ['acceptance-launch', 'a'.repeat(40), 'latest'],
@@ -281,6 +296,62 @@ describe('customer VPS terminal runtime services', () => {
         encoding: 'utf8',
       });
       expect(result.status).not.toBe(0);
+    } finally {
+      rmSync(generation, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes private extraction modes before publishing a runtime generation', () => {
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const generation = mkdtempSync(join(tmpdir(), 'matrix-generation-modes-'));
+    const nativeDir = join(generation, 'node_modules', 'node-pty', 'build', 'Release');
+    const spikes = join(generation, 'spikes');
+    try {
+      mkdirSync(nativeDir, { recursive: true });
+      mkdirSync(spikes);
+      writeFileSync(join(generation, 'keeper.js'), 'keeper');
+      writeFileSync(join(generation, 'supervisor-acceptor'), 'acceptor');
+      writeFileSync(join(nativeDir, 'pty.node'), 'native');
+      for (const name of [
+        'launch-remote.sh',
+        'pack-evidence.sh',
+        'run-remote.sh',
+        'production-acceptance.sh',
+      ]) {
+        writeFileSync(join(spikes, name), name);
+      }
+      for (const path of [
+        generation,
+        join(generation, 'node_modules'),
+        join(generation, 'node_modules', 'node-pty'),
+        join(generation, 'node_modules', 'node-pty', 'build'),
+        nativeDir,
+        spikes,
+      ]) chmodSync(path, 0o700);
+      for (const path of [
+        join(generation, 'keeper.js'),
+        join(generation, 'supervisor-acceptor'),
+        join(nativeDir, 'pty.node'),
+        ...[
+          'launch-remote.sh',
+          'pack-evidence.sh',
+          'run-remote.sh',
+          'production-acceptance.sh',
+        ].map((name) => join(spikes, name)),
+      ]) chmodSync(path, 0o600);
+
+      const result = spawnSync('bash', ['-c', [
+        'set -euo pipefail',
+        extractShellFunction(updater, 'normalize_terminal_runtime_generation_permissions'),
+        'normalize_terminal_runtime_generation_permissions "$1"',
+      ].join('\n'), 'normalize-generation', generation], { encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+      expect(statSync(generation).mode & 0o777).toBe(0o755);
+      expect(statSync(nativeDir).mode & 0o777).toBe(0o755);
+      expect(statSync(join(generation, 'keeper.js')).mode & 0o777).toBe(0o644);
+      expect(statSync(join(nativeDir, 'pty.node')).mode & 0o777).toBe(0o644);
+      expect(statSync(join(generation, 'supervisor-acceptor')).mode & 0o777).toBe(0o755);
+      expect(statSync(join(spikes, 'launch-remote.sh')).mode & 0o777).toBe(0o755);
     } finally {
       rmSync(generation, { recursive: true, force: true });
     }

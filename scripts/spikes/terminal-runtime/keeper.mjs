@@ -6,7 +6,9 @@ import { promisify, stripVTControlCharacters } from 'node:util';
 const execFileAsync = promisify(execFile);
 const require = createRequire('/opt/matrix/libexec/terminal-runtime/current/package.json');
 const runtimeId = process.argv[2] ?? '';
-const runtimeRoot = '/run/matrix-terminal-runtime-spike';
+const runNamespace = runtimeId.slice(1);
+const runtimeRoot = `/run/matrix-terminal-runtime-spikes/${runNamespace}`;
+const stateRoot = `/home/matrix/home/system/terminal-runtime-spikes/${runNamespace}`;
 const zellij = '/opt/matrix/bin/zellij';
 let stopping = false;
 let monitor;
@@ -60,12 +62,12 @@ function zellijEnvironment() {
     PATH: '/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin',
     LANG: 'C.UTF-8',
     TERM: 'xterm-256color',
-    XDG_CACHE_HOME: '/home/matrix/home/system/terminal-runtime-spike/cache',
-    XDG_CONFIG_HOME: '/home/matrix/home/system/terminal-runtime-spike/config-home',
-    XDG_DATA_HOME: '/home/matrix/home/system/terminal-runtime-spike/data',
+    XDG_CACHE_HOME: `${stateRoot}/cache`,
+    XDG_CONFIG_HOME: `${stateRoot}/config-home`,
+    XDG_DATA_HOME: `${stateRoot}/data`,
     XDG_RUNTIME_DIR: `/run/user/${process.getuid()}`,
-    ZELLIJ_CONFIG_DIR: '/home/matrix/home/system/terminal-runtime-spike/config',
-    ZELLIJ_CONFIG_FILE: '/home/matrix/home/system/terminal-runtime-spike/config/config.kdl',
+    ZELLIJ_CONFIG_DIR: `${stateRoot}/config`,
+    ZELLIJ_CONFIG_FILE: `${stateRoot}/config/config.kdl`,
   };
 }
 async function exactSessionResponds(sessionName, env) {
@@ -180,7 +182,7 @@ async function main() {
   const sessionName = `matrix-t-${runtimeId}`;
   const args = descriptor.intent === 'recover'
     ? ['attach', sessionName]
-    : ['--session', sessionName, '--new-session-with-layout', '/opt/matrix/libexec/terminal-runtime-spike/layout.kdl'];
+    : ['--session', sessionName, '--new-session-with-layout', '/opt/matrix/libexec/terminal-runtime/current/spikes/layout.kdl'];
   pty = spawnPty(zellij, args, {
     name: 'xterm-256color',
     cols: 120,

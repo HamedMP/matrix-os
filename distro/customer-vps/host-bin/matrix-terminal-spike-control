@@ -8,7 +8,8 @@ operation="$1"
 pr_head_sha="$2"
 case "$operation" in
   launch | pack)
-    [ "$#" -eq 2 ] || { echo "spike_control_invalid_request" >&2; exit 2; }
+    [ "$#" -eq 3 ] && [[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]] ||
+      { echo "spike_control_invalid_request" >&2; exit 2; }
     ;;
   acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack)
     [ "$#" -eq 3 ] && [[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]] ||
@@ -55,4 +56,4 @@ fi
 if [[ "$operation" == acceptance-* ]]; then
   exec /usr/bin/bash "$target" "$@"
 fi
-exec /usr/bin/bash "$target" "$pr_head_sha"
+exec /usr/bin/bash "$target" "$pr_head_sha" "$3"

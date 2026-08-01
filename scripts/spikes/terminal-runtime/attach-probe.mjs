@@ -5,6 +5,7 @@ const require = createRequire(import.meta.url);
 const { spawn } = require('node-pty');
 const runtimeId = process.argv[2] ?? '';
 if (!/^[0-9a-f]{32}$/.test(runtimeId)) process.exit(2);
+const runtimeRoot = `/run/matrix-terminal-runtime-spikes/${runtimeId.slice(1)}`;
 const pty = spawn('/opt/matrix/bin/zellij', ['attach', `matrix-t-${runtimeId}`], {
   name: 'xterm-256color', cols: 120, rows: 40,
   cwd: '/home/matrix/home', env: process.env,
@@ -13,7 +14,7 @@ const membership = await readFile(`/proc/${pty.pid}/cgroup`, 'utf8');
 const unified = membership.split(/\r?\n/).find((line) => line.startsWith('0::'));
 if (!unified) process.exit(3);
 const clientCgroup = unified.slice(3);
-const handle = await open(`/run/matrix-terminal-runtime-spike/attach-${runtimeId}.json`, 'wx', 0o600);
+const handle = await open(`${runtimeRoot}/attach-${runtimeId}.json`, 'wx', 0o600);
 try {
   await handle.writeFile(`${JSON.stringify({ helper: process.pid, client: pty.pid, clientCgroup })}\n`, 'utf8');
   await handle.sync();

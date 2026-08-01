@@ -151,6 +151,12 @@ if find "$terminal_generation_build" -type f -links +1 -print -quit |
   echo "terminal_runtime_generation_contains_hardlink" >&2
   exit 1
 fi
+find "$terminal_generation_build" -type d -exec chmod 0755 {} +
+find "$terminal_generation_build" -type f -exec chmod 0644 {} +
+chmod 0755 "$terminal_generation_build/supervisor-acceptor"
+if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
+  chmod 0755 "$terminal_generation_build/spikes/"{launch-remote,pack-evidence,run-remote,production-acceptance}.sh
+fi
 (
   cd "$terminal_generation_build"
   LC_ALL=C find . -type f ! -name runtime-manifest.sha256 -printf '%P\n' |
@@ -163,6 +169,7 @@ fi
       sha256sum "$runtime_file"
     done >runtime-manifest.sha256
 )
+chmod 0644 "$terminal_generation_build/runtime-manifest.sha256"
 terminal_generation_id="$(
   sha256sum "$terminal_generation_build/runtime-manifest.sha256" |
     awk '{print $1}'

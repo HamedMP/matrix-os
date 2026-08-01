@@ -858,7 +858,20 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
-    expect(workflow).toContain('bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${BASE_SHA:0:7}');
+    expect(workflow).toContain('bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${bootstrap_sha:0:7}');
+    expect(workflow).toContain(
+      'activation_commits < <(git log --format=%H --reverse -S "$activation_line" "$merge_base..$HEAD_SHA"',
+    );
+    expect(workflow).toContain(
+      'bootstrap_sha="$(git rev-parse "${activation_commits[0]}^")"',
+    );
+    expect(workflow).toContain('echo "bootstrap_sha=$bootstrap_sha"');
+    expect(workflow).toContain(
+      'MATRIX_BUILD_SHA: ${{ steps.version.outputs.bootstrap_sha }}',
+    );
+    expect(workflow).toContain(
+      'git checkout --detach "${{ steps.version.outputs.bootstrap_sha }}"',
+    );
     expect(workflow).not.toContain('dist/activation/**');
     expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
@@ -866,11 +879,12 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
     expect(workflow).toContain('rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control');
     expect(workflow).not.toContain('activation_watch');
-    expect(workflow).toContain('BASE_SHA: ${{ needs.gate.outputs.base_sha }}');
+    expect(workflow).toContain('BOOTSTRAP_SHA: ${{ needs.build.outputs.bootstrap_sha }}');
     expect(workflow).toContain(
       'if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
     );
     expect(workflow).toContain('Reusing the exact dormant parent already installed on the preview.');
+    expect(workflow).toContain('[[ "$deployed" == *"-${BOOTSTRAP_SHA:0:7}" ]]');
     expect(workflow).not.toContain(
       '[[ "$deployed" =~ ^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-([0-9]+-[0-9]+-)?[0-9a-f]{7}$ ]]',
     );
@@ -902,6 +916,16 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
     expect(deployLoop).toContain(
       'updater_diagnostic_result="$(updater_diagnostic "$address")"',
+    );
+    expect(
+      deployLoop.indexOf(
+        'updater_diagnostic_result="$(updater_diagnostic "$address")"',
+      ),
+    ).toBeLessThan(
+      deployLoop.indexOf('if [ "$deployed" = "$target_version" ]; then'),
+    );
+    expect(deployLoop).toContain(
+      'if [ "$updater_diagnostic_result" = "Update service: idle phase=idle failure=none" ]; then',
     );
     expect(deployLoop).toContain(
       '"Update service: failed phase=failed failure="*',

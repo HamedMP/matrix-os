@@ -51,6 +51,7 @@ S1 passes only when:
 - unexpected keeper or server loss produces exactly one deterministic interrupted/failed outcome;
 - readiness is withheld until the exact Zellij session responds and all required cgroup membership checks pass;
 - with at least three concurrent runtime units driven above the relevant thresholds, each unit's `MemoryHigh=50%` applies independently while the slice's `MemoryHigh=75%` applies to their combined usage; these are layered pressure thresholds, not additive per-session capacity budgets.
+- The disposable pressure exercise first records those production-configured numeric thresholds, then may temporarily lower only the validated live cgroup-v2 `memory.high` files and MUST restore every recorded value before stopping the units, including through its exit trap. It MUST NOT persist test thresholds through `systemctl set-property`; a disposable VPS is reprovisioned if an older spike left a runtime property override.
 
 ### Gate S2 — Patched Zellij resurrection and bounded history
 

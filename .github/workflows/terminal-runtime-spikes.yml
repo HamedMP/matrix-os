@@ -184,6 +184,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Resolve same-repository PR head
         id: resolve
@@ -349,12 +350,13 @@ jobs:
             echo "update_status=${update_status}" >&2
             exit 1
           fi
-          run_body="$(jq -cn --arg sha "$HEAD_SHA" '{
+          run_body="$(jq -cn --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
             command: [
               "/usr/bin/sudo",
               "/opt/matrix/bin/matrix-terminal-spike-control",
               "launch",
-              $sha
+              $sha,
+              $nonce
             ],
             timeoutMs: 30000
           }')"
@@ -428,12 +430,13 @@ jobs:
             process.stdout.write(createHmac("sha256", process.argv[2]).update(process.argv[1]).digest("hex"));
           ' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$gateway_token"
-          pack_body="$(jq -cn --arg sha "$HEAD_SHA" '{
+          pack_body="$(jq -cn --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
             command: [
               "/usr/bin/sudo",
               "/opt/matrix/bin/matrix-terminal-spike-control",
               "pack",
-              $sha
+              $sha,
+              $nonce
             ],
             timeoutMs: 30000
           }')"
@@ -464,7 +467,7 @@ jobs:
                   diagnostic="$next_diagnostic"
                   echo "evidence_stage=${diagnostic}"
                 fi
-                if [[ "$diagnostic" =~ ^spike_pack_evidence_incomplete_[a-z0-9_]+_(descriptor|launch|cgroup|readiness|notify)_[a-z0-9_]+$ ]]; then echo "evidence_diagnostic=${diagnostic}" >&2; exit 1; fi
+                if [[ "$diagnostic" =~ ^spike_pack_evidence_incomplete_[a-z0-9_]+_(descriptor|launch|cgroup|readiness|notify)_[a-z0-9_]+_[a-z0-9_]+$ ]]; then echo "evidence_diagnostic=${diagnostic}" >&2; exit 1; fi
               elif jq -e '
                 type == "object" and .exitCode == 0 and .timedOut == false and
                 .truncated == false and .signal == null and

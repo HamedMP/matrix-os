@@ -129,11 +129,13 @@ describe('terminal runtime spike evidence', () => {
       'export SOURCE_DATE_EPOCH="$ZELLIJ_SOURCE_DATE_EPOCH"', '--remap-path-prefix=$work_dir=$ZELLIJ_PATH_REMAP',
       'command_panes_serialize_initial_contents_for_gated_resurrection']);
     expectAll(remoteRunner, ['candidate_build_record="$source_dir/v0.44.3-matrix.1.build.json"',
-      '/usr/bin/timeout --signal=TERM --kill-after=1s 5s \\',
-      '/usr/bin/sed -nE',
+      'command_bounded 5 /usr/bin/sed \\',
+      "-nE 's/^[[:space:]]*\"binarySha256\"",
       'IFS= read -r expected_zellij_binary_sha256 <&9',
       'read -r zellij_binary_sha256 digest_path digest_extra <"$actual_digest_file"',
-      'rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"']);
+      'rm -rf -- "$evidence_root"',
+      'support_root="$source_dir"',
+      'spike_attempt_state_exists']);
     expect(remoteRunner).not.toContain('python3');
     expect(remoteRunner).not.toContain('expected_zellij_binary_sha256="$(');
     expect(remoteRunner).not.toContain('zellij_binary_sha256="$(');
@@ -253,6 +255,44 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
+  it('isolates every disposable-VPS proof attempt from stale runtime state', async () => {
+    const [workflow, helper, launcher, packer, runner, template, keeper] = await Promise.all([
+      readRepo('.github/workflows/terminal-runtime-spikes.yml'),
+      readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-control'),
+      readRepo('scripts/spikes/terminal-runtime/launch-remote.sh'),
+      readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'),
+      readRepo('scripts/spikes/terminal-runtime/run-remote.sh'),
+      readRepo('scripts/spikes/terminal-runtime/matrix-terminal-spike-template.service'),
+      readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
+    ]);
+    expect(workflow).toContain('RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}');
+    expect(workflow.match(/--arg nonce "\$RUN_NONCE"/g)).toHaveLength(2);
+    expect(workflow.match(/\$sha,\n\s+\$nonce/g)).toHaveLength(2);
+    expectAll(helper, [
+      'launch | pack)',
+      '[[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]]',
+      'exec /usr/bin/bash "$target" "$pr_head_sha" "$3"',
+    ]);
+    for (const script of [launcher, packer, runner]) {
+      expect(script).toContain('run_nonce="${2:-}"');
+      expect(script).toContain('run_namespace="${pr_head_sha:0:5}${run_id_padded}${run_attempt_padded}"');
+    }
+    expect(launcher).toContain('matrix-terminal-runtime-spike-${run_namespace}.service');
+    expect(packer).toContain('matrix-terminal-spike-evidence-${pr_head_sha}-${run_nonce}');
+    expect(runner).toContain('support_root="$source_dir"');
+    expect(runner).not.toContain('quarantine_setup_path');
+    expect(runner).not.toContain('runtime_cleanup_paths=');
+    expect(runner).not.toContain('support_root.next');
+    expect(template).toContain('/opt/matrix/libexec/terminal-runtime/current/spikes/keeper.mjs');
+    expect(keeper).toContain('/opt/matrix/libexec/terminal-runtime/current/spikes/layout.kdl');
+  });
+  it('launches the initial pane from the immutable installed generation', async () => {
+    const layout = await readRepo('scripts/spikes/terminal-runtime/layout.kdl');
+    expect(layout).toContain(
+      'pane command="/opt/matrix/libexec/terminal-runtime/current/spikes/pane-probe.sh"',
+    );
+    expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
+  });
   it('can remove only its immutable disposable preview before a clean proof', async () => {
     const workflow = await readFile(
       join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'),
@@ -333,12 +373,18 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(paths.filter((path) => !/^[A-Za-z0-9._/-]+$/.test(path))).toEqual([]);
   });
   it('detaches the spike from the gateway cgroup and waits for completed evidence', async () => {
-    const [workflow, launcher, packer, runner, attachProbe] = await Promise.all([
+    const [workflow, launcher, packer, runner, attachProbe, zellijDeleteClient, keeper, recordOutcome, recordRuntimeRoles, paneProbe, spec] = await Promise.all([
       readFile(join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/launch-remote.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/pack-evidence.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/run-remote.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/attach-probe.mjs'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/zellij-delete-client.mjs'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/record-outcome.mjs'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/record-runtime-roles.mjs'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/pane-probe.sh'), 'utf8'),
+      readFile(join(process.cwd(), 'specs/109-persist-terminal-sessions/spec.md'), 'utf8'),
     ]);
     expect(workflow).toContain('/opt/matrix/bin/matrix-terminal-spike-control');
     expect(workflow).not.toContain('/opt/matrix/app/scripts/spikes');
@@ -347,42 +393,256 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(workflow).toContain('--unpack "$envelope" "$evidence_parent" "$HEAD_SHA"');
     expect(workflow).not.toContain('tar --extract');
     expect(workflow).not.toContain('REMOTE_STATUS:');
-    expectAll(workflow, ['test("^(?:spike|evidence)_[a-z0-9_]+\\\\n?$")', 'elif .timedOut == true then "spike_pack_command_timeout"', 'elif .truncated == true then "spike_pack_command_truncated"', 'elif .exitCode != 0 then "spike_pack_command_failed"', 'spike_pack_evidence_incomplete_[a-z0-9_]+_(descriptor|launch|cgroup|readiness|notify)_[a-z0-9_]+']);
+    expectAll(workflow, ['test("^(?:spike|evidence)_[a-z0-9_]+\\\\n?$")', 'elif .timedOut == true then "spike_pack_command_timeout"', 'elif .truncated == true then "spike_pack_command_truncated"', 'elif .exitCode != 0 then "spike_pack_command_failed"', 'spike_pack_evidence_incomplete_[a-z0-9_]+_(descriptor|launch|cgroup|readiness|notify)_[a-z0-9_]+_[a-z0-9_]+']);
     expect(launcher).toContain('systemd-run');
     expect(launcher).toContain('--collect');
     expect(launcher).toContain('--no-block');
     expect(launcher).toContain('--property=RuntimeMaxSec=1800');
+    expect(launcher).toContain(
+      "list-units --all --plain --no-legend 'matrix-terminal-runtime-spike-*.service'",
+    );
+    expect(launcher).toContain(
+      '[[ "$stale_unit" =~ ^matrix-terminal-runtime-spike-[0-9a-f]{31}\\.service$ ]]',
+    );
+    expect(launcher).toContain(
+      '/usr/bin/timeout --signal=TERM --kill-after=2s 35s systemctl stop "$stale_unit"',
+    );
     expect(launcher).toContain('StandardOutput=null');
     expect(launcher).toContain('StandardError=null');
-    expect(launcher).toContain('unit="matrix-terminal-runtime-spike-${pr_head_sha}.service"');
-    expect(launcher).toContain('summary="/tmp/matrix-terminal-spike-evidence-${pr_head_sha}/summary.json"');
+    expect(launcher).toContain('unit="matrix-terminal-runtime-spike-${run_namespace}.service"');
+    expect(launcher).toContain('summary="/tmp/matrix-terminal-spike-evidence-${pr_head_sha}-${run_nonce}/summary.json"');
     expect(launcher).not.toContain('short_sha=');
     expect(packer).toContain('summary.json');
     expect(packer).toContain('spike_pack_evidence_incomplete_no_root_${state}');
-    expect(packer).toContain('${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}');
+    expect(packer).toContain(
+      '${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}_${progress_stage}',
+    );
+    expect(packer).toContain('progress-stage.txt');
+    expect(packer).toContain('^[a-z0-9_]{1,32}$');
     expect(packer).not.toContain('${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}" >&2');
     expect(packer).toMatch(/verify-evidence\.mjs \\\n\s+"\$evidence_root" --pack "\$pr_head_sha"/);
     expect(packer).not.toContain('tar --create');
     expect(runner).toContain('bounded_wait_child "$attach_parent"');
     expect(runner).not.toContain('wait "$attach_parent" 2>/dev/null || true');
     expect(runner).toContain("trap 'status=$?; build_summary; cleanup; exit $status' EXIT");
-    expectAll(runner, ['/usr/bin/timeout --signal=TERM --kill-after=2s 35s systemctl stop', 'systemctl stop "${units[@]}"', 'delete_pids+=("$!")', 'for child in "${delete_pids[@]}"; do wait "$child" || true; done', 'systemctl cat matrix-terminal-spike.slice matrix-terminal-spike@.service']);
-    expect(runner).toContain('--kill-after=1s 5s systemctl reset-failed');
-    expect(runner).toContain('--kill-after=1s 5s systemctl set-property');
+    expect(runner).toContain('write_progress base_start');
+    expect(runner).toContain('write_progress base_start_requested');
+    expect(runner).toContain('write_progress keeper_loss');
+    expect(runner).toContain('write_progress server_loss');
+    expect(runner).toContain('write_progress memory_pressure');
+    expect(runner).toContain('write_progress recovery_restore');
+    expect(runner).toContain('write_progress corruption_fallback');
+    expect(runner).toContain('progress-stage.txt');
+    expect(runner).toContain('command_bounded 35 /usr/bin/systemctl "$@"');
+    expect(runner).not.toContain('systemctl-client.mjs');
+    expect(runner).not.toMatch(/(?:timeout[^\\n]*|^)systemctl /m);
+    expect(runner).toContain('write_progress startup_cleanup');
+    expect(runner).not.toContain('write_progress startup_cleanup\ncleanup\ntrap');
+    expect(runner).toContain('write_progress runtime_setup');
+    expect(runner).not.toContain('write_progress runtime_cleanup');
+    expect(runner).toContain('run_namespace="${pr_head_sha:0:5}${run_id_padded}${run_attempt_padded}"');
+    expect(runner).toContain('runtime_root="/run/matrix-terminal-runtime-spikes/$run_namespace"');
+    expect(runner).toContain('state_root="$owner_home/system/terminal-runtime-spikes/$run_namespace"');
+    expect(runner).not.toContain('runtime_root="/run/matrix-terminal-runtime-spike"');
+    expect(runner).not.toContain('system/terminal-runtime-spike/cache');
+    expect(runner).toContain('write_progress runtime_dirs');
+    expect(runner).toContain('support_root="$source_dir"');
+    expect(runner).not.toContain('write_progress support_cleanup');
+    expect(runner).not.toContain('support_copy_stages=');
+    expect(runner).toContain('write_progress unit_check');
+    expect(runner).toContain('write_progress binary_check');
+    expect(runner).toContain('write_progress config_dump');
+    expect(runner).toContain('write_progress config_check');
+    expect(runner).toContain('zellij_setup_bounded setup --dump-config');
+    expect(runner).toContain('zellij_setup_bounded setup --check');
+    expect(runner).toMatch(
+      /zellij_setup_bounded\(\)[\s\S]*?command_bounded 15 runuser -u matrix -- env/,
+    );
+    expect(runner).toMatch(
+      /command_bounded\(\)[\s\S]*?timeout --signal=TERM --kill-after=1s "\$timeout_seconds"/,
+    );
+    expect(runner).toContain('/usr/bin/setsid /usr/bin/timeout');
+    expect(runner).toContain('wait -n -p completed_pid "$operation_pid" "$deadline_pid"');
+    expect(runner).toContain('kill -KILL -- "-$operation_pid"');
+    expectAll(runner, [
+      '[[ -e "$runtime_root" || -L "$runtime_root" || -e "$state_root" || -L "$state_root" ]]',
+      'setup_fs_bounded 15 /usr/bin/install -d -o matrix -g matrix -m 0700 "$runtime_root"',
+      '/usr/bin/bash "$support_root/pane-probe.sh"',
+    ]);
+    expect(runner).not.toContain('/usr/bin/chown -R root:root "$support_root.next"');
+    expect(runner).not.toContain(
+      'setup_fs_bounded 30 /usr/bin/rm -rf -- "$runtime_root"',
+    );
+    expect(runner).not.toMatch(
+      /runuser -u matrix -- env[\s\\\n]+HOME=.*zellij setup --dump-config/,
+    );
+    expect(runner).toContain('write_progress cleanup_units');
+    expect(runner).toContain('write_progress cleanup_sessions');
+    expect(runner).toContain(
+      'session_inventory="$(zellij_list_bounded 2>/dev/null || true)"',
+    );
+    for (let cleanupIndex = 0; cleanupIndex <= 6; cleanupIndex += 1) {
+      expect(runner).toContain(`cleanup_session_${cleanupIndex}`);
+    }
+    expect(runner).not.toContain('write_progress cleanup_reset');
+    expect(runner).not.toContain('write_progress cleanup_slice');
+    expect(runner).toContain('write_progress cleanup_attach');
+    expect(runner).toContain('zellij_delete_bounded "${runtime_ids[$cleanup_index]}"');
+    expect(runner).toContain(
+      'grep -Fxq "matrix-t-${runtime_ids[$cleanup_index]}"',
+    );
+    expect(runner).toContain('zellij_delete_if_present "$recovery_id"');
+    expect(runner).not.toContain('zellij_cmd delete-session');
+    expect(runner).not.toContain('while [ "$SECONDS" -lt "$deadline" ] && [ ! -f "$output_path" ]');
+    expect(runner).not.toMatch(/\n\s+rm -rf -- "\$operation_dir"/);
+    expect(runner).not.toContain('delete_pids+=("$!")');
+    expect(runner).not.toContain('( zellij_delete_bounded "$runtime_id"');
+    expect(runner).toContain('zellij-delete-client.mjs');
+    expect(runner).not.toMatch(/timeout[^\\n]*runuser[^\\n]*zellij delete-session/);
+    expect(zellijDeleteClient).toContain("spawn('/usr/bin/runuser'");
+    expect(zellijDeleteClient).toContain(
+      "['delete-session', `matrix-t-${operation}`, '--force']",
+    );
+    expect(zellijDeleteClient).toContain("'list-sessions', '--no-formatting'");
+    expect(zellijDeleteClient).toContain('const MAX_OUTPUT = 64 * 1024');
+    expect(zellijDeleteClient).toContain('detached: true');
+    expect(zellijDeleteClient).toContain('worker.unref()');
+    expect(zellijDeleteClient).toContain("statSync('/home/matrix/home')");
+    expect(zellijDeleteClient).toContain("openSync(launcherPidPath, 'wx', 0o600)");
+    expect(zellijDeleteClient).toContain('writeSync(launcherPidHandle, `${worker.pid}\\n`)');
+    expect(zellijDeleteClient).toContain('closeSync(launcherPidHandle)');
+    expect(zellijDeleteClient).toContain('process.exit(0)');
+    expect(zellijDeleteClient).toContain("process.argv[2] === '--request'");
+    expect(zellijDeleteClient).toContain('await waitForWorkerResult(worker, timeoutSeconds)');
+    expect(zellijDeleteClient).toContain(
+      "stdio: useIpc ? ['ignore', 'ignore', 'ignore', 'ipc'] : 'ignore'",
+    );
+    expect(zellijDeleteClient).toContain('process.send');
+    expect(zellijDeleteClient).not.toContain('readFile(resultPath)');
+    expect(zellijDeleteClient).toContain('const runIdentity = resultPath.match(resultPathPattern)?.groups');
+    expect(zellijDeleteClient).toContain("runIdentity.runId.padStart(20, '0')");
+    expect(zellijDeleteClient).toContain('system/terminal-runtime-spikes/${runNamespace}/cache');
+    expect(zellijDeleteClient).not.toContain('system/terminal-runtime-spike/cache');
+    for (const helper of [attachProbe, keeper, recordOutcome, recordRuntimeRoles, paneProbe]) {
+      expect(helper).toContain('terminal-runtime-spikes');
+      expect(helper).not.toContain('/run/matrix-terminal-runtime-spike/');
+      expect(helper).not.toContain('system/terminal-runtime-spike/');
+    }
+    expect(zellijDeleteClient).toContain("for (const signal of ['SIGTERM', 'SIGKILL'])");
+    expect(zellijDeleteClient).toContain('process.kill(-workerPid, signal)');
+    expect(zellijDeleteClient).toContain('timeoutSeconds > 60');
+    expect(zellijDeleteClient).toContain('writeSync(1, result.output)');
+    expect(zellijDeleteClient).not.toContain('await stat(');
+    expect(runner).toContain('client_pid_path="$operation_dir/client.pid"');
+    expect(runner).toContain(
+      '/usr/bin/timeout --signal=TERM --kill-after=1s "$((timeout_seconds + 10))s" \\\n'
+      + '    /opt/matrix/runtime/node/bin/node \\\n'
+      + '    "$source_dir/zellij-delete-client.mjs" \\\n'
+      + '    --request "$timeout_seconds"',
+    );
+    expect(runner).toContain(
+      '"$source_dir/zellij-delete-client.mjs" \\\n'
+      + '    --request "$timeout_seconds" \\\n'
+      + '    "$client_pid_path" \\\n'
+      + '    "$output_path" \\\n'
+      + '    "$operation"',
+    );
+    expect(runner).not.toContain('IFS= read -r client_pid <"$client_pid_path"');
+    expect(runner).not.toContain(
+      'client_pid="$(/opt/matrix/runtime/node/bin/node "$source_dir/zellij-delete-client.mjs"',
+    );
+    expect(runner).not.toContain('systemctl_bounded reset-failed');
+    expect(runner).toContain(
+      'request_runtime_start "${unit_prefix}${runtime_id}.service"',
+    );
+    expect(runner).toContain('request_runtime_start()');
+    expect(runner).toContain('systemctl_value_bounded()');
+    expect(runner).toContain('systemctl_bounded start --no-block "$unit"');
+    expect(runner).toContain(
+      'systemctl_value_bounded "$unit" ActiveState',
+    );
+    expect(runner).toContain(
+      'systemctl_bounded stop --no-block "$base_unit"',
+    );
+    expect(runner).not.toContain('systemctl stop --no-block "$base_unit"');
+    expect(runner).not.toContain('current="$(systemctl show "$unit"');
+    expect(runner).not.toContain('main_pid="$(systemctl show "$base_unit"');
+    expect(runner).not.toContain(
+      'kill -KILL "$(systemctl show "$keeper_unit"',
+    );
+    expect(runner).toContain(
+      'main_pid="$(systemctl_value_bounded "$base_unit" MainPID)"',
+    );
+    expect(runner).toContain(
+      'systemctl_value_bounded "$keeper_unit" MainPID',
+    );
+    expect(runner).not.toContain(
+      'systemctl_bounded start --no-block "${unit_prefix}${runtime_id}.service"',
+    );
+    expect(runner).not.toContain(
+      'systemctl reset-failed "${unit_prefix}${runtime_id}.service"',
+    );
+    expect(runner).not.toContain(
+      'systemctl start --no-block "${unit_prefix}${runtime_id}.service"',
+    );
+    expect(runner).not.toContain('if systemctl restart matrix-gateway.service');
+    expect(runner).not.toContain('if systemctl restart matrix-shell.service');
+    expect(runner).not.toContain('systemctl stop "$recovery_unit"');
+    expect(runner).not.toContain(
+      'systemctl stop "${unit_prefix}${runtime_id}.service"',
+    );
+    expectAll(runner, [
+      'systemctl_bounded stop "${units[@]}"',
+      'zellij_delete_bounded "${runtime_ids[$cleanup_index]}" >/dev/null 2>&1 || true',
+      'systemctl_bounded cat matrix-terminal-spike.slice matrix-terminal-spike@.service',
+    ]);
+    expect(runner).not.toContain(
+      'systemctl_bounded reset-failed "${units[@]}"',
+    );
+    expect(runner).not.toContain('systemctl_bounded reset-failed');
+    expect(runner).not.toContain('systemctl_bounded set-property');
     expect(runner).toContain('--kill-after=1s 5s pkill');
     expect(runner).not.toContain('sleep 2\ncleanup');
     expect(runner).not.toContain('systemctl daemon-reload');
     expect(runner).not.toContain('systemctl is-active');
-    expect(runner).toContain('/usr/bin/timeout 5s systemctl show "$base_unit"');
+    expect(runner).toContain(
+      'systemctl_bounded show "$base_unit"',
+    );
+    expect(packer).toContain(
+      '/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit"',
+    );
+    expect(packer).toContain(
+      '/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl is-active',
+    );
+    expect(packer).not.toContain('state="$(systemctl is-active');
+    expect(packer).not.toContain(
+      'base_state="$(/usr/bin/timeout 2s systemctl show',
+    );
     expect(runner.includes('IFS= read -r readiness <"$readiness_path" || return 1\n  [[ "$readiness" =~ $readiness_regex ]]') && runner.includes('[ "$desired" = active ] && [ -f "$readiness_path" ]; then return 0')).toBe(true);
     expect(runner).not.toContain('cp -aL "$generation_dir/node_modules/node-pty"');
     expect(runner).not.toContain('install -o matrix -g matrix -m 0600 /dev/null "$runtime_root/confirmations/${recovery_id}.pass"');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
-    expect(runner).toContain('systemctl set-property --runtime');
-    expect(runner).toContain('MemoryHigh=75%');
-    expect(runner).toContain('/usr/bin/timeout --signal=TERM --kill-after=2s 15s runuser');
+    expect(runner).toContain('restore_memory_high');
+    expect(runner).toContain(
+      'memory_restore_slice_high="$slice_high"',
+    );
+    expect(runner).toContain(
+      'printf \'%s\\n\' 268435456 >"$slice_high_path"',
+    );
+    expect(runner).toContain(
+      'printf \'%s\\n\' 134217728 >"$runtime_high_path"',
+    );
+    expect(runner).toContain(
+      '[[ "$slice_high_path" =~ ^/sys/fs/cgroup/[-A-Za-z0-9_.@/]+/memory\\.high$ ]]',
+    );
+    expect(runner).toContain(
+      'printf \'%s\\n\' "$memory_restore_slice_high" >"$memory_restore_slice_path"',
+    );
+    expect(spec).toContain(
+      'It MUST NOT persist test thresholds through `systemctl set-property`',
+    );
+    expect(runner).not.toContain('/usr/bin/timeout --signal=TERM --kill-after=2s 15s runuser');
     expect(runner).toContain('wait_file');
-    const keeper = await readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8');
     expect(keeper).toContain("cgroupRoles(cgroup.path, descriptor.intent === 'create')");
     expectAll(keeper, ["createRequire('/opt/matrix/libexec/terminal-runtime/current/package.json')", "throw new Error('native_binding', { cause: error })"]);
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
@@ -414,13 +674,111 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       'printf \'MATRIX_CORRUPT_STATE\\n\' >"$corrupt_target"',
     );
   });
+  it('publishes a detached Zellij delete worker PID without stdout command substitution', async () => {
+    const operationRoot = join(
+      tmpdir(),
+      `matrix-terminal-spike-zellij-delete-${'a'.repeat(40)}-1-1`,
+    );
+    roots.push(operationRoot);
+    const operationDirectory = join(operationRoot, 'op.ABC123');
+    await mkdir(operationDirectory, { recursive: true });
+    const launcherPidPath = join(operationDirectory, 'client.pid');
+    const resultPath = join(operationDirectory, 'result');
+    const helper = join(
+      process.cwd(),
+      'scripts/spikes/terminal-runtime/zellij-delete-client.mjs',
+    );
+    const launched = spawnSync(
+      process.execPath,
+      [helper, launcherPidPath, resultPath, 'b'.repeat(32)],
+      { encoding: 'utf8', timeout: 2_000 },
+    );
+    expect(launched.status).toBe(0);
+    expect(launched.stdout).toBe('');
+    expect((await readFile(launcherPidPath, 'utf8')).trim()).toMatch(/^[1-9][0-9]*$/);
+  });
+  it('bounds systemctl probes in a directly supervised process group', async () => {
+    const runner = await readRepo('scripts/spikes/terminal-runtime/run-remote.sh');
+    expect(runner).toContain(
+      'command_bounded 35 /usr/bin/systemctl "$@"',
+    );
+    expect(runner).toContain(
+      'command_bounded 5 /usr/bin/systemctl show "$unit" -p "$property" --value',
+    );
+    expect(runner).toMatch(
+      /command_bounded\(\)[\s\S]*?\/usr\/bin\/setsid \/usr\/bin\/timeout[\s\S]*?kill -KILL -- "-\$operation_pid"/,
+    );
+    expect(runner).not.toContain('systemctl-client.mjs');
+  });
+  it('reaps fast bounded commands through a deadline race instead of kill-zero polling', async () => {
+    const runner = await readRepo('scripts/spikes/terminal-runtime/run-remote.sh');
+    expectAll(runner, [
+      '/usr/bin/sleep "$((timeout_seconds + 5))" &',
+      'deadline_pid=$!',
+      'wait -n -p completed_pid "$operation_pid" "$deadline_pid"',
+      'if [ "$completed_pid" = "$operation_pid" ]; then',
+      'kill "$deadline_pid" 2>/dev/null || true',
+      'wait "$deadline_pid" 2>/dev/null || true',
+    ]);
+    expect(runner).not.toContain('operation_deadline=$((SECONDS + timeout_seconds + 5))');
+    expect(runner).not.toMatch(
+      /command_bounded\(\)[\s\S]*?while [\s\S]*?kill -0 "\$operation_pid"/,
+    );
+    const boundedFunction = runner.match(/command_bounded\(\) \{[\s\S]*?\n\}/)?.[0];
+    expect(boundedFunction).toBeDefined();
+    const completed = spawnSync(
+      '/bin/bash',
+      ['-c', `${boundedFunction}\ncommand_bounded 1 /usr/bin/printf fast`],
+      { encoding: 'utf8', timeout: 2_000 },
+    );
+    expect(completed.status).toBe(0);
+    expect(completed.stdout).toBe('fast');
+  });
+  it('records and process-group-bounds every production binary probe', async () => {
+    const runner = await readRepo('scripts/spikes/terminal-runtime/run-remote.sh');
+    expectAll(runner, [
+      'write_progress binary_version',
+      'write_progress binary_manifest',
+      'write_progress binary_digest',
+      'write_progress binary_metadata',
+      'command_bounded 15 /opt/matrix/bin/zellij --version',
+      'command_bounded 5 /usr/bin/sed',
+      'command_bounded 5 /usr/bin/sha256sum /opt/matrix/bin/zellij',
+      'command_bounded 5 /usr/bin/cmp --silent',
+      'command_bounded 15 runuser -u matrix -- env',
+    ]);
+  });
+  it('bounds a complete Zellij request outside the Bash receipt poller', async () => {
+    const operationRoot = join(
+      tmpdir(),
+      `matrix-terminal-spike-zellij-delete-${'d'.repeat(40)}-1-1`,
+    );
+    roots.push(operationRoot);
+    const operationDirectory = join(operationRoot, 'op.GHI789');
+    await mkdir(operationDirectory, { recursive: true });
+    const launcherPidPath = join(operationDirectory, 'client.pid');
+    const resultPath = join(operationDirectory, 'result');
+    const helper = join(
+      process.cwd(),
+      'scripts/spikes/terminal-runtime/zellij-delete-client.mjs',
+    );
+    const startedAt = Date.now();
+    const completed = spawnSync(
+      process.execPath,
+      [helper, '--request', '1', launcherPidPath, resultPath, '--list'],
+      { encoding: 'utf8', timeout: 3_000 },
+    );
+    expect(completed.status).not.toBeNull();
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+    expect((await readFile(launcherPidPath, 'utf8')).trim()).toMatch(/^[1-9][0-9]*$/);
+  });
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
     const [unit, keeper] = await Promise.all([
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/matrix-terminal-spike-template.service'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8'),
     ]);
     expect(unit).toContain('Type=notify\nNotifyAccess=all\n');
-    expect(unit).toContain('ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/libexec/terminal-runtime-spike/keeper.mjs %i');
+    expect(unit).toContain('ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/libexec/terminal-runtime/current/spikes/keeper.mjs %i');
     expect(unit).toContain('KillMode=control-group');
     expect(unit).toContain('Restart=no');
     expect(unit).not.toContain('EnvironmentFile=');
@@ -428,6 +786,26 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain("!process.cmdline.includes('list-sessions')");
     expect([keeper.includes("execFileAsync(zellij, ['list-sessions'"), keeper.includes('detached: true'), keeper.includes("process.kill(-child.pid, 'SIGKILL')"), keeper.includes("stdio: ['ignore', handle.fd, 'ignore']"), keeper.includes("stdio: ['ignore', 'pipe', 'ignore']")]).toEqual([false, true, true, true, false]);
     expect(keeper.indexOf('const detected = await cgroupRoles')).toBeLessThan(keeper.indexOf('const responsive = Boolean(detected && await exactSessionResponds'));
+  });
+  it('activates the aggregate slice before starting the first template instance', async () => {
+    const runner = await readRepo('scripts/spikes/terminal-runtime/run-remote.sh');
+    const sliceStart = runner.indexOf(
+      'systemctl_bounded start matrix-terminal-spike.slice',
+    );
+    const sliceCheck = runner.indexOf(
+      'systemctl_value_bounded matrix-terminal-spike.slice ActiveState',
+    );
+    const runtimeStartDefinition = runner.indexOf('start_runtime() {');
+    const descriptorPublish = runner.indexOf('descriptor "$runtime_id" "$intent"');
+    const runtimeStartRequest = runner.indexOf(
+      'request_runtime_start "${unit_prefix}${runtime_id}.service"',
+    );
+    const firstRuntimeStart = runner.indexOf('start_runtime "$base_id"');
+    expect(sliceStart).toBeGreaterThan(-1);
+    expect(sliceCheck).toBeGreaterThan(sliceStart);
+    expect(descriptorPublish).toBeGreaterThan(runtimeStartDefinition);
+    expect(runtimeStartRequest).toBeGreaterThan(descriptorPublish);
+    expect(firstRuntimeStart).toBeGreaterThan(sliceCheck);
   });
   it('accepts complete bounded S1 and S2 evidence', async () => {
     const root = await evidence();

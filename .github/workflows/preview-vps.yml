@@ -157,6 +157,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       bootstrap_version: ${{ steps.version.outputs.bootstrap_version }}
+      bootstrap_sha: ${{ steps.version.outputs.bootstrap_sha }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -208,16 +209,35 @@ jobs:
         env:
           PR_NUMBER: ${{ needs.gate.outputs.pr }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
-          BASE_SHA: ${{ needs.gate.outputs.base_sha }}
           REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}
         run: |
           set -euo pipefail
           VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if git diff --unified=0 "$BASE_SHA" "$HEAD_SHA" -- \
-            packages/gateway/src/shell/runtime-client.ts |
-            grep -F 'return nodeEnv === "production" ? "supervised" : "legacy";' >/dev/null; then
-            echo "bootstrap_version=v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${BASE_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          activation_line='return nodeEnv === "production" ? "supervised" : "legacy";'
+          git fetch --no-tags origin main
+          merge_base="$(git merge-base origin/main "$HEAD_SHA")"
+          mapfile -t activation_commits < <(git log --format=%H --reverse -S "$activation_line" "$merge_base..$HEAD_SHA" -- packages/gateway/src/shell/runtime-client.ts)
+          if [ "${#activation_commits[@]}" -gt 1 ]; then
+            echo "Preview branch has multiple production terminal activation boundaries." >&2
+            exit 1
+          fi
+          if [ "${#activation_commits[@]}" -eq 1 ]; then
+            bootstrap_sha="$(git rev-parse "${activation_commits[0]}^")"
+            if ! git merge-base --is-ancestor "$merge_base" "$bootstrap_sha" ||
+              ! git merge-base --is-ancestor "$bootstrap_sha" "$HEAD_SHA"; then
+              echo "Preview dormant bootstrap parent is outside the approved branch history." >&2
+              exit 1
+            fi
+            activation_diff="$(git diff --unified=0 "$bootstrap_sha" "${activation_commits[0]}" -- packages/gateway/src/shell/runtime-client.ts)"
+            dormant_source="$(git show "$bootstrap_sha:packages/gateway/src/shell/runtime-client.ts")"
+            if ! grep -Fq "+    $activation_line" <<<"$activation_diff" ||
+              grep -Fq "$activation_line" <<<"$dormant_source"; then
+              echo "Preview terminal activation boundary is not an exact dormant-parent transition." >&2
+              exit 1
+            fi
+            echo "bootstrap_sha=$bootstrap_sha" >> "$GITHUB_OUTPUT"
+            echo "bootstrap_version=v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${bootstrap_sha:0:7}" >> "$GITHUB_OUTPUT"
           fi
           echo "Preview version: $VERSION"
 
@@ -226,13 +246,13 @@ jobs:
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.bootstrap_version }}
           HOST_BUNDLE_CHANNEL: none
-          MATRIX_BUILD_SHA: ${{ needs.gate.outputs.base_sha }}
+          MATRIX_BUILD_SHA: ${{ steps.version.outputs.bootstrap_sha }}
           MATRIX_BUILD_REF: bootstrap
           HOST_BUNDLE_ZELLIJ_BUILD_DIR: ${{ runner.temp }}/matrix-zellij
         run: |
           set -euo pipefail
           cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"
-          git checkout --detach "${{ needs.gate.outputs.base_sha }}"
+          git checkout --detach "${{ steps.version.outputs.bootstrap_sha }}"
           cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/
           ./scripts/build-host-bundle.sh
           mv dist/host-bundle dist/bootstrap
@@ -290,8 +310,8 @@ jobs:
       PR_NUMBER: ${{ needs.gate.outputs.pr }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
       BOOTSTRAP_VERSION: ${{ needs.build.outputs.bootstrap_version }}
+      BOOTSTRAP_SHA: ${{ needs.build.outputs.bootstrap_sha }}
       HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
-      BASE_SHA: ${{ needs.gate.outputs.base_sha }}
     steps:
       - uses: actions/checkout@v6
         if: needs.gate.outputs.action == 'deploy'
@@ -525,7 +545,7 @@ jobs:
                 ' <<<"$fleet")"
               deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
               address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-              if [[ "$deployed" == *"-${BASE_SHA:0:7}" ]] &&
+              if [[ "$deployed" == *"-${BOOTSTRAP_SHA:0:7}" ]] &&
                 updater_idle "$address"; then
                 echo "Reusing the exact dormant parent already installed on the preview."
                 continue
@@ -569,27 +589,26 @@ jobs:
                   ' <<<"$fleet")"
                 deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
                 address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+                updater_diagnostic_result=""
+                if updater_diagnostic_result="$(updater_diagnostic "$address")"; then
+                  if [ "$updater_diagnostic_result" != "$last_updater_diagnostic" ]; then
+                    echo "Preview updater state: ${updater_diagnostic_result}"
+                    last_updater_diagnostic="$updater_diagnostic_result"
+                  fi
+                  case "$updater_diagnostic_result" in
+                    "Update service: failed phase=failed failure="*)
+                      echo "Preview updater failed after rollback: ${updater_diagnostic_result}" >&2
+                      exit 1
+                      ;;
+                  esac
+                fi
                 if [ "$deployed" = "$target_version" ]; then
                   version_seen=true
-                  if updater_idle "$address"; then
+                  if [ "$updater_diagnostic_result" = "Update service: idle phase=idle failure=none" ]; then
                     deploy_converged=true
                     break
                   fi
                   echo "Waiting for the preview updater to become idle."
-                else
-                  updater_diagnostic_result=""
-                  if updater_diagnostic_result="$(updater_diagnostic "$address")"; then
-                    if [ "$updater_diagnostic_result" != "$last_updater_diagnostic" ]; then
-                      echo "Preview updater state: ${updater_diagnostic_result}"
-                      last_updater_diagnostic="$updater_diagnostic_result"
-                    fi
-                    case "$updater_diagnostic_result" in
-                      "Update service: failed phase=failed failure="*)
-                        echo "Preview updater failed after rollback: ${updater_diagnostic_result}" >&2
-                        exit 1
-                        ;;
-                    esac
-                  fi
                 fi
               fi
               sleep 15
