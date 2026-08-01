@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
@@ -7,11 +8,31 @@ const execFileAsync = promisify(execFile);
 const [operation = "", displayName = "", workloadKind = "", readyPath = ""] = process.argv.slice(2);
 const home = "/home/matrix/home";
 const descriptorRoot = `${home}/system/terminal-runtimes`;
+const attachReadyPrefix = `${home}/system/terminal-acceptance/`;
+const attachStatusPath = operation === "attach"
+  && readyPath.startsWith(attachReadyPrefix)
+  && !readyPath.includes("..")
+  && readyPath.length <= 4096
+  ? `${readyPath}.status`
+  : "";
 const uid = process.getuid?.() === 0
   ? Number((await execFileAsync("/usr/bin/id", ["-u", "matrix"])).stdout.trim())
   : process.getuid?.();
 
+function recordAttachStatus(code) {
+  const safeCode = code.replaceAll("_", "-");
+  if (!attachStatusPath || !/^[a-z][a-z0-9-]{0,63}$/.test(safeCode)) return;
+  try {
+    writeFileSync(attachStatusPath, `${safeCode}\n`, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") return;
+    if (!(error instanceof Error)) process.stderr.write("production_probe_status_write_non_error\n");
+    process.stderr.write("production_probe_status_write_failed\n");
+  }
+}
+
 function fail(code) {
+  recordAttachStatus(code);
   process.stderr.write(`${code}\n`);
   process.exit(1);
 }
@@ -31,11 +52,9 @@ if (!Number.isInteger(uid) || !/^[a-z0-9][a-z0-9-]{0,30}$/.test(displayName)) {
 
 if (operation === "attach") {
   const token = process.env.MATRIX_AUTH_TOKEN ?? "";
-  const readyPrefix = `${home}/system/terminal-acceptance/`;
-  const statusPath = `${readyPath}.status`;
   if (
     !/^[A-Za-z0-9._~+/=-]{16,512}$/.test(token)
-    || !readyPath.startsWith(readyPrefix)
+    || !readyPath.startsWith(attachReadyPrefix)
     || readyPath.includes("..")
     || readyPath.length > 4096
   ) fail("production_probe_invalid_request");
@@ -56,17 +75,9 @@ if (operation === "attach") {
     const failAttach = (code) => {
       if (failureStarted || attached) return;
       failureStarted = true;
-      void writeFile(statusPath, `${code}\n`, { flag: "wx", mode: 0o600 })
-        .then(() => {
-          socket.close();
-          finish(code);
-        })
-        .catch((error) => {
-          if (!(error instanceof Error)) process.stderr.write("production_probe_status_write_non_error\n");
-          process.stderr.write("production_probe_status_write_failed\n");
-          socket.close();
-          finish("status-write-failed");
-        });
+      recordAttachStatus(code);
+      socket.close();
+      finish(code);
     };
     const timeout = setTimeout(() => failAttach("timeout"), 15_000);
     socket.addEventListener("message", (event) => {
