@@ -703,9 +703,57 @@ path_state() {
   fi
 }
 
+installed_bounded_updater_is_ready() {
+  local updater=/opt/matrix/bin/matrix-sync-agent
+  [ -f "$updater" ] && [ ! -L "$updater" ] && [ -x "$updater" ] &&
+    grep -Fq '/usr/bin/timeout --signal=KILL 1800 curl' "$updater"
+}
+
+classify_updater_phase() {
+  local updater_state=other phase=idle main_pid current child comm index=0 inspected=0
+  local -a queue
+  if installed_bounded_updater_is_ready; then updater_state=bounded; fi
+  main_pid="$(systemctl show matrix-sync-agent.service -p MainPID --value 2>/dev/null || true)"
+  if [[ ! "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
+    echo "${updater_state}-inactive"
+    return 0
+  fi
+  queue=("$main_pid")
+  while [ "$index" -lt "${#queue[@]}" ] && [ "$inspected" -lt 64 ]; do
+    current="${queue[$index]}"
+    index=$((index + 1))
+    inspected=$((inspected + 1))
+    comm="$(cat "/proc/${current}/comm" 2>/dev/null || true)"
+    case "$comm" in
+      timeout|curl) [ "$phase" != idle ] || phase=download ;;
+      sha256sum) phase=verify ;;
+      gzip|tar) phase=extract ;;
+      chown|cp|install|mv) phase=install ;;
+    esac
+    while IFS= read -r child; do
+      [[ "$child" =~ ^[1-9][0-9]*$ ]] && queue+=("$child")
+    done < <(pgrep -P "$current" 2>/dev/null || true)
+  done
+  echo "${updater_state}-${phase}"
+}
+
+classify_update_bundle() {
+  local expected="$1" bundle="/opt/matrix/staging/bundle-${expected}.tar.gz"
+  local extracted="/opt/matrix/staging/bundle-${expected}" state
+  state="$(path_state "$bundle")"
+  if [ -L "$extracted" ]; then
+    state="${state}-extract-symlink"
+  elif [ -d "$extracted" ]; then
+    state="${state}-extract-present"
+  elif [ -e "$extracted" ]; then
+    state="${state}-extract-invalid"
+  fi
+  echo "$state"
+}
+
 diagnose_update_failure() {
   local expected="$1" version_state=missing trigger_state manifest_state error_code=none
-  local sync_state=inactive gateway_state=inactive health_state=failed installed
+  local updater_state bundle_state sync_state=inactive gateway_state=inactive health_state=failed installed
   if [ -f /opt/matrix/app/BUNDLE_VERSION ] && [ ! -L /opt/matrix/app/BUNDLE_VERSION ]; then
     installed="$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)"
     if [ "$installed" = "$expected" ]; then
@@ -736,11 +784,13 @@ diagnose_update_failure() {
   if curl --fail --silent --max-time 5 http://127.0.0.1:4000/health >/dev/null 2>&1; then
     health_state=ok
   fi
-  current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"
+  updater_state="$(classify_updater_phase)"
+  bundle_state="$(classify_update_bundle "$expected")"
+  current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-updater-${updater_state}-bundle-${bundle_state}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"
 }
 
 wait_update() {
-  local expected="$1" deadline=$((SECONDS + 3900)) error_code=none
+  local expected="$1" deadline=$((SECONDS + 5400)) error_code=none
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
       [ ! -e /opt/matrix/app/.update-now ] &&
@@ -803,6 +853,7 @@ prepare_exact_head_runtime() {
     sleep 1
   done
   systemctl is-active --quiet matrix-sync-agent.service
+  installed_bounded_updater_is_ready
 
   current_failure=exact-head-reapply
   runuser -u matrix -- /opt/matrix/bin/matrix-update --no-tail "$preview_version" >/dev/null

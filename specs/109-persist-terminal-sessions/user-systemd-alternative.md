@@ -110,7 +110,11 @@ first transfer fails, the sync agent refreshes the exact-version signed
 manifest, requires the immutable version, checksum, and size to match, and
 resumes the partial bundle once. Exhausting both attempts fails closed with a
 structured updater error; it never weakens the requirement that active runtime
-PIDs and cgroups remain unchanged.
+PIDs and cgroups remain unchanged. Exact-head acceptance verifies the restarted
+installed updater contains this bounded path, classifies only allowlisted
+process and staging states on failure, and gives the separately bounded
+checksum, extraction, generation-install, and replacement phases explicit
+post-transfer time.
 
 Reference-aware generation garbage collection keeps
 the current app generation, rollback app generation, and every generation
