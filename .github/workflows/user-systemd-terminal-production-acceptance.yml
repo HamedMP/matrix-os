@@ -277,6 +277,7 @@ jobs:
           done
           call_helper launch
           deadline=$((SECONDS + 14400))
+          progress_deadline="$deadline"
           last_state=""
           while [ "$SECONDS" -lt "$deadline" ]; do
             if state="$(call_helper status 2>/dev/null)" && grep -q '^phase1-ready$' <<<"$state"; then
@@ -289,6 +290,21 @@ jobs:
             if [[ "${state:-}" == phase1-running:* ]] && [ "$state" != "$last_state" ]; then
               echo "Acceptance progress: ${state}"
               last_state="$state"
+              case "$state" in
+                phase1-running:bundle-a-update|phase1-running:bundle-b-update|phase1-running:rollback-update)
+                  progress_timeout=2100
+                  ;;
+                phase1-running:gateway-restart)
+                  progress_timeout=900
+                  ;;
+                *)
+                  progress_timeout=600
+                  ;;
+              esac
+              progress_deadline=$((SECONDS + progress_timeout))
+            elif [[ "${state:-}" == phase1-running:* ]] && [ "$SECONDS" -ge "$progress_deadline" ]; then
+              echo "Acceptance phase stalled at ${state}" >&2
+              exit 1
             fi
             sleep 15
           done

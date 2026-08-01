@@ -174,10 +174,18 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(probe).toContain("TasksMax");
     expect(acceptance).toContain("write_progress");
     expect(acceptance).toContain('write_state "failed:${current_progress}"');
+    expect(acceptance).toContain("write_progress runtime-shell-create");
+    expect(acceptance).toContain("write_progress runtime-agent-create");
+    expect(acceptance).toContain("write_progress runtime-shell-snapshot");
+    expect(acceptance).toContain("write_progress runtime-agent-snapshot");
+    expect(acceptance).toContain('/usr/bin/timeout --signal=KILL 15');
+    expect(acceptance).toContain("failed:phase-worker-exited:");
     expect(acceptance).toContain("deadline=$((SECONDS + 1800))");
     expect(acceptance).not.toContain("for _ in $(seq 1 1800)");
     expect(workflow).toContain("Acceptance stalled at ${state:-unavailable}");
     expect(workflow).toContain("Acceptance failed at ${state}");
+    expect(workflow).toContain("progress_deadline=$((SECONDS + progress_timeout))");
+    expect(workflow).toContain("Acceptance phase stalled at ${state}");
   });
 
   it("rejects permissive descriptor parsers and pins the keeper helper to the descriptor generation", () => {
