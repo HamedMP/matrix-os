@@ -11,6 +11,7 @@ export interface CachedTerminal {
   lastSeq: number;
   hasReplayCursor?: boolean;
   sessionId: string;
+  gatewayUrl?: string;
   socketRetained?: boolean;
 }
 

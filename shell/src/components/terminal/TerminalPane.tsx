@@ -28,6 +28,14 @@ import {
   correctTerminalPointerCoordinates,
 } from "./terminal-soft-grid";
 import {
+  initialTerminalProtocolState,
+  resolveTerminalGatewayCompatibility,
+  terminalProtocolHasCanonicalGrid,
+  terminalProtocolUsesSoftClient,
+  transitionTerminalProtocolState,
+  type TerminalProtocolState,
+} from "./terminal-gateway-compat";
+import {
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
 import {
@@ -350,6 +358,7 @@ export function TerminalPane({
   suppressNativeKeyboard = false,
   canvasZoom = 1,
 }: TerminalPaneProps) {
+  const terminalGatewayUrl = getGatewayUrl();
   const terminalThemeId = useTerminalSettings((s) => s.themeId);
   const terminalFontSize = useTerminalSettings((s) => s.fontSize);
   const terminalFontFamily = useTerminalSettings((s) => s.fontFamily);
@@ -367,6 +376,8 @@ export function TerminalPane({
   const fitAddonRef = useRef<unknown>(null);
   const searchAddonRef = useRef<unknown>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
+  const latestInitialSessionIdRef = useRef(initialSessionId);
+  const appliedInitialSessionIdRef = useRef(initialSessionId);
   const lastSeqRef = useRef<number>(0);
   const hasReplayCursorRef = useRef(false);
   const reconnectAttemptRef = useRef<number>(0);
@@ -385,7 +396,9 @@ export function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [pasteError, setPasteError] = useState<string | null>(null);
-  const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | null>(null);
+  const [connectionNotice, setConnectionNotice] = useState<
+    "reconnecting" | "disconnected" | "update-required" | null
+  >(null);
   const outputBufferRef = useRef("");
   const commandBlockBufferRef = useRef("");
   const activeCommandBlockRef = useRef(false);
@@ -399,6 +412,13 @@ export function TerminalPane({
   const softGridScaleRef = useRef(1);
   const softGridLayoutRef = useRef<(() => void) | null>(null);
   const terminalFontSizeRef = useRef(terminalFontSize);
+  const terminalProtocolStateRef = useRef<TerminalProtocolState>(initialTerminalProtocolState(
+    initialSessionId ?? "",
+    Boolean(initialSessionId && isCanonicalShellSessionId(initialSessionId)),
+  ));
+  const legacyGridReadyRef = useRef(!Boolean(
+    initialSessionId && isCanonicalShellSessionId(initialSessionId),
+  ));
 
   // Latest-value refs kept in sync during render so the long-lived init effect
   // (and the cleanup it returns) read current prop values without re-running and
@@ -419,6 +439,8 @@ export function TerminalPane({
   compatModeRef.current = compatMode;
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived terminal lifecycle reads the latest configured font size without reconnecting the WebSocket.
   terminalFontSizeRef.current = terminalFontSize;
+  // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- cleanup compares the newest requested session with the session captured by its lifecycle so a retargeted pane cannot cache stale protocol state.
+  latestInitialSessionIdRef.current = initialSessionId;
 
   // Keep a stable ref to the current canvasZoom so the effect below can read
   // the latest value without being re-run (and re-registering listeners) on
@@ -712,6 +734,14 @@ export function TerminalPane({
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup, react-doctor/exhaustive-deps -- cleanup is returned via init()'s awaited promise (see outer return), and reading the live heartbeatRef.current in cleanup is required to stop the most recent heartbeat instance.
   useEffect(() => {
     let disposed = false;
+    const lifecycleInitialSessionId = initialSessionId;
+    if (appliedInitialSessionIdRef.current !== initialSessionId) {
+      appliedInitialSessionIdRef.current = initialSessionId;
+      sessionIdRef.current = initialSessionId ?? null;
+      lastSeqRef.current = 0;
+      hasReplayCursorRef.current = false;
+      reconnectAttemptRef.current = 0;
+    }
 
     async function init() {
       const log = (event: string, details: Record<string, unknown> = {}) => {
@@ -788,11 +818,34 @@ export function TerminalPane({
       }
 
       // Check cache first — instant tab switch
-      const cachedRestore = getCachedTerminalRestorePlan(takeCached(paneId));
+      let cachedRestore = getCachedTerminalRestorePlan(takeCached(paneId));
+      const cachedSessionMismatch = Boolean(
+        cachedRestore.cached
+        && initialSessionId
+        && cachedRestore.sessionId !== initialSessionId,
+      );
+      const cachedRuntimeMismatch = Boolean(
+        cachedRestore.cached?.gatewayUrl
+        && cachedRestore.cached.gatewayUrl !== terminalGatewayUrl,
+      );
+      if (cachedSessionMismatch || cachedRuntimeMismatch) {
+        discardStaleCachedTerminal(cachedRestore.cached);
+        cachedRestore = {
+          cached: null,
+          reuseTerminal: false,
+          reuseSocket: false,
+          sessionId: null,
+          lastSeq: 0,
+          hasReplayCursor: false,
+        };
+        sessionIdRef.current = initialSessionId ?? null;
+        lastSeqRef.current = 0;
+        hasReplayCursorRef.current = false;
+      }
       const cached = cachedRestore.cached;
       const canReuseCachedTerminal = cachedRestore.reuseTerminal;
       const canReuseCachedSocket = cachedRestore.reuseSocket;
-      if (cached && !canReuseCachedTerminal) {
+      if (cached) {
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
         hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
@@ -812,13 +865,34 @@ export function TerminalPane({
       let webglAddon: unknown = null;
       let coldReplayVisibility: ColdReplayVisibility | null = null;
       let softGridLayoutFrame: number | null = null;
+      let compatibilityProbeAbort: AbortController | null = null;
+      let quarantinedProbeSocket: WebSocket | null = null;
+      let compatibilityFallbackStarted = false;
+      let legacyFitInProgress = false;
       const xtermTheme = buildXtermTheme(theme, terminalThemeId);
       codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
 
-      const usesSoftGrid = () => {
+      const currentSessionIsCanonical = () => {
         const currentSessionId = sessionIdRef.current;
         return Boolean(currentSessionId && isCanonicalShellSessionId(currentSessionId));
       };
+      terminalProtocolStateRef.current = initialTerminalProtocolState(
+        sessionIdRef.current ?? "",
+        currentSessionIsCanonical(),
+      );
+      legacyGridReadyRef.current = !currentSessionIsCanonical();
+
+      const hasCanonicalGrid = () => (
+        currentSessionIsCanonical()
+        && terminalProtocolHasCanonicalGrid(terminalProtocolStateRef.current)
+      );
+      const shouldDeferLegacyFit = () => (
+        currentSessionIsCanonical()
+        && (
+          terminalProtocolStateRef.current.mode !== "legacy-compatibility"
+          || !legacyGridReadyRef.current
+        )
+      );
 
       const unscaledElementSize = (
         element: HTMLElement,
@@ -838,7 +912,7 @@ export function TerminalPane({
       };
 
       const applySoftGridLayout = () => {
-        if (disposed || !usesSoftGrid()) {
+        if (disposed || !hasCanonicalGrid()) {
           return;
         }
         const termElement = term.element;
@@ -886,7 +960,7 @@ export function TerminalPane({
         });
       };
       const applyCanonicalGridSize = (size: { cols: number; rows: number }) => {
-        if (!usesSoftGrid()) {
+        if (!hasCanonicalGrid()) {
           return;
         }
         if (term.cols !== size.cols || term.rows !== size.rows) {
@@ -906,9 +980,12 @@ export function TerminalPane({
           return;
         }
         try {
-          if (usesSoftGrid()) {
+          if (hasCanonicalGrid()) {
             scheduleSoftGridLayout();
             focusIfAllowed();
+            return;
+          }
+          if (shouldDeferLegacyFit()) {
             return;
           }
           fitAddon.fit();
@@ -1000,9 +1077,9 @@ export function TerminalPane({
         lastSeqRef.current = cachedRestore.lastSeq;
         hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
         let restoredFitSucceeded = true;
-        if (usesSoftGrid()) {
+        if (hasCanonicalGrid()) {
           scheduleSoftGridLayout();
-        } else {
+        } else if (!shouldDeferLegacyFit()) {
           try {
             fitAddon.fit();
             sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
@@ -1060,7 +1137,7 @@ export function TerminalPane({
           applyXtermScrollSurface(xtermElement);
           xtermElement.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
         }
-        if (!usesSoftGrid()) {
+        if (!shouldDeferLegacyFit()) {
           nextFitAddon.fit();
         }
 
@@ -1173,6 +1250,29 @@ export function TerminalPane({
         });
       }
 
+      const activateLegacyGrid = (ws: WebSocket) => {
+        legacyGridReadyRef.current = true;
+        softGridScaleRef.current = 1;
+        const termElement = term.element;
+        if (termElement) {
+          termElement.style.transform = "";
+          termElement.style.transformOrigin = "";
+        }
+        container.style.overflowX = "hidden";
+        container.style.overflowY = "hidden";
+        term.options.fontSize = terminalFontSizeRef.current;
+        try {
+          legacyFitInProgress = true;
+          fitAddon.fit();
+        } catch (err: unknown) {
+          log("legacy-fit-failed", { message: err instanceof Error ? err.message : String(err) });
+        } finally {
+          legacyFitInProgress = false;
+        }
+        sendTerminalResize(ws, term, allowRemoteResizeRef.current);
+        focusIfAllowed();
+      };
+
       function bindWs(
         ws: WebSocket,
         attachOnOpen: boolean,
@@ -1212,6 +1312,84 @@ export function TerminalPane({
           },
         });
         coldReplayVisibility = replayVisibility;
+
+        const beginCompatibilityFallback = (sessionId: string) => {
+          if (!isCurrentWs() || compatibilityFallbackStarted) {
+            return;
+          }
+          compatibilityFallbackStarted = true;
+          compatibilityProbeAbort?.abort();
+          const controller = new AbortController();
+          compatibilityProbeAbort = controller;
+
+          // Quarantine this generation synchronously before the first REST
+          // await. The transport stays open only for the bounded sizing settle
+          // window so post-#990 gateways can persist their authoritative grid;
+          // every queued replay/live frame is ignored by isCurrentWs().
+          wsGenerationRef.current = generation + 1;
+          wsRef.current = null;
+          heartbeatRef.current?.stop();
+          replayVisibility.dispose();
+          quarantinedProbeSocket = ws;
+          setConnectionNotice("reconnecting");
+          log("canonical-capability-probe-start", { generation });
+
+          void resolveTerminalGatewayCompatibility({
+            gatewayUrl: terminalGatewayUrl,
+            sessionId,
+            signal: controller.signal,
+          }).then((result) => {
+            if (
+              disposed
+              || isClosingRef.current
+              || compatibilityProbeAbort !== controller
+              || controller.signal.aborted
+            ) {
+              return;
+            }
+            compatibilityProbeAbort = null;
+            quarantinedProbeSocket = null;
+            if (ws.readyState !== WebSocket.CLOSED) {
+              ws.close();
+            }
+
+            if (result.kind === "cancelled") {
+              return;
+            }
+            if (result.kind === "canonical-compatibility") {
+              terminalProtocolStateRef.current = transitionTerminalProtocolState(
+                terminalProtocolStateRef.current,
+                { type: "metadata-canonical", size: result.size },
+              );
+              legacyGridReadyRef.current = false;
+              applyCanonicalGridSize(result.size);
+              log("canonical-capability-compatible", {
+                cols: result.size.cols,
+                rows: result.size.rows,
+              });
+              connectWs();
+              return;
+            }
+            if (result.kind === "legacy-compatibility") {
+              terminalProtocolStateRef.current = transitionTerminalProtocolState(
+                terminalProtocolStateRef.current,
+                { type: "metadata-legacy" },
+              );
+              legacyGridReadyRef.current = false;
+              log("canonical-capability-legacy");
+              connectWs();
+              return;
+            }
+
+            terminalProtocolStateRef.current = transitionTerminalProtocolState(
+              terminalProtocolStateRef.current,
+              { type: "metadata-error" },
+            );
+            legacyGridReadyRef.current = false;
+            log("canonical-capability-incompatible");
+            setConnectionNotice("update-required");
+          });
+        };
         log("bind-ws", {
           attachOnOpen,
           alreadyAttached,
@@ -1390,13 +1568,46 @@ export function TerminalPane({
                 requestedSeq: options.replayRequest?.requestedSeq,
                 acceptedSeq: msg.fromSeq ?? undefined,
               });
-              sessionIdRef.current = msg.sessionId;
-              if (msg.canonicalSize) {
-                applyCanonicalGridSize(msg.canonicalSize);
+              if (isCanonicalShellSessionId(msg.sessionId)) {
+                if (terminalProtocolStateRef.current.sessionId !== msg.sessionId) {
+                  terminalProtocolStateRef.current = transitionTerminalProtocolState(
+                    terminalProtocolStateRef.current,
+                    { type: "session-change", sessionId: msg.sessionId, canonical: true },
+                  );
+                  legacyGridReadyRef.current = false;
+                }
+                if (msg.canonicalSize) {
+                  terminalProtocolStateRef.current = transitionTerminalProtocolState(
+                    terminalProtocolStateRef.current,
+                    { type: "attached-canonical", size: msg.canonicalSize },
+                  );
+                  legacyGridReadyRef.current = false;
+                  applyCanonicalGridSize(msg.canonicalSize);
+                } else if (
+                  terminalProtocolStateRef.current.mode === "probing"
+                  || terminalProtocolStateRef.current.mode === "canonical"
+                ) {
+                  if (terminalProtocolStateRef.current.mode === "canonical") {
+                    terminalProtocolStateRef.current = transitionTerminalProtocolState(
+                      terminalProtocolStateRef.current,
+                      { type: "session-change", sessionId: msg.sessionId, canonical: true },
+                    );
+                  }
+                  beginCompatibilityFallback(msg.sessionId);
+                  break;
+                }
               }
+              sessionIdRef.current = msg.sessionId;
               if (msg.fromSeq !== null) {
                 lastSeqRef.current = Math.max(lastSeqRef.current, msg.fromSeq);
                 hasReplayCursorRef.current = true;
+              }
+              if (
+                isCanonicalShellSessionId(msg.sessionId)
+                && terminalProtocolStateRef.current.mode === "legacy-compatibility"
+                && !legacyGridReadyRef.current
+              ) {
+                activateLegacyGrid(ws);
               }
               onSessionAttachedRef.current?.(paneId, msg.sessionId);
               if (msg.state === "exited") {
@@ -1406,10 +1617,27 @@ export function TerminalPane({
               break;
 
             case "canonical-size":
-              applyCanonicalGridSize(msg);
+              if (currentSessionIsCanonical()) {
+                terminalProtocolStateRef.current = transitionTerminalProtocolState(
+                  terminalProtocolStateRef.current,
+                  { type: "attached-canonical", size: msg },
+                );
+                legacyGridReadyRef.current = false;
+                applyCanonicalGridSize(msg);
+              }
               break;
 
             case "output":
+              if (
+                currentSessionIsCanonical()
+                && !hasCanonicalGrid()
+                && !(
+                  terminalProtocolStateRef.current.mode === "legacy-compatibility"
+                  && legacyGridReadyRef.current
+                )
+              ) {
+                return;
+              }
               term.write(transformTerminalOutputForCompat(
                 msg.data,
                 compatModeRef.current,
@@ -1498,9 +1726,9 @@ export function TerminalPane({
 
         if (!attachOnOpen && ws.readyState === WebSocket.OPEN) {
           if (alreadyAttached) {
-            if (usesSoftGrid()) {
+            if (hasCanonicalGrid()) {
               scheduleSoftGridLayout();
-            } else {
+            } else if (!shouldDeferLegacyFit()) {
               sendTerminalResize(ws, term, allowRemoteResizeRef.current);
             }
             return;
@@ -1526,7 +1754,13 @@ export function TerminalPane({
         const wsPath = terminalWebSocketPathForSession(currentSessionId);
         const replayRequest = getCanonicalReplayRequest();
         const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
-          ? { session: currentSessionId, fromSeq: String(replayRequest?.requestedSeq ?? 0), client: "soft" }
+          ? {
+              session: currentSessionId,
+              fromSeq: String(replayRequest?.requestedSeq ?? 0),
+              ...(terminalProtocolUsesSoftClient(terminalProtocolStateRef.current)
+                ? { client: "soft" }
+                : {}),
+            }
           : currentSessionId || !cwd
             ? undefined
             : { cwd };
@@ -1629,8 +1863,11 @@ export function TerminalPane({
 
       onResizeDisposableRef.current?.dispose();
       onResizeDisposableRef.current = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-        if (usesSoftGrid()) {
+        if (hasCanonicalGrid()) {
           scheduleSoftGridLayout();
+          return;
+        }
+        if (shouldDeferLegacyFit() || legacyFitInProgress) {
           return;
         }
         sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current);
@@ -1717,9 +1954,9 @@ export function TerminalPane({
 
       // react-doctor-disable-next-line react-doctor/effect-observer-needs-disconnect -- the async init lifecycle returns a cleanup below that disconnects this observer before terminal teardown.
       const resizeObserver = new ResizeObserver(() => {
-        if (usesSoftGrid()) {
+        if (hasCanonicalGrid()) {
           scheduleSoftGridLayout();
-        } else {
+        } else if (!shouldDeferLegacyFit()) {
           requestAnimationFrame(refitOnly);
         }
       });
@@ -1739,6 +1976,12 @@ export function TerminalPane({
         clearAuthDetectTimer();
         clearReconnectTimer();
         clearPendingReconnectBanner();
+        compatibilityProbeAbort?.abort();
+        compatibilityProbeAbort = null;
+        if (quarantinedProbeSocket && quarantinedProbeSocket.readyState !== WebSocket.CLOSED) {
+          quarantinedProbeSocket.close();
+        }
+        quarantinedProbeSocket = null;
         coldReplayVisibility?.dispose();
         heartbeatRef.current?.stop();
         // Drop the context-loss subscription on every path. Cache paths dispose
@@ -1749,11 +1992,15 @@ export function TerminalPane({
         onDataDisposableRef.current = null;
         onResizeDisposableRef.current?.dispose();
         onResizeDisposableRef.current = null;
-        const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
+        const sessionWasRetargeted = latestInitialSessionIdRef.current !== lifecycleInitialSessionId;
+        const shouldCache = !sessionWasRetargeted
+          && !isClosingRef.current
+          && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
         const shouldDestroy = shouldDestroyOnUnmountRef.current?.(paneId) ?? false;
         log("cleanup", {
           shouldCache,
           shouldDestroy,
+          sessionWasRetargeted,
           isClosing: isClosingRef.current,
           paneStillInTree: shouldCacheOnUnmountRef.current?.(paneId) ?? true,
         });
@@ -1802,6 +2049,7 @@ export function TerminalPane({
             lastSeq: lastSeqRef.current,
             hasReplayCursor: hasReplayCursorRef.current,
             sessionId: cachedSessionId,
+            gatewayUrl: terminalGatewayUrl,
           }, { retainSocket });
         } else {
           // WS never established — dispose, don't cache
@@ -1822,9 +2070,11 @@ export function TerminalPane({
   }, [
     claudeMode,
     cwd,
+    initialSessionId,
     allowRemoteResize,
     paneId,
     suppressNativeKeyboard,
+    terminalGatewayUrl,
   ]);
 
   useEffect(() => {
@@ -1832,6 +2082,14 @@ export function TerminalPane({
     codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
 
     if (termRef.current && fitAddonRef.current) {
+      const currentSessionId = sessionIdRef.current;
+      const canonicalSession = Boolean(
+        currentSessionId && isCanonicalShellSessionId(currentSessionId),
+      );
+      const allowAppearanceFit = !canonicalSession || (
+        terminalProtocolStateRef.current.mode === "legacy-compatibility"
+        && legacyGridReadyRef.current
+      );
       applyTerminalAppearance(
         termRef.current as Parameters<typeof applyTerminalAppearance>[0],
         fitAddonRef.current as Parameters<typeof applyTerminalAppearance>[1],
@@ -1844,7 +2102,7 @@ export function TerminalPane({
           cursorStyle: terminalCursorStyle,
           smoothScrollDuration: terminalSmoothScroll ? 125 : 0,
           ligatures: terminalLigatures,
-          fit: !Boolean(sessionIdRef.current && isCanonicalShellSessionId(sessionIdRef.current)),
+          fit: allowAppearanceFit,
         },
       );
       softGridLayoutRef.current?.();
@@ -1874,8 +2132,16 @@ export function TerminalPane({
   useEffect(() => {
     const currentSessionId = sessionIdRef.current;
     if (currentSessionId && isCanonicalShellSessionId(currentSessionId)) {
-      const id = requestAnimationFrame(() => softGridLayoutRef.current?.());
-      return () => cancelAnimationFrame(id);
+      if (terminalProtocolHasCanonicalGrid(terminalProtocolStateRef.current)) {
+        const id = requestAnimationFrame(() => softGridLayoutRef.current?.());
+        return () => cancelAnimationFrame(id);
+      }
+      if (!(
+        terminalProtocolStateRef.current.mode === "legacy-compatibility"
+        && legacyGridReadyRef.current
+      )) {
+        return;
+      }
     }
     const fit = fitAddonRef.current as { fit?: () => void } | null;
     if (!fit?.fit) return;
@@ -1971,10 +2237,16 @@ export function TerminalPane({
             maxWidth: "calc(100% - 32px)",
             background: connectionNotice === "reconnecting"
               ? "rgba(146, 64, 14, 0.95)"
+              : connectionNotice === "update-required"
+                ? "rgba(127, 29, 29, 0.95)"
               : "rgba(63, 63, 70, 0.95)",
           }}
         >
-          {connectionNotice === "reconnecting" ? "Reconnecting terminal..." : "Terminal disconnected"}
+          {connectionNotice === "reconnecting"
+            ? "Reconnecting terminal..."
+            : connectionNotice === "update-required"
+              ? "Update this Matrix computer, then reopen the terminal."
+              : "Terminal disconnected"}
         </div>
       )}
       {authUrl && (

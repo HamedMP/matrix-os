@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  MAX_TERMINAL_SESSION_METADATA_BYTES,
+  MAX_TERMINAL_SESSION_METADATA_ROWS,
+  TERMINAL_METADATA_FETCH_TIMEOUT_MS,
   initialTerminalProtocolState,
   resolveTerminalGatewayCompatibility,
   transitionTerminalProtocolState,
@@ -148,5 +151,71 @@ describe("terminal gateway compatibility negotiation", () => {
       wait,
     })).resolves.toEqual({ kind: "cancelled" });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out a metadata request and clears its bounded timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          }, { once: true });
+        })
+      ));
+      const result = resolveTerminalGatewayCompatibility({
+        gatewayUrl: "https://gateway.example",
+        sessionId: "main",
+        signal: new AbortController().signal,
+        fetchImpl,
+      });
+
+      await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_FETCH_TIMEOUT_MS + 1);
+      await expect(result).resolves.toEqual({ kind: "incompatible" });
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out and cancels a stalled metadata response body", async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn();
+      const fetchImpl = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+        cancel,
+      }), { status: 200 }));
+      const result = resolveTerminalGatewayCompatibility({
+        gatewayUrl: "https://gateway.example",
+        sessionId: "main",
+        signal: new AbortController().signal,
+        fetchImpl,
+      });
+
+      await vi.advanceTimersByTimeAsync(TERMINAL_METADATA_FETCH_TIMEOUT_MS + 1);
+      await expect(result).resolves.toEqual({ kind: "incompatible" });
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects oversized response bytes and row counts", async () => {
+    const oversizedBody = `{"sessions":[],"padding":"${"x".repeat(MAX_TERMINAL_SESSION_METADATA_BYTES)}"}`;
+    const oversizedRows = Array.from(
+      { length: MAX_TERMINAL_SESSION_METADATA_ROWS + 1 },
+      (_, index) => ({ name: `session-${index}` }),
+    );
+    const bodyProbe = probeOptions([new Response(oversizedBody, { status: 200 })]);
+    const rowProbe = probeOptions([jsonResponse({ sessions: oversizedRows })]);
+
+    await expect(resolveTerminalGatewayCompatibility(bodyProbe.options)).resolves.toEqual({
+      kind: "incompatible",
+    });
+    await expect(resolveTerminalGatewayCompatibility(rowProbe.options)).resolves.toEqual({
+      kind: "incompatible",
+    });
   });
 });

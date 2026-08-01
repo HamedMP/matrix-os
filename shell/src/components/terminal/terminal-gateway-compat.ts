@@ -126,38 +126,16 @@ function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError";
 }
 
-async function fetchWithTimeout(
-  fetchImpl: FetchLike,
-  url: string,
-  parentSignal: AbortSignal,
-): Promise<Response> {
-  if (parentSignal.aborted) {
-    throw abortError();
-  }
-  const controller = new AbortController();
-  const onParentAbort = () => controller.abort();
-  parentSignal.addEventListener("abort", onParentAbort, { once: true });
-  const timeout = setTimeout(() => controller.abort(), TERMINAL_METADATA_FETCH_TIMEOUT_MS);
-  try {
-    return await fetchImpl(url, {
-      credentials: "same-origin",
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-    parentSignal.removeEventListener("abort", onParentAbort);
-  }
-}
-
 async function observeSessionMetadata(
   response: Response,
   sessionId: string,
+  signal: AbortSignal,
 ): Promise<SessionMetadataObservation> {
   if (!response.ok) {
     return { kind: "invalid" };
   }
-  const raw = await response.text();
-  if (raw.length > MAX_TERMINAL_SESSION_METADATA_BYTES) {
+  const raw = await readBoundedResponseText(response, signal);
+  if (raw === null) {
     return { kind: "invalid" };
   }
 
@@ -193,6 +171,108 @@ async function observeSessionMetadata(
   return { kind: "canonical", size: canonicalSize };
 }
 
+function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) {
+    return Promise.reject(abortError());
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      void reader.cancel().then(undefined, () => {
+        console.warn("[terminal] failed to cancel timed out session metadata response");
+      });
+      reject(abortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (result) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (err: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
+async function readBoundedResponseText(
+  response: Response,
+  signal: AbortSignal,
+): Promise<string | null> {
+  if (!response.body) {
+    const raw = await response.text();
+    return new TextEncoder().encode(raw).byteLength <= MAX_TERMINAL_SESSION_METADATA_BYTES
+      ? raw
+      : null;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let readerCancelled = false;
+  try {
+    while (true) {
+      const { done, value } = await readStreamChunk(reader, signal);
+      if (done) {
+        break;
+      }
+      if (!value || value.byteLength === 0) {
+        continue;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_TERMINAL_SESSION_METADATA_BYTES) {
+        readerCancelled = true;
+        void reader.cancel().then(undefined, () => {
+          console.warn("[terminal] failed to cancel oversized session metadata response");
+        });
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    if (!readerCancelled && !signal.aborted) {
+      reader.releaseLock();
+    }
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+async function observeSessionMetadataWithTimeout(
+  fetchImpl: FetchLike,
+  url: string,
+  sessionId: string,
+  parentSignal: AbortSignal,
+): Promise<SessionMetadataObservation> {
+  if (parentSignal.aborted) {
+    throw abortError();
+  }
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort();
+  parentSignal.addEventListener("abort", onParentAbort, { once: true });
+  const timeout = setTimeout(() => controller.abort(), TERMINAL_METADATA_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(url, {
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+    return await observeSessionMetadata(response, sessionId, controller.signal);
+  } finally {
+    clearTimeout(timeout);
+    parentSignal.removeEventListener("abort", onParentAbort);
+  }
+}
+
 export async function resolveTerminalGatewayCompatibility(
   options: ResolveTerminalGatewayCompatibilityOptions,
 ): Promise<TerminalGatewayCompatibility> {
@@ -204,8 +284,12 @@ export async function resolveTerminalGatewayCompatibility(
 
   try {
     for (let attempt = 0; attempt < TERMINAL_CANONICAL_SIZE_PROBE_ATTEMPTS; attempt += 1) {
-      const response = await fetchWithTimeout(fetchImpl, url, options.signal);
-      const observation = await observeSessionMetadata(response, options.sessionId);
+      const observation = await observeSessionMetadataWithTimeout(
+        fetchImpl,
+        url,
+        options.sessionId,
+        options.signal,
+      );
       if (observation.kind === "invalid") {
         return { kind: "incompatible" };
       }
