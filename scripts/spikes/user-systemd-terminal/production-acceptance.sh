@@ -219,6 +219,39 @@ print(value.replace("_", "-"))
 PY
 }
 
+read_probe_diagnostic() {
+  python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+diagnostic_fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+diagnostic_stat = os.fstat(diagnostic_fd)
+if not stat.S_ISREG(diagnostic_stat.st_mode) or diagnostic_stat.st_size > 512:
+    os.close(diagnostic_fd)
+    raise SystemExit(1)
+with os.fdopen(diagnostic_fd, encoding="utf-8") as source:
+    lines = set(source.read().splitlines())
+allowed = (
+    "production_probe_status_write_failed",
+    "production_probe_ready_write_failed",
+    "production_probe_invalid_request",
+    "production_probe_runtime_unavailable",
+    "production_probe_attach_failed",
+    "production_probe_status_write_non_error",
+    "production_probe_ready_write_non_error",
+    "production_probe_message_parse_non_syntax_error",
+    "production_probe_uncaught_non_error",
+    "production_probe_rejection_non_error",
+)
+for candidate in allowed:
+    if candidate in lines:
+        print(candidate.replace("_", "-"))
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 load_host_auth() {
   local line token
   current_failure=auth-env-missing
@@ -330,20 +363,22 @@ roles_match() {
 
 websocket_attach_owned_by_gateway() {
   local name="$1" snapshot_file="$2" runtime_id session_name gateway_cgroup ready status client_pid found=0
-  local attach_status=unknown
+  local attach_status=unknown attach_diagnostic
   runtime_id="$(json_field "$snapshot_file" runtimeId)"
   session_name="$(json_field "$snapshot_file" sessionName)"
   gateway_cgroup="$(systemctl show matrix-gateway.service -p ControlGroup --value)"
   ready="${loop_root}/ws-${runtime_id}.ready"
   status="${ready}.status"
+  attach_diagnostic="${state_root}/attach-${runtime_id}.diagnostic"
   rm -f -- "$ready" "$status"
+  install -m 0600 /dev/null "$attach_diagnostic"
   load_host_auth
   runuser -u matrix -- env \
     HOME="$home" MATRIX_HOME="$home" MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN" \
     XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
     /opt/matrix/runtime/node/bin/node "$probe_path" attach "$name" unused "$ready" \
-    >/dev/null 2>&1 &
+    >/dev/null 2>"$attach_diagnostic" &
   client_pid=$!
   current_failure=attachment-ready-timeout
   for _ in $(seq 1 30); do
@@ -352,12 +387,15 @@ websocket_attach_owned_by_gateway() {
     sleep 1
   done
   if [ ! -f "$ready" ]; then
-    attach_status="$(read_probe_status "$status" 2>/dev/null || true)"
-    [[ "$attach_status" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || attach_status=unknown
-    current_failure="attachment-ready-${attach_status}"
     kill "$client_pid" >/dev/null 2>&1 || true
     wait "$client_pid" >/dev/null 2>&1 || true
-    rm -f -- "$status"
+    attach_status="$(read_probe_status "$status" 2>/dev/null || true)"
+    if [[ ! "$attach_status" =~ ^[a-z][a-z0-9-]{0,63}$ ]]; then
+      attach_status="$(read_probe_diagnostic "$attach_diagnostic" 2>/dev/null || true)"
+    fi
+    [[ "$attach_status" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || attach_status=unknown
+    current_failure="attachment-ready-${attach_status}"
+    rm -f -- "$ready" "$status" "$attach_diagnostic"
     return 1
   fi
   local proc pid cmdline cgroup
@@ -372,6 +410,7 @@ websocket_attach_owned_by_gateway() {
       [ "$cgroup" = "$(json_field "$snapshot_file" cgroup)" ]; then
       kill "$client_pid" >/dev/null 2>&1 || true
       wait "$client_pid" >/dev/null 2>&1 || true
+      rm -f -- "$ready" "$status" "$attach_diagnostic"
       return 1
     fi
     found=$((found + 1))
@@ -380,11 +419,12 @@ websocket_attach_owned_by_gateway() {
   if [ "$found" -lt 1 ]; then
     kill "$client_pid" >/dev/null 2>&1 || true
     wait "$client_pid" >/dev/null 2>&1 || true
+    rm -f -- "$ready" "$status" "$attach_diagnostic"
     return 1
   fi
   current_failure=attachment-client-exit
   if ! wait "$client_pid"; then return 1; fi
-  rm -f -- "$ready" "$status"
+  rm -f -- "$ready" "$status" "$attach_diagnostic"
   current_failure=attachment-runtime-continuity
   roles_match "$name" "$(json_field "$snapshot_file" workloadKind)" "$snapshot_file"
 }
