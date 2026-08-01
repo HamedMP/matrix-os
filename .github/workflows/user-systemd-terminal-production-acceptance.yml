@@ -277,14 +277,25 @@ jobs:
           done
           call_helper launch
           deadline=$((SECONDS + 14400))
+          last_state=""
           while [ "$SECONDS" -lt "$deadline" ]; do
             if state="$(call_helper status 2>/dev/null)" && grep -q '^phase1-ready$' <<<"$state"; then
               break
             fi
-            if grep -q '^failed$' <<<"${state:-}"; then exit 1; fi
+            if [[ "${state:-}" == failed:* ]] || [ "${state:-}" = failed ]; then
+              echo "Acceptance failed at ${state}" >&2
+              exit 1
+            fi
+            if [[ "${state:-}" == phase1-running:* ]] && [ "$state" != "$last_state" ]; then
+              echo "Acceptance progress: ${state}"
+              last_state="$state"
+            fi
             sleep 15
           done
-          grep -q '^phase1-ready$' <<<"${state:-}"
+          if ! grep -q '^phase1-ready$' <<<"${state:-}"; then
+            echo "Acceptance stalled at ${state:-unavailable}" >&2
+            exit 1
+          fi
           call_helper reboot
       - name: Verify zero automatic execution after reboot
         id: evidence
@@ -319,14 +330,25 @@ jobs:
           done
           call_helper resume
           deadline=$((SECONDS + 900))
+          last_state=""
           while [ "$SECONDS" -lt "$deadline" ]; do
             if state="$(call_helper status 2>/dev/null)" && grep -q '^complete$' <<<"$state"; then
               break
             fi
-            if grep -q '^failed$' <<<"${state:-}"; then exit 1; fi
+            if [[ "${state:-}" == failed:* ]] || [ "${state:-}" = failed ]; then
+              echo "Acceptance failed at ${state}" >&2
+              exit 1
+            fi
+            if [[ "${state:-}" == phase2-running:* ]] && [ "$state" != "$last_state" ]; then
+              echo "Acceptance progress: ${state}"
+              last_state="$state"
+            fi
             sleep 10
           done
-          grep -q '^complete$' <<<"${state:-}"
+          if ! grep -q '^complete$' <<<"${state:-}"; then
+            echo "Acceptance stalled at ${state:-unavailable}" >&2
+            exit 1
+          fi
           call_helper pack >"$RUNNER_TEMP/user-systemd-terminal-evidence.json"
           jq -e --arg head "$HEAD_SHA" '
             .schemaVersion == 1 and .headSha == $head and
