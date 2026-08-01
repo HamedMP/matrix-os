@@ -275,6 +275,12 @@ type CanonicalReplayRequest = {
   requestedSeq: number;
 };
 
+const UNINITIALIZED_TERMINAL_PROTOCOL_STATE: TerminalProtocolState = {
+  mode: "incompatible",
+  sessionId: "",
+  canonicalSize: null,
+};
+
 function toDisposableWebglAddon(addon: unknown): DisposableWebglAddon | null {
   if (!addon || typeof addon !== "object") {
     return null;
@@ -412,10 +418,9 @@ export function TerminalPane({
   const softGridScaleRef = useRef(1);
   const softGridLayoutRef = useRef<(() => void) | null>(null);
   const terminalFontSizeRef = useRef(terminalFontSize);
-  const terminalProtocolStateRef = useRef<TerminalProtocolState>(initialTerminalProtocolState(
-    initialSessionId ?? "",
-    Boolean(initialSessionId && isCanonicalShellSessionId(initialSessionId)),
-  ));
+  const terminalProtocolStateRef = useRef<TerminalProtocolState>(
+    UNINITIALIZED_TERMINAL_PROTOCOL_STATE,
+  );
   const legacyGridReadyRef = useRef(!Boolean(
     initialSessionId && isCanonicalShellSessionId(initialSessionId),
   ));
@@ -1261,6 +1266,7 @@ export function TerminalPane({
         container.style.overflowX = "hidden";
         container.style.overflowY = "hidden";
         term.options.fontSize = terminalFontSizeRef.current;
+        // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally yet; the finalizer must clear the resize suppression even when FitAddon throws, or future legitimate legacy resizes remain disabled.
         try {
           legacyFitInProgress = true;
           fitAddon.fit();
