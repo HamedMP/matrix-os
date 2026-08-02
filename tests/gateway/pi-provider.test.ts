@@ -562,6 +562,36 @@ describe("pi provider adapter — event normalization", () => {
     expect(outputs.some((event) => event.type === "tool.output" && event.truncated === true)).toBe(true);
   });
 
+  it("bounds unmatched tool state and still closes every emitted tool", async () => {
+    const lines = [
+      sessionLine(SESSION_ID),
+      ...Array.from({ length: 100 }, (_, index) => JSON.stringify({
+        type: "tool_execution_start",
+        toolCallId: `call_${index}`,
+        toolName: "read",
+        args: {},
+      })),
+    ];
+    const fake = fakeSpawn({ lines });
+    const provider = providerFor(fake.spawnFn, { maxEvents: 20 });
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Read files"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+    const parsed = parseCodingAgentProviderRunResult(result, threadSummary().id);
+    const started = parsed.events.filter((event) => event.type === "tool.started");
+    const completed = parsed.events.filter((event) => event.type === "tool.completed");
+
+    expect(started).toHaveLength(10);
+    expect(completed).toHaveLength(10);
+    expect(completed.map((event) => event.type === "tool.completed" && event.toolCallId))
+      .toEqual(started.map((event) => event.type === "tool.started" && event.toolCallId));
+  });
+
   it("skips unknown and malformed lines without failing the run", async () => {
     const lines = [
       "not json at all",

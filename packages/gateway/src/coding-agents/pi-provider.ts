@@ -177,6 +177,10 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
   let assistantText = "";
   let assistantMessageId: string | null = null;
   let fallbackToolCounter = 0;
+  // Each tracked tool needs at least a started + completed event. Reserving
+  // half the run budget keeps both the event stream and the in-memory tool
+  // registries bounded even if a provider emits starts without matching ends.
+  const maxTrackedTools = Math.max(1, Math.floor(options.maxEvents / 2));
   const toolOutputs = new Map<string, string>();
   const toolTruncated = new Set<string>();
 
@@ -219,6 +223,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
     resultText: string | undefined,
     outcome: "success" | "failed" | "cancelled",
   ): void {
+    if (!toolOutputs.has(toolCallId)) return;
     const accumulated = toolOutputs.get(toolCallId) ?? "";
     toolOutputs.delete(toolCallId);
     const truncatedByCap = toolTruncated.delete(toolCallId);
@@ -318,6 +323,10 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
         flushAssistantText();
         const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${++fallbackToolCounter}`);
         const toolName = safeToolName(event.toolName);
+        if (!toolOutputs.has(toolCallId) && toolOutputs.size >= maxTrackedTools) {
+          dropped += 1;
+          return;
+        }
         toolOutputs.set(toolCallId, "");
         emit({
           ...baseEvent(),
@@ -330,6 +339,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
       }
       case "tool_execution_update": {
         const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${fallbackToolCounter}`);
+        if (!toolOutputs.has(toolCallId)) return;
         const partial = event.partialResult;
         const text = partial && typeof partial === "object"
           ? contentText((partial as Record<string, unknown>).content)
