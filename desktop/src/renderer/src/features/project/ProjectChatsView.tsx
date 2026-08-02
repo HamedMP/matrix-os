@@ -39,6 +39,35 @@ import { ProjectThreadList } from "./ProjectThreadList";
 
 export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/AgentComposer";
 
+const TYPE_TO_START_MAX_PROMPT_BYTES = 24_000;
+const TYPE_TO_START_INTERACTIVE_SELECTOR = [
+  "input",
+  "textarea",
+  "select",
+  "button",
+  "a[href]",
+  "summary",
+  "[contenteditable]:not([contenteditable='false'])",
+  "[role='button']",
+  "[role='link']",
+  "[role='menuitem']",
+  "[role='option']",
+  "[role='tab']",
+  "[role='switch']",
+  "[role='checkbox']",
+  "[role='radio']",
+  "[role='slider']",
+  "[role='spinbutton']",
+  "[role='textbox']",
+  "[role='combobox']",
+  "[role='listbox']",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function isTypeToStartInteractiveTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(TYPE_TO_START_INTERACTIVE_SELECTOR) !== null;
+}
+
 /**
  * The project's Chats view: thread list on the left, the selected
  * conversation in the middle, and the shared conversation inspector on the
@@ -175,7 +204,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
 
   const openNewChat = useCallback(async (
     taskId?: string,
-    initialPrompt?: string,
+    initialPrompt?: string | (() => string),
     cancelled: () => boolean = () => false,
     onReady: () => void = () => undefined,
   ): Promise<boolean> => {
@@ -187,12 +216,15 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       toast.error("Couldn't start a new chat here. Refresh the workspace and try again.");
       return false;
     }
+    const resolvedInitialPrompt = typeof initialPrompt === "function"
+      ? initialPrompt()
+      : initialPrompt;
     setComposerSeed({
       seedId: Date.now(),
       draft: {
         ...defaultAgentThreadComposerDraft(summary),
         ...relation,
-        ...(initialPrompt ? { prompt: initialPrompt } : {}),
+        ...(resolvedInitialPrompt ? { prompt: resolvedInitialPrompt } : {}),
       },
     });
     setComposerOpen(true);
@@ -206,29 +238,45 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const typeToStartEnabled = summary
     ? capabilityEnabled(summary, "codingAgentsThreadCreate") && projectWorkspaceEnabled
     : false;
+  const typeToStartPromptByteLimit = Math.min(
+    summary?.limits.maxPromptBytes ?? TYPE_TO_START_MAX_PROMPT_BYTES,
+    TYPE_TO_START_MAX_PROMPT_BYTES,
+  );
   const typeToStartInFlightRef = useRef(false);
+  const typeToStartBufferRef = useRef("");
   useEffect(() => {
     if (!active || selectedThreadId || !typeToStartEnabled || composerOpen) return;
     typeToStartInFlightRef.current = false;
+    typeToStartBufferRef.current = "";
+    let cancelled = false;
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
       if (event.key.length !== 1) return;
-      const target = event.target as HTMLElement | null;
-      if (
-        target
-        && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)
-      ) {
-        return;
-      }
+      if (isTypeToStartInteractiveTarget(event.target)) return;
+      const nextBuffer = `${typeToStartBufferRef.current}${event.key}`;
+      if (new TextEncoder().encode(nextBuffer).byteLength > typeToStartPromptByteLimit) return;
+      event.preventDefault();
+      typeToStartBufferRef.current = nextBuffer;
       if (typeToStartInFlightRef.current) return;
       typeToStartInFlightRef.current = true;
-      void openNewChatForTypeToStart(undefined, event.key).then((started) => {
+      void openNewChatForTypeToStart(
+        undefined,
+        () => typeToStartBufferRef.current,
+        () => cancelled,
+      ).then((started) => {
+        if (cancelled) return;
+        typeToStartBufferRef.current = "";
         if (!started) typeToStartInFlightRef.current = false;
       });
     }
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, selectedThreadId, typeToStartEnabled, composerOpen]);
+    return () => {
+      cancelled = true;
+      typeToStartBufferRef.current = "";
+      typeToStartInFlightRef.current = false;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [active, selectedThreadId, typeToStartEnabled, typeToStartPromptByteLimit, composerOpen]);
 
   useEffect(() => {
     if (!active || !composerRequest || composerRequest.projectId !== projectId) return;

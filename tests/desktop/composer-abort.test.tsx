@@ -110,14 +110,26 @@ describe("AgentConversationView abort control", () => {
     // retry must not leave the user reading "could not stop".
     mockOperator();
     useCodingAgentWorkspace.setState({
+      turnStatus: "error",
       turnThreadId: "thread_alpha",
       turnError: "Could not stop this conversation. It may still be running — try again.",
+      turnRetry: {
+        threadId: "thread_alpha",
+        message: "please finish",
+        clientRequestId: "req_retry",
+      },
     });
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
-    await waitFor(() => expect(useCodingAgentWorkspace.getState().turnError).toBeNull());
+    await waitFor(() => {
+      const state = useCodingAgentWorkspace.getState();
+      expect(state.turnStatus).toBe("idle");
+      expect(state.turnError).toBeNull();
+      expect(state.turnRetry).toBeNull();
+      expect(state.turnThreadId).toBeNull();
+    });
   });
 
   it("keeps the send button on an idle thread even when abort is supported", () => {

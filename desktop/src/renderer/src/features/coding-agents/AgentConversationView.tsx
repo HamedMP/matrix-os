@@ -443,8 +443,7 @@ function ConversationComposer({
   const turnError = useCodingAgentWorkspace((state) => state.turnError);
   const send = useCodingAgentWorkspace((state) => state.sendThreadMessage);
   const submitting = turnStatus === "submitting" && turnThreadId === threadId;
-  // The preload has no abort channel yet; the Stop button stays hidden until
-  // window.matrix.abortThread exists (see abort-thread.ts).
+  // Abort support follows the typed operator preload bridge.
   const abortSupported = agentThreadAbortSupported();
 
   async function submit() {

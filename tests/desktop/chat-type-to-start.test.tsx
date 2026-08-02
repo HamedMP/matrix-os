@@ -13,6 +13,7 @@ import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/proj
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 
 const NOW = "2026-07-12T12:00:00.000Z";
+const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
 
 function summaryFixture(): RuntimeSummary {
   return {
@@ -121,7 +122,10 @@ class MockResizeObserver {
 
 function resetStores() {
   useProjectView.setState({ entries: {}, runtimeScope: null });
-  useProjectWorkspaces.setState({ entries: {} });
+  useProjectWorkspaces.setState({
+    entries: {},
+    resolveNewChatTarget: defaultResolveNewChatTarget,
+  });
   useProjectChatLauncher.setState({ composerRequest: null });
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
   useCodingAgentWorkspace.setState({
@@ -183,6 +187,25 @@ describe("ProjectChatsView type-to-start", () => {
     await waitFor(() => expect(prompt.value).toBe("h"));
   });
 
+  it("buffers normal typing while the new-chat target resolves", async () => {
+    let resolveTarget!: (target: { projectId: string }) => void;
+    const resolveNewChatTarget = vi.fn(() => new Promise<{ projectId: string }>((resolve) => {
+      resolveTarget = resolve;
+    }));
+    useProjectWorkspaces.setState({ resolveNewChatTarget });
+    mockOperator({ withThreads: false });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByText("Start typing to begin a new chat");
+    await act(async () => {});
+
+    for (const key of "hello") fireEvent.keyDown(window, { key });
+
+    expect(resolveNewChatTarget).toHaveBeenCalledTimes(1);
+    act(() => resolveTarget({ projectId: "matrix-os" }));
+    const prompt = (await screen.findByLabelText("Agent run prompt")) as HTMLTextAreaElement;
+    await waitFor(() => expect(prompt.value).toBe("hello"));
+  });
+
   it("ignores printable keys while a chat is selected", async () => {
     mockOperator();
     useProjectView.getState().setSelectedThread("matrix-os", "thread_plan");
@@ -209,6 +232,32 @@ describe("ProjectChatsView type-to-start", () => {
       foreign.remove();
     }
 
+    expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
+  });
+
+  it("ignores printable keys from interactive controls and their children", async () => {
+    const resolveNewChatTarget = vi.fn(async () => ({ projectId: "matrix-os" }));
+    useProjectWorkspaces.setState({ resolveNewChatTarget });
+    mockOperator({ withThreads: false });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByText("Start typing to begin a new chat");
+    await act(async () => {});
+
+    const button = document.createElement("button");
+    const buttonLabel = document.createElement("span");
+    button.appendChild(buttonLabel);
+    const link = document.createElement("a");
+    link.href = "https://example.test";
+    document.body.append(button, link);
+    try {
+      fireEvent.keyDown(buttonLabel, { key: " " });
+      fireEvent.keyDown(link, { key: "x" });
+    } finally {
+      button.remove();
+      link.remove();
+    }
+
+    expect(resolveNewChatTarget).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
   });
 

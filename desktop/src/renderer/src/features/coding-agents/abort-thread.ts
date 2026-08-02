@@ -10,6 +10,7 @@
 // snapshot, leaving the composer blocked and Stop visible until some later
 // refresh.
 import { invoke } from "../../lib/operator";
+import { diagnosticErrorKind } from "../../lib/errors";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 
@@ -42,16 +43,25 @@ export async function abortAgentThread(threadId: string): Promise<boolean> {
         threadSnapshotStatus: "ready",
         threadSnapshotError: null,
         // Clear a message left by an earlier failed attempt on this thread;
-        // otherwise a successful retry still shows "could not stop".
-        ...(state.turnThreadId === threadId ? { turnError: null } : {}),
+        // otherwise a successful retry still shows "could not stop" and
+        // retains a stale direct-send retry for a conversation that ended.
+        ...(state.turnThreadId === threadId
+          ? {
+              turnStatus: "idle" as const,
+              turnError: null,
+              turnRetry: null,
+              turnThreadId: null,
+            }
+          : {}),
       });
     }
     return true;
   } catch (err: unknown) {
-    // Log the real shape for support; show the user generic copy only.
+    // Keep renderer diagnostics category-only; upstream details may contain
+    // provider or filesystem data and belong in server-side logs.
     console.warn(
       "[coding-agents] thread abort failed:",
-      err instanceof Error ? err.message : String(err),
+      diagnosticErrorKind(err),
     );
     if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
     const state = useCodingAgentWorkspace.getState();
