@@ -18,17 +18,15 @@ const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
 // Mirrors the shell:open-external contract: only HTTPS origins may leave the
 // app. Plain-http localhost previews stay inspectable but cannot be opened.
 function canOpenExternally(origin: string | undefined): origin is string {
-  if (!origin) return false;
-  try {
-    return new URL(origin).protocol === "https:";
-  } catch {
-    return false;
-  }
+  return Boolean(origin && URL.canParse(origin) && new URL(origin).protocol === "https:");
 }
 
 function openExternalPreview(url: string): void {
   void invoke("shell:open-external", { url }).catch((err: unknown) => {
-    console.warn("[coding-agents] preview open failed", err instanceof Error ? err.message : String(err));
+    console.warn(
+      "[coding-agents] preview open failed",
+      err instanceof Error ? err.name : "Unknown error",
+    );
   });
 }
 
