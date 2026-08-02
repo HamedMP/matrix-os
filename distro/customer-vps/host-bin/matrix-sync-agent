@@ -21,6 +21,7 @@ readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
 readonly UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
 readonly UPDATE_VERSION_FILE="$APP_DIR/.update-version"
 readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"
+readonly UPDATE_PHASE_MARKER="$STAGING_DIR/update-phase"
 readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"
 readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
 readonly HEALTH_URL="http://127.0.0.1:4000/health"
@@ -86,6 +87,29 @@ write_symphony_env() {
   rm -f "$temp_file"
   return "$status"
 }
+
+install_host_bin_payload() {
+  local source_dir="$1" source name incoming destination
+  [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
+  sudo install -d -o root -g root -m 0755 "$BIN_DIR" || return 1
+  while IFS= read -r -d '' source; do
+    name="${source##*/}"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 1
+    incoming="$BIN_DIR/.${name}.incoming.$$"
+    destination="$BIN_DIR/$name"
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid installed host-bin destination for $name"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0755 "$source" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+  done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+}
+
 default_update_channel() {
   local channel="${MATRIX_UPDATE_CHANNEL:-}"
   case "$channel" in
@@ -248,6 +272,37 @@ with open(path, "w", encoding="utf-8") as handle:
 PY
 }
 
+write_update_phase() {
+  local phase="$1" temp
+  case "$phase" in
+    prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
+    *) return 1 ;;
+  esac
+  temp="$(mktemp "$STAGING_DIR/.update-phase.XXXXXX")" || return 1
+  if ! printf '%s\n' "$phase" >"$temp" || ! mv -fT "$temp" "$UPDATE_PHASE_MARKER"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+}
+
+recover_interrupted_update() {
+  local phase version=""
+  [ -f "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 0
+  [ -f "$UPDATE_MARKER" ] && [ ! -L "$UPDATE_MARKER" ] || {
+    rm -f -- "$UPDATE_PHASE_MARKER"
+    return 0
+  }
+  [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 0
+  phase="$(cat "$UPDATE_PHASE_MARKER" 2>/dev/null || true)"
+  case "$phase" in
+    prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
+    *) phase=unknown ;;
+  esac
+  version="$(json_field "$(cat "$UPDATE_MARKER")" version 2>/dev/null || true)"
+  log "ERROR: interrupted update recovered at bounded phase $phase"
+  write_update_error "apply_interrupted" "The update process was interrupted before completion." "$version"
+}
+
 fetch_manifest() {
   local url="$1" manifest
   if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
@@ -374,7 +429,7 @@ check_for_update() {
       log "Skipping auto-apply for $remote_version — previous attempt failed (use .update-now to retry)"
     else
       log "Auto-apply update $remote_version (severity=${severity:-normal}, updateType=${update_type:-manual})"
-      if ! apply_update; then
+      if ! run_apply_update; then
         echo "$remote_version" > "$AUTO_APPLY_FAILED_MARKER"
         log "Auto-apply failed — will not retry automatically (use .update-now to force)"
       else
@@ -402,16 +457,19 @@ apply_update() {
   sudo chown matrix:matrix "$STAGING_DIR"
   ensure_update_headroom "$(json_field "$manifest" size)" "$version" || return 1
   rm -f "$UPDATE_ERROR_MARKER"
+  write_update_phase prepare || return 1
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
   extract_dir="$STAGING_DIR/bundle-${version}"
 
   log "Downloading bundle..."
+  write_update_phase download || return 1
   if ! download_bundle "$version" "$sha256" "$(json_field "$manifest" size)" "$bundle_url" "$bundle_file"; then
     log "ERROR: download failed"
     return 1
   fi
 
   # Verify checksum
+  write_update_phase verify || return 1
   if [ -n "$sha256" ]; then
     local actual_sha256
     actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
@@ -427,6 +485,7 @@ apply_update() {
 
   # Extract and validate
   log "Extracting bundle..."
+  write_update_phase extract || return 1
   mkdir -p "$extract_dir"
   if ! tar -xzf "$bundle_file" -C "$extract_dir"; then
     log "ERROR: extraction failed"
@@ -438,6 +497,7 @@ apply_update() {
     write_update_error "bundle_layout_invalid" "The release bundle layout was invalid." "$version"
     rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
+  write_update_phase terminal-runtime || return 1
   if ! install_terminal_runtime_payload "$extract_dir"; then
     log "ERROR: Terminal runtime installation failed; aborting before app replacement"
     write_update_error "terminal_runtime_install_failed" "The terminal runtime assets could not be installed." "$version"
@@ -446,6 +506,7 @@ apply_update() {
   fi
 
   # Stop services, backup, install
+  write_update_phase app-install || return 1
   log "Stopping services..."
   sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   sudo rm -rf "$APP_DIR.rollback"
@@ -462,8 +523,16 @@ apply_update() {
     log "Updated release metadata"
   fi
   if [ -d "$extract_dir/bin" ]; then
-    sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
-    sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
+    if ! write_update_phase host-bin || ! install_host_bin_payload "$extract_dir/bin"; then
+      log "ERROR: host-bin installation failed — rolling back"
+      if do_rollback; then
+        write_update_error "post_install_host_bin_failed" "The host update helpers could not be installed and the previous release was restored." "$version"
+      else
+        write_update_error "post_install_rollback_failed" "The host update helpers could not be installed and rollback did not complete." "$version"
+      fi
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
     log "Updated bin scripts"
   fi
   write_symphony_env
@@ -516,6 +585,7 @@ apply_update() {
     return 1
   fi
   log "Running health check..."
+  write_update_phase health || return 1
   local healthy=false
   for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
@@ -538,7 +608,24 @@ apply_update() {
   fi
   rm -rf "$extract_dir" "$bundle_file"
   clean_staging || true
+  rm -f -- "$UPDATE_PHASE_MARKER"
   restart_sync_agent_after_update
+}
+
+run_apply_update() {
+  local status version=""
+  if apply_update; then
+    return 0
+  else
+    status=$?
+  fi
+  if [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ]; then
+    if [ -f "$UPDATE_MARKER" ] && [ ! -L "$UPDATE_MARKER" ]; then
+      version="$(json_field "$(cat "$UPDATE_MARKER")" version 2>/dev/null || true)"
+    fi
+    write_update_error "apply_failed" "The update failed outside a classified apply phase." "$version"
+  fi
+  return "$status"
 }
 
 # ── Rollback ─────────────────────────────────────────────────────────
@@ -724,6 +811,7 @@ fi
 mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
+recover_interrupted_update
 last_staging_cleanup="$(date +%s)"
 
 while true; do
@@ -732,7 +820,7 @@ while true; do
     sudo rm -f "$UPDATE_TRIGGER"
     rm -f "$AUTO_APPLY_FAILED_MARKER"
     if prepare_triggered_update; then
-      if apply_update; then
+      if run_apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update failed — will retry on next trigger"
@@ -750,7 +838,7 @@ while true; do
     sudo rm -f "$UPDATE_REPAIR_TRIGGER"
     perform_update_repair
     if prepare_triggered_update; then
-      if apply_update; then
+      if run_apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update repair retry failed — will retry on next trigger"
@@ -763,7 +851,7 @@ while true; do
   if [ "$update_requested" = true ]; then
     update_requested=false
     if prepare_triggered_update; then
-      if apply_update; then
+      if run_apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update (via SIGUSR1) failed — will retry on next trigger"

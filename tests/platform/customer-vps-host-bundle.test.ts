@@ -1056,8 +1056,28 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('write_update_error "bundle_layout_invalid"');
     expect(syncAgent).toContain('write_update_error "terminal_runtime_install_failed"');
     expect(syncAgent).toContain('write_update_error "post_install_service_start_failed"');
+    expect(syncAgent).toContain('write_update_error "post_install_host_bin_failed"');
     expect(syncAgent).toContain('write_update_error "post_install_health_failed"');
     expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
+    expect(syncAgent).toContain('write_update_error "apply_failed"');
+    expect(syncAgent).toContain('write_update_error "apply_interrupted"');
+    expect(syncAgent).toContain('readonly UPDATE_PHASE_MARKER="$STAGING_DIR/update-phase"');
+    expect(syncAgent).toContain('write_update_phase download');
+    expect(syncAgent).toContain('write_update_phase verify');
+    expect(syncAgent).toContain('write_update_phase extract');
+    expect(syncAgent).toContain('write_update_phase terminal-runtime');
+    expect(syncAgent).toContain('write_update_phase app-install');
+    expect(syncAgent).toContain('write_update_phase host-bin');
+    expect(syncAgent).toContain('write_update_phase health');
+    expect(syncAgent).toContain('recover_interrupted_update');
+    expect(syncAgent).toContain('run_apply_update');
+
+    const hostBinFailure = syncAgent.indexOf('log "ERROR: host-bin installation failed — rolling back"');
+    const hostBinRollback = syncAgent.indexOf('if do_rollback; then', hostBinFailure);
+    const durableHostBinError = syncAgent.indexOf('write_update_error "post_install_host_bin_failed"', hostBinFailure);
+    expect(hostBinFailure).toBeGreaterThan(-1);
+    expect(hostBinRollback).toBeGreaterThan(hostBinFailure);
+    expect(durableHostBinError).toBeGreaterThan(hostBinRollback);
 
     const healthFailure = syncAgent.indexOf('log "ERROR: health check failed — rolling back"');
     const healthRollback = syncAgent.indexOf('if do_rollback; then', healthFailure);
@@ -1117,6 +1137,17 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');
     expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
     expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
+  });
+
+  it('sync agent atomically replaces host-bin scripts without truncating itself', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('install_host_bin_payload()');
+    expect(syncAgent).toContain('sudo install -o root -g root -m 0755 "$source" "$incoming"');
+    expect(syncAgent).toContain('sudo mv -Tf "$incoming" "$destination"');
+    expect(syncAgent).toContain('install_host_bin_payload "$extract_dir/bin"');
+    expect(syncAgent).not.toContain('sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \\;');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {
