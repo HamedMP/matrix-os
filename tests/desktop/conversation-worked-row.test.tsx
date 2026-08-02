@@ -43,6 +43,18 @@ function assistantCompleted(messageId: string, occurredAt: string): AgentThreadE
   } as AgentThreadEvent;
 }
 
+function turnAccepted(id: string, occurredAt: string): AgentThreadEvent {
+  return {
+    type: "turn.accepted",
+    eventId: `evt_turn_${id}`,
+    threadId: "thread_alpha",
+    occurredAt,
+    turnId: `turn_${id}`,
+    clientRequestId: `req_${id}`,
+    acceptedAt: occurredAt,
+  } as AgentThreadEvent;
+}
+
 function toolStarted(id: string, displayName: string, occurredAt: string): AgentThreadEvent {
   return {
     type: "tool.started",
@@ -123,6 +135,21 @@ describe("deriveTurnSummaries", () => {
     ];
 
     // The live second turn is excluded; the finished first turn is summarized.
+    expect(deriveTurnSummaries(events, true)).toEqual([
+      { endOrder: 2, label: "Worked for 12s" },
+    ]);
+  });
+
+  it("closes the previous turn before the next turn acceptance idle interval", () => {
+    const events = [
+      userMessage("1", "2026-07-15T00:00:00.000Z"),
+      assistantDelta("msg_a1", "first answer", "2026-07-15T00:00:05.000Z"),
+      assistantCompleted("msg_a1", "2026-07-15T00:00:17.000Z"),
+      turnAccepted("2", "2026-07-15T00:05:00.000Z"),
+      userMessage("2", "2026-07-15T00:05:01.000Z"),
+      assistantDelta("msg_a2", "second answer", "2026-07-15T00:05:05.000Z"),
+    ];
+
     expect(deriveTurnSummaries(events, true)).toEqual([
       { endOrder: 2, label: "Worked for 12s" },
     ]);
@@ -235,6 +262,29 @@ describe("AgentConversationView worked-for rows", () => {
     expect(screen.queryByText(/Worked for/)).toBeNull();
   });
 
+  it.each(["waiting_for_approval", "waiting_for_input"] as const)(
+    "keeps a %s turn active instead of rendering a completion summary",
+    (status) => {
+      render(
+        <AgentConversationView
+          status="ready"
+          snapshot={snapshot(
+            [
+              userMessage("1", "2026-07-15T00:00:00.000Z"),
+              assistantDelta("msg_a1", "I need your response.", "2026-07-15T00:00:05.000Z"),
+              assistantCompleted("msg_a1", "2026-07-15T00:00:17.000Z"),
+            ],
+            { status },
+          )}
+          error={null}
+          canSendTurns
+        />,
+      );
+
+      expect(screen.queryByText(/Worked for/)).toBeNull();
+    },
+  );
+
   it("summarizes earlier turns while a later turn is still running", () => {
     render(
       <AgentConversationView
@@ -272,6 +322,30 @@ describe("AgentConversationView worked-for rows", () => {
     );
 
     expect(screen.getByText("Worked for 36s")).toBeTruthy();
+  });
+
+  it("renders the summary after an intervening tool when an assistant group completes later", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot(
+          [
+            userMessage("1", "2026-07-15T00:00:00.000Z"),
+            assistantDelta("msg_a1", "I will run the checks.", "2026-07-15T00:00:05.000Z"),
+            toolStarted("tc_1", "Run checks", "2026-07-15T00:00:06.000Z"),
+            toolCompleted("tc_1", "2026-07-15T00:00:15.000Z"),
+            assistantCompleted("msg_a1", "2026-07-15T00:00:17.000Z"),
+          ],
+          { status: "completed" },
+        )}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    const tool = screen.getByText("Run checks");
+    const summary = screen.getByText("Worked for 12s");
+    expect(tool.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("renders one summary per finished turn in a multi-turn thread", () => {

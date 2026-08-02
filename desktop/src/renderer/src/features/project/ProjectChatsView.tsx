@@ -107,6 +107,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const narrowInspectorLayout = useNarrowInspectorLayout();
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [composerResetId, setComposerResetId] = useState(0);
   const [inspectorTabOverride, setInspectorTabOverride] = useState<AgentConversationInspectorTab | null>(null);
 
   // Runtime-scope reconciliation + self-sufficiency bootstrap: the first
@@ -408,6 +409,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       ) : projectWorkspaceEnabled ? (
         <div className="relative flex min-h-0 flex-1 flex-col">
           <ProjectChatHero
+            key={`project-chat-hero:${composerResetId}`}
             summary={summary}
             projectId={projectId}
             projectLabel={projectLabel}
@@ -469,6 +471,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
                   if (composerOpen) {
                     setComposerOpen(false);
                     setComposerSeed(null);
+                    setComposerResetId((current) => current + 1);
                     return;
                   }
                   void openNewChat();

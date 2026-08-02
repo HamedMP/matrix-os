@@ -5,9 +5,10 @@ import type { AgentThreadEvent } from "@matrix-os/contracts";
  * already held in memory — no store or runtime involvement.
  *
  * A turn is the run of events following a `user.message`, up to (but excluding)
- * the next one. A turn is finished when a later user message closes it, or when
- * the thread leaves its running states; the still-open final turn of a running
- * thread keeps the live "Working…" row instead of a summary.
+ * the next accepted turn. A turn is finished when a later `turn.accepted` (or
+ * legacy stream with only a later user message) closes it, or when the thread
+ * leaves its active states. The still-open final turn of an active thread keeps
+ * its live/waiting state instead of a summary.
  */
 export interface TurnSummary {
   /** Index into the thread event list of the finished turn's last event. */
@@ -27,12 +28,16 @@ export function formatTurnDuration(durationMs: number): string {
 
 export function deriveTurnSummaries(
   events: AgentThreadEvent[],
-  threadRunning: boolean,
+  threadActive: boolean,
 ): TurnSummary[] {
   const summaries: TurnSummary[] = [];
   // Start index (into `events`) of the open turn's first event; -1 while no
   // user message has opened a turn yet.
   let turnStart = -1;
+  // Current gateways emit turn.accepted before the corresponding user.message.
+  // Remember that boundary so the following message opens the already-new turn
+  // instead of trying to close the previous turn a second time.
+  let acceptedTurnPendingMessage = false;
 
   const closeTurn = (endOrder: number) => {
     if (turnStart < 0 || endOrder < turnStart) return;
@@ -46,15 +51,21 @@ export function deriveTurnSummaries(
   };
 
   for (const [index, event] of events.entries()) {
+    if (event.type === "turn.accepted") {
+      closeTurn(index - 1);
+      acceptedTurnPendingMessage = true;
+      continue;
+    }
     if (event.type !== "user.message") continue;
-    // A new user message closes the previous turn (if any) and opens the next.
-    closeTurn(index - 1);
+    // Older persisted streams may not contain turn.accepted. Preserve their
+    // user-message boundary while avoiding the accepted turn's idle interval.
+    if (!acceptedTurnPendingMessage) closeTurn(index - 1);
+    acceptedTurnPendingMessage = false;
     turnStart = index + 1;
   }
-  // The final turn is live while the thread runs; only a terminal thread
-  // closes it (final assistant completion / status transition away from
-  // running is already reflected in the caller's threadRunning flag).
-  if (!threadRunning) closeTurn(events.length - 1);
+  // Approval and input waits are still active turns. Only a terminal thread
+  // closes the final turn.
+  if (!threadActive) closeTurn(events.length - 1);
 
   return summaries;
 }

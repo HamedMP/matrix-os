@@ -618,15 +618,28 @@ export function AgentConversationView({
   const threadRunning = snapshot?.thread.status === "running"
     || snapshot?.thread.status === "starting"
     || snapshot?.thread.status === "queued";
+  const threadActive = threadRunning
+    || snapshot?.thread.status === "waiting_for_approval"
+    || snapshot?.thread.status === "waiting_for_input";
   const items = useMemo(() => timelineItems(conversationItems(snapshot?.events.items ?? [])), [snapshot?.events.items]);
   // Per-turn "Worked for Xs" rows, derived from event timestamps only.
-  const turnSummaryByEndOrder = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const summary of deriveTurnSummaries(snapshot?.events.items ?? [], threadRunning)) {
-      map.set(summary.endOrder, summary.label);
+  const turnSummaryByItemKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const summary of deriveTurnSummaries(snapshot?.events.items ?? [], threadActive)) {
+      // Grouped assistant messages can complete after an intervening tool row
+      // while still rendering at their first-event position. Anchor the receipt
+      // to the last VISUAL timeline item that began within the finished turn.
+      let anchor: TimelineItem | undefined;
+      for (const item of items) {
+        if (item.order > summary.endOrder) break;
+        anchor = item;
+      }
+      if (!anchor) continue;
+      const key = anchor.kind === "event" ? `event:${anchor.event.eventId}` : anchor.key;
+      map.set(key, summary.label);
     }
     return map;
-  }, [snapshot?.events.items, threadRunning]);
+  }, [items, snapshot?.events.items, threadActive]);
   const answeredInputs = useMemo(() => new Set((snapshot?.events.items ?? [])
     .filter((event) => event.type === "user_input.answered")
     .map((event) => codingAgentInputActionKey(event.threadId, event.requestId))), [snapshot?.events.items]);
@@ -662,8 +675,8 @@ export function AgentConversationView({
       <Conversation key={`transcript:${snapshot.thread.id}`}>
         <ConversationContent>
           {items.map((item) => {
-            const workedLabel = turnSummaryByEndOrder.get(item.endOrder);
             const itemKey = item.kind === "event" ? `event:${item.event.eventId}` : item.key;
+            const workedLabel = turnSummaryByItemKey.get(itemKey);
             return (
               <Fragment key={itemKey}>
                 {item.kind === "assistant" ? (

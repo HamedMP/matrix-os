@@ -260,7 +260,9 @@ describe("ProjectChatsView type-to-start", () => {
     }
 
     expect(resolveNewChatTarget).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
+    // The hero composer is always present in this slice; interaction with a
+    // nested control must leave its persistent draft untouched.
+    expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("ignores modified and non-printable keys", async () => {

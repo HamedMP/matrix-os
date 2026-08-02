@@ -173,7 +173,12 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
     const submittedDraft = draft;
     const threadId = await createThread(submittedDraft);
     if (!threadId) {
-      setDraft((current) => clearComposerLaunchContext(current));
+      setDraft((current) => {
+        const cleared = clearComposerLaunchContext(current);
+        // The hero's project is persistent scope, not one-shot launch context.
+        // Keep retries in the project advertised directly above the composer.
+        return defaultProjectId ? { ...cleared, projectId: defaultProjectId } : cleared;
+      });
       return;
     }
     providerSelectionDirtyRef.current = false;

@@ -316,7 +316,7 @@ describe("ProjectTab", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("button", { name: "Chat Plan the auth work" });
 
-    useProjectChatLauncher.getState().requestComposer("matrix-os");
+    act(() => useProjectChatLauncher.getState().requestComposer("matrix-os"));
 
     // The composer seed resolves against the project and the request is consumed.
     await waitFor(() => {
@@ -365,7 +365,7 @@ describe("ProjectTab", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("button", { name: "Chat Plan the auth work" });
 
-    useProjectChatLauncher.getState().requestComposer("website");
+    act(() => useProjectChatLauncher.getState().requestComposer("website"));
 
     expect(screen.queryByRole("button", { name: "Close new chat composer" })).toBeNull();
     expect(useProjectChatLauncher.getState().composerRequest?.projectId).toBe("website");
@@ -374,7 +374,7 @@ describe("ProjectTab", () => {
   it("shows the hero empty state until a chat is selected", async () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("button", { name: "Chat Plan the auth work" });
-    useProjectView.getState().setSelectedThread("matrix-os", null);
+    act(() => useProjectView.getState().setSelectedThread("matrix-os", null));
 
     // The hero replaces the conversation pane; the rail keeps its chats.
     expect(await screen.findByText("What should we work on?")).toBeTruthy();

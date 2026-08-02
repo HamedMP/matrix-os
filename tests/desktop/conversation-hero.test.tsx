@@ -75,7 +75,11 @@ function workspaceFixture({ withThreads = true }: { withThreads?: boolean } = {}
   };
 }
 
-function mockOperator({ withThreads = true }: { withThreads?: boolean } = {}) {
+function mockOperator({ withThreads = true, failFirstCreate = false }: {
+  withThreads?: boolean;
+  failFirstCreate?: boolean;
+} = {}) {
+  let createCount = 0;
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
     if (channel === "runtime:get-summary") return summaryFixture();
     if (channel === "runtime:get-reviews") return { items: [], hasMore: false, limit: 50 };
@@ -83,6 +87,24 @@ function mockOperator({ withThreads = true }: { withThreads?: boolean } = {}) {
       return { attentionPush: { approval: true, input: true, failed: true, completed: true } };
     }
     if (channel === "runtime:get-project-workspace") return workspaceFixture({ withThreads });
+    if (channel === "runtime:create-thread") {
+      createCount += 1;
+      if (failFirstCreate && createCount === 1) throw new Error("provider failed");
+      const draft = payload as { projectId?: string; prompt?: string };
+      return {
+        thread: {
+          id: `thread_created_${createCount}`,
+          providerId: "codex",
+          title: draft.prompt ?? "Created chat",
+          status: "queued",
+          attention: "none",
+          projectId: draft.projectId,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        events: { items: [], hasMore: false, limit: 200 },
+      };
+    }
     if (channel === "runtime:get-thread-snapshot") {
       const { threadId } = payload as { threadId: string };
       return {
@@ -213,6 +235,43 @@ describe("ProjectChatsView hero empty state", () => {
         expect.objectContaining({ projectId: "matrix-os" }),
       ),
     );
+  });
+
+  it("keeps the advertised project context when a hero submission fails and is retried", async () => {
+    const { invoke } = mockOperator({ withThreads: false, failFirstCreate: true });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByText("What should we work on?");
+
+    const prompt = await screen.findByLabelText("Agent run prompt");
+    fireEvent.change(prompt, { target: { value: "Retry this in Matrix OS" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText("Agent run could not be started. Try again.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => {
+      const createCalls = invoke.mock.calls.filter(([channel]) => channel === "runtime:create-thread");
+      expect(createCalls).toHaveLength(2);
+      expect(createCalls[0]?.[1]).toEqual(expect.objectContaining({ projectId: "matrix-os" }));
+      expect(createCalls[1]?.[1]).toEqual(expect.objectContaining({ projectId: "matrix-os" }));
+    });
+  });
+
+  it("clears the persistent hero draft when a new chat is cancelled", async () => {
+    mockOperator({ withThreads: false });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByText("What should we work on?");
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat in selected project" }));
+    const prompt = await screen.findByLabelText("Agent run prompt") as HTMLTextAreaElement;
+    fireEvent.change(prompt, { target: { value: "Discard this draft" } });
+    expect(prompt.value).toBe("Discard this draft");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close new chat composer" }));
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toBe("");
+    });
   });
 
   it("seeds the hero composer prompt when a suggestion chip is clicked", async () => {
