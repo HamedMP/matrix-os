@@ -138,6 +138,7 @@ interface SettingsProps {
     onBuild: (tools: DeveloperToolId[]) => void;
     loading: boolean;
     error: string | null;
+    collectAcquisitionSource?: boolean;
   };
 }
 

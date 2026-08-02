@@ -301,6 +301,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
           onboardingDefaultInstalls={{
             loading: working,
             error: installError,
+            collectAcquisitionSource: true,
             onBuild: (tools) => {
               void startProvision(tools);
             },

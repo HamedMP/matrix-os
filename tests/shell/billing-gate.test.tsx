@@ -84,6 +84,12 @@ async function loadBillingGate() {
   return await import("../../shell/src/components/BillingGate.js");
 }
 
+async function answerAcquisitionSource(): Promise<void> {
+  fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await screen.findByRole("button", { name: "Build VPS" });
+}
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     replace: navigationState.replace,
@@ -567,6 +573,8 @@ describe("BillingGate", () => {
     );
 
     expect((await screen.findByRole("button", { name: "Default installs" })).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("heading", { name: "How did you hear about Matrix?" })).toBeTruthy();
+    await answerAcquisitionSource();
     for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
       expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
     }
@@ -634,6 +642,7 @@ describe("BillingGate", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Default installs" })).toBeTruthy();
+    await answerAcquisitionSource();
     fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Matrix could not start building this VPS. Try again.");
     expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
@@ -674,6 +683,7 @@ describe("BillingGate", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Default installs" })).toBeTruthy();
+    await answerAcquisitionSource();
     fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Matrix could not start building this VPS. Try again.");
     expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);

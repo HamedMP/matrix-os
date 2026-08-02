@@ -88,6 +88,22 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
   }
 }
 
+export function setPostHogPersonPropertiesOnce(
+  properties: ClientProperties,
+  currentConfig: typeof config = config,
+) {
+  if (!currentConfig) return;
+  try {
+    ensurePostHogInitialized(currentConfig);
+    posthog.setPersonProperties({}, sanitizeProperties(properties));
+  } catch (err: unknown) {
+    console.warn(
+      "[posthog] Failed to set first-touch person properties:",
+      err instanceof Error ? err.name : typeof err,
+    );
+  }
+}
+
 export function capturePostHogLog(
   level: PostHogLogLevel,
   message: string,

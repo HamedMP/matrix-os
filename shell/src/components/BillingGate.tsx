@@ -202,7 +202,7 @@ function DeviceDefaultInstallsRequired({
       onOpenChange={() => {}}
       closeDisabled
       billingActiveOverride
-      onboardingDefaultInstalls={{ onBuild, loading, error }}
+      onboardingDefaultInstalls={{ onBuild, loading, error, collectAcquisitionSource: true }}
     />
   );
 }

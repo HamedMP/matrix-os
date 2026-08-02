@@ -45,6 +45,12 @@ function mockJourney(state: JourneyState, journeyStatus = 200) {
   return fetchMock;
 }
 
+async function answerAcquisitionSource(): Promise<void> {
+  fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await screen.findByRole("button", { name: "Build VPS" });
+}
+
 const baseState: JourneyState = {
   phase: "plan_required",
   detail: "Choose a plan to create your Matrix computer.",
@@ -153,6 +159,8 @@ describe("BootSequence", () => {
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
 
     expect((await screen.findByRole("button", { name: "Default installs" })).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("heading", { name: "How did you hear about Matrix?" })).toBeTruthy();
+    await answerAcquisitionSource();
     for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
       expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
     }
@@ -197,6 +205,7 @@ describe("BootSequence", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    await answerAcquisitionSource();
     fireEvent.click(await screen.findByRole("button", { name: "Build VPS" }));
 
     await waitFor(() => expect(onboardingNavigation.navigate).toHaveBeenCalledWith("/"));
@@ -220,6 +229,7 @@ describe("BootSequence", () => {
     }));
 
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    await answerAcquisitionSource();
     fireEvent.click(await screen.findByRole("button", { name: "Build VPS" }));
 
     expect((await screen.findByRole("alert")).textContent).toContain("Matrix could not start building this VPS. Try again.");

@@ -135,7 +135,12 @@ describe("Settings panel", () => {
         onOpenChange={() => {}}
         closeDisabled
         billingActiveOverride
-        onboardingDefaultInstalls={{ onBuild, loading: false, error: null }}
+        onboardingDefaultInstalls={{
+          onBuild,
+          loading: false,
+          error: null,
+          collectAcquisitionSource: true,
+        }}
       />,
     );
 
@@ -145,6 +150,9 @@ describe("Settings panel", () => {
     for (const label of ["Appearance", "Integrations", "System"]) {
       expect((screen.getByRole("button", { name: `${label} Unavailable until your VPS is ready` }) as HTMLButtonElement).disabled).toBe(true);
     }
+
+    fireEvent.click(screen.getByRole("radio", { name: "TikTok" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
       const checkbox = screen.getByRole("checkbox", { name: label });
