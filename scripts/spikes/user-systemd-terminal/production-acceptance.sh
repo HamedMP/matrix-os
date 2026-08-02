@@ -1021,11 +1021,16 @@ prepare_exact_head_runtime() {
   installed_bounded_updater_is_ready
 
   current_failure=exact-head-reapply
+  local deadline=$((SECONDS + 1800)) reapply_sync_pid
+  reapply_sync_pid="$(systemctl show matrix-sync-agent.service -p MainPID --value)"
+  [[ "$reapply_sync_pid" =~ ^[1-9][0-9]*$ ]]
   runuser -u matrix -- /opt/matrix/bin/matrix-update --no-tail "$preview_version" >/dev/null
-  local deadline=$((SECONDS + 1800))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$preview_version" ] &&
       [ ! -e /opt/matrix/app/.update-now ] &&
+      [ "$(path_state /opt/matrix/staging/update-phase)" = missing ] &&
+      [ "$(path_state /opt/matrix/app/.update-error.json)" = missing ] &&
+      [ "$(systemctl show matrix-sync-agent.service -p MainPID --value)" != "$reapply_sync_pid" ] &&
       installed_terminal_runtime_is_ready && wait_gateway; then
       break
     fi
