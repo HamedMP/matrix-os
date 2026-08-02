@@ -14,6 +14,7 @@ import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/proj
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 
 const NOW = "2026-07-12T12:00:00.000Z";
+const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
 
 function summaryFixture(): RuntimeSummary {
   return {
@@ -142,7 +143,7 @@ class MockResizeObserver {
 
 function resetStores() {
   useProjectView.setState({ entries: {}, runtimeScope: null });
-  useProjectWorkspaces.setState({ entries: {} });
+  useProjectWorkspaces.setState({ entries: {}, resolveNewChatTarget: defaultResolveNewChatTarget });
   useProjectChatLauncher.setState({ composerRequest: null });
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
   useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
@@ -257,6 +258,42 @@ describe("draft chat implicit thread creation", () => {
       expect(invoke).toHaveBeenCalledWith(
         "runtime:create-thread",
         expect.objectContaining({ prompt: "Direct draft with no seed", projectId: "matrix-os" }),
+      );
+    });
+  });
+
+  it("locks the composer while a lazy project relation is resolving", async () => {
+    let resolveTarget!: (value: { projectId: string }) => void;
+    const resolveNewChatTarget = vi.fn(() => new Promise<{ projectId: string }>((resolve) => {
+      resolveTarget = resolve;
+    }));
+    useProjectWorkspaces.setState({ resolveNewChatTarget });
+    const { invoke } = mockOperator();
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByRole("region", { name: "Conversation Plan the auth work" });
+    act(() => {
+      useProjectView.getState().setSelectedThread("matrix-os", null);
+    });
+    const composer = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
+
+    fireEvent.change(composer, { target: { value: "Keep the complete prompt" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(resolveNewChatTarget).toHaveBeenCalledWith("matrix-os");
+    });
+    expect(composer.disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
+    expect(vi.mocked(invoke).mock.calls.filter(([channel]) => channel === "runtime:create-thread")).toHaveLength(0);
+
+    await act(async () => {
+      resolveTarget({ projectId: "matrix-os" });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({ prompt: "Keep the complete prompt", projectId: "matrix-os" }),
       );
     });
   });

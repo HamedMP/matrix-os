@@ -341,7 +341,7 @@ describe("ProjectTab", () => {
     act(() => useCodingAgentWorkspace.setState({ status: "ready", summary: summaryFixture() }));
 
     await waitFor(() => expect(useProjectChatLauncher.getState().composerRequest).toBeNull());
-    expect(await screen.findByRole("button", { name: "Close new chat composer" })).toBeTruthy();
+    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
   });
 
   it("ignores a pending compose request after the project chat view unmounts", async () => {

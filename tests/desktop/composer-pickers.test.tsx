@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
@@ -103,7 +103,15 @@ function createdThreadSnapshot(prompt: string, providerId: string) {
   };
 }
 
-function mockOperator({ preferredProviderId }: { preferredProviderId?: string } = {}) {
+function mockOperator({
+  preferredProviderId,
+  loadPreferredProviderId,
+  threadProviderId = "codex",
+}: {
+  preferredProviderId?: string;
+  loadPreferredProviderId?: () => Promise<string | null>;
+  threadProviderId?: string;
+} = {}) {
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
     if (channel === "runtime:get-summary") return summaryFixture();
     if (channel === "runtime:get-reviews") return { items: [], hasMore: false, limit: 50 };
@@ -120,7 +128,7 @@ function mockOperator({ preferredProviderId }: { preferredProviderId?: string } 
       return {
         thread: {
           id: threadId,
-          providerId: "codex",
+          providerId: threadProviderId,
           title: "Plan the auth work",
           status: "running",
           attention: "none",
@@ -134,7 +142,10 @@ function mockOperator({ preferredProviderId }: { preferredProviderId?: string } 
     if (channel === "state:get") {
       const { key } = payload as { key?: string };
       if (key === "providerPreferences") {
-        return { value: preferredProviderId ? { defaultProviderId: preferredProviderId } : null };
+        const providerId = loadPreferredProviderId
+          ? await loadPreferredProviderId()
+          : preferredProviderId ?? null;
+        return { value: providerId ? { defaultProviderId: providerId } : null };
       }
       return { value: null };
     }
@@ -234,6 +245,26 @@ describe("composer provider/mode pickers", () => {
     await waitFor(() => expect(mode.value).toBe("review"));
   });
 
+  it("applies a persisted provider that hydrates after a seeded draft opens", async () => {
+    let resolvePreference!: (value: string | null) => void;
+    mockOperator({
+      loadPreferredProviderId: () => new Promise((resolve) => {
+        resolvePreference = resolve;
+      }),
+    });
+    await openDraftComposer();
+
+    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
+    expect(provider.value).toBe("codex");
+    await act(async () => {
+      resolvePreference("claude");
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(provider.value).toBe("claude"));
+    await waitFor(() => expect((screen.getByLabelText("Agent mode") as HTMLSelectElement).value).toBe("review"));
+  });
+
   it("resets the mode to the new provider's default when the provider changes", async () => {
     mockOperator();
     await openDraftComposer();
@@ -283,5 +314,17 @@ describe("composer provider/mode pickers", () => {
     expect(provider.closest(".prompt-card")).not.toBeNull();
     expect(screen.queryByLabelText("Agent mode")).toBeNull();
     expect(composer).toBeTruthy();
+  });
+
+  it("shows an unavailable stored provider truthfully instead of substituting another provider", async () => {
+    mockOperator({ threadProviderId: "removed-provider" });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByRole("region", { name: "Conversation Plan the auth work" });
+
+    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
+    expect(provider.value).toBe("removed-provider");
+    expect(provider.selectedOptions[0]?.textContent).toBe("removed-provider (unavailable)");
+    expect(provider.disabled).toBe(true);
+    expect(screen.queryByLabelText("Agent mode")).toBeNull();
   });
 });

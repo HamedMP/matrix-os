@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   defaultAgentThreadComposerDraft,
@@ -11,9 +11,9 @@ import { useProviderPreferences } from "../settings/provider-preferences";
 import { PromptInput } from "../chat/elements/prompt-input";
 import { AgentComposerPickers } from "../coding-agents/composer-pickers";
 import { capabilityEnabled } from "../coding-agents/capabilities";
+import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
 import {
   clearComposerLaunchContext,
-  hasComposerContent,
   mergeComposerSeed,
   type ComposerSeed,
 } from "../coding-agents/composer-seed";
@@ -55,29 +55,31 @@ export function ProjectChatDraft({
     if (!preferred) return base;
     return { ...base, providerId: preferred.id, mode: preferred.defaultMode ?? base.mode };
   }, [summary, preferredProviderId]);
-  const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
+  const [draft, setDraft] = useState<AgentThreadComposerDraft>(() => (
+    seed ? mergeComposerSeed(initialDraft, seed.draft) : initialDraft
+  ));
+  const providerSelectionTouchedRef = useRef(false);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);
   const createThread = useCodingAgentWorkspace((s) => s.createThread);
   const resolveNewChatTarget = useProjectWorkspaces((s) => s.resolveNewChatTarget);
   const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
   const submitting = createStatus === "submitting";
+  const [resolvingTarget, setResolvingTarget] = useState(false);
+  const submitInFlightRef = useRef(false);
+  const busy = submitting || resolvingTarget;
   // Local focus bumps (type-to-start, chip seeds) combine with the shared
   // composer-focus request id; PromptInput focuses whenever the sum changes.
   const [localFocusBumps, setLocalFocusBumps] = useState(0);
   const focusComposer = () => setLocalFocusBumps((count) => count + 1);
 
-  // A runtime summary refresh swaps the draft baseline only while the draft
-  // carries no user content — typed text and seeded context always survive.
-  useEffect(() => {
-    setDraft((current) => hasComposerContent(current) ? current : initialDraft);
-  }, [initialDraft]);
-
-  useEffect(() => {
-    if (!seed) return;
-    setDraft((current) => mergeComposerSeed(current, seed.draft));
-    focusComposer();
-  }, [seed]);
+  // Until a picker is touched, provider/mode are derived from the current
+  // runtime + persisted preference. Prompt and relation state remain local,
+  // so late preference hydration never needs an effect that briefly renders a
+  // stale provider or overwrites what the user typed.
+  const effectiveDraft = providerSelectionTouchedRef.current
+    ? draft
+    : { ...draft, providerId: initialDraft.providerId, mode: initialDraft.mode };
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -92,13 +94,7 @@ export function ProjectChatDraft({
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
       if (event.key.length !== 1) return;
-      const target = event.target as HTMLElement | null;
-      if (
-        target
-        && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)
-      ) {
-        return;
-      }
+      if (isTypeToStartInteractiveTarget(event.target)) return;
       setDraft((current) => ({ ...current, prompt: current.prompt + event.key }));
       focusComposer();
     }
@@ -107,35 +103,44 @@ export function ProjectChatDraft({
   }, [active, typeToStartEnabled, canCreate]);
 
   async function submit() {
-    if (submitting) return;
-    let effective = draft;
+    if (submitting || submitInFlightRef.current) return;
+    let effective = effectiveDraft;
     if (!effective.prompt.trim()) return;
-    // A draft typed without a seed (plain deselect, direct typing) has no
-    // project relation yet — resolve it lazily so the created thread lands in
-    // this project's rail.
-    if (!effective.projectId) {
-      const relation = await resolveNewChatTarget(projectId);
-      if (!relation) {
-        toast.error("Couldn't start a new chat here. Refresh the workspace and try again.");
+    submitInFlightRef.current = true;
+    setResolvingTarget(true);
+    try {
+      // A draft typed without a seed (plain deselect, direct typing) has no
+      // project relation yet — resolve it lazily so the created thread lands in
+      // this project's rail. Lock the composer across this await so `effective`
+      // remains the exact prompt the user approved for submission.
+      if (!effective.projectId) {
+        const relation = await resolveNewChatTarget(projectId);
+        if (!relation) {
+          toast.error("Couldn't start a new chat here. Refresh the workspace and try again.");
+          return;
+        }
+        effective = { ...effective, ...relation };
+        setDraft(effective);
+      }
+      const threadId = await createThread(effective);
+      if (!threadId) {
+        // Keep the prompt for retry; drop one-shot launch context (review
+        // references, task targeting) exactly like the legacy form did.
+        setDraft((current) => clearComposerLaunchContext(current));
         return;
       }
-      effective = { ...effective, ...relation };
-      setDraft(effective);
+      providerSelectionTouchedRef.current = false;
+      setDraft(initialDraft);
+      onCreated();
+    } finally {
+      submitInFlightRef.current = false;
+      setResolvingTarget(false);
     }
-    const threadId = await createThread(effective);
-    if (!threadId) {
-      // Keep the prompt for retry; drop one-shot launch context (review
-      // references, task targeting) exactly like the legacy form did.
-      setDraft((current) => clearComposerLaunchContext(current));
-      return;
-    }
-    setDraft(initialDraft);
-    onCreated();
   }
 
-  const selectedProvider = summary.providers.find((provider) => provider.id === draft.providerId)
+  const selectedProvider = summary.providers.find((provider) => provider.id === effectiveDraft.providerId)
     ?? summary.providers[0];
-  const promptEmpty = draft.prompt.trim().length === 0;
+  const promptEmpty = effectiveDraft.prompt.trim().length === 0;
 
   return (
     <section
@@ -160,11 +165,11 @@ export function ProjectChatDraft({
           ) : null}
           {canCreate ? (
             <PromptInput
-              value={draft.prompt}
+              value={effectiveDraft.prompt}
               onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
               onSubmit={() => void submit()}
-              busy={submitting}
-              disabled={submitting}
+              busy={busy}
+              disabled={busy}
               autoFocus={active}
               focusRequestId={active ? focusRequestId + localFocusBumps : 0}
               maxLength={24_000}
@@ -174,8 +179,9 @@ export function ProjectChatDraft({
                 <AgentComposerPickers
                   summary={summary}
                   providerId={selectedProvider?.id}
-                  mode={draft.mode ?? selectedProvider?.defaultMode}
+                  mode={effectiveDraft.mode ?? selectedProvider?.defaultMode}
                   onProviderChange={(providerId) => {
+                    providerSelectionTouchedRef.current = true;
                     const provider = summary.providers.find((candidate) => candidate.id === providerId);
                     setDraft((current) => ({
                       ...current,
@@ -183,7 +189,10 @@ export function ProjectChatDraft({
                       mode: provider?.defaultMode ?? current.mode,
                     }));
                   }}
-                  onModeChange={(mode) => setDraft((current) => ({ ...current, mode }))}
+                  onModeChange={(mode) => {
+                    providerSelectionTouchedRef.current = true;
+                    setDraft((current) => ({ ...current, mode }));
+                  }}
                 />
               )}
             />

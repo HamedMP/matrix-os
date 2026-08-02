@@ -14,6 +14,7 @@ import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/proj
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 
 const NOW = "2026-07-12T12:00:00.000Z";
+const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
 
 function summaryFixture(): RuntimeSummary {
   return {
@@ -56,16 +57,28 @@ function workspaceFixture(): ProjectAgentWorkspace {
     project: { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 2, attentionCount: 0 },
     tasks: { items: [], hasMore: false, limit: 100 },
     projectThreads: {
-      items: [{
-        id: "thread_plan",
-        providerId: "codex",
-        title: "Plan the auth work",
-        status: "running",
-        attention: "none",
-        projectId: "matrix-os",
-        createdAt: NOW,
-        updatedAt: NOW,
-      }],
+      items: [
+        {
+          id: "thread_plan",
+          providerId: "codex",
+          title: "Plan the auth work",
+          status: "running",
+          attention: "none",
+          projectId: "matrix-os",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: "thread_newer",
+          providerId: "codex",
+          title: "Investigate the callback",
+          status: "queued",
+          attention: "none",
+          projectId: "matrix-os",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
       hasMore: false,
       limit: 100,
     },
@@ -176,7 +189,7 @@ class MockResizeObserver {
 
 function resetStores() {
   useProjectView.setState({ entries: {}, runtimeScope: null });
-  useProjectWorkspaces.setState({ entries: {} });
+  useProjectWorkspaces.setState({ entries: {}, resolveNewChatTarget: defaultResolveNewChatTarget });
   useProjectChatLauncher.setState({ composerRequest: null });
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
   useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
@@ -310,6 +323,31 @@ describe("draft chat replaces the selected thread", () => {
     expect(await screen.findByRole("region", { name: "Conversation Plan the auth work" })).toBeTruthy();
     expect(screen.queryByLabelText("Message new chat")).toBeNull();
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_plan");
+  });
+
+  it("does not clear a newer thread selection when project targeting resolves late", async () => {
+    let resolveTarget!: (value: { projectId: string }) => void;
+    useProjectWorkspaces.setState({
+      resolveNewChatTarget: vi.fn(() => new Promise<{ projectId: string }>((resolve) => {
+        resolveTarget = resolve;
+      })),
+    });
+    mockOperator();
+    await renderWithSelectedThread();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    await waitFor(() => {
+      expect(useProjectWorkspaces.getState().resolveNewChatTarget).toHaveBeenCalledWith("matrix-os", undefined);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat Investigate the callback" }));
+    await act(async () => {
+      resolveTarget({ projectId: "matrix-os" });
+      await Promise.resolve();
+    });
+
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_newer");
+    expect(screen.queryByLabelText("Message new chat")).toBeNull();
   });
 
   it("routes a review-hunk follow-up into the draft state with the seeded prompt", async () => {

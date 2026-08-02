@@ -244,12 +244,12 @@ describe("ProjectChatsView hero empty state", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByText("What should we work on?");
 
-    const prompt = await screen.findByLabelText("Agent run prompt");
+    const prompt = await screen.findByLabelText("Message new chat");
     fireEvent.change(prompt, { target: { value: "Retry this in Matrix OS" } });
-    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByText("Agent run could not be started. Try again.")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
       const createCalls = invoke.mock.calls.filter(([channel]) => channel === "runtime:create-thread");
@@ -259,20 +259,22 @@ describe("ProjectChatsView hero empty state", () => {
     });
   });
 
-  it("clears the persistent hero draft when a new chat is cancelled", async () => {
-    mockOperator({ withThreads: false });
+  it("clears the persistent hero draft after navigating away and starting another chat", async () => {
+    mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
-    await screen.findByText("What should we work on?");
+    await screen.findByRole("region", { name: "Conversation Plan the auth work" });
 
-    fireEvent.click(screen.getByRole("button", { name: "New chat in selected project" }));
-    const prompt = await screen.findByLabelText("Agent run prompt") as HTMLTextAreaElement;
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    const prompt = await screen.findByLabelText("Message new chat") as HTMLTextAreaElement;
     fireEvent.change(prompt, { target: { value: "Discard this draft" } });
     expect(prompt.value).toBe("Discard this draft");
 
-    fireEvent.click(screen.getByRole("button", { name: "Close new chat composer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
+    await screen.findByRole("region", { name: "Conversation Plan the auth work" });
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
 
     await waitFor(() => {
-      expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toBe("");
+      expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
     });
   });
 

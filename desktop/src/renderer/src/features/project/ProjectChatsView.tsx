@@ -33,6 +33,7 @@ import {
   ProviderList,
 } from "../coding-agents/AgentWorkspacePanels";
 import { capabilityEnabled } from "../coding-agents/capabilities";
+import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
 import { CreatedThreadHandleList, ThreadList } from "../coding-agents/AgentThreadLists";
 import { ReviewList, reviewHunkFollowUpDraft } from "../coding-agents/AgentReviewPanel";
 import { openCodingAgentThread } from "../../lib/project-chat";
@@ -42,34 +43,6 @@ import { ProjectThreadList } from "./ProjectThreadList";
 export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/composer-seed";
 
 const TYPE_TO_START_MAX_PROMPT_BYTES = 24_000;
-const TYPE_TO_START_INTERACTIVE_SELECTOR = [
-  "input",
-  "textarea",
-  "select",
-  "button",
-  "a[href]",
-  "summary",
-  "[contenteditable]:not([contenteditable='false'])",
-  "[role='button']",
-  "[role='link']",
-  "[role='menuitem']",
-  "[role='option']",
-  "[role='tab']",
-  "[role='switch']",
-  "[role='checkbox']",
-  "[role='radio']",
-  "[role='slider']",
-  "[role='spinbutton']",
-  "[role='textbox']",
-  "[role='combobox']",
-  "[role='listbox']",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",");
-
-function isTypeToStartInteractiveTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest(TYPE_TO_START_INTERACTIVE_SELECTOR) !== null;
-}
-
 /**
  * The project's Chats view: thread list on the left, the selected
  * conversation in the middle, and the shared conversation inspector on the
@@ -108,6 +81,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const narrowInspectorLayout = useNarrowInspectorLayout();
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
   const [inspectorTabOverride, setInspectorTabOverride] = useState<AgentConversationInspectorTab | null>(null);
+  const newChatRequestIdRef = useRef(0);
 
   // Runtime-scope reconciliation + self-sufficiency bootstrap: the first
   // mounted view claims the scope (clearing the previous account's data),
@@ -213,8 +187,14 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     onReady: () => void = () => undefined,
   ): Promise<boolean> => {
     if (!summary) return false;
+    const requestId = ++newChatRequestIdRef.current;
     const relation = await resolveNewChatTarget(projectId, taskId);
     if (cancelled()) return false;
+    // Resolving a project relation can require a workspace refresh. Only the
+    // latest intent may continue: a newer New chat action or an explicit rail
+    // selection invalidates this delayed result without mistaking the rail's
+    // initial auto-selection for user navigation.
+    if (newChatRequestIdRef.current !== requestId) return false;
     onReady();
     if (!relation) {
       toast.error("Couldn't start a new chat here. Refresh the workspace and try again.");
@@ -234,7 +214,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     setSelectedThread(projectId, null);
     requestComposerFocus();
     return true;
-  }, [projectId, requestComposerFocus, resolveNewChatTarget, summary]);
+  }, [projectId, requestComposerFocus, resolveNewChatTarget, setSelectedThread, summary]);
   const openNewChatForTypeToStart = useEffectEvent(openNewChat);
 
   // Type-to-start is computed before the early returns so the keydown effect
@@ -367,6 +347,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       void openCodingAgentThread(threadId);
       return;
     }
+    newChatRequestIdRef.current += 1;
     setComposerSeed(null);
     setSelectedThread(projectId, threadId);
     if (useCodingAgentWorkspace.getState().activeThreadId !== threadId) {
@@ -415,6 +396,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         />
       ) : projectWorkspaceEnabled ? (
         <ProjectChatDraft
+          key={composerSeed?.seedId ?? "empty-draft"}
           summary={summary}
           projectId={projectId}
           projectLabel={projectLabel}
@@ -490,6 +472,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
             canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
             canCreateFollowUp={canCreate}
             onAskHunkFollowUp={(snapshot, selected) => {
+              newChatRequestIdRef.current += 1;
               setComposerSeed({
                 seedId: Date.now(),
                 draft: reviewHunkFollowUpDraft(summary, snapshot, selected),

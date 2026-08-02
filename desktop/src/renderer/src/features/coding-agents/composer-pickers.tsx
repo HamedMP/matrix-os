@@ -76,7 +76,18 @@ export function AgentComposerPickers({
   onModeChange?: (mode: ComposerMode) => void;
 }) {
   const providers = summary.providers;
-  const selected = providers.find((provider) => provider.id === providerId) ?? providers[0];
+  const storedProvider = providers.find((provider) => provider.id === providerId);
+  if (readOnly && providerId && !storedProvider) {
+    return (
+      <ComposerPicker
+        ariaLabel="Agent provider"
+        value={providerId}
+        options={[{ value: providerId, label: `${providerId} (unavailable)` }]}
+        disabled
+      />
+    );
+  }
+  const selected = storedProvider ?? providers[0];
   if (!selected) return null;
   const providerOptions = providers.map((provider) => ({ value: provider.id, label: provider.displayName }));
   const modeOptions = selected.supportedModes.map((candidate) => ({

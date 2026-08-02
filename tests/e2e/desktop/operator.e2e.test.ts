@@ -147,8 +147,10 @@ suite("operator desktop e2e", () => {
     await page.locator("aside button", { hasText: "Matrix OS" }).first().click({ timeout: 5_000 });
     await page.getByRole("button", { name: "Chats" }).click();
     await page.getByRole("button", { name: "New chat in Matrix OS" }).click();
-    await page.getByLabel("Agent run prompt").fill("fix the failing auth tests", { timeout: 5_000 });
-    await page.getByRole("button", { name: "Start run" }).focus();
+    await page.getByLabel("Message new chat").waitFor({ timeout: 5_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05a-draft-chat.png") });
+    await page.getByLabel("Message new chat").fill("fix the failing auth tests");
+    await page.getByRole("button", { name: "Send" }).focus();
     await page.keyboard.press("Enter");
     await expect.poll(() => gateway.state.codingAgentCreates.length, { timeout: 5_000 }).toBe(1);
     expect(gateway.state.codingAgentCreates[0]).toMatchObject({ projectId: "matrix-os" });
