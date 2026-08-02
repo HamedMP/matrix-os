@@ -2,6 +2,7 @@ import { Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
+  defaultSandboxModeForProvider,
   providerReady,
   type AgentThreadComposerDraft,
   type RuntimeSummary,
@@ -103,7 +104,12 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
       ? summary.providers.find((provider) => provider.id === preferredProviderId && providerReady(provider))
       : undefined;
     if (!preferred) return base;
-    return { ...base, providerId: preferred.id, mode: preferred.defaultMode ?? base.mode };
+    return {
+      ...base,
+      providerId: preferred.id,
+      mode: preferred.defaultMode ?? base.mode,
+      sandboxMode: defaultSandboxModeForProvider(preferred),
+    };
   }, [summary, preferredProviderId, defaultProjectId]);
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
   const previousInitialDraftRef = useRef(initialDraft);
@@ -135,6 +141,7 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
         ...current,
         providerId: initialDraft.providerId,
         mode: providerChanged || followsPreviousMode ? initialDraft.mode : current.mode,
+        sandboxMode: providerChanged ? initialDraft.sandboxMode : current.sandboxMode,
       };
     });
   }, [initialDraft]);
@@ -214,6 +221,7 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
                 ...current,
                 providerId: provider?.id,
                 mode: provider?.defaultMode ?? current.mode,
+                sandboxMode: defaultSandboxModeForProvider(provider),
               }));
             }}
           >

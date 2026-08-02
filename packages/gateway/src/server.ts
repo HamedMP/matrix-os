@@ -591,6 +591,7 @@ export async function createGateway(config: GatewayConfig) {
     const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
+      homePath,
       codexEvents: codexEventBridge,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
     });

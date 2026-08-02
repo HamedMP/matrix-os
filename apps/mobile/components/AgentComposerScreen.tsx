@@ -8,6 +8,7 @@ import { z } from "zod/v4";
 import {
   buildCreateAgentThreadRequestFromComposer,
   defaultAgentThreadComposerDraft,
+  defaultSandboxModeForProvider,
   type AgentProviderSummary,
   type AgentThreadComposerDraft,
   ProjectIdSchema,
@@ -171,6 +172,9 @@ function threadFollowUpDraft(
   return {
     ...base,
     providerId: sourceProvider && providerReady(sourceProvider) ? sourceProvider.id : base.providerId,
+    sandboxMode: sourceProvider && providerReady(sourceProvider)
+      ? defaultSandboxModeForProvider(sourceProvider)
+      : base.sandboxMode,
     prompt: [
       "Please follow up on this agent run.",
       "",
@@ -378,6 +382,7 @@ export default function AgentComposerScreen() {
       ...(current ?? defaultAgentThreadComposerDraft(summary)),
       providerId: provider.id,
       mode: provider.defaultMode,
+      sandboxMode: defaultSandboxModeForProvider(provider),
     }));
     setPickerOpen(false);
   }, [summary]);

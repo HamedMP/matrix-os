@@ -7,12 +7,14 @@ import {
   AgentThreadEventSchema,
   ProviderIdSchema,
   SafeSetupActionSchema,
+  type AgentAttachment,
   type AgentThreadEvent,
   type SafeSetupAction,
 } from "@matrix-os/contracts";
 import { createProjectManager } from "../project-manager.js";
 import { createWorktreeManager } from "../worktree-manager.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import { buildPiChildEnvironment, resolvePiCommand } from "./pi-process-environment.js";
 import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
 
 /**
@@ -46,6 +48,7 @@ const MAX_DELTA_CHARS = 3_500;
 const MAX_TEXT_CHARS = 24_000;
 const MAX_STDERR_CHARS = 8_192;
 const MAX_SESSION_ID_CHARS = 64;
+const MAX_PI_PROMPT_BYTES = 128 * 1024;
 const SESSION_ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
 
 const PiResumeStateSchema = z.object({
@@ -71,7 +74,7 @@ export type PiSpawnFn = (command: string, args: string[], options: PiSpawnOption
 export type PiRunCommandFn = (
   command: string,
   args: string[],
-  options: { cwd: string; timeout: number },
+  options: { cwd: string; timeout: number; env?: Record<string, string> },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 export interface PiCodingAgentProviderOptions {
@@ -94,6 +97,7 @@ const defaultRunCommand: PiRunCommandFn = async (command, args, options) => {
   const { stdout, stderr } = await execFileAsync(command, args, {
     cwd: options.cwd,
     timeout: options.timeout,
+    env: options.env,
     encoding: "utf-8",
     maxBuffer: 1024 * 1024,
   });
@@ -106,6 +110,19 @@ const defaultSpawnFn: PiSpawnFn = (command, args, options) =>
 function boundedTimeout(value: number | undefined, fallback: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.min(Math.floor(value), DEFAULT_RUN_TIMEOUT_MS));
+}
+
+function piPromptWithReferences(message: string, attachments: AgentAttachment[] | undefined): string {
+  const references = (attachments ?? [])
+    .filter((attachment) => attachment.kind === "structured_ref")
+    .map((attachment) => `- ${attachment.label}${attachment.path ? `: ${attachment.path}` : ""}`);
+  const prompt = references.length > 0
+    ? `${message}\n\nContext references:\n${references.join("\n")}`
+    : message;
+  if (Buffer.byteLength(prompt, "utf-8") > MAX_PI_PROMPT_BYTES) {
+    throw new Error("Pi provider prompt is too large");
+  }
+  return prompt;
 }
 
 // SAFE_REFERENCE in the contracts allows [A-Za-z0-9_.:-]; pi tool-call ids
@@ -460,7 +477,7 @@ function visibleSetupCommand(command: string): string {
 
 export function createPiCodingAgentProvider(options: PiCodingAgentProviderOptions): CodingAgentProviderAdapter {
   const providerId = ProviderIdSchema.parse(options.providerId ?? "pi");
-  const command = options.command ?? "pi";
+  const command = resolvePiCommand(options.command, options.env);
   const homePath = options.homePath;
   const spawnFn = options.spawnFn ?? defaultSpawnFn;
   const runCommand = options.runCommand ?? defaultRunCommand;
@@ -503,7 +520,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     if (activeProcesses.get(threadId) === tracked) activeProcesses.delete(threadId);
   }
 
-  function terminate(proc: PiChildProcess, killTimer: { current?: ReturnType<typeof setTimeout> }): void {
+  function terminate(
+    proc: PiChildProcess,
+    killTimer: { current?: ReturnType<typeof setTimeout> },
+    afterKill: () => void,
+  ): void {
     try {
       proc.kill("SIGTERM");
     } catch (err: unknown) {
@@ -514,6 +535,8 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         proc.kill("SIGKILL");
       } catch (err: unknown) {
         logCodingAgentWarning("pi provider SIGKILL failed", err);
+      } finally {
+        afterKill();
       }
     }, killGraceMs);
     killTimer.current.unref?.();
@@ -542,11 +565,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       "--session-id", input.sessionId,
       promptArg(input.prompt),
     ];
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (typeof value === "string") env[key] = value;
-    }
-    Object.assign(env, options.env ?? {});
+    const env = buildPiChildEnvironment(options.env);
 
     return await new Promise<PiRunResult>((resolve) => {
       let proc: PiChildProcess;
@@ -560,20 +579,21 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       let settled = false;
       let aborted = false;
       let timedOut = false;
+      let terminationStarted = false;
       let stdoutBuffer = "";
       let stderrText = "";
       const killTimer: { current?: ReturnType<typeof setTimeout> } = {};
 
       const timeoutTimer = setTimeout(() => {
         timedOut = true;
-        terminate(proc, killTimer);
+        requestTermination();
       }, runTimeoutMs);
       timeoutTimer.unref?.();
 
       const onAbort = () => {
         if (aborted || settled) return;
         aborted = true;
-        terminate(proc, killTimer);
+        requestTermination();
       };
       const trackedProcess = trackProcess(input.threadId, onAbort);
       if (input.signal) {
@@ -591,12 +611,33 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         resolve(result);
       }
 
+      function settleAfterForcedTermination(): void {
+        if (settled) return;
+        const collected = collector.finish();
+        const sessionId = collected.sessionId ?? input.sessionId;
+        if (timedOut) {
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${runTimeoutMs}ms`));
+        }
+        settle({
+          events: collected.events,
+          outcome: aborted ? "aborted" : "failed",
+          sessionId,
+        });
+      }
+
+      function requestTermination(): void {
+        if (terminationStarted || settled) return;
+        terminationStarted = true;
+        terminate(proc, killTimer, settleAfterForcedTermination);
+      }
+
       proc.stdout.on("data", (chunk: Buffer) => {
+        if (settled) return;
         stdoutBuffer += chunk.toString("utf-8");
         if (stdoutBuffer.length > 8 * 1024 * 1024) {
           logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout buffer overflow"));
           timedOut = true;
-          terminate(proc, killTimer);
+          requestTermination();
           stdoutBuffer = "";
           return;
         }
@@ -609,6 +650,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         }
       });
       proc.stderr.on("data", (chunk: Buffer) => {
+        if (settled) return;
         if (stderrText.length < MAX_STDERR_CHARS) {
           stderrText += chunk.toString("utf-8").slice(0, MAX_STDERR_CHARS - stderrText.length);
         }
@@ -618,6 +660,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         settle({ events: [], outcome: "failed", sessionId: input.sessionId });
       });
       proc.once("exit", (code: number | null) => {
+        if (settled) return;
         const tail = stdoutBuffer.trim();
         if (tail.length > 0) collector.feedLine(tail);
         const collected = collector.finish();
@@ -754,7 +797,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
   async function probeInstalled(): Promise<boolean> {
     try {
-      await runCommand(command, ["--version"], { cwd: homePath, timeout: PROBE_TIMEOUT_MS });
+      await runCommand(command, ["--version"], {
+        cwd: homePath,
+        timeout: PROBE_TIMEOUT_MS,
+        env: buildPiChildEnvironment(options.env),
+      });
       return true;
     } catch (err: unknown) {
       logCodingAgentWarning("pi provider binary probe failed", err);
@@ -840,10 +887,17 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
       const runningEvent = statusEvent({ threadId: thread.id, status: "running", now, nextEventId });
       const sessionId = randomUUID();
+      let prompt: string;
+      try {
+        prompt = piPromptWithReferences(request.prompt, request.attachments);
+      } catch (err: unknown) {
+        logCodingAgentWarning("pi provider prompt construction failed", err);
+        return { events: terminalEvents(thread.id, "failed", now, nextEventId) };
+      }
       const run = await runPi({
         threadId: thread.id,
         scope: thread.id,
-        prompt: request.prompt,
+        prompt,
         cwd,
         sessionId,
         now,
@@ -877,10 +931,17 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       if (!cwd) {
         return { events: [], outcome: "failed" as const, resumeState };
       }
+      let prompt: string;
+      try {
+        prompt = piPromptWithReferences(turn.message, turn.attachments);
+      } catch (err: unknown) {
+        logCodingAgentWarning("pi provider prompt construction failed", err);
+        return { events: [], outcome: "failed" as const, resumeState };
+      }
       const run = await runPi({
         threadId: thread.id,
         scope: turn.turnId,
-        prompt: turn.message,
+        prompt,
         cwd,
         sessionId: parsed.sessionId,
         signal,

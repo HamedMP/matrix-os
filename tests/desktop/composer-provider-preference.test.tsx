@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAgentThreadComposerDraft, type RuntimeSummary } from "@matrix-os/contracts";
 import { AgentComposer } from "../../desktop/src/renderer/src/features/coding-agents/AgentComposer";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
+import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 
 const NOW = "2026-07-27T12:00:00.000Z";
 
@@ -18,7 +19,7 @@ function provider(id: string, ready: boolean) {
   return {
     id,
     kind: id,
-    displayName: id === "codex" ? "Codex" : "Claude",
+    displayName: id === "codex" ? "Codex" : id === "pi" ? "Pi" : "Claude",
     availability: ready ? "available" : "setup_required",
     installStatus: ready ? "installed" : "missing",
     authStatus: ready ? "authenticated" : "missing",
@@ -56,6 +57,7 @@ describe("AgentComposer default provider preference", () => {
       },
     });
     useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
+    useCodingAgentWorkspace.setState({ createStatus: "idle", createError: null });
   });
 
   afterEach(() => {
@@ -152,5 +154,30 @@ describe("AgentComposer default provider preference", () => {
     });
 
     await waitFor(() => expect(providerSelect.value).toBe("opencode"));
+  });
+
+  it("switches the desktop draft to Pi's runnable read-only sandbox", async () => {
+    const createThread = vi.fn(async () => null);
+    useCodingAgentWorkspace.setState({ createThread });
+    render(
+      <AgentComposer
+        summary={summaryWith([provider("codex", true), provider("pi", true)])}
+        seed={null}
+        focusRequestId={0}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Provider", { selector: "select" }), {
+      target: { value: "pi" },
+    });
+    fireEvent.change(screen.getByLabelText("Agent run prompt"), {
+      target: { value: "Inspect the repository" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => expect(createThread).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: "pi",
+      sandboxMode: "read_only",
+    })));
   });
 });

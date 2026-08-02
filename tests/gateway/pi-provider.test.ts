@@ -159,6 +159,9 @@ interface FakeScript {
   stderrText?: string;
   hang?: boolean;
   spawnError?: Error;
+  // Simulates an uninterruptible child or a failed kill where no exit event
+  // arrives even after both termination signals are attempted.
+  ignoreKill?: boolean;
   // When true, rewrite the session event id to the --session-id arg, matching
   // real pi behavior (it echoes the requested id back).
   echoSessionId?: boolean;
@@ -184,6 +187,7 @@ function fakeSpawn(script: FakeScript) {
       stderr,
       kill(signal: NodeJS.Signals) {
         kills.push(signal);
+        if (script.ignoreKill) return;
         queueMicrotask(() => emitExit(null, signal));
       },
       once(event: "exit" | "error", listener: never) {
@@ -357,7 +361,13 @@ describe("pi provider adapter — spawn contract", () => {
 
   it("does not add provider secrets to argv or env", async () => {
     const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
-    const provider = providerFor(fake.spawnFn, { env: { PI_SAFE_TEST: "1" } });
+    const provider = providerFor(fake.spawnFn, {
+      env: {
+        LANG: "C",
+        DATABASE_URL: "postgres://secret-token-leak",
+        MATRIX_AUTH_TOKEN: "secret-token-leak",
+      },
+    });
 
     await provider.startThread({
       principal: ownerPrincipal,
@@ -369,7 +379,49 @@ describe("pi provider adapter — spawn contract", () => {
 
     const call = fake.calls[0]!;
     expect(call.args.join(" ")).not.toMatch(/api[_ -]?key|bearer|token|secret|password/i);
-    expect(call.env.PI_SAFE_TEST).toBe("1");
+    expect(call.env.LANG).toBe("C");
+    expect(call.env.DATABASE_URL).toBeUndefined();
+    expect(call.env.MATRIX_AUTH_TOKEN).toBeUndefined();
+  });
+
+  it("launches Pi from the configured Matrix node prefix", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn, {
+      env: { MATRIX_NODE_PREFIX: "/opt/matrix/custom-node" },
+    });
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.command).toBe("/opt/matrix/custom-node/bin/pi");
+    expect(fake.calls[0]!.env.PATH?.split(":")[0]).toBe("/opt/matrix/custom-node/bin");
+  });
+
+  it("includes bounded structured references in the initial Pi prompt", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Review this", "done") });
+    const provider = providerFor(fake.spawnFn);
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Review this", {
+        attachments: [
+          { id: "review:1", kind: "structured_ref", label: "Review hunk 1", path: "src/auth.ts" },
+          { id: "file:1", kind: "file", label: "Ignored file", path: "tmp/output.txt" },
+        ],
+      }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.args.at(-1)).toBe(
+      "Review this\n\nContext references:\n- Review hunk 1: src/auth.ts",
+    );
   });
 
   it("uses homePath as cwd when the thread has no project", async () => {
@@ -701,6 +753,31 @@ describe("pi provider adapter — resume", () => {
     for (const event of turnResult.events) AgentThreadEventSchema.parse(event);
   });
 
+  it("includes structured references in resumed Pi prompts", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Continue", "done") });
+    const provider = providerFor(fake.spawnFn);
+
+    await provider.resumeTurn!({
+      principal: ownerPrincipal,
+      thread: threadSummary({ status: "running" }),
+      turn: {
+        turnId: "turn_019f8e9c1e8c7bedbd12eda826fd22",
+        message: "Continue",
+        attachments: [
+          { id: "thread:1", kind: "structured_ref", label: "Source thread" },
+        ],
+      },
+      resumeState: { conversationId: JSON.stringify({ s: SESSION_ID, c: "/work/repo" }) },
+      signal: AbortSignal.timeout(5_000),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls[0]!.args.at(-1)).toBe(
+      "Continue\n\nContext references:\n- Source thread",
+    );
+  });
+
   it("scopes assistant message ids per turn", async () => {
     const first = fakeSpawn({ lines: textRunLines(SESSION_ID, "One", "first") });
     const provider = providerFor(first.spawnFn);
@@ -839,6 +916,29 @@ describe("pi provider adapter — abort and timeout", () => {
     expect(parsed.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
   });
 
+  it("settles a timed-out run even when the child never emits exit", async () => {
+    const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true, ignoreKill: true });
+    const provider = providerFor(fake.spawnFn, { runTimeoutMs: 20, killGraceMs: 5 });
+
+    const result = await Promise.race([
+      provider.startThread({
+        principal: ownerPrincipal,
+        thread: threadSummary(),
+        request: createRequest("Say hi"),
+        now: () => baseNow,
+        nextEventId: nextEventIdFactory(),
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 150)),
+    ]);
+
+    expect(result).not.toBeNull();
+    expect(fake.kills).toEqual(["SIGTERM", "SIGKILL"]);
+    if (result) {
+      const parsed = parseCodingAgentProviderRunResult(result, threadSummary().id);
+      expect(parsed.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
+    }
+  });
+
   it("abortThread kills a tracked active process and returns default abort events", async () => {
     const fake = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true });
     const provider = providerFor(fake.spawnFn);
@@ -873,6 +973,32 @@ describe("pi provider adapter — abort and timeout", () => {
 });
 
 describe("pi provider adapter — availability and summary", () => {
+  it("probes Pi through the configured Matrix node prefix and environment", async () => {
+    const calls: Array<{ command: string; env: Record<string, string> | undefined }> = [];
+    const provider = createPiCodingAgentProvider({
+      homePath,
+      env: { MATRIX_NODE_PREFIX: "/opt/matrix/custom-node", PATH: "/usr/bin" },
+      runCommand: async (command, _args, options) => {
+        calls.push({ command, env: options.env });
+        return { stdout: "0.81.0\n", stderr: "" };
+      },
+    });
+
+    await provider.healthCheck!({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    });
+
+    expect(calls).toEqual([{
+      command: "/opt/matrix/custom-node/bin/pi",
+      env: expect.objectContaining({
+        MATRIX_NODE_PREFIX: "/opt/matrix/custom-node",
+        PATH: "/opt/matrix/custom-node/bin:/usr/bin",
+      }),
+    }]);
+  });
+
   it("reports installed and authenticated when the binary answers --version", async () => {
     const provider = createPiCodingAgentProvider({
       homePath,
