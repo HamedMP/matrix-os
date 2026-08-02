@@ -340,6 +340,19 @@ fetch_manifest() {
   printf '%s' "$manifest"
 }
 
+write_prepared_update_marker() {
+  local manifest="$1" temp
+  if [ -L "$UPDATE_MARKER" ] || { [ -e "$UPDATE_MARKER" ] && [ ! -f "$UPDATE_MARKER" ]; }; then
+    log "ERROR: prepared update marker has an invalid file type"
+    return 1
+  fi
+  temp="$(mktemp "$APP_DIR/.update-available.json.XXXXXX")" || return 1
+  if ! printf '%s\n' "$manifest" >"$temp" || ! mv -fT "$temp" "$UPDATE_MARKER"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+}
+
 download_bundle() {
   local version="$1" expected_sha256="$2" expected_size="$3" bundle_url="$4" bundle_file="$5"
   local attempt refreshed refreshed_version refreshed_sha256 refreshed_size refreshed_url partial_size
@@ -393,10 +406,11 @@ download_bundle() {
 }
 
 prepare_triggered_update() {
-  local url="" target=""
+  local url="" target="" requested_version=""
   if [ -f "$UPDATE_VERSION_FILE" ]; then
     target="$(cat "$UPDATE_VERSION_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update version file is empty"; return 1; }
+    requested_version="$target"
     url="$(release_url_for_version "$target")"
   elif [ -f "$UPDATE_CHANNEL_FILE" ]; then
     target="$(cat "$UPDATE_CHANNEL_FILE" 2>/dev/null || true)"
@@ -423,12 +437,18 @@ prepare_triggered_update() {
   if [ -z "$remote_version" ]; then
     log "WARN: release metadata missing 'version' field"; return 1
   fi
+  if [ -n "$requested_version" ] && ! [ "$remote_version" = "$requested_version" ]; then
+    log "ERROR: immutable update target did not match fetched release metadata"
+    write_update_error "update_target_mismatch" \
+      "The fetched release metadata did not match the requested version." "$requested_version"
+    return 1
+  fi
   if [ ! -f "$UPDATE_VERSION_FILE" ] && [ ! -f "$UPDATE_CHANNEL_FILE" ] && [ "$remote_version" = "$(current_version)" ]; then
     log "No update available on ${target} — nothing to apply"
     rm -f "$UPDATE_MARKER"
     return 1
   fi
-  echo "$manifest" > "$UPDATE_MARKER"
+  write_prepared_update_marker "$manifest" || return 1
   log "Prepared requested update target ${target}: $remote_version"
 }
 
@@ -462,7 +482,7 @@ check_for_update() {
   update_type="$(json_field "$manifest" updateType)"
 
   log "Update available: $remote_version (current: $cur, severity: ${severity:-normal})"
-  echo "$manifest" > "$UPDATE_MARKER"
+  write_prepared_update_marker "$manifest" || return 1
 
   if [ "$severity" = "security" ] || [ "$update_type" = "auto" ]; then
     if [ -f "$AUTO_APPLY_FAILED_MARKER" ] && [ "$(cat "$AUTO_APPLY_FAILED_MARKER" 2>/dev/null)" = "$remote_version" ]; then

@@ -295,10 +295,11 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('wait_update "$version_a" rollback');
     expect(acceptance).toContain('read_update_target');
     expect(acceptance).toContain('read_update_manifest_version');
+    expect(acceptance).toContain('update_target_mismatch');
     expect(acceptance).toContain('classify_installed_updater_protocol');
     expect(acceptance).toContain('systemctl show matrix-sync-agent.service -p NRestarts --value');
     expect(acceptance).toContain('case "$error_code" in');
-    expect(acceptance).toContain('download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown)');
+    expect(acceptance).toContain('download_failed|download_metadata_changed|update_target_mismatch|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown)');
     expect(acceptance).not.toContain("journalctl -u matrix-sync-agent");
     expect(workflow).toContain("Acceptance stalled at ${state:-unavailable}");
     expect(workflow).toContain("Acceptance failed at ${state}");
