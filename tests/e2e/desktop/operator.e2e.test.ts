@@ -177,6 +177,16 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05c-settings-integrations.png") });
   }, 30_000);
 
+  it("opens the add-project flow from the project rail", async () => {
+    await page.getByRole("button", { name: "Add project" }).click();
+    await page.getByText("Add project", { exact: true }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05d-add-project.png") });
+
+    await page.getByRole("button", { name: /Clone from GitHub/ }).click();
+    await page.getByPlaceholder("https://github.com/owner/repo").waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05e-clone-project.png") });
+  }, 30_000);
+
   it("opens the Terminal workspace with a session sidebar", async () => {
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     // Inner sessions sidebar lists the VPS session as a clickable button

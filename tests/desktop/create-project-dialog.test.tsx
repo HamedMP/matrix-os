@@ -166,11 +166,12 @@ describe("CreateProjectDialog", () => {
 
     // A replacement signed-in session (same slot, new credential) must drop the
     // folder picked under the previous owner.
-    act(() => {
+    await act(async () => {
       useConnection.setState({ authGeneration: 2 });
+      await Promise.resolve();
     });
 
-    expect(screen.queryByText(/^Selected:/)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(/^Selected:/)).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     expect(createProject).not.toHaveBeenCalled();
   });

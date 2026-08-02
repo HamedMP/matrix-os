@@ -91,7 +91,9 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   // previous computer would open a project that does not exist on the one the
   // user is now looking at.
   const runtimeIdentityRef = useRef({ runtimeSlot, authGeneration });
-  runtimeIdentityRef.current = { runtimeSlot, authGeneration };
+  useEffect(() => {
+    runtimeIdentityRef.current = { runtimeSlot, authGeneration };
+  }, [authGeneration, runtimeSlot]);
 
   const folderPath = scopedPath(folderSelection, runtimeSlot, authGeneration);
   const parentPath = scopedPath(parentSelection, runtimeSlot, authGeneration);
