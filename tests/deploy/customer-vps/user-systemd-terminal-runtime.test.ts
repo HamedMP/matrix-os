@@ -166,6 +166,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
       join(root, "scripts/spikes/user-systemd-terminal/production-acceptance.sh"),
       "utf8",
     );
+    const prepareOperation = acceptance.slice(
+      acceptance.indexOf("  prepare)"),
+      acceptance.indexOf("  launch)"),
+    );
     const probe = readFileSync(
       join(root, "scripts/spikes/user-systemd-terminal/production-probe.mjs"),
       "utf8",
@@ -255,6 +259,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("write_progress hostile-state-create");
     expect(acceptance).toContain("write_progress hostile-state-pre-api");
     expect(acceptance).toContain("write_progress hostile-state-api");
+    expect(prepareOperation).toContain("remove_hostile_state || true");
     expect(acceptance).toContain('systemctl show matrix-gateway.service -p Result --value');
     expect(acceptance).toContain('systemctl show matrix-gateway.service -p ExecMainStatus --value');
     expect(acceptance).toContain('systemctl show matrix-gateway.service -p NRestarts --value');
