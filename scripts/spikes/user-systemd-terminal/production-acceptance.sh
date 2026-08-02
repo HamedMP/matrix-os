@@ -759,6 +759,36 @@ print(phase)
 PY
 }
 
+read_update_target() {
+  python3 - /opt/matrix/app/.update-version <<'PY'
+import os, re, stat, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+info = os.fstat(fd)
+if not stat.S_ISREG(info.st_mode) or info.st_size > 128:
+    os.close(fd); raise SystemExit(1)
+with os.fdopen(fd, encoding="utf-8") as source:
+    value = source.read().strip()
+if re.fullmatch(r"v[0-9][A-Za-z0-9._-]{0,126}", value) is None:
+    raise SystemExit(1)
+print(value)
+PY
+}
+
+read_update_manifest_version() {
+  python3 - /opt/matrix/app/.update-available.json <<'PY'
+import json, os, re, stat, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+info = os.fstat(fd)
+if not stat.S_ISREG(info.st_mode) or info.st_size > 16384:
+    os.close(fd); raise SystemExit(1)
+with os.fdopen(fd, encoding="utf-8") as source:
+    value = json.load(source).get("version")
+if not isinstance(value, str) or re.fullmatch(r"v[0-9][A-Za-z0-9._-]{0,126}", value) is None:
+    raise SystemExit(1)
+print(value)
+PY
+}
+
 path_state() {
   local path="$1"
   if [ -L "$path" ]; then
@@ -776,6 +806,18 @@ installed_bounded_updater_is_ready() {
   local updater=/opt/matrix/bin/matrix-sync-agent
   [ -f "$updater" ] && [ ! -L "$updater" ] && [ -x "$updater" ] &&
     grep -Fq '/usr/bin/timeout --signal=KILL 1800 curl' "$updater"
+}
+
+classify_installed_updater_protocol() {
+  local updater=/opt/matrix/bin/matrix-sync-agent
+  if ! installed_bounded_updater_is_ready; then
+    echo invalid
+  elif grep -Fq 'run_apply_update explicit' "$updater" &&
+    grep -Fq 'if [ "$trigger_source" = explicit ]; then' "$updater"; then
+    echo durable
+  else
+    echo legacy
+  fi
 }
 
 classify_updater_phase() {
@@ -822,7 +864,8 @@ classify_update_bundle() {
 
 diagnose_update_failure() {
   local expected="$1" version_state=missing trigger_state manifest_state error_code=none update_phase=missing
-  local updater_state bundle_state sync_state=inactive gateway_state=inactive health_state=failed installed
+  local target_state target updater_protocol updater_state bundle_state sync_state=inactive gateway_state=inactive health_state=failed installed
+  local manifest_version sync_result sync_exit sync_restarts
   if [ -f /opt/matrix/app/BUNDLE_VERSION ] && [ ! -L /opt/matrix/app/BUNDLE_VERSION ]; then
     installed="$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)"
     if [ "$installed" = "$expected" ]; then
@@ -837,6 +880,21 @@ diagnose_update_failure() {
   fi
   trigger_state="$(path_state /opt/matrix/app/.update-now)"
   manifest_state="$(path_state /opt/matrix/app/.update-available.json)"
+  target_state="$(path_state /opt/matrix/app/.update-version)"
+  if [ "$target_state" = present ]; then
+    target="$(read_update_target 2>/dev/null || true)"
+    if [ "$target" = "$expected" ]; then target_state=expected
+    elif [ -n "$target" ]; then target_state=other
+    else target_state=invalid
+    fi
+  fi
+  if [ "$manifest_state" = present ]; then
+    manifest_version="$(read_update_manifest_version 2>/dev/null || true)"
+    if [ "$manifest_version" = "$expected" ]; then manifest_state=expected
+    elif [ -n "$manifest_version" ]; then manifest_state=other
+    else manifest_state=invalid
+    fi
+  fi
   if [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; then
     error_code="$(read_update_error_code 2>/dev/null || true)"
     case "$error_code" in
@@ -858,12 +916,19 @@ diagnose_update_failure() {
     health_state=ok
   fi
   updater_state="$(classify_updater_phase)"
+  updater_protocol="$(classify_installed_updater_protocol)"
   bundle_state="$(classify_update_bundle "$expected")"
-  current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-phase-${update_phase}-updater-${updater_state}-bundle-${bundle_state}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"
+  sync_result="$(systemctl show matrix-sync-agent.service -p Result --value 2>/dev/null || true)"
+  case "$sync_result" in success|resources|protocol|timeout|exit-code|signal|core-dump|watchdog|start-limit-hit|oom-kill|exec-condition) ;; *) sync_result=unknown ;; esac
+  sync_exit="$(systemctl show matrix-sync-agent.service -p ExecMainStatus --value 2>/dev/null || true)"
+  [[ "$sync_exit" =~ ^[0-9]{1,3}$ ]] || sync_exit=unknown
+  sync_restarts="$(systemctl show matrix-sync-agent.service -p NRestarts --value 2>/dev/null || true)"
+  [[ "$sync_restarts" =~ ^[0-9]{1,6}$ ]] || sync_restarts=unknown
+  current_failure="update-${version_state}-target-${target_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-phase-${update_phase}-protocol-${updater_protocol}-updater-${updater_state}-bundle-${bundle_state}-sync-${sync_state}-result-${sync_result}-exit-${sync_exit}-restarts-${sync_restarts}-gateway-${gateway_state}-health-${health_state}"
 }
 
 wait_update() {
-  local expected="$1" deadline=$((SECONDS + 5400)) error_code=none
+  local expected="$1" update_mode="${2:-explicit}" deadline=$((SECONDS + 5400)) error_code=none
   local explicit_update_idle_ticks=0 updater_state
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
@@ -884,7 +949,7 @@ wait_update() {
         return 1
       fi
     fi
-    if [ "$(path_state /opt/matrix/app/.update-version)" = present ] &&
+    if [ "$update_mode" = explicit ] &&
       [ "$(path_state /opt/matrix/app/.update-now)" = missing ] &&
       [ "$(path_state /opt/matrix/staging/update-phase)" = missing ] &&
       [ "$(path_state /opt/matrix/app/.update-error.json)" = missing ]; then
@@ -1235,7 +1300,7 @@ EOF
 
   write_progress bundle-a-update
   request_update "$version_a"
-  wait_update "$version_a"
+  wait_update "$version_a" explicit
   write_progress bundle-a-continuity
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
@@ -1244,7 +1309,7 @@ EOF
 
   write_progress bundle-b-update
   request_update "$version_b"
-  wait_update "$version_b"
+  wait_update "$version_b" explicit
   write_progress bundle-b-continuity
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
@@ -1269,7 +1334,7 @@ EOF
 
   write_progress rollback-update
   request_update rollback
-  wait_update "$version_a"
+  wait_update "$version_a" rollback
   write_progress rollback-continuity
   roles_match "$shell_name" shell "$shell_baseline"
   roles_match "$agent_name" agent "$agent_baseline"
