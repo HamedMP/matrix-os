@@ -285,6 +285,10 @@ write_update_phase() {
   fi
 }
 
+consume_update_trigger() {
+  sudo rm -f -- "$UPDATE_TRIGGER"
+}
+
 recover_interrupted_update() {
   local phase version=""
   [ -f "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 0
@@ -441,6 +445,7 @@ check_for_update() {
 
 # ── Apply update ─────────────────────────────────────────────────────
 apply_update() {
+  local trigger_source="${1:-other}"
   if [ ! -f "$UPDATE_MARKER" ]; then
     log "No update available — nothing to apply"; return 1
   fi
@@ -455,9 +460,26 @@ apply_update() {
 
   sudo mkdir -p "$STAGING_DIR"
   sudo chown matrix:matrix "$STAGING_DIR"
-  ensure_update_headroom "$(json_field "$manifest" size)" "$version" || return 1
+  if ! ensure_update_headroom "$(json_field "$manifest" size)" "$version"; then
+    if [ "$trigger_source" = explicit ]; then
+      consume_update_trigger || log "WARN: failed to consume update trigger"
+    fi
+    return 1
+  fi
   rm -f "$UPDATE_ERROR_MARKER"
-  write_update_phase prepare || return 1
+  if ! write_update_phase prepare; then
+    if [ "$trigger_source" = explicit ]; then
+      consume_update_trigger || log "WARN: failed to consume update trigger"
+    fi
+    return 1
+  fi
+  # Keep the explicit request durable until an atomic phase marker exists. If
+  # the agent is interrupted before this point, systemd can restart it and the
+  # still-present trigger will retry the prepared immutable manifest. Once the
+  # phase is durable, startup recovery can report apply_interrupted instead.
+  if [ "$trigger_source" = explicit ]; then
+    consume_update_trigger || return 1
+  fi
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
   extract_dir="$STAGING_DIR/bundle-${version}"
 
@@ -613,8 +635,8 @@ apply_update() {
 }
 
 run_apply_update() {
-  local status version=""
-  if apply_update; then
+  local trigger_source="${1:-other}" status version=""
+  if apply_update "$trigger_source"; then
     return 0
   else
     status=$?
@@ -817,10 +839,9 @@ last_staging_cleanup="$(date +%s)"
 while true; do
   # React to trigger files and signals
   if [ -f "$UPDATE_TRIGGER" ]; then
-    sudo rm -f "$UPDATE_TRIGGER"
     rm -f "$AUTO_APPLY_FAILED_MARKER"
     if prepare_triggered_update; then
-      if run_apply_update; then
+      if run_apply_update explicit; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update failed — will retry on next trigger"
@@ -828,6 +849,7 @@ while true; do
     else
       log "Requested release metadata fetch failed — skipping apply"
       rm -f "$UPDATE_MARKER"
+      consume_update_trigger || log "WARN: failed to consume update trigger"
     fi
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then

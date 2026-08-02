@@ -1087,6 +1087,26 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(durableHealthError).toBeGreaterThan(healthRollback);
   });
 
+  it('keeps explicit update triggers durable until the apply phase is recorded', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const triggerBranch = syncAgent.indexOf('if [ -f "$UPDATE_TRIGGER" ]; then');
+    const prepareTriggeredUpdate = syncAgent.indexOf('if prepare_triggered_update; then', triggerBranch);
+    const earlyTriggerRemoval = syncAgent.indexOf('consume_update_trigger', triggerBranch);
+    const preparePhase = syncAgent.indexOf('write_update_phase prepare');
+    const durableTriggerRemoval = syncAgent.indexOf('consume_update_trigger || return 1', preparePhase);
+
+    expect(syncAgent).toContain('sudo rm -f -- "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('if [ "$trigger_source" = explicit ]; then');
+    expect(syncAgent).toContain('run_apply_update explicit');
+    expect(triggerBranch).toBeGreaterThan(-1);
+    expect(prepareTriggeredUpdate).toBeGreaterThan(triggerBranch);
+    expect(earlyTriggerRemoval === -1 || earlyTriggerRemoval > prepareTriggeredUpdate).toBe(true);
+    expect(preparePhase).toBeGreaterThan(-1);
+    expect(durableTriggerRemoval).toBeGreaterThan(preparePhase);
+  });
+
   it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
@@ -1113,7 +1133,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('sudo mv "$extract_dir/app" "$APP_DIR"');
     expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
     expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
-    expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('sudo rm -f -- "$UPDATE_TRIGGER"');
     expect(syncAgent).toContain('prepare_triggered_update');
     expect(syncAgent).toContain('restart_sync_agent_after_update');
     expect(syncAgent).toContain('sudo systemctl restart --no-block matrix-sync-agent.service');
