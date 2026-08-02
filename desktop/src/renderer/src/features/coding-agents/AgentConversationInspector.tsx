@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 export type AgentConversationInspectorTab = "changes" | "files" | "terminal" | "preview" | "activity";
 
@@ -76,12 +76,15 @@ export function AgentConversationInspector({
   // Lazy-mount surfaces on first visit so a never-opened tab (file listings,
   // live previews) costs nothing; once visited a surface stays mounted across
   // switches so local state (drafts, scrollback, selection) survives.
-  const [visitedTabs, setVisitedTabs] = useState<AgentConversationInspectorTab[]>([defaultTab]);
-  if (!visitedTabs.includes(selectedTab)) {
-    setVisitedTabs([...visitedTabs, selectedTab]);
-  }
+  const [visitedTabs, setVisitedTabs] = useState<AgentConversationInspectorTab[]>(() =>
+    controlledTab === undefined || controlledTab === defaultTab
+      ? [defaultTab]
+      : [defaultTab, controlledTab],
+  );
+  const visitedTabSet = useMemo(() => new Set(visitedTabs), [visitedTabs]);
 
   function selectTab(tab: AgentConversationInspectorTab, focusIndex?: number) {
+    setVisitedTabs((current) => current.includes(tab) ? current : [...current, tab]);
     if (controlledTab === undefined) setInternalTab(tab);
     onTabChange?.(tab);
     if (focusIndex !== undefined) tabRefs.current[focusIndex]?.focus();
@@ -191,7 +194,7 @@ export function AgentConversationInspector({
             hidden={!selected}
             className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
           >
-            {visitedTabs.includes(tabId) ? (
+            {selected || visitedTabSet.has(tabId) ? (
               <div className="flex min-h-0 flex-1 flex-col p-4">{content[tabId]}</div>
             ) : null}
           </div>

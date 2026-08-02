@@ -194,5 +194,6 @@ describe("AgentConversationInspector controlled tabs", () => {
     );
     expect(screen.getByRole("tab", { name: /^Changes\b/ }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Changed files")).toBeTruthy();
+    expect(screen.getByText("Matrix shell")).toBeTruthy();
   });
 });
