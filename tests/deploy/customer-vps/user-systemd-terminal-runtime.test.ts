@@ -222,6 +222,19 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("rebootStartsNoRuntime");
     expect(acceptance).toContain("rebootCreatesNoReplacementPids");
     expect(acceptance).toContain("rebootProducesNoOutput");
+    expect(acceptance).toContain("write_progress reboot-user-bus-ready");
+    expect(acceptance).toContain("for role in shell agent; do");
+    for (const rebootStage of [
+      "unit-inactive",
+      "cgroup-removed",
+      "descriptor-retained",
+      "old-pids-detached",
+    ]) {
+      expect(acceptance).toContain(`write_progress "reboot-\${role}-${rebootStage}"`);
+    }
+    for (const rebootStage of ["no-active-units", "no-replacement-pids", "no-output"]) {
+      expect(acceptance).toContain(`write_progress reboot-${rebootStage}`);
+    }
     expect(probe).toContain("/ws/terminal");
     expect(probe).toContain('message?.type === "attached"');
     expect(probe).toContain('message?.type === "error"');

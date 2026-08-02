@@ -1464,14 +1464,20 @@ phase2() {
   trap fail_phase ERR
   [ "$(cat "$state_file")" = reboot-scheduled ]
   current_state_prefix=phase2-running
-  write_progress reboot-verification
-  local baseline unit pid old_cgroup
-  for baseline in "${state_root}/shell-baseline.json" "${state_root}/agent-baseline.json"; do
+  write_progress reboot-user-bus-ready
+  owner_systemctl show-environment >/dev/null
+  local role baseline unit pid old_cgroup
+  for role in shell agent; do
+    baseline="${state_root}/${role}-baseline.json"
     unit="$(json_field "$baseline" unit)"
     old_cgroup="$(json_field "$baseline" cgroup)"
+    write_progress "reboot-${role}-unit-inactive"
     ! owner_systemctl is-active --quiet "$unit"
+    write_progress "reboot-${role}-cgroup-removed"
     [ ! -e "/sys/fs/cgroup${old_cgroup}/cgroup.procs" ]
+    write_progress "reboot-${role}-descriptor-retained"
     [ -f "${descriptor_root}/$(json_field "$baseline" runtimeId).json" ]
+    write_progress "reboot-${role}-old-pids-detached"
     for pid in "$(json_field "$baseline" mainPid)" \
       "$(json_field "$baseline" zellijServerPid)" \
       "$(json_field "$baseline" workloadPid)"; do
@@ -1480,13 +1486,16 @@ phase2() {
       fi
     done
   done
+  write_progress reboot-no-active-units
   if owner_systemctl list-units 'matrix-zellij@*.service' --state=active --no-legend | grep -q .; then
     return 1
   fi
   mark rebootStartsNoRuntime
+  write_progress reboot-no-replacement-pids
   ! pgrep -f -- "$loop_script" >/dev/null
   mark rebootCreatesNoReplacementPids
 
+  write_progress reboot-no-output
   local size_before size_after
   size_before="$(stat -c %s "$output_file")"
   sleep 3
