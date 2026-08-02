@@ -864,6 +864,7 @@ diagnose_update_failure() {
 
 wait_update() {
   local expected="$1" deadline=$((SECONDS + 5400)) error_code=none
+  local explicit_update_idle_ticks=0 updater_state
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
       [ ! -e /opt/matrix/app/.update-now ] &&
@@ -882,6 +883,23 @@ wait_update() {
         diagnose_update_failure "$expected"
         return 1
       fi
+    fi
+    if [ "$(path_state /opt/matrix/app/.update-version)" = present ] &&
+      [ "$(path_state /opt/matrix/app/.update-now)" = missing ] &&
+      [ "$(path_state /opt/matrix/staging/update-phase)" = missing ] &&
+      [ "$(path_state /opt/matrix/app/.update-error.json)" = missing ]; then
+      updater_state="$(classify_updater_phase)"
+      if [[ "$updater_state" == *-idle ]]; then
+        explicit_update_idle_ticks=$((explicit_update_idle_ticks + 1))
+        if [ "$explicit_update_idle_ticks" -ge 60 ]; then
+          diagnose_update_failure "$expected"
+          return 1
+        fi
+      else
+        explicit_update_idle_ticks=0
+      fi
+    else
+      explicit_update_idle_ticks=0
     fi
     sleep 1
   done

@@ -287,6 +287,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("/usr/bin/timeout --signal=KILL 1800 curl");
     expect(acceptance).toContain('current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-phase-${update_phase}-updater-${updater_state}-bundle-${bundle_state}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"');
     expect(acceptance).toContain('if [ "$error_code" != none ]; then');
+    expect(acceptance).toContain('explicit_update_idle_ticks=0');
+    expect(acceptance).toContain('if [ "$explicit_update_idle_ticks" -ge 60 ]; then');
     expect(acceptance).toContain('case "$error_code" in');
     expect(acceptance).toContain('download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown)');
     expect(acceptance).not.toContain("journalctl -u matrix-sync-agent");
