@@ -241,7 +241,13 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('write_state "failed:${current_progress}:${current_failure}"');
     expect(acceptance).toContain("api-http-${code}-${safe_code}");
     expect(acceptance).toContain("diagnose_api_transport");
-    expect(acceptance).toContain('current_failure="api-transport-${curl_state}-gateway-pid-${pid_state}-gateway-${gateway_state}-health-${health_state}"');
+    expect(acceptance).toContain('current_failure="api-transport-${curl_state}-gateway-pid-${pid_state}-gateway-${gateway_state}-health-${health_state}-result-${gateway_result}-exit-${gateway_exec_status}-restarts-${gateway_restarts}"');
+    expect(acceptance).toContain("write_progress hostile-state-create");
+    expect(acceptance).toContain("write_progress hostile-state-pre-api");
+    expect(acceptance).toContain("write_progress hostile-state-api");
+    expect(acceptance).toContain('systemctl show matrix-gateway.service -p Result --value');
+    expect(acceptance).toContain('systemctl show matrix-gateway.service -p ExecMainStatus --value');
+    expect(acceptance).toContain('systemctl show matrix-gateway.service -p NRestarts --value');
     expect(acceptance).toContain('7) curl_state=connect');
     expect(acceptance).toContain('56) curl_state=receive');
     expect(acceptance).toContain("auth-env-missing");
