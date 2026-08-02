@@ -31,17 +31,21 @@ const NOW = "2026-07-12T12:00:00.000Z";
 const panelsMock = vi.hoisted(() => ({
   lastDefaultLayout: undefined as Record<string, number> | undefined,
   lastOnLayoutChange: undefined as ((layout: Record<string, number>) => void) | undefined,
+  lastOrientation: undefined as "horizontal" | "vertical" | undefined,
 }));
 
 vi.mock("react-resizable-panels", () => ({
-  Group: ({ children, defaultLayout, onLayoutChange, className }: {
+  Group: ({ children, defaultLayout, onLayoutChange, className, orientation }: {
     children: React.ReactNode;
     defaultLayout?: Record<string, number>;
     onLayoutChange?: (layout: Record<string, number>) => void;
     className?: string;
+    orientation: "horizontal" | "vertical";
   }) => {
-    panelsMock.lastDefaultLayout = defaultLayout;
+    const initialLayout = React.useRef(defaultLayout);
+    panelsMock.lastDefaultLayout = initialLayout.current;
     panelsMock.lastOnLayoutChange = onLayoutChange;
+    panelsMock.lastOrientation = orientation;
     return <div data-testid="inspector-split" className={className}>{children}</div>;
   },
   Panel: ({ children, id, className }: { children: React.ReactNode; id?: string; className?: string }) => (
@@ -173,7 +177,7 @@ function resetStores() {
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {} });
   useProjectChatLauncher.setState({ composerRequest: null });
-  useInspectorLayout.setState({ entries: {}, runtimeScope: null });
+  useInspectorLayout.setState({ entries: {}, runtimeScope: null, hydratedScope: null });
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,
@@ -205,6 +209,15 @@ describe("ProjectChatsView hero layout", () => {
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
     panelsMock.lastDefaultLayout = undefined;
     panelsMock.lastOnLayoutChange = undefined;
+    panelsMock.lastOrientation = undefined;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
     resetStores();
   });
 
@@ -268,6 +281,58 @@ describe("ProjectChatsView hero layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show conversation tools" }));
     await screen.findByTestId("inspector-split");
     expect(panelsMock.lastDefaultLayout).toEqual({ conversation: 60, inspector: 40 });
+  });
+
+  it("applies a persisted expanded width before mounting the split", async () => {
+    mockOperator({
+      [INSPECTOR_TASK_KEY]: {
+        order: ["conversation", "inspector"],
+        visible: { conversation: true, inspector: true },
+        sizes: { conversation: 50, inspector: 50 },
+        touchedAt: 1,
+      },
+    });
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    await screen.findByTestId("inspector-split");
+    expect(panelsMock.lastDefaultLayout).toEqual({ conversation: 50, inspector: 50 });
+  });
+
+  it("reopens a collapsed inspector when a review-focus request arrives", async () => {
+    mockOperator({
+      [INSPECTOR_TASK_KEY]: {
+        order: ["conversation", "inspector"],
+        visible: { conversation: true, inspector: false },
+        sizes: { conversation: 60, inspector: 40 },
+        touchedAt: 1,
+      },
+    });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByRole("button", { name: "Show conversation tools" });
+
+    act(() => useCodingAgentWorkspace.setState({ reviewFocusRequestId: 1, reviewFocusConsumedId: 0 }));
+
+    expect(await screen.findByRole("button", { name: "Hide conversation tools" })).toBeTruthy();
+    expect(useInspectorLayout.getState().layoutFor("matrix-os").collapsed).toBe(false);
+  });
+
+  it("stacks the conversation and inspector in narrow desktop windows", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
+    mockOperator();
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    await screen.findByTestId("inspector-split");
+    expect(panelsMock.lastOrientation).toBe("vertical");
+    expect(panelsMock.lastDefaultLayout).toEqual({ conversation: 55, inspector: 45 });
   });
 
   it("persists inspector width changes from the split", async () => {

@@ -6,6 +6,7 @@
 // with the same 90-day TTL as task workspace layouts.
 import { create } from "zustand";
 import { z } from "zod/v4";
+import { diagnosticErrorKind } from "../../lib/errors";
 import { invoke } from "../../lib/operator";
 
 export const INSPECTOR_LAYOUT_PREFIX = "project-inspector:";
@@ -62,6 +63,7 @@ const DEFAULT_LAYOUT: InspectorLayout = {
 interface InspectorLayoutState {
   entries: Record<string, InspectorLayout>;
   runtimeScope: string | null;
+  hydratedScope: string | null;
   hydrate: (runtimeScope: string) => Promise<void>;
   layoutFor: (projectId: string) => InspectorLayout;
   setWidthPct: (projectId: string, widthPct: number) => void;
@@ -123,20 +125,24 @@ function persistEntry(projectId: string, entry: InspectorLayout): void {
 }
 
 export function clearInspectorLayoutRuntime(): void {
-  useInspectorLayout.setState({ entries: {}, runtimeScope: null });
+  useInspectorLayout.setState({ entries: {}, runtimeScope: null, hydratedScope: null });
 }
 
 export const useInspectorLayout = create<InspectorLayoutState>()((set, get) => ({
   entries: {},
   runtimeScope: null,
+  hydratedScope: null,
 
   hydrate: async (runtimeScope) => {
-    if (get().runtimeScope === runtimeScope) return;
+    const current = get();
+    if (current.runtimeScope === runtimeScope && current.hydratedScope === runtimeScope) return;
     // Claiming a different runtime drops the previous owner's entries. Keeping
     // them would let the old runtime's collapsed state and width win the merge
     // below and then be persisted back under this runtime's key.
     // The scope is set up front so writes landing during the read still persist.
-    set({ runtimeScope, entries: {} });
+    if (current.runtimeScope !== runtimeScope) {
+      set({ runtimeScope, hydratedScope: null, entries: {} });
+    }
     let persisted: Record<string, InspectorLayout> = {};
     try {
       const stored = await invoke("state:get", { key: "panelLayouts" });
@@ -156,12 +162,15 @@ export const useInspectorLayout = create<InspectorLayoutState>()((set, get) => (
     } catch (err: unknown) {
       console.warn(
         "[inspector-layout] layout could not be loaded:",
-        err instanceof Error ? err.message : String(err),
+        diagnosticErrorKind(err),
       );
     }
     if (get().runtimeScope !== runtimeScope) return;
     // In-memory entries were written after launch — they are newer and win.
-    set((state) => ({ entries: { ...persisted, ...state.entries } }));
+    set((state) => ({
+      entries: { ...persisted, ...state.entries },
+      hydratedScope: runtimeScope,
+    }));
   },
 
   layoutFor: (projectId) => get().entries[projectId] ?? DEFAULT_LAYOUT,

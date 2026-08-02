@@ -73,6 +73,8 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const composerRequest = useProjectChatLauncher((s) => s.composerRequest);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const inspectorEntry = useInspectorLayout((s) => s.entries[projectId]);
+  const inspectorHydrated = useInspectorLayout((s) => s.hydratedScope === runtimeScope);
+  const narrowInspectorLayout = useNarrowInspectorLayout();
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [inspectorTabOverride, setInspectorTabOverride] = useState<AgentConversationInspectorTab | null>(null);
@@ -108,6 +110,29 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     useProjectWorkspaces.getState().ensureRuntimeScope(runtimeScope);
     void ensureWorkspace(projectId);
   }, [ensureWorkspace, projectId, projectWorkspaceEnabled, runtimeScope]);
+
+  const inspectorCollapsed = inspectorEntry?.collapsed ?? false;
+  const inspectorWidthPct = inspectorEntry?.widthPct ?? DEFAULT_INSPECTOR_WIDTH_PCT;
+
+  // Review focus can originate outside the inspector (for example, from a
+  // notification). Expand first so the inspector mounts and can select and
+  // consume the requested Changes focus.
+  useEffect(() => {
+    if (
+      !active
+      || !inspectorHydrated
+      || !inspectorCollapsed
+      || reviewFocusRequestId <= reviewFocusConsumedId
+    ) return;
+    useInspectorLayout.getState().setCollapsed(projectId, false);
+  }, [
+    active,
+    inspectorCollapsed,
+    inspectorHydrated,
+    projectId,
+    reviewFocusConsumedId,
+    reviewFocusRequestId,
+  ]);
 
   // The shared snapshot store follows the ACTIVE project tab's selection.
   // Background tabs keep their per-project selection in the view store but
@@ -260,8 +285,6 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   // Slice 2 hero layout: the conversation and the tools inspector sit in a
   // resizable split; collapsing the inspector yields a full-width hero
   // transcript. Width and collapsed state persist per project.
-  const inspectorCollapsed = inspectorEntry?.collapsed ?? false;
-  const inspectorWidthPct = inspectorEntry?.widthPct ?? DEFAULT_INSPECTOR_WIDTH_PCT;
   const inspectorRegionId = `project-${projectId}-inspector`;
 
   // The inspector tab is controlled so live surfaces can gate on visibility:
@@ -422,7 +445,11 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         onNewChat={(taskId) => void openNewChat(taskId)}
         onRetry={() => void refreshWorkspace(projectId)}
       />
-      {inspectorCollapsed ? (
+      {!inspectorHydrated ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {conversationColumn}
+        </div>
+      ) : inspectorCollapsed ? (
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {conversationColumn}
           <InspectorToggle
@@ -433,14 +460,20 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         </div>
       ) : (
         <Group
-          orientation="horizontal"
+          orientation={narrowInspectorLayout ? "vertical" : "horizontal"}
           className="flex min-h-0 min-w-0 flex-1"
-          defaultLayout={{ conversation: 100 - inspectorWidthPct, inspector: inspectorWidthPct }}
-          onLayoutChange={handleSplitLayout}
+          defaultLayout={narrowInspectorLayout
+            ? { conversation: 55, inspector: 45 }
+            : { conversation: 100 - inspectorWidthPct, inspector: inspectorWidthPct }}
+          onLayoutChange={narrowInspectorLayout ? undefined : handleSplitLayout}
         >
           {/* v4 reads numeric minSize/maxSize as PIXELS — always pass "%"
               strings or the inspector clamps to a tiny pixel sliver. */}
-          <Panel id="conversation" minSize={`${100 - MAX_INSPECTOR_WIDTH_PCT}%`} className="flex min-h-0 min-w-0 flex-col">
+          <Panel
+            id="conversation"
+            minSize={narrowInspectorLayout ? "45%" : `${100 - MAX_INSPECTOR_WIDTH_PCT}%`}
+            className="flex min-h-0 min-w-0 flex-col"
+          >
             <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               {conversationColumn}
               <InspectorToggle
@@ -451,15 +484,20 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
             </div>
           </Panel>
           <Separator
-            className="group/sep relative w-px shrink-0 cursor-col-resize outline-none"
+            className={narrowInspectorLayout
+              ? "group/sep relative h-px w-full shrink-0 cursor-row-resize outline-none"
+              : "group/sep relative w-px shrink-0 cursor-col-resize outline-none"}
             style={{ background: "var(--border-subtle)" }}
           >
-            <span className="absolute inset-y-0 -left-1 -right-1 transition-colors duration-100 group-hover/sep:bg-[var(--accent-muted)]" />
+            <span className={narrowInspectorLayout
+              ? "absolute -bottom-1 -top-1 inset-x-0 transition-colors duration-100 group-hover/sep:bg-[var(--accent-muted)]"
+              : "absolute inset-y-0 -left-1 -right-1 transition-colors duration-100 group-hover/sep:bg-[var(--accent-muted)]"}
+            />
           </Separator>
           <Panel
             id="inspector"
-            minSize={`${MIN_INSPECTOR_WIDTH_PCT}%`}
-            maxSize={`${MAX_INSPECTOR_WIDTH_PCT}%`}
+            minSize={narrowInspectorLayout ? "30%" : `${MIN_INSPECTOR_WIDTH_PCT}%`}
+            maxSize={narrowInspectorLayout ? "55%" : `${MAX_INSPECTOR_WIDTH_PCT}%`}
             className="flex min-h-0 min-w-0 flex-col"
           >
             {inspectorPanel}
@@ -468,6 +506,27 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       )}
     </div>
   );
+}
+
+const NARROW_INSPECTOR_MEDIA_QUERY = "(max-width: 1099px)";
+
+function useNarrowInspectorLayout(): boolean {
+  const [narrow, setNarrow] = useState(() => (
+    typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia(NARROW_INSPECTOR_MEDIA_QUERY).matches
+  ));
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return undefined;
+    const mediaQuery = window.matchMedia(NARROW_INSPECTOR_MEDIA_QUERY);
+    setNarrow(mediaQuery.matches);
+    const update = (event: MediaQueryListEvent) => setNarrow(event.matches);
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
+  }, []);
+
+  return narrow;
 }
 
 // Collapse toggle for the tools inspector. Lives in the conversation pane's

@@ -44,7 +44,7 @@ function persistedLayout(widthPct: number, collapsed: boolean): CapturedLayout {
 
 describe("inspector-layout-store", () => {
   beforeEach(() => {
-    useInspectorLayout.setState({ entries: {}, runtimeScope: null });
+    useInspectorLayout.setState({ entries: {}, runtimeScope: null, hydratedScope: null });
   });
 
   afterEach(() => {
@@ -106,6 +106,7 @@ describe("inspector-layout-store", () => {
     await useInspectorLayout.getState().hydrate("scope-a");
 
     expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({ widthPct: 45, collapsed: false });
+    expect(useInspectorLayout.getState().hydratedScope).toBe("scope-a");
     expect(useInspectorLayout.getState().layoutFor("website")).toEqual({ widthPct: 25, collapsed: true });
     expect(useInspectorLayout.getState().layoutFor("some-task")).toEqual({
       widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
