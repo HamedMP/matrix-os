@@ -4,7 +4,11 @@ import {
   classifyHttpStatus,
   classifyTransportError,
 } from "@desktop/shared/app-error";
-import { sanitizeServerMessage, toUserMessage } from "@desktop/renderer/src/lib/errors";
+import {
+  diagnosticErrorKind,
+  sanitizeServerMessage,
+  toUserMessage,
+} from "@desktop/renderer/src/lib/errors";
 
 describe("classifyHttpStatus", () => {
   it("maps statuses to categories", () => {
@@ -60,6 +64,14 @@ describe("toUserMessage", () => {
     expect(toUserMessage(new Error("ECONNREFUSED 10.0.0.1:5432"))).toMatch(/something went wrong/i);
     expect(toUserMessage("postgres exploded")).toMatch(/something went wrong/i);
     expect(toUserMessage(undefined)).toMatch(/something went wrong/i);
+  });
+});
+
+describe("diagnosticErrorKind", () => {
+  it("reports only safe categories or class names", () => {
+    expect(diagnosticErrorKind(new AppError("offline"))).toBe("offline");
+    expect(diagnosticErrorKind(new Error("secret-token-leak at /home/matrix"))).toBe("Error");
+    expect(diagnosticErrorKind("secret-token-leak")).toBe("Unknown error");
   });
 });
 

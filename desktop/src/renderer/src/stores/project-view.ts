@@ -11,6 +11,7 @@ import {
   type ProjectViewsState,
 } from "../../../shared/project-views";
 import { invoke } from "../lib/operator";
+import { diagnosticErrorKind } from "../lib/errors";
 
 export type { ProjectView } from "../../../shared/project-views";
 
@@ -87,7 +88,7 @@ export const useProjectView = create<ProjectViewState>()((set, get) => ({
     } catch (err: unknown) {
       console.warn(
         "[project-view] view state could not be loaded:",
-        err instanceof Error ? err.message : String(err),
+        diagnosticErrorKind(err),
       );
     }
     if (get().runtimeScope !== runtimeScope) return;

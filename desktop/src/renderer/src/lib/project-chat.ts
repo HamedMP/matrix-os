@@ -5,6 +5,7 @@
 // conversation.
 import { create } from "zustand";
 import { invoke } from "./operator";
+import { diagnosticErrorKind } from "./errors";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../stores/runtime-generation";
 import { useBoard } from "../stores/board";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
@@ -86,7 +87,7 @@ export function openProjectChat(projectId: string, options: OpenProjectChatOptio
       workspace.loadThreadSnapshot(options.threadId).catch((err: unknown) => {
         console.warn(
           "[project-chat] thread open failed:",
-          err instanceof Error ? err.message : String(err),
+          diagnosticErrorKind(err),
         );
       });
     }
@@ -111,7 +112,7 @@ async function resolveThreadProjectId(threadId: string): Promise<string | undefi
   } catch (err: unknown) {
     console.warn(
       "[project-chat] thread project lookup failed:",
-      err instanceof Error ? err.message : String(err),
+      diagnosticErrorKind(err),
     );
     return undefined;
   }
