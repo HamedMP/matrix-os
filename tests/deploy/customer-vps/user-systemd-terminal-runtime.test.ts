@@ -145,7 +145,6 @@ describe("customer VPS user-systemd terminal runtime", () => {
       join(root, ".github/workflows/user-systemd-terminal-production-acceptance.yml"),
       "utf8",
     );
-
     expect(workflow).toContain("github.event.label.name == 'user-systemd-production-acceptance'");
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(workflow).toContain('any(.name == "preview-vps")');
@@ -159,6 +158,9 @@ describe("customer VPS user-systemd terminal runtime", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/user-systemd-terminal-production-acceptance.yml"),
       "utf8",
+    );
+    const rebootVerification = workflow.slice(
+      workflow.indexOf("- name: Verify zero automatic execution after reboot"),
     );
     const acceptance = readFileSync(
       join(root, "scripts/spikes/user-systemd-terminal/production-acceptance.sh"),
@@ -175,6 +177,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(workflow).toContain('"${remote_base}.sh" helper root 0700');
     expect(workflow).toContain('"${remote_base}-probe.mjs" probe matrix 0640');
     expect(workflow).toContain('--arg group "$group" --arg mode "$mode"');
+    expect(rebootVerification).toContain(
+      'if ! curl --fail --silent --show-error --max-time 45 --insecure',
+    );
+    expect(rebootVerification).toContain('return 1');
     expect(acceptance).toContain("gatewayRestartPreservesRuntimes");
     expect(acceptance).toContain("gatewaySigkillPreservesRuntimes");
     expect(acceptance).toContain("bundleOnePreservesRuntimes");

@@ -341,11 +341,13 @@ jobs:
             body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
               --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" --arg version "$PREVIEW_VERSION" '{
               command:["/usr/bin/sudo",$helper,$op,$sha,$nonce,$version],timeoutMs:30000}')"
-            curl --fail --silent --show-error --max-time 45 --insecure \
+            if ! curl --fail --silent --show-error --max-time 45 --insecure \
               --resolve "app.matrix-os.com:443:${ADDRESS}" \
               -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
               -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
-              --data-binary "$body"
+              --data-binary "$body"; then
+              return 1
+            fi
             jq -er 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) | .stdout' \
               "$response"
           }
