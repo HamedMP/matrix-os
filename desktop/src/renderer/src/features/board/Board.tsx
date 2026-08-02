@@ -20,7 +20,6 @@ import { useGit } from "../../stores/git";
 import { useSessions } from "../../stores/sessions";
 import { useUi } from "../../stores/ui";
 import BoardCard from "./BoardCard";
-import CreateTaskDialog from "./CreateTaskDialog";
 
 const COLUMN_LABEL: Record<CardStatus, string> = {
   todo: "Todo",
@@ -129,19 +128,11 @@ export default function Board({ projectSlug, active = true }: { projectSlug?: st
   );
   const error = useBoard((s) => s.error);
   const moveTask = useBoard((s) => s.moveTask);
-  const selectProject = useBoard((s) => s.selectProject);
   const sessionsLoad = useSessions((s) => s.load);
   const gitLoadAll = useGit((s) => s.loadAll);
   const gitLoadPreviews = useGit((s) => s.loadPreviews);
-  const createTaskOpen = useUi((s) => s.createTaskOpen);
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
-
-  // Only the focused board tab becomes the create-dialog context. Inactive
-  // mounted board tabs must not clobber activeProjectSlug.
-  useEffect(() => {
-    if (api && activeSlug && active) void selectProject(api, activeSlug);
-  }, [api, active, activeSlug, selectProject]);
 
   // Live development state for the card badges (session/branch/dirty/preview).
   useEffect(() => {
@@ -223,40 +214,34 @@ export default function Board({ projectSlug, active = true }: { projectSlug?: st
 
   if (cards.length === 0) {
     return (
-      <>
-        <EmptyState
-          icon={<Kanban size={28} />}
-          headline="No tasks yet"
-          description="Create your first task to start working with your Matrix OS computer."
-          action={
-            <Button variant="primary" onClick={() => setCreateTaskOpen(true)}>
-              New task
-            </Button>
-          }
-        />
-        <CreateTaskDialog open={createTaskOpen} onClose={() => setCreateTaskOpen(false)} />
-      </>
+      <EmptyState
+        icon={<Kanban size={28} />}
+        headline="No tasks yet"
+        description="Create your first task to start working with your Matrix OS computer."
+        action={
+          <Button variant="primary" onClick={() => setCreateTaskOpen(true)}>
+            New task
+          </Button>
+        }
+      />
     );
   }
 
   return (
-    <>
-      <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-        <div className="flex flex-1 gap-4 overflow-x-auto p-4">
-          {BOARD_COLUMNS.map((status) => (
-            <Column
-              key={status}
-              status={status}
-              cards={columns[status] ?? []}
-              activeDragId={activeDragId}
-            />
-          ))}
-        </div>
-        <DragOverlay dropAnimation={null}>
-          {dragCard ? <BoardCard card={dragCard} overlay /> : null}
-        </DragOverlay>
-      </DndContext>
-      <CreateTaskDialog open={createTaskOpen} onClose={() => setCreateTaskOpen(false)} />
-    </>
+    <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+      <div className="flex flex-1 gap-4 overflow-x-auto p-4">
+        {BOARD_COLUMNS.map((status) => (
+          <Column
+            key={status}
+            status={status}
+            cards={columns[status] ?? []}
+            activeDragId={activeDragId}
+          />
+        ))}
+      </div>
+      <DragOverlay dropAnimation={null}>
+        {dragCard ? <BoardCard card={dragCard} overlay /> : null}
+      </DragOverlay>
+    </DndContext>
   );
 }

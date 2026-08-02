@@ -78,6 +78,13 @@ describe("coding-agent project workspace model", () => {
     expect(reconcileProjectChatSelection(workspace(), "thread_attention", new Set(["thread_attention"]))).toBe("thread_attention");
   });
 
+  it("keeps an externally opened selection while the workspace pages are bounded", () => {
+    const paged = workspace();
+    paged.projectThreads = { ...paged.projectThreads, hasMore: true };
+
+    expect(reconcileProjectChatSelection(paged, "thread_older", new Set())).toBe("thread_older");
+  });
+
   it("returns null when the project has no chats at all", () => {
     const empty = workspace();
     empty.projectThreads = { ...empty.projectThreads, items: [] };

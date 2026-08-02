@@ -74,10 +74,17 @@ export const useProjectView = create<ProjectViewState>()((set, get) => ({
   runtimeScope: null,
 
   hydrate: async (runtimeScope) => {
-    if (get().runtimeScope === runtimeScope) return;
+    const previousScope = get().runtimeScope;
+    if (previousScope === runtimeScope) return;
     // Set the scope up front so writes that land while the persisted state is
-    // being read still persist afterwards.
-    set({ runtimeScope });
+    // being read still persist afterwards. Entries created before the first
+    // hydration are unscoped launch intents and must survive; entries owned by
+    // a different established scope must be cleared before the async read so
+    // one account can never overwrite another account's persisted views.
+    set({
+      runtimeScope,
+      ...(previousScope === null ? {} : { entries: {} }),
+    });
     let persisted: Record<string, ProjectViewEntry> = {};
     try {
       const stored = await invoke("state:get", { key: "projectViews" });

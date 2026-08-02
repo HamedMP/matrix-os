@@ -67,7 +67,12 @@ export function reconcileProjectChatSelection(
   ];
   if (selectedThreadId) {
     const stillValid = listed.some((thread) => thread.id === selectedThreadId)
-      || externallyKnownThreadIds.has(selectedThreadId);
+      || externallyKnownThreadIds.has(selectedThreadId)
+      // A deep-linked or notification-opened conversation can live outside
+      // the bounded page. Preserve it until the runtime returns an exhaustive
+      // page; otherwise refresh would hide a valid, already loaded snapshot.
+      || workspace.projectThreads.hasMore
+      || workspace.taskThreads.hasMore;
     if (stillValid) return selectedThreadId;
   }
   return listed[0]?.id ?? null;

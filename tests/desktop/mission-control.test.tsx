@@ -4,8 +4,10 @@ import React from "react";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MissionControl from "../../desktop/src/renderer/src/features/mission-control/MissionControl";
+import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useBoard, type Project } from "../../desktop/src/renderer/src/stores/board";
+import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 vi.mock("../../desktop/src/renderer/src/features/mission-control/Sidebar", () => ({
@@ -156,5 +158,30 @@ describe("MissionControl", () => {
 
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith(api, "preview-project"));
     expect(useBoard.getState().activeProjectSlug).toBe("preview-project");
+  });
+
+  it("claims the runtime scope before the eager coding-agent refresh", async () => {
+    const api = { get: vi.fn() };
+    const ensureRuntimeScope = vi.fn();
+    const refresh = vi.fn(async () => undefined);
+    useCodingAgentWorkspace.setState({
+      ensureRuntimeScope,
+      refresh,
+      notificationPreferencesStatus: "ready",
+    });
+    useBoard.setState({ loadProjects: vi.fn(async () => undefined) });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: api as never,
+    });
+
+    render(<MissionControl />);
+
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(ensureRuntimeScope).toHaveBeenCalledWith(codingAgentRuntimeScope(useConnection.getState()));
+    expect(ensureRuntimeScope.mock.invocationCallOrder[0]).toBeLessThan(refresh.mock.invocationCallOrder[0]!);
   });
 });

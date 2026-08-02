@@ -8,6 +8,7 @@ import {
 } from "../../desktop/src/renderer/src/stores/project-view";
 
 const SCOPE = "operator|https://platform.test|primary";
+const OTHER_SCOPE = "other|https://platform.test|primary";
 
 function resetStore(): void {
   useProjectView.setState({ entries: {}, runtimeScope: null });
@@ -108,6 +109,26 @@ describe("project view store", () => {
 
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+  });
+
+  it("drops the previous account's entries before hydrating a new runtime scope", async () => {
+    useProjectView.setState({
+      runtimeScope: SCOPE,
+      entries: {
+        "matrix-os": { view: "chats", selectedThreadId: "thread_account_a", touchedAt: 20 },
+      },
+    });
+    mockOperator({
+      runtimeScope: OTHER_SCOPE,
+      views: {
+        "matrix-os": { view: "board", selectedThreadId: "thread_account_b", touchedAt: 10 },
+      },
+    });
+
+    await useProjectView.getState().hydrate(OTHER_SCOPE);
+
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_account_b");
   });
 
   it("keeps in-memory selections made before hydration finished", async () => {

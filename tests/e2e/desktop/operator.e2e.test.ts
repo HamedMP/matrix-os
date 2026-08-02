@@ -248,7 +248,7 @@ suite("operator desktop e2e", () => {
     // The earlier computer switch cleared the workspace summary; opening the
     // project refreshes it before the rail is inspected.
     await page.locator("aside button", { hasText: "Matrix OS" }).last().click();
-    await page.getByRole("button", { name: "Board" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Board", exact: true }).waitFor({ timeout: 10_000 });
     await page.locator("aside button", { hasText: "Chat" }).first().click();
     // The rail lists the server-backed run alongside Hermes under "Agent runs".
     await page.getByText("Agent runs").waitFor({ timeout: 10_000 });

@@ -11,6 +11,7 @@ import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/c
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 
 const NOW = "2026-07-12T12:00:00.000Z";
@@ -234,6 +235,28 @@ describe("ProjectTab", () => {
     expect((await screen.findAllByRole("button", { name: "Chats" }))[0]!.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("keeps global task creation available when the active project opens in Chats", async () => {
+    const api = { get: vi.fn() };
+    const selectProject = vi.fn(async (_api: unknown, projectSlug: string) => {
+      useBoard.setState({ activeProjectSlug: projectSlug });
+    });
+    useConnection.setState({ api: api as never });
+    useBoard.setState({ activeProjectSlug: null, selectProject });
+    useProjectView.setState({
+      entries: {
+        "matrix-os": { view: "chats", selectedThreadId: null, touchedAt: Date.now() },
+      },
+    });
+
+    render(<ProjectTab projectSlug="matrix-os" active />);
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(api, "matrix-os"));
+
+    act(() => useUi.getState().setCreateTaskOpen(true));
+
+    expect(await screen.findByPlaceholderText("Task title")).toBeTruthy();
+    expect(useBoard.getState().activeProjectSlug).toBe("matrix-os");
+  });
+
   it("loads the project workspace and auto-selects the first chat", async () => {
     const invoke = mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
@@ -299,6 +322,21 @@ describe("ProjectTab", () => {
     await waitFor(() => {
       expect(useProjectChatLauncher.getState().composerRequest).toBeNull();
     });
+    expect(await screen.findByRole("button", { name: "Close new chat composer" })).toBeTruthy();
+  });
+
+  it("keeps a compose request pending until runtime capabilities finish loading", async () => {
+    useCodingAgentWorkspace.setState({ status: "loading", summary: null });
+    useProjectChatLauncher.getState().requestComposer("matrix-os");
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await act(async () => Promise.resolve());
+
+    expect(useProjectChatLauncher.getState().composerRequest?.projectId).toBe("matrix-os");
+
+    act(() => useCodingAgentWorkspace.setState({ status: "ready", summary: summaryFixture() }));
+
+    await waitFor(() => expect(useProjectChatLauncher.getState().composerRequest).toBeNull());
     expect(await screen.findByRole("button", { name: "Close new chat composer" })).toBeTruthy();
   });
 

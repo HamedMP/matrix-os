@@ -7,8 +7,10 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
+import { useUi } from "../../stores/ui";
 import type { ProjectView } from "../../stores/project-view";
 import Board from "../board/Board";
+import CreateTaskDialog from "../board/CreateTaskDialog";
 import ProjectChatsView from "./ProjectChatsView";
 
 const RUNTIME_STATUS_COLOR: Record<string, string> = {
@@ -59,10 +61,21 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
   const view = useProjectView((s) => s.entries[projectSlug]?.view ?? "board");
   const setView = useProjectView((s) => s.setView);
   const boardProject = useBoard((s) => s.projects.find((project) => project.slug === projectSlug));
+  const selectProject = useBoard((s) => s.selectProject);
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const refresh = useCodingAgentWorkspace((s) => s.refresh);
   const refreshWorkspace = useProjectWorkspaces((s) => s.refresh);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const api = useConnection((s) => s.api);
+  const createTaskOpen = useUi((s) => s.createTaskOpen);
+  const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
+
+  // The active project owns global task creation in both Board and Chats.
+  // Keeping this context at the project-shell level prevents a view switch
+  // from unmounting the dialog or leaving it pointed at another project.
+  useEffect(() => {
+    if (api && active) void selectProject(api, projectSlug);
+  }, [active, api, projectSlug, selectProject]);
 
   // Restore the per-project view/chat selection for this computer.
   useEffect(() => {
@@ -137,6 +150,7 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
       ) : (
         <Board projectSlug={projectSlug} active={active} />
       )}
+      <CreateTaskDialog open={createTaskOpen && active} onClose={() => setCreateTaskOpen(false)} />
     </div>
   );
 }

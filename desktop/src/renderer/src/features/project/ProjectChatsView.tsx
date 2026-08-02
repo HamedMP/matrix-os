@@ -83,6 +83,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const projectWorkspaceEnabled = summary
     ? capabilityEnabled(summary, "codingAgentsProjectWorkspace")
     : false;
+  const capabilitiesLoaded = summary !== null;
 
   useEffect(() => {
     if (!projectWorkspaceEnabled) return;
@@ -158,6 +159,10 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
 
   useEffect(() => {
     if (!active || !composerRequest || composerRequest.projectId !== projectId) return;
+    // A missing summary means capabilities are unresolved, not disabled. Keep
+    // the one-shot request pending until the runtime answers so type-to-start
+    // cannot disappear during startup.
+    if (!capabilitiesLoaded) return;
     if (!projectWorkspaceEnabled) {
       // Without project pages the composer is always visible; just focus it.
       useProjectChatLauncher.getState().consumeComposer(projectId);
@@ -174,7 +179,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, composerRequest, projectId, projectWorkspaceEnabled]);
+  }, [active, capabilitiesLoaded, composerRequest, projectId, projectWorkspaceEnabled]);
 
   if (status === "loading" && !summary) {
     return (
