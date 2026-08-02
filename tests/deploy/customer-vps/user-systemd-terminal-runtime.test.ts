@@ -218,6 +218,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('controller_diagnostic="${state_root}/hostile-controller.diagnostic"');
     expect(acceptance).toContain('progress("hostile-controller-invalid-runtime-id")');
     expect(acceptance).toContain('progress(`hostile-controller-create-${safeCreateFailure}`)');
+    expect(acceptance).toContain('progress("hostile-controller-inactive-stop")');
+    expect(acceptance).toContain('progress("hostile-controller-inactive-start")');
+    expect(acceptance).toContain('progress("hostile-controller-inactive-identity")');
+    expect(acceptance).toContain('progress("hostile-controller-inactive-restop")');
     expect(acceptance).toContain("diagnose_controller_failure");
     expect(acceptance).toContain('current_failure="${controller_status}-descriptor-${descriptor_state}-unit-${unit_result}-exit-${exec_status}-keeper-${keeper_code}"');
     expect(acceptance).toContain('current_failure="${controller_status:-hostile-controller-runtime-unavailable}"');
