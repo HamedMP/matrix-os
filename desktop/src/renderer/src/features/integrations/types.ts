@@ -102,10 +102,6 @@ export function parseConnectUrl(value: unknown): string | null {
   const record = asRecord(value);
   if (!record) return null;
   const url = asTrimmedString(record.url, 2048);
-  if (!url) return null;
-  try {
-    return new URL(url).protocol === "https:" ? url : null;
-  } catch {
-    return null;
-  }
+  if (!url || !URL.canParse(url)) return null;
+  return new URL(url).protocol === "https:" ? url : null;
 }
