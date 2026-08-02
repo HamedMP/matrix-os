@@ -364,6 +364,18 @@ export function codingAgentSummary(): RuntimeSummary {
         setupActions: [],
         lastCheckedAt: NOW,
       },
+      {
+        id: "pi",
+        displayName: "Pi",
+        kind: "pi",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default"],
+        defaultMode: "default",
+        setupActions: [],
+        lastCheckedAt: NOW,
+      },
     ],
     projects: {
       items: [{
