@@ -192,6 +192,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(workflow).toContain("x-matrix-acceptance-signature");
     expect(workflow).toContain("x-matrix-acceptance-response-signature");
     expect(workflow).not.toContain('authorization: Bearer ${token}');
+    expect(workflow).not.toContain('"$response" <<\'NODE\'');
     expect(rebootVerification).toContain(
       'if ! send_signed_command "$body" "$response"; then',
     );
