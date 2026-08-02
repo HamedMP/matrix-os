@@ -350,7 +350,7 @@ export function createWorkspaceRoutes(options: {
 
   const ListCommitsQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(500).default(200),
-    cursor: z.string().regex(/^\d{1,7}$/).optional(),
+    cursor: z.string().regex(/^[a-f0-9]{24}\.\d{1,4}$/).optional(),
   });
 
   app.get("/api/projects/:slug/commits", async (c) => {
@@ -358,7 +358,7 @@ export function createWorkspaceRoutes(options: {
     if (!query.success) return c.json(errorBody("invalid_request", "Query parameters are invalid"), 400);
     const result = await gitLog.listCommits(c.req.param("slug"), {
       limit: query.data.limit,
-      offset: query.data.cursor ? Number(query.data.cursor) : 0,
+      cursor: query.data.cursor,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ commits: result.commits, nextCursor: result.nextCursor, refreshedAt: result.refreshedAt });

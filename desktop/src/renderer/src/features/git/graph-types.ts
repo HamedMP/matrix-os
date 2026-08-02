@@ -27,7 +27,7 @@ export const CommitDiffFileSchema = z.object({
 
 export const CommitListResponseSchema = z.object({
   commits: z.array(CommitSummarySchema).max(500),
-  nextCursor: z.string().max(16).nullable(),
+  nextCursor: z.string().max(32).nullable(),
 });
 
 export const CommitDiffResponseSchema = z.object({

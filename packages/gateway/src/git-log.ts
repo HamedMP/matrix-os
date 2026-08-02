@@ -4,6 +4,7 @@
 // `<home>/projects/<slug>/config.json`, not-a-git-repo degradation to empty
 // results, and generic client-facing error messages with server-side logging.
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -48,6 +49,13 @@ type RepoResolution = Result<{ repoPath: string | null }> | Failure;
 const DEFAULT_TIMEOUT_MS = 10_000;
 // Absolute ceiling on rendered patch lines across all files of one commit.
 const MAX_TOTAL_PATCH_LINES = 8_000;
+const MAX_PATCH_BYTES = 200_000;
+const MAX_COMMIT_PARENTS = 8;
+const MAX_COMMIT_REFS = 50;
+const MAX_HISTORY_SNAPSHOT_COMMITS = 2_000;
+const MAX_HISTORY_SNAPSHOTS = 16;
+const HISTORY_SNAPSHOT_TTL_MS = 30 * 60 * 1_000;
+const HISTORY_CURSOR_REGEX = /^([a-f0-9]{24})\.(\d{1,4})$/;
 
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
 const CommitShaSchema = z.string().regex(COMMIT_SHA_REGEX);
@@ -155,13 +163,13 @@ export function parseGitLog(stdout: string): GitCommitSummary[] {
     const subject = parts.slice(5).join("\x1f");
     const { refs, tags, head } = parseRefList(refsRaw ?? "");
     commits.push({
-      sha: sha!,
-      parents: (parentsRaw ?? "").split(" ").filter(Boolean),
-      author: author ?? "",
-      timestamp: timestamp ?? "",
-      subject,
-      refs,
-      tags,
+      sha: sha!.slice(0, 64),
+      parents: (parentsRaw ?? "").split(" ").filter(Boolean).slice(0, MAX_COMMIT_PARENTS),
+      author: (author ?? "").slice(0, 200),
+      timestamp: (timestamp ?? "").slice(0, 64),
+      subject: subject.slice(0, 2_000),
+      refs: refs.slice(0, MAX_COMMIT_REFS).map((ref) => ref.slice(0, 200)),
+      tags: tags.slice(0, MAX_COMMIT_REFS).map((tag) => tag.slice(0, 200)),
       head,
     });
   }
@@ -175,17 +183,97 @@ interface ParsedPatch {
 
 function unquoteGitPath(raw: string): string {
   const value = raw.trim();
-  if (value.startsWith("\"") && value.endsWith("\"") && value.length >= 2) {
-    return value.slice(1, -1);
+  if (!value.startsWith("\"") || !value.endsWith("\"") || value.length < 2) return value;
+  const encoded = value.slice(1, -1);
+  const bytes: number[] = [];
+  const escapes: Record<string, number> = {
+    a: 0x07,
+    b: 0x08,
+    t: 0x09,
+    n: 0x0a,
+    v: 0x0b,
+    f: 0x0c,
+    r: 0x0d,
+    "\\": 0x5c,
+    "\"": 0x22,
+  };
+  for (let index = 0; index < encoded.length;) {
+    const char = encoded[index]!;
+    if (char !== "\\") {
+      const codePoint = encoded.codePointAt(index)!;
+      const literal = String.fromCodePoint(codePoint);
+      bytes.push(...Buffer.from(literal, "utf8"));
+      index += literal.length;
+      continue;
+    }
+    const escaped = encoded[index + 1];
+    if (escaped === undefined) {
+      bytes.push(0x5c);
+      break;
+    }
+    if (/[0-7]/.test(escaped)) {
+      let octal = escaped;
+      let cursor = index + 2;
+      while (octal.length < 3 && cursor < encoded.length && /[0-7]/.test(encoded[cursor]!)) {
+        octal += encoded[cursor]!;
+        cursor += 1;
+      }
+      bytes.push(Number.parseInt(octal, 8));
+      index = cursor;
+      continue;
+    }
+    const decoded = escapes[escaped];
+    if (decoded !== undefined) bytes.push(decoded);
+    else bytes.push(...Buffer.from(escaped, "utf8"));
+    index += 2;
   }
-  return value;
+  return Buffer.from(bytes).toString("utf8");
 }
 
-function pathFromDiffMarker(line: string, prefix: string): string | null {
-  if (!line.startsWith(prefix)) return null;
-  const value = line.slice(prefix.length).trim();
+function pathFromDiffMarker(line: string, marker: string, prefix: string): string | null {
+  if (!line.startsWith(marker)) return null;
+  const value = unquoteGitPath(line.slice(marker.length));
   if (value === "/dev/null") return null;
-  return unquoteGitPath(value);
+  return value.startsWith(prefix) ? value.slice(prefix.length) : null;
+}
+
+function pathFromDiffHeader(line: string): string | null {
+  if (!line.startsWith("diff --git ")) return null;
+  const raw = line.slice("diff --git ".length);
+  const tokens: string[] = [];
+  let token = "";
+  let quoted = false;
+  let escaped = false;
+  for (const char of raw) {
+    if (!quoted && /\s/.test(char)) {
+      if (token) {
+        tokens.push(token);
+        token = "";
+      }
+      continue;
+    }
+    token += char;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quoted && char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") quoted = !quoted;
+  }
+  if (token) tokens.push(token);
+  const bPath = tokens[1] ? unquoteGitPath(tokens[1]) : null;
+  return bPath?.startsWith("b/") ? bPath.slice(2) : null;
+}
+
+function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
+  const encoded = Buffer.from(value, "utf8");
+  if (encoded.byteLength <= maxBytes) return { value, truncated: false };
+  let end = maxBytes;
+  while (end > 0 && (encoded[end]! & 0xc0) === 0x80) end -= 1;
+  return { value: encoded.subarray(0, end).toString("utf8"), truncated: true };
 }
 
 export function parseCommitPatch(stdout: string, options: { maxFiles: number; maxLines: number }): ParsedPatch {
@@ -216,13 +304,17 @@ export function parseCommitPatch(stdout: string, options: { maxFiles: number; ma
       } else if (line.startsWith("copy from ")) {
         status = "C";
         oldPath = unquoteGitPath(line.slice("copy from ".length));
+      } else if (line.startsWith("rename to ")) {
+        path = unquoteGitPath(line.slice("rename to ".length));
+      } else if (line.startsWith("copy to ")) {
+        path = unquoteGitPath(line.slice("copy to ".length));
       } else if (line.startsWith("Binary files ") || line.startsWith("GIT binary patch")) {
         binary = true;
       }
       if (hunkStart < 0 && line.startsWith("@@")) hunkStart = i;
     }
     for (const line of lines) {
-      const next = pathFromDiffMarker(line, "+++ b/");
+      const next = pathFromDiffMarker(line, "+++ ", "b/");
       if (next) {
         path = next;
         break;
@@ -230,7 +322,7 @@ export function parseCommitPatch(stdout: string, options: { maxFiles: number; ma
     }
     if (!path) {
       for (const line of lines) {
-        const prev = pathFromDiffMarker(line, "--- a/");
+        const prev = pathFromDiffMarker(line, "--- ", "a/");
         if (prev) {
           path = prev;
           break;
@@ -240,11 +332,7 @@ export function parseCommitPatch(stdout: string, options: { maxFiles: number; ma
     if (!path) {
       // Binary and mode-only sections carry no ---/+++ markers; fall back to
       // the diff header's b-side path.
-      const header = lines[0] ?? "";
-      const markerIndex = header.indexOf(" b/");
-      if (header.startsWith("diff --git a/") && markerIndex > 0) {
-        path = unquoteGitPath(header.slice(markerIndex + 3));
-      }
+      path = pathFromDiffHeader(lines[0] ?? "");
     }
     if (!path) continue;
     if (status === "R" || status === "C") {
@@ -272,6 +360,12 @@ export function parseCommitPatch(stdout: string, options: { maxFiles: number; ma
       if (budget > 0) {
         patch = hunkLines.slice(0, budget).join("\n");
         totalPatchLines += Math.min(hunkLines.length, budget);
+        const bounded = truncateUtf8(patch, MAX_PATCH_BYTES);
+        patch = bounded.value;
+        if (bounded.truncated) {
+          fileTruncated = true;
+          truncated = true;
+        }
       } else {
         fileTruncated = true;
         truncated = true;
@@ -349,6 +443,32 @@ export function createGitLog(options: {
 }) {
   const homePath = resolve(options.homePath);
   const runCommand = options.runCommand ?? defaultRunCommand;
+  const historySnapshots = new Map<string, {
+    repoPath: string;
+    commits: GitCommitSummary[];
+    refreshedAt: string;
+    lastTouchedAt: number;
+    lastTouchedOrder: number;
+  }>();
+  let historyAccessOrder = 0;
+
+  function sweepHistorySnapshots(now: number): void {
+    for (const [token, snapshot] of historySnapshots) {
+      if (now - snapshot.lastTouchedAt > HISTORY_SNAPSHOT_TTL_MS) historySnapshots.delete(token);
+    }
+  }
+
+  function reserveHistorySnapshotSlot(now: number): void {
+    sweepHistorySnapshots(now);
+    if (historySnapshots.size < MAX_HISTORY_SNAPSHOTS) return;
+    const oldest = [...historySnapshots.entries()]
+      .sort((left, right) => left[1].lastTouchedOrder - right[1].lastTouchedOrder)[0];
+    if (oldest) historySnapshots.delete(oldest[0]);
+  }
+
+  function nextHistoryCursor(token: string, offset: number, total: number): string | null {
+    return offset < total ? `${token}.${offset}` : null;
+  }
 
   // Resolves the project's repository path, or null when there is no usable
   // repository (not a git repo, or the Matrix home repo itself — never expose
@@ -371,36 +491,75 @@ export function createGitLog(options: {
       if (err instanceof Error) console.warn("[git-log] Failed to probe git worktree:", err.message);
       return failure(502, "git_request_failed", "Git request failed");
     }
+    let repoReal: string;
     try {
-      const [homeReal, repoReal] = await Promise.all([realpath(homePath), realpath(repoTopLevel)]);
+      const [homeReal, resolvedRepo] = await Promise.all([realpath(homePath), realpath(repoTopLevel)]);
+      repoReal = resolvedRepo;
       if (homeReal === repoReal) return { ok: true, repoPath: null };
     } catch (err: unknown) {
       if (err instanceof Error) console.warn("[git-log] Failed to resolve repository path:", err.message);
       return failure(502, "git_request_failed", "Git request failed");
     }
-    return { ok: true, repoPath: config.localPath };
+    return { ok: true, repoPath: repoReal };
   }
 
   return {
     async listCommits(
       slug: string,
-      opts: { limit: number; offset: number },
+      opts: { limit: number; cursor?: string },
     ): Promise<Result<{ commits: GitCommitSummary[]; nextCursor: string | null; refreshedAt: string }> | Failure> {
       const repo = await resolveRepo(slug);
       if (!repo.ok) return repo;
       const refreshedAt = nowIso(options.now);
       if (!repo.repoPath) return { ok: true, commits: [], nextCursor: null, refreshedAt };
-      try {
-        const result = await runCommand(
-          "git",
-          ["log", "--all", "--date-order", `--format=${LOG_FORMAT}`, "-n", String(opts.limit), `--skip=${opts.offset}`],
-          { cwd: repo.repoPath, timeout: DEFAULT_TIMEOUT_MS },
-        );
-        const commits = parseGitLog(result.stdout);
+      const now = Date.now();
+      sweepHistorySnapshots(now);
+      if (opts.cursor) {
+        const parsedCursor = HISTORY_CURSOR_REGEX.exec(opts.cursor);
+        const token = parsedCursor?.[1];
+        const offset = parsedCursor?.[2] ? Number(parsedCursor[2]) : Number.NaN;
+        const snapshot = token ? historySnapshots.get(token) : undefined;
+        if (!snapshot || snapshot.repoPath !== repo.repoPath || !Number.isSafeInteger(offset)) {
+          return failure(409, "stale_cursor", "Commit history changed. Refresh and try again");
+        }
+        snapshot.lastTouchedAt = now;
+        snapshot.lastTouchedOrder = ++historyAccessOrder;
+        const commits = snapshot.commits.slice(offset, offset + opts.limit);
         return {
           ok: true,
           commits,
-          nextCursor: commits.length === opts.limit ? String(opts.offset + commits.length) : null,
+          nextCursor: nextHistoryCursor(token!, offset + commits.length, snapshot.commits.length),
+          refreshedAt: snapshot.refreshedAt,
+        };
+      }
+      try {
+        const result = await runCommand(
+          "git",
+          ["log", "--all", "--date-order", `--format=${LOG_FORMAT}`, "-n", String(MAX_HISTORY_SNAPSHOT_COMMITS + 1)],
+          { cwd: repo.repoPath, timeout: DEFAULT_TIMEOUT_MS },
+        );
+        const snapshotCommits = parseGitLog(result.stdout).slice(0, MAX_HISTORY_SNAPSHOT_COMMITS);
+        const commits = snapshotCommits.slice(0, opts.limit);
+        let nextCursor: string | null = null;
+        if (commits.length < snapshotCommits.length) {
+          reserveHistorySnapshotSlot(now);
+          let token: string;
+          do {
+            token = randomBytes(12).toString("hex");
+          } while (historySnapshots.has(token));
+          historySnapshots.set(token, {
+            repoPath: repo.repoPath,
+            commits: snapshotCommits,
+            refreshedAt,
+            lastTouchedAt: now,
+            lastTouchedOrder: ++historyAccessOrder,
+          });
+          nextCursor = nextHistoryCursor(token, commits.length, snapshotCommits.length);
+        }
+        return {
+          ok: true,
+          commits,
+          nextCursor,
           refreshedAt,
         };
       } catch (err: unknown) {
@@ -427,7 +586,7 @@ export function createGitLog(options: {
       try {
         const result = await runCommand(
           "git",
-          ["show", "--format=", "--patch", "-M", "--first-parent", "--unified=3", sha],
+          ["show", "--format=", "--patch", "--no-color", "--default-prefix", "--no-ext-diff", "-M", "--first-parent", "--unified=3", sha],
           { cwd: repo.repoPath, timeout: DEFAULT_TIMEOUT_MS },
         );
         const parsed = parseCommitPatch(result.stdout, { maxFiles: opts.maxFiles, maxLines: opts.maxLines });

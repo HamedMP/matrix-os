@@ -62,17 +62,18 @@ describe("git log routes", () => {
         nextCursor: null,
         refreshedAt: "2026-07-19T12:00:00.000Z",
       });
-      expect(gitLog.listCommits).toHaveBeenCalledWith("repo", { limit: 200, offset: 0 });
+      expect(gitLog.listCommits).toHaveBeenCalledWith("repo", { limit: 200, cursor: undefined });
     });
 
     it("passes bounded limit and cursor through to the service", async () => {
       const gitLog = makeGitLog();
       const app = createWorkspaceRoutes({ homePath, gitLog });
 
-      const res = await app.request("/api/projects/repo/commits?limit=50&cursor=120");
+      const cursor = `${"a".repeat(24)}.120`;
+      const res = await app.request(`/api/projects/repo/commits?limit=50&cursor=${cursor}`);
 
       expect(res.status).toBe(200);
-      expect(gitLog.listCommits).toHaveBeenCalledWith("repo", { limit: 50, offset: 120 });
+      expect(gitLog.listCommits).toHaveBeenCalledWith("repo", { limit: 50, cursor });
     });
 
     it.each([

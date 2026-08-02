@@ -91,12 +91,11 @@ export const GitGraph = memo(function GitGraph({
     });
   }, [layout, startRow, endRow, commits.length]);
 
-  let maxVisibleCol = 0;
-  for (let row = startRow; row < endRow; row += 1) {
-    const col = layout.rows[row]?.col ?? 0;
-    if (col > maxVisibleCol) maxVisibleCol = col;
-  }
-  const gutterWidth = colX(maxVisibleCol) + COLUMN_WIDTH / 2 + 4;
+  // Reserve every active lane, including edges that cross this viewport while
+  // their commit dot is off-screen. A viewport-only width clips those edges
+  // and makes commit text jump horizontally during scrolling.
+  const maxLayoutCol = Math.max(0, layout.columnCount - 1);
+  const gutterWidth = colX(maxLayoutCol) + COLUMN_WIDTH / 2 + 4;
 
   const rows: React.ReactNode[] = [];
   for (let row = startRow; row < endRow; row += 1) {

@@ -201,21 +201,80 @@ describe("git-log service", () => {
       expect(result.commits[2]).toMatchObject({ sha: SHA_C, parents: [] });
     });
 
-    it("passes limit and skip to git log and pages with a cursor", async () => {
+    it("serves later pages from an immutable bounded snapshot", async () => {
       await seedProject(homePath, "repo", repoPath);
-      const runCommand = probeAwareRunCommand({ log: { stdout: logRecord({ sha: SHA_A }) } });
+      const runCommand = probeAwareRunCommand({
+        log: { stdout: logRecord({ sha: SHA_A }) + logRecord({ sha: SHA_B }) + logRecord({ sha: SHA_C }) },
+      });
       const gitLog = makeService(runCommand);
 
-      const result = await gitLog.listCommits("repo", { limit: 1, offset: 40 });
+      const first = await gitLog.listCommits("repo", { limit: 1 });
 
-      expect(result).toMatchObject({ ok: true, nextCursor: "41" });
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+      expect(first.commits.map((commit) => commit.sha)).toEqual([SHA_A]);
+      expect(first.nextCursor).toMatch(/^[a-f0-9]{24}\.1$/);
+
+      const second = await gitLog.listCommits("repo", { limit: 1, cursor: first.nextCursor! });
+      expect(second).toMatchObject({ ok: true, commits: [{ sha: SHA_B }] });
+      if (!second.ok) return;
+      expect(second.nextCursor).toMatch(/^[a-f0-9]{24}\.2$/);
+
       const logCall = (runCommand as ReturnType<typeof vi.fn>).mock.calls.find((call) => call[1][0] === "log");
       expect(logCall).toBeDefined();
       const args = logCall![1] as string[];
       expect(args).toContain("--all");
       const nIndex = args.indexOf("-n");
-      expect(args[nIndex + 1]).toBe("1");
-      expect(args.join(" ")).toContain("--skip=40");
+      expect(args[nIndex + 1]).toBe("2001");
+      expect((runCommand as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[1][0] === "log")).toHaveLength(1);
+    });
+
+    it("caps history snapshots and evicts the least recently used cursor", async () => {
+      await seedProject(homePath, "repo", repoPath);
+      const gitLog = makeService(probeAwareRunCommand({
+        log: { stdout: logRecord({ sha: SHA_A }) + logRecord({ sha: SHA_B }) },
+      }));
+      const cursors: string[] = [];
+      for (let index = 0; index < 16; index += 1) {
+        const page = await gitLog.listCommits("repo", { limit: 1 });
+        expect(page.ok).toBe(true);
+        if (page.ok && page.nextCursor) cursors.push(page.nextCursor);
+      }
+      expect(cursors).toHaveLength(16);
+
+      // Touch the oldest cursor, then allocate one more snapshot. The second
+      // cursor is now the LRU entry and must be evicted instead.
+      expect((await gitLog.listCommits("repo", { limit: 1, cursor: cursors[0] })).ok).toBe(true);
+      await gitLog.listCommits("repo", { limit: 1 });
+
+      expect(await gitLog.listCommits("repo", { limit: 1, cursor: cursors[1] })).toMatchObject({
+        ok: false,
+        status: 409,
+        error: { code: "stale_cursor" },
+      });
+      expect((await gitLog.listCommits("repo", { limit: 1, cursor: cursors[0] })).ok).toBe(true);
+    });
+
+    it("caps commit metadata to the desktop response contract", async () => {
+      await seedProject(homePath, "repo", repoPath);
+      const parents = Array.from({ length: 12 }, (_, index) => String(index).padStart(40, "0")).join(" ");
+      const refs = Array.from({ length: 60 }, (_, index) => `branch-${index}`).join(", ");
+      const gitLog = makeService(probeAwareRunCommand({
+        log: { stdout: logRecord({ sha: SHA_A, parents, refs, author: "a".repeat(250), subject: "s".repeat(2_100) }) },
+      }));
+
+      const result = await gitLog.listCommits("repo", { limit: 200 });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.commits[0]).toMatchObject({
+        parents: expect.any(Array),
+        refs: expect.any(Array),
+        author: "a".repeat(200),
+        subject: "s".repeat(2_000),
+      });
+      expect(result.commits[0]?.parents).toHaveLength(8);
+      expect(result.commits[0]?.refs).toHaveLength(50);
     });
 
     it("treats an empty repository as an empty page", async () => {
@@ -283,6 +342,38 @@ describe("git-log service", () => {
       expect(binary).toMatchObject({ path: "bin.dat", binary: true, patch: null, additions: null, deletions: null });
     });
 
+    it("decodes Git C-quoted marker paths", async () => {
+      await seedProject(homePath, "repo", repoPath);
+      const quotedPatch = `diff --git "a/caf\\303\\251\\tfile.txt" "b/caf\\303\\251\\tfile.txt"
+index 1111111..2222222 100644
+--- "a/caf\\303\\251\\tfile.txt"
++++ "b/caf\\303\\251\\tfile.txt"
+@@ -1 +1 @@
+-old
++new
+`;
+      const gitLog = makeService(probeAwareRunCommand({ show: { stdout: quotedPatch } }));
+
+      const result = await gitLog.getCommitDiff("repo", SHA_A, { maxFiles: 20, maxLines: 100 });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.files[0]?.path).toBe("café\tfile.txt");
+    });
+
+    it("forces stable uncolored patch prefixes", async () => {
+      await seedProject(homePath, "repo", repoPath);
+      const runCommand = probeAwareRunCommand({ show: { stdout: SAMPLE_PATCH } });
+      const gitLog = makeService(runCommand);
+
+      await gitLog.getCommitDiff("repo", SHA_A, { maxFiles: 20, maxLines: 100 });
+
+      const showCall = (runCommand as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) => call[1][0] === "show" && call[1].includes("--patch"),
+      );
+      expect(showCall?.[1]).toEqual(expect.arrayContaining(["--no-color", "--default-prefix", "--no-ext-diff"]));
+    });
+
     it("caps the file list and marks the result truncated", async () => {
       await seedProject(homePath, "repo", repoPath);
       const gitLog = makeService(probeAwareRunCommand({ show: { stdout: SAMPLE_PATCH } }));
@@ -330,6 +421,26 @@ ${bigHunk.join("\n")}
       expect(file.patch?.split("\n")).toHaveLength(50);
       expect(file.additions).toBe(120);
       expect(file.deletions).toBe(120);
+      expect(result.truncated).toBe(true);
+    });
+
+    it("truncates a single oversized diff line to the desktop byte contract", async () => {
+      await seedProject(homePath, "repo", repoPath);
+      const patch = `diff --git a/huge.txt b/huge.txt
+--- a/huge.txt
++++ b/huge.txt
+@@ -1 +1 @@
+-old
++${"x".repeat(200_100)}
+`;
+      const gitLog = makeService(probeAwareRunCommand({ show: { stdout: patch } }));
+
+      const result = await gitLog.getCommitDiff("repo", SHA_A, { maxFiles: 20, maxLines: 100 });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.files[0]?.patch?.length).toBeLessThanOrEqual(200_000);
+      expect(result.files[0]?.truncated).toBe(true);
       expect(result.truncated).toBe(true);
     });
 

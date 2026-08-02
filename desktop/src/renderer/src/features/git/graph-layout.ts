@@ -80,9 +80,11 @@ export function computeGraphLayout(commits: GraphLayoutCommit[]): GraphLayout {
     if (firstParent) {
       columns[col] = firstParent;
     }
+    const reservedParents = new Set(columns.filter((sha): sha is string => sha !== null));
     for (const parent of extraParents) {
-      if (columns.includes(parent)) continue;
+      if (reservedParents.has(parent)) continue;
       columns[firstFreeColumn()] = parent;
+      reservedParents.add(parent);
     }
   }
 

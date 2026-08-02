@@ -86,6 +86,15 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "03-task-tab.png") });
   }, 30_000);
 
+  it("renders the project commit DAG in the task Git panel", async () => {
+    await page.getByRole("button", { name: "Git (⌘3)" }).click();
+    await page.getByRole("button", { name: "Terminal (⌘1)" }).click();
+    await page.getByRole("tab", { name: "Graph" }).waitFor({ timeout: 10_000 });
+    await page.getByText("feat(desktop): add project-centric shell").waitFor({ timeout: 10_000 });
+    await page.getByText("fix(gateway): bound commit history").waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "03b-git-dag.png") });
+  }, 30_000);
+
   it("opens the project chats from the command palette", async () => {
     await page.locator("aside button", { hasText: "Home" }).first().click();
     await page.keyboard.press("Control+K");

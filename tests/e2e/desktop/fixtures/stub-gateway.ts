@@ -513,6 +513,47 @@ export async function startStubGateway(): Promise<StubGateway> {
       json(res, 200, { tasks, nextCursor: null });
       return;
     }
+    if (path === "/api/projects/matrix-os/commits" && req.method === "GET") {
+      const shellSha = "a".repeat(40);
+      const historySha = "b".repeat(40);
+      const baseSha = "c".repeat(40);
+      json(res, 200, {
+        commits: [
+          {
+            sha: shellSha,
+            parents: [historySha],
+            author: "Hamed",
+            timestamp: NOW,
+            subject: "feat(desktop): add project-centric shell",
+            refs: ["main"],
+            tags: [],
+            head: true,
+          },
+          {
+            sha: historySha,
+            parents: [baseSha],
+            author: "Matrix",
+            timestamp: "2026-07-07T23:45:00.000Z",
+            subject: "fix(gateway): bound commit history",
+            refs: ["origin/main"],
+            tags: ["desktop-v1"],
+            head: false,
+          },
+          {
+            sha: baseSha,
+            parents: [],
+            author: "Matrix",
+            timestamp: "2026-07-07T23:30:00.000Z",
+            subject: "chore: initialize remote workspace",
+            refs: [],
+            tags: [],
+            head: false,
+          },
+        ],
+        nextCursor: null,
+      });
+      return;
+    }
     if (path.startsWith("/api/projects/matrix-os/tasks/") && req.method === "PATCH") {
       const id = path.split("/").pop();
       const body = await readBody(req);

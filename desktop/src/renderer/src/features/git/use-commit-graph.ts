@@ -171,8 +171,10 @@ export function useCommitGraph(api: ApiClient | null, projectSlug: string): Comm
   const refresh = useCallback(() => {
     const seq = ++listSeq.current;
     // Any in-flight load-more is now stale; its stale-guarded finally will
-    // not run, so clear the spinner here.
+    // not run, so clear the spinner here. The old cursor belongs to the old
+    // commit ordering and must not remain actionable while page one reloads.
     setLoadingMore(false);
+    setNextCursor(null);
     void loadInitial(seq);
   }, [loadInitial]);
 

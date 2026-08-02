@@ -226,6 +226,35 @@ describe("GitPanel graph tab", () => {
     const getMock = api.get as ReturnType<typeof vi.fn>;
     expect(getMock.mock.calls.some(([path]) => String(path).includes("cursor=1"))).toBe(true);
   });
+
+  it("hides the stale pagination cursor while history refreshes", async () => {
+    let commitRequest = 0;
+    let resolveRefresh!: (value: typeof PAGE) => void;
+    const pendingRefresh = new Promise<typeof PAGE>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/commits")) {
+        commitRequest += 1;
+        if (commitRequest === 1) {
+          return { ...PAGE, commits: [commit({ sha: SHA_A, subject: "Newest work" })], nextCursor: "1" };
+        }
+        return pendingRefresh;
+      }
+      if (path.includes("/branches")) return { branches: [] };
+      if (path.includes("/prs")) return { prs: [] };
+      if (path.includes("/worktrees")) return { worktrees: [] };
+      throw new Error(`unmocked path: ${path}`);
+    });
+    renderPanel({ baseUrl: "https://x.test", get } as unknown as ApiClient);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh history" }));
+
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    resolveRefresh({ ...PAGE, commits: [commit({ sha: SHA_A, subject: "Refreshed work" })] });
+    await waitFor(() => expect(screen.getByText("Refreshed work")).toBeTruthy());
+  });
 });
 
 describe("GitGraph virtualization", () => {
@@ -273,6 +302,25 @@ describe("GitGraph virtualization", () => {
 
     expect(screen.getByText(/Showing the most recent/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("sizes the gutter for reserved lanes whose commits are outside the viewport", () => {
+    const octopus = [commit({ sha: SHA_A, parents: [SHA_B, SHA_C, "d".repeat(40)] })];
+
+    render(
+      <GitGraph
+        commits={octopus}
+        selectedSha={null}
+        onSelect={() => undefined}
+        hasMore={false}
+        capped={false}
+        loadingMore={false}
+        onLoadMore={() => undefined}
+      />,
+    );
+
+    const svg = screen.getByTestId("git-graph-scroll").querySelector("svg");
+    expect(Number(svg?.getAttribute("width"))).toBeGreaterThanOrEqual(62);
   });
 });
 
