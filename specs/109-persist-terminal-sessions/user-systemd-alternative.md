@@ -136,7 +136,7 @@ preview identity. It is absent on customer runtimes.
 
 | Route | Availability | Authentication | Input and resource bounds |
 | --- | --- | --- | --- |
-| `POST /api/internal/terminal-acceptance/run` | Exact disposable PR preview only | HMAC-SHA256 over version, timestamp, 128-bit nonce, and exact body digest using the handle-scoped platform verification key | 16 KiB body; typed command array; bounded timeout/output; 120-second clock window; 512-entry, five-minute replay cache |
+| `POST /api/internal/terminal-acceptance/run` | Exact disposable PR preview only | HMAC-SHA256 over version, timestamp, 128-bit nonce, and exact body digest using the handle-scoped platform verification key | 16 KiB body; typed command array; bounded timeout/output; dedicated 64-request/minute verification bucket with 30-second lockout; 120-second clock window; 512-entry, five-minute replay cache |
 
 The workflow derives the handle-scoped key locally from the Actions-only
 platform secret but never sends either reusable secret. Every request uses a
