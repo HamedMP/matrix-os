@@ -107,6 +107,24 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("delegates the exact terminal acceptance path to its request-signature verifier", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/internal/terminal-acceptance/run", undefined, undefined, "10.44.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+
+    nextCalled = false;
+    const result = await mw(
+      mockContext("/api/internal/terminal-acceptance/other", undefined, undefined, "10.44.0.2"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
   it("allows WebSocket path with correct token", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

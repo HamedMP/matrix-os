@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,5 +76,66 @@ describe("terminal runtime generation GC candidates", () => {
     ]);
 
     expect(stdout).toBe("");
+  });
+
+  it("holds one symlink-safe lock across the descriptor scan and deletion", async () => {
+    const names = [generation("1"), generation("2"), generation("3")];
+    for (let index = 0; index < names.length; index += 1) {
+      const path = join(runtimeRoot, "generations", names[index]!);
+      await mkdir(path);
+      await utimes(path, index + 1, index + 1);
+    }
+
+    const holder = spawn("python3", [script, "--lock", descriptorRoot], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await new Promise<void>((resolve, reject) => {
+      holder.once("error", reject);
+      holder.stdout.once("data", (chunk) => {
+        if (chunk.toString() === "locked\n") resolve();
+        else reject(new Error("generation lock holder did not become ready"));
+      });
+    });
+
+    const deleting = execFileAsync("python3", [
+      script,
+      "--delete",
+      runtimeRoot,
+      descriptorRoot,
+      appDir,
+      rollbackDir,
+      "2",
+    ]);
+    await writeFile(join(descriptorRoot, "runtime.json"), JSON.stringify({ generation: names[0] }));
+    holder.stdin.end();
+    await new Promise<void>((resolve, reject) => {
+      holder.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`lock holder exited ${code}`)));
+    });
+    const { stdout } = await deleting;
+
+    expect(stdout.trim()).toBe(names[1]);
+    await expect(execFileAsync("test", ["-d", join(runtimeRoot, "generations", names[0])])).resolves.toBeDefined();
+    await expect(execFileAsync("test", ["-d", join(runtimeRoot, "generations", names[1])])).rejects.toBeDefined();
+  });
+
+  it("fails closed when the shared lock entry is a symlink", async () => {
+    const first = generation("a");
+    const second = generation("b");
+    const third = generation("c");
+    await mkdir(join(runtimeRoot, "generations", first));
+    await mkdir(join(runtimeRoot, "generations", second));
+    await mkdir(join(runtimeRoot, "generations", third));
+    await symlink(join(fixtureRoot, "outside-lock"), join(descriptorRoot, ".generation-gc.lock"));
+
+    await expect(execFileAsync("python3", [
+      script,
+      "--delete",
+      runtimeRoot,
+      descriptorRoot,
+      appDir,
+      rollbackDir,
+      "2",
+    ])).rejects.toBeDefined();
+    await expect(execFileAsync("test", ["-d", join(runtimeRoot, "generations", first)])).resolves.toBeDefined();
   });
 });

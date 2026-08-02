@@ -245,6 +245,7 @@ import {
   ShellPreferencesStore,
   createPendingTerminalInputQueue,
   createShellCommandRunner,
+  createTerminalAcceptanceRoutes,
   createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
@@ -357,7 +358,11 @@ export async function createGateway(config: GatewayConfig) {
     ? await loadInstalledTerminalRuntimeGeneration(process.env.MATRIX_APP_DIR ?? process.cwd())
     : null;
   const userSystemdTerminalController = terminalRuntimeGeneration
-    ? createUserSystemdTerminalRuntime({ homePath, generation: terminalRuntimeGeneration })
+    ? createUserSystemdTerminalRuntime({
+        homePath,
+        generation: terminalRuntimeGeneration,
+        generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
+      })
     : null;
   const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
     ? createUserSystemdZellijRuntime({
@@ -1731,6 +1736,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
+  const shellCommandRunner = createShellCommandRunner({ homePath });
   const shellRouteDeps = {
     homePath,
     registry: zellijShellRegistry,
@@ -1739,7 +1745,7 @@ export async function createGateway(config: GatewayConfig) {
     layouts: shellLayoutStore,
     shellBackend: zellijAdapter,
     shellThemeConfig: zellijAdapter,
-    commandRunner: createShellCommandRunner({ homePath }),
+    commandRunner: shellCommandRunner,
     terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
   };
@@ -1766,6 +1772,15 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  const runtimeHandle = process.env.MATRIX_HANDLE ?? "";
+  const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)
+    && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
+  if (terminalAcceptanceEnabled) {
+    app.route("/api/internal/terminal-acceptance", createTerminalAcceptanceRoutes({
+      secret: process.env.UPGRADE_TOKEN ?? "",
+      run: (input) => shellCommandRunner.run(input),
+    }));
+  }
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
