@@ -129,9 +129,12 @@ async function loadWorkspace(projectId: string): Promise<void> {
     if (selected !== projectView.selectedThreadFor(projectId)) {
       projectView.setSelectedThread(projectId, selected);
     }
-  } catch {
+  } catch (error: unknown) {
     if (isStaleLoad(projectId, runtimeGeneration, generation)) return;
-    console.warn("[project-workspaces] workspace load failed");
+    console.warn(
+      "[project-workspaces] workspace load failed",
+      error instanceof Error ? error.name : "Unknown error",
+    );
     // Error entries are capped too. Opening distinct projects while the runtime
     // is unavailable would otherwise grow the cache past its stated bound,
     // since only the success path used to enforce it.
