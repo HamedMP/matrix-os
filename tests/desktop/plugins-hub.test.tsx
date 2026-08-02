@@ -96,7 +96,9 @@ describe("desktop plugins hub", () => {
     fireEvent.click(skills);
     await waitFor(() => expect(screen.getByText("code-review")).not.toBeNull());
     expect(skills.className).toContain("bg-[var(--bg-selected)]");
+    expect(skills.getAttribute("aria-current")).toBe("page");
     expect(integrations.className).not.toContain("bg-[var(--bg-selected)]");
+    expect(integrations.getAttribute("aria-current")).toBeNull();
   });
 
   it("switches to the MCP servers section with its honest empty state", async () => {

@@ -6,6 +6,7 @@
 import { Check, Copy, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
+import { diagnosticErrorKind } from "../../lib/errors";
 
 export const CLI_BREW_INSTALL_COMMAND = "brew install finnaai/tap/matrix";
 export const CLI_NPM_INSTALL_COMMAND = "npm install -g @finnaai/matrix";
@@ -75,7 +76,7 @@ export function CliSection() {
     } catch (err: unknown) {
       console.warn(
         "[plugins] clipboard copy failed:",
-        err instanceof Error ? err.message : String(err),
+        diagnosticErrorKind(err),
       );
       setCopyError("Could not copy to the clipboard.");
       return;

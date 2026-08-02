@@ -138,6 +138,35 @@ describe("desktop plugins skills section", () => {
     expect(screen.getByText(".agents/skills/qmd/SKILL.md")).not.toBeNull();
   });
 
+  it("filters installed skills with a clear, keyboard-accessible search", async () => {
+    render(<SkillsSection />);
+    await waitFor(() => expect(screen.getByText("code-review")).not.toBeNull());
+
+    const search = screen.getByRole("searchbox", { name: "Search skills" });
+    fireEvent.change(search, { target: { value: "qmd" } });
+
+    expect(screen.queryByText("code-review")).toBeNull();
+    expect(screen.getByText("qmd")).not.toBeNull();
+    expect(screen.getByText("1 of 2 skills")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear skill search" }));
+    expect(screen.getByText("code-review")).not.toBeNull();
+    expect(screen.getByText("2 skills installed")).not.toBeNull();
+  });
+
+  it("renders an onboarding-style empty search result", async () => {
+    render(<SkillsSection />);
+    await waitFor(() => expect(screen.getByText("code-review")).not.toBeNull());
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search skills" }), {
+      target: { value: "nonexistent" },
+    });
+
+    expect(screen.getByText('No skills match “nonexistent”')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByText("code-review")).not.toBeNull();
+  });
+
   it("shows a generic offline message with a retry that reloads", async () => {
     let failures = 0;
     const api = makeApi({

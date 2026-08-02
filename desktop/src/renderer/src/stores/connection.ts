@@ -109,6 +109,11 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
 
   signOut: async () => {
     await invoke("auth:sign-out", {});
+    // Signing out is a runtime identity boundary just like switching
+    // computers. Advance the shared generation and synchronously remove every
+    // previous-owner cache before publishing signed-out state, so an in-flight
+    // request cannot repopulate the next account's desktop.
+    reconcileDesktopRuntimeChange();
     set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
   },
 }));

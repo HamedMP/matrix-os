@@ -56,13 +56,15 @@ describe("desktop plugins CLI install card", () => {
   });
 
   it("shows generic copy when the clipboard write fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     writeText.mockImplementation(async () => {
-      throw new Error("denied");
+      throw new Error("secret-token-leak");
     });
     render(<CliSection />);
     fireEvent.click(screen.getByTestId("plugins-cli-copy-brew"));
     await waitFor(() =>
       expect(screen.getByText("Could not copy to the clipboard.")).not.toBeNull(),
     );
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("secret-token-leak");
   });
 });

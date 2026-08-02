@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 // Plugins hub state is per-computer. Switching runtimes replaces the ApiClient
 // and clears the tab strip, so anything still in flight against the previous
 // computer must not land on the newly selected one.
@@ -27,7 +29,8 @@ function makeApi(get: (path: string) => Promise<unknown>, post?: (path: string, 
 describe("plugins hub across runtime switches", () => {
   beforeEach(() => {
     usePlugins.setState({ skills: [], skillsStatus: "idle", skillsError: null });
-    useConnection.setState({ runtimeSlot: "primary", authGeneration: 1, api: null });
+    useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 1, api: null });
+    window.operator = { invoke: vi.fn(async () => ({})), on: vi.fn() };
   });
 
   it("drops a superseded computer's skills response when it settles last", async () => {
@@ -66,6 +69,29 @@ describe("plugins hub across runtime switches", () => {
 
     await expect(opening).resolves.toBe("runtime-changed");
     expect(openTab).not.toHaveBeenCalled();
+  });
+
+  it("drops an in-flight skills response and cached owner data on sign-out", async () => {
+    let release!: (value: unknown) => void;
+    const api = makeApi(
+      () => new Promise<unknown>((resolve) => { release = resolve; }),
+    );
+    usePlugins.setState({
+      skills: [{ name: "owner-only", description: "Private", file: ".agents/skills/private/SKILL.md" }],
+      skillsStatus: "ready",
+      skillsError: null,
+    });
+
+    const pending = usePlugins.getState().refreshSkills(api);
+    await useConnection.getState().signOut();
+    release([{ name: "previous-owner-skill", file: ".agents/skills/old/SKILL.md", enabled: true }]);
+    await pending;
+
+    expect(usePlugins.getState()).toMatchObject({
+      skills: [],
+      skillsStatus: "idle",
+      skillsError: null,
+    });
   });
 
   it("still opens the tab when the runtime is unchanged", async () => {
