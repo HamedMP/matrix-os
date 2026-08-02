@@ -224,18 +224,17 @@ jobs:
               -H 'content-type: application/json' \
               --data-binary "$body"
             response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
-            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module - \
-              "$timestamp" "$nonce" "$response_signature" "$response" <<'NODE'
-            import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-            import { readFile } from "node:fs/promises";
-            const [timestamp, nonce, signature, path] = process.argv.slice(2);
-            const body = await readFile(path);
-            const digest = createHash("sha256").update(body).digest("hex");
-            const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
-              .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
-            if (!/^[0-9a-f]{64}$/.test(signature) ||
-              !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
-            NODE
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+              import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+              import { readFile } from "node:fs/promises";
+              const [timestamp, nonce, signature, path] = process.argv.slice(1);
+              const body = await readFile(path);
+              const digest = createHash("sha256").update(body).digest("hex");
+              const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+              if (!/^[0-9a-f]{64}$/.test(signature) ||
+                !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            ' "$timestamp" "$nonce" "$response_signature" "$response"
           }
           send_command() {
             local body="$1" response="$RUNNER_TEMP/user-systemd-command.json"
@@ -312,18 +311,17 @@ jobs:
               -H "x-matrix-acceptance-signature: $signature" \
               -H 'content-type: application/json' --data-binary "$body"
             response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
-            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module - \
-              "$timestamp" "$nonce" "$response_signature" "$response" <<'NODE'
-            import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-            import { readFile } from "node:fs/promises";
-            const [timestamp, nonce, signature, path] = process.argv.slice(2);
-            const body = await readFile(path);
-            const digest = createHash("sha256").update(body).digest("hex");
-            const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
-              .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
-            if (!/^[0-9a-f]{64}$/.test(signature) ||
-              !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
-            NODE
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+              import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+              import { readFile } from "node:fs/promises";
+              const [timestamp, nonce, signature, path] = process.argv.slice(1);
+              const body = await readFile(path);
+              const digest = createHash("sha256").update(body).digest("hex");
+              const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+              if (!/^[0-9a-f]{64}$/.test(signature) ||
+                !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            ' "$timestamp" "$nonce" "$response_signature" "$response"
           }
           call_helper() {
             local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
@@ -416,18 +414,17 @@ jobs:
               -H "x-matrix-acceptance-signature: $signature" \
               -H 'content-type: application/json' --data-binary "$body"
             response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
-            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module - \
-              "$timestamp" "$nonce" "$response_signature" "$response" <<'NODE'
-            import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-            import { readFile } from "node:fs/promises";
-            const [timestamp, nonce, signature, path] = process.argv.slice(2);
-            const body = await readFile(path);
-            const digest = createHash("sha256").update(body).digest("hex");
-            const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
-              .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
-            if (!/^[0-9a-f]{64}$/.test(signature) ||
-              !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
-            NODE
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+              import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+              import { readFile } from "node:fs/promises";
+              const [timestamp, nonce, signature, path] = process.argv.slice(1);
+              const body = await readFile(path);
+              const digest = createHash("sha256").update(body).digest("hex");
+              const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+              if (!/^[0-9a-f]{64}$/.test(signature) ||
+                !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            ' "$timestamp" "$nonce" "$response_signature" "$response"
           }
           call_helper() {
             local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
