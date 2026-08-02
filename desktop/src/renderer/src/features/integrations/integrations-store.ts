@@ -119,13 +119,16 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
   syncNow: async (apiOverride) => {
     const api = resolveApi(apiOverride);
     if (!api) return "failed";
-    // The connect poll holds one ApiClient for ~108s, so identity -- not
-    // ordering -- is what matters here: a tick firing after an account change
-    // is the newest request but still speaks for the previous account.
+    // The connect poll holds one ApiClient for ~108s, so identity and ordering
+    // both matter: a tick may carry an old client, while an older catalog load
+    // may otherwise settle after this authoritative sync and overwrite it.
     const runtimeGeneration = captureRuntimeGeneration();
+    const sequence = ++refreshSequence;
+    const superseded = (): boolean =>
+      !isCurrentRuntimeGeneration(runtimeGeneration) || refreshSequence !== sequence;
     try {
       const raw = await api.post<unknown>(SYNC_PATH, {});
-      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return "superseded";
+      if (superseded()) return "superseded";
       // Owns the terminal status when it supersedes an in-flight catalog load:
       // that load returns without writing one, so leaving status untouched
       // strands the panel on "loading" with no retry affordance.
@@ -133,7 +136,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
       return "ok";
     } catch (err: unknown) {
       logWarn("sync failed", err);
-      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return "superseded";
+      if (superseded()) return "superseded";
       // Same reason: never leave a superseded refresh's "loading" in place.
       set((state) => (state.status === "loading"
         ? { status: "error" as const, errorMessage: categoryMessage("server") }
@@ -188,6 +191,9 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
       // Without this the success path filters the NEW account's connection
       // list by the OLD account's connectionId and clears its error banner.
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
+      // The successful delete is authoritative. Invalidate list reads that
+      // began before it completed so they cannot reintroduce this account.
+      refreshSequence += 1;
       set((state) => ({
         connections: state.connections.filter((conn) => conn.id !== connectionId),
         errorMessage: null,

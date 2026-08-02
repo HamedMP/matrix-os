@@ -7,9 +7,11 @@
 // email/status — never tokens, remote logos, or upstream error text.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../design/primitives";
+import { diagnosticErrorKind } from "../../lib/errors";
 import { invoke } from "../../lib/operator";
 import { categoryMessage } from "../../../../shared/app-error";
 import { useConnection } from "../../stores/connection";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { AvailableServiceCard } from "./AvailableServiceCard";
 import { ConnectedServiceRow } from "./ConnectedServiceRow";
 import { ConnectPendingBanner } from "./ConnectPendingBanner";
@@ -39,8 +41,22 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
   const previousIdsRef = useRef<Set<string> | null>(null);
+  const connectAttemptRef = useRef(0);
+  const disconnectAttemptRef = useRef(0);
 
   useEffect(() => {
+    // OAuth work is identity-bound. Invalidate both scheduled and in-flight
+    // callbacks before loading the next account/computer's integration state.
+    connectAttemptRef.current += 1;
+    disconnectAttemptRef.current += 1;
+    cancelPollRef.current?.();
+    cancelPollRef.current = null;
+    previousIdsRef.current = null;
+    setConnectingService(null);
+    setManualBusy(false);
+    setManualNote(null);
+    setConfirmId(null);
+    setDisconnectingId(null);
     void useIntegrations.getState().refresh(api);
   }, [api]);
 
@@ -63,12 +79,17 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
 
   const handleConnect = async (serviceId: string): Promise<void> => {
     if (!api || connectingService) return;
+    const attempt = ++connectAttemptRef.current;
+    const runtimeGeneration = captureRuntimeGeneration();
+    const isCurrentAttempt = (): boolean =>
+      connectAttemptRef.current === attempt && isCurrentRuntimeGeneration(runtimeGeneration);
     setManualNote(null);
     setConnectingService(serviceId);
     const previousIds = new Set(useIntegrations.getState().connections.map((conn) => conn.id));
     previousIdsRef.current = previousIds;
 
     const url = await useIntegrations.getState().startConnect(serviceId, api);
+    if (!isCurrentAttempt()) return;
     if (!url) {
       setConnectingService(null);
       return;
@@ -76,11 +97,13 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     try {
       await invoke("shell:open-external", { url });
     } catch (err: unknown) {
-      console.warn("[integrations] failed to open consent url:", err instanceof Error ? err.message : String(err));
+      if (!isCurrentAttempt()) return;
+      console.warn("[integrations] failed to open consent url:", diagnosticErrorKind(err));
       useIntegrations.getState().showError(GENERIC_ERROR);
       setConnectingService(null);
       return;
     }
+    if (!isCurrentAttempt()) return;
 
     const isLanded = () =>
       useIntegrations
@@ -91,25 +114,39 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     cancelPollRef.current = startConnectPoll({
       intervals: pollIntervals ?? DEFAULT_CONNECT_POLL_INTERVALS_MS,
       tick: async () => {
+        if (!isCurrentAttempt()) {
+          cancelConnectPoll();
+          return;
+        }
         const result = await useIntegrations.getState().syncNow(api);
         // A superseded tick means the user changed account/computer; stop
         // polling rather than keep asking on behalf of the previous one.
         if (result === "superseded") cancelConnectPoll();
       },
       isDone: isLanded,
-      onSettled: () => {
+      onSettled: (found) => {
+        if (!isCurrentAttempt()) return;
         cancelPollRef.current = null;
-        setConnectingService(null);
+        if (found) {
+          setConnectingService(null);
+          return;
+        }
+        setManualNote("Still waiting — finish the sign-in in your browser, then select I've connected.");
       },
     });
   };
 
   const handleManualConfirm = async (): Promise<void> => {
     if (!api || !connectingService || manualBusy) return;
+    const attempt = connectAttemptRef.current;
+    const runtimeGeneration = captureRuntimeGeneration();
+    const isCurrentAttempt = (): boolean =>
+      connectAttemptRef.current === attempt && isCurrentRuntimeGeneration(runtimeGeneration);
     setManualBusy(true);
     setManualNote(null);
     try {
       const result = await useIntegrations.getState().syncNow(api);
+      if (!isCurrentAttempt()) return;
       const landed = useIntegrations
         .getState()
         .connections.some((conn) => conn.service === connectingService && !previousIdsRef.current?.has(conn.id));
@@ -127,11 +164,12 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       if (result === "superseded") return;
       setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
     } finally {
-      setManualBusy(false);
+      if (isCurrentAttempt()) setManualBusy(false);
     }
   };
 
   const handleCancelConnect = (): void => {
+    connectAttemptRef.current += 1;
     cancelConnectPoll();
     setConnectingService(null);
     setManualNote(null);
@@ -139,8 +177,13 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
 
   const handleDisconnect = async (): Promise<void> => {
     if (!api || !confirmId) return;
-    setDisconnectingId(confirmId);
-    await useIntegrations.getState().disconnect(confirmId, api);
+    const connectionId = confirmId;
+    const attempt = ++disconnectAttemptRef.current;
+    const runtimeGeneration = captureRuntimeGeneration();
+    setDisconnectingId(connectionId);
+    await useIntegrations.getState().disconnect(connectionId, api);
+    if (disconnectAttemptRef.current !== attempt
+      || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
     setDisconnectingId(null);
     // Close either way: on failure the row stays and the store's generic
     // errorMessage banner explains it (partial-failure safe).

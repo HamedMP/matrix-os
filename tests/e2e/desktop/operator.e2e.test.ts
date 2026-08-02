@@ -169,6 +169,9 @@ suite("operator desktop e2e", () => {
 
     await page.getByRole("button", { name: "Integrations" }).click();
     await page.getByRole("heading", { name: "Integrations" }).waitFor({ timeout: 10_000 });
+    await page.getByText("Matrix OS Team").waitFor({ timeout: 10_000 });
+    await page.getByText("GitHub").waitFor();
+    await page.getByText("Slack").waitFor();
     await page.mouse.move(1_000, 680);
     await page.waitForTimeout(150);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05c-settings-integrations.png") });

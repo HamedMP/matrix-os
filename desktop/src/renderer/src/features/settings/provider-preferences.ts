@@ -6,6 +6,7 @@
 // session with a console warning.
 import "../../lib/operator";
 import { create } from "zustand";
+import { diagnosticErrorKind } from "../../lib/errors";
 
 export const PROVIDER_PREFERENCES_STATE_KEY = "providerPreferences";
 
@@ -28,7 +29,7 @@ function isValidProviderId(value: unknown): value is string {
 function logPersistence(context: string, err: unknown): void {
   console.warn(
     `[provider-preferences] ${context}:`,
-    err instanceof Error ? err.message : String(err),
+    diagnosticErrorKind(err),
   );
 }
 

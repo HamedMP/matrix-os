@@ -260,6 +260,30 @@ describe("useIntegrations store", () => {
     expect(useIntegrations.getState().status).not.toBe("loading");
   });
 
+  it("does not let an older catalog refresh overwrite a newer sync result", async () => {
+    const release: Array<() => void> = [];
+    const slowApi = makeApi({
+      get: async (path: string) => {
+        await new Promise<void>((resolve) => release.push(resolve));
+        return path === "/api/integrations/available" ? AVAILABLE : CONNECTIONS;
+      },
+    });
+    const synced = [{
+      ...CONNECTIONS[0],
+      id: "8e4a7a2f-3c4d-5b6e-9f0a-1b2c3d4e5f60",
+      account_label: "Synced account",
+    }];
+    const syncApi = makeApi({ post: async () => ({ services: synced }) });
+
+    const refresh = useIntegrations.getState().refresh(slowApi);
+    await useIntegrations.getState().syncNow(syncApi);
+    for (const resolve of release) resolve();
+    await refresh;
+
+    expect(useIntegrations.getState().connections.map((connection) => connection.id))
+      .toEqual(["8e4a7a2f-3c4d-5b6e-9f0a-1b2c3d4e5f60"]);
+  });
+
   it("refresh() falls back to the connection store's ApiClient when none is passed", async () => {
     const api = makeApi();
     useConnection.setState({ api });
@@ -344,6 +368,24 @@ describe("useIntegrations store", () => {
     expect(api.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail" });
   });
 
+  it("startConnect() drops a consent URL minted for a superseded runtime", async () => {
+    let release!: () => void;
+    const api = makeApi({
+      post: async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { url: "https://pipedream.com/connect?token=previous-account" };
+      },
+    });
+
+    const connecting = useIntegrations.getState().startConnect("gmail", api);
+    advanceRuntimeGeneration();
+    release();
+
+    await expect(connecting).resolves.toBeNull();
+  });
+
   it("startConnect() refuses non-https URLs and sets a generic error", async () => {
     const api = makeApi({
       post: async () => ({ url: "http://evil.test/connect" }),
@@ -377,6 +419,24 @@ describe("useIntegrations store", () => {
     const ok = await useIntegrations.getState().disconnect("7d3f6f1e-2b3c-4a5d-8e9f-0a1b2c3d4e5f", api);
     expect(ok).toBe(true);
     expect(api.delete).toHaveBeenCalledWith("/api/integrations/7d3f6f1e-2b3c-4a5d-8e9f-0a1b2c3d4e5f");
+    expect(useIntegrations.getState().connections).toEqual([]);
+  });
+
+  it("does not let an older refresh reintroduce a disconnected account", async () => {
+    await useIntegrations.getState().refresh(makeApi());
+    const release: Array<() => void> = [];
+    const slowApi = makeApi({
+      get: async (path: string) => {
+        await new Promise<void>((resolve) => release.push(resolve));
+        return path === "/api/integrations/available" ? AVAILABLE : CONNECTIONS;
+      },
+    });
+
+    const refresh = useIntegrations.getState().refresh(slowApi);
+    await useIntegrations.getState().disconnect(CONNECTIONS[0].id, makeApi());
+    for (const resolve of release) resolve();
+    await refresh;
+
     expect(useIntegrations.getState().connections).toEqual([]);
   });
 

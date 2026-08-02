@@ -6,9 +6,9 @@
 // the seeded chat fails on submit instead of running.
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RuntimeSummary } from "@matrix-os/contracts";
+import { defaultAgentThreadComposerDraft, type RuntimeSummary } from "@matrix-os/contracts";
 import { AgentComposer } from "../../desktop/src/renderer/src/features/coding-agents/AgentComposer";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
 
@@ -90,5 +90,67 @@ describe("AgentComposer default provider preference", () => {
 
     const select = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
     expect(select.value).toBe("claude");
+  });
+
+  it("applies a hydrated preference without dropping seeded project context", async () => {
+    let releasePreference!: (value: { value: { defaultProviderId: string } }) => void;
+    const preference = new Promise<{ value: { defaultProviderId: string } }>((resolve) => {
+      releasePreference = resolve;
+    });
+    window.operator.invoke = vi.fn(async (channel: string) =>
+      channel === "state:get" ? preference : { ok: true },
+    ) as typeof window.operator.invoke;
+    const summary = summaryWith([provider("codex", true), provider("claude", true)]);
+
+    render(
+      <AgentComposer
+        summary={summary}
+        seed={{
+          seedId: 1,
+          draft: {
+            ...defaultAgentThreadComposerDraft(summary),
+            projectId: "matrix-os",
+          },
+        }}
+        focusRequestId={0}
+      />,
+    );
+
+    expect((screen.getAllByRole("combobox")[0] as HTMLSelectElement).value).toBe("codex");
+    await act(async () => {
+      releasePreference({ value: { defaultProviderId: "claude" } });
+      await preference;
+    });
+
+    await waitFor(() =>
+      expect((screen.getAllByRole("combobox")[0] as HTMLSelectElement).value).toBe("claude"),
+    );
+  });
+
+  it("does not replace an explicit provider selection when hydration finishes", async () => {
+    let releasePreference!: (value: { value: { defaultProviderId: string } }) => void;
+    const preference = new Promise<{ value: { defaultProviderId: string } }>((resolve) => {
+      releasePreference = resolve;
+    });
+    window.operator.invoke = vi.fn(async (channel: string) =>
+      channel === "state:get" ? preference : { ok: true },
+    ) as typeof window.operator.invoke;
+    const summary = summaryWith([
+      provider("codex", true),
+      provider("claude", true),
+      provider("opencode", true),
+    ]);
+
+    render(<AgentComposer summary={summary} seed={null} focusRequestId={0} />);
+    const providerSelect = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
+    fireEvent.change(providerSelect, { target: { value: "opencode" } });
+    expect(providerSelect.value).toBe("opencode");
+
+    await act(async () => {
+      releasePreference({ value: { defaultProviderId: "claude" } });
+      await preference;
+    });
+
+    await waitFor(() => expect(providerSelect.value).toBe("opencode"));
   });
 });

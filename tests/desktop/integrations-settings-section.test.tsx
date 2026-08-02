@@ -6,7 +6,7 @@
 // the HTTPS-only shell:open-external bridge and status polls go through the
 // typed ApiClient (bearer injected by the trusted core at the network layer).
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   IntegrationsSettingsSection,
@@ -14,6 +14,7 @@ import {
 } from "../../desktop/src/renderer/src/features/integrations";
 import { AppError } from "../../desktop/src/shared/app-error";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
 const CONN_ID = "7d3f6f1e-2b3c-4a5d-8e9f-0a1b2c3d4e5f";
@@ -233,6 +234,43 @@ describe("desktop integrations settings section", () => {
     fireEvent.click(screen.getByRole("button", { name: /Cancel/i }));
     expect(screen.queryByText(/waiting for/i)).toBeNull();
     expect(api.post).not.toHaveBeenCalledWith("/api/integrations/sync", {});
+  });
+
+  it("keeps manual recovery controls after automatic polling times out", async () => {
+    const api = makeApi({ connections: [], syncServices: [] });
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection pollIntervals={[1]} />);
+
+    await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("integration-connect-gmail"));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Still waiting/i)).not.toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: /I've connected/i })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Cancel/i })).not.toBeNull();
+  });
+
+  it("cancels a scheduled connect poll when the runtime client changes", async () => {
+    const previousApi = makeApi({ connections: [], syncServices: [NEW_GMAIL_CONNECTION] });
+    const nextApi = makeApi({ connections: [], syncServices: [] });
+    useConnection.setState({ api: previousApi as never });
+    render(<IntegrationsSettingsSection pollIntervals={[30]} />);
+
+    await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());
+    fireEvent.click(screen.getByTestId("integration-connect-gmail"));
+    await waitFor(() =>
+      expect(previousApi.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail" }),
+    );
+
+    await act(async () => {
+      advanceRuntimeGeneration();
+      useConnection.setState({ api: nextApi as never });
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+
+    expect(previousApi.post).not.toHaveBeenCalledWith("/api/integrations/sync", {});
+    expect(screen.queryByText("Personal")).toBeNull();
   });
 
   it("disconnects an account after confirmation", async () => {

@@ -92,6 +92,9 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: { su
     return { ...base, providerId: preferred.id, mode: preferred.defaultMode ?? base.mode };
   }, [summary, preferredProviderId]);
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
+  const previousInitialDraftRef = useRef(initialDraft);
+  const providerSelectionDirtyRef = useRef(false);
+  const modeSelectionDirtyRef = useRef(false);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);
@@ -99,7 +102,27 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: { su
   const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
 
   useEffect(() => {
-    setDraft((current) => hasComposerContent(current) ? current : initialDraft);
+    const previousInitialDraft = previousInitialDraftRef.current;
+    previousInitialDraftRef.current = initialDraft;
+    setDraft((current) => {
+      if (!hasComposerContent(current)
+        && !providerSelectionDirtyRef.current
+        && !modeSelectionDirtyRef.current) return initialDraft;
+      // Project/task seeds are launch context, not a provider choice. When the
+      // persisted preference hydrates after that context arrives, update only
+      // an untouched automatic selection and preserve the seeded fields.
+      const followsPreviousDefault = !providerSelectionDirtyRef.current
+        && current.providerId === previousInitialDraft.providerId;
+      if (!followsPreviousDefault) return current;
+      const providerChanged = initialDraft.providerId !== previousInitialDraft.providerId;
+      const followsPreviousMode = !modeSelectionDirtyRef.current
+        && current.mode === previousInitialDraft.mode;
+      return {
+        ...current,
+        providerId: initialDraft.providerId,
+        mode: providerChanged || followsPreviousMode ? initialDraft.mode : current.mode,
+      };
+    });
   }, [initialDraft]);
 
   useEffect(() => {
@@ -140,6 +163,8 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: { su
       setDraft((current) => clearComposerLaunchContext(current));
       return;
     }
+    providerSelectionDirtyRef.current = false;
+    modeSelectionDirtyRef.current = false;
     setDraft(initialDraft);
     onCreated?.();
   }
@@ -164,6 +189,8 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: { su
               value={draft.providerId ?? ""}
               onChange={(event) => {
                 const provider = summary.providers.find((candidate) => candidate.id === event.target.value);
+                providerSelectionDirtyRef.current = true;
+                modeSelectionDirtyRef.current = false;
                 setDraft((current) => ({
                   ...current,
                   providerId: provider?.id,
@@ -191,6 +218,7 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: { su
               onChange={(event) => {
                 const mode = modes.find((candidate) => candidate === event.target.value);
                 if (!mode) return;
+                modeSelectionDirtyRef.current = true;
                 setDraft((current) => ({ ...current, mode }));
               }}
             >

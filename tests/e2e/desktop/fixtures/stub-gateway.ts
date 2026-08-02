@@ -770,6 +770,25 @@ export async function startStubGateway(): Promise<StubGateway> {
       ));
       return;
     }
+    if (req.method === "GET" && path === "/api/integrations/available") {
+      json(res, 200, [
+        { id: "gmail", name: "Gmail", category: "Google Workspace" },
+        { id: "github", name: "GitHub", category: "Developer tools" },
+        { id: "slack", name: "Slack", category: "Communication" },
+      ]);
+      return;
+    }
+    if (req.method === "GET" && path === "/api/integrations") {
+      json(res, 200, [{
+        id: "7d3f6f1e-2b3c-4a5d-8e9f-0a1b2c3d4e5f",
+        service: "gmail",
+        account_label: "Matrix OS Team",
+        account_email: "team@matrix-os.com",
+        status: "active",
+        connected_at: "2026-07-08T00:00:00.000Z",
+      }]);
+      return;
+    }
     if (path === "/api/sessions") {
       json(res, 200, {
         sessions: [
