@@ -345,6 +345,7 @@ load_host_auth() {
 diagnose_api_transport() {
   local curl_status="$1" gateway_pid_before="$2" curl_state=other
   local gateway_pid_after pid_state=unknown gateway_state=inactive health_state=failed
+  local gateway_result gateway_exec_status gateway_restarts
   case "$curl_status" in
     5) curl_state=proxy-dns ;;
     6) curl_state=dns ;;
@@ -371,7 +372,16 @@ diagnose_api_transport() {
   if curl --fail --silent --max-time 5 http://127.0.0.1:4000/health >/dev/null 2>&1; then
     health_state=ok
   fi
-  current_failure="api-transport-${curl_state}-gateway-pid-${pid_state}-gateway-${gateway_state}-health-${health_state}"
+  gateway_result="$(systemctl show matrix-gateway.service -p Result --value 2>/dev/null || true)"
+  case "$gateway_result" in
+    success|resources|protocol|timeout|exit-code|signal|core-dump|watchdog|start-limit-hit|oom-kill|exec-condition) ;;
+    *) gateway_result=unknown ;;
+  esac
+  gateway_exec_status="$(systemctl show matrix-gateway.service -p ExecMainStatus --value 2>/dev/null || true)"
+  [[ "$gateway_exec_status" =~ ^[0-9]{1,3}$ ]] || gateway_exec_status=unknown
+  gateway_restarts="$(systemctl show matrix-gateway.service -p NRestarts --value 2>/dev/null || true)"
+  [[ "$gateway_restarts" =~ ^[0-9]{1,6}$ ]] || gateway_restarts=unknown
+  current_failure="api-transport-${curl_state}-gateway-pid-${pid_state}-gateway-${gateway_state}-health-${health_state}-result-${gateway_result}-exit-${gateway_exec_status}-restarts-${gateway_restarts}"
 }
 
 api_call() {
@@ -1197,8 +1207,11 @@ EOF
   mark hostileDescriptorFieldsFailClosed
   mark deleteIsIdempotent
 
-  write_progress hostile-state
+  write_progress hostile-state-create
   create_hostile_state
+  write_progress hostile-state-pre-api
+  wait_gateway
+  write_progress hostile-state-api
   hostile_state_fails_closed
   mark corruptAndSymlinkStateFailsClosed
 
