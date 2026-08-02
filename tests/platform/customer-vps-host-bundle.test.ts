@@ -1107,6 +1107,21 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(durableTriggerRemoval).toBeGreaterThan(preparePhase);
   });
 
+  it('binds explicit immutable update requests to the fetched release version', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const requestedVersion = syncAgent.indexOf('requested_version="$target"');
+    const targetMismatch = syncAgent.indexOf('[ "$remote_version" = "$requested_version" ]');
+    const durableError = syncAgent.indexOf('write_update_error "update_target_mismatch"');
+    const preparedMarker = syncAgent.indexOf('write_prepared_update_marker "$manifest"');
+
+    expect(requestedVersion).toBeGreaterThan(-1);
+    expect(targetMismatch).toBeGreaterThan(requestedVersion);
+    expect(durableError).toBeGreaterThan(targetMismatch);
+    expect(preparedMarker).toBeGreaterThan(durableError);
+  });
+
   it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
