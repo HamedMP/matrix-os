@@ -7,7 +7,7 @@
 // features/integrations — the same component Settings uses.
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PluginsHub from "../../desktop/src/renderer/src/features/plugins";
 import { usePlugins } from "../../desktop/src/renderer/src/features/plugins";
@@ -91,8 +91,12 @@ describe("desktop plugins hub", () => {
 
   it("switches to the Skills section and lists installed skills", async () => {
     render(<PluginsHub />);
-    fireEvent.click(screen.getByRole("button", { name: /Skills/i }));
+    const integrations = screen.getByRole("button", { name: /Integrations/i });
+    const skills = screen.getByRole("button", { name: /Skills/i });
+    fireEvent.click(skills);
     await waitFor(() => expect(screen.getByText("code-review")).not.toBeNull());
+    expect(skills.className).toContain("bg-[var(--bg-selected)]");
+    expect(integrations.className).not.toContain("bg-[var(--bg-selected)]");
   });
 
   it("switches to the MCP servers section with its honest empty state", async () => {
@@ -113,13 +117,16 @@ describe("desktop plugins hub", () => {
     );
   });
 
-  it("opens a plugins tab from the sidebar entry", () => {
+  it("opens a plugins tab from the sidebar entry", async () => {
     render(
       <Tooltip.Provider>
         <Sidebar />
       </Tooltip.Provider>,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Plugins/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Plugins/i }));
+      await Promise.resolve();
+    });
     const { tabs, activeTabId } = useTabs.getState();
     const pluginsTab = tabs.find((tab) => tab.kind === "plugins");
     expect(pluginsTab).toBeDefined();

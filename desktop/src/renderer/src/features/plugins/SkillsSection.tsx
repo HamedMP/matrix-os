@@ -48,14 +48,17 @@ export function SkillsSection() {
     }
     setTerminalBusy(true);
     setTerminalError(null);
-    const opened = await openPluginsTerminal(api, openTab, {
-      sessionName: SKILLS_TERMINAL_SESSION,
-      title: "Skills",
-    });
-    setTerminalBusy(false);
-    // "runtime-changed" is not a failure: the session was created on the
-    // computer the user just left, so there is nothing to apologise for.
-    if (opened === "failed") setTerminalError(categoryMessage("server"));
+    try {
+      const opened = await openPluginsTerminal(api, openTab, {
+        sessionName: SKILLS_TERMINAL_SESSION,
+        title: "Skills",
+      });
+      // "runtime-changed" is not a failure: the session was created on the
+      // computer the user just left, so there is nothing to apologise for.
+      if (opened === "failed") setTerminalError(categoryMessage("server"));
+    } finally {
+      setTerminalBusy(false);
+    }
   };
 
   let body: ReactNode;

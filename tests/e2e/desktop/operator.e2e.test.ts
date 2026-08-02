@@ -188,6 +188,17 @@ suite("operator desktop e2e", () => {
     await page.getByRole("button", { name: "Cancel" }).click();
   }, 30_000);
 
+  it("opens the plugins hub and its Matrix-computer skills surface", async () => {
+    await page.keyboard.press("Escape");
+    await page.locator("aside button", { hasText: "Plugins" }).first().click();
+    await page.getByRole("heading", { name: "Plugins" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: /Skills/i }).click();
+    await page.getByRole("heading", { name: "Skills" }).waitFor({ timeout: 10_000 });
+    await page.mouse.move(1_000, 680);
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05f-plugins-skills.png") });
+  }, 30_000);
+
   it("opens the Terminal workspace with a session sidebar", async () => {
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     // Inner sessions sidebar lists the VPS session as a clickable button

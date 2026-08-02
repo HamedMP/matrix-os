@@ -27,14 +27,17 @@ export function McpServersSection() {
     }
     setBusy(true);
     setErrorMessage(null);
-    const opened = await openPluginsTerminal(api, openTab, {
-      sessionName: MCP_TERMINAL_SESSION,
-      title: "MCP servers",
-    });
-    setBusy(false);
-    // "runtime-changed" is not a failure: the session was created on the
-    // computer the user just left, so there is nothing to apologise for.
-    if (opened === "failed") setErrorMessage(categoryMessage("server"));
+    try {
+      const opened = await openPluginsTerminal(api, openTab, {
+        sessionName: MCP_TERMINAL_SESSION,
+        title: "MCP servers",
+      });
+      // "runtime-changed" is not a failure: the session was created on the
+      // computer the user just left, so there is nothing to apologise for.
+      if (opened === "failed") setErrorMessage(categoryMessage("server"));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

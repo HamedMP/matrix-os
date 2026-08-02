@@ -38,10 +38,8 @@ export default function PluginsHub() {
               key={s.id}
               type="button"
               onClick={() => setSection(s.id)}
-              className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100"
-              style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)", background: active ? "var(--bg-selected)" : "transparent" }}
-              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "var(--bg-hover)"; }}
-              onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+              className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 ${active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]"}`}
+              style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
             >
               <span style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }}>{s.icon}</span>
               {s.label}

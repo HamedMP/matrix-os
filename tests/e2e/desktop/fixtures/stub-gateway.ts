@@ -574,6 +574,14 @@ export async function startStubGateway(): Promise<StubGateway> {
       json(res, 200, { projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
       return;
     }
+    if (req.method === "GET" && path === "/api/settings/skills") {
+      json(res, 200, [
+        { name: "code-review", file: ".agents/skills/code-review/SKILL.md", enabled: true },
+        { name: "ship-stack", file: ".agents/skills/ship-stack/SKILL.md", enabled: true },
+        { name: "design-critique", file: ".agents/skills/design-critique/SKILL.md", enabled: true },
+      ]);
+      return;
+    }
     if (path === "/api/projects/matrix-os/tasks" && req.method === "GET") {
       json(res, 200, { tasks, nextCursor: null });
       return;
