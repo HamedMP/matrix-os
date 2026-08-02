@@ -1,5 +1,5 @@
 import { MessageSquare, PanelRightClose, PanelRightOpen, Server } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Group, Panel, Separator, type Layout as SplitLayout } from "react-resizable-panels";
 import { defaultAgentThreadComposerDraft } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
@@ -199,6 +199,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     requestComposerFocus();
     return true;
   }, [projectId, requestComposerFocus, resolveNewChatTarget, summary]);
+  const openNewChatForTypeToStart = useEffectEvent(openNewChat);
 
   // Type-to-start is computed before the early returns so the keydown effect
   // stays hook-order safe; `canCreate` below is derived after them.
@@ -221,13 +222,13 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       }
       if (typeToStartInFlightRef.current) return;
       typeToStartInFlightRef.current = true;
-      void openNewChat(undefined, event.key).then((started) => {
+      void openNewChatForTypeToStart(undefined, event.key).then((started) => {
         if (!started) typeToStartInFlightRef.current = false;
       });
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, selectedThreadId, typeToStartEnabled, composerOpen, openNewChat]);
+  }, [active, selectedThreadId, typeToStartEnabled, composerOpen]);
 
   useEffect(() => {
     if (!active || !composerRequest || composerRequest.projectId !== projectId) return;
