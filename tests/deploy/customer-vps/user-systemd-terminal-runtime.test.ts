@@ -225,6 +225,11 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("read_controller_diagnostic");
     expect(acceptance).toContain('readonly conflict_id="rt_$(printf');
     expect(acceptance).toContain("cleanup_controller_runtime");
+    expect(acceptance).toContain("cleanup_stale_acceptance_runtimes");
+    expect(acceptance).toContain("list_stale_acceptance_runtimes");
+    expect(acceptance).toContain('os.open(entry.path, os.O_RDONLY | os.O_NOFOLLOW)');
+    expect(acceptance).toContain('re.fullmatch(r"u-[sadlpc]-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}", display_name)');
+    expect(prepareWorker).toContain("cleanup_stale_acceptance_runtimes");
     expect(acceptance).toContain('owner_systemctl stop "matrix-zellij@${runtime_id}.service"');
     expect(acceptance).toContain('rm -f -- "${descriptor_root}/${runtime_id}.json"');
     expect(acceptance).not.toContain("readonly conflict_id=rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -237,6 +242,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('progress("hostile-controller-inactive-identity")');
     expect(acceptance).toContain('progress("hostile-controller-inactive-restop")');
     expect(acceptance).toContain("diagnose_controller_failure");
+    expect(acceptance).toContain("journalctl --user -u \"$unit\" --no-pager -n 20 -o cat 2>/dev/null || true");
     expect(acceptance).toContain('current_failure="${controller_status}-descriptor-${descriptor_state}-unit-${unit_result}-exit-${exec_status}-keeper-${keeper_code}"');
     expect(acceptance).toContain('current_failure="${controller_status:-hostile-controller-runtime-unavailable}"');
     expect(acceptance).toContain('attach_diagnostic="${state_root}/attach-${runtime_id}.diagnostic"');

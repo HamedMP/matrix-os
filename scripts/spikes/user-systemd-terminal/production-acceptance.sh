@@ -96,6 +96,78 @@ cleanup_controller_runtime() {
   rm -f -- "$controller_environment_path" "$legacy_controller_environment_path"
 }
 
+list_stale_acceptance_runtimes() {
+  python3 - "$descriptor_root" <<'PY'
+import errno
+import json
+import os
+import re
+import stat
+import sys
+
+root = sys.argv[1]
+try:
+    with os.scandir(root) as scanner:
+        entries = sorted(scanner, key=lambda entry: entry.name)
+except FileNotFoundError:
+    raise SystemExit(0)
+if len(entries) > 512:
+    raise SystemExit(1)
+runtime_pattern = re.compile(r"rt_[0-9a-f]{32}")
+for entry in entries:
+    if runtime_pattern.fullmatch(entry.name.removesuffix(".json")) is None or not entry.name.endswith(".json"):
+        continue
+    try:
+        descriptor_fd = os.open(entry.path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as error:
+        if error.errno in (errno.ENOENT, errno.ELOOP):
+            continue
+        raise
+    descriptor_stat = os.fstat(descriptor_fd)
+    if not stat.S_ISREG(descriptor_stat.st_mode) or descriptor_stat.st_size > 64 * 1024:
+        os.close(descriptor_fd)
+        continue
+    try:
+        with os.fdopen(descriptor_fd, encoding="utf-8") as source:
+            descriptor = json.load(source)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        continue
+    runtime_id = descriptor.get("runtimeId") if isinstance(descriptor, dict) else None
+    display_name = descriptor.get("displayName") if isinstance(descriptor, dict) else None
+    if runtime_id != entry.name.removesuffix(".json") or not isinstance(display_name, str):
+        continue
+    if (
+        re.fullmatch(r"u-[sadlpc]-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}", display_name) is None
+        and display_name != "acceptance-conflict-a"
+    ):
+        continue
+    if descriptor.get("scope") != "terminal" or descriptor.get("sessionName") != f"matrix-{runtime_id}":
+        continue
+    print(f"{runtime_id}\t{display_name}")
+PY
+}
+
+cleanup_stale_acceptance_runtimes() {
+  local inventory="${state_root}/stale-acceptance-runtimes" runtime_id display_name unit
+  install -m 0600 /dev/null "$inventory"
+  list_stale_acceptance_runtimes >"$inventory"
+  while IFS=$'\t' read -r runtime_id display_name; do
+    [ -n "$runtime_id" ] && [ -n "$display_name" ] || continue
+    unit="matrix-zellij@${runtime_id}.service"
+    delete_session "$display_name" >/dev/null 2>&1 || true
+    owner_systemctl stop "$unit" >/dev/null 2>&1 || true
+    owner_systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+    rm -f -- "${descriptor_root}/${runtime_id}.json"
+    rm -f -- "${home}/system/zellij/runtime-layouts/${runtime_id}.kdl"
+    if [ -d "/run/user/${owner_uid}/zellij" ]; then
+      find "/run/user/${owner_uid}/zellij" -maxdepth 1 -type s -name "matrix-${runtime_id}*" -delete
+    fi
+    ! owner_systemctl is-active --quiet "$unit"
+    [ ! -e "${descriptor_root}/${runtime_id}.json" ]
+  done <"$inventory"
+  rm -f -- "$inventory"
+}
+
 diagnose_controller_failure() {
   local controller_status="$1" descriptor_path="${descriptor_root}/${conflict_id}.json"
   local descriptor_state=missing unit="matrix-zellij@${conflict_id}.service"
@@ -109,12 +181,13 @@ diagnose_controller_failure() {
   fi
   unit_result="$(owner_systemctl show "$unit" -p Result --value 2>/dev/null || true)"
   exec_status="$(owner_systemctl show "$unit" -p ExecMainStatus --value 2>/dev/null || true)"
-  keeper_code="$(runuser -u matrix -- env \
-    HOME="$home" MATRIX_HOME="$home" \
-    XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
-    journalctl --user -u "$unit" --no-pager -n 20 -o cat 2>/dev/null |
-    sed -n 's/^matrix-terminal-user-keeper: \([a-z][a-z_]*\)$/\1/p' | tail -n 1)"
+  keeper_code="$({
+    runuser -u matrix -- env \
+      HOME="$home" MATRIX_HOME="$home" \
+      XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
+      journalctl --user -u "$unit" --no-pager -n 20 -o cat 2>/dev/null || true
+  } | sed -n 's/^matrix-terminal-user-keeper: \([a-z][a-z_]*\)$/\1/p' | tail -n 1)"
   [[ "$unit_result" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || unit_result=unknown
   [[ "$exec_status" =~ ^[0-9]{1,3}$ ]] || exec_status=unknown
   [[ "$keeper_code" =~ ^[a-z][a-z_]{0,63}$ ]] || keeper_code=unknown
@@ -1052,6 +1125,8 @@ EOF
   systemctl daemon-reload
   systemctl restart matrix-gateway.service
   wait_gateway
+  current_failure=stale-acceptance-cleanup
+  cleanup_stale_acceptance_runtimes
   write_state prepared
 }
 
