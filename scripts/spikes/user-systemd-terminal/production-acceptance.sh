@@ -729,6 +729,26 @@ print(code)
 PY
 }
 
+read_update_phase() {
+  python3 - /opt/matrix/staging/update-phase <<'PY'
+import os
+import stat
+import sys
+
+phase_fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+phase_stat = os.fstat(phase_fd)
+if not stat.S_ISREG(phase_stat.st_mode) or phase_stat.st_size > 64:
+    os.close(phase_fd)
+    raise SystemExit(1)
+with os.fdopen(phase_fd, encoding="utf-8") as source:
+    phase = source.read().strip()
+allowed = {"prepare", "download", "verify", "extract", "terminal-runtime", "app-install", "host-bin", "health"}
+if phase not in allowed:
+    raise SystemExit(1)
+print(phase)
+PY
+}
+
 path_state() {
   local path="$1"
   if [ -L "$path" ]; then
@@ -791,7 +811,7 @@ classify_update_bundle() {
 }
 
 diagnose_update_failure() {
-  local expected="$1" version_state=missing trigger_state manifest_state error_code=none
+  local expected="$1" version_state=missing trigger_state manifest_state error_code=none update_phase=missing
   local updater_state bundle_state sync_state=inactive gateway_state=inactive health_state=failed installed
   if [ -f /opt/matrix/app/BUNDLE_VERSION ] && [ ! -L /opt/matrix/app/BUNDLE_VERSION ]; then
     installed="$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)"
@@ -810,9 +830,13 @@ diagnose_update_failure() {
   if [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; then
     error_code="$(read_update_error_code 2>/dev/null || true)"
     case "$error_code" in
-      download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|unknown) ;;
+      download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown) ;;
       *) error_code=unknown ;;
     esac
+  fi
+  if [ -e /opt/matrix/staging/update-phase ] || [ -L /opt/matrix/staging/update-phase ]; then
+    update_phase="$(read_update_phase 2>/dev/null || true)"
+    [ -n "$update_phase" ] || update_phase=invalid
   fi
   if systemctl is-active --quiet matrix-sync-agent.service; then
     sync_state=active
@@ -825,7 +849,7 @@ diagnose_update_failure() {
   fi
   updater_state="$(classify_updater_phase)"
   bundle_state="$(classify_update_bundle "$expected")"
-  current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-updater-${updater_state}-bundle-${bundle_state}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"
+  current_failure="update-${version_state}-trigger-${trigger_state}-manifest-${manifest_state}-error-${error_code}-phase-${update_phase}-updater-${updater_state}-bundle-${bundle_state}-sync-${sync_state}-gateway-${gateway_state}-health-${health_state}"
 }
 
 wait_update() {
@@ -841,7 +865,7 @@ wait_update() {
       { [ -e /opt/matrix/app/.update-error.json ] || [ -L /opt/matrix/app/.update-error.json ]; }; then
       error_code="$(read_update_error_code 2>/dev/null || true)"
       case "$error_code" in
-        download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|unknown) ;;
+        download_failed|download_metadata_changed|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown) ;;
         *) error_code=unknown ;;
       esac
       if [ "$error_code" != none ]; then
