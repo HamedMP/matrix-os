@@ -47,7 +47,7 @@ export function startConnectPoll(options: ConnectPollOptions): () => void {
     } catch (err: unknown) {
       console.warn(
         "[integrations] connect poll tick failed:",
-        err instanceof Error ? err.message : String(err),
+        err instanceof Error ? err.name : "Unknown error",
       );
     }
     if (cancelled || settled) return;

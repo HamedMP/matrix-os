@@ -59,6 +59,7 @@ describe("startConnectPoll", () => {
   });
 
   it("keeps polling when a tick throws (transient proxy errors)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let calls = 0;
     const onSettled = vi.fn();
 
@@ -66,7 +67,7 @@ describe("startConnectPoll", () => {
       intervals: [100, 100, 100],
       tick: () => {
         calls += 1;
-        if (calls === 1) return Promise.reject(new Error("boom"));
+        if (calls === 1) return Promise.reject(new Error("secret-token-leak"));
         return Promise.resolve();
       },
       isDone: () => calls >= 2,
@@ -76,6 +77,7 @@ describe("startConnectPoll", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(calls).toBe(2);
     expect(onSettled).toHaveBeenCalledWith(true);
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("secret-token-leak");
   });
 
   it("stops immediately when cancelled", async () => {
