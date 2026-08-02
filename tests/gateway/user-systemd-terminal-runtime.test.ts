@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,6 +93,49 @@ describe("user-systemd terminal runtime", () => {
         }),
       }),
     );
+  });
+
+  it("serializes descriptor creation with generation garbage collection across processes", async () => {
+    const descriptorRoot = join(homePath, "system", "terminal-runtimes");
+    await mkdir(descriptorRoot, { recursive: true });
+    const helperPath = join(process.cwd(), "distro/customer-vps/host-bin/matrix-terminal-generation-gc.py");
+    const holder = spawn("python3", [helperPath, "--lock", descriptorRoot], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await new Promise<void>((resolve, reject) => {
+      holder.once("error", reject);
+      holder.stdout.once("data", (chunk) => {
+        if (chunk.toString() === "locked\n") resolve();
+        else reject(new Error("generation lock holder did not become ready"));
+      });
+    });
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      generationLockHelperPath: helperPath,
+      runCommand,
+      readinessProbe: vi.fn(async () => true),
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+
+    let settled = false;
+    const creating = runtime.create({
+      runtimeId: RUNTIME_ID,
+      scope: "terminal",
+      kind: "shell",
+      displayName: "Main shell",
+      cwd,
+      layoutPath,
+    }).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(settled).toBe(false);
+
+    holder.stdin.end();
+    await expect(creating).resolves.toMatchObject({ runtimeId: RUNTIME_ID });
   });
 
   it("rejects unsafe IDs and paths before writing state or invoking systemd", async () => {

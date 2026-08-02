@@ -84,6 +84,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf8");
 
     expect(server).toContain('process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED === "1"');
+    expect(server).toContain('const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)');
+    expect(server).toContain('process.env.MATRIX_RUNTIME_SLOT === runtimeHandle');
     expect(server).toContain("loadInstalledTerminalRuntimeGeneration");
     expect(server).toContain("createUserSystemdZellijRuntime");
     expect(server).toContain("createUserSystemdZellijAdapter");
@@ -185,8 +187,13 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(workflow).toContain('"${remote_base}.sh" helper root 0700');
     expect(workflow).toContain('"${remote_base}-probe.mjs" probe matrix 0640');
     expect(workflow).toContain('--arg group "$group" --arg mode "$mode"');
+    expect(workflow).toContain("x-matrix-acceptance-timestamp");
+    expect(workflow).toContain("x-matrix-acceptance-nonce");
+    expect(workflow).toContain("x-matrix-acceptance-signature");
+    expect(workflow).toContain("x-matrix-acceptance-response-signature");
+    expect(workflow).not.toContain('authorization: Bearer ${token}');
     expect(rebootVerification).toContain(
-      'if ! curl --fail --silent --show-error --max-time 45 --insecure',
+      'if ! send_signed_command "$body" "$response"; then',
     );
     expect(rebootVerification).toContain('return 1');
     expect(acceptance).toContain("gatewayRestartPreservesRuntimes");

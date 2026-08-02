@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -241,6 +241,7 @@ export function createUserSystemdTerminalRuntime(options: {
   readinessProbe?: (descriptor: UserSystemdTerminalDescriptor) => Promise<boolean>;
   now?: () => string;
   readinessTimeoutMs?: number;
+  generationLockHelperPath?: string;
 }) {
   const homePath = resolve(options.homePath);
   const uid = options.uid ?? process.getuid?.();
@@ -249,6 +250,7 @@ export function createUserSystemdTerminalRuntime(options: {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const now = options.now ?? (() => new Date().toISOString());
   const descriptorRoot = join(homePath, "system", "terminal-runtimes");
+  const generationLockHelperPath = options.generationLockHelperPath;
   let mutationTail = Promise.resolve();
   const systemdEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -260,6 +262,64 @@ export function createUserSystemdTerminalRuntime(options: {
     }),
   };
 
+  async function withCrossProcessGenerationLock<T>(operation: () => Promise<T>): Promise<T> {
+    if (!generationLockHelperPath) return operation();
+    await ensureDescriptorRoot();
+    const child = spawn("python3", [generationLockHelperPath, "--lock", descriptorRoot], {
+      cwd: homePath,
+      env: systemdEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      if (stderr.length < 4096) stderr += chunk.slice(0, 4096 - stderr.length);
+    });
+    try {
+      await new Promise<void>((resolveReady, rejectReady) => {
+        const timeout = setTimeout(() => rejectReady(new TerminalRuntimeUnavailableError()), SYSTEMCTL_TIMEOUT_MS);
+        timeout.unref?.();
+        const cleanup = () => {
+          clearTimeout(timeout);
+          child.stdout.off("data", onData);
+          child.off("error", onError);
+          child.off("exit", onExit);
+        };
+        const onData = (chunk: Buffer) => {
+          if (chunk.toString("utf8") !== "locked\n") return;
+          cleanup();
+          resolveReady();
+        };
+        const onError = (err: Error) => {
+          cleanup();
+          rejectReady(new TerminalRuntimeUnavailableError(err));
+        };
+        const onExit = () => {
+          cleanup();
+          rejectReady(new TerminalRuntimeUnavailableError(new Error(stderr || "generation lock exited")));
+        };
+        child.stdout.on("data", onData);
+        child.once("error", onError);
+        child.once("exit", onExit);
+      });
+      return await operation();
+    } finally {
+      child.stdin.end();
+      await new Promise<void>((resolveExit) => {
+        if (child.exitCode !== null) return resolveExit();
+        const timeout = setTimeout(() => {
+          child.kill("SIGKILL");
+          resolveExit();
+        }, SYSTEMCTL_TIMEOUT_MS);
+        timeout.unref?.();
+        child.once("exit", () => {
+          clearTimeout(timeout);
+          resolveExit();
+        });
+      });
+    }
+  }
+
   async function withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
     const previous = mutationTail;
     let release!: () => void;
@@ -268,7 +328,7 @@ export function createUserSystemdTerminalRuntime(options: {
     });
     await previous;
     try {
-      return await operation();
+      return await withCrossProcessGenerationLock(operation);
     } finally {
       release();
     }

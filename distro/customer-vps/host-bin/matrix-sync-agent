@@ -200,22 +200,24 @@ reload_terminal_user_manager() {
 }
 
 cleanup_terminal_runtime_generations() {
-  local max_generations="$TERMINAL_RUNTIME_MAX_GENERATIONS" candidate installed_count
+  local max_generations="$TERMINAL_RUNTIME_MAX_GENERATIONS" candidate installed_count removed
   if [[ ! "$max_generations" =~ ^[0-9]+$ ]] || [ "$max_generations" -lt 2 ] || [ "$max_generations" -gt 32 ]; then
     max_generations=8
   fi
-  while IFS= read -r candidate; do
-    [[ "$candidate" =~ ^gen_[0-9a-f]{64}$ ]] || continue
-    [ -d "$TERMINAL_RUNTIME_ROOT/generations/$candidate" ] || continue
-    [ ! -L "$TERMINAL_RUNTIME_ROOT/generations/$candidate" ] || continue
-    sudo rm -rf -- "$TERMINAL_RUNTIME_ROOT/generations/$candidate" || return 1
-    log "Removed unreferenced terminal runtime generation $candidate"
-  done < <(python3 "$BIN_DIR/matrix-terminal-generation-gc.py" \
+  if ! removed="$(sudo python3 "$BIN_DIR/matrix-terminal-generation-gc.py" --delete \
     "$TERMINAL_RUNTIME_ROOT" \
     "/home/matrix/home/system/terminal-runtimes" \
     "$APP_DIR" \
     "$APP_DIR.rollback" \
-    "$max_generations")
+    "$max_generations")"; then
+    log "ERROR: terminal runtime generation cleanup failed closed"
+    return 1
+  fi
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    [[ "$candidate" =~ ^gen_[0-9a-f]{64}$ ]] || return 1
+    log "Removed unreferenced terminal runtime generation $candidate"
+  done <<< "$removed"
   installed_count="$(find "$TERMINAL_RUNTIME_ROOT/generations" -mindepth 1 -maxdepth 1 -type d -name 'gen_*' -print 2>/dev/null | wc -l)"
   if [ "$installed_count" -gt "$max_generations" ]; then
     log "ERROR: terminal runtime generation cap reached by active or recoverable sessions"

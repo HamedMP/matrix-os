@@ -1,24 +1,56 @@
 #!/usr/bin/env python3
-"""Print unreferenced terminal runtime generations eligible for deletion."""
+"""Inspect or delete unreferenced terminal runtime generations safely."""
 
+import fcntl
 import json
 import os
 import re
+import shutil
+import stat
 import sys
 
 GENERATION_RE = re.compile(r"^gen_[0-9a-f]{64}$")
 
 
-def main() -> int:
-    if len(sys.argv) != 6:
-        return 2
-    root, descriptor_root, app_dir, rollback_dir, max_raw = sys.argv[1:]
+def acquire_generation_lock(descriptor_root: str) -> int:
+    root_stats = os.lstat(descriptor_root)
+    if stat.S_ISLNK(root_stats.st_mode) or not stat.S_ISDIR(root_stats.st_mode):
+        raise OSError("unsafe descriptor root")
+    lock_path = os.path.join(descriptor_root, ".generation-gc.lock")
+    descriptor = os.open(
+        lock_path,
+        os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        lock_stats = os.fstat(descriptor)
+        if not stat.S_ISREG(lock_stats.st_mode):
+            raise OSError("unsafe generation lock")
+        if lock_stats.st_uid != root_stats.st_uid or lock_stats.st_gid != root_stats.st_gid:
+            if os.geteuid() != 0:
+                raise OSError("generation lock ownership mismatch")
+            os.fchown(descriptor, root_stats.st_uid, root_stats.st_gid)
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def collect_candidates(
+    root: str,
+    descriptor_root: str,
+    app_dir: str,
+    rollback_dir: str,
+    max_raw: str,
+) -> list[str]:
     try:
         max_generations = int(max_raw)
     except ValueError:
-        return 2
+        raise OSError("invalid generation limit")
     if max_generations < 2 or max_generations > 32:
-        return 2
+        raise OSError("invalid generation limit")
 
     keep: set[str] = set()
 
@@ -73,14 +105,64 @@ def main() -> int:
     except OSError:
         pass
 
+    candidates: list[str] = []
     remaining = len(generations)
     for _mtime, name in sorted(generations):
         if remaining <= max_generations:
             break
         if name in keep:
             continue
-        print(name)
+        candidates.append(name)
         remaining -= 1
+    return candidates
+
+
+def delete_candidates(root: str, candidates: list[str]) -> None:
+    generation_root = os.path.join(root, "generations")
+    for name in candidates:
+        if not GENERATION_RE.fullmatch(name):
+            raise OSError("invalid generation candidate")
+        candidate = os.path.join(generation_root, name)
+        stats = os.lstat(candidate)
+        if stat.S_ISLNK(stats.st_mode) or not stat.S_ISDIR(stats.st_mode):
+            raise OSError("unsafe generation candidate")
+        shutil.rmtree(candidate)
+        print(name, flush=True)
+
+
+def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--lock":
+        try:
+            descriptor = acquire_generation_lock(sys.argv[2])
+            print("locked", flush=True)
+            sys.stdin.buffer.read(1)
+            os.close(descriptor)
+            return 0
+        except OSError:
+            return 1
+
+    delete = len(sys.argv) == 7 and sys.argv[1] == "--delete"
+    if delete:
+        root, descriptor_root, app_dir, rollback_dir, max_raw = sys.argv[2:]
+    elif len(sys.argv) == 6:
+        root, descriptor_root, app_dir, rollback_dir, max_raw = sys.argv[1:]
+    else:
+        return 2
+    descriptor: int | None = None
+    try:
+        if delete:
+            descriptor = acquire_generation_lock(descriptor_root)
+        candidates = collect_candidates(root, descriptor_root, app_dir, rollback_dir, max_raw)
+        if delete:
+            delete_candidates(root, candidates)
+        else:
+            for candidate in candidates:
+                print(candidate)
+    except OSError:
+        return 1
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     return 0
 
 

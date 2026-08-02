@@ -89,6 +89,9 @@ const HMAC_WEBHOOK_PREFIXES = [
 const ROUTE_SCOPED_BEARER_PATHS = [
   "/api/internal/upgrade",
 ];
+const ROUTE_SCOPED_SIGNATURE_PATHS = [
+  "/api/internal/terminal-acceptance/run",
+];
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/terminal/session", "/ws/onboarding", "/ws/vocal"];
@@ -199,6 +202,14 @@ export function authMiddleware(
     }
 
     if (ROUTE_SCOPED_BEARER_PATHS.some((p) => normalizedPath === p)) {
+      const ip = getClientIp(c);
+      if (!rateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    if (ROUTE_SCOPED_SIGNATURE_PATHS.some((p) => normalizedPath === p)) {
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {
         return tooManyRequests(c);

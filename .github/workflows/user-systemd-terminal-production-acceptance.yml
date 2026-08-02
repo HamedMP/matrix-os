@@ -201,14 +201,45 @@ jobs:
             process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
           ' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$token"
-          endpoint='https://app.matrix-os.com/api/terminal/run'
-          send_command() {
-            local body="$1" response="$RUNNER_TEMP/user-systemd-command.json"
+          endpoint='https://app.matrix-os.com/api/internal/terminal-acceptance/run'
+          send_signed_command() {
+            local body="$1" response="$2" timestamp nonce signature response_signature headers
+            timestamp="$(date +%s)"
+            nonce="$(openssl rand -hex 16)"
+            signature="$(ACCEPTANCE_SIGNING_KEY="$token" ACCEPTANCE_BODY="$body" node --input-type=module -e '
+              import{createHash,createHmac}from"node:crypto";
+              const digest=createHash("sha256").update(process.env.ACCEPTANCE_BODY).digest("hex");
+              process.stdout.write(createHmac("sha256",process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
+            ' "$timestamp" "$nonce")"
+            headers="$RUNNER_TEMP/user-systemd-command-headers"
+            # The disposable VPS has a per-host self-signed certificate. Request and response
+            # HMACs provide end-to-end authenticity; the reusable key never crosses this link.
             curl --fail --silent --show-error --max-time 90 --insecure \
               --resolve "app.matrix-os.com:443:${ADDRESS}" \
-              -o "$response" -X POST "$endpoint" \
-              -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
+              -D "$headers" -o "$response" -X POST "$endpoint" \
+              -H "x-matrix-acceptance-timestamp: $timestamp" \
+              -H "x-matrix-acceptance-nonce: $nonce" \
+              -H "x-matrix-acceptance-signature: $signature" \
+              -H 'content-type: application/json' \
               --data-binary "$body"
+            response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module - \
+              "$timestamp" "$nonce" "$response_signature" "$response" <<'NODE'
+            import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+            import { readFile } from "node:fs/promises";
+            const [timestamp, nonce, signature, path] = process.argv.slice(2);
+            const body = await readFile(path);
+            const digest = createHash("sha256").update(body).digest("hex");
+            const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+              .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+            if (!/^[0-9a-f]{64}$/.test(signature) ||
+              !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            NODE
+          }
+          send_command() {
+            local body="$1" response="$RUNNER_TEMP/user-systemd-command.json"
+            send_signed_command "$body" "$response"
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
           }
@@ -261,16 +292,45 @@ jobs:
           ' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$token"
           helper="$(cat "$RUNNER_TEMP/user-systemd-remote-base").sh"
+          send_signed_command() {
+            local body="$1" response="$2" timestamp nonce signature response_signature headers
+            timestamp="$(date +%s)"
+            nonce="$(openssl rand -hex 16)"
+            signature="$(ACCEPTANCE_SIGNING_KEY="$token" ACCEPTANCE_BODY="$body" node --input-type=module -e '
+              import{createHash,createHmac}from"node:crypto";
+              const digest=createHash("sha256").update(process.env.ACCEPTANCE_BODY).digest("hex");
+              process.stdout.write(createHmac("sha256",process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
+            ' "$timestamp" "$nonce")"
+            headers="$RUNNER_TEMP/user-systemd-helper-headers"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -D "$headers" -o "$response" -X POST \
+              'https://app.matrix-os.com/api/internal/terminal-acceptance/run' \
+              -H "x-matrix-acceptance-timestamp: $timestamp" \
+              -H "x-matrix-acceptance-nonce: $nonce" \
+              -H "x-matrix-acceptance-signature: $signature" \
+              -H 'content-type: application/json' --data-binary "$body"
+            response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module - \
+              "$timestamp" "$nonce" "$response_signature" "$response" <<'NODE'
+            import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+            import { readFile } from "node:fs/promises";
+            const [timestamp, nonce, signature, path] = process.argv.slice(2);
+            const body = await readFile(path);
+            const digest = createHash("sha256").update(body).digest("hex");
+            const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+              .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+            if (!/^[0-9a-f]{64}$/.test(signature) ||
+              !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            NODE
+          }
           call_helper() {
             local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
             body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
               --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" --arg version "$PREVIEW_VERSION" '{
               command:["/usr/bin/sudo",$helper,$op,$sha,$nonce,$version],timeoutMs:30000}')"
-            curl --fail --silent --show-error --max-time 45 --insecure \
-              --resolve "app.matrix-os.com:443:${ADDRESS}" \
-              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
-              -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
-              --data-binary "$body"
+            send_signed_command "$body" "$response"
             jq -er 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) | .stdout' \
               "$response"
           }
@@ -336,16 +396,45 @@ jobs:
           ' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$token"
           helper="$(cat "$RUNNER_TEMP/user-systemd-remote-base").sh"
+          send_signed_command() {
+            local body="$1" response="$2" timestamp nonce signature response_signature headers
+            timestamp="$(date +%s)"
+            nonce="$(openssl rand -hex 16)"
+            signature="$(ACCEPTANCE_SIGNING_KEY="$token" ACCEPTANCE_BODY="$body" node --input-type=module -e '
+              import{createHash,createHmac}from"node:crypto";
+              const digest=createHash("sha256").update(process.env.ACCEPTANCE_BODY).digest("hex");
+              process.stdout.write(createHmac("sha256",process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
+            ' "$timestamp" "$nonce")"
+            headers="$RUNNER_TEMP/user-systemd-helper-headers"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -D "$headers" -o "$response" -X POST \
+              'https://app.matrix-os.com/api/internal/terminal-acceptance/run' \
+              -H "x-matrix-acceptance-timestamp: $timestamp" \
+              -H "x-matrix-acceptance-nonce: $nonce" \
+              -H "x-matrix-acceptance-signature: $signature" \
+              -H 'content-type: application/json' --data-binary "$body"
+            response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module - \
+              "$timestamp" "$nonce" "$response_signature" "$response" <<'NODE'
+            import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+            import { readFile } from "node:fs/promises";
+            const [timestamp, nonce, signature, path] = process.argv.slice(2);
+            const body = await readFile(path);
+            const digest = createHash("sha256").update(body).digest("hex");
+            const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+              .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+            if (!/^[0-9a-f]{64}$/.test(signature) ||
+              !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            NODE
+          }
           call_helper() {
             local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
             body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
               --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" --arg version "$PREVIEW_VERSION" '{
               command:["/usr/bin/sudo",$helper,$op,$sha,$nonce,$version],timeoutMs:30000}')"
-            if ! curl --fail --silent --show-error --max-time 45 --insecure \
-              --resolve "app.matrix-os.com:443:${ADDRESS}" \
-              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
-              -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
-              --data-binary "$body"; then
+            if ! send_signed_command "$body" "$response"; then
               return 1
             fi
             jq -er 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) | .stdout' \

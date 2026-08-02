@@ -119,9 +119,35 @@ post-transfer time.
 Reference-aware generation garbage collection keeps
 the current app generation, rollback app generation, and every generation
 referenced by a valid descriptor, skip symlinks, and enforce a bounded retained
-count. Corrupt files and symlinks are ignored rather than followed. Disposable
-VPS evidence must still prove the behavior on the target filesystem and cgroup
-image before activation.
+count. Descriptor create, rename, and delete operations take the same
+cross-process kernel advisory lock that garbage collection holds continuously
+from descriptor scan through exact generation deletion. The lock file is
+opened with `O_NOFOLLOW`, checked as a regular file, and owned by the descriptor
+root owner; a symlink or ownership mismatch fails closed. Corrupt files and
+symlinks are ignored rather than followed. Disposable VPS evidence must still
+prove the behavior on the target filesystem and cgroup image before activation.
+
+## Disposable-preview acceptance control surface
+
+The production acceptance workflow needs a direct control path before the
+dormant runtime flag is enabled. That route exists only when `MATRIX_HANDLE`
+and `MATRIX_RUNTIME_SLOT` are the same validated `pr-<number>` disposable
+preview identity. It is absent on customer runtimes.
+
+| Route | Availability | Authentication | Input and resource bounds |
+| --- | --- | --- | --- |
+| `POST /api/internal/terminal-acceptance/run` | Exact disposable PR preview only | HMAC-SHA256 over version, timestamp, 128-bit nonce, and exact body digest using the handle-scoped platform verification key | 16 KiB body; typed command array; bounded timeout/output; 120-second clock window; 512-entry, five-minute replay cache |
+
+The workflow derives the handle-scoped key locally from the Actions-only
+platform secret but never sends either reusable secret. Every request uses a
+fresh nonce, and the gateway rejects stale, forged, or replayed requests before
+execution. The response body is signed with the same request timestamp and
+nonce and verified before the workflow consumes it. This application-layer
+request/response authentication is required because disposable VPS origins use
+per-host self-signed TLS certificates. Acceptance payloads and responses are
+bounded repository assets and lifecycle evidence only; they must contain no
+credentials, terminal contents, prompts, provider configuration, environment
+values, or user files.
 
 ## Scope split
 
