@@ -314,6 +314,10 @@ allowed = {
     "hostile-controller-create-unexpected-error",
     "hostile-controller-conflicting-descriptor-reuse",
     "hostile-controller-inactive-restart",
+    "hostile-controller-inactive-stop",
+    "hostile-controller-inactive-start",
+    "hostile-controller-inactive-identity",
+    "hostile-controller-inactive-restop",
     "hostile-controller-descriptor-reject",
     "hostile-controller-unit-descriptor-reject",
     "hostile-controller-unit-environment-reject",
@@ -659,9 +663,13 @@ try {
   progress("hostile-controller-conflicting-descriptor-reuse");
   await mustReject(() => runtime.create({ ...base, displayName: "acceptance-conflict-b" }));
   progress("hostile-controller-inactive-restart");
+  progress("hostile-controller-inactive-stop");
   await execFileAsync("systemctl", ["--user", "stop", `matrix-zellij@${runtimeId}.service`]);
+  progress("hostile-controller-inactive-start");
   const restarted = await runtime.start(runtimeId);
+  progress("hostile-controller-inactive-identity");
   if (restarted.runtimeId !== created.runtimeId || restarted.sessionName !== created.sessionName) process.exit(1);
+  progress("hostile-controller-inactive-restop");
   await execFileAsync("systemctl", ["--user", "stop", `matrix-zellij@${runtimeId}.service`]);
   const descriptorPath = `${homePath}/system/terminal-runtimes/${runtimeId}.json`;
   const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
