@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
@@ -84,7 +84,7 @@ describe("AgentConversationView abort control", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(
         "runtime:abort-thread",
         expect.objectContaining({ threadId: "thread_alpha" }),
@@ -100,7 +100,7 @@ describe("AgentConversationView abort control", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.status).toBe("aborted"),
     );
   });
@@ -117,7 +117,7 @@ describe("AgentConversationView abort control", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
-    await vi.waitFor(() => expect(useCodingAgentWorkspace.getState().turnError).toBeNull());
+    await waitFor(() => expect(useCodingAgentWorkspace.getState().turnError).toBeNull());
   });
 
   it("keeps the send button on an idle thread even when abort is supported", () => {
@@ -139,7 +139,7 @@ describe("AgentConversationView abort control", () => {
 
     // The user must be told the stop did not take effect -- previously the
     // failure was swallowed and the busy UI looked identical to success.
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(useCodingAgentWorkspace.getState().turnError).toMatch(/could not stop/i),
     );
     // Generic copy only: the raw provider message never reaches the UI.

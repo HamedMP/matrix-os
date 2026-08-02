@@ -150,8 +150,8 @@ suite("operator desktop e2e", () => {
     await expect.poll(() => gateway.state.codingAgentCreates.length, { timeout: 5_000 }).toBe(1);
     expect(gateway.state.codingAgentCreates[0]).toMatchObject({ projectId: "matrix-os" });
     await page.getByText("fix the failing auth tests").first().waitFor({ timeout: 10_000 });
-    await page.getByText("Completed").first().waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05-project-chats-composer.png") });
+    await page.locator("span:visible", { hasText: /^Done$/ }).first().waitFor({ timeout: 10_000 });
   }, 30_000);
 
   it("opens the Terminal workspace with a session sidebar", async () => {

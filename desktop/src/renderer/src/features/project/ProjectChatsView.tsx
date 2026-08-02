@@ -1,5 +1,5 @@
 import { MessageSquare, PanelRightClose, PanelRightOpen, Server } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Group, Panel, Separator, type Layout as SplitLayout } from "react-resizable-panels";
 import { defaultAgentThreadComposerDraft } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
@@ -173,12 +173,12 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     void workspace.loadThreadSnapshot(selectedThreadId);
   }, [active, selectedThreadId, activeThreadId, threadSnapshot?.thread.id, projectId, setSelectedThread]);
 
-  async function openNewChat(
+  const openNewChat = useCallback(async (
     taskId?: string,
     initialPrompt?: string,
     cancelled: () => boolean = () => false,
     onReady: () => void = () => undefined,
-  ): Promise<boolean> {
+  ): Promise<boolean> => {
     if (!summary) return false;
     const relation = await resolveNewChatTarget(projectId, taskId);
     if (cancelled()) return false;
@@ -198,15 +198,13 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     setComposerOpen(true);
     requestComposerFocus();
     return true;
-  }
+  }, [projectId, requestComposerFocus, resolveNewChatTarget, summary]);
 
   // Type-to-start is computed before the early returns so the keydown effect
   // stays hook-order safe; `canCreate` below is derived after them.
   const typeToStartEnabled = summary
     ? capabilityEnabled(summary, "codingAgentsThreadCreate") && projectWorkspaceEnabled
     : false;
-  const openNewChatRef = useRef(openNewChat);
-  openNewChatRef.current = openNewChat;
   const typeToStartInFlightRef = useRef(false);
   useEffect(() => {
     if (!active || selectedThreadId || !typeToStartEnabled || composerOpen) return;
@@ -223,13 +221,13 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       }
       if (typeToStartInFlightRef.current) return;
       typeToStartInFlightRef.current = true;
-      void openNewChatRef.current(undefined, event.key).then((started) => {
+      void openNewChat(undefined, event.key).then((started) => {
         if (!started) typeToStartInFlightRef.current = false;
       });
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, selectedThreadId, typeToStartEnabled, composerOpen]);
+  }, [active, selectedThreadId, typeToStartEnabled, composerOpen, openNewChat]);
 
   useEffect(() => {
     if (!active || !composerRequest || composerRequest.projectId !== projectId) return;
