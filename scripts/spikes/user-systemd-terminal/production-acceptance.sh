@@ -1427,6 +1427,7 @@ case "$operation" in
   prepare)
     install -d -o root -g root -m 0700 "$root_parent"
     cleanup_controller_runtime || true
+    remove_hostile_state || true
     find "$root_parent" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf -- {} +
     rm -rf -- "$state_root"
     install -d -o root -g root -m 0700 "$checks_root"
