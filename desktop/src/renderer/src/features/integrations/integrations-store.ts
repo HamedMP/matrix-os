@@ -54,7 +54,12 @@ function resolveApi(apiOverride: ApiClient | null | undefined): ApiClient | null
 }
 
 function logWarn(scope: string, err: unknown): void {
-  console.warn(`[integrations] ${scope}:`, err instanceof Error ? err.message : String(err));
+  const category = err instanceof AppError
+    ? err.category
+    : err instanceof Error
+      ? err.name
+      : "Unknown error";
+  console.warn(`[integrations] ${scope}:`, category);
 }
 
 // Ordering guard for the catalog load only. Identity ("is this still the same

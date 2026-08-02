@@ -354,14 +354,20 @@ describe("useIntegrations store", () => {
   });
 
   it("startConnect() surfaces only generic copy when the proxy fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const api = makeApi({
       post: async () => {
         throw new Error("pipedream exploded: secret-token-leak");
       },
     });
-    const url = await useIntegrations.getState().startConnect("gmail", api);
-    expect(url).toBeNull();
-    expect(useIntegrations.getState().errorMessage).toBe("Something went wrong. Please try again.");
+    try {
+      const url = await useIntegrations.getState().startConnect("gmail", api);
+      expect(url).toBeNull();
+      expect(useIntegrations.getState().errorMessage).toBe("Something went wrong. Please try again.");
+      expect(warn.mock.calls.flat().join(" ")).not.toContain("secret-token-leak");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("disconnect() removes the connection on success", async () => {
