@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { BrandPanel } from "../../desktop/src/renderer/src/design/BrandPanel";
@@ -44,6 +46,30 @@ describe("BrandPanel brand pinning", () => {
     renderPanel();
     const mark = screen.getByTestId("matrix-brand-visible-mark");
     expect(mark.style.background).toBe("var(--brand-forest-foreground)");
+  });
+
+  it("uses pinned muted text for the subtitle and bullet labels", () => {
+    renderPanel();
+
+    expect(screen.getByText("Every user gets a private VPS.").style.color).toBe(
+      "var(--brand-forest-muted)",
+    );
+    expect(screen.getByText("No local setup required").style.color).toBe(
+      "var(--brand-forest-muted)",
+    );
+  });
+
+  it("keeps the pinned forest palette consistent in dark mode", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "desktop/src/renderer/src/design/tokens.css"),
+      "utf8",
+    );
+    const darkTokens = css.match(/\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/)?.[1];
+
+    expect(darkTokens).toContain("--brand-forest: #434e3f;");
+    expect(darkTokens).toContain("--brand-forest-deep: #32352e;");
+    expect(darkTokens).toContain("--brand-forest-foreground: #fafaf5;");
+    expect(darkTokens).toContain("--brand-forest-muted: rgba(250, 250, 245, 0.62);");
   });
 
   it("keeps brand tokens unmanaged when a non-matrix theme is applied", () => {
