@@ -49,6 +49,7 @@ export function isValidBranchName(value: string): boolean {
   if (value.startsWith("-") || value.startsWith(".") || value.startsWith("/")) return false;
   if (value.endsWith("/") || value.endsWith(".") || value.endsWith(".lock")) return false;
   if (value.includes("..") || value.includes("@{") || value.includes("//")) return false;
+  if (value.split("/").some((component) => component.startsWith(".") || component.endsWith(".lock"))) return false;
   if (value === "@") return false;
   return true;
 }

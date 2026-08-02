@@ -117,6 +117,20 @@ describe("createApiClient", () => {
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({ title: "Fix" });
   });
 
+  it("honors a bounded per-request timeout override", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+
+    await client.post("/api/projects/clone", { url: "https://github.com/owner/repo" }, { timeoutMs: 310_000 });
+
+    expect(timeout).toHaveBeenCalledWith(310_000);
+  });
+
   it("treats non-JSON success bodies as server errors", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response("<html>", { status: 200 }));
     const client = createApiClient({

@@ -8,10 +8,16 @@ import { createProjectManager } from "../../packages/gateway/src/project-manager
 import { createProjectFolders } from "../../packages/gateway/src/project-folders.js";
 
 function jsonRequest(path: string, body: unknown): Request {
+  const requestBody = path === "/api/projects/clone"
+    && typeof body === "object"
+    && body !== null
+    && !("clientRequestId" in body)
+    ? { ...body, clientRequestId: "req_test-default" }
+    : body;
   return new Request(`http://localhost${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(requestBody),
   });
 }
 
@@ -54,6 +60,7 @@ describe("project clone and mkdir routes", () => {
         url: "https://github.com/owner/repo",
         name: "my-repo",
         branch: "main",
+        clientRequestId: "req_clone-123",
       }));
 
       expect(res.status).toBe(201);
@@ -65,6 +72,7 @@ describe("project clone and mkdir routes", () => {
         slug: "my-repo",
         name: undefined,
         branch: "main",
+        clientRequestId: "req_clone-123",
         ownerScope: expect.anything(),
       });
     });
@@ -75,6 +83,7 @@ describe("project clone and mkdir routes", () => {
 
       const res = await app.request(jsonRequest("/api/projects/clone", {
         url: "https://github.com/owner/repo.git",
+        clientRequestId: "req_clone-456",
       }));
 
       expect(res.status).toBe(201);
@@ -84,8 +93,22 @@ describe("project clone and mkdir routes", () => {
         slug: undefined,
         name: undefined,
         branch: undefined,
+        clientRequestId: "req_clone-456",
         ownerScope: expect.anything(),
       });
+    });
+
+    it("requires a valid idempotency key", async () => {
+      const projectManager = makeProjectManager();
+      const app = createWorkspaceRoutes({ homePath, projectManager });
+
+      const res = await app.request(jsonRequest("/api/projects/clone", {
+        url: "https://github.com/owner/repo",
+        clientRequestId: "bad key",
+      }));
+
+      expect(res.status).toBe(400);
+      expect(projectManager.createProject).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -127,7 +150,7 @@ describe("project clone and mkdir routes", () => {
       },
     );
 
-    it.each(["-x", "a..b", "a b", "a@{b}", ".x", "x.", "x/", "/x", "x.lock", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", "a\\b"])(
+    it.each(["-x", "a..b", "a b", "a@{b}", ".x", "x.", "x/", "/x", "x.lock", "foo/.bar", "foo/bar.lock/baz", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", "a\\b"])(
       "rejects unsafe branch names: %s",
       async (branch) => {
         const projectManager = makeProjectManager();
@@ -240,6 +263,22 @@ describe("project clone and mkdir routes", () => {
   });
 
   describe("project manager branch support", () => {
+    it("reports missing GitHub CLI auth as a dependency failure, not Matrix session auth", async () => {
+      const runCommand = vi.fn(async (command: string) => {
+        if (command === "gh") throw new Error("not logged in");
+        return { stdout: "", stderr: "" };
+      });
+      const manager = createProjectManager({ homePath, runCommand });
+
+      const result = await manager.createProject({ mode: "github", url: "https://github.com/owner/repo" });
+
+      expect(result).toEqual({
+        ok: false,
+        status: 424,
+        error: { code: "github_auth_required", message: "GitHub authentication is required" },
+      });
+    });
+
     it("passes --branch to git clone when a branch is given", async () => {
       const runCommand = vi.fn(async (_command: string, _args: string[]) => ({ stdout: "", stderr: "" }));
       const manager = createProjectManager({ homePath, runCommand });
@@ -324,6 +363,25 @@ describe("project clone and mkdir routes", () => {
       await expect(res.json()).resolves.toEqual({ path: "code/side-project" });
       const created = await stat(join(homePath, "code", "side-project"));
       expect(created.isDirectory()).toBe(true);
+    });
+
+    it("allows a safe child beside a denied subtree", async () => {
+      await mkdir(join(homePath, "data", "browser-profiles"), { recursive: true });
+      const app = createWorkspaceRoutes({ homePath });
+
+      const res = await app.request(jsonRequest("/api/projects/mkdir", { name: "safe-project", parent: "data" }));
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toEqual({ path: "data/safe-project" });
+    });
+
+    it("still rejects a target inside the denied browser-profile subtree", async () => {
+      await mkdir(join(homePath, "data", "browser-profiles"), { recursive: true });
+      const app = createWorkspaceRoutes({ homePath });
+
+      const res = await app.request(jsonRequest("/api/projects/mkdir", { name: "nested", parent: "data/browser-profiles" }));
+
+      expect(res.status).toBe(400);
     });
 
     it("returns 409 for an existing custom-parent folder", async () => {

@@ -87,6 +87,7 @@ const CloneProjectSchema = z.object({
   ),
   name: z.string().trim().regex(PROJECT_SLUG_REGEX).optional(),
   branch: GitBranchSchema.optional(),
+  clientRequestId: z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/),
 });
 
 const MkdirFolderSchema = z.object({
@@ -355,6 +356,7 @@ export function createWorkspaceRoutes(options: {
       url: body.value.url,
       slug: body.value.name,
       branch: body.value.branch,
+      clientRequestId: body.value.clientRequestId,
       ownerScope,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));

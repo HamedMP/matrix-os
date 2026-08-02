@@ -1,12 +1,9 @@
-// Clone request for the add-project dialog. The shared ApiClient caps calls
-// at 10s, but a git clone can legitimately run for minutes (the gateway
-// bounds it at 5 minutes), so this one POST uses a raw fetch with a matching
-// timeout. Auth still rides the Authorization header injected by the trusted
-// core at the network layer (desktop/src/main/auth/header-injection.ts),
-// exactly like the ApiClient. Server error bodies are read only for their
-// safe snake_case code and mapped to generic copy — raw git output never
-// reaches the UI.
-import { buildGatewayUrl } from "../../lib/api";
+// Clone request for the add-project dialog. A git clone can legitimately run
+// for minutes, so this call uses the authenticated ApiClient with an explicit
+// operation timeout. Keeping the request in ApiClient preserves its 401
+// session-expiry callback and safe error-code parsing.
+import type { ApiClient } from "../../lib/api";
+import { AppError } from "../../lib/errors";
 
 // Gateway CLONE_TIMEOUT_MS is 5 minutes; the client waits slightly longer so
 // the server's own timeout error wins the race.
@@ -18,8 +15,6 @@ export interface ClonedProject {
 }
 
 type CloneResult = { ok: true; project: ClonedProject } | { ok: false; message: string };
-
-type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
 function cloneErrorMessage(code: string | null): string {
   switch (code) {
@@ -39,52 +34,42 @@ function cloneErrorMessage(code: string | null): string {
 }
 
 export async function cloneProject(options: {
-  baseUrl: string;
-  runtimeSlot: string;
+  api: ApiClient;
   url: string;
   name?: string;
   branch?: string;
-  fetchFn?: FetchFn;
+  clientRequestId: string;
 }): Promise<CloneResult> {
-  const fetchFn: FetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
-  let response: Response;
   try {
-    response = await fetchFn(buildGatewayUrl(options.baseUrl, "/api/projects/clone", options.runtimeSlot), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const body = await options.api.post<{ project?: { slug?: unknown; name?: unknown } }>(
+      "/api/projects/clone",
+      {
         url: options.url,
         ...(options.name ? { name: options.name } : {}),
         ...(options.branch ? { branch: options.branch } : {}),
-      }),
-      signal: AbortSignal.timeout(CLONE_REQUEST_TIMEOUT_MS),
-    });
-  } catch (err: unknown) {
-    console.warn("[add-project] clone request failed:", err instanceof Error ? err.message : String(err));
-    return { ok: false, message: "Couldn't reach your Matrix computer. Check the connection and try again." };
-  }
-  if (response.ok) {
-    try {
-      const body = (await response.json()) as { project?: { slug?: unknown; name?: unknown } };
-      const slug = typeof body.project?.slug === "string" ? body.project.slug : null;
-      const name = typeof body.project?.name === "string" ? body.project.name : null;
-      if (!slug) {
-        console.warn("[add-project] clone response missing project slug");
-        return { ok: false, message: "Couldn't create the project. Try again." };
-      }
-      return { ok: true, project: { slug, name: name ?? slug } };
-    } catch (err: unknown) {
-      console.warn("[add-project] clone response unreadable:", err instanceof Error ? err.message : String(err));
+        clientRequestId: options.clientRequestId,
+      },
+      { timeoutMs: CLONE_REQUEST_TIMEOUT_MS },
+    );
+    const slug = typeof body.project?.slug === "string" ? body.project.slug : null;
+    const name = typeof body.project?.name === "string" ? body.project.name : null;
+    if (!slug) {
+      console.warn("[add-project] clone response missing project slug");
       return { ok: false, message: "Couldn't create the project. Try again." };
     }
-  }
-  let code: string | null = null;
-  try {
-    const body = (await response.json()) as { error?: { code?: unknown } };
-    code = typeof body.error?.code === "string" ? body.error.code : null;
+    return { ok: true, project: { slug, name: name ?? slug } };
   } catch (err: unknown) {
-    // Non-JSON error body — fall through to the generic message.
-    console.warn("[add-project] clone error body unreadable:", err instanceof Error ? err.message : String(err));
+    const kind = err instanceof AppError ? err.category : err instanceof Error ? err.name : "Unknown error";
+    console.warn("[add-project] clone request failed:", kind);
+    if (err instanceof AppError) {
+      if (err.category === "unauthorized") {
+        return { ok: false, message: "Your session has expired. Please sign in again." };
+      }
+      if (err.detail) return { ok: false, message: cloneErrorMessage(err.detail) };
+      if (err.category === "offline" || err.category === "timeout") {
+        return { ok: false, message: "Couldn't reach your Matrix computer. Check the connection and try again." };
+      }
+    }
+    return { ok: false, message: "Couldn't clone the repository. Check the URL and try again." };
   }
-  return { ok: false, message: cloneErrorMessage(code) };
 }

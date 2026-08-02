@@ -30,11 +30,16 @@ export interface BoundedReadOptions {
   maxBytes?: number;
 }
 
+export interface RequestTimeoutOptions {
+  /** Internal operation-specific timeout. Every request remains bounded. */
+  timeoutMs?: number;
+}
+
 export interface ApiClient {
   get<T>(path: string): Promise<T>;
   getText(path: string, options?: BoundedReadOptions): Promise<string>;
   getBlob(path: string, options?: BoundedReadOptions): Promise<Blob>;
-  post<T>(path: string, body: unknown): Promise<T>;
+  post<T>(path: string, body: unknown, options?: RequestTimeoutOptions): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
   put<T>(path: string, body: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
@@ -45,13 +50,13 @@ export interface ApiClient {
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const fetchFn: FetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
 
-  async function send(path: string, init: RequestInit): Promise<Response> {
+  async function send(path: string, init: RequestInit, timeoutMs = API_TIMEOUT_MS): Promise<Response> {
     const url = buildGatewayUrl(options.baseUrl, path, options.getRuntimeSlot());
     let response: Response;
     try {
       response = await fetchFn(url, {
         ...init,
-        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err: unknown) {
       throw new AppError(classifyTransportError(err), { cause: err });
@@ -73,8 +78,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return response;
   }
 
-  async function request<T>(path: string, init: RequestInit): Promise<T> {
-    const response = await send(path, init);
+  async function request<T>(path: string, init: RequestInit, options?: RequestTimeoutOptions): Promise<T> {
+    const response = await send(path, init, options?.timeoutMs);
     try {
       return (await response.json()) as T;
     } catch (err: unknown) {
@@ -145,12 +150,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     get: (path) => request(path, { method: "GET" }),
     getText: (path, boundedOptions) => requestText(path, { method: "GET" }, boundedOptions),
     getBlob: (path, boundedOptions) => requestBlob(path, { method: "GET" }, boundedOptions),
-    post: (path, body) =>
+    post: (path, body, requestOptions) =>
       request(path, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }),
+      }, requestOptions),
     patch: (path, body) =>
       request(path, {
         method: "PATCH",

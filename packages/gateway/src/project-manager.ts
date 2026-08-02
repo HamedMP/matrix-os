@@ -89,6 +89,7 @@ export function isValidGitBranchName(value: string): boolean {
   if (value.startsWith("-") || value.startsWith(".") || value.startsWith("/")) return false;
   if (value.endsWith("/") || value.endsWith(".") || value.endsWith(".lock")) return false;
   if (value.includes("..") || value.includes("@{") || value.includes("//")) return false;
+  if (value.split("/").some((component) => component.startsWith(".") || component.endsWith(".lock"))) return false;
   if (value === "@") return false;
   return true;
 }
@@ -445,9 +446,9 @@ export function createProjectManager(options: {
           await runCommand("gh", ["auth", "status"], { cwd: homePath, timeout: DEFAULT_TIMEOUT_MS });
         } catch (err: unknown) {
           if (err instanceof Error) {
-            return genericError(401, "github_auth_required", "GitHub authentication is required");
+            return genericError(424, "github_auth_required", "GitHub authentication is required");
           }
-          return genericError(401, "github_auth_required", "GitHub authentication is required");
+          return genericError(424, "github_auth_required", "GitHub authentication is required");
         }
 
         try {

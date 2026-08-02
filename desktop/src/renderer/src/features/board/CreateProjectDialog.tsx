@@ -81,8 +81,12 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const [folderSelection, setFolderSelection] = useState<ScopedPath | null>(null);
   const [parentSelection, setParentSelection] = useState<ScopedPath | null>(null);
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [activeSubmission, setActiveSubmission] = useState<{
+    runtimeSlot: string;
+    authGeneration: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cloneRequestId] = useState(() => `req_${crypto.randomUUID()}`);
   const dialogClosedRef = useRef(false);
   const dialogGenerationRef = useRef(0);
   // Latest runtime identity. A submission captures the identity it was sent to
@@ -104,6 +108,11 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const trimmedBranch = branch.trim();
   const urlInvalid = url.trim().length > 0 && !parsedUrl;
   const branchInvalid = trimmedBranch.length > 0 && !isValidBranchName(trimmedBranch);
+  const folderNameInvalid = effectiveFolderName.length > 0 && !isValidProjectSlug(effectiveFolderName);
+  // A request sent to another computer remains in flight, but it must not keep
+  // this computer's dialog disabled while its stale completion is ignored.
+  const submitting = activeSubmission?.runtimeSlot === runtimeSlot
+    && activeSubmission.authGeneration === authGeneration;
 
   useEffect(() => {
     setFolderSelection((current) =>
@@ -179,7 +188,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     const submitGeneration = dialogGenerationRef.current;
     const submitRuntimeSlot = runtimeSlot;
     const submitAuthGeneration = authGeneration;
-    setSubmitting(true);
+    setActiveSubmission({ runtimeSlot: submitRuntimeSlot, authGeneration: submitAuthGeneration });
     setError(null);
     const isCurrent = () =>
       !dialogClosedRef.current
@@ -201,14 +210,19 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       if (step === "folder") {
         await submitExistingFolder(ctx, { name: name.trim(), path: folderPath });
       } else if (step === "github") {
-        await submitClone(ctx, { url: url.trim(), name: effectiveFolderName, branch: trimmedBranch || undefined });
+        await submitClone(ctx, {
+          url: url.trim(),
+          name: effectiveFolderName,
+          branch: trimmedBranch || undefined,
+          clientRequestId: cloneRequestId,
+        });
       } else {
         await submitNewFolder(ctx, { name: name.trim(), parentPath });
       }
     } catch (err: unknown) {
       if (isCurrent()) setError(toUserMessage(err));
     } finally {
-      if (isCurrent()) setSubmitting(false);
+      if (isCurrent()) setActiveSubmission(null);
     }
   };
 
@@ -258,6 +272,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         <button
           type="button"
           aria-label="Back"
+          disabled={submitting}
           onClick={() => {
             setStep("pick");
             setError(null);
@@ -281,6 +296,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
             setFolderName(value);
             setFolderNameTouched(true);
           }}
+          showFolderNameError={folderNameTouched && folderNameInvalid}
           branch={branch}
           onBranchChange={setBranch}
           onBranchBlur={() => setBranchAttempted(true)}

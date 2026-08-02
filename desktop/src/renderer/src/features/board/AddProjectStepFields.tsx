@@ -22,6 +22,7 @@ export function CloneStepFields({
   showUrlError,
   folderName,
   onFolderNameChange,
+  showFolderNameError,
   branch,
   onBranchChange,
   onBranchBlur,
@@ -34,6 +35,7 @@ export function CloneStepFields({
   showUrlError: boolean;
   folderName: string;
   onFolderNameChange: (value: string) => void;
+  showFolderNameError: boolean;
   branch: string;
   onBranchChange: (value: string) => void;
   onBranchBlur: () => void;
@@ -69,6 +71,11 @@ export function CloneStepFields({
           style={FIELD_STYLE}
         />
       </label>
+      {showFolderNameError ? (
+        <span className="text-xs" style={{ color: "var(--danger)" }}>
+          Use lowercase letters, numbers, and dashes only.
+        </span>
+      ) : null}
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Branch (optional)</span>
         <input

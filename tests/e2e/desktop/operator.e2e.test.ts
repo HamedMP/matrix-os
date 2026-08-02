@@ -185,6 +185,7 @@ suite("operator desktop e2e", () => {
     await page.getByRole("button", { name: /Clone from GitHub/ }).click();
     await page.getByPlaceholder("https://github.com/owner/repo").waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05e-clone-project.png") });
+    await page.getByRole("button", { name: "Cancel" }).click();
   }, 30_000);
 
   it("opens the Terminal workspace with a session sidebar", async () => {

@@ -48,14 +48,14 @@ export async function submitExistingFolder(
 
 export async function submitClone(
   ctx: AddProjectSubmitContext,
-  input: { url: string; name: string; branch?: string },
+  input: { url: string; name: string; branch?: string; clientRequestId: string },
 ): Promise<void> {
   const result = await cloneProject({
-    baseUrl: ctx.api.baseUrl,
-    runtimeSlot: ctx.runtimeSlot,
+    api: ctx.api,
     url: input.url,
     name: input.name,
     branch: input.branch,
+    clientRequestId: input.clientRequestId,
   });
   if (!ctx.isCurrent()) return;
   if (!result.ok) {
@@ -64,8 +64,12 @@ export async function submitClone(
   }
   // The board store only refreshes on its own create path, so pull the new
   // clone into the sidebar list explicitly.
-  await ctx.loadProjects(ctx.api);
+  const refreshed = await ctx.loadProjects(ctx.api);
   if (!ctx.isCurrent()) return;
+  if (!refreshed) {
+    ctx.setError("The project was created, but the project list could not be refreshed. Try again.");
+    return;
+  }
   await finish(ctx, result.project);
 }
 
@@ -73,7 +77,11 @@ export async function submitNewFolder(
   ctx: AddProjectSubmitContext,
   input: { name: string; parentPath: string },
 ): Promise<void> {
-  if (!input.parentPath) {
+  const parentPath = input.parentPath.trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
+  // Selecting the visible Projects directory is semantically identical to the
+  // default location. Use the manager-owned scratch path instead of mkdir +
+  // folder bind, which would pre-create the registry slot and then conflict.
+  if (!parentPath || parentPath === "projects") {
     const project = await ctx.createProject(ctx.api, { name: input.name, mode: "scratch" });
     if (!ctx.isCurrent()) return;
     if (!project) {
@@ -90,7 +98,7 @@ export async function submitNewFolder(
   try {
     const created = await ctx.api.post<{ path?: unknown }>("/api/projects/mkdir", {
       name: slugifyProjectName(input.name),
-      parent: input.parentPath,
+      parent: parentPath,
     });
     if (typeof created.path !== "string" || created.path.length === 0) {
       if (ctx.isCurrent()) ctx.setError("Couldn't create the folder. Try again.");

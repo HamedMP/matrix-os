@@ -15,6 +15,7 @@ import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX } from "./project-manager.js";
 import {
   containsDeniedFileApiPath,
+  isDeniedFileApiPath,
   isProtectedHomeSubpath,
   resolveWithinHome,
 } from "./path-security.js";
@@ -104,9 +105,11 @@ export function createProjectFolders(options: { homePath: string }) {
       { base: homePath, path: resolvedParent },
       { base: realHome, path: realParent },
     ]) {
+      const target = join(candidate.path, name);
       if (
-        isProtectedHomeSubpath(candidate.base, candidate.path)
-        || containsDeniedFileApiPath(candidate.base, candidate.path)
+        isProtectedHomeSubpath(candidate.base, target)
+        || containsDeniedFileApiPath(candidate.base, target)
+        || isDeniedFileApiPath(candidate.base, toHomeRelative(candidate.base, target))
         || overlapsRoot(join(candidate.base, "projects"), candidate.path)
       ) {
         return failure(400, "invalid_parent", "Parent folder is invalid");
