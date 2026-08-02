@@ -47,7 +47,7 @@ export async function openPluginsTerminal(
   } catch (err: unknown) {
     console.error(
       "[plugins] Failed to open terminal session:",
-      err instanceof Error ? err.message : String(err),
+      err instanceof Error ? err.name : "Unknown error",
     );
     return "failed";
   }

@@ -168,6 +168,19 @@ describe("desktop plugins skills section", () => {
     );
   });
 
+  it("keeps upstream skill errors out of renderer diagnostics", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useConnection.setState({
+      api: makeApi({ getError: () => new Error("secret-token-leak") }) as never,
+    });
+    render(<SkillsSection />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Something went wrong. Please try again.")).not.toBeNull(),
+    );
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("secret-token-leak");
+  });
+
   it("shows an honest empty state with a terminal path when no skills are installed", async () => {
     const api = makeApi({ skills: [] });
     useConnection.setState({ api: api as never });
@@ -187,9 +200,10 @@ describe("desktop plugins skills section", () => {
   });
 
   it("shows generic copy when the terminal cannot be opened", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const api = makeApi({ skills: [] });
     api.post = vi.fn(async () => {
-      throw new AppError("server");
+      throw new Error("secret-token-leak");
     });
     useConnection.setState({ api: api as never });
     render(<SkillsSection />);
@@ -201,5 +215,6 @@ describe("desktop plugins skills section", () => {
       expect(screen.getByText("Something went wrong. Please try again.")).not.toBeNull(),
     );
     expect(useTabs.getState().tabs).toHaveLength(0);
+    expect(error.mock.calls.flat().join(" ")).not.toContain("secret-token-leak");
   });
 });

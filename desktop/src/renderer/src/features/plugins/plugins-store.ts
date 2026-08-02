@@ -73,7 +73,11 @@ export const usePlugins = create<PluginsState>()((set) => ({
       }
       console.warn(
         "[plugins] skills refresh failed:",
-        err instanceof Error ? err.message : String(err),
+        err instanceof AppError
+          ? err.category
+          : err instanceof Error
+            ? err.name
+            : "Unknown error",
       );
       if (superseded()) return;
       set({ skillsStatus: "error", skillsError: toUserMessage(err) });
