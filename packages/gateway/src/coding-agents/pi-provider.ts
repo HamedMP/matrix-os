@@ -467,7 +467,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
   const runTimeoutMs = boundedTimeout(options.runTimeoutMs, DEFAULT_RUN_TIMEOUT_MS);
   const killGraceMs = Math.max(1, Math.min(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, 30_000));
   const maxEvents = Math.max(1, Math.min(options.maxEvents ?? MAX_EVENTS_PER_RUN, MAX_EVENTS_PER_RUN));
-  const activeProcesses = new Map<string, { kill: (signal: NodeJS.Signals) => void }>();
+  const activeProcesses = new Map<string, { abort: () => void }>();
 
   const resolveProjectPath = options.resolveProjectPath ?? (async (projectSlug: string) => {
     const projects = createProjectManager({ homePath });
@@ -481,24 +481,26 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     return listed.worktrees.find((candidate) => candidate.id === worktreeId)?.path ?? null;
   });
 
-  function trackProcess(threadId: string, proc: PiChildProcess): void {
+  function trackProcess(threadId: string, abort: () => void): { abort: () => void } {
     if (activeProcesses.size >= MAX_ACTIVE_PROCESSES) {
       const oldest = activeProcesses.keys().next().value as string | undefined;
       if (oldest) {
         const stale = activeProcesses.get(oldest);
         activeProcesses.delete(oldest);
         try {
-          stale?.kill("SIGTERM");
+          stale?.abort();
         } catch (err: unknown) {
           logCodingAgentWarning("pi provider stale process eviction failed", err);
         }
       }
     }
-    activeProcesses.set(threadId, { kill: (signal) => proc.kill(signal) });
+    const tracked = { abort };
+    activeProcesses.set(threadId, tracked);
+    return tracked;
   }
 
-  function untrackProcess(threadId: string): void {
-    activeProcesses.delete(threadId);
+  function untrackProcess(threadId: string, tracked: { abort: () => void }): void {
+    if (activeProcesses.get(threadId) === tracked) activeProcesses.delete(threadId);
   }
 
   function terminate(proc: PiChildProcess, killTimer: { current?: ReturnType<typeof setTimeout> }): void {
@@ -555,8 +557,6 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         resolve({ events: [], outcome: "failed", sessionId: input.sessionId });
         return;
       }
-      trackProcess(input.threadId, proc);
-
       let settled = false;
       let aborted = false;
       let timedOut = false;
@@ -571,9 +571,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       timeoutTimer.unref?.();
 
       const onAbort = () => {
+        if (aborted || settled) return;
         aborted = true;
         terminate(proc, killTimer);
       };
+      const trackedProcess = trackProcess(input.threadId, onAbort);
       if (input.signal) {
         if (input.signal.aborted) onAbort();
         else input.signal.addEventListener("abort", onAbort, { once: true });
@@ -585,7 +587,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         clearTimeout(timeoutTimer);
         if (killTimer.current) clearTimeout(killTimer.current);
         input.signal?.removeEventListener("abort", onAbort);
-        untrackProcess(input.threadId);
+        untrackProcess(input.threadId, trackedProcess);
         resolve(result);
       }
 
@@ -895,9 +897,8 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     async abortThread({ thread, now, nextEventId }) {
       const active = activeProcesses.get(thread.id);
       if (active) {
-        untrackProcess(thread.id);
         try {
-          active.kill("SIGTERM");
+          active.abort();
         } catch (err: unknown) {
           logCodingAgentWarning("pi provider abort kill failed", err);
         }

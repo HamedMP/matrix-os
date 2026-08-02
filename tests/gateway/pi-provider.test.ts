@@ -861,9 +861,10 @@ describe("pi provider adapter — abort and timeout", () => {
       now: () => baseNow,
       nextEventId: nextEventIdFactory(),
     });
-    await pending;
+    const pendingResult = parseCodingAgentProviderRunResult(await pending, thread.id);
 
     expect(fake.kills).toContain("SIGTERM");
+    expect(pendingResult.outcome).toBe("aborted");
     const parsed = parseCodingAgentProviderRunResult({ events: abortEvents }, thread.id);
     expect(parsed.events.map((event) => event.type)).toEqual(["thread.status", "thread.completed"]);
     expect(parsed.events[0]).toMatchObject({ type: "thread.status", status: "aborted" });
