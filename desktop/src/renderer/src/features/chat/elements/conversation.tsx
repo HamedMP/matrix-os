@@ -62,6 +62,11 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   const scrollToEnd = useCallback((options?: { behavior?: ScrollBehavior }) => {
     const el = viewportRef.current;
     if (!el) return;
+    // Re-engage follow before starting a smooth scroll. Streaming content can
+    // resize the transcript before the browser emits the scroll event that
+    // finally lands at the live edge.
+    atBottomRef.current = true;
+    setAtBottom(true);
     el.scrollTo({ top: el.scrollHeight, behavior: options?.behavior ?? "smooth" });
   }, []);
 
@@ -108,12 +113,18 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
       const first = content.firstElementChild;
       const previousFirst = firstRowRef.current;
       firstRowRef.current = first;
+      const nextHeight = viewport.scrollHeight;
+      const delta = nextHeight - contentHeightRef.current;
+      contentHeightRef.current = nextHeight;
       if (!previousFirst || previousFirst === first) return;
+      // A different first row only means "history was prepended" when the old
+      // first row is still mounted below it. Bounded live windows can evict the
+      // head while appending at the tail; compensating for that net height
+      // change would jump a reader who is browsing older messages.
+      if (!content.contains(previousFirst)) return;
       // Follow wins at the live edge: a prepend during an active stream must
       // not fight the bottom anchor.
       if (atBottomRef.current) return;
-      const delta = viewport.scrollHeight - contentHeightRef.current;
-      contentHeightRef.current = viewport.scrollHeight;
       if (delta > 0) viewport.scrollTop += delta;
     };
 

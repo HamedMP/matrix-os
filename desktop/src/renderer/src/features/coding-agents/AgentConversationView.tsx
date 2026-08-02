@@ -633,7 +633,11 @@ export function AgentConversationView({
               </ConversationItem>
             ),
           )}
-          {showWorking ? <WorkingRow /> : null}
+          {showWorking ? (
+            <ConversationItem messageId="agent:working">
+              <WorkingRow />
+            </ConversationItem>
+          ) : null}
           {items.length === 0 && !showWorking ? (
             <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
               {canSendTurns ? "Send a message to start the conversation." : "No messages yet."}

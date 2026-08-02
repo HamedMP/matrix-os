@@ -254,6 +254,7 @@ describe("AgentConversationView on chat primitives", () => {
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
     const status = screen.getByRole("status", { name: "Agent is working" });
+    expect(status.closest("[data-message-id]")?.getAttribute("data-message-id")).toBe("agent:working");
     const content = status.querySelector("[data-slot='marker-content']") as HTMLElement;
     expect(content).not.toBeNull();
     expect(content.className).toContain("shimmer");

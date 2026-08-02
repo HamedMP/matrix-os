@@ -125,6 +125,30 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     expect(el.scrollTop).toBe(1200);
   });
 
+  it("re-engages live-edge follow as soon as scroll-to-latest is requested", () => {
+    const metrics = { scrollHeight: 1000, clientHeight: 200 };
+    render(
+      <Conversation>
+        <ConversationContent>
+          <ConversationItem messageId="m1">row</ConversationItem>
+        </ConversationContent>
+      </Conversation>,
+    );
+    const el = viewport();
+    mockMetrics(el, metrics);
+    Object.defineProperty(el, "scrollTo", { configurable: true, value: vi.fn() });
+
+    el.scrollTop = 0;
+    fireEvent.scroll(el);
+    fireEvent.click(screen.getByRole("button", { name: "Scroll to latest" }));
+
+    // Streaming can resize the transcript before the smooth-scroll emits its
+    // final scroll event. The requested jump must already have restored follow.
+    metrics.scrollHeight = 1200;
+    fireContentResize();
+    expect(el.scrollTop).toBe(1200);
+  });
+
   it("keeps the reader's place when older rows are prepended above", async () => {
     const metrics = { scrollHeight: 600, clientHeight: 200 };
     const view = render(
@@ -158,6 +182,40 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     });
 
     expect(el.scrollTop).toBe(600);
+  });
+
+  it("does not apply prepend compensation when a bounded live window evicts its first row", async () => {
+    const metrics = { scrollHeight: 600, clientHeight: 200 };
+    const view = render(
+      <Conversation>
+        <ConversationContent>
+          <ConversationItem key="a" messageId="a">row a</ConversationItem>
+          <ConversationItem key="b" messageId="b">row b</ConversationItem>
+        </ConversationContent>
+      </Conversation>,
+    );
+    const el = viewport();
+    mockMetrics(el, metrics);
+
+    el.scrollTop = 200;
+    fireEvent.scroll(el);
+
+    // A bounded window drops a while appending a taller c. The old first row
+    // no longer exists, so the net height increase is not history above us.
+    metrics.scrollHeight = 750;
+    view.rerender(
+      <Conversation>
+        <ConversationContent>
+          <ConversationItem key="b" messageId="b">row b</ConversationItem>
+          <ConversationItem key="c" messageId="c">a much taller row c</ConversationItem>
+        </ConversationContent>
+      </Conversation>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(el.scrollTop).toBe(200);
   });
 
   it("exposes scroll commands through the ref handle for future deep-links", () => {

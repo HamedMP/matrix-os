@@ -121,6 +121,9 @@ suite("operator desktop e2e", () => {
     await page.getByRole("button", { name: "Chats" }).click();
     await page.getByRole("button", { name: "Chat Investigate auth callback" }).click();
     await page.getByRole("region", { name: "Conversation Investigate auth callback" }).waitFor();
+    await page.getByText("Trace why the OAuth callback drops the return path.").waitFor();
+    await page.getByText("auth-callback.ts").waitFor();
+    await page.getByRole("button", { name: "Tool call Read auth callback" }).waitFor();
     await page.getByRole("tablist", { name: "Conversation tools" }).waitFor();
     await page.getByRole("button", { name: "Open review PR #917" }).click();
     await page.getByText("PR #917 review details").waitFor();
