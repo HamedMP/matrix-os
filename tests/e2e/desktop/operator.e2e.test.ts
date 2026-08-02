@@ -157,6 +157,23 @@ suite("operator desktop e2e", () => {
     await page.locator("span:visible", { hasText: /^Done$/ }).first().waitFor({ timeout: 10_000 });
   }, 30_000);
 
+  it("shows provider and integration settings for the selected computer", async () => {
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "Providers" }).click();
+    await page.getByText("Coding agents on this computer").waitFor({ timeout: 10_000 });
+    await page.mouse.move(1_000, 680);
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05b-settings-providers.png") });
+
+    await page.getByRole("button", { name: "Integrations" }).click();
+    await page.getByRole("heading", { name: "Integrations" }).waitFor({ timeout: 10_000 });
+    await page.mouse.move(1_000, 680);
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05c-settings-integrations.png") });
+  }, 30_000);
+
   it("opens the Terminal workspace with a session sidebar", async () => {
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     // Inner sessions sidebar lists the VPS session as a clickable button

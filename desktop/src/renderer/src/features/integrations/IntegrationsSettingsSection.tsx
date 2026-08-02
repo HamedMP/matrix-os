@@ -38,7 +38,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
-  const previousIdsRef = useRef<Set<string>>(new Set());
+  const previousIdsRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     void useIntegrations.getState().refresh(api);
@@ -108,24 +108,27 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     if (!api || !connectingService || manualBusy) return;
     setManualBusy(true);
     setManualNote(null);
-    const result = await useIntegrations.getState().syncNow(api);
-    setManualBusy(false);
-    const landed = useIntegrations
-      .getState()
-      .connections.some((conn) => conn.service === connectingService && !previousIdsRef.current.has(conn.id));
-    if (landed) {
-      cancelConnectPoll();
-      setConnectingService(null);
-      return;
+    try {
+      const result = await useIntegrations.getState().syncNow(api);
+      const landed = useIntegrations
+        .getState()
+        .connections.some((conn) => conn.service === connectingService && !previousIdsRef.current?.has(conn.id));
+      if (landed) {
+        cancelConnectPoll();
+        setConnectingService(null);
+        return;
+      }
+      // "superseded" is not a failure: the account/computer changed underneath
+      // this click, so showing a red banner would be a lie.
+      if (result === "failed") {
+        useIntegrations.getState().showError(GENERIC_ERROR);
+        return;
+      }
+      if (result === "superseded") return;
+      setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
+    } finally {
+      setManualBusy(false);
     }
-    // "superseded" is not a failure: the account/computer changed underneath
-    // this click, so showing a red banner would be a lie.
-    if (result === "failed") {
-      useIntegrations.getState().showError(GENERIC_ERROR);
-      return;
-    }
-    if (result === "superseded") return;
-    setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
   };
 
   const handleCancelConnect = (): void => {
