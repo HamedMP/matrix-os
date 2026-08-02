@@ -140,6 +140,17 @@ const webhookRateLimiter = createRateLimiter({
   lockoutMs: 30_000,
 });
 
+// The preview-only acceptance transport uploads two bounded probe assets in
+// signed chunks before running two lifecycle commands. It therefore needs a
+// short valid burst larger than the generic failed-auth ceiling, and must not
+// inherit a lockout caused by unrelated requests sharing a proxy source IP.
+// Keep HMAC verification bounded independently at 64 requests per minute.
+const acceptanceSignatureRateLimiter = createRateLimiter({
+  maxAttempts: 64,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
   const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   return (
@@ -211,7 +222,7 @@ export function authMiddleware(
 
     if (ROUTE_SCOPED_SIGNATURE_PATHS.some((p) => normalizedPath === p)) {
       const ip = getClientIp(c);
-      if (!rateLimiter.check(ip)) {
+      if (!acceptanceSignatureRateLimiter.check(ip)) {
         return tooManyRequests(c);
       }
       return nextWithReady(c, next);
