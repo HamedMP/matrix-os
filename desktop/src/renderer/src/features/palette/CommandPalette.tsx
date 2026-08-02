@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
@@ -83,6 +83,7 @@ function paletteTerminalCommands(
 }
 
 export default function CommandPalette() {
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const open = useUi((s) => s.paletteOpen);
   const setOpen = useUi((s) => s.setPaletteOpen);
@@ -119,6 +120,18 @@ export default function CommandPalette() {
     if (open) setActionError(null);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    return () => {
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    };
+  }, [open]);
+
   if (!open) return null;
 
   const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
@@ -149,17 +162,26 @@ export default function CommandPalette() {
   };
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[16vh]"
-      style={{ background: "rgba(0,0,0,0.45)" }}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) setOpen(false);
+    <dialog
+      ref={dialogRef}
+      aria-label="Command palette"
+      className="fixed inset-0 z-50 m-0 flex h-screen max-h-none w-screen max-w-none items-start justify-center border-0 bg-transparent p-0 pt-[16vh]"
+      onCancel={(e) => {
+        e.preventDefault();
+        setOpen(false);
       }}
     >
+      <button
+        type="button"
+        aria-label="Close command palette"
+        tabIndex={-1}
+        className="absolute inset-0 h-full w-full cursor-default border-0 p-0"
+        style={{ background: "rgba(0,0,0,0.45)" }}
+        onClick={() => setOpen(false)}
+      />
       <Command
-        label="Command palette"
-        className="fade-in w-[560px] overflow-hidden rounded-xl border"
+        label="Search commands"
+        className="fade-in relative z-10 w-[560px] overflow-hidden rounded-xl border"
         style={{
           background: "var(--bg-overlay)",
           borderColor: "var(--border-default)",
@@ -357,7 +379,7 @@ export default function CommandPalette() {
           ) : null}
         </Command.List>
       </Command>
-    </div>
+    </dialog>
   );
 }
 

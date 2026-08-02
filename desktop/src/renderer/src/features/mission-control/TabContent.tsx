@@ -9,7 +9,7 @@ import TerminalView from "../terminal/TerminalView";
 import SettingsView from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
 import ChatTab from "../chat/ChatTab";
-import { AppLauncher } from "../embeds";
+import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";

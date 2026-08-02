@@ -72,9 +72,10 @@ export function buildProjectThreadListModel(
   const mergedProject = applyOverlay(projectThreads);
   const mergedGroups = taskGroups.map((group) => ({ ...group, threads: applyOverlay(group.threads) }));
   const mergedOther = applyOverlay(otherThreads);
+  const mergedGroupByTaskId = new Map(mergedGroups.map((group) => [group.task.id, group]));
 
   for (const thread of overlay.values()) {
-    const group = thread.taskId ? mergedGroups.find((candidate) => candidate.task.id === thread.taskId) : undefined;
+    const group = thread.taskId ? mergedGroupByTaskId.get(thread.taskId) : undefined;
     if (group) group.threads.push(thread);
     else if (thread.taskId) mergedOther.push(thread);
     else mergedProject.push(thread);

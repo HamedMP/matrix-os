@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import ProjectTab from "../../desktop/src/renderer/src/features/project/ProjectTab";
@@ -262,6 +262,25 @@ describe("ProjectTab", () => {
     });
   });
 
+  it("reloads a selected chat when its active id survives but its snapshot does not", async () => {
+    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_auth");
+    useCodingAgentWorkspace.setState({
+      summary: summaryFixture(),
+      status: "ready",
+      activeThreadId: "thread_auth",
+      threadSnapshot: null,
+      threadSnapshotStatus: "idle",
+    });
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("runtime:get-thread-snapshot", { threadId: "thread_auth" });
+    });
+    expect(await screen.findByRole("region", { name: "Conversation Harden the auth route" })).toBeTruthy();
+  });
+
   it("groups task chats under their task and offers per-task new chat", async () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
 
@@ -281,6 +300,27 @@ describe("ProjectTab", () => {
       expect(useProjectChatLauncher.getState().composerRequest).toBeNull();
     });
     expect(await screen.findByRole("button", { name: "Close new chat composer" })).toBeTruthy();
+  });
+
+  it("ignores a pending compose request after the project chat view unmounts", async () => {
+    let resolveTarget!: (value: { projectId: string }) => void;
+    const resolveNewChatTarget = vi.fn(() => new Promise<{ projectId: string }>((resolve) => {
+      resolveTarget = resolve;
+    }));
+    useProjectWorkspaces.setState({ resolveNewChatTarget });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByRole("button", { name: "Chat Plan the auth work" });
+    const focusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
+
+    act(() => useProjectChatLauncher.getState().requestComposer("matrix-os"));
+    await waitFor(() => expect(resolveNewChatTarget).toHaveBeenCalledWith("matrix-os", undefined));
+    cleanup();
+    await act(async () => {
+      resolveTarget({ projectId: "matrix-os" });
+      await Promise.resolve();
+    });
+
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId);
   });
 
   it("ignores compose requests for another project", async () => {

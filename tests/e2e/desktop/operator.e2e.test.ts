@@ -89,8 +89,9 @@ suite("operator desktop e2e", () => {
   it("opens the project chats from the command palette", async () => {
     await page.locator("aside button", { hasText: "Home" }).first().click();
     await page.keyboard.press("Control+K");
-    await page.getByLabel("Command palette").waitFor({ timeout: 10_000 });
-    await page.getByLabel("Command palette").getByText("Matrix OS").click();
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    await palette.waitFor({ timeout: 10_000 });
+    await palette.getByRole("group", { name: "Projects" }).getByText("Matrix OS").click();
     // The project tab opens on the board; switching to Chats shows the threads.
     await page.getByRole("button", { name: "Chats" }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Chats" }).click();
@@ -103,7 +104,7 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "04-project-chats-list.png") });
 
     // The segmented control switches back to the project's board.
-    await page.getByRole("button", { name: "Board" }).click();
+    await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Polish the board design").waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "04b-project-board.png") });
 

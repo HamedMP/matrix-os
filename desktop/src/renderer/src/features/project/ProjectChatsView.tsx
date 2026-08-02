@@ -106,6 +106,11 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     if (workspace.activeThreadId === selectedThreadId) {
       if (workspace.threadSnapshot?.thread.id === selectedThreadId) {
         boundThreadRef.current = selectedThreadId;
+      } else if (workspace.threadSnapshotStatus !== "loading") {
+        // The active id can outlive its snapshot when Chats unmounts during a
+        // Board round-trip. Rebind it instead of leaving the conversation on
+        // a permanent loading state.
+        void workspace.loadThreadSnapshot(selectedThreadId);
       }
       return;
     }
@@ -127,9 +132,15 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     void workspace.loadThreadSnapshot(selectedThreadId);
   }, [active, selectedThreadId, activeThreadId, threadSnapshot?.thread.id, projectId, setSelectedThread]);
 
-  async function openNewChat(taskId?: string) {
+  async function openNewChat(
+    taskId?: string,
+    cancelled: () => boolean = () => false,
+    onReady: () => void = () => undefined,
+  ) {
     if (!summary) return;
     const relation = await resolveNewChatTarget(projectId, taskId);
+    if (cancelled()) return;
+    onReady();
     if (!relation) {
       toast.error("Couldn't start a new chat here. Refresh the workspace and try again.");
       return;
@@ -147,13 +158,21 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
 
   useEffect(() => {
     if (!active || !composerRequest || composerRequest.projectId !== projectId) return;
-    useProjectChatLauncher.getState().consumeComposer(projectId);
     if (!projectWorkspaceEnabled) {
       // Without project pages the composer is always visible; just focus it.
+      useProjectChatLauncher.getState().consumeComposer(projectId);
       requestComposerFocus();
       return;
     }
-    void openNewChat();
+    let cancelled = false;
+    void openNewChat(
+      undefined,
+      () => cancelled,
+      () => useProjectChatLauncher.getState().consumeComposer(projectId),
+    );
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, composerRequest, projectId, projectWorkspaceEnabled]);
 

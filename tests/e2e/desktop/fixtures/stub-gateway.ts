@@ -252,6 +252,29 @@ export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): Agen
   });
 }
 
+function codingAgentTaskSnapshot(
+  id: string,
+  taskId: string,
+  title: string,
+  status: AgentThreadSnapshot["thread"]["status"],
+): AgentThreadSnapshot {
+  const thread = codingAgentTaskThread(id, taskId, title, status);
+  return AgentThreadSnapshotSchema.parse({
+    thread,
+    events: {
+      items: [{
+        type: "thread.created",
+        eventId: `evt_${id}_created`,
+        threadId: id,
+        occurredAt: NOW,
+        thread,
+      }],
+      hasMore: false,
+      limit: 200,
+    },
+  });
+}
+
 export function codingAgentSummary(): RuntimeSummary {
   return RuntimeSummarySchema.parse({
     runtime: {
@@ -633,6 +656,24 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
     if (req.method === "GET" && path === "/api/coding-agents/threads/thread_operator_1") {
       json(res, 200, codingAgentSnapshot());
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/threads/thread_task_auth_1") {
+      json(res, 200, codingAgentTaskSnapshot(
+        "thread_task_auth_1",
+        "task_auth",
+        "Investigate auth callback",
+        "running",
+      ));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/threads/thread_task_auth_2") {
+      json(res, 200, codingAgentTaskSnapshot(
+        "thread_task_auth_2",
+        "task_auth",
+        "Verify token refresh",
+        "completed",
+      ));
       return;
     }
     if (path === "/api/sessions") {
