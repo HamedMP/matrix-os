@@ -170,6 +170,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
       acceptance.indexOf("  prepare)"),
       acceptance.indexOf("  launch)"),
     );
+    const prepareWorker = acceptance.slice(
+      acceptance.indexOf("prepare_exact_head_runtime()"),
+      acceptance.indexOf("create_hostile_state()"),
+    );
     const probe = readFileSync(
       join(root, "scripts/spikes/user-systemd-terminal/production-probe.mjs"),
       "utf8",
@@ -278,6 +282,18 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("os.O_NOFOLLOW");
     expect(acceptance).toContain("prepare-exact-head-runtime");
     expect(acceptance).toContain("matrix-sync-agent.service");
+    expect(prepareWorker).toContain(
+      '"$(path_state /opt/matrix/staging/update-phase)" = missing',
+    );
+    expect(prepareWorker).toContain(
+      'local deadline=$((SECONDS + 1800)) reapply_sync_pid',
+    );
+    expect(prepareWorker).toContain(
+      '"$(systemctl show matrix-sync-agent.service -p MainPID --value)" != "$reapply_sync_pid"',
+    );
+    expect(prepareWorker).toContain(
+      '"$(path_state /opt/matrix/app/.update-error.json)" = missing',
+    );
     expect(acceptance).not.toMatch(/\bjq\b/);
     expect(acceptance).toContain("matrix-terminal-user-keeper:");
     expect(acceptance).toContain("ExecMainStatus");
