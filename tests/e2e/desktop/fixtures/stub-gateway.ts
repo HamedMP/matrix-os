@@ -582,6 +582,23 @@ export async function startStubGateway(): Promise<StubGateway> {
       ]);
       return;
     }
+    if (req.method === "GET" && path === "/api/files/list") {
+      const folder = url.searchParams.get("path") ?? "";
+      const entries = folder === "workspaces"
+        ? [
+            { name: "matrix-os", type: "directory", children: 18, modified: NOW },
+            { name: "t3code", type: "directory", children: 12, modified: "2026-07-30T17:00:00.000Z" },
+            { name: "README.md", type: "file", size: 4_862, modified: NOW },
+          ]
+        : [
+            { name: "workspaces", type: "directory", children: 3, modified: NOW },
+            { name: "apps", type: "directory", children: 7, modified: "2026-07-31T16:00:00.000Z" },
+            { name: "system", type: "directory", children: 9, modified: "2026-07-29T12:00:00.000Z" },
+            { name: "SOUL.md", type: "file", size: 2_741, modified: NOW },
+          ];
+      json(res, 200, { entries });
+      return;
+    }
     if (path === "/api/projects/matrix-os/tasks" && req.method === "GET") {
       json(res, 200, { tasks, nextCursor: null });
       return;

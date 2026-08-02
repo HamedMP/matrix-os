@@ -201,6 +201,17 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05f-plugins-skills.png") });
   }, 30_000);
 
+  it("browses Matrix-computer files in Finder-style list and grid views", async () => {
+    await page.locator("aside button", { hasText: "Files" }).first().click();
+    await page.getByRole("heading", { name: "Files" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Open workspaces" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05g-files-list.png") });
+
+    await page.getByRole("button", { name: "Grid view" }).click();
+    await page.getByRole("button", { name: "Open SOUL.md" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05h-files-grid.png") });
+  }, 30_000);
+
   it("opens the Terminal workspace with a session sidebar", async () => {
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     // Inner sessions sidebar lists the VPS session as a clickable button
