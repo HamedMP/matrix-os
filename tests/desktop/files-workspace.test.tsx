@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FilesWorkspace, {
   resolveActivePath,
@@ -95,6 +95,22 @@ describe("Files workspace", () => {
     expect(useTabs.getState().tabs).toEqual([
       expect.objectContaining({ kind: "files", title: "Files", closable: false }),
     ]);
+  });
+
+  it("renders browser and preview as panes of one bordered container with a hairline divider", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open README.md" });
+
+    // One bordered container owns both panes; the preview is separated by a
+    // hairline divider instead of sitting in its own nested card.
+    const panes = screen.getByTestId("files-workspace-panes");
+    expect(panes.className).toContain("rounded-lg");
+    expect(panes.className).toContain("border");
+    expect(within(panes).getByRole("button", { name: "Refresh folder" })).toBeTruthy();
+    expect(within(panes).getByText("Preview")).toBeTruthy();
+    const previewPane = screen.getByText("Preview").closest("section");
+    expect(previewPane?.className).toContain("border-t");
+    expect(previewPane?.className).not.toContain("rounded-lg");
   });
 
   it("browses folders with breadcrumbs and previews markdown", async () => {

@@ -29,22 +29,28 @@ export interface GraphLayout {
   columnCount: number;
 }
 
-export const LANE_COLORS = [
-  "#9ca3af",
-  "#a78bfa",
-  "#f59e0b",
-  "#10b981",
-  "#f472b6",
-  "#06b6d4",
-  "#ef4444",
-  "#8b5cf6",
-  "#14b8a6",
-  "#f97316",
-  "#22d3ee",
+// Lane colors are theme-driven, never hardcoded hex: each lane maps onto a
+// semantic CSS variable every theme defines from its own palette (see
+// design/themes/apply.ts — --info/--success/--warning/--highlight come from
+// the theme's chart1–chart4), so the DAG re-themes with the workspace.
+// GitGraph resolves these through inline styles; var() is invalid inside SVG
+// presentation attributes, so strokes/fills there go through `style`.
+export const LANE_COLOR_VARS = [
+  "--info",
+  "--success",
+  "--warning",
+  "--highlight",
+  "--accent",
+  "--danger",
 ] as const;
 
+export function laneColorVar(col: number): string {
+  return LANE_COLOR_VARS[col % LANE_COLOR_VARS.length] ?? LANE_COLOR_VARS[0];
+}
+
+/** Inline-style color reference for a lane, e.g. "var(--info)". */
 export function laneColor(col: number): string {
-  return LANE_COLORS[col % LANE_COLORS.length] ?? LANE_COLORS[0];
+  return `var(${laneColorVar(col)})`;
 }
 
 export function computeGraphLayout(commits: GraphLayoutCommit[]): GraphLayout {

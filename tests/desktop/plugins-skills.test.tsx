@@ -138,6 +138,23 @@ describe("desktop plugins skills section", () => {
     expect(screen.getByText(".agents/skills/qmd/SKILL.md")).not.toBeNull();
   });
 
+  it("renders the shared Refresh recipe in the section header and reloads on click", async () => {
+    const api = makeApi();
+    useConnection.setState({ api: api as never });
+    render(<SkillsSection />);
+    await waitFor(() => expect(screen.getByText("code-review")).not.toBeNull());
+
+    // Same IconButton-with-label recipe as Providers: RefreshCw glyph plus
+    // label in a subtle pill, top-right of the section header.
+    const refreshButton = screen.getByRole("button", { name: "Refresh" });
+    expect(refreshButton.querySelector("svg")).not.toBeNull();
+
+    const getMock = api.get as unknown as ReturnType<typeof vi.fn>;
+    const callsBefore = getMock.mock.calls.length;
+    fireEvent.click(refreshButton);
+    await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
   it("filters installed skills with a clear, keyboard-accessible search", async () => {
     render(<SkillsSection />);
     await waitFor(() => expect(screen.getByText("code-review")).not.toBeNull());

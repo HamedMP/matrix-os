@@ -49,9 +49,16 @@ export default function FilesWorkspace() {
           {runtimeSlot !== "primary" ? <span>· {runtimeSlot}</span> : null}
         </div>
       </header>
-      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(220px,40%)_minmax(0,1fr)] gap-3 p-3 md:grid-cols-[minmax(260px,360px)_minmax(0,1fr)] md:grid-rows-1">
-        <ComputerFileBrowser onOpenFile={handleOpenFile} />
-        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}>
+      <div
+        data-testid="files-workspace-panes"
+        className="m-3 grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(220px,40%)_minmax(0,1fr)] overflow-hidden rounded-lg border md:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)] md:grid-rows-1"
+        style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
+      >
+        <ComputerFileBrowser onOpenFile={handleOpenFile} framed={false} />
+        <section
+          className="flex min-h-0 min-w-0 flex-col border-t md:border-t-0 md:border-l"
+          style={{ borderColor: "var(--border-subtle)" }}
+        >
           <div className="flex h-10 shrink-0 items-center border-b px-3 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             <span className="truncate" title={activePath ?? undefined}>{activePath ?? "Preview"}</span>
           </div>

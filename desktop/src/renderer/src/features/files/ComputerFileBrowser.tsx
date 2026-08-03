@@ -40,11 +40,16 @@ function parentPath(path: string): string {
 
 export default function ComputerFileBrowser({
   compact = false,
+  framed = true,
   mode = "browse",
   onOpenFile,
   onChooseFolder,
 }: {
   compact?: boolean;
+  // framed renders the browser as its own bordered card (dialogs, pickers).
+  // The Files workspace passes framed={false} and wraps browser + preview in
+  // a single bordered container with a hairline divider instead.
+  framed?: boolean;
   // "folder-picker" lists directories only, so picking a target folder never
   // competes with files. The default "browse" mode is unchanged.
   mode?: "browse" | "folder-picker";
@@ -227,7 +232,10 @@ export default function ComputerFileBrowser({
   }, [viewCurrentPath]);
 
   const chosenName = (viewCandidatePath.split("/").pop() || "Matrix home");
-  const listColumns = compact ? "minmax(0,1fr) 72px 104px" : "minmax(0,1fr) 88px 140px";
+  // Name flexes (minmax(0,1fr) + truncate); Size/Modified are fixed-width
+  // right-aligned columns sized to the format.ts outputs, so long names only
+  // truncate once the pane is genuinely out of room.
+  const listColumns = compact ? "minmax(0,1fr) 64px 88px" : "minmax(0,1fr) 72px 104px";
 
   let content: ReactNode;
   if (viewStatus === "loading") {
@@ -306,6 +314,7 @@ export default function ComputerFileBrowser({
               sortLabel="Sort by modified"
               active={sortKey === "modified"}
               direction={sortDirection}
+              alignEnd
               onClick={() => toggleSort("modified")}
             />
           </div>
@@ -316,8 +325,8 @@ export default function ComputerFileBrowser({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border"
-      style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
+      className={`flex min-h-0 flex-1 flex-col overflow-hidden${framed ? " rounded-lg border" : ""}`}
+      style={{ background: "var(--bg-surface)", borderColor: framed ? "var(--border-subtle)" : undefined }}
     >
       <BrowserToolbar
         compact={compact}

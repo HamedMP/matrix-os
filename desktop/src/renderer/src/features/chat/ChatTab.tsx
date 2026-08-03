@@ -1,4 +1,4 @@
-import { GitBranch, Laptop, MessageSquarePlus, Sparkles, SquareTerminal } from "lucide-react";
+import { FolderOpen, GitBranch, Laptop, Mail, MessageSquare, MessageSquarePlus, Sparkles, SquareTerminal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { StatusDot } from "../../design/primitives";
 import { groupMessages } from "../../lib/chat";
@@ -34,14 +34,19 @@ function Pill({ icon, label }: { icon: React.ReactNode; label: string }) {
   );
 }
 
-function ConnectCard({ title, body, done }: { title: string; body: string; done?: boolean }) {
+function ConnectCard({ title, body, icon, done }: { title: string; body: string; icon: React.ReactNode; done?: boolean }) {
   return (
     <div
       className="flex flex-col gap-1.5 rounded-xl border p-4 text-left"
       style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)", opacity: done ? 0.55 : 1 }}
     >
       <div className="flex items-center justify-between">
-        <div className="h-6 w-6 rounded" style={{ background: "var(--bg-sunken)" }} />
+        <div
+          className="flex h-6 w-6 items-center justify-center rounded"
+          style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)" }}
+        >
+          {icon}
+        </div>
         {done ? <span className="text-xs" style={{ color: "var(--success)" }}>✓</span> : null}
       </div>
       <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{title}</span>
@@ -91,9 +96,9 @@ function HermesPane() {
           </h1>
           <PromptInput value={draft} onChange={setDraft} onSubmit={submit} onAbort={abort} busy={status !== "idle"} autoFocus footer={composerFooter} />
           <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <ConnectCard title="Connect messaging" body="Get context from recent team discussions" />
-            <ConnectCard title="Connect email" body="Summarize stakeholder asks from email" />
-            <ConnectCard title="Connect files" body="Review results, research, and plans" />
+            <ConnectCard title="Connect messaging" body="Get context from recent team discussions" icon={<MessageSquare size={13} aria-hidden />} />
+            <ConnectCard title="Connect email" body="Summarize stakeholder asks from email" icon={<Mail size={13} aria-hidden />} />
+            <ConnectCard title="Connect files" body="Review results, research, and plans" icon={<FolderOpen size={13} aria-hidden />} />
           </div>
         </div>
       </div>

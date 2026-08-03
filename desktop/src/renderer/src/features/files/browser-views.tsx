@@ -195,7 +195,7 @@ export function EntryButton({
       <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
         {formatEntrySize(entry)}
       </span>
-      <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+      <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
         {formatModified(entry.modifiedAt)}
       </span>
     </button>

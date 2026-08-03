@@ -6,6 +6,7 @@ import { Search, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { categoryMessage } from "../../../../shared/app-error";
 import { Button } from "../../design/primitives";
+import { RefreshButton } from "../settings/sections/ProvidersSection";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { openPluginsTerminal } from "./open-plugins-terminal";
@@ -194,11 +195,7 @@ export function SkillsSection() {
             Reusable instruction packs installed on your Matrix computer.
           </p>
         </div>
-        {status === "ready" ? (
-          <Button variant="ghost" onClick={refresh}>
-            Refresh
-          </Button>
-        ) : null}
+        {status === "ready" ? <RefreshButton onClick={refresh} /> : null}
       </div>
 
       {status === "ready" && skills.length > 0 ? (

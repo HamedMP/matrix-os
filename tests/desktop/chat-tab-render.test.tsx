@@ -113,6 +113,19 @@ describe("ChatTab", () => {
     expect(container.querySelector(".h-full.items-center.justify-center")).toBeNull();
   });
 
+  it("renders connect cards with real lucide icons instead of placeholder squares", () => {
+    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
+    render(<ChatTab />);
+
+    // Each onboarding connect card carries a glyph matching its label
+    // semantics — no empty gray placeholder tiles.
+    for (const title of ["Connect messaging", "Connect email", "Connect files"]) {
+      const card = screen.getByText(title).parentElement;
+      expect(card).not.toBeNull();
+      expect(card?.querySelector("svg")).not.toBeNull();
+    }
+  });
+
   it("switches from Hermes to an agent thread from the rail", () => {
     useThreads.setState({
       threads: [thread("t1", "Build parser")],

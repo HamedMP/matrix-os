@@ -118,29 +118,41 @@ export const GitGraph = memo(function GitGraph({
         <span className="flex min-w-0 items-center gap-1">
           {commit.head ? (
             <span
-              className="shrink-0 rounded px-1 py-px text-[10px] font-semibold"
-              style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+              className="shrink-0 rounded border px-1 py-px text-[10px] font-semibold"
+              style={{
+                background: "var(--accent-muted)",
+                borderColor: "color-mix(in srgb, var(--accent) 45%, transparent)",
+                color: "var(--accent)",
+              }}
             >
               HEAD
             </span>
           ) : null}
-          {commit.refs.map((ref) => (
-            <span
-              key={ref}
-              className="shrink-0 rounded px-1 py-px text-[10px] font-medium"
-              style={{
-                background: `color-mix(in srgb, ${laneColor(layout.rows[row]?.col ?? 0)} 18%, transparent)`,
-                color: laneColor(layout.rows[row]?.col ?? 0),
-              }}
-            >
-              {ref}
-            </span>
-          ))}
+          {commit.refs.map((ref) => {
+            const lane = laneColor(layout.rows[row]?.col ?? 0);
+            return (
+              <span
+                key={ref}
+                className="shrink-0 rounded border px-1 py-px text-[10px] font-medium"
+                style={{
+                  background: `color-mix(in srgb, ${lane} 14%, transparent)`,
+                  borderColor: `color-mix(in srgb, ${lane} 45%, transparent)`,
+                  color: "var(--text-primary)",
+                }}
+              >
+                {ref}
+              </span>
+            );
+          })}
           {commit.tags.map((tag) => (
             <span
               key={tag}
-              className="shrink-0 rounded px-1 py-px text-[10px] font-medium"
-              style={{ background: "var(--warning-muted)", color: "var(--warning)" }}
+              className="shrink-0 rounded border px-1 py-px text-[10px] font-medium"
+              style={{
+                background: "var(--warning-muted)",
+                borderColor: "color-mix(in srgb, var(--warning) 45%, transparent)",
+                color: "var(--text-primary)",
+              }}
             >
               {tag}
             </span>
@@ -149,11 +161,10 @@ export const GitGraph = memo(function GitGraph({
             {commit.subject}
           </span>
         </span>
-        <span className="truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-          <span className="font-mono">{commit.sha.slice(0, 8)}</span>
-          {" · "}
-          {commit.author}
-          {relativeTime(commit.timestamp) ? ` · ${relativeTime(commit.timestamp)}` : ""}
+        <span className="flex min-w-0 items-center text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+          <span className="w-16 shrink-0 font-mono">{commit.sha.slice(0, 8)}</span>
+          <span className="w-28 shrink-0 truncate">{commit.author}</span>
+          <span className="min-w-0 flex-1 truncate text-right">{relativeTime(commit.timestamp)}</span>
         </span>
       </button>,
     );
@@ -178,10 +189,10 @@ export const GitGraph = memo(function GitGraph({
               <path
                 key={index}
                 d={edgePath(edge, commits.length)}
-                stroke={laneColor(edge.colorIndex)}
                 strokeWidth={1.5}
                 fill="none"
                 opacity={0.45}
+                style={{ stroke: laneColor(edge.colorIndex) }}
               />
             ))}
             {commits.slice(startRow, endRow).map((commit, offset) => {
@@ -196,15 +207,26 @@ export const GitGraph = memo(function GitGraph({
                       cy={rowCenterY(row)}
                       r={MERGE_DOT_OUTER}
                       fill="none"
-                      stroke={color}
                       strokeWidth={1.5}
+                      style={{ stroke: color }}
                     />
-                    <circle cx={colX(col)} cy={rowCenterY(row)} r={MERGE_DOT_INNER} fill={color} />
+                    <circle
+                      cx={colX(col)}
+                      cy={rowCenterY(row)}
+                      r={MERGE_DOT_INNER}
+                      style={{ fill: color }}
+                    />
                   </g>
                 );
               }
               return (
-                <circle key={commit.sha} cx={colX(col)} cy={rowCenterY(row)} r={DOT_RADIUS} fill={color} />
+                <circle
+                  key={commit.sha}
+                  cx={colX(col)}
+                  cy={rowCenterY(row)}
+                  r={DOT_RADIUS}
+                  style={{ fill: color }}
+                />
               );
             })}
           </svg>

@@ -242,6 +242,19 @@ describe("ComputerFileBrowser view options", () => {
     expect(screen.getByText("3 items")).toBeTruthy();
   });
 
+  it("gives the name column the flexible track with fixed right-aligned meta columns", async () => {
+    renderBrowser();
+    const row = await screen.findByRole("button", { name: "Open README.md" });
+
+    // Name owns the flexible minmax track; Size/Modified are fixed-width
+    // columns sized to the format.ts outputs so names only truncate when the
+    // pane is genuinely out of room.
+    expect(row.getAttribute("style")).toContain("minmax(0,1fr) 72px 104px");
+    expect(screen.getByText("2 KB").className).toContain("text-right");
+    const modifiedHeader = screen.getByRole("button", { name: "Sort by modified" });
+    expect(modifiedHeader.className).toContain("justify-end");
+  });
+
   it("sorts the list when a column header is clicked", async () => {
     renderBrowser();
     await screen.findByRole("button", { name: "Open README.md" });

@@ -28,6 +28,28 @@ const PROVIDER_STATUS_COLOR: Record<AgentProviderSummary["availability"], string
   unknown: "var(--text-tertiary)",
 };
 
+// The one section-header Refresh recipe: subtle pill, 13px RefreshCw, label
+// text. Integrations and the Plugins sections import this so every settings
+// surface renders the identical action instead of ad-hoc ghost/plain buttons.
+export function RefreshButton({
+  label = "Refresh",
+  refreshing = false,
+  disabled,
+  onClick,
+}: {
+  label?: string;
+  refreshing?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button variant="subtle" aria-label={label} disabled={disabled} onClick={onClick}>
+      <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
+      {refreshing ? "Refreshing" : "Refresh"}
+    </Button>
+  );
+}
+
 const STATUS_UNAVAILABLE_ERROR = "Provider status is unavailable right now.";
 const SETUP_TERMINAL_ERROR = "Could not open setup terminal. Try again from Terminal.";
 const OFFLINE_MESSAGE = "Connect to your Matrix computer to manage coding agent providers.";
@@ -177,15 +199,12 @@ export default function ProvidersSection() {
           title="Providers"
           description="Coding agents on this computer. Install, sign in, and choose the default for new chats."
         />
-        <Button
-          variant="subtle"
-          aria-label="Refresh provider status"
+        <RefreshButton
+          label="Refresh provider status"
+          refreshing={refreshing}
           disabled={!api || refreshing}
           onClick={retry}
-        >
-          <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
-          {refreshing ? "Refreshing" : "Refresh"}
-        </Button>
+        />
       </div>
 
       {!api ? (

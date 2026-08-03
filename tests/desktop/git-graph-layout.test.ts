@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeGraphLayout, laneColor, LANE_COLORS } from "../../desktop/src/renderer/src/features/git/graph-layout";
+import { computeGraphLayout, laneColor, laneColorVar, LANE_COLOR_VARS } from "../../desktop/src/renderer/src/features/git/graph-layout";
 
 function commit(sha: string, parents: string[] = []) {
   return { sha, parents };
@@ -79,10 +79,18 @@ describe("computeGraphLayout", () => {
 });
 
 describe("laneColor", () => {
+  it("maps lanes onto theme-driven CSS variables, never hardcoded hex", () => {
+    for (const token of LANE_COLOR_VARS) {
+      expect(token).toMatch(/^--[a-z-]+$/);
+    }
+    expect(laneColor(0)).toBe(`var(${LANE_COLOR_VARS[0]})`);
+    expect(laneColorVar(0)).not.toBe(laneColorVar(1));
+  });
+
   it("assigns distinct colors per lane and wraps the palette", () => {
-    expect(laneColor(0)).toBe(LANE_COLORS[0]);
-    expect(laneColor(1)).toBe(LANE_COLORS[1]);
-    expect(laneColor(LANE_COLORS.length)).toBe(LANE_COLORS[0]);
-    expect(laneColor(0)).not.toBe(laneColor(1));
+    expect(laneColorVar(0)).toBe(LANE_COLOR_VARS[0]);
+    expect(laneColorVar(1)).toBe(LANE_COLOR_VARS[1]);
+    expect(laneColorVar(LANE_COLOR_VARS.length)).toBe(LANE_COLOR_VARS[0]);
+    expect(laneColor(LANE_COLOR_VARS.length)).toBe(laneColor(0));
   });
 });

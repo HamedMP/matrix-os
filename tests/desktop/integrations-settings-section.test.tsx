@@ -141,6 +141,23 @@ describe("desktop integrations settings section", () => {
     expect(screen.getByText("active")).not.toBeNull();
   });
 
+  it("renders the shared Refresh recipe in the section header and reloads on click", async () => {
+    const api = makeApi();
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection />);
+    await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());
+
+    // Same IconButton-with-label recipe as Providers: RefreshCw glyph plus
+    // label in a subtle pill, top-right of the section header.
+    const refreshButton = screen.getByRole("button", { name: "Refresh" });
+    expect(refreshButton.querySelector("svg")).not.toBeNull();
+
+    const getMock = api.get as unknown as ReturnType<typeof vi.fn>;
+    const callsBefore = getMock.mock.calls.length;
+    fireEvent.click(refreshButton);
+    await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
   it("renders the unavailable empty state when the runtime does not expose integrations", async () => {
     useConnection.setState({
       api: makeApi({ getError: () => new AppError("notFound") }) as never,

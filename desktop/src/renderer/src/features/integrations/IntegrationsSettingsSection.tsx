@@ -6,10 +6,10 @@
 // for confirmation first. The renderer only displays name/category/label/
 // email/status — never tokens, remote logos, or upstream error text.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Button } from "../../design/primitives";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { invoke } from "../../lib/operator";
 import { categoryMessage } from "../../../../shared/app-error";
+import { RefreshButton } from "../settings/sections/ProvidersSection";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { AvailableServiceCard } from "./AvailableServiceCard";
@@ -280,11 +280,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
             Connect external services to extend your agent's capabilities.
           </p>
         </div>
-        {status === "ready" ? (
-          <Button variant="ghost" onClick={refresh}>
-            Refresh
-          </Button>
-        ) : null}
+        {status === "ready" ? <RefreshButton onClick={refresh} /> : null}
       </div>
 
       {body}

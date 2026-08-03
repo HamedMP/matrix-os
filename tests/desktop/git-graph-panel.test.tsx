@@ -133,6 +133,30 @@ describe("GitPanel graph tab", () => {
     expect(screen.getAllByText(/Bob/).length).toBeGreaterThan(0);
   });
 
+  it("renders ref pills with a bordered high-contrast recipe and column-aligned meta", async () => {
+    renderPanel(makeApi(HEALTHY_ROUTES));
+
+    await waitFor(() => expect(screen.getByText("Wire the graph")).toBeTruthy());
+
+    // Ref pills keep the lane tint but gain a border and primary text for AA
+    // contrast instead of colored text on a tinted background.
+    const refPill = screen.getByText("main");
+    expect(refPill.className).toContain("border");
+    expect(refPill.getAttribute("style")).toContain("color-mix");
+    const headPill = screen.getByText("HEAD");
+    expect(headPill.className).toContain("border");
+
+    // Meta is split into stable columns: fixed-width mono sha, fixed-width
+    // author, and a right-aligned relative-time column, so scanning is
+    // vertical instead of tracking " · "-separated runs.
+    const sha = screen.getByText(SHA_A.slice(0, 8));
+    expect(sha.className).toContain("font-mono");
+    expect(sha.className).toContain("w-16");
+    const author = screen.getAllByText("Alice")[0]!;
+    expect(author.className).toContain("w-28");
+    expect(author.className).toContain("truncate");
+  });
+
   it("opens commit detail on click and expands per-file diffs with +/- lines", async () => {
     const { container } = renderPanel(makeApi(HEALTHY_ROUTES));
 
