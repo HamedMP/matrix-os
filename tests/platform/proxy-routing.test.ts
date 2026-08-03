@@ -3554,6 +3554,38 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("cache-control")).toContain("no-store");
   });
 
+  it("routes the isolated platform preview to its selected disposable T3 VM", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ environmentId: "environment-preview-t3" }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-preview-secret-123",
+      env: {
+        PLATFORM_PREVIEW: "true",
+        PLATFORM_PREVIEW_ROUTE_MACHINE_ID: "610408b1-31d7-4e8b-b66b-309c3e622e47",
+        PLATFORM_PREVIEW_ROUTE_HANDLE: "pr-1126",
+        PLATFORM_PREVIEW_ROUTE_IPV4: "203.0.113.38",
+        PLATFORM_PREVIEW_ROUTE_IMAGE_VERSION: "v2026.08.03-pr1126-518dead",
+      } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request(
+      "/vm/pr-1126/api/integrations/t3/.well-known/t3/environment",
+      { headers: { host: "app.matrix-os.com" } },
+    );
+
+    expect(res.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "https://203.0.113.38:443/api/integrations/t3/.well-known/t3/environment",
+    );
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
+  });
+
   it("rejects explicit VM native app stream assets without a capability token", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("unexpected", { status: 200 }),

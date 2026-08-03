@@ -98,6 +98,7 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import { resolvePreviewVmRoute } from './preview-vm-route.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -636,13 +637,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
+      const selectedRuntimeSlot = explicitVmRoute.runtimeSlot ?? (
+        runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined
+      );
       const machine = await getActiveUserMachineByHandle(
         db,
         explicitVmRoute.handle,
-        explicitVmRoute.runtimeSlot ?? (
-          runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined
-        ),
-      );
+        selectedRuntimeSlot,
+      ) ?? resolvePreviewVmRoute(appEnv, explicitVmRoute.handle, selectedRuntimeSlot);
       if (!machine || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))) {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);

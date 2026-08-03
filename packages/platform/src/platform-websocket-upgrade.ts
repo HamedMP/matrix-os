@@ -46,6 +46,7 @@ import { resolveContainerEndpoint } from './container-endpoint.js';
 import { describeError } from './platform-route-utils.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
+import { resolvePreviewVmRoute } from './preview-vm-route.js';
 
 interface PlatformWebSocketTelemetry {
   capturePlatformEvent(event: MatrixTelemetryEvent, properties: Record<string, unknown>): void;
@@ -221,7 +222,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         db,
         explicitVmRoute.handle,
         explicitVmRoute.runtimeSlot,
-      );
+      ) ?? resolvePreviewVmRoute(env, explicitVmRoute.handle, explicitVmRoute.runtimeSlot);
       if (!explicitMachine || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
         socket.destroy();
         return;

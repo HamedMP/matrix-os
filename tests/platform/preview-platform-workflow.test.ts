@@ -52,7 +52,7 @@ describe("preview platform workflow", () => {
       'PREVIEW_SERVICE_DOMAIN="${service_base_url#https://}"',
     );
     expect(workflow).toContain(
-      'PREVIEW_SESSION_HOSTS="${PREVIEW_DOMAIN},${PREVIEW_SERVICE_DOMAIN}"',
+      'PREVIEW_SESSION_HOSTS="${PREVIEW_SERVICE_DOMAIN}"',
     );
     expect(workflow).toContain(
       "MATRIX_APP_DOMAIN_HOSTS=${session_hosts}",
@@ -60,5 +60,22 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain(
       'deploy_preview "$PREVIEW_API_ORIGIN" "$PREVIEW_SESSION_HOSTS"',
     );
+  });
+
+  it("passes only the selected disposable VPS route into the isolated preview", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      "PRODUCTION_PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}",
+    );
+    expect(workflow).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h');
+    expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_MACHINE_ID=${preview_machine_id}");
+    expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_HANDLE=${preview_handle}");
+    expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_IPV4=${preview_ipv4}");
+    expect(workflow).not.toContain("PLATFORM_DATABASE_URL=platform-database-url:latest");
   });
 });
