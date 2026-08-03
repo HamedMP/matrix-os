@@ -56,4 +56,26 @@ describe("terminal production acceptance request authentication", () => {
     expect((await app.request(forged)).status).toBe(401);
     expect(run).toHaveBeenCalledTimes(1);
   });
+
+  it("atomically rejects concurrent copies of one valid signed request", async () => {
+    const run = vi.fn(async () => ({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      truncated: false,
+    }));
+    const app = new Hono().route("/", createTerminalAcceptanceRoutes({ secret: SECRET, run }));
+    const body = JSON.stringify({ command: ["/usr/bin/true"] });
+    const valid = request(body);
+
+    const responses = await Promise.all([
+      app.request(valid.clone()),
+      app.request(valid.clone()),
+    ]);
+
+    expect(responses.map(({ status }) => status).sort()).toEqual([200, 401]);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
 });

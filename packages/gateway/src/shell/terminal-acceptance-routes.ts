@@ -64,14 +64,6 @@ export function createTerminalAcceptanceRoutes(options: {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
-    for (const [candidate, expiresAt] of seenNonces) {
-      if (expiresAt <= nowMs) seenNonces.delete(candidate);
-    }
-    if (seenNonces.has(nonce)) return c.json({ error: "Unauthorized" }, 401);
-    if (seenNonces.size >= MAX_ACCEPTANCE_NONCES) {
-      return c.json({ error: "Too many requests" }, 429);
-    }
-
     const rawBody = await c.req.text();
     if (!signatureMatches(signature, requestSignature(options.secret, timestamp, nonce, rawBody))) {
       return c.json({ error: "Unauthorized" }, 401);
@@ -87,7 +79,16 @@ export function createTerminalAcceptanceRoutes(options: {
     }
     const parsed = AcceptanceCommandSchema.safeParse(parsedBody);
     if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
-    seenNonces.set(nonce, nowMs + ACCEPTANCE_NONCE_TTL_MS);
+
+    const reservationNowMs = now();
+    for (const [candidate, expiresAt] of seenNonces) {
+      if (expiresAt <= reservationNowMs) seenNonces.delete(candidate);
+    }
+    if (seenNonces.has(nonce)) return c.json({ error: "Unauthorized" }, 401);
+    if (seenNonces.size >= MAX_ACCEPTANCE_NONCES) {
+      return c.json({ error: "Too many requests" }, 429);
+    }
+    seenNonces.set(nonce, reservationNowMs + ACCEPTANCE_NONCE_TTL_MS);
 
     try {
       const responseBody = JSON.stringify(await options.run(parsed.data));
