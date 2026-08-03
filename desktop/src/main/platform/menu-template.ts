@@ -1,4 +1,5 @@
 import type { MenuItemConstructorOptions } from "electron";
+import type { ZoomAction } from "./zoom";
 
 type MenuEventSender = (channel: string, payload: unknown) => void;
 
@@ -7,6 +8,7 @@ interface AppMenuTemplateOptions {
   isPackaged: boolean;
   openExternal(url: string): void;
   send: MenuEventSender;
+  adjustZoom(action: ZoomAction): void;
 }
 
 export function createAppMenuTemplate({
@@ -14,6 +16,7 @@ export function createAppMenuTemplate({
   isPackaged,
   openExternal,
   send,
+  adjustZoom,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const viewSubmenu: MenuItemConstructorOptions[] = [
     {
@@ -34,6 +37,25 @@ export function createAppMenuTemplate({
   ];
 
   viewSubmenu.push(
+    { type: "separator" },
+    // Custom click handlers instead of the zoomin/zoomout/resetzoom roles so
+    // the factor round-trips through the shared zoom step path and the
+    // renderer store hears about it via app:zoom-changed.
+    {
+      label: "Zoom In",
+      accelerator: "CmdOrCtrl+=",
+      click: () => adjustZoom("in"),
+    },
+    {
+      label: "Zoom Out",
+      accelerator: "CmdOrCtrl+-",
+      click: () => adjustZoom("out"),
+    },
+    {
+      label: "Actual Size",
+      accelerator: "CmdOrCtrl+0",
+      click: () => adjustZoom("reset"),
+    },
     { type: "separator" },
     { role: "togglefullscreen" },
     ...(isPackaged

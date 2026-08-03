@@ -10,6 +10,7 @@ import type { CodingAgentNotificationPreferences, CodingAgentNotificationPrefere
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
+import { clampZoomFactor, DEFAULT_ZOOM_FACTOR } from "../platform/zoom";
 
 interface IpcMainLike {
   handle(
@@ -77,9 +78,29 @@ export interface HandlerContext {
 
 type Handler<C extends InvokeChannel> = (
   payload: InvokeRequest<C>,
+  event: unknown,
 ) => Promise<InvokeResponse<C>> | InvokeResponse<C>;
 
 const PUBLIC_IPC_ERRORS = new Set(["invalid request", "internal error", "embed unavailable"]);
+
+// The sender's webContents is the only zoom target; anything else (tests,
+// malformed events) degrades to a no-op instead of throwing.
+interface ZoomTarget {
+  getZoomFactor(): number;
+  setZoomFactor(factor: number): void;
+}
+
+function zoomTarget(event: unknown): ZoomTarget | null {
+  const sender = (event as { sender?: Partial<ZoomTarget> } | null)?.sender;
+  if (
+    sender &&
+    typeof sender.getZoomFactor === "function" &&
+    typeof sender.setZoomFactor === "function"
+  ) {
+    return sender as ZoomTarget;
+  }
+  return null;
+}
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
@@ -91,7 +112,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
       }
       let result: InvokeResponse<C>;
       try {
-        result = await handler(parsedRequest.data as InvokeRequest<C>);
+        result = await handler(parsedRequest.data as InvokeRequest<C>, _event);
       } catch (err: unknown) {
         console.warn(
           `[ipc] handler for ${channel} failed:`,
@@ -155,6 +176,17 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
   handle("runtime:create-turn", (request) => ctx.createAgentTurn(request));
   handle("runtime:abort-thread", (request) => ctx.abortAgentThread(request));
+
+  // The renderer appearance store owns the persisted factor; these handlers
+  // only apply/read it on the sender's webContents.
+  handle("app:get-zoom", (_payload, event) => {
+    const target = zoomTarget(event);
+    return { factor: target ? clampZoomFactor(target.getZoomFactor()) : DEFAULT_ZOOM_FACTOR };
+  });
+  handle("app:set-zoom", ({ factor }, event) => {
+    zoomTarget(event)?.setZoomFactor(factor);
+    return { factor };
+  });
 
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),

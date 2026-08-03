@@ -54,6 +54,11 @@ const CodingAgentCreateTurnResultSchema = z.discriminatedUnion("ok", [
 const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
 const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
+// App-wide Chromium zoom factor (webContents.setZoomFactor). Bounded so a
+// renderer can never push the UI outside the supported 50%–200% range.
+const ZoomFactorSchema = z.number().min(0.5).max(2);
+const ZoomFactorResultSchema = z.object({ factor: ZoomFactorSchema }).strict();
+
 const ProfileSchema = z
   .object({
     handle: z.string().min(1).max(64),
@@ -239,6 +244,14 @@ export const INVOKE_CHANNELS = {
     request: z.object({ threadId: ThreadIdSchema }).strict(),
     response: AgentThreadSnapshotSchema,
   },
+  // App-wide UI zoom: the renderer owns the persisted factor; main applies it
+  // to the sender's webContents and reports menu-driven steps back via the
+  // app:zoom-changed event.
+  "app:get-zoom": { request: Empty, response: ZoomFactorResultSchema },
+  "app:set-zoom": {
+    request: ZoomFactorResultSchema,
+    response: ZoomFactorResultSchema,
+  },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),
     response: z.object({ value: z.unknown() }).strict(),
@@ -352,6 +365,7 @@ export const EVENT_CHANNELS = {
   "update:available": z.object({ version: z.string().max(64) }).strict(),
   "update:ready": z.object({ version: z.string().max(64) }).strict(),
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
+  "app:zoom-changed": ZoomFactorResultSchema,
   "menu:action": z
     .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open"]) })
     .strict(),

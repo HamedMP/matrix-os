@@ -48,6 +48,14 @@ describe("local store", () => {
     await expect(store.set("windowBounds", { x: "a" } as never)).rejects.toThrow();
   });
 
+  it("round-trips appearance themeId and zoom while bounding the factor", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    await store.set("appearance", { theme: "dark", themeId: "nord", zoom: 1.3 });
+    expect(await store.get("appearance")).toEqual({ theme: "dark", themeId: "nord", zoom: 1.3 });
+    await expect(store.setUnknown("appearance", { theme: "dark", zoom: 2.5 })).rejects.toThrow();
+    await expect(store.setUnknown("appearance", { theme: "dark", zoom: 0.1 })).rejects.toThrow();
+  });
+
   it("validates unknown IPC state values before writing", async () => {
     const store = createLocalStore({ dir: await makeDir() });
     await store.setUnknown("appearance", { theme: "system" });

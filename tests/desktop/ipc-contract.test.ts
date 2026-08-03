@@ -43,6 +43,8 @@ describe("IPC contract", () => {
       "badge:set",
       "shell:open-external",
       "update:check",
+      "app:get-zoom",
+      "app:set-zoom",
     ];
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
@@ -827,6 +829,29 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ url: "http://matrix-os.com" }).success).toBe(false);
     expect(schema.safeParse({ url: "file:///etc/passwd" }).success).toBe(false);
     expect(schema.safeParse({ url: "javascript:alert(1)" }).success).toBe(false);
+  });
+
+  it("bounds the app zoom factor between 0.5 and 2.0", () => {
+    const setRequest = INVOKE_CHANNELS["app:set-zoom"].request;
+    const setResponse = INVOKE_CHANNELS["app:set-zoom"].response;
+    const getRequest = INVOKE_CHANNELS["app:get-zoom"].request;
+    const getResponse = INVOKE_CHANNELS["app:get-zoom"].response;
+
+    expect(getRequest.safeParse({}).success).toBe(true);
+    expect(getRequest.safeParse({ token: "secret" }).success).toBe(false);
+    for (const factor of [0.5, 1, 1.3, 2]) {
+      expect(setRequest.safeParse({ factor }).success).toBe(true);
+      expect(setResponse.safeParse({ factor }).success).toBe(true);
+      expect(getResponse.safeParse({ factor }).success).toBe(true);
+      expect(EVENT_CHANNELS["app:zoom-changed"].safeParse({ factor }).success).toBe(true);
+    }
+    for (const factor of [0.4, 0, 2.1, Number.NaN, "1.5"]) {
+      expect(setRequest.safeParse({ factor }).success).toBe(false);
+      expect(EVENT_CHANNELS["app:zoom-changed"].safeParse({ factor }).success).toBe(false);
+    }
+    expect(setRequest.safeParse({}).success).toBe(false);
+    expect(setRequest.safeParse({ factor: 1, accessToken: "secret" }).success).toBe(false);
+    expect(setResponse.safeParse({}).success).toBe(false);
   });
 
   it("defines event channels with schemas", () => {

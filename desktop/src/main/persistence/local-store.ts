@@ -9,8 +9,13 @@ import { ProjectViewsStateSchema } from "../../shared/project-views";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
+// themeId and zoom are optional so older state files keep validating.
 const AppearanceSchema = z
-  .object({ theme: z.enum(["dark", "light", "system"]) })
+  .object({
+    theme: z.enum(["dark", "light", "system"]),
+    themeId: z.string().min(1).max(64).optional(),
+    zoom: z.number().min(0.5).max(2).optional(),
+  })
   .strict();
 
 const WindowBoundsSchema = z
