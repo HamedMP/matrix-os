@@ -73,6 +73,7 @@ describe("preview platform workflow", () => {
     );
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 10');
     expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h');
+    expect(workflow).not.toContain('and .provisioningClass == "preview"');
     expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_MACHINE_ID=${preview_machine_id}");
     expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_HANDLE=${preview_handle}");
     expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_IPV4=${preview_ipv4}");

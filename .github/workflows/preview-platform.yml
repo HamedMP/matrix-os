@@ -133,7 +133,7 @@ jobs:
             https://api.matrix-os.com/vps/fleet | jq -ce --arg h "pr-${PR_NUMBER}" \
             '[.machines[]
               | select(.handle == $h and .runtimeSlot == $h
-                and .provisioningClass == "preview" and .status == "running")]
+                and .status == "running")]
              | if length == 1 then .[0] else error("preview route is not uniquely running") end')"
           preview_machine_id="$(jq -r '.machineId' <<< "$preview_machine")"
           preview_handle="$(jq -r '.handle' <<< "$preview_machine")"
