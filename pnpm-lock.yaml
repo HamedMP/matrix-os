@@ -4,7 +4,7 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-packageExtensionsChecksum: sha256-m9DsuDtJANdLytZP9n/Bml4jTXvRcMW5PxlVKX5MJog=
+packageExtensionsChecksum: sha256-rZpBjPGwynkZBO6ecOJcSqSzQ7VMBks/aE429NKBlCU=
 
 importers:
 
@@ -324,9 +324,6 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
-      '@matrix-os/contracts':
-        specifier: workspace:*
-        version: link:../packages/contracts
       '@radix-ui/react-collapsible':
         specifier: ^1.1.12
         version: 1.1.12(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -421,6 +418,9 @@ importers:
         specifier: ^5.0.13
         version: 5.0.13(@types/react@19.2.14)(react@19.2.6)(use-sync-external-store@1.6.0(react@19.2.6))
     devDependencies:
+      '@matrix-os/contracts':
+        specifier: workspace:*
+        version: link:../packages/contracts
       '@tailwindcss/vite':
         specifier: ^4.1.18
         version: 4.3.0(vite@7.3.5(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.51.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.2))
@@ -24279,6 +24279,7 @@ snapshots:
       '@babel/core': 7.29.0
       '@babel/plugin-transform-arrow-functions': 7.27.1(@babel/core@7.29.0)
       cac: 6.7.14
+      electron: 41.7.1
       esbuild: 0.25.12
       magic-string: 0.30.21
       picocolors: 1.1.1

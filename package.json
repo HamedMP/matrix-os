@@ -64,6 +64,11 @@
       }
     },
     "packageExtensions": {
+      "electron-vite@*": {
+        "dependencies": {
+          "electron": "^41.0.3"
+        }
+      },
       "node-pty@*": {
         "dependencies": {
           "node-gyp": "12.3.0"

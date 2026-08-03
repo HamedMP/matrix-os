@@ -59,10 +59,10 @@ describe("desktop release workflows", () => {
     expect(config).not.toContain("MATRIX_DESKTOP_UPDATE_CHANNEL ?? process.env.OPERATOR_UPDATE_CHANNEL");
   });
 
-  it("bundles preload runtime schema dependencies for sandboxed IPC validation", () => {
-    const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
+  it("keeps raw workspace TypeScript out of the packaged app archive", () => {
+    const builder = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
 
-    expect(config).toContain('externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })');
+    expect(builder).toContain('- "!**/node_modules/@matrix-os/contracts/**"');
   });
 
   it("bundles runtime schema dependencies into the Electron main process", () => {
@@ -93,12 +93,21 @@ describe("desktop release workflows", () => {
 
     expect(build).toContain("Validate Apple notarization secrets");
     expect(build).toContain("Prepare mac signing environment");
-    expect(build).toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
+    expect(build).toContain("MATRIX_DESKTOP_MAC_CERTIFICATE or CSC_LINK is required");
+    expect(build).toContain("MATRIX_DESKTOP_MAC_CERTIFICATE_PASSWORD or CSC_KEY_PASSWORD is required");
+    expect(build).not.toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
     expect(build).toContain("cert_delimiter=\"MATRIX_DESKTOP_CERT_$(uuidgen");
     expect(build).toContain("password_delimiter=\"MATRIX_DESKTOP_CERT_PASSWORD_$(uuidgen");
     expect(build).toContain("MAC_CERTIFICATE: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
     expect(build).not.toContain("CSC_LINK: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
-    expect(build).toContain("APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set together");
+    expect(build).toContain("Missing required Apple notarization secret");
+    expect(build).toContain("Verify macOS signature and notarization");
+    expect(build).toContain('codesign --verify --deep --strict --verbose=2 "$app_path"');
+    expect(build).toContain('grep "Authority=Developer ID Application" >/dev/null');
+    expect(build).toContain('xcrun stapler validate "$app_path"');
+    expect(build).toContain('spctl --assess --type execute --verbose=4 "$app_path"');
+    expect(build).toContain("Launch smoke test macOS app");
+    expect(build).toContain("ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING");
     expect(build).toContain("Apply desktop release version");
     expect(build).toContain("RELEASE_VERSION: ${{ inputs.version }}");
     expect(build).toContain("j.version = exact ||");

@@ -27,8 +27,9 @@ electron-builder:
 - `APPLE_TEAM_ID`
 
 `MATRIX_DESKTOP_MAC_CERTIFICATE` may be a base64-encoded `.p12` payload or a
-secure URL supported by electron-builder. Do not publish a public release from a
-run where signing or notarization was skipped.
+secure URL supported by electron-builder. macOS release jobs fail before the
+build if any certificate, certificate-password, or notarization secret is
+missing; unsigned artifacts must never reach a release.
 
 ## Channels
 
@@ -67,7 +68,10 @@ git push origin desktop-v0.1.0
 
 The release workflow builds macOS arm64/x64 DMG+ZIP artifacts, Linux x64
 AppImage artifacts, merges `latest-mac.yml`, generates checksums, and creates
-the GitHub release with generated changelog notes.
+the GitHub release with generated changelog notes. Before upload, each macOS
+build verifies its Developer ID signature, stapled notarization ticket, and
+Gatekeeper assessment; inspects the ASAR for raw workspace TypeScript; mounts
+the DMG; and launches the copied app in an isolated profile.
 
 ## Updates
 
