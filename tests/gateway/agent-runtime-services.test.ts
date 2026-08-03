@@ -2,11 +2,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentRuntimeSource } from "../../packages/gateway/src/agent-config/service.js";
 import {
   createAgentRuntimeServices,
   createHermesAgentRuntimeServices,
   createLazyOpenClawRpc,
   OPENCLAW_READINESS_TIMEOUT_MS,
+  waitForHermesReady,
   waitForOpenClawReady,
 } from "../../packages/gateway/src/agent-config/runtime-services.js";
 
@@ -32,6 +34,23 @@ describe("Hermes agent runtime services", () => {
 
     await expect(waitForOpenClawReady(
       rpc,
+      new AbortController().signal,
+      1,
+    )).rejects.toMatchObject({
+      name: "AgentConfigError",
+      kind: "runtime_switch_failed",
+    });
+  });
+
+  it("maps a Hermes source abort during readiness polling to a runtime error", async () => {
+    const source: AgentRuntimeSource = vi.fn((signal: AbortSignal) => (
+      new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      })
+    ));
+
+    await expect(waitForHermesReady(
+      source,
       new AbortController().signal,
       1,
     )).rejects.toMatchObject({

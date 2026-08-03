@@ -159,7 +159,7 @@ async function resetOpenClawRpc(rpc: OpenClawRpcClient): Promise<void> {
 export const OPENCLAW_READINESS_TIMEOUT_MS = 45_000;
 export const HERMES_READINESS_TIMEOUT_MS = 20_000;
 
-async function waitForHermesReady(
+export async function waitForHermesReady(
   source: AgentRuntimeSource,
   signal: AbortSignal,
   timeoutMs = HERMES_READINESS_TIMEOUT_MS,
@@ -169,13 +169,20 @@ async function waitForHermesReady(
     AbortSignal.timeout(timeoutMs),
   ]);
   while (true) {
-    source.invalidate?.();
-    const snapshot = await source(readinessSignal);
-    const descriptor = snapshot.runtime.options.find((runtime) => runtime.id === "hermes");
-    if (descriptor !== undefined
-      && descriptor.health !== "unknown"
-      && descriptor.health !== "unreachable") {
-      return;
+    try {
+      source.invalidate?.();
+      const snapshot = await source(readinessSignal);
+      const descriptor = snapshot.runtime.options.find((runtime) => runtime.id === "hermes");
+      if (descriptor !== undefined
+        && descriptor.health !== "unknown"
+        && descriptor.health !== "unreachable") {
+        return;
+      }
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
+      if (readinessSignal.aborted) {
+        throw new AgentConfigError("runtime_switch_failed", error);
+      }
     }
     if (signal.aborted) throw signal.reason ?? new AgentConfigError("runtime_switch_failed");
     if (readinessSignal.aborted) throw new AgentConfigError("runtime_switch_failed");
