@@ -375,7 +375,7 @@ describe("Canvas Agent runtime settings", () => {
     expect(screen.getByRole("combobox", { name: "Chat model" })).toHaveValue("claude-sonnet-4-6");
     fireEvent.click(screen.getByRole("button", { name: "Save Chat model" }));
 
-    await waitFor(() => expect(fetcher).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
       expect.stringContaining("/api/settings/agent"),
       expect.objectContaining({
         method: "PUT",
@@ -504,6 +504,59 @@ describe("Canvas Agent runtime settings", () => {
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({ model: "claude-opus-4-6", effort: "high" }),
+      }),
+    ));
+  });
+
+  it("reconciles legacy edits after a successful catalog refresh", async () => {
+    const initial = {
+      identity: {},
+      kernel: { model: "claude-sonnet-4-6", effort: "medium" },
+      availableModels: [
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", tier: "Balanced" },
+        { id: "claude-opus-4-6", label: "Claude Opus 4.6", tier: "Most capable" },
+      ],
+      availableEfforts: ["low", "medium", "high"],
+      defaults: { model: "claude-sonnet-4-6", effort: "medium" },
+    };
+    const refreshed = {
+      ...initial,
+      kernel: { model: "claude-opus-4-6", effort: "high" },
+      availableModels: [initial.availableModels[0]],
+      availableEfforts: ["low", "medium"],
+    };
+    let updated = false;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        updated = true;
+        return response({ ok: true });
+      }
+      return response(updated ? refreshed : initial);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    const region = await screen.findByRole("region", { name: "Legacy agent settings" });
+    fireEvent.change(within(region).getByRole("combobox", { name: "Legacy Chat model" }), {
+      target: { value: "claude-opus-4-6" },
+    });
+    fireEvent.change(within(region).getByRole("combobox", { name: "Legacy Chat effort" }), {
+      target: { value: "high" },
+    });
+    fireEvent.click(within(region).getByRole("button", { name: "Save Chat model" }));
+
+    await waitFor(() => expect(
+      within(screen.getByRole("region", { name: "Legacy agent settings" }))
+        .queryByRole("option", { name: "Claude Opus 4.6" }),
+    ).toBeNull());
+    const refreshedRegion = screen.getByRole("region", { name: "Legacy agent settings" });
+    fireEvent.click(within(refreshedRegion).getByRole("button", { name: "Save Chat model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ model: "claude-sonnet-4-6", effort: null }),
       }),
     ));
   });

@@ -531,11 +531,18 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
   }
 
   if (settings?.kind === "legacy") {
+    const legacyEditKey = JSON.stringify({
+      model: settings.model,
+      effort: settings.effort,
+      models: settings.view.availableModels?.map((entry) => entry.id),
+      efforts: settings.view.availableEfforts,
+      editResetVersion,
+    });
     return (
       <div className="space-y-4">
         {error && <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
         <LegacyFallback
-          key={editResetVersion}
+          key={legacyEditKey}
           settings={settings}
           busy={busy}
           onSave={(model, effort) => void mutate(() => updateAgentSettings({ model, effort }))}
