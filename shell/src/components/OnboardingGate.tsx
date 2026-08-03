@@ -1,16 +1,11 @@
 "use client";
 
-import { Suspense, useEffect, useState, type ReactNode } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { BillingGate } from "@/components/BillingGate";
 import { BootSequence } from "@/components/BootSequence";
-import { SignupBillingHandoff } from "@/components/auth/SignupBillingHandoff";
 import { normalizeDeviceReturnPath } from "@/lib/device-onboarding";
 import { navigateForOnboarding } from "@/lib/onboarding-navigation";
-import {
-  isSignupBillingHandoffSearch,
-  type SignupBillingHandoffLoadingSurface,
-} from "@/lib/signup-billing-handoff";
 
 const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
@@ -36,15 +31,11 @@ function DeviceReturnHandoff({ deviceReturnPath }: { deviceReturnPath: string })
 function OnboardingGateInner({
   children,
   platformSessionActive,
-  handoffStartedAt,
 }: {
   children: ReactNode;
   platformSessionActive: boolean;
-  handoffStartedAt: number;
 }) {
   const searchParams = useSearchParams();
-  const pathname = usePathname();
-  const signupBillingHandoff = isSignupBillingHandoffSearch(pathname, searchParams);
   const rawDeviceReturnPath = searchParams.get("device_return");
   const deviceReturnPath = normalizeDeviceReturnPath(rawDeviceReturnPath);
   const isDeviceFlow = rawDeviceReturnPath !== null;
@@ -57,15 +48,7 @@ function OnboardingGateInner({
     return <DeviceReturnHandoff deviceReturnPath={deviceReturnPath} />;
   }
   if (isDeviceFlow || isBillingEntrypoint) {
-    return (
-      <BillingGate
-        platformSessionActive={platformSessionActive}
-        loadingSurface={signupBillingHandoff ? "signup-handoff" : "default"}
-        handoffStartedAt={handoffStartedAt}
-      >
-        {children}
-      </BillingGate>
-    );
+    return <BillingGate platformSessionActive={platformSessionActive}>{children}</BillingGate>;
   }
   return (
     <BootSequence platformSessionActive={platformSessionActive} e2eBypass={e2eBypass}>
@@ -74,17 +57,7 @@ function OnboardingGateInner({
   );
 }
 
-function OnboardingGateFallback({
-  loadingSurface,
-  handoffStartedAt,
-}: {
-  loadingSurface: SignupBillingHandoffLoadingSurface;
-  handoffStartedAt: number;
-}) {
-  if (loadingSurface === "signup-handoff") {
-    return <SignupBillingHandoff startedAt={handoffStartedAt} />;
-  }
-
+function OnboardingGateFallback() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
       <output className="text-sm">Loading your Matrix computer…</output>
@@ -95,29 +68,15 @@ function OnboardingGateFallback({
 export function OnboardingGate({
   children,
   platformSessionActive = false,
-  initialLoadingSurface = "default",
 }: {
   children: ReactNode;
   platformSessionActive?: boolean;
-  initialLoadingSurface?: SignupBillingHandoffLoadingSurface;
 }) {
-  const [handoffStartedAt] = useState(() => Date.now());
-
   // useSearchParams requires a Suspense boundary so the page is not forced into
   // full client-side rendering.
   return (
-    <Suspense
-      fallback={
-        <OnboardingGateFallback
-          loadingSurface={initialLoadingSurface}
-          handoffStartedAt={handoffStartedAt}
-        />
-      }
-    >
-      <OnboardingGateInner
-        platformSessionActive={platformSessionActive}
-        handoffStartedAt={handoffStartedAt}
-      >
+    <Suspense fallback={<OnboardingGateFallback />}>
+      <OnboardingGateInner platformSessionActive={platformSessionActive}>
         {children}
       </OnboardingGateInner>
     </Suspense>

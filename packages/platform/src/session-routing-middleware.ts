@@ -37,13 +37,11 @@ import {
   getAuthShellOrigin,
   isAppDomainGatewayPath,
   isBillingSetupPath,
-  isSignupBillingHandoff,
   isPlatformShellAssetNamespacePath,
   readRuntimeSlotSelection,
   shouldProxyAuthShellForUnroutedUser,
   shouldProxyShellForBillingGate,
 } from './request-routing.js';
-import { getSignupBillingHandoffPage } from './signup-billing-handoff-page.js';
 import { isAppDomainHost, isCodeDomainHost } from './ws-upgrade.js';
 import { appOrigin } from './origins.js';
 import {
@@ -319,21 +317,6 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         c.header('Retry-After', '5');
         return c.text('Matrix OS shell asset unavailable', 503);
       }
-      if (isSignupBillingHandoff(c.req.url)) {
-        const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-        if (!publishableKey) {
-          applyNoStoreHeaders(c);
-          return c.text('Matrix OS shell unavailable', 503);
-        }
-        const scriptNonce = randomBytes(16).toString('base64');
-        applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
-        const requestUrl = new URL(c.req.url);
-        return c.html(getSignupBillingHandoffPage({
-          publishableKey,
-          scriptNonce,
-          redirectTarget: `${requestUrl.pathname}${requestUrl.search}`,
-        }));
-      }
       if (proxyOpts.redirectToBillingOnFailure !== false && !isBillingSetupPath(c.req.url)) {
         return c.redirect(buildBillingSetupPath(c.req.url), 302);
       }
@@ -530,16 +513,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     );
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
-    const signupBillingHandoff = isAppDomain && isSignupBillingHandoff(c.req.url);
     const allowAuthShellUnroutedIdentity = shouldProxyAuthShellForUnroutedUser({
       isAppDomain,
       method: c.req.method,
       path,
-    }) && (
-      !legacyContainerRoutingEnabled ||
-      isPlatformRuntimeShellPath(path) ||
-      signupBillingHandoff
-    );
+    }) && (!legacyContainerRoutingEnabled || isPlatformRuntimeShellPath(path));
     const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
@@ -978,10 +956,6 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       applyNoStoreHeaders(c);
       return c.html(getVpsBootPage({ status: activeMachine.status }), 503);
-    }
-
-    if (signupBillingHandoff) {
-      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
     if (!legacyContainerRoutingEnabled) {

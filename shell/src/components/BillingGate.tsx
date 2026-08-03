@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircleIcon, Loader2Icon } from "lucide-react";
 import {
   getMatrixBillingSuccessRedirectUrl,
@@ -11,12 +11,7 @@ import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { MatrixBootMark } from "@/components/MatrixBootMark";
-import { SignupBillingHandoff } from "@/components/auth/SignupBillingHandoff";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
-import {
-  isSignupBillingHandoffSearch,
-  type SignupBillingHandoffLoadingSurface,
-} from "@/lib/signup-billing-handoff";
 import { AddComputerOnboarding } from "@/components/runtime/RuntimeManager";
 import { Settings } from "./Settings";
 import { navigateForOnboarding } from "@/lib/onboarding-navigation";
@@ -239,31 +234,16 @@ function BillingStatusLoading() {
 export function BillingGate({
   children,
   platformSessionActive = false,
-  loadingSurface = "default",
-  handoffStartedAt: initialHandoffStartedAt,
 }: {
   children: ReactNode;
   platformSessionActive?: boolean;
-  loadingSurface?: SignupBillingHandoffLoadingSurface;
-  handoffStartedAt?: number;
 }) {
-  const [handoffStartedAt] = useState(() => initialHandoffStartedAt ?? Date.now());
   // useSearchParams() (read inside BillingGateInner) requires a <Suspense> boundary so the page
   // is not forced into full client-side rendering; the fallback mirrors the gate's own loading
   // state so there is no visible change while search params resolve.
   return (
-    <Suspense
-      fallback={
-        loadingSurface === "signup-handoff"
-          ? <SignupBillingHandoff startedAt={handoffStartedAt} />
-          : <BillingStatusLoading />
-      }
-    >
-      <BillingGateRoute
-        platformSessionActive={platformSessionActive}
-        loadingSurface={loadingSurface}
-        handoffStartedAt={handoffStartedAt}
-      >
+    <Suspense fallback={<BillingStatusLoading />}>
+      <BillingGateRoute platformSessionActive={platformSessionActive}>
         {children}
       </BillingGateRoute>
     </Suspense>
@@ -273,13 +253,9 @@ export function BillingGate({
 function BillingGateRoute({
   children,
   platformSessionActive,
-  loadingSurface,
-  handoffStartedAt,
 }: {
   children: ReactNode;
   platformSessionActive: boolean;
-  loadingSurface: SignupBillingHandoffLoadingSurface;
-  handoffStartedAt: number;
 }) {
   const searchParams = useSearchParams();
   const isAddComputerHandoff = searchParams.get("handoff") === "add-computer";
@@ -290,33 +266,14 @@ function BillingGateRoute({
   if (platformSessionActive) {
     return <>{children}</>;
   }
-  return (
-    <BillingGateInner
-      loadingSurface={loadingSurface}
-      handoffStartedAt={handoffStartedAt}
-    >
-      {children}
-    </BillingGateInner>
-  );
+  return <BillingGateInner>{children}</BillingGateInner>;
 }
 
-function BillingGateInner({
-  children,
-  loadingSurface,
-  handoffStartedAt,
-}: {
-  children: ReactNode;
-  loadingSurface: SignupBillingHandoffLoadingSurface;
-  handoffStartedAt: number;
-}) {
+function BillingGateInner({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { active: billingActive, checking: billingAccessChecking } = useMatrixBillingAccess();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const pathname = usePathname();
-  const signupBillingHandoff =
-    loadingSurface === "signup-handoff" &&
-    isSignupBillingHandoffSearch(pathname, searchParams);
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const deviceReturnPath = normalizeDeviceReturnPath(searchParams.get("device_return"));
   const requestedRuntime = searchParams.get("runtime");
@@ -434,9 +391,7 @@ function BillingGateInner({
   }
 
   if (!isLoaded || billingChecking) {
-    return signupBillingHandoff
-      ? <SignupBillingHandoff startedAt={handoffStartedAt} />
-      : <BillingStatusLoading />;
+    return <BillingStatusLoading />;
   }
 
   if (!isSignedIn && !hasBillingAccess) {

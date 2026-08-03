@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { SignUp } from "@clerk/nextjs";
-import { AuthLayout } from "@/components/auth/AuthLayout";
-import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
-import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
+import { shadcn } from "@clerk/ui/themes";
+import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
 
 export const metadata: Metadata = {
   title: "Create your account | Matrix OS",
@@ -11,20 +10,23 @@ export const metadata: Metadata = {
 
 export default function SignUpPage() {
   return (
-    <AuthLayout
-      featureContent={
-        <FeatureShowcase
-          variant="product"
-          subheading="Create your free account. Your private machine spins up only when you provision it."
-        />
-      }
-      formContent={
-        <SignUp
-          forceRedirectUrl="/"
-          fallbackRedirectUrl="/"
-          appearance={matrixClerkAppearance}
-        />
-      }
-    />
+    <ShellAuthLayout
+      eyebrow="Start Matrix OS"
+      title="Create the account. Open the shell."
+      body="Signup stays lightweight: no card until you actually provision a hosted Matrix computer. After signup, you land in the OS and can start the trial from the native billing panel."
+    >
+      <SignUp
+        forceRedirectUrl="/"
+        fallbackRedirectUrl="/"
+        appearance={{
+          theme: shadcn,
+          elements: {
+            rootBox: "w-full",
+            cardBox: "w-full !shadow-none !border-0",
+            card: "!bg-transparent",
+          },
+        }}
+      />
+    </ShellAuthLayout>
   );
 }
