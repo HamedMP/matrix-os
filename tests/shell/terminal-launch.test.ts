@@ -18,7 +18,7 @@ import {
 } from "../../shell/src/lib/terminal-launch.js";
 
 const T3_PREVIEW_PACKAGE =
-  "https://github.com/HamedMP/t3code/releases/download/matrix-preview-pr-5115-fb484b334/t3-pr5115-fb484b334.tgz";
+  "https://github.com/HamedMP/t3code/releases/download/matrix-preview-pr-5115-662e50904/t3-pr5115-662e50904.tgz";
 
 describe("terminal launch paths", () => {
   afterEach(() => {
