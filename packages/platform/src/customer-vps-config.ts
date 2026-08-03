@@ -1,5 +1,7 @@
 import {
+  DEFAULT_GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS,
   DEFAULT_GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS,
+  GoldenSnapshotBuildArchitectureSchema,
   GoldenSnapshotRuntimeConfigSchema,
   type GoldenSnapshotRuntimeConfig,
 } from './golden-snapshot-schema.js';
@@ -65,6 +67,9 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
   const platformUrl = env.PLATFORM_PUBLIC_URL ?? `http://localhost:${env.PLATFORM_PORT ?? 9000}`;
   const imageVersion = env.CUSTOMER_VPS_IMAGE_VERSION ?? 'stable';
   const bundleBaseUrl = (env.MATRIX_HOST_BUNDLE_BASE_URL ?? platformUrl).replace(/\/$/, '');
+  const snapshotArchitecture = GoldenSnapshotBuildArchitectureSchema.parse(
+    env.GOLDEN_SNAPSHOT_ARCHITECTURE ?? 'x86',
+  );
   return {
     hetznerApiToken: env.HETZNER_API_TOKEN ?? '',
     location: env.HETZNER_LOCATION ?? 'nbg1',
@@ -108,9 +113,10 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
       enabled: enabledFromEnv(env.GOLDEN_SNAPSHOTS_ENABLED),
       buildsEnabled: enabledFromEnv(env.GOLDEN_SNAPSHOT_BUILDS_ENABLED),
       rolloutPercent: boundedInteger(env.GOLDEN_SNAPSHOT_ROLLOUT_PERCENT, 0, 0, 100),
+      serverType: env.GOLDEN_SNAPSHOT_SERVER_TYPE ?? 'cx23',
       compatibility: {
         provider: 'hetzner',
-        architecture: env.GOLDEN_SNAPSHOT_ARCHITECTURE ?? 'x86',
+        architecture: snapshotArchitecture,
         region: env.GOLDEN_SNAPSHOT_REGION ?? 'eu-central',
         baseImage: env.GOLDEN_SNAPSHOT_BASE_IMAGE || env.HETZNER_IMAGE || 'ubuntu-24.04',
         baseGeneration: env.GOLDEN_SNAPSHOT_BASE_GENERATION ?? 'ubuntu-24.04-v1',
@@ -126,6 +132,12 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
         10 * 60 * 1000,
         60_000,
         30 * 60 * 1000,
+      ),
+      callbackDeadlineMs: boundedInteger(
+        env.GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS,
+        DEFAULT_GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS,
+        60_000,
+        60 * 60 * 1000,
       ),
       retentionLimit: boundedInteger(env.GOLDEN_SNAPSHOT_RETENTION_LIMIT, 20, 1, 29),
       freshnessMaxAgeMs: boundedInteger(

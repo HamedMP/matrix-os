@@ -25,6 +25,22 @@ export class CustomerVpsError extends Error {
   }
 }
 
+/**
+ * The provider returned a bounded HTTP rejection, proving that create did not
+ * have an ambiguous transport outcome. Callers may retry or fail without an
+ * orphan-discovery delay; the raw provider response remains server-side only.
+ */
+export class DefinitiveProviderRejectionError extends CustomerVpsError {
+  constructor(
+    status: number,
+    code: CustomerVpsFailureCode,
+    publicMessage: string,
+  ) {
+    super(status, code, publicMessage);
+    this.name = 'DefinitiveProviderRejectionError';
+  }
+}
+
 export function genericProviderError(err: unknown): CustomerVpsError {
   if (err instanceof CustomerVpsError) return err;
   if (err instanceof DOMException && err.name === 'TimeoutError') {

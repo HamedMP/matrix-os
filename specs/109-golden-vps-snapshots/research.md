@@ -61,6 +61,17 @@ The source spike inspected the current official client as executable API-schema 
 - Key only by image ID: rejected because provider IDs do not encode boot/update compatibility.
 - Duplicate every snapshot for every Hetzner location: rejected for V1 because official docs say snapshots are location-independent; region remains a rollout/availability constraint rather than duplicate storage when policy permits.
 
+### Authorized disposable spike finding (2026-08-02)
+
+An 80 GB x86 builder remained active through immutable install and sanitation but did
+not finish the callback phase within one hour. It failed closed with no image or
+validation clone, and its exact-label cleanup completed in one attempt. The current
+provider API listed non-deprecated 40 GB `cx23` (x86) and `cax11` (Arm) shapes in the
+tested European locations. V1 therefore defaults synthetic builders and validators to
+those smallest-supported shapes, independently of customer plan size, retains a
+bounded override, and keeps the one-hour callback deadline. A successful end-to-end
+builder/image/two-clone rerun remains a rollout gate.
+
 ## Decision 5: Retain below quota and protect in-use images with DB leases
 
 **Decision**: Default retention is configurable and must remain below the project's effective snapshot quota. V1 defaults to 20 retained snapshots, leaving headroom below Hetzner's documented default of 30 across all projects. A snapshot referenced by a promoted channel, rollback window, active lease, or only-compatible fallback cannot be deleted.

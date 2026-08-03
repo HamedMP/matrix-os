@@ -62,6 +62,23 @@ describe('platform/customer-vps-hetzner', () => {
     });
   });
 
+  it('classifies a definitive placement rejection as retryable capacity pressure', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        error: { code: 'resource_unavailable', message: 'error during placement', details: {} },
+      }), { status: 412 }));
+      const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
+
+      await expect(client.createServer(createInput)).rejects.toMatchObject({
+        code: 'quota_exceeded',
+        status: 503,
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('uses a validated per-machine location instead of the platform default', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       server: {
