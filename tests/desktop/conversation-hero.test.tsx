@@ -10,6 +10,7 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
+import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 
 const NOW = "2026-07-12T12:00:00.000Z";
@@ -142,6 +143,7 @@ class MockResizeObserver {
 }
 
 function resetStores() {
+  clearDraftChats();
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {} });
   useProjectChatLauncher.setState({ composerRequest: null });
@@ -259,22 +261,22 @@ describe("ProjectChatsView hero empty state", () => {
     });
   });
 
-  it("clears the persistent hero draft after navigating away and starting another chat", async () => {
+  it("preserves the hero draft after navigating away and back", async () => {
     mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("region", { name: "Conversation Plan the auth work" });
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
     const prompt = await screen.findByLabelText("Message new chat") as HTMLTextAreaElement;
-    fireEvent.change(prompt, { target: { value: "Discard this draft" } });
-    expect(prompt.value).toBe("Discard this draft");
+    fireEvent.change(prompt, { target: { value: "Keep this draft" } });
+    expect(prompt.value).toBe("Keep this draft");
 
     fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
     await screen.findByRole("region", { name: "Conversation Plan the auth work" });
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
 
     await waitFor(() => {
-      expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+      expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("Keep this draft");
     });
   });
 

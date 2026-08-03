@@ -9,6 +9,7 @@ import ProjectChatsView, {
 } from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
+import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { openCodingAgentThread } from "../../desktop/src/renderer/src/lib/project-chat";
 import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/stores/runtime-transition";
@@ -685,6 +686,7 @@ class MockResizeObserver {
 describe("ProjectChatsView", () => {
   beforeEach(() => {
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
+    clearDraftChats();
     useBoard.setState(useBoard.getInitialState(), true);
     useProjectView.setState({ entries: {}, runtimeScope: null });
     useProjectWorkspaces.setState({ entries: {} });

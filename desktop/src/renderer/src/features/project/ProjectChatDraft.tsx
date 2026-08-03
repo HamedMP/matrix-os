@@ -8,6 +8,7 @@ import {
   type RuntimeSummary,
 } from "@matrix-os/contracts";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useDraftChat } from "../../stores/draft-chat";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useProviderPreferences } from "../settings/provider-preferences";
 import { PromptInput } from "../chat/elements/prompt-input";
@@ -62,10 +63,22 @@ export function ProjectChatDraft({
       sandboxMode: defaultSandboxModeForProvider(preferred),
     };
   }, [summary, preferredProviderId]);
-  const [draft, setDraft] = useState<AgentThreadComposerDraft>(() => (
-    seed ? mergeComposerSeed(initialDraft, seed.draft) : initialDraft
-  ));
-  const providerSelectionTouchedRef = useRef(false);
+  // Selecting a thread unmounts this pane (the only route to the inspector
+  // while drafting); the session-scoped draft store keeps the composed input
+  // alive across that round trip. A restored draft counts as provider-touched
+  // so the user's earlier picker choices survive verbatim.
+  const [restoredDraft] = useState(() => useDraftChat.getState().draftFor(projectId));
+  const [draft, setDraft] = useState<AgentThreadComposerDraft>(() => {
+    if (restoredDraft) return seed ? mergeComposerSeed(restoredDraft, seed.draft) : restoredDraft;
+    return seed ? mergeComposerSeed(initialDraft, seed.draft) : initialDraft;
+  });
+  const providerSelectionTouchedRef = useRef(restoredDraft !== null);
+
+  useEffect(() => {
+    const store = useDraftChat.getState();
+    if (draft.prompt.trim().length > 0) store.setDraft(projectId, draft);
+    else store.clearDraft(projectId);
+  }, [projectId, draft]);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);
   const createThread = useCodingAgentWorkspace((s) => s.createThread);

@@ -12,6 +12,7 @@ import { useInspectorLayout } from "../../desktop/src/renderer/src/features/pane
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
+import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
@@ -188,6 +189,7 @@ class MockResizeObserver {
 }
 
 function resetStores() {
+  clearDraftChats();
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {}, resolveNewChatTarget: defaultResolveNewChatTarget });
   useProjectChatLauncher.setState({ composerRequest: null });
@@ -323,6 +325,25 @@ describe("draft chat replaces the selected thread", () => {
     expect(await screen.findByRole("region", { name: "Conversation Plan the auth work" })).toBeTruthy();
     expect(screen.queryByLabelText("Message new chat")).toBeNull();
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_plan");
+  });
+
+  it("preserves an unsent draft across thread selection and back", async () => {
+    mockOperator();
+    await renderWithSelectedThread();
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    const composer = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "half-written thought" } });
+    await waitFor(() => expect(composer.value).toBe("half-written thought"));
+
+    // Selecting a thread unmounts the draft pane (inspector access); the
+    // composed input must survive the round trip.
+    fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
+    expect(await screen.findByRole("region", { name: "Conversation Plan the auth work" })).toBeTruthy();
+    expect(screen.queryByLabelText("Message new chat")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    const restored = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
+    await waitFor(() => expect(restored.value).toBe("half-written thought"));
   });
 
   it("does not clear a newer thread selection when project targeting resolves late", async () => {
