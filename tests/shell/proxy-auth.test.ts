@@ -833,7 +833,7 @@ describe("proxy auth: sign-in redirects", () => {
     expect(response).toEqual({
       kind: "redirect",
       url: new URL(
-        "https://app.matrix-os.com/sign-in?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F%3Flaunch%3D__terminal__%26terminal_action%3Dt3-connect",
+        "https://app.matrix-os.com/sign-in?matrix_redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F%3Flaunch%3D__terminal__%26terminal_action%3Dt3-connect",
       ),
     });
     expect(nextResponseRedirect).toHaveBeenCalledTimes(1);

@@ -107,7 +107,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
         `${request.nextUrl.pathname}${request.nextUrl.search}`,
         publicOrigin,
       );
-      signInUrl.searchParams.set("redirect_url", redirectUrl.toString());
+      signInUrl.searchParams.set("matrix_redirect_url", redirectUrl.toString());
       return NextResponse.redirect(signInUrl);
     }
   }
