@@ -11,6 +11,7 @@ const PLATFORM_SHELL_PUBLIC_ASSET_PATHS = [
   '/matrix-logo.svg',
   '/og.png',
   '/runtime-shell-backdrop.webp',
+  '/wallpapers/moraine-lake.jpg',
 ] as const;
 
 export function isPlatformShellAssetNamespacePath(path: string): boolean {

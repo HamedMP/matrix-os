@@ -11,6 +11,7 @@ describe("applyTerminalAppearance", () => {
       rows: 12,
       options: {
         theme: {},
+        minimumContrastRatio: 1,
         fontFamily: "",
         fontSize: 13,
         cursorBlink: true,
@@ -23,6 +24,7 @@ describe("applyTerminalAppearance", () => {
 
     applyTerminalAppearance(term, fitAddon, {
       theme: { background: "#000000" },
+      minimumContrastRatio: 4.5,
       fontFamily: '"MesloLGS NF", monospace',
       fontSize: 15,
       cursorBlink: false,
@@ -33,6 +35,7 @@ describe("applyTerminalAppearance", () => {
 
     expect(term.options).toMatchObject({
       theme: { background: "#000000" },
+      minimumContrastRatio: 4.5,
       fontFamily: '"MesloLGS NF", monospace',
       fontSize: 15,
       cursorBlink: false,

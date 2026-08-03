@@ -7,8 +7,14 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   options: Record<string, unknown>;
   element: HTMLElement | null;
   viewport: HTMLElement | null;
+  cols: number;
+  rows: number;
+  logicalLines: string[];
   focus: ReturnType<typeof vi.fn>;
   flushWrites: () => void;
+  emitData: (data: string) => void;
+  resize: ReturnType<typeof vi.fn>;
+  write: ReturnType<typeof vi.fn>;
   reset: ReturnType<typeof vi.fn>;
 }>);
 
@@ -89,16 +95,59 @@ vi.mock("@xterm/xterm", () => ({
     options: Record<string, unknown>;
     parser = { registerOscHandler: vi.fn() };
     private writeCallbacks: Array<() => void> = [];
+    private dataListener: ((data: string) => void) | null = null;
+    private cursorColumn = 0;
+    private readonly initialFontSize: number;
+    logicalLines = [""];
 
     constructor(options: Record<string, unknown>) {
-      this.options = options;
+      this.initialFontSize = typeof options.fontSize === "number" ? options.fontSize : 13;
+      this.options = new Proxy(options, {
+        set: (target, property, value) => {
+          target[property as string] = value;
+          if (property === "fontSize") {
+            this.updateScreenSize();
+          }
+          return true;
+        },
+      });
       createdTerminals.push(this);
+    }
+
+    private updateScreenSize(): void {
+      const screen = this.element?.querySelector(".xterm-screen");
+      if (!(screen instanceof HTMLElement)) {
+        return;
+      }
+      const fontSize = typeof this.options.fontSize === "number"
+        ? this.options.fontSize
+        : this.initialFontSize;
+      const fontScale = fontSize / this.initialFontSize;
+      screen.style.width = `${this.cols * 10 * fontScale}px`;
+      screen.style.height = `${this.rows * 20 * fontScale}px`;
     }
 
     loadAddon = vi.fn();
     focus = vi.fn();
     refresh = vi.fn();
-    write = vi.fn((_data: string, callback?: () => void) => {
+    write = vi.fn((data: string, callback?: () => void) => {
+      for (const char of data) {
+        if (char === "\r") {
+          this.cursorColumn = 0;
+          continue;
+        }
+        if (char === "\n") {
+          this.logicalLines.push("");
+          this.cursorColumn = 0;
+          continue;
+        }
+        if (this.cursorColumn >= this.cols) {
+          this.logicalLines.push("");
+          this.cursorColumn = 0;
+        }
+        this.logicalLines[this.logicalLines.length - 1] += char;
+        this.cursorColumn += 1;
+      }
       if (callback) {
         this.writeCallbacks.push(callback);
       }
@@ -110,7 +159,16 @@ vi.mock("@xterm/xterm", () => ({
     };
     reset = vi.fn();
     dispose = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
+    resize = vi.fn((cols: number, rows: number) => {
+      this.cols = cols;
+      this.rows = rows;
+      this.updateScreenSize();
+    });
+    onData = vi.fn((listener: (data: string) => void) => {
+      this.dataListener = listener;
+      return { dispose: vi.fn(() => { this.dataListener = null; }) };
+    });
+    emitData = (data: string) => this.dataListener?.(data);
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
     attachCustomKeyEventHandler = vi.fn();
     clearSelection = vi.fn();
@@ -123,10 +181,16 @@ vi.mock("@xterm/xterm", () => ({
       root.className = "xterm";
       const viewport = document.createElement("div");
       viewport.className = "xterm-viewport";
+      const screen = document.createElement("div");
+      screen.className = "xterm-screen";
+      screen.style.width = `${this.cols * 10}px`;
+      screen.style.height = `${this.rows * 20}px`;
+      viewport.appendChild(screen);
       root.appendChild(viewport);
       container.appendChild(root);
       this.element = root;
       this.viewport = viewport;
+      this.updateScreenSize();
     }
   },
 }));
@@ -228,10 +292,26 @@ const theme = {
   fonts: {},
 } as unknown as Parameters<typeof TerminalPane>[0]["theme"];
 
+const lightTheme = {
+  mode: "light",
+  colors: { background: "#FBF1C7", foreground: "#3C3836", primary: "#79740E" },
+  fonts: {},
+} as unknown as Parameters<typeof TerminalPane>[0]["theme"];
+
 class ResizeObserverMock {
+  static instances: ResizeObserverMock[] = [];
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    ResizeObserverMock.instances.push(this);
+  }
+
   observe() {}
   unobserve() {}
   disconnect() {}
+
+  trigger(): void {
+    this.callback([], this as unknown as ResizeObserver);
+  }
 }
 
 class WebSocketMock {
@@ -333,8 +413,108 @@ describe("TerminalPane scrolling", () => {
     mockedCacheTerminal.mockClear();
     mockedCapturePostHogEvent.mockClear();
     WebSocketMock.instances.length = 0;
+    ResizeObserverMock.instances.length = 0;
     buildAuthenticatedWebSocketUrl.mockClear();
     Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  it("renders a soft browser on the authoritative 140x40 grid across repeated local resizes", async () => {
+    const { container } = render(
+      <TerminalPane
+        paneId="pane-soft-grid"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const terminal = createdTerminals[0];
+    const fitAddon = createdFitAddons[0];
+    const socket = WebSocketMock.instances[0];
+    const pane = container.firstElementChild as HTMLElement;
+    Object.defineProperty(pane, "clientWidth", { configurable: true, value: 700 });
+    Object.defineProperty(pane, "clientHeight", { configurable: true, value: 800 });
+
+    expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
+      "/ws/terminal/session",
+      expect.objectContaining({ session: "main", client: "soft" }),
+    );
+
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 0,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
+      });
+    });
+
+    await waitFor(() => expect(terminal.resize).toHaveBeenLastCalledWith(140, 40));
+    await waitFor(() => expect(terminal.options.fontSize).toBe(10));
+    await waitFor(() => expect(terminal.element?.style.transform).toBe("scale(1)"));
+    expect(terminal.cols).toBe(140);
+    expect(terminal.rows).toBe(40);
+    expect(fitAddon.fit).not.toHaveBeenCalled();
+
+    const longLsRow = [
+      "-rw-r--r-- 1 matrix matrix 4096 Jul 31 20:00",
+      "a-very-long-ls-style-filename-that-crosses-the-seventy-column-browser-width.txt",
+    ].join(" ");
+    expect(longLsRow.length).toBeGreaterThan(70);
+    expect(longLsRow.length).toBeLessThan(140);
+
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "output", seq: 0, data: `${longLsRow}\r\n$ ` }),
+      });
+    });
+    expect(terminal.logicalLines[0]).toBe(longLsRow);
+    expect(terminal.logicalLines[1]).toBe("$ ");
+    expect(terminal.logicalLines.filter((line) => line === "$ ")).toHaveLength(1);
+
+    const canonicalResizeCount = terminal.resize.mock.calls.length;
+    await act(async () => {
+      const observer = ResizeObserverMock.instances.at(-1)!;
+      observer.trigger();
+      observer.trigger();
+      observer.trigger();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(terminal.resize).toHaveBeenCalledTimes(canonicalResizeCount);
+    expect(stubWs.send.mock.calls
+      .map(([frame]) => JSON.parse(frame as string) as { type: string })
+      .filter((frame) => frame.type === "resize")).toHaveLength(0);
+
+    terminal.emitData("x");
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "x" }));
+
+    Object.defineProperty(pane, "clientWidth", { configurable: true, value: 1_600 });
+    Object.defineProperty(pane, "clientHeight", { configurable: true, value: 900 });
+    await act(async () => {
+      ResizeObserverMock.instances.at(-1)!.trigger();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(terminal.element?.style.transform).toBe("scale(1)");
+    expect(terminal.options.fontSize).toBe(13);
+    expect(terminal.cols).toBe(140);
+    expect(terminal.rows).toBe(40);
+
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "canonical-size", cols: 132, rows: 36 }),
+      });
+    });
+    await waitFor(() => expect(terminal.resize).toHaveBeenLastCalledWith(132, 36));
   });
 
   it("configures xterm scrollback and native viewport scrolling after mount", async () => {
@@ -638,6 +818,47 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
     expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+  });
+
+  it("enforces light-theme contrast in both the default and WebGL renderers", async () => {
+    const { unmount } = render(
+      <TerminalPane
+        paneId="pane-light-webgl-contrast-test"
+        cwd=""
+        theme={lightTheme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
+    expect(createdTerminals[0].options.minimumContrastRatio).toBe(4.5);
+    expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+    unmount();
+
+    createdTerminals.length = 0;
+    createdWebglAddons.length = 0;
+    render(
+      <TerminalPane
+        paneId="pane-light-dom-contrast-test"
+        cwd=""
+        theme={lightTheme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        suppressNativeKeyboard
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    expect(createdTerminals[0].options.minimumContrastRatio).toBe(4.5);
+    expect(createdWebglAddons).toHaveLength(0);
   });
 
   it("requests retained scrollback from zero for a fresh canonical browser session", async () => {

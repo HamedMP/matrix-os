@@ -13,7 +13,7 @@ import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
-import { buildXtermTheme } from "./terminal-themes";
+import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, removeCached, takeCached, type CachedTerminal } from "./terminal-cache";
@@ -23,6 +23,10 @@ import { applyTerminalAppearance } from "./terminal-appearance";
 import { buildTerminalFontStack } from "./terminal-fonts";
 import { createCodexTuiCompatTransform, transformTerminalOutputForCompat, type CodexTuiCompatTransform } from "./codex-tui-compat";
 import { sendTerminalResize } from "./terminal-remote-resize";
+import {
+  computeSoftGridLayout,
+  correctTerminalPointerCoordinates,
+} from "./terminal-soft-grid";
 import {
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
@@ -54,6 +58,7 @@ const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const TERMINAL_SCROLL_SENSITIVITY = 1;
 const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
+const TERMINAL_MINIMUM_READABLE_FONT_SIZE = 10;
 const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   enableSizeReports: false,
   pixelLimit: 4_194_304,
@@ -391,6 +396,9 @@ export function TerminalPane({
   const allowRemoteResizeRef = useRef(allowRemoteResize);
   const compatModeRef = useRef<TerminalCompatMode | undefined>(compatMode);
   const codexCompatTransformRef = useRef<CodexTuiCompatTransform | null>(null);
+  const softGridScaleRef = useRef(1);
+  const softGridLayoutRef = useRef<(() => void) | null>(null);
+  const terminalFontSizeRef = useRef(terminalFontSize);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
   // (and the cleanup it returns) read current prop values without re-running and
@@ -409,6 +417,8 @@ export function TerminalPane({
   allowRemoteResizeRef.current = allowRemoteResize;
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- latest-value ref consumed by the long-lived WebSocket output handler without reconnecting on metadata changes.
   compatModeRef.current = compatMode;
+  // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived terminal lifecycle reads the latest configured font size without reconnecting the WebSocket.
+  terminalFontSizeRef.current = terminalFontSize;
 
   // Keep a stable ref to the current canvasZoom so the effect below can read
   // the latest value without being re-run (and re-registering listeners) on
@@ -445,8 +455,8 @@ export function TerminalPane({
     const MOUSE_EVENTS = ["mousedown", "mousemove", "mouseup"] as const;
 
     const correct = (e: MouseEvent) => {
-      const zoom = canvasZoomRef.current;
-      if (zoom === 1) return;
+      const visualScale = canvasZoomRef.current * softGridScaleRef.current;
+      if (visualScale === 1) return;
 
       // Find the actual xterm element — it is the direct child element that
       // xterm appended inside our container div (has class "xterm" or is the
@@ -456,8 +466,14 @@ export function TerminalPane({
       const rect = el.getBoundingClientRect();
 
       // Unscale: move the pointer back into element-space coordinates.
-      const correctedX = rect.left + (e.clientX - rect.left) / zoom;
-      const correctedY = rect.top + (e.clientY - rect.top) / zoom;
+      const corrected = correctTerminalPointerCoordinates({
+        clientX: e.clientX,
+        clientY: e.clientY,
+        rectLeft: rect.left,
+        rectTop: rect.top,
+        canvasZoom: canvasZoomRef.current,
+        gridScale: softGridScaleRef.current,
+      });
 
       // Stop xterm from processing the original (scaled) event.
       e.stopImmediatePropagation();
@@ -475,8 +491,8 @@ export function TerminalPane({
         view: e.view ?? window,
         screenX: e.screenX,
         screenY: e.screenY,
-        clientX: correctedX,
-        clientY: correctedY,
+        clientX: corrected.clientX,
+        clientY: corrected.clientY,
         ctrlKey: e.ctrlKey,
         altKey: e.altKey,
         shiftKey: e.shiftKey,
@@ -495,8 +511,8 @@ export function TerminalPane({
     const handler = (e: MouseEvent) => {
       // Skip synthetic events we already corrected to avoid infinite loops.
       if ((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected) return;
-      const zoom = canvasZoomRef.current;
-      if (zoom === 1) return;
+      const visualScale = canvasZoomRef.current * softGridScaleRef.current;
+      if (visualScale === 1) return;
       correct(e);
     };
 
@@ -795,8 +811,89 @@ export function TerminalPane({
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
       let coldReplayVisibility: ColdReplayVisibility | null = null;
+      let softGridLayoutFrame: number | null = null;
       const xtermTheme = buildXtermTheme(theme, terminalThemeId);
       codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
+
+      const usesSoftGrid = () => {
+        const currentSessionId = sessionIdRef.current;
+        return Boolean(currentSessionId && isCanonicalShellSessionId(currentSessionId));
+      };
+
+      const unscaledElementSize = (
+        element: HTMLElement,
+        dimension: "width" | "height",
+      ): number => {
+        const offset = dimension === "width" ? element.offsetWidth : element.offsetHeight;
+        if (offset > 0) {
+          return offset;
+        }
+        const styled = Number.parseFloat(element.style[dimension]);
+        if (Number.isFinite(styled) && styled > 0) {
+          return styled;
+        }
+        const rect = element.getBoundingClientRect();
+        const transformed = dimension === "width" ? rect.width : rect.height;
+        return transformed > 0 ? transformed / softGridScaleRef.current : 0;
+      };
+
+      const applySoftGridLayout = () => {
+        if (disposed || !usesSoftGrid()) {
+          return;
+        }
+        const termElement = term.element;
+        const screen = termElement?.querySelector(".xterm-screen");
+        if (!termElement || !(screen instanceof HTMLElement)) {
+          return;
+        }
+        const gridWidth = unscaledElementSize(screen, "width");
+        const gridHeight = unscaledElementSize(screen, "height");
+        if (gridWidth <= 0 || gridHeight <= 0) {
+          return;
+        }
+        const currentFontSize = typeof term.options.fontSize === "number"
+          ? term.options.fontSize
+          : terminalFontSizeRef.current;
+        const configuredFontSize = terminalFontSizeRef.current;
+        const baseGridWidth = gridWidth * (configuredFontSize / currentFontSize);
+        const baseGridHeight = gridHeight * (configuredFontSize / currentFontSize);
+        const layout = computeSoftGridLayout({
+          viewportWidth: container.clientWidth,
+          viewportHeight: container.clientHeight,
+          gridWidth: baseGridWidth,
+          gridHeight: baseGridHeight,
+          configuredFontSize,
+          minimumReadableFontSize: TERMINAL_MINIMUM_READABLE_FONT_SIZE,
+          devicePixelRatio: window.devicePixelRatio,
+        });
+        if (Math.abs(currentFontSize - layout.fontSize) > 0.01) {
+          term.options.fontSize = layout.fontSize;
+        }
+        softGridScaleRef.current = layout.scale;
+        termElement.style.transformOrigin = "top left";
+        termElement.style.transform = `scale(${layout.scale})`;
+        container.style.overflowX = layout.panX ? "auto" : "hidden";
+        container.style.overflowY = layout.panY ? "auto" : "hidden";
+      };
+
+      const scheduleSoftGridLayout = () => {
+        if (disposed || softGridLayoutFrame !== null) {
+          return;
+        }
+        softGridLayoutFrame = requestAnimationFrame(() => {
+          softGridLayoutFrame = null;
+          applySoftGridLayout();
+        });
+      };
+      const applyCanonicalGridSize = (size: { cols: number; rows: number }) => {
+        if (!usesSoftGrid()) {
+          return;
+        }
+        if (term.cols !== size.cols || term.rows !== size.rows) {
+          term.resize(size.cols, size.rows);
+        }
+        scheduleSoftGridLayout();
+      };
 
       const focusIfAllowed = () => {
         if (isFocusedRef.current && !suppressNativeKeyboard) {
@@ -809,6 +906,11 @@ export function TerminalPane({
           return;
         }
         try {
+          if (usesSoftGrid()) {
+            scheduleSoftGridLayout();
+            focusIfAllowed();
+            return;
+          }
           fitAddon.fit();
           sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
           focusIfAllowed();
@@ -897,13 +999,17 @@ export function TerminalPane({
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
         hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
-        let restoredFitSucceeded = false;
-        try {
-          fitAddon.fit();
-          sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
-          restoredFitSucceeded = true;
-        } catch (err: unknown) {
-          log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
+        let restoredFitSucceeded = true;
+        if (usesSoftGrid()) {
+          scheduleSoftGridLayout();
+        } else {
+          try {
+            fitAddon.fit();
+            sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
+          } catch (err: unknown) {
+            restoredFitSucceeded = false;
+            log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
+          }
         }
         refreshTerminalRenderer(term);
         scheduleStableFit();
@@ -933,6 +1039,7 @@ export function TerminalPane({
           logger: createXtermLogger(),
           fontSize: terminalFontSize,
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
+          minimumContrastRatio: getTerminalMinimumContrastRatio(xtermTheme),
           theme: xtermTheme,
           // Make ⌥ (Option) on macOS act as Meta — without this, Option+Left/Right
           // never reaches the shell as ESC-b / ESC-f, so word-jump is broken.
@@ -953,7 +1060,9 @@ export function TerminalPane({
           applyXtermScrollSurface(xtermElement);
           xtermElement.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
         }
-        nextFitAddon.fit();
+        if (!usesSoftGrid()) {
+          nextFitAddon.fit();
+        }
 
         term = xterm;
         fitAddon = nextFitAddon;
@@ -1054,6 +1163,8 @@ export function TerminalPane({
         }
       }
 
+      softGridLayoutRef.current = scheduleSoftGridLayout;
+
       if (isFocusedRef.current && !suppressNativeKeyboard) {
         requestAnimationFrame(() => {
           if (!disposed) {
@@ -1132,7 +1243,6 @@ export function TerminalPane({
             fromSeq: lastSeqRef.current,
           });
           if (isCanonicalShellSession) {
-            sendTerminalResize(ws, term, allowRemoteResizeRef.current);
             return;
           }
           if (currentSessionId) {
@@ -1292,6 +1402,9 @@ export function TerminalPane({
                 acceptedSeq: msg.fromSeq ?? undefined,
               });
               sessionIdRef.current = msg.sessionId;
+              if (msg.canonicalSize) {
+                applyCanonicalGridSize(msg.canonicalSize);
+              }
               if (msg.fromSeq !== null) {
                 if (
                   options.replayRequest?.mode === "cursor-resume"
@@ -1308,6 +1421,10 @@ export function TerminalPane({
                 const exitCode = msg.exitCode ?? "unknown";
                 term.write(`\r\n[Process exited with code ${exitCode}]\r\n`);
               }
+              break;
+
+            case "canonical-size":
+              applyCanonicalGridSize(msg);
               break;
 
             case "output":
@@ -1423,7 +1540,11 @@ export function TerminalPane({
 
         if (!attachOnOpen && ws.readyState === WebSocket.OPEN) {
           if (alreadyAttached) {
-            sendTerminalResize(ws, term, allowRemoteResizeRef.current);
+            if (usesSoftGrid()) {
+              scheduleSoftGridLayout();
+            } else {
+              sendTerminalResize(ws, term, allowRemoteResizeRef.current);
+            }
             return;
           }
           sendAttach();
@@ -1447,7 +1568,7 @@ export function TerminalPane({
         const wsPath = terminalWebSocketPathForSession(currentSessionId);
         const replayRequest = getCanonicalReplayRequest();
         const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
-          ? { session: currentSessionId, fromSeq: String(replayRequest?.requestedSeq ?? 0) }
+          ? { session: currentSessionId, fromSeq: String(replayRequest?.requestedSeq ?? 0), client: "soft" }
           : currentSessionId || !cwd
             ? undefined
             : { cwd };
@@ -1550,6 +1671,10 @@ export function TerminalPane({
 
       onResizeDisposableRef.current?.dispose();
       onResizeDisposableRef.current = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+        if (usesSoftGrid()) {
+          scheduleSoftGridLayout();
+          return;
+        }
         sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current);
       });
 
@@ -1632,14 +1757,27 @@ export function TerminalPane({
         return true;
       });
 
+      // react-doctor-disable-next-line react-doctor/effect-observer-needs-disconnect -- the async init lifecycle returns a cleanup below that disconnects this observer before terminal teardown.
       const resizeObserver = new ResizeObserver(() => {
-        requestAnimationFrame(refitOnly);
+        if (usesSoftGrid()) {
+          scheduleSoftGridLayout();
+        } else {
+          requestAnimationFrame(refitOnly);
+        }
       });
       resizeObserver.observe(container);
 
       return () => {
         document.removeEventListener("visibilitychange", onVisibilityChange);
         resizeObserver.disconnect();
+        if (softGridLayoutFrame !== null) {
+          cancelAnimationFrame(softGridLayoutFrame);
+          softGridLayoutFrame = null;
+        }
+        if (softGridLayoutRef.current === scheduleSoftGridLayout) {
+          softGridLayoutRef.current = null;
+        }
+        softGridScaleRef.current = 1;
         clearAuthDetectTimer();
         clearReconnectTimer();
         clearPendingReconnectBanner();
@@ -1741,14 +1879,17 @@ export function TerminalPane({
         fitAddonRef.current as Parameters<typeof applyTerminalAppearance>[1],
         {
           theme: xtermTheme,
+          minimumContrastRatio: getTerminalMinimumContrastRatio(xtermTheme),
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           fontSize: terminalFontSize,
           cursorBlink,
           cursorStyle: terminalCursorStyle,
           smoothScrollDuration: terminalSmoothScroll ? 125 : 0,
           ligatures: terminalLigatures,
+          fit: !Boolean(sessionIdRef.current && isCanonicalShellSessionId(sessionIdRef.current)),
         },
       );
+      softGridLayoutRef.current?.();
     }
   }, [
     cursorBlink,
@@ -1773,6 +1914,11 @@ export function TerminalPane({
   // not subtract a keyboard CSS var, so these passes only recompute rows/cols
   // and keep the prompt visible after mobile keyboard transitions settle.
   useEffect(() => {
+    const currentSessionId = sessionIdRef.current;
+    if (currentSessionId && isCanonicalShellSessionId(currentSessionId)) {
+      const id = requestAnimationFrame(() => softGridLayoutRef.current?.());
+      return () => cancelAnimationFrame(id);
+    }
     const fit = fitAddonRef.current as { fit?: () => void } | null;
     if (!fit?.fit) return;
     const refit = () => {

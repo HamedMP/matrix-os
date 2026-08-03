@@ -74,6 +74,45 @@
   }
 }
 
+@keyframes onboarding-choice-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes onboarding-selection-pop {
+  0% { transform: scale(0.45) rotate(-18deg); }
+  70% { transform: scale(1.15) rotate(3deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+.onboarding-step-enter {
+  animation: onboard-text-rise 420ms var(--ease-emphasized) both;
+}
+
+.onboarding-choice-enter {
+  opacity: 0;
+  animation: onboarding-choice-in 420ms var(--ease-emphasized) both;
+}
+
+.onboarding-selection-pop {
+  animation: onboarding-selection-pop 260ms var(--ease-emphasized) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-step-enter,
+  .onboarding-choice-enter,
+  .onboarding-selection-pop {
+    opacity: 1;
+    animation: none;
+  }
+}
+
 :root {
   --font-sans: var(--font-instrument), "Instrument Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;

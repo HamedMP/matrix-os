@@ -225,6 +225,18 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     return runtime;
   }
 
+  function broadcastCanonicalSize(runtime: SessionRuntime, size: TerminalSize): void {
+    const dead: ConnState[] = [];
+    for (const conn of runtime.conns) {
+      if (!sendJson(conn.ws, { type: "canonical-size", cols: size.cols, rows: size.rows })) {
+        dead.push(conn);
+      }
+    }
+    for (const conn of dead) {
+      conn.close();
+    }
+  }
+
   function canUseRuntime(runtime: SessionRuntime): boolean {
     return !runtime.disposed && runtimes.get(runtime.name) === runtime;
   }
@@ -604,6 +616,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         debounceMs: options.sizingDebounceMs,
         onApply: (size) => {
           runtime.child?.resize(size.cols, size.rows);
+          broadcastCanonicalSize(runtime, size);
         },
         persist: (size) => {
           options.persistCanonicalSize?.(safeName, size);
@@ -701,6 +714,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       session: safeName,
       state: info.status === "exited" ? "exited" : "running",
       fromSeq: effectiveFromSeq,
+      canonicalSize: sizing.current() ?? sizing.spawnSize(),
     })) {
       const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
       let nextSeq = effectiveFromSeq;

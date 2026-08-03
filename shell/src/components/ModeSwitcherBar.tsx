@@ -26,14 +26,14 @@ export function ModeSwitcherBar() {
             aria-label={`${m.label} mode`}
             onClick={() => setMode(m.id)}
             title={m.description}
-            className={`inline-flex h-full items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium leading-none transition-colors ${
+            className={`inline-flex h-full items-center gap-1.5 rounded-full px-1.5 text-[12px] font-medium leading-none transition-colors lg:px-2.5 ${
               active
                 ? "bg-card !text-forest shadow-[0_1px_2px_rgba(50,53,46,0.14)]"
                 : "!text-muted-foreground hover:!text-forest/80"
             }`}
           >
             <Icon className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-            {m.label}
+            <span className="hidden lg:inline">{m.label}</span>
           </button>
         );
       })}
