@@ -13,7 +13,7 @@ export interface TerminalLaunchConfig {
 
 // Replace with the first official T3 release containing PR #5115 before this leaves preview.
 const T3_PREVIEW_PACKAGE =
-  "https://github.com/HamedMP/t3code/releases/download/matrix-preview-pr-5115-1faf1ad4f/t3-pr5115-1faf1ad4f.tgz";
+  "https://github.com/HamedMP/t3code/releases/download/matrix-preview-pr-5115-fb484b334/t3-pr5115-fb484b334.tgz";
 
 const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
   "claude-login": {
