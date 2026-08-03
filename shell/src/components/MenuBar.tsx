@@ -13,6 +13,8 @@ import { isSelfHostedDocument } from "@/lib/self-host-mode";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { useOsSessionStore } from "./os-session/os-session-store";
 import { useThemeStyle } from "./window/useThemeStyle";
+import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import { EllipsisIcon } from "lucide-react";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
 
@@ -59,6 +61,14 @@ function formatMenuBarClock(date: Date): string {
   return `${day} ${month} ${dayNum}  ${time}`;
 }
 
+function formatCompactMenuBarClock(date: Date): string {
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 /** macOS menu-bar clock: "Fri 17 Jul  21:45" (weekday, day, month, 24h time). */
 function formatMacMenuBarClock(date: Date): string {
   const day = date.toLocaleDateString("en-US", { weekday: "short" });
@@ -72,7 +82,21 @@ function formatMacMenuBarClock(date: Date): string {
   return `${day} ${dayNum} ${month}  ${time}`;
 }
 
-function MenuBarClock({ format = formatMenuBarClock }: { format?: (date: Date) => string }) {
+function formatCompactMacMenuBarClock(date: Date): string {
+  return date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function MenuBarClock({
+  format = formatMenuBarClock,
+  compactFormat = formatCompactMenuBarClock,
+}: {
+  format?: (date: Date) => string;
+  compactFormat?: (date: Date) => string;
+}) {
   // SSR-safe wall clock: useIsClient is false during SSR/hydration (so the server and the first
   // client render both emit the non-breaking-space placeholder) and true on the client. The
   // displayed time is derived during render from a `tick` counter that the interval bumps, so the
@@ -97,7 +121,14 @@ function MenuBarClock({ format = formatMenuBarClock }: { format?: (date: Date) =
   }, [isClient, tick]);
 
   return (
-    <span className="tabular-nums whitespace-pre">{now ? format(now) : "\u00A0"}</span>
+    <>
+      <span data-menu-clock="full" className="hidden tabular-nums whitespace-pre lg:inline">
+        {now ? format(now) : "\u00A0"}
+      </span>
+      <span data-menu-clock="compact" className="tabular-nums whitespace-pre lg:hidden">
+        {now ? compactFormat(now) : "\u00A0"}
+      </span>
+    </>
   );
 }
 
@@ -144,7 +175,7 @@ function AuthenticatedMenuBarUser({ onOpenSettings }: { onOpenSettings?: () => v
           onClick={onOpenSettings}
           title="Set up billing"
           aria-label="Set up billing"
-          className="group hidden h-5 items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2 text-[11px] font-medium leading-none text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-300 sm:inline-flex"
+          className="group hidden h-5 items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2 text-[11px] font-medium leading-none text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-300 lg:inline-flex"
         >
           <span className="size-1.5 rounded-full bg-amber-500" aria-hidden="true" />
           Set up billing
@@ -178,6 +209,8 @@ function MenuDropdown({
   onClose,
   bold,
   ariaLabel,
+  title,
+  triggerClassName = "",
 }: {
   label: React.ReactNode;
   items: MenuEntry[];
@@ -186,6 +219,8 @@ function MenuDropdown({
   onClose: () => void;
   bold?: boolean;
   ariaLabel?: string;
+  title?: string;
+  triggerClassName?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseEvent = useEffectEvent(onClose);
@@ -207,12 +242,13 @@ function MenuDropdown({
   }, [open]);
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative min-w-0" ref={ref}>
       <button
         type="button"
         onClick={onToggle}
         aria-label={ariaLabel}
-        className={`px-2 py-0.5 rounded ${bold ? "font-semibold text-foreground/80" : "text-foreground/60"} ${open ? "bg-foreground/10 text-foreground/90" : "hover:bg-foreground/10"}`}
+        title={title}
+        className={`whitespace-nowrap px-2 py-0.5 rounded ${bold ? "font-semibold text-foreground/80" : "text-foreground/60"} ${open ? "bg-foreground/10 text-foreground/90" : "hover:bg-foreground/10"} ${triggerClassName}`}
       >
         {label}
       </button>
@@ -237,6 +273,60 @@ function MenuDropdown({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+interface MenuSection {
+  label: string;
+  items: MenuEntry[];
+}
+
+function ApplicationActionsMenu({ sections }: { sections: MenuSection[] }) {
+  return (
+    <div data-testid="compact-application-actions" className="shrink-0 lg:hidden">
+      <DropdownMenuPrimitive.Root>
+        <DropdownMenuPrimitive.Trigger asChild>
+          <button
+            type="button"
+            aria-label="More application actions"
+            title="More application actions"
+            className="flex size-6 items-center justify-center rounded text-foreground/60 hover:bg-foreground/10 hover:text-foreground/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <EllipsisIcon className="size-4" aria-hidden="true" />
+          </button>
+        </DropdownMenuPrimitive.Trigger>
+        <DropdownMenuPrimitive.Portal>
+          <DropdownMenuPrimitive.Content
+            aria-label="More application actions"
+            align="start"
+            sideOffset={4}
+            collisionPadding={8}
+            className="z-[70] min-w-52 rounded-lg border border-border/40 bg-card/95 py-1 text-[13px] leading-normal text-foreground/80 shadow-xl backdrop-blur-xl"
+          >
+            {sections.map((section, sectionIndex) => (
+              <div key={section.label}>
+                {sectionIndex > 0 ? <DropdownMenuPrimitive.Separator className="my-1 h-px bg-border/40" /> : null}
+                <DropdownMenuPrimitive.Label className="px-3 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-foreground/45">
+                  {section.label}
+                </DropdownMenuPrimitive.Label>
+                {section.items.map((entry, entryIndex) => entry.separator ? (
+                  <DropdownMenuPrimitive.Separator key={`${section.label}-separator-${entryIndex}`} className="my-1 h-px bg-border/40" />
+                ) : (
+                  <DropdownMenuPrimitive.Item
+                    key={`${section.label}-${entry.label}`}
+                    onSelect={entry.action}
+                    className="flex cursor-default select-none items-center justify-between gap-6 px-3 py-1 outline-none data-[highlighted]:bg-primary/10 data-[highlighted]:text-foreground"
+                  >
+                    <span>{entry.label}</span>
+                    {entry.shortcut ? <span className="text-[11px] text-foreground/40">{entry.shortcut}</span> : null}
+                  </DropdownMenuPrimitive.Item>
+                ))}
+              </div>
+            ))}
+          </DropdownMenuPrimitive.Content>
+        </DropdownMenuPrimitive.Portal>
+      </DropdownMenuPrimitive.Root>
     </div>
   );
 }
@@ -347,32 +437,47 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
   const helpItems: MenuEntry[] = [
     { label: "Matrix OS Help", shortcut: "⌘K", action: onOpenCommandPalette },
   ];
+  const compactSections: MenuSection[] = [
+    { label: "File", items: fileItems },
+    { label: "Edit", items: editItems },
+    { label: "View", items: viewItems },
+    ...(isMacGlass
+      ? [
+          { label: "Window", items: windowItems },
+          { label: "Help", items: helpItems },
+        ]
+      : []),
+  ];
+  const activeAppLabel = <span className="block min-w-0 truncate">{activeAppName}</span>;
 
   const macGlassMenuBar = isMacGlass ? (
-    <header data-menu-bar className="fixed top-0 inset-x-0 hidden md:grid grid-cols-[1fr_auto_1fr] h-8 items-center px-3 text-[13px] leading-8 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm" style={{ zIndex: SHELL_Z_INDEX.menuBar }}>
+    <header data-menu-bar className="fixed top-0 inset-x-0 hidden h-8 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-3 text-[13px] leading-none select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm md:grid" style={{ zIndex: SHELL_Z_INDEX.menuBar }}>
       {/* Left: Apple menu + bold app menu + global menus */}
-      <div className="flex items-center gap-0.5 font-medium">
+      <div className="flex min-w-0 items-center gap-0.5 whitespace-nowrap font-medium">
         <MenuDropdown label={<AppleLogoIcon className="size-3.5" />} ariaLabel="Apple menu" items={appleItems} open={openMenu === "apple"} onToggle={() => toggleMenu("apple")} onClose={closeMenu} />
-        <MenuDropdown label={activeAppName} items={appItems} open={openMenu === "app"} onToggle={() => toggleMenu("app")} onClose={closeMenu} bold />
-        <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
-        <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
-        <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
-        <MenuDropdown label="Window" items={windowItems} open={openMenu === "window"} onToggle={() => toggleMenu("window")} onClose={closeMenu} />
-        <MenuDropdown label="Help" items={helpItems} open={openMenu === "help"} onToggle={() => toggleMenu("help")} onClose={closeMenu} />
+        <MenuDropdown label={activeAppLabel} ariaLabel={activeAppName} title={activeAppName} triggerClassName="min-w-0 max-w-24 lg:max-w-56" items={appItems} open={openMenu === "app"} onToggle={() => toggleMenu("app")} onClose={closeMenu} bold />
+        <div data-testid="full-application-actions" className="hidden items-center gap-0.5 lg:flex">
+          <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
+          <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
+          <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
+          <MenuDropdown label="Window" items={windowItems} open={openMenu === "window"} onToggle={() => toggleMenu("window")} onClose={closeMenu} />
+          <MenuDropdown label="Help" items={helpItems} open={openMenu === "help"} onToggle={() => toggleMenu("help")} onClose={closeMenu} />
+        </div>
+        <ApplicationActionsMenu sections={compactSections} />
       </div>
 
       {/* Center: mode switcher + contextual toolbar controls — always centered via grid */}
-      <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
+      <div className="flex min-w-0 items-center gap-0.5 whitespace-nowrap text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
         <ModeSwitcherBar />
         {children}
       </div>
 
       {/* Right: status icons + Control Center + clock + fast-user-switching avatar */}
-      <div className="flex items-center gap-0.5 justify-end text-foreground/70">
-        <span className="flex items-center px-1" aria-hidden="true">
+      <div className="flex min-w-0 items-center justify-end gap-0.5 whitespace-nowrap text-foreground/70">
+        <span className="hidden items-center px-1 lg:flex" aria-hidden="true">
           <BatteryFullIcon className="size-4" />
         </span>
-        <span className="flex items-center px-1" aria-hidden="true">
+        <span className="hidden items-center px-1 lg:flex" aria-hidden="true">
           <WifiIcon className="size-3.5" />
         </span>
         <button
@@ -400,7 +505,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
           </span>
         )}
         <button type="button" className="px-2 py-0.5 rounded hover:bg-foreground/10 text-foreground/80">
-          <MenuBarClock format={formatMacMenuBarClock} />
+          <MenuBarClock format={formatMacMenuBarClock} compactFormat={formatCompactMacMenuBarClock} />
         </button>
         <div className="pl-0.5">
           <MenuBarUser onOpenSettings={onOpenSettings} />
@@ -412,10 +517,10 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
   return (
     <>
       {macGlassMenuBar ?? (
-      <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-8 items-center px-3 text-[13px] leading-8 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
+      <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden h-8 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-3 text-[13px] leading-none select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm md:grid">
         {/* Left: app icon + app menu + global menus */}
-        <div className="flex items-center gap-0.5">
-          <div className="flex items-center px-2 py-0.5 rounded">
+        <div className="flex min-w-0 items-center gap-0.5 whitespace-nowrap">
+          <div className="flex shrink-0 items-center px-2 py-0.5 rounded">
             {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- active app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image */}
             <img
               key={activeAppIconUrl}
@@ -429,26 +534,30 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
               }}
             />
           </div>
-          <MenuDropdown label={activeAppName} items={appItems} open={openMenu === "app"} onToggle={() => toggleMenu("app")} onClose={closeMenu} />
-          <div className="mx-1 h-3 w-px bg-border/40" />
-          <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
-          <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
-          <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
+          <MenuDropdown label={activeAppLabel} ariaLabel={activeAppName} title={activeAppName} triggerClassName="min-w-0 max-w-24 lg:max-w-56" items={appItems} open={openMenu === "app"} onToggle={() => toggleMenu("app")} onClose={closeMenu} />
+          <div className="mx-1 hidden h-3 w-px shrink-0 bg-border/40 lg:block" />
+          <div data-testid="full-application-actions" className="hidden items-center gap-0.5 lg:flex">
+            <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
+            <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
+            <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
+          </div>
+          <ApplicationActionsMenu sections={compactSections} />
         </div>
 
         {/* Center: mode switcher + contextual toolbar controls — always centered via grid */}
-        <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
+        <div className="flex min-w-0 items-center gap-0.5 whitespace-nowrap text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
           <ModeSwitcherBar />
           {children}
         </div>
 
         {/* Right: Search + clock + user */}
-        <div className="flex items-center gap-1 justify-end">
+        <div className="flex min-w-0 items-center justify-end gap-1 whitespace-nowrap">
           <button
             type="button"
             className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
             onClick={onOpenCommandPalette}
             title="Search (Cmd+K)"
+            aria-label="Search"
           >
             <SearchIcon className="size-3.5 text-foreground/70" />
           </button>
