@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState } from "react";
+import Image from "next/image";
 import {
   PaletteIcon,
   UserIcon,
@@ -29,6 +30,7 @@ import type { ComputerSetupSelection } from "./settings/sections/BillingPanel";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton as AccountButton } from "./UserButton";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { isSelfHostedRuntime } from "@/lib/self-host-mode";
 import { useThemeStyle } from "./window/useThemeStyle";
 import {
@@ -265,11 +267,24 @@ function SettingsFrame({
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
   return (
     <div className="fixed inset-0" style={{ zIndex: SHELL_Z_INDEX.settings }}>
+      {onboardingMode ? (
+        <Image
+          src={platformShellAssetPath("/runtime-shell-backdrop.webp")}
+          alt=""
+          fill
+          priority
+          unoptimized
+          data-testid="onboarding-shell-backdrop"
+          className="pointer-events-none select-none object-cover"
+        />
+      ) : null}
       <button
         type="button"
         aria-label="Close settings"
         disabled={closeDisabled}
-        className="absolute inset-0 cursor-default bg-black/30 backdrop-blur-xl"
+        className={`absolute inset-0 cursor-default ${
+          onboardingMode ? "bg-black/20 backdrop-blur-[5px]" : "bg-black/30 backdrop-blur-xl"
+        }`}
         style={{
           opacity: visible ? 1 : 0,
           transition: `opacity 300ms ${transitionEase}`,

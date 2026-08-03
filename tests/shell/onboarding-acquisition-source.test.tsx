@@ -82,6 +82,60 @@ describe("onboarding acquisition source", () => {
     expect(onBuild).toHaveBeenCalledWith(["codex", "claude-code", "opencode", "pi"]);
   });
 
+  it("selects acquisition sources by number and continues with Enter", () => {
+    render(<DefaultInstallsStep onBuild={vi.fn()} collectAcquisitionSource />);
+
+    const sourceList = screen.getByRole("list", { name: "Acquisition sources" });
+    expect(sourceList.querySelectorAll("li")).toHaveLength(8);
+    expect(Array.from(sourceList.querySelectorAll("kbd"), (key) => key.textContent)).toEqual([
+      "1", "2", "3", "4", "5", "6", "7", "8",
+    ]);
+    fireEvent.keyDown(window, { key: "2" });
+
+    expect((screen.getByRole("radio", { name: "Instagram" }) as HTMLInputElement).checked).toBe(true);
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    expect(continueButton.querySelector("kbd")?.textContent).toContain("Enter");
+
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(screen.getByRole("heading", { name: "Default installs" })).toBeTruthy();
+  });
+
+  it("keeps number shortcuts active after an option receives focus", () => {
+    render(<DefaultInstallsStep onBuild={vi.fn()} collectAcquisitionSource />);
+
+    const tiktok = screen.getByRole("radio", { name: "TikTok" });
+    fireEvent.click(tiktok);
+    tiktok.focus();
+    fireEvent.keyDown(tiktok, { key: "2" });
+
+    expect((screen.getByRole("radio", { name: "Instagram" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("toggles coding agents by number and builds with Enter", () => {
+    const onBuild = vi.fn();
+    render(<DefaultInstallsStep onBuild={onBuild} collectAcquisitionSource />);
+
+    fireEvent.keyDown(window, { key: "1" });
+    fireEvent.keyDown(window, { key: "Enter" });
+    const agentList = screen.getByRole("list", { name: "Coding agents" });
+    expect(agentList.querySelectorAll("li")).toHaveLength(4);
+    expect(Array.from(agentList.querySelectorAll("kbd"), (key) => key.textContent)).toEqual([
+      "1", "2", "3", "4",
+    ]);
+    fireEvent.keyDown(window, { key: "1" });
+    fireEvent.keyDown(window, { key: "4" });
+
+    expect((screen.getByRole("checkbox", { name: "Codex" }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("checkbox", { name: "Pi" }) as HTMLInputElement).checked).toBe(false);
+    const buildButton = screen.getByRole("button", { name: "Build VPS" });
+    expect(buildButton.querySelector("kbd")?.textContent).toContain("Enter");
+
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(onBuild).toHaveBeenCalledWith(["claude-code", "opencode"]);
+  });
+
   it("does not repeat first-touch attribution in reused add-computer flows", () => {
     render(<DefaultInstallsStep onBuild={vi.fn()} />);
 
