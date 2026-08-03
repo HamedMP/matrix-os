@@ -8,6 +8,8 @@ const previewEnv = {
   PLATFORM_PREVIEW_ROUTE_HANDLE: "pr-1126",
   PLATFORM_PREVIEW_ROUTE_IPV4: "203.0.113.38",
   PLATFORM_PREVIEW_ROUTE_IMAGE_VERSION: "v2026.08.03-pr1126-518dead",
+  PLATFORM_PREVIEW_ROUTE_OWNER_CLERK_USER_ID: "user_owner",
+  PLATFORM_PREVIEW_ROUTE_ACCESS_CLERK_USER_IDS: "user_hamed:user_collaborator",
 };
 
 describe("preview VM route", () => {
@@ -17,6 +19,8 @@ describe("preview VM route", () => {
       handle: "pr-1126",
       runtimeSlot: "pr-1126",
       provisioningClass: "preview",
+      clerkUserId: "user_owner",
+      accessClerkUserIds: ["user_hamed", "user_collaborator"],
       publicIPv4: "203.0.113.38",
       status: "running",
       imageVersion: "v2026.08.03-pr1126-518dead",
@@ -29,5 +33,8 @@ describe("preview VM route", () => {
     expect(resolvePreviewVmRoute({ ...previewEnv, PLATFORM_PREVIEW: "false" }, "pr-1126")).toBeNull();
     expect(resolvePreviewVmRoute({ ...previewEnv, PLATFORM_PREVIEW_ROUTE_IPV4: "127.0.0.1" }, "pr-1126")).toBeNull();
     expect(resolvePreviewVmRoute({ ...previewEnv, PLATFORM_PREVIEW_ROUTE_HANDLE: "hamed" }, "hamed")).toBeNull();
+    expect(resolvePreviewVmRoute({ ...previewEnv, PLATFORM_PREVIEW_ROUTE_OWNER_CLERK_USER_ID: "" }, "pr-1126")).toBeNull();
+    expect(resolvePreviewVmRoute({ ...previewEnv, PLATFORM_PREVIEW_ROUTE_ACCESS_CLERK_USER_IDS: "user_owner" }, "pr-1126")).toBeNull();
+    expect(resolvePreviewVmRoute({ ...previewEnv, PLATFORM_PREVIEW_ROUTE_ACCESS_CLERK_USER_IDS: "user_hamed:user_hamed" }, "pr-1126")).toBeNull();
   });
 });

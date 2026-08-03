@@ -3568,6 +3568,8 @@ describe("platform proxy routing", () => {
         PLATFORM_PREVIEW_ROUTE_HANDLE: "pr-1126",
         PLATFORM_PREVIEW_ROUTE_IPV4: "203.0.113.38",
         PLATFORM_PREVIEW_ROUTE_IMAGE_VERSION: "v2026.08.03-pr1126-518dead",
+        PLATFORM_PREVIEW_ROUTE_OWNER_CLERK_USER_ID: "user_owner",
+        PLATFORM_PREVIEW_ROUTE_ACCESS_CLERK_USER_IDS: "user_hamed",
       } as NodeJS.ProcessEnv,
     });
 
