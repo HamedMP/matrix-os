@@ -48,6 +48,21 @@ describe('platform host bundle route', () => {
     });
   }
 
+  it('persists host bundles larger than the PostgreSQL integer limit', async () => {
+    const size = 2_379_609_790;
+
+    await expect(upsertHostBundleRelease(db, {
+      version: 'v2026.08.02-large-bundle',
+      gitCommit: 'ee96e3240e57d19d1b1017be8bf1e3890efa8f13',
+      gitRef: 'codex/125-golden-vps-dev-gate',
+      buildTime: '2026-08-02T20:32:52.103Z',
+      bundleKey: 'system-bundles/v2026.08.02-large-bundle/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.08.02-large-bundle/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'e'.repeat(64),
+      size,
+    })).resolves.toMatchObject({ size });
+  });
+
   it('serves host bundle checksums from platform DB without admin auth', async () => {
     await seedRelease();
     const getObject = vi.fn();
@@ -609,9 +624,9 @@ describe('platform host bundle route', () => {
 
     const updated = await upsertHostBundleRelease(db, {
       version: 'v2026.05.12-4',
-      gitCommit: 'updatedsha',
-      gitRef: 'refs/tags/v2026.05.12-4',
-      buildTime: '2026-05-12T02:00:00.000Z',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-1',
+      buildTime: '2026-05-12T00:00:00.000Z',
       bundleKey: 'system-bundles/v2026.05.12-4/matrix-host-bundle.tar.gz',
       checksumKey: 'system-bundles/v2026.05.12-4/matrix-host-bundle.tar.gz.sha256',
       sha256: 'a'.repeat(64),
@@ -623,7 +638,7 @@ describe('platform host bundle route', () => {
 
     expect(updated).toMatchObject({
       version: 'v2026.05.12-4',
-      gitCommit: 'updatedsha',
+      gitCommit: 'c1598218',
       severity: 'security',
       updateType: 'auto',
       changelog: 'metadata only',
