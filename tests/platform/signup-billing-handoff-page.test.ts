@@ -50,6 +50,9 @@ describe("platform signup billing handoff fallback", () => {
     expect(html).toContain(
       "Matrix could not finish opening billing. Try again after a moment.",
     );
+    expect(html).toContain(
+      'var marketingSignInUrl = "https://matrix-os.com/sign-in";',
+    );
     expect(html).toContain("window.location.replace(marketingSignInUrl)");
     expect(html).toContain(".card.failed .spinner { display: none; }");
     expect(html).not.toContain("AppSessionExchangeError");
