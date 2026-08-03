@@ -1,7 +1,9 @@
 export type CustomerVpsFailureCode =
   | 'quota_exceeded'
+  | 'snapshot_quota_exceeded'
   | 'provider_unavailable'
   | 'provider_timeout'
+  | 'snapshot_clone_rejected'
   | 'user_data_too_large'
   | 'r2_unavailable'
   | 'invalid_state'

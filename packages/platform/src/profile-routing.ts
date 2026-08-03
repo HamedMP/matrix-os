@@ -8,6 +8,7 @@ const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "mail", "ftp"]);
 export interface CustomerVpsProxyMachine {
   status: string;
   publicIPv4: string | null;
+  recoveryOldServerId?: number | null;
 }
 
 export const EntitlementStatusSchema = z.enum(['active', 'missing', 'expired', 'disabled', 'changed']);
@@ -41,9 +42,14 @@ export function buildCustomerVpsProxyUrl(
   path: string,
   queryString = "",
 ): string | null {
-  if (machine.status !== "running" || !machine.publicIPv4) return null;
+  if (!isCustomerVpsProxyMachineRoutable(machine) || !machine.publicIPv4) return null;
   const safePath = path.startsWith("/") ? path : `/${path}`;
   return `https://${machine.publicIPv4}:443${safePath}${queryString}`;
+}
+
+export function isCustomerVpsProxyMachineRoutable(machine: CustomerVpsProxyMachine): boolean {
+  return machine.status === "running"
+    || (machine.status === "recovering" && machine.recoveryOldServerId != null);
 }
 
 export function deriveEntitlementAccess(state: EntitlementState): EntitlementAccessDecision {
