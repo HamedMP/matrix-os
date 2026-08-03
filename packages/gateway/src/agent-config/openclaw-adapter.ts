@@ -258,7 +258,7 @@ export function createOpenClawRuntimeAdapter(options: {
   async function restorePrimary(previous: string | null): Promise<void> {
     const signal = AbortSignal.timeout(2_000);
     try {
-      const current = await readConfig(signal);
+      const current = await readConfig(signal, true);
       await patchPrimary(previous, current.hash, signal);
     } catch (error) {
       console.warn(

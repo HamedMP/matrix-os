@@ -334,6 +334,36 @@ describe("OpenClaw messaging runtime adapter", () => {
     });
   });
 
+  it("restores the prior primary when the rollback snapshot is malformed", async () => {
+    const rpc = createRpc({
+      "models.list": [models],
+      "models.authStatus": [auth],
+      "config.get": [
+        config("openai/gpt-5.4", "before-hash"),
+        config("openai/gpt-5.4", "mutated-hash"),
+        config("INVALID PRIMARY", "rollback-read-hash"),
+      ],
+      "config.patch": [{ ok: true }, { ok: true }],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    await expect(adapter.configure({
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+    }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "invalid_response",
+    });
+
+    const patchCalls = rpc.call.mock.calls.filter(([method]) => method === "config.patch");
+    expect(patchCalls).toHaveLength(2);
+    expect(patchCalls[1]?.[1]).toEqual({
+      raw: JSON.stringify({
+        agents: { defaults: { model: { primary: "openai/gpt-5.4" } } },
+      }),
+      baseHash: "rollback-read-hash",
+    });
+  });
+
   it("restores the prior primary when the initial patch outcome is unknown", async () => {
     const rpc = createRpc({
       "models.list": [models],
