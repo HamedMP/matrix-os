@@ -50,6 +50,8 @@ const buildAuthenticatedWebSocketUrl = vi.hoisted(() => vi.fn((
   return Promise.resolve(url.toString());
 }));
 
+const fetchMock = vi.hoisted(() => vi.fn());
+
 const restorePlan = vi.hoisted(() => ({
   current: {
     cached: null as null | {
@@ -61,6 +63,7 @@ const restorePlan = vi.hoisted(() => ({
         focus: ReturnType<typeof vi.fn>;
         loadAddon: ReturnType<typeof vi.fn>;
         refresh: ReturnType<typeof vi.fn>;
+        resize: ReturnType<typeof vi.fn>;
         write: ReturnType<typeof vi.fn>;
         dispose: ReturnType<typeof vi.fn>;
         onData: ReturnType<typeof vi.fn>;
@@ -77,6 +80,7 @@ const restorePlan = vi.hoisted(() => ({
       lastSeq: number;
       hasReplayCursor?: boolean;
       sessionId: string;
+      gatewayUrl?: string;
     },
     reuseTerminal: false,
     reuseSocket: false,
@@ -281,9 +285,11 @@ vi.mock("@/stores/terminal-settings", () => {
 import { TerminalPane } from "../../shell/src/components/terminal/TerminalPane.js";
 import { COLD_REPLAY_TIMEOUT_MS } from "../../shell/src/components/terminal/cold-replay-visibility.js";
 import { cacheTerminal } from "../../shell/src/components/terminal/terminal-cache.js";
+import { discardStaleCachedTerminal } from "../../shell/src/components/terminal/terminal-restore.js";
 import { capturePostHogEvent } from "../../shell/src/lib/posthog-client.js";
 
 const mockedCacheTerminal = vi.mocked(cacheTerminal);
+const mockedDiscardStaleCachedTerminal = vi.mocked(discardStaleCachedTerminal);
 const mockedCapturePostHogEvent = vi.mocked(capturePostHogEvent);
 
 const theme = {
@@ -377,6 +383,7 @@ function createCachedTerminal() {
       focus: vi.fn(),
       loadAddon: vi.fn(),
       refresh: vi.fn(),
+      resize: vi.fn(),
       write: vi.fn(),
       dispose: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
@@ -411,10 +418,13 @@ describe("TerminalPane scrolling", () => {
     stubWs.close.mockReset();
     stubWs.readyState = WebSocketMock.OPEN;
     mockedCacheTerminal.mockClear();
+    mockedDiscardStaleCachedTerminal.mockClear();
     mockedCapturePostHogEvent.mockClear();
     WebSocketMock.instances.length = 0;
     ResizeObserverMock.instances.length = 0;
     buildAuthenticatedWebSocketUrl.mockClear();
+    fetchMock.mockReset();
+    globalThis.fetch = fetchMock;
     Reflect.deleteProperty(window, "visualViewport");
   });
 
@@ -446,6 +456,7 @@ describe("TerminalPane scrolling", () => {
       "/ws/terminal/session",
       expect.objectContaining({ session: "main", client: "soft" }),
     );
+    expect(fetchMock).not.toHaveBeenCalled();
 
     await act(async () => {
       socket.onmessage?.({
@@ -481,6 +492,9 @@ describe("TerminalPane scrolling", () => {
     expect(terminal.logicalLines[0]).toBe(longLsRow);
     expect(terminal.logicalLines[1]).toBe("$ ");
     expect(terminal.logicalLines.filter((line) => line === "$ ")).toHaveLength(1);
+    expect(terminal.resize.mock.invocationCallOrder[0]).toBeLessThan(
+      terminal.write.mock.invocationCallOrder[0],
+    );
 
     const canonicalResizeCount = terminal.resize.mock.calls.length;
     await act(async () => {
@@ -515,6 +529,306 @@ describe("TerminalPane scrolling", () => {
       });
     });
     await waitFor(() => expect(terminal.resize).toHaveBeenLastCalledWith(132, 36));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("quarantines old-gateway replay and reconnects at the recovered canonical grid", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      sessions: [{ name: "main", canonicalSize: { cols: 140, rows: 40 } }],
+    }), { status: 200 }));
+
+    render(
+      <TerminalPane
+        paneId="pane-version-skew-canonical"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const terminal = createdTerminals[0];
+    const fitAddon = createdFitAddons[0];
+    const probingSocket = WebSocketMock.instances[0];
+
+    await act(async () => {
+      probingSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      probingSocket.onmessage?.({
+        data: JSON.stringify({ type: "output", seq: 0, data: "abandoned replay" }),
+      });
+    });
+
+    expect(terminal.write).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3), { timeout: 3_000 });
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const compatibilitySocket = WebSocketMock.instances[1];
+
+    expect(probingSocket.close).toHaveBeenCalledOnce();
+    expect(compatibilitySocket.url).toContain("client=soft");
+    expect(terminal.resize).toHaveBeenLastCalledWith(140, 40);
+    expect(fitAddon.fit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      compatibilitySocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      compatibilitySocket.onmessage?.({
+        data: JSON.stringify({
+          type: "output",
+          seq: 0,
+          data: `${"x".repeat(139)}\r\n$ `,
+        }),
+      });
+      // A late queued frame from the abandoned generation cannot replace the
+      // selected compatibility size or write duplicate output.
+      probingSocket.onmessage?.({
+        data: JSON.stringify({ type: "canonical-size", cols: 80, rows: 24 }),
+      });
+      probingSocket.onmessage?.({
+        data: JSON.stringify({ type: "output", seq: 1, data: "$ " }),
+      });
+    });
+
+    expect(terminal.cols).toBe(140);
+    expect(terminal.logicalLines[0]).toBe("x".repeat(139));
+    expect(terminal.logicalLines[1]).toBe("$ ");
+    expect(terminal.logicalLines.filter((line) => line === "$ ")).toHaveLength(1);
+    expect(terminal.resize.mock.invocationCallOrder[0]).toBeLessThan(
+      terminal.write.mock.invocationCallOrder[0],
+    );
+    expect(compatibilitySocket.send.mock.calls
+      .map(([frame]) => JSON.parse(frame as string) as { type: string })
+      .filter((frame) => frame.type === "resize")).toHaveLength(0);
+  });
+
+  it("reconnects exactly once as legacy and fits only after legacy attachment", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      sessions: [{ name: "main" }],
+    }), { status: 200 }));
+
+    render(
+      <TerminalPane
+        paneId="pane-version-skew-legacy"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const fitAddon = createdFitAddons[0];
+    const probingSocket = WebSocketMock.instances[0];
+    await act(async () => {
+      probingSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+    });
+
+    expect(fitAddon.fit).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3), { timeout: 3_000 });
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const legacySocket = WebSocketMock.instances[1];
+    expect(legacySocket.url).not.toContain("client=soft");
+    expect(fitAddon.fit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      legacySocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+    });
+
+    expect(fitAddon.fit).toHaveBeenCalledOnce();
+    expect(legacySocket.send.mock.calls
+      .map(([frame]) => JSON.parse(frame as string) as { type: string })
+      .filter((frame) => frame.type === "resize")).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(WebSocketMock.instances).toHaveLength(2);
+  });
+
+  it("fails closed with generic update guidance when session metadata fails", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: "postgres /private/path provider failure",
+    }), { status: 503 }));
+
+    const { getByText } = render(
+      <TerminalPane
+        paneId="pane-version-skew-error"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const probingSocket = WebSocketMock.instances[0];
+    await act(async () => {
+      probingSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      probingSocket.onmessage?.({
+        data: JSON.stringify({ type: "output", seq: 0, data: "must stay hidden" }),
+      });
+    });
+
+    await waitFor(() => expect(getByText(
+      "Update this Matrix computer, then reopen the terminal.",
+    )).toBeTruthy());
+    expect(createdTerminals[0].write).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain("postgres");
+    expect(document.body.textContent).not.toContain("/private/path");
+    expect(WebSocketMock.instances).toHaveLength(1);
+  });
+
+  it("cancels metadata retries and compatibility reconnects on unmount", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      sessions: [{ name: "main" }],
+    }), { status: 200 }));
+
+    const { unmount } = render(
+      <TerminalPane
+        paneId="pane-version-skew-unmount"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const probingSocket = WebSocketMock.instances[0];
+    await act(async () => {
+      probingSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 750));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(probingSocket.close).toHaveBeenCalled();
+    expect(WebSocketMock.instances).toHaveLength(1);
+  });
+
+  it("aborts an old capability probe and resets safely when the pane session changes", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      sessions: [{ name: "main" }],
+    }), { status: 200 }));
+    const commonProps = {
+      paneId: "pane-version-skew-session-change",
+      cwd: "",
+      theme,
+      isFocused: true,
+      isClosing: false,
+      shouldCacheOnUnmount: () => true,
+      shouldDestroyOnUnmount: () => false,
+      onFocus: () => {},
+    } as const;
+
+    const view = render(<TerminalPane {...commonProps} sessionId="main" />);
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const oldSocket = WebSocketMock.instances[0];
+    await act(async () => {
+      oldSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 17 }),
+      });
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    view.rerender(<TerminalPane {...commonProps} sessionId="other" />);
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const newSocket = WebSocketMock.instances[1];
+    expect(new URL(newSocket.url).searchParams.get("session")).toBe("other");
+    expect(new URL(newSocket.url).searchParams.get("fromSeq")).toBe("0");
+
+    await act(async () => {
+      newSocket.onmessage?.({
+        data: JSON.stringify({
+          type: "attached",
+          session: "other",
+          state: "running",
+          fromSeq: 0,
+          canonicalSize: { cols: 132, rows: 36 },
+        }),
+      });
+      newSocket.onmessage?.({
+        data: JSON.stringify({ type: "output", seq: 0, data: "other-session-only\r\n" }),
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 750));
+
+    expect(oldSocket.close).toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(WebSocketMock.instances).toHaveLength(2);
+    expect(createdTerminals[0].write).not.toHaveBeenCalled();
+    expect(createdTerminals[1].write).toHaveBeenCalledWith("other-session-only\r\n");
+    expect(mockedCacheTerminal).not.toHaveBeenCalled();
+  });
+
+  it("discards cached terminals from another session or runtime before probing", async () => {
+    const cached = createCachedTerminal();
+    const staleEntry = {
+      terminal: cached.terminal,
+      fitAddon: { fit: vi.fn() },
+      webglAddon: null,
+      searchAddon: null,
+      ws: stubWs,
+      lastSeq: 91,
+      hasReplayCursor: true,
+      sessionId: "main",
+      gatewayUrl: "https://old-runtime.example",
+    };
+    restorePlan.current = {
+      cached: staleEntry,
+      reuseTerminal: true,
+      reuseSocket: true,
+      sessionId: "main",
+      lastSeq: 91,
+      hasReplayCursor: true,
+    };
+
+    render(
+      <TerminalPane
+        paneId="pane-version-skew-stale-cache"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        sessionId="other"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    expect(mockedDiscardStaleCachedTerminal).toHaveBeenCalledWith(staleEntry);
+    expect(createdTerminals).toHaveLength(1);
+    const url = new URL(WebSocketMock.instances[0].url);
+    expect(url.searchParams.get("session")).toBe("other");
+    expect(url.searchParams.get("fromSeq")).toBe("0");
   });
 
   it("configures xterm scrollback and native viewport scrolling after mount", async () => {
@@ -914,7 +1228,13 @@ describe("TerminalPane scrolling", () => {
 
     await act(async () => {
       restoredSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 0,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
       });
       restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
       restoredSocket.onmessage?.({
@@ -957,7 +1277,13 @@ describe("TerminalPane scrolling", () => {
     ];
     await act(async () => {
       socket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 0,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
       });
       socket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
       for (const [seq, data] of replayFrames.entries()) {
@@ -1010,7 +1336,13 @@ describe("TerminalPane scrolling", () => {
 
       await act(async () => {
         socket.onmessage?.({
-          data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+          data: JSON.stringify({
+            type: "attached",
+            session: "main",
+            state: "running",
+            fromSeq: 0,
+            canonicalSize: { cols: 140, rows: 40 },
+          }),
         });
         socket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
         socket.onmessage?.({
@@ -1048,7 +1380,13 @@ describe("TerminalPane scrolling", () => {
     const firstSocket = WebSocketMock.instances[0]!;
     await act(async () => {
       firstSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 12 }),
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 12,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
       });
     });
     expect(mockedCapturePostHogEvent).toHaveBeenCalledWith("shell_terminal_ws", expect.objectContaining({
@@ -1066,7 +1404,13 @@ describe("TerminalPane scrolling", () => {
     const reconnectSocket = WebSocketMock.instances[1]!;
     await act(async () => {
       reconnectSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 12 }),
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 12,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
       });
     });
     expect(mockedCapturePostHogEvent).toHaveBeenCalledWith("shell_terminal_ws", expect.objectContaining({
@@ -1082,11 +1426,12 @@ describe("TerminalPane scrolling", () => {
 
   it("records cursor-resume metadata when a cached canonical socket finishes connecting", async () => {
     const cached = createCachedTerminal();
+    const cachedFitAddon = { fit: vi.fn() };
     stubWs.readyState = WebSocketMock.CONNECTING;
     restorePlan.current = {
       cached: {
         terminal: cached.terminal,
-        fitAddon: { fit: vi.fn() },
+        fitAddon: cachedFitAddon,
         webglAddon: null,
         searchAddon: null,
         ws: stubWs,
@@ -1115,11 +1460,18 @@ describe("TerminalPane scrolling", () => {
     );
 
     await waitFor(() => expect(stubWs.onmessage).not.toBeNull());
+    expect(cachedFitAddon.fit).not.toHaveBeenCalled();
     await act(async () => {
       stubWs.readyState = WebSocketMock.OPEN;
       stubWs.onopen?.();
       stubWs.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 23 }),
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 23,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
       });
     });
 
@@ -1130,6 +1482,7 @@ describe("TerminalPane scrolling", () => {
       acceptedSeq: 23,
     }));
     expect(cached.terminal.element.style.visibility).toBe("visible");
+    expect(cachedFitAddon.fit).not.toHaveBeenCalled();
   });
 
   it("resumes from the next accepted sequence and renders missed output once", async () => {
@@ -1152,7 +1505,13 @@ describe("TerminalPane scrolling", () => {
     const terminal = createdTerminals[0]!;
     await act(async () => {
       firstSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 40 }),
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 40,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
       });
       firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 40, data: "before-drop\r\n" }) });
       firstSocket.onclose?.();
@@ -1165,7 +1524,13 @@ describe("TerminalPane scrolling", () => {
     expect(terminal.element?.style.visibility).toBe("visible");
     await act(async () => {
       reconnectSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 41 }),
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 41,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
       });
       reconnectSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 41, data: "missed-once\r\n" }) });
     });
@@ -1193,7 +1558,13 @@ describe("TerminalPane scrolling", () => {
     const terminal = createdTerminals[0]!;
     await act(async () => {
       firstSocket.onmessage?.({
-        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 7 }),
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq: 7,
+          canonicalSize: { cols: 140, rows: 40 },
+        }),
       });
       firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 7, data: "cached-output\r\n" }) });
       firstMount.unmount();
@@ -1258,6 +1629,7 @@ describe("TerminalPane scrolling", () => {
           session: "main",
           state: "running",
           fromSeq,
+          canonicalSize: { cols: 140, rows: 40 },
         }),
       });
       firstSocket.onclose?.();
