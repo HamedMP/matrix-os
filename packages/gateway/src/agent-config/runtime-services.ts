@@ -157,6 +157,36 @@ async function resetOpenClawRpc(rpc: OpenClawRpcClient): Promise<void> {
 }
 
 export const OPENCLAW_READINESS_TIMEOUT_MS = 45_000;
+export const HERMES_READINESS_TIMEOUT_MS = 20_000;
+
+async function waitForHermesReady(
+  source: AgentRuntimeSource,
+  signal: AbortSignal,
+  timeoutMs = HERMES_READINESS_TIMEOUT_MS,
+): Promise<void> {
+  const readinessSignal = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(timeoutMs),
+  ]);
+  while (true) {
+    source.invalidate?.();
+    const snapshot = await source(readinessSignal);
+    const descriptor = snapshot.runtime.options.find((runtime) => runtime.id === "hermes");
+    if (descriptor !== undefined
+      && descriptor.health !== "unknown"
+      && descriptor.health !== "unreachable") {
+      return;
+    }
+    if (signal.aborted) throw signal.reason ?? new AgentConfigError("runtime_switch_failed");
+    if (readinessSignal.aborted) throw new AgentConfigError("runtime_switch_failed");
+    try {
+      await delay(250, undefined, { signal: readinessSignal });
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
+      throw new AgentConfigError("runtime_switch_failed", error);
+    }
+  }
+}
 
 export async function waitForOpenClawReady(
   rpc: OpenClawRpcClient,
@@ -288,7 +318,7 @@ function createUnifiedRuntimeSource(options: {
           provider.runtime === selected
           && provider.id === selection.provider
           && provider.models.some((model) =>
-            model.id === selection.model && model.available
+            model.id === selection.model
           )
         );
         if (selectedModelIsCataloged) messaging = selection;
@@ -343,6 +373,7 @@ export function createAgentRuntimeServices(options: {
     async activate(signal) {
       hermesSource.invalidate?.();
       await hostControl.switch("hermes", signal);
+      await waitForHermesReady(hermesSource, signal);
       hermesSource.invalidate?.();
     },
     deactivate: async () => {},

@@ -39,8 +39,8 @@ MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
 MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$MATRIX_RUNTIME_USER}"
 install_timeout_seconds=1810
-action_timeout_seconds=10
-active_wait_seconds=10
+action_timeout_seconds=50
+active_wait_seconds=45
 lock_dir="$MATRIX_RUNTIME_HOME/system/agent-runtime"
 install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0700 "$lock_dir"
 exec 9>"$lock_dir/host-control.lock"

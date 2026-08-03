@@ -420,7 +420,9 @@ export function createAgentRuntimeController(
             });
           }
         }
-        await selectedAdapter.activate(probeDeadline.signal);
+        // A healthy probe already proves the selected runtime is active. Do
+        // not send a host lifecycle switch through the deliberately short
+        // startup-reconciliation deadline.
         await resumeDelivery(selected, probeDeadline.signal);
       } else {
         for (const adapter of Object.values(options.adapters)) {

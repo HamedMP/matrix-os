@@ -194,7 +194,7 @@ describe("Hermes agent runtime services", () => {
         });
     const openClawRpc = {
       call: vi.fn(async (method: string) => {
-        if (method === "health") return { ts: 1_789_000_000_000 };
+        if (method === "health") return { ok: true, ts: 1_789_000_000_000 };
         if (method === "models.list") {
           return {
             models: [{
@@ -356,7 +356,7 @@ describe("Hermes agent runtime services", () => {
       },
       openClawRpc: {
         call: vi.fn(async (method: string) => {
-          if (method === "health") return { ts: 1_789_000_000_000 };
+          if (method === "health") return { ok: true, ts: 1_789_000_000_000 };
           if (method === "models.list") throw new Error("catalog unavailable");
           if (method === "models.authStatus") {
             return { ts: 1_789_000_000_000, providers: [] };
@@ -388,6 +388,119 @@ describe("Hermes agent runtime services", () => {
     await services.controller.close();
   });
 
+  it("preserves a configured selection when its catalog model is temporarily unavailable", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "agent-runtime-services-"));
+    cleanupPaths.push(homePath);
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system/config.json"), JSON.stringify({
+      agent: { messagingRuntime: "openclaw", revision: 0 },
+    }));
+    const services = createAgentRuntimeServices({
+      homePath,
+      client: {
+        readJson: vi.fn(async () => ({ gateway_running: false })),
+        requestJson: vi.fn(async () => ({ ok: true })),
+      },
+      hostControl: {
+        status: vi.fn(async () => ({
+          hermes: { installed: true, running: false },
+          openclaw: { installed: true, running: true },
+        })),
+        switch: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+      },
+      openClawRpc: {
+        call: vi.fn(async (method: string) => {
+          if (method === "health") return { ok: true, ts: 1_789_000_000_000 };
+          if (method === "models.list") {
+            return { models: [{
+              id: "claude-opus-4-6",
+              name: "Claude Opus 4.6",
+              provider: "anthropic",
+              available: false,
+            }] };
+          }
+          if (method === "models.authStatus") {
+            return { ts: 1_789_000_000_000, providers: [] };
+          }
+          if (method === "config.get") {
+            return {
+              valid: true,
+              hash: "config-hash",
+              config: { agents: { defaults: { model: {
+                primary: "anthropic/claude-opus-4-6",
+              } } } },
+            };
+          }
+          throw new Error("Unexpected OpenClaw method");
+        }),
+        close: vi.fn(async () => {}),
+      },
+    });
+
+    await expect(services.source(new AbortController().signal)).resolves.toMatchObject({
+      messaging: {
+        runtime: "openclaw",
+        provider: "anthropic",
+        model: "claude-opus-4-6",
+        configured: true,
+      },
+    });
+    await services.controller.close();
+  });
+
+  it("waits for the Hermes dashboard before verifying a cold switch", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "agent-runtime-services-"));
+    cleanupPaths.push(homePath);
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system/config.json"), JSON.stringify({
+      agent: { messagingRuntime: "openclaw", revision: 0 },
+    }));
+    let active: "hermes" | "openclaw" = "openclaw";
+    let statusCalls = 0;
+    const readJson = vi.fn(async (path: string) => {
+      if (path === "/api/status") {
+        statusCalls += 1;
+        if (statusCalls < 3) throw new Error("dashboard binding");
+        return { gateway_running: true };
+      }
+      return {
+        provider: "nous",
+        model: "hermes-4-405b",
+        providers: [{
+          slug: "nous",
+          name: "Nous",
+          authenticated: true,
+          models: ["hermes-4-405b"],
+        }],
+      };
+    });
+    const services = createAgentRuntimeServices({
+      homePath,
+      client: { readJson, requestJson: vi.fn(async () => ({ ok: true })) },
+      hostControl: {
+        status: vi.fn(async () => ({
+          hermes: { installed: true, running: active === "hermes" },
+          openclaw: { installed: true, running: active === "openclaw" },
+        })),
+        switch: vi.fn(async (runtime: "hermes" | "openclaw") => {
+          active = runtime;
+        }),
+        stop: vi.fn(async () => {}),
+      },
+      openClawRpc: {
+        call: vi.fn(async () => { throw new Error("OpenClaw stopped"); }),
+        close: vi.fn(async () => {}),
+        reset: vi.fn(async () => {}),
+      },
+    });
+
+    await expect(services.controller.update({ runtime: "hermes", revision: 0 }))
+      .resolves.toMatchObject({ runtime: "hermes" });
+    expect(statusCalls).toBeGreaterThanOrEqual(3);
+    await services.controller.close();
+  });
+
   it("waits for fresh OpenClaw RPC readiness before committing a switch", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "agent-runtime-services-"));
     cleanupPaths.push(homePath);
@@ -413,7 +526,7 @@ describe("Hermes agent runtime services", () => {
         if (method === "health") {
           healthCalls += 1;
           if (healthCalls < 3) throw new Error("gateway binding");
-          return { ts: 1_789_000_000_000 };
+          return { ok: true, ts: 1_789_000_000_000 };
         }
         if (method === "models.list") {
           return { models: [{
@@ -511,7 +624,7 @@ describe("Hermes agent runtime services", () => {
         });
     const openClawRpc = {
       call: vi.fn(async (method: string) => {
-        if (method === "health") return { ts: 1_789_000_000_000 };
+        if (method === "health") return { ok: true, ts: 1_789_000_000_000 };
         if (method === "models.list") {
           return { models: [{
             id: "claude-opus-4-6",
@@ -557,7 +670,7 @@ describe("Hermes agent runtime services", () => {
     await services.controller.update({ runtime: "openclaw", revision: 0 });
     await services.controller.update({ runtime: "hermes", revision: 1 });
 
-    expect(readJson).toHaveBeenCalledTimes(4);
+    expect(readJson).toHaveBeenCalledTimes(6);
     expect(hostControl.stop).not.toHaveBeenCalled();
     await services.controller.close();
   });

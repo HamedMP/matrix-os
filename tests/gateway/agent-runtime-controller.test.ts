@@ -560,7 +560,6 @@ describe("agent runtime controller", () => {
     expect(calls).toEqual([
       "delivery:pause",
       "openclaw:deactivate",
-      "hermes:activate",
       "delivery:resume:hermes",
     ]);
     await expect(lstat(join(runtimeDir, "transition.lock")))
