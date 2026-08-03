@@ -778,6 +778,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8'),
     ]);
     expect(unit).toContain('Type=notify\nNotifyAccess=all\n');
+    expect(unit).not.toContain('After=matrix-terminal-spike.slice');
     expect(unit).toContain('ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/libexec/terminal-runtime/current/spikes/keeper.mjs %i');
     expect(unit).toContain('KillMode=control-group');
     expect(unit).toContain('Restart=no');
@@ -801,11 +802,23 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       'request_runtime_start "${unit_prefix}${runtime_id}.service"',
     );
     const firstRuntimeStart = runner.indexOf('start_runtime "$base_id"');
+    const releaseProgress = runner.indexOf('write_progress base_release');
+    const boundedPaneRelease = runner.indexOf(
+      'setup_fs_bounded 5 /usr/bin/install -o root -g root -m 0644 /dev/null',
+    );
+    const paneReleaseCall = runner.indexOf('release_pane "$base_id"');
+    const waitProgress = runner.indexOf('write_progress base_wait_ready');
+    const firstRuntimeWait = runner.indexOf('wait_state "$base_unit" active');
     expect(sliceStart).toBeGreaterThan(-1);
     expect(sliceCheck).toBeGreaterThan(sliceStart);
     expect(descriptorPublish).toBeGreaterThan(runtimeStartDefinition);
     expect(runtimeStartRequest).toBeGreaterThan(descriptorPublish);
     expect(firstRuntimeStart).toBeGreaterThan(sliceCheck);
+    expect(releaseProgress).toBeGreaterThan(firstRuntimeStart);
+    expect(boundedPaneRelease).toBeGreaterThan(-1);
+    expect(paneReleaseCall).toBeGreaterThan(releaseProgress);
+    expect(waitProgress).toBeGreaterThan(paneReleaseCall);
+    expect(firstRuntimeWait).toBeGreaterThan(waitProgress);
   });
   it('accepts complete bounded S1 and S2 evidence', async () => {
     const root = await evidence();

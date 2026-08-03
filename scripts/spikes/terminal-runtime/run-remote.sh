@@ -90,7 +90,7 @@ write_progress() {
   local progress_stage="$1"
   local progress_tmp="$evidence_root/.progress-stage.$$"
   case "$progress_stage" in
-    startup_cleanup|runtime_setup|runtime_dirs|unit_check|binary_check|binary_version|binary_manifest|binary_digest|binary_metadata|config_dump|config_check|cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach|base_start|base_start_requested|keeper_loss|server_loss|memory_pressure|recovery_restore|corruption_fallback|summary_build) ;;
+    startup_cleanup|runtime_setup|runtime_dirs|unit_check|binary_check|binary_version|binary_manifest|binary_digest|binary_metadata|config_dump|config_check|cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach|base_start|base_start_requested|base_release|base_wait_ready|keeper_loss|server_loss|memory_pressure|recovery_restore|corruption_fallback|summary_build) ;;
     *) return 2 ;;
   esac
   printf '%s\n' "$progress_stage" >"$progress_tmp"
@@ -319,7 +319,8 @@ start_runtime() {
   request_runtime_start "${unit_prefix}${runtime_id}.service"
 }
 release_pane() {
-  install -o root -g root -m 0644 /dev/null "$runtime_root/pane-release/matrix-t-$1"
+  setup_fs_bounded 5 /usr/bin/install -o root -g root -m 0644 /dev/null \
+    "$runtime_root/pane-release/matrix-t-$1"
 }
 wait_state() {
   unit="$1"
@@ -418,7 +419,12 @@ sleep 0.3
 if [ ! -e "$runtime_root/readiness/${base_id}.json" ]; then
   mark_pass s1 readinessGated
 fi
-release_pane "$base_id"
+write_progress base_release
+if ! release_pane "$base_id"; then
+  echo "spike_pane_release_failed" >&2
+  exit 10
+fi
+write_progress base_wait_ready
 if ! wait_state "$base_unit" active; then
   wait_not_active "$base_unit" || true
   systemctl_bounded show "$base_unit" -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus >"$evidence_root/s1/base-startup-unit.txt" || true

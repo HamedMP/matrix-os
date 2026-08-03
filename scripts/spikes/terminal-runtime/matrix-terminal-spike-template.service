@@ -1,6 +1,5 @@
 [Unit]
 Description=Matrix terminal persistence spike runtime
-After=matrix-terminal-spike.slice
 
 [Service]
 Type=notify
