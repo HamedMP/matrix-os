@@ -69,6 +69,7 @@ interface UserMachinesTable {
   recovery_create_action_id: number | null;
   recovery_encrypted_payload: string | null;
   recovery_old_server_id: number | null;
+  recovery_old_public_ipv4: string | null;
   server_type: string | null;
   location: string | null;
   registration_token_hash: string | null;
@@ -609,6 +610,7 @@ export interface UserMachineRecord {
   recoveryCreateActionId: number | null;
   recoveryEncryptedPayload: string | null;
   recoveryOldServerId: number | null;
+  recoveryOldPublicIPv4: string | null;
   serverType: string | null;
   location: string | null;
   registrationTokenHash: string | null;
@@ -839,6 +841,7 @@ export interface NewUserMachine {
   recoveryCreateActionId?: number | null;
   recoveryEncryptedPayload?: string | null;
   recoveryOldServerId?: number | null;
+  recoveryOldPublicIPv4?: string | null;
   serverType?: string | null;
   location?: string | null;
   registrationTokenHash?: string | null;
@@ -950,6 +953,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       recovery_create_action_id BIGINT,
       recovery_encrypted_payload TEXT,
       recovery_old_server_id BIGINT,
+      recovery_old_public_ipv4 TEXT,
       server_type TEXT,
       location TEXT,
       registration_token_hash TEXT,
@@ -975,6 +979,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_create_action_id BIGINT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_encrypted_payload TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_old_server_id BIGINT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_old_public_ipv4 TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS location TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
@@ -1976,6 +1981,7 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     ),
     recoveryEncryptedPayload: row.recovery_encrypted_payload,
     recoveryOldServerId: row.recovery_old_server_id,
+    recoveryOldPublicIPv4: row.recovery_old_public_ipv4,
     serverType: row.server_type,
     location: row.location,
     registrationTokenHash: row.registration_token_hash,
@@ -2012,6 +2018,7 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     recovery_create_action_id: record.recoveryCreateActionId ?? null,
     recovery_encrypted_payload: record.recoveryEncryptedPayload ?? null,
     recovery_old_server_id: record.recoveryOldServerId ?? null,
+    recovery_old_public_ipv4: record.recoveryOldPublicIPv4 ?? null,
     server_type: record.serverType ?? null,
     location: record.location ?? null,
     registration_token_hash: record.registrationTokenHash ?? null,
@@ -2048,6 +2055,7 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.recoveryCreateActionId !== undefined) update.recovery_create_action_id = values.recoveryCreateActionId;
   if (values.recoveryEncryptedPayload !== undefined) update.recovery_encrypted_payload = values.recoveryEncryptedPayload;
   if (values.recoveryOldServerId !== undefined) update.recovery_old_server_id = values.recoveryOldServerId;
+  if (values.recoveryOldPublicIPv4 !== undefined) update.recovery_old_public_ipv4 = values.recoveryOldPublicIPv4;
   if (values.serverType !== undefined) update.server_type = values.serverType;
   if (values.location !== undefined) update.location = values.location;
   if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
@@ -3113,6 +3121,7 @@ export async function claimUserMachineRecovery(
       machine_id: intent.machineId,
       recovery_encrypted_payload: intent.encryptedPayload,
       recovery_old_server_id: sql<number | null>`hetzner_server_id`,
+      recovery_old_public_ipv4: sql<string | null>`public_ipv4`,
       server_type: intent.serverType,
       registration_token_hash: intent.registrationTokenHash,
       registration_token_expires_at: intent.registrationTokenExpiresAt,
@@ -3126,6 +3135,7 @@ export async function claimUserMachineRecovery(
       hetzner_server_id: null,
       public_ipv4: null,
       public_ipv6: null,
+      recovery_old_public_ipv4: null,
       failure_code: null,
       failure_at: null,
     })

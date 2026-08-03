@@ -19,6 +19,7 @@ import { canClerkUserAccessMachine } from './customer-vps-preview.js';
 import { issueSyncJwt } from './sync-jwt.js';
 import {
   buildCustomerVpsProxyUrl,
+  isCustomerVpsProxyMachineRoutable,
   type EntitlementAccessDecision,
 } from './profile-routing.js';
 import {
@@ -681,7 +682,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
-      if (machine.status !== 'running') {
+      if (!isCustomerVpsProxyMachineRoutable(machine)) {
         if (isGatewayPath) {
           applyNoStoreHeaders(c);
           return c.json({
@@ -800,7 +801,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       : await getRunningUserMachineByHandle(db, identity.handle);
     if (!runningMachine && identity.userId) {
       requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
-      if (!requestedActiveMachine) {
+      if (requestedActiveMachine && isCustomerVpsProxyMachineRoutable(requestedActiveMachine)) {
+        runningMachine = requestedActiveMachine;
+      } else if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
         if (handleMachine && canClerkUserAccessMachine(handleMachine, identity.userId)) {
           runningMachine = handleMachine;

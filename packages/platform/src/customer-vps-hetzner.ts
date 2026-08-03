@@ -107,11 +107,31 @@ const ProviderImageSchema = z.object({
   labels: ProviderLabelsSchema.default({}),
   protection: z.object({ delete: z.boolean() }),
 }).passthrough();
-const ProviderCapacityErrorSchema = z.object({
+const ProviderErrorSchema = z.object({
   error: z.object({
     code: z.string().min(1).max(128),
+    details: z.object({
+      fields: z.array(z.object({
+        name: z.string().min(1).max(128),
+      }).passthrough()).max(32).optional(),
+    }).passthrough().optional(),
   }).passthrough(),
 }).passthrough();
+
+async function isSnapshotImageRejection(res: Response): Promise<boolean> {
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) {
+      logCustomerVpsError('hetzner createServer rejection classification', err);
+    }
+    return false;
+  }
+  const parsed = ProviderErrorSchema.safeParse(body);
+  if (!parsed.success) return false;
+  return parsed.data.error.details?.fields?.some((field) => field.name === 'image') ?? false;
+}
 
 async function isDefinitiveCapacityRejection(res: Response): Promise<boolean> {
   if (res.status !== 412) return false;
@@ -124,7 +144,7 @@ async function isDefinitiveCapacityRejection(res: Response): Promise<boolean> {
     }
     return false;
   }
-  const parsed = ProviderCapacityErrorSchema.safeParse(body);
+  const parsed = ProviderErrorSchema.safeParse(body);
   return parsed.success && parsed.data.error.code === 'resource_unavailable';
 }
 
@@ -276,8 +296,14 @@ export function createHetznerClient(
         );
       }
       if (!res.ok) {
+        const snapshotImageRejected = input.image !== undefined && await isSnapshotImageRejection(res);
         const capacityRejected = await isDefinitiveCapacityRejection(res);
         await logProviderRejection('createServer', res);
+        if (snapshotImageRejected) {
+          throw new DefinitiveProviderRejectionError(
+            500, 'snapshot_clone_rejected', 'Provisioning provider unavailable',
+          );
+        }
         if (capacityRejected) {
           throw new DefinitiveProviderRejectionError(
             503, 'quota_exceeded', 'Provisioning capacity unavailable',

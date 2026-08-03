@@ -344,6 +344,48 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("keeps routing to the healthy predecessor while a recovery replacement is unregistered", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff202",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "recovering",
+      hetznerServerId: 123502,
+      recoveryOldServerId: 123500,
+      recoveryOldPublicIPv4: "203.0.113.42",
+      publicIPv4: "203.0.113.42",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("healthy predecessor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+    });
+
+    const res = await app.request("/api/health", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("healthy predecessor");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.42:443/api/health");
+  });
+
   it("routes mobile app session-token launches to the hinted customer VPS without Clerk cookies", async () => {
     await insertUserMachine(db, {
       machineId: "machine-alice-mobile-app",
