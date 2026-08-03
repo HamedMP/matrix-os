@@ -223,6 +223,18 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     return runtime;
   }
 
+  function broadcastCanonicalSize(runtime: SessionRuntime, size: TerminalSize): void {
+    const dead: ConnState[] = [];
+    for (const conn of runtime.conns) {
+      if (!sendJson(conn.ws, { type: "canonical-size", cols: size.cols, rows: size.rows })) {
+        dead.push(conn);
+      }
+    }
+    for (const conn of dead) {
+      conn.close();
+    }
+  }
+
   function canUseRuntime(runtime: SessionRuntime): boolean {
     return !runtime.disposed && runtimes.get(runtime.name) === runtime;
   }
@@ -595,6 +607,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         debounceMs: options.sizingDebounceMs,
         onApply: (size) => {
           runtime.child?.resize(size.cols, size.rows);
+          broadcastCanonicalSize(runtime, size);
         },
         persist: (size) => {
           options.persistCanonicalSize?.(safeName, size);
@@ -662,6 +675,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       session: safeName,
       state: info.status === "exited" ? "exited" : "running",
       fromSeq: effectiveFromSeq,
+      canonicalSize: sizing.current() ?? sizing.spawnSize(),
     });
 
     const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
@@ -794,10 +808,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   return { open, dispose, pendingPersistBytes };
 }
 
-function sendJson(ws: ShellWsSocket, msg: unknown): void {
+function sendJson(ws: ShellWsSocket, msg: unknown): boolean {
   try {
     ws.send(JSON.stringify(msg));
+    return true;
   } catch (err: unknown) {
     console.warn("[shell] terminal websocket send failed:", err instanceof Error ? err.message : String(err));
+    return false;
   }
 }

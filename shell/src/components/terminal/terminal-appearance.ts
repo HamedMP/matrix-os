@@ -3,6 +3,7 @@ export interface TerminalAppearanceTarget {
   rows: number;
   options: {
     theme: unknown;
+    minimumContrastRatio: number;
     fontFamily: string;
     fontSize: number;
     cursorBlink: boolean;
@@ -18,12 +19,14 @@ export interface TerminalFitTarget {
 
 interface TerminalAppearanceOptions {
   theme: unknown;
+  minimumContrastRatio: number;
   fontFamily: string;
   fontSize: number;
   cursorBlink: boolean;
   cursorStyle: "block" | "bar" | "underline";
   smoothScrollDuration: number;
   ligatures: boolean;
+  fit?: boolean;
 }
 
 export function applyTerminalAppearance(
@@ -32,6 +35,7 @@ export function applyTerminalAppearance(
   options: TerminalAppearanceOptions,
 ): void {
   term.options.theme = options.theme;
+  term.options.minimumContrastRatio = options.minimumContrastRatio;
   term.options.fontFamily = options.fontFamily;
   term.options.fontSize = options.fontSize;
   term.options.cursorBlink = options.cursorBlink;
@@ -40,7 +44,9 @@ export function applyTerminalAppearance(
   if (term.element) {
     term.element.style.fontVariantLigatures = options.ligatures ? "normal" : "none";
   }
-  fitAddon.fit();
+  if (options.fit !== false) {
+    fitAddon.fit();
+  }
   if (term.rows > 0) {
     term.refresh(0, term.rows - 1);
   }

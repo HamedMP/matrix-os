@@ -1,5 +1,13 @@
 export type TerminalServerMessage =
-  | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null; fromSeq: number | null }
+  | {
+      type: "attached";
+      sessionId: string;
+      state: "running" | "exited";
+      exitCode: number | null;
+      fromSeq: number | null;
+      canonicalSize: TerminalCanonicalSize | null;
+    }
+  | { type: "canonical-size"; cols: number; rows: number }
   | { type: "output"; data: string; seq: number | null }
   | { type: "block-mark"; seq: number | null; mark: { code: "A" | "B" | "C" | "D"; exitCode?: number } }
   | { type: "replay-start" }
@@ -7,8 +15,25 @@ export type TerminalServerMessage =
   | { type: "exit"; code: number | null }
   | { type: "error"; message: string };
 
+export interface TerminalCanonicalSize {
+  cols: number;
+  rows: number;
+}
+
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toCanonicalSize(value: unknown): TerminalCanonicalSize | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const cols = (value as { cols?: unknown }).cols;
+  const rows = (value as { rows?: unknown }).rows;
+  return Number.isInteger(cols) && (cols as number) >= 1 && (cols as number) <= 500
+    && Number.isInteger(rows) && (rows as number) >= 1 && (rows as number) <= 200
+    ? { cols: cols as number, rows: rows as number }
+    : null;
 }
 
 export function stripTerminalControls(value: string): string {
@@ -44,7 +69,12 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
         state: msg.state,
         exitCode: toFiniteNumber(msg.exitCode),
         fromSeq: Number.isInteger(msg.fromSeq) && (msg.fromSeq as number) >= 0 ? (msg.fromSeq as number) : null,
+        canonicalSize: toCanonicalSize(msg.canonicalSize),
       };
+    }
+    case "canonical-size": {
+      const canonicalSize = toCanonicalSize(msg);
+      return canonicalSize ? { type: "canonical-size", ...canonicalSize } : null;
     }
     case "output":
       if (typeof msg.data !== "string") {

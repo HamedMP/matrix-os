@@ -6,11 +6,16 @@ import { useWorkspaceCanvasStore } from "../../shell/src/stores/workspace-canvas
 import { WorkspaceCanvas } from "../../shell/src/components/canvas/WorkspaceCanvas.js";
 import { WorkspaceCanvasNode } from "../../shell/src/components/canvas/WorkspaceCanvasNode.js";
 
+const terminalPaneSpy = vi.fn();
+
 vi.mock("@tldraw/tldraw", () => ({
   Tldraw: () => <div data-testid="mock-tldraw" />,
 }));
 vi.mock("../../shell/src/components/terminal/TerminalPane.js", () => ({
-  TerminalPane: () => <div>terminal pane</div>,
+  TerminalPane: (props: unknown) => {
+    terminalPaneSpy(props);
+    return <div>terminal pane</div>;
+  },
 }));
 vi.mock("../../shell/src/hooks/useTheme.js", () => ({
   useTheme: () => ({ colors: { background: "#000", foreground: "#fff" } }),
@@ -30,6 +35,20 @@ function node(type: any, metadata: Record<string, unknown> = {}) {
 }
 
 describe("workspace canvas renderer", () => {
+  it("routes a focused canonical terminal node through the shared soft-grid TerminalPane", () => {
+    useWorkspaceCanvasStore.setState({ focusedNodeId: "node_terminal" });
+    render(<WorkspaceCanvasNode node={{
+      ...node("terminal", { label: "Main" }),
+      sourceRef: { kind: "terminal_session", id: "main" },
+    } as any} />);
+
+    expect(terminalPaneSpy).toHaveBeenCalledWith(expect.objectContaining({
+      paneId: "canvas-node_terminal",
+      sessionId: "main",
+      isFocused: true,
+    }));
+  });
+
   it("renders PR, task, review, finding, terminal, custom, and fallback nodes", () => {
     for (const item of [
       node("pr", { number: 57, owner: "acme", repo: "app" }),

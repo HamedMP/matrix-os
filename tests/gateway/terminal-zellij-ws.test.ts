@@ -342,7 +342,12 @@ describe("zellij terminal WebSocket", () => {
     session.onClose();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(ws.sent).toContainEqual({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 0,
+    }));
     expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: "hello" });
     expect(pty.writes).toEqual(["pwd\r"]);
     expect(pty.resizes).toEqual([{ cols: 100, rows: 30 }]);
@@ -548,12 +553,12 @@ describe("zellij terminal WebSocket", () => {
     });
     secondHandler.onClose();
 
-    expect(secondWs.sent).toContainEqual({
+    expect(secondWs.sent).toContainEqual(expect.objectContaining({
       type: "attached",
       session: "main",
       state: "running",
       fromSeq: 60,
-    });
+    }));
     expect(secondWs.sent).not.toContainEqual({ type: "output", seq: 0, data: "frame-0" });
     expect(secondWs.sent).not.toContainEqual({ type: "output", seq: 59, data: "frame-59" });
   });
@@ -587,12 +592,12 @@ describe("zellij terminal WebSocket", () => {
     });
     session.onClose();
 
-    expect(ws.sent).toContainEqual({
+    expect(ws.sent).toContainEqual(expect.objectContaining({
       type: "attached",
       session: "main",
       state: "running",
       fromSeq: 100,
-    });
+    }));
     expect(readSince).toHaveBeenCalledWith("main", 100);
   });
 
@@ -1164,6 +1169,152 @@ describe("zellij terminal WebSocket", () => {
 
     expect(pty.resizes).not.toContainEqual({ cols: 40, rows: 20 });
     expect(pty.resizes.at(-1)).toEqual({ cols: 200, rows: 50 });
+    handler.dispose();
+  });
+
+  it("reports the canonical grid when a hard client attaches before a soft browser", async () => {
+    const pty = new FakePty();
+    const hardWs = socket();
+    const softWs = socket();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    await handler.open({
+      ws: hardWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 140, rows: 40 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    const soft = await handler.open({ ws: softWs, session: "main", clientClass: "soft" });
+
+    expect(softWs.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      session: "main",
+      canonicalSize: { cols: 140, rows: 40 },
+    }));
+
+    const longRow = `${"entry-".repeat(18)}crosses-browser-width`;
+    const output = `${longRow}\r\n$ `;
+    pty.emitData(output);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (const clientWs of [hardWs, softWs]) {
+      expect(clientWs.sent.filter((frame) => (
+        (frame as { type?: string; data?: string }).type === "output"
+        && (frame as { data?: string }).data === output
+      ))).toHaveLength(1);
+    }
+
+    const resizeCount = pty.resizes.length;
+    soft.onMessage(JSON.stringify({ type: "resize", cols: 70, rows: 20 }));
+    soft.onMessage(JSON.stringify({ type: "resize", cols: 71, rows: 21 }));
+    expect(pty.resizes).toHaveLength(resizeCount);
+    handler.dispose();
+  });
+
+  it("updates a soft browser when a hard client attaches second, changes size, and disconnects", async () => {
+    const pty = new FakePty();
+    const softWs = socket();
+    const hardWs = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{
+          name: "main",
+          status: "active",
+          canonicalSize: { cols: 160, rows: 50 },
+        }]),
+      },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    const soft = await handler.open({ ws: softWs, session: "main", clientClass: "soft" });
+    expect(softWs.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      canonicalSize: { cols: 160, rows: 50 },
+    }));
+
+    const hard = await handler.open({
+      ws: hardWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 140, rows: 40 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(softWs.sent).toContainEqual({
+      type: "canonical-size",
+      cols: 140,
+      rows: 40,
+    });
+
+    const longRow = `${"wide-entry-".repeat(14)}still-readable`;
+    const output = `${longRow}\r\n$ `;
+    pty.emitData(output);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (const clientWs of [softWs, hardWs]) {
+      expect(clientWs.sent.filter((frame) => (
+        (frame as { type?: string; data?: string }).type === "output"
+        && (frame as { data?: string }).data === output
+      ))).toHaveLength(1);
+    }
+
+    hard.onMessage(JSON.stringify({ type: "resize", cols: 132, rows: 36 }));
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(softWs.sent).toContainEqual({
+      type: "canonical-size",
+      cols: 132,
+      rows: 36,
+    });
+
+    const appliedBeforeDisconnect = pty.resizes.length;
+    hard.onClose();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(pty.resizes).toHaveLength(appliedBeforeDisconnect);
+
+    soft.onMessage(JSON.stringify({ type: "resize", cols: 70, rows: 20 }));
+    expect(pty.resizes).toHaveLength(appliedBeforeDisconnect);
+    handler.dispose();
+  });
+
+  it("recomputes and reports the canonical grid when the smaller hard client disconnects", async () => {
+    const pty = new FakePty();
+    const softWs = socket();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    await handler.open({ ws: softWs, session: "main", clientClass: "soft" });
+    const smaller = await handler.open({
+      ws: socket(),
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 140, rows: 40 },
+    });
+    await handler.open({
+      ws: socket(),
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 160, rows: 45 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    smaller.onClose();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    expect(pty.resizes.at(-1)).toEqual({ cols: 160, rows: 45 });
+    expect(softWs.sent.at(-1)).toEqual({
+      type: "canonical-size",
+      cols: 160,
+      rows: 45,
+    });
     handler.dispose();
   });
 
