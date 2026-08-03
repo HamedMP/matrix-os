@@ -257,6 +257,11 @@ import {
   writeClientErrorReport,
 } from "./client-error-log.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
+import {
+  createT3WebSocketProxyHub,
+  proxyT3HttpRequest,
+  T3_PROXY_BODY_LIMIT,
+} from "./t3-proxy.js";
 
 export {
   buildAllowedOrigins,
@@ -382,6 +387,7 @@ export async function createGateway(config: GatewayConfig) {
   const shellSessionReaper = createShellSessionReaper({ registry: zellijShellRegistry });
   shellSessionReaper.start();
   const forwardTunnelHub = createForwardTunnelHub();
+  const t3WebSocketProxyHub = createT3WebSocketProxyHub();
   // One distinct id for every gateway telemetry event so all events on a
   // dev gateway without owner env vars land under the same person.
   const ownerTelemetryDistinctId = resolveOwnerTelemetryDistinctId() ?? "matrix-gateway";
@@ -1686,6 +1692,17 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.get(
+    "/api/integrations/t3/ws",
+    upgradeWebSocket((c) => (
+      t3WebSocketProxyHub.createHandler(c.req.url, c.req.header("origin"))
+    )),
+  );
+  app.all(
+    "/api/integrations/t3/*",
+    bodyLimit({ maxSize: T3_PROXY_BODY_LIMIT }),
+    (c) => proxyT3HttpRequest(c.req.raw),
+  );
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
@@ -4238,6 +4255,7 @@ export async function createGateway(config: GatewayConfig) {
       systemActivityCandidates.clear();
       await channelManager.stop();
       await processManager.shutdownAll();
+      t3WebSocketProxyHub.close();
       await forwardTunnelHub.close();
       shellSessionReaper.stop();
       await zellijShellWs.dispose();

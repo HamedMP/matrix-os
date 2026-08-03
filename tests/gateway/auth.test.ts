@@ -78,6 +78,29 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("delegates only the T3 proxy namespace to T3 authentication", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/integrations/t3/api/auth/session", "Bearer t3-session"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+
+    nextCalled = false;
+    const result = await mw(
+      mockContext(
+        "/api/integrations/t3-evil/api/auth/session",
+        "Bearer t3-session",
+        undefined,
+        "203.0.113.250",
+      ),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
   it("rejects API requests without token", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

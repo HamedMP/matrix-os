@@ -79,6 +79,7 @@ import {
   buildShellRouteCookie,
   buildShellRuntimeSlotCookie,
   hasExplicitVmNativeAppStreamCapability,
+  hasExplicitVmT3ProxyCapability,
   isNativeAppStreamPath,
   readAppDomainRouteCookie,
   readExplicitVmRoute,
@@ -492,8 +493,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const explicitVmRouteHasNativeAppStreamCapability = Boolean(
       explicitVmRoute && hasExplicitVmNativeAppStreamCapability(c.req.method, explicitVmRoute),
     );
+    const explicitVmRouteHasT3ProxyCapability = Boolean(
+      explicitVmRoute && hasExplicitVmT3ProxyCapability(c.req.method, explicitVmRoute),
+    );
     const explicitVmRouteHasCredentiallessCapability =
-      explicitVmRouteHasValidAppAssetToken || explicitVmRouteHasNativeAppStreamCapability;
+      explicitVmRouteHasValidAppAssetToken
+      || explicitVmRouteHasNativeAppStreamCapability
+      || explicitVmRouteHasT3ProxyCapability;
     if (
       explicitVmRoute
       && isNativeAppStreamPath(explicitVmRoute.upstreamPath)
@@ -689,7 +695,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         }
       }
       const rawCookie = c.req.header('cookie');
-      if (rawCookie) {
+      if (rawCookie && !explicitVmRouteHasT3ProxyCapability) {
         const forwarded = rawCookie
           .split(';')
           .map((p) => p.trim())
@@ -702,10 +708,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
+      if (explicitVmRouteHasT3ProxyCapability && authHeader && authHeader.length <= 8192 && !/[\r\n]/.test(authHeader)) {
+        headers.set('authorization', authHeader);
+      }
       // Capability-only requests must not inherit the platform's internal
       // runtime credential. The gateway authorizes this exact stream path by
       // validating its opaque token against the live native-app session.
-      if (platformSecret && !explicitVmRouteHasNativeAppStreamCapability) {
+      if (
+        platformSecret
+        && !explicitVmRouteHasNativeAppStreamCapability
+        && !explicitVmRouteHasT3ProxyCapability
+      ) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`);
         if (identity.userId) {
           headers.set('x-platform-user-id', identity.userId);
@@ -727,6 +740,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        if (explicitVmRouteHasT3ProxyCapability) {
+          responseHeaders.delete('set-cookie');
+          applyNoStoreResponseHeaders(responseHeaders);
+          return new Response(upstream.body, {
+            status: upstream.status,
+            headers: responseHeaders,
+          });
+        }
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);

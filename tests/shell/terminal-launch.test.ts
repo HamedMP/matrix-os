@@ -62,12 +62,16 @@ describe("terminal launch paths", () => {
     });
     expect(config?.command).toContain('MATRIX_T3_HOME="${MATRIX_HOME:-$HOME}/system/t3code"');
     expect(config?.command).toContain("read -r MATRIX_T3_CONFIRM");
-    expect(config?.command).toContain("npx --yes t3@0.0.31 connect link --headless");
-    expect(config?.command).toContain("npx --yes t3@0.0.31 serve");
-    expect(config?.command).not.toContain("t3@0.0.31 connect --headless");
+    expect(config?.command).toContain('MATRIX_T3_PUBLIC_BASE_URL="https://app.matrix-os.com/vm/$MATRIX_HANDLE/api/integrations/t3/"');
+    expect(config?.command).toContain("npx --yes t3@0.0.32 pair");
+    expect(config?.command).toContain("npx --yes t3@0.0.32 serve");
+    expect(config?.command).toContain("--host 127.0.0.1 --port 3773");
+    expect(config?.command).toContain('--pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL"');
+    expect(config?.command).not.toContain("connect link");
+    expect(config?.command).not.toContain("--headless");
     expect(config?.command).not.toContain("t3@latest");
     expect(config?.command.indexOf("read -r MATRIX_T3_CONFIRM")).toBeLessThan(
-      config?.command.indexOf("npx --yes t3@0.0.31") ?? -1,
+      config?.command.indexOf("npx --yes t3@0.0.32") ?? -1,
     );
     expect(config?.command).toContain('--base-dir "$MATRIX_T3_HOME"');
   });
@@ -103,6 +107,7 @@ describe("terminal launch paths", () => {
       const env = {
         ...process.env,
         MATRIX_HOME: root,
+        MATRIX_HANDLE: "test-handle",
         MATRIX_NODE_PREFIX: prefix,
         MATRIX_T3_TEST_MARKER: marker,
       };
@@ -122,8 +127,47 @@ describe("terminal launch paths", () => {
       });
       expect(approved.status).toBe(0);
       expect(readFileSync(marker, "utf8").trim().split("\n")).toEqual([
-        `--yes t3@0.0.31 connect link --headless --base-dir ${join(root, "system/t3code")}`,
-        `--yes t3@0.0.31 serve --base-dir ${join(root, "system/t3code")}`,
+        `--yes t3@0.0.32 pair --pairing-base-url https://app.matrix-os.com/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("starts the loopback server when no existing T3 process can mint a pairing link", () => {
+    const config = parseTerminalLaunchActionFromSearch(
+      "?launch=__terminal__&terminal_action=t3-connect",
+    );
+    const root = mkdtempSync(join(tmpdir(), "matrix-t3-serve-"));
+    const prefix = join(root, "node");
+    const bin = join(prefix, "bin");
+    const marker = join(root, "invoked");
+    const fakeNpx = join(bin, "npx");
+    const canonicalCommand = createCanonicalTerminalLaunchCommand(config?.command ?? "");
+    try {
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(
+        fakeNpx,
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$MATRIX_T3_TEST_MARKER"\ncase "$*" in *"t3@0.0.32 pair"*) exit 1 ;; esac\n',
+      );
+      chmodSync(fakeNpx, 0o755);
+
+      const result = spawnSync("sh", ["-c", canonicalCommand], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          MATRIX_HOME: root,
+          MATRIX_HANDLE: "test-handle",
+          MATRIX_NODE_PREFIX: prefix,
+          MATRIX_T3_TEST_MARKER: marker,
+        },
+        input: "y\n",
+      });
+
+      expect(result.status).toBe(0);
+      expect(readFileSync(marker, "utf8").trim().split("\n")).toEqual([
+        `--yes t3@0.0.32 pair --pairing-base-url https://app.matrix-os.com/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
+        `--yes t3@0.0.32 serve --host 127.0.0.1 --port 3773 --pairing-base-url https://app.matrix-os.com/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
       ]);
     } finally {
       rmSync(root, { force: true, recursive: true });

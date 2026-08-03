@@ -3506,6 +3506,54 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-user-id")).toBeNull();
   });
 
+  it("routes a T3 bearer request to the selected VM without Matrix or Clerk credentials", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff146",
+      clerkUserId: "user_alice",
+      handle: "alice-t3",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123490,
+      publicIPv4: "203.0.113.38",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-07-31T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ environmentId: "environment-t3" }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/vm/alice-t3/api/integrations/t3/api/auth/session",
+      {
+        method: "GET",
+        headers: {
+          host: "app.matrix-os.com",
+          authorization: "Bearer t3-environment-session",
+          origin: "https://app.t3.codes",
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "https://203.0.113.38:443/api/integrations/t3/api/auth/session",
+    );
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBe("Bearer t3-environment-session");
+    expect(headers.get("origin")).toBe("https://app.t3.codes");
+    expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("x-platform-user-id")).toBeNull();
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
   it("rejects explicit VM native app stream assets without a capability token", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("unexpected", { status: 200 }),

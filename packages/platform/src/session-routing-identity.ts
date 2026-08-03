@@ -33,6 +33,8 @@ export interface ExplicitVmRoute {
 
 const NATIVE_APP_STREAM_PATH = /^\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream(?:\/|$)/;
 const NATIVE_APP_STREAM_CAPABILITY_PATH = /^\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream\/stream_[A-Za-z0-9_-]{24,96}(?:\/|$)/;
+const T3_PROXY_PREFIX = '/api/integrations/t3';
+const T3_PROXY_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
 
 export interface AppDomainIdentity {
   handle: string;
@@ -187,6 +189,21 @@ export function hasExplicitVmNativeAppStreamCapability(
   // timing-safely validates the full random stream token against a live session.
   return (method === 'GET' || method === 'HEAD')
     && NATIVE_APP_STREAM_CAPABILITY_PATH.test(route.upstreamPath);
+}
+
+export function hasExplicitVmT3ProxyCapability(
+  method: string,
+  route: ExplicitVmRoute,
+): boolean {
+  if (!T3_PROXY_METHODS.has(method.toUpperCase())) return false;
+  if (route.upstreamPath.includes('%')) return false;
+  const path = route.upstreamPath.slice(T3_PROXY_PREFIX.length);
+  if (!route.upstreamPath.startsWith(`${T3_PROXY_PREFIX}/`)) return false;
+  return path === '/.well-known/t3/environment'
+    || path === '/oauth/token'
+    || path === '/ws'
+    || path === '/api'
+    || path.startsWith('/api/');
 }
 
 export function readAppDomainRouteCookie(path: string, cookieHeader: string | undefined): string | null {

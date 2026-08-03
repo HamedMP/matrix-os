@@ -89,6 +89,7 @@ const HMAC_WEBHOOK_PREFIXES = [
 const ROUTE_SCOPED_BEARER_PATHS = [
   "/api/internal/upgrade",
 ];
+const T3_PROXY_PREFIX = "/api/integrations/t3/";
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/terminal/session", "/ws/onboarding", "/ws/vocal"];
@@ -133,6 +134,12 @@ const rateLimiter = createRateLimiter({
 // legitimate provider just gets delayed, not permanently silenced.
 const webhookRateLimiter = createRateLimiter({
   maxAttempts: 120,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
+const t3ProxyRateLimiter = createRateLimiter({
+  maxAttempts: 600,
   windowMs: 60_000,
   lockoutMs: 30_000,
 });
@@ -201,6 +208,19 @@ export function authMiddleware(
     if (ROUTE_SCOPED_BEARER_PATHS.some((p) => normalizedPath === p)) {
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    // T3 validates its own one-time pairing, bearer, DPoP, and WebSocket
+    // ticket credentials. Matrix only exposes this fixed protocol namespace
+    // and rate-limits it before the loopback proxy handles the request.
+    if (normalizedPath.startsWith(T3_PROXY_PREFIX)) {
+      // This route is deliberately credentialless until T3 validates its
+      // pairing/session proof. Use one aggregate bucket per customer gateway;
+      // client-supplied forwarding headers are not a trustworthy identity.
+      if (!t3ProxyRateLimiter.check("t3-proxy")) {
         return tooManyRequests(c);
       }
       return nextWithReady(c, next);

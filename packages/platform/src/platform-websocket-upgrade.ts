@@ -30,6 +30,7 @@ import { EDGE_SECRET_HEADER } from './session-routing-proxy.js';
 import {
   buildExplicitVmWebSocketUpstreamPath,
   hasExplicitVmNativeAppStreamCapability,
+  hasExplicitVmT3ProxyCapability,
   isNativeAppStreamPath,
   readExplicitVmWebSocketRoute,
   resolveAppDomainIdentity,
@@ -136,6 +137,11 @@ export function registerPlatformWebSocketUpgradeHandler(
       ? buildExplicitVmWebSocketUpstreamPath(path)
       : path;
     const pathClass = classifyWebSocketPath(webSocketProxyPath);
+    const explicitVmRouteHasT3ProxyCapability = Boolean(
+      explicitVmRoute
+      && hasExplicitVmT3ProxyCapability(req.method ?? '', explicitVmRoute)
+      && explicitVmRoute.upstreamPath === '/api/integrations/t3/ws',
+    );
     if (isAppDomain && path.startsWith('/vm/') && !explicitVmRoute) {
       socket.destroy();
       return;
@@ -168,7 +174,10 @@ export function registerPlatformWebSocketUpgradeHandler(
       if (
         !identity
         && explicitVmRoute
-        && hasExplicitVmNativeAppStreamCapability(req.method ?? '', explicitVmRoute)
+        && (
+          hasExplicitVmNativeAppStreamCapability(req.method ?? '', explicitVmRoute)
+          || explicitVmRouteHasT3ProxyCapability
+        )
       ) {
         identity = {
           handle: explicitVmRoute.handle,
@@ -313,7 +322,10 @@ export function registerPlatformWebSocketUpgradeHandler(
         return;
       }
       const upstreamHostHeader = isCodeDomain ? host : 'app.matrix-os.com';
-      const headers = buildUpgradeHeaders(runningMachine.handle, true);
+      const headers = buildUpgradeHeaders(
+        runningMachine.handle,
+        !explicitVmRouteHasT3ProxyCapability,
+      );
       const upstreamServerName = upstreamHostHeader.split(':')[0] ?? upstreamHostHeader;
       const upstream = createTlsConnection({
         host: runningMachine.publicIPv4,
