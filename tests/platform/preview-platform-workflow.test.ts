@@ -36,6 +36,17 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("_NEXT_PUBLIC_MATRIX_APP_URL=https://preview.matrix-os.com");
   });
 
+  it("configures the public preview origin for the runtime auth shell", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      "NEXT_PUBLIC_MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}",
+    );
+  });
+
   it("sources the deployed control-plane origin from the selected environment", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/platform-cloud-run.yml"),
