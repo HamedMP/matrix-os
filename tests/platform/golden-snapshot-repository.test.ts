@@ -21,6 +21,7 @@ import {
   reconcileExpiredGoldenSnapshotLeases,
   reconcileRevokedGoldenSnapshotBaseGeneration,
   releaseGoldenSnapshotLease,
+  releaseGoldenSnapshotLeaseInTransaction,
   reserveGoldenSnapshotValidationCreate,
   retryGoldenSnapshotCleanup,
   retireGoldenSnapshot,
@@ -1385,6 +1386,37 @@ describe('golden snapshot repository', () => {
     }));
   });
 
+  it('releases a lease on the caller transaction without opening a nested transaction', async () => {
+    const enqueued = await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v1', compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000064',
+      buildId: '20000000-0000-4000-8000-000000000064', now: '2026-07-03T00:00:00.000Z',
+    });
+    await db.executor.updateTable('golden_snapshots').set({
+      state: 'ready', ready_at: '2026-07-03T00:01:00.000Z', provider_image_id: 964,
+      provider_image_status: 'available', image_disk_gb: 40, image_architecture: 'x86',
+    }).where('snapshot_id', '=', enqueued.snapshot.snapshotId).execute();
+    const selected = await selectAndLeaseGoldenSnapshot(db, {
+      targetBundleVersion: 'v1', compatibility, serverDiskGb: 80,
+      machineId: '30000000-0000-4000-8000-000000000064', purpose: 'provision',
+      leaseId: '40000000-0000-4000-8000-000000000064',
+      now: '2026-07-03T00:02:00.000Z', expiresAt: '2026-07-03T00:12:00.000Z',
+    });
+
+    await expect(db.transaction(async (trx) => releaseGoldenSnapshotLeaseInTransaction(
+      {
+        ...trx,
+        transaction: async () => { throw new Error('nested transaction attempted'); },
+      },
+      selected!.lease.leaseId,
+      '2026-07-03T00:03:00.000Z',
+    ))).resolves.toBe(true);
+
+    await expect(db.executor.selectFrom('golden_snapshot_leases').select('released_at')
+      .where('lease_id', '=', selected!.lease.leaseId).executeTakeFirstOrThrow())
+      .resolves.toEqual({ released_at: '2026-07-03T00:03:00.000Z' });
+  });
+
   it('retains the bounded orphan deadline when revoking an in-flight provider create', async () => {
     const enqueued = await enqueueGoldenSnapshotBuild(db, {
       bundleVersion: 'v1', compatibility,
@@ -1421,8 +1453,10 @@ describe('golden snapshot repository', () => {
     await promoteHostBundleChannel(db, 'stable', 'v1', '2026-07-01T00:02:00.000Z');
 
     expect(await retireGoldenSnapshot(
-      db, enqueued.snapshot.snapshotId, 'freshness_expired', '2026-07-03T00:00:00.000Z', 2,
-      24 * 60 * 60 * 1000,
+      db, enqueued.snapshot.snapshotId, 'freshness_expired', '2026-07-03T00:00:00.000Z', {
+        rollbackVersionsPerChannel: 2,
+        freshnessMaxAgeMs: 24 * 60 * 60 * 1000,
+      },
     )).toBe(false);
     const replacement = await enqueueGoldenSnapshotBuild(db, {
       bundleVersion: 'v1', compatibility, replaceReady: true,
@@ -1433,8 +1467,10 @@ describe('golden snapshot repository', () => {
       state: 'ready', ready_at: '2026-07-03T00:02:00.000Z', provider_image_id: 114,
     }).where('snapshot_id', '=', replacement.snapshot.snapshotId).execute();
     expect(await retireGoldenSnapshot(
-      db, enqueued.snapshot.snapshotId, 'freshness_expired', '2026-07-03T00:03:00.000Z', 2,
-      24 * 60 * 60 * 1000,
+      db, enqueued.snapshot.snapshotId, 'freshness_expired', '2026-07-03T00:03:00.000Z', {
+        rollbackVersionsPerChannel: 2,
+        freshnessMaxAgeMs: 24 * 60 * 60 * 1000,
+      },
     )).toBe(true);
     await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({
       state: 'retiring',
@@ -1460,7 +1496,8 @@ describe('golden snapshot repository', () => {
     await promoteHostBundleChannel(db, 'stable', 'v2', '2026-07-03T00:03:00.000Z');
 
     expect(await retireGoldenSnapshot(
-      db, historical.snapshot.snapshotId, 'retention', '2026-07-03T00:04:00.000Z', 1,
+      db, historical.snapshot.snapshotId, 'retention', '2026-07-03T00:04:00.000Z',
+      { rollbackVersionsPerChannel: 1 },
     )).toBe(true);
   });
 
@@ -1590,6 +1627,28 @@ describe('golden snapshot repository', () => {
     )).rejects.toThrow('provider action conflict');
     await expect(getGoldenSnapshotCreateIntent(db, '40000000-0000-4000-8000-000000000056'))
       .resolves.toMatchObject({ providerCreateActionId: 7001 });
+  });
+
+  it('retires an exact provider image even when legacy build linkage is absent', async () => {
+    const enqueued = await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v1', compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000027',
+      buildId: '20000000-0000-4000-8000-000000000027', now: '2026-07-03T00:00:00.000Z',
+    });
+    await db.executor.updateTable('golden_snapshots').set({
+      state: 'failed', provider_image_id: 127, failure_code: 'legacy_failed',
+    }).where('snapshot_id', '=', enqueued.snapshot.snapshotId).execute();
+    await db.executor.deleteFrom('golden_snapshot_builds')
+      .where('build_id', '=', enqueued.build.buildId).execute();
+
+    await expect(retireGoldenSnapshot(
+      db, enqueued.snapshot.snapshotId, 'failed_build', '2026-07-03T00:01:00.000Z',
+    )).resolves.toBe(true);
+    await expect(listPendingGoldenSnapshotCleanup(db, '2026-07-03T00:01:00.000Z', 10)).resolves.toEqual([
+      expect.objectContaining({
+        buildId: null, resourceType: 'snapshot_image', providerResourceId: 127,
+      }),
+    ]);
   });
 
   it('marks a base generation revoked immediately and quarantines it in bounded batches', async () => {

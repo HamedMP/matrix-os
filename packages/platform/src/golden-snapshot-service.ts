@@ -3,7 +3,10 @@ import { sql } from 'kysely';
 import { z } from 'zod/v4';
 import type { PlatformDB } from './db.js';
 import type { HetznerClient, HetznerServer } from './customer-vps-hetzner.js';
-import { DefinitiveProviderRejectionError } from './customer-vps-errors.js';
+import {
+  CustomerVpsError,
+  DefinitiveProviderRejectionError,
+} from './customer-vps-errors.js';
 import {
   appendGoldenSnapshotAuditEvent,
   getGoldenSnapshot,
@@ -343,7 +346,9 @@ function exactLabels(buildId: string, snapshotId: string, role: 'builder' | 'val
 function providerFailure(context: string, err: unknown): Error {
   const kind = err instanceof Error ? err.name : typeof err;
   console.error(`[golden-snapshot] ${context} failed: ${kind}`);
-  return new Error('Golden snapshot provider operation failed');
+  return err instanceof CustomerVpsError
+    ? err
+    : new Error('Golden snapshot provider operation failed');
 }
 
 export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps): GoldenSnapshotService {
@@ -856,6 +861,18 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           labels: exactLabels(buildId, snapshot.snapshotId, 'builder'),
         });
       } catch (err: unknown) {
+        if (err instanceof CustomerVpsError && err.code === 'quota_exceeded') {
+          await deps.db.executor.updateTable('golden_snapshot_builds').set({
+            phase: 'snapshot_create', pending_operation: null, callback_expires_at: null,
+            updated_at: at,
+          }).where('build_id', '=', buildId).where('phase', '=', 'snapshot_wait')
+            .where('provider_snapshot_action_id', 'is', null).execute();
+          throw new CustomerVpsError(
+            err.status,
+            'snapshot_quota_exceeded',
+            'Snapshot capacity unavailable',
+          );
+        }
         throw providerFailure('snapshot create', err);
       }
       if (created.image.status === 'deleting') {

@@ -1937,6 +1937,8 @@ export async function retireGoldenSnapshot(
     const retirementTarget = await trx.executor.selectFrom('golden_snapshots').selectAll()
       .where('snapshot_id', '=', snapshotId).executeTakeFirst();
     if (!retirementTarget || !['ready', 'failed', 'quarantined'].includes(retirementTarget.state)) return false;
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${retirementTarget.base_generation}))`
+      .execute(trx.executor);
     const compatibilityRows = retirementTarget.state === 'ready'
       ? await trx.executor.selectFrom('golden_snapshots').selectAll()
         .where('compatibility_key', '=', retirementTarget.compatibility_key)
@@ -1947,6 +1949,11 @@ export async function retireGoldenSnapshot(
         .where('snapshot_id', '=', snapshotId).forUpdate().executeTakeFirst()];
     const snapshotRow = compatibilityRows.find((row) => row?.snapshot_id === snapshotId);
     if (!snapshotRow || !['ready', 'failed', 'quarantined'].includes(snapshotRow.state)) return false;
+    const build = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
+      .where('snapshot_id', '=', snapshotId).forUpdate().executeTakeFirst();
+    // An unresolved provider create must be reconciled before retirement. Its
+    // exact resource may not be represented by any persisted provider ID yet.
+    if (build?.pending_operation !== null && build?.pending_operation !== undefined) return false;
     const freshnessExpired = snapshotRow.state === 'ready'
       && policy.freshnessMaxAgeMs !== undefined
       && snapshotRow.ready_at !== null
@@ -1996,13 +2003,27 @@ export async function retireGoldenSnapshot(
       const otherReady = compatibilityRows.find((row) => row?.snapshot_id !== snapshotId);
       if (!otherReady) return false;
     }
-    if (snapshotRow.provider_image_id !== null) {
-      const build = await trx.executor.selectFrom('golden_snapshot_builds').select('build_id')
-        .where('snapshot_id', '=', snapshotId).executeTakeFirst();
+    const resources = [
+      build?.provider_builder_id === null || build?.provider_builder_id === undefined ? undefined : {
+        type: 'builder_server' as const, id: build.provider_builder_id,
+      },
+      build?.provider_validation_id === null || build?.provider_validation_id === undefined ? undefined : {
+        type: 'validation_server' as const, id: build.provider_validation_id,
+      },
+      snapshotRow.provider_image_id === null ? undefined : {
+        type: 'snapshot_image' as const, id: snapshotRow.provider_image_id,
+      },
+    ].filter((resource): resource is {
+      type: 'builder_server' | 'validation_server' | 'snapshot_image'; id: number;
+    } => resource !== undefined);
+    for (const resource of resources) {
       await trx.executor.insertInto('golden_snapshot_cleanup').values({
         cleanup_id: randomUUID(), snapshot_id: snapshotId, build_id: build?.build_id ?? null,
-        resource_type: 'snapshot_image', provider_resource_id: snapshotRow.provider_image_id,
-        provenance_key: `snapshot:${snapshotId}`, reason, status: 'queued', attempts: 0,
+        resource_type: resource.type, provider_resource_id: resource.id,
+        provenance_key: resource.type === 'snapshot_image'
+          ? `snapshot:${snapshotId}`
+          : `build:${build!.build_id}:${resource.type}`,
+        reason, status: 'queued', attempts: 0,
         next_attempt_at: now, lease_expires_at: null, last_error_code: null,
         created_at: now, completed_at: null,
       }).onConflict((oc) => oc.columns(['resource_type', 'provider_resource_id'])
@@ -2022,6 +2043,44 @@ export async function retireGoldenSnapshot(
   });
 }
 
+async function finalizeRetiringGoldenSnapshotWithoutImage(
+  db: PlatformDB,
+  snapshotId: string,
+  now: string,
+): Promise<boolean> {
+  return db.transaction(async (trx) => {
+    const identity = await trx.executor.selectFrom('golden_snapshots').select('base_generation')
+      .where('snapshot_id', '=', snapshotId).executeTakeFirst();
+    if (!identity) return false;
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${identity.base_generation}))`.execute(trx.executor);
+    const snapshot = await trx.executor.selectFrom('golden_snapshots').selectAll()
+      .where('snapshot_id', '=', snapshotId).forUpdate().executeTakeFirst();
+    if (!snapshot || snapshot.state !== 'retiring' || snapshot.provider_image_id !== null) return false;
+    const build = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
+      .where('snapshot_id', '=', snapshotId).forUpdate().executeTakeFirst();
+    if (build && (build.pending_operation !== null
+      || build.provider_builder_id !== null
+      || build.provider_validation_id !== null)) return false;
+    const [unreleasedLease, pendingCleanup] = await Promise.all([
+      trx.executor.selectFrom('golden_snapshot_leases').select('lease_id')
+        .where('snapshot_id', '=', snapshotId).where('released_at', 'is', null).executeTakeFirst(),
+      trx.executor.selectFrom('golden_snapshot_cleanup').select('cleanup_id')
+        .where('snapshot_id', '=', snapshotId).where('completed_at', 'is', null).executeTakeFirst(),
+    ]);
+    if (unreleasedLease || pendingCleanup) return false;
+    const deleted = await trx.executor.updateTable('golden_snapshots').set({
+      state: 'deleted', deleted_at: now, updated_at: now, revision: sql<number>`revision + 1`,
+    }).where('snapshot_id', '=', snapshotId).where('state', '=', 'retiring')
+      .where('revision', '=', snapshot.revision).returning('snapshot_id').executeTakeFirst();
+    if (!deleted) return false;
+    await appendGoldenSnapshotAuditEvent(trx, {
+      snapshotId, buildId: build?.build_id, eventType: 'snapshot_deleted', actorType: 'worker',
+      fromState: 'retiring', toState: 'deleted', reason: 'provider_image_absent', now,
+    });
+    return true;
+  });
+}
+
 export async function enforceGoldenSnapshotRetention(
   db: PlatformDB,
   rawInput: z.input<typeof RetentionInputSchema>,
@@ -2033,12 +2092,15 @@ export async function enforceGoldenSnapshotRetention(
   } catch (err: unknown) {
     console.error(`[golden-snapshot] lease reconciliation failed: ${err instanceof Error ? err.name : typeof err}`);
   }
-  const [readyRows, disposableRows, channels] = await Promise.all([
+  const [readyRows, disposableRows, retiringWithoutImageRows, channels] = await Promise.all([
     db.executor.selectFrom('golden_snapshots').select([
       'snapshot_id', 'bundle_version', 'compatibility_key', 'ready_at', 'test_mode',
     ]).where('state', '=', 'ready').orderBy('ready_at', 'desc').limit(100).execute(),
     db.executor.selectFrom('golden_snapshots').select('snapshot_id')
-      .where('state', 'in', ['failed', 'quarantined']).where('provider_image_id', 'is not', null)
+      .where('state', 'in', ['failed', 'quarantined'])
+      .orderBy('updated_at').limit(100).execute(),
+    db.executor.selectFrom('golden_snapshots').select('snapshot_id')
+      .where('state', '=', 'retiring').where('provider_image_id', 'is', null)
       .orderBy('updated_at').limit(100).execute(),
     db.executor.selectFrom('host_bundle_channels').select(['channel', 'version']).limit(20).execute(),
   ]);
@@ -2138,6 +2200,19 @@ export async function enforceGoldenSnapshotRetention(
   for (const candidate of candidates.slice(0, retirementCount)) {
     if (await tryRetire(candidate.snapshot_id, input.quotaPressure ? 'quota_pressure' : 'retention')) {
       retiredSnapshotIds.push(candidate.snapshot_id);
+    }
+  }
+  const imageLessRetiringIds = new Set([
+    ...retiringWithoutImageRows.map((row) => row.snapshot_id),
+    ...retiredSnapshotIds,
+  ]);
+  for (const snapshotId of imageLessRetiringIds) {
+    try {
+      await finalizeRetiringGoldenSnapshotWithoutImage(db, snapshotId, input.now);
+    } catch (err: unknown) {
+      console.error(
+        `[golden-snapshot] image-less retirement finalization failed snapshot=${snapshotId}: ${err instanceof Error ? err.name : typeof err}`,
+      );
     }
   }
   return {
