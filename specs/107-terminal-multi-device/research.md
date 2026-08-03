@@ -37,7 +37,7 @@ This is a PTY-layer constraint, not a zellij bug: a PTY has one size and the for
 
 Existing partial mitigation in-repo: web shell passes `allowRemoteResize={!mobile}` (`TerminalApp.tsx`) so mobile-web viewports skip sending resize — but the native mobile client (`apps/mobile/lib/terminal-client.ts`) and the CLI (`shell-client.ts`, SIGWINCH) still send resize unconditionally, and attach PTYs spawn at 120x40 regardless, so the guard is incomplete.
 
-**Decision**: gateway-owned canonical size; hard clients (CLI/TTY, cannot scale their render) negotiate via component-wise min; soft clients (web, native mobile) render the canonical grid scaled client-side with pan/zoom and never influence size (spec FR-006..011). Client-side scaling is the only physically possible version of "same terminal, own viewport", and is the approach used by mature mobile SSH clients.
+**Decision**: gateway-owned canonical size; hard clients (desktop web and CLI/TTY) negotiate via component-wise minimum and render only gateway-confirmed real rows/columns. Soft clients (mobile web and native mobile) render the canonical grid scaled client-side with pan/zoom and never influence size (spec FR-006..011). Client-side scaling is reserved for mobile, where it is the only physically possible version of "same terminal, own viewport" without shrinking desktop and CLI clients.
 
 ## R4: Live measurement — zellij multi-client cost is small; host pressure dominates
 

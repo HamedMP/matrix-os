@@ -764,9 +764,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         if (msg.type === "resize") {
           const requested = { cols: msg.cols, rows: msg.rows };
           if (clientClass === "hard") {
-            // A hard client's terminal changed size: update its declaration
-            // and let the arbiter re-pin the shared attach pty (spec 107
-            // FR-008/9).
+            // A desktop-web or CLI hard client changed size: update its
+            // declaration and let the arbiter re-pin the shared attach pty
+            // (spec 107 FR-008/9).
             sizing.declared(connId, requested);
             return;
           }

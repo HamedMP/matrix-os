@@ -5,7 +5,7 @@ const port = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "3000", 10);
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /screenshots\.spec\.ts/,
+  testMatch: /(screenshots|terminal-sizing)\.spec\.ts/,
   snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -33,6 +33,8 @@ export default defineConfig({
     timeout: 60_000,
     env: {
       E2E_TEST_BYPASS: "1",
+      NEXT_PUBLIC_E2E_TEST_BYPASS: "1",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2ktc2FmZS5leGFtcGxlLmNvbSQ=",
       NODE_ENV: "test",
     },
   },

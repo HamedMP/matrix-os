@@ -20,6 +20,7 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
   fit: ReturnType<typeof vi.fn>;
+  proposeDimensions: ReturnType<typeof vi.fn>;
 }>);
 
 const createdWebglAddons = vi.hoisted(() => [] as Array<{
@@ -70,7 +71,10 @@ const restorePlan = vi.hoisted(() => ({
         getSelection: ReturnType<typeof vi.fn>;
         scrollToBottom: ReturnType<typeof vi.fn>;
       };
-      fitAddon: { fit: ReturnType<typeof vi.fn> };
+      fitAddon: {
+        fit: ReturnType<typeof vi.fn>;
+        proposeDimensions?: ReturnType<typeof vi.fn>;
+      };
       webglAddon: null;
       searchAddon: null;
       ws: typeof stubWs;
@@ -181,11 +185,14 @@ vi.mock("@xterm/xterm", () => ({
       root.className = "xterm";
       const viewport = document.createElement("div");
       viewport.className = "xterm-viewport";
+      const scrollable = document.createElement("div");
+      scrollable.className = "xterm-scrollable-element";
       const screen = document.createElement("div");
       screen.className = "xterm-screen";
       screen.style.width = `${this.cols * 10}px`;
       screen.style.height = `${this.rows * 20}px`;
       viewport.appendChild(screen);
+      root.appendChild(scrollable);
       root.appendChild(viewport);
       container.appendChild(root);
       this.element = root;
@@ -198,6 +205,7 @@ vi.mock("@xterm/xterm", () => ({
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class MockFitAddon {
     fit = vi.fn();
+    proposeDimensions = vi.fn(() => ({ cols: 120, rows: 42 }));
 
     constructor() {
       createdFitAddons.push(this);
@@ -366,6 +374,9 @@ function createCachedTerminal() {
   element.className = "xterm";
   const viewport = document.createElement("div");
   viewport.className = "xterm-viewport";
+  const scrollable = document.createElement("div");
+  scrollable.className = "xterm-scrollable-element";
+  element.appendChild(scrollable);
   element.appendChild(viewport);
 
   return {
@@ -407,6 +418,14 @@ describe("TerminalPane scrolling", () => {
     globalThis.WebSocket = WebSocketMock as unknown as typeof WebSocket;
     globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
       setTimeout(() => cb(0), 0)) as typeof requestAnimationFrame;
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => 1_200,
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get: () => 840,
+    });
     stubWs.send.mockReset();
     stubWs.close.mockReset();
     stubWs.readyState = WebSocketMock.OPEN;
@@ -418,7 +437,190 @@ describe("TerminalPane scrolling", () => {
     Reflect.deleteProperty(window, "visualViewport");
   });
 
-  it("renders a soft browser on the authoritative 140x40 grid across repeated local resizes", async () => {
+  it("attaches desktop canonical sessions as hard clients with proposed dimensions", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-hard-attach"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
+      "/ws/terminal/session",
+      expect.objectContaining({
+        session: "main",
+        client: "hard",
+        cols: "120",
+        rows: "42",
+      }),
+    );
+    expect(createdFitAddons[0].proposeDimensions).toHaveBeenCalled();
+    expect(createdFitAddons[0].fit).not.toHaveBeenCalled();
+    expect(createdTerminals[0].resize).not.toHaveBeenCalled();
+  });
+
+  it("waits for a measurable hard pane instead of attaching with a destructive fallback", async () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => 0,
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get: () => 0,
+    });
+
+    const { container } = render(
+      <TerminalPane
+        paneId="pane-hidden-hard-attach"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdFitAddons).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(WebSocketMock.instances).toHaveLength(0);
+
+    const pane = container.firstElementChild as HTMLElement;
+    Object.defineProperty(pane, "clientWidth", { configurable: true, value: 1_010 });
+    Object.defineProperty(pane, "clientHeight", { configurable: true, value: 660 });
+    createdFitAddons[0].proposeDimensions.mockReturnValue({ cols: 999, rows: 999 });
+    await act(async () => {
+      ResizeObserverMock.instances.at(-1)!.trigger();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    expect(buildAuthenticatedWebSocketUrl).toHaveBeenLastCalledWith(
+      "/ws/terminal/session",
+      expect.objectContaining({ client: "hard", cols: "500", rows: "200" }),
+    );
+  });
+
+  it("keeps mobile canonical sessions soft", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-soft-attach"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        suppressNativeKeyboard
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
+      "/ws/terminal/session",
+      expect.objectContaining({ session: "main", client: "soft" }),
+    );
+    const query = buildAuthenticatedWebSocketUrl.mock.calls.at(-1)?.[1];
+    expect(query).not.toHaveProperty("cols");
+    expect(query).not.toHaveProperty("rows");
+  });
+
+  it("declares deduplicated hard-client proposals without locally resizing xterm", async () => {
+    const { container } = render(
+      <TerminalPane
+        paneId="pane-hard-resize"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const terminal = createdTerminals[0];
+    const fitAddon = createdFitAddons[0];
+    const pane = container.firstElementChild as HTMLElement;
+    fitAddon.proposeDimensions.mockReturnValue({ cols: 154, rows: 51 });
+
+    await act(async () => {
+      ResizeObserverMock.instances.at(-1)!.trigger();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({ type: "resize", cols: 154, rows: 51 }));
+    expect(terminal.resize).not.toHaveBeenCalled();
+    expect(fitAddon.fit).not.toHaveBeenCalled();
+
+    const resizeCount = stubWs.send.mock.calls.filter(([frame]) => (
+      JSON.parse(frame as string) as { type: string }
+    ).type === "resize").length;
+    await act(async () => {
+      ResizeObserverMock.instances.at(-1)!.trigger();
+      ResizeObserverMock.instances.at(-1)!.trigger();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(stubWs.send.mock.calls.filter(([frame]) => (
+      JSON.parse(frame as string) as { type: string }
+    ).type === "resize")).toHaveLength(resizeCount);
+
+    Object.defineProperty(pane, "clientWidth", { configurable: true, value: 0 });
+    Object.defineProperty(pane, "clientHeight", { configurable: true, value: 0 });
+    fitAddon.proposeDimensions.mockReturnValue({ cols: 1, rows: 1 });
+    await act(async () => {
+      ResizeObserverMock.instances.at(-1)!.trigger();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(stubWs.send.mock.calls.filter(([frame]) => (
+      JSON.parse(frame as string) as { type: string }
+    ).type === "resize")).toHaveLength(resizeCount);
+  });
+
+  it("resizes hard-client xterm only after gateway canonical confirmation", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-hard-confirmation"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const terminal = createdTerminals[0];
+    const socket = WebSocketMock.instances[0];
+    expect(terminal.resize).not.toHaveBeenCalled();
+
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "canonical-size", cols: 146, rows: 47 }),
+      });
+    });
+    expect(terminal.resize).toHaveBeenLastCalledWith(146, 47);
+    expect(createdFitAddons[0].fit).not.toHaveBeenCalled();
+  });
+
+  it("renders a soft mobile browser on the authoritative 140x40 grid across repeated local resizes", async () => {
     const { container } = render(
       <TerminalPane
         paneId="pane-soft-grid"
@@ -429,6 +631,7 @@ describe("TerminalPane scrolling", () => {
         isClosing={false}
         shouldCacheOnUnmount={() => false}
         shouldDestroyOnUnmount={() => false}
+        suppressNativeKeyboard
         onFocus={() => {}}
       />,
     );
@@ -818,6 +1021,82 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
     expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+  });
+
+  it("themes fresh, cached, and live xterm background surfaces", async () => {
+    const fresh = render(
+      <TerminalPane
+        paneId="pane-light-background"
+        cwd=""
+        theme={lightTheme}
+        isFocused={false}
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    const root = createdTerminals[0].element!;
+    expect((fresh.container.firstElementChild as HTMLElement).style.backgroundColor).toBe("rgb(251, 241, 199)");
+    expect(root.style.backgroundColor).toBe("rgb(251, 241, 199)");
+    expect((root.querySelector(".xterm-viewport") as HTMLElement).style.backgroundColor).toBe("rgb(251, 241, 199)");
+    expect((root.querySelector(".xterm-scrollable-element") as HTMLElement).style.backgroundColor).toBe("rgb(251, 241, 199)");
+
+    fresh.rerender(
+      <TerminalPane
+        paneId="pane-light-background"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(root.style.backgroundColor).toBe("rgb(16, 24, 32)"));
+    expect((root.querySelector(".xterm-viewport") as HTMLElement).style.backgroundColor).toBe("rgb(16, 24, 32)");
+    expect((root.querySelector(".xterm-scrollable-element") as HTMLElement).style.backgroundColor).toBe("rgb(16, 24, 32)");
+    fresh.unmount();
+
+    const cached = createCachedTerminal();
+    restorePlan.current = {
+      cached: {
+        terminal: cached.terminal,
+        fitAddon: { fit: vi.fn(), proposeDimensions: vi.fn(() => ({ cols: 120, rows: 42 })) },
+        webglAddon: null,
+        searchAddon: null,
+        ws: stubWs,
+        lastSeq: 0,
+        sessionId: "main",
+      },
+      reuseTerminal: true,
+      reuseSocket: true,
+      sessionId: "main",
+      lastSeq: 0,
+      hasReplayCursor: false,
+    };
+    render(
+      <TerminalPane
+        paneId="pane-cached-light-background"
+        cwd=""
+        theme={lightTheme}
+        isFocused={false}
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+    await waitFor(() => expect(cached.terminal.element.parentElement).not.toBeNull());
+    expect(cached.terminal.element.style.backgroundColor).toBe("rgb(251, 241, 199)");
+    expect(cached.viewport.style.backgroundColor).toBe("rgb(251, 241, 199)");
+    expect((cached.terminal.element.querySelector(".xterm-scrollable-element") as HTMLElement).style.backgroundColor).toBe("rgb(251, 241, 199)");
   });
 
   it("enforces light-theme contrast in both the default and WebGL renderers", async () => {
