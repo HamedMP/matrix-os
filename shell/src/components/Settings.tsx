@@ -269,7 +269,7 @@ function SettingsFrame({
     <div className="fixed inset-0" style={{ zIndex: SHELL_Z_INDEX.settings }}>
       {onboardingMode ? (
         <Image
-          src={platformShellAssetPath("/runtime-shell-backdrop.webp")}
+          src={platformShellAssetPath("/wallpapers/moraine-lake.jpg")}
           alt=""
           fill
           priority

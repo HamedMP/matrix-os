@@ -145,7 +145,7 @@ describe("Settings panel", () => {
     );
 
     const shellBackdrop = screen.getByTestId("onboarding-shell-backdrop");
-    expect(shellBackdrop.getAttribute("src")).toContain("runtime-shell-backdrop.webp");
+    expect(shellBackdrop.getAttribute("src")).toContain("wallpapers/moraine-lake.jpg");
     const defaultInstallsTab = screen.getByRole("button", { name: "Default installs" });
     expect(defaultInstallsTab.getAttribute("aria-current")).toBe("page");
     expect((screen.getByRole("button", { name: "Billing Completed" }) as HTMLButtonElement).disabled).toBe(true);
