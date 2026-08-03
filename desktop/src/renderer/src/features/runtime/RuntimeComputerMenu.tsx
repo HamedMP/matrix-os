@@ -70,7 +70,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
           role="listbox"
           aria-label="Choose computer"
           className={`absolute bottom-full left-2 mb-1 overflow-hidden rounded-xl border p-1 shadow-lg ${collapsed ? "w-64" : "right-2"}`}
-          style={{ zIndex: 20, borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}
+          style={{ zIndex: 20, borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
         >
           <div className="flex items-center justify-between gap-2 px-2 py-1.5">
             <span className="text-[10px] font-semibold uppercase tracking-[0.1em]" style={{ color: "var(--text-tertiary)" }}>

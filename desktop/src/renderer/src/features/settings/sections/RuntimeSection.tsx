@@ -36,7 +36,7 @@ function ComputerCard({
     <div
       className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
       style={{
-        background: selected ? "var(--accent-muted)" : "var(--bg-elevated)",
+        background: selected ? "var(--accent-muted)" : "var(--bg-raised)",
         borderColor: selected ? "var(--accent)" : "var(--border-subtle)",
       }}
     >

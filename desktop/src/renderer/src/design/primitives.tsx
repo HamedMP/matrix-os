@@ -84,7 +84,7 @@ export function Dialog({
   return (
     <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-50" style={{ background: "rgba(40,44,37,0.35)" }} />
+        <RadixDialog.Overlay className="fixed inset-0 z-50" style={{ background: "var(--overlay-dim)" }} />
         <RadixDialog.Content
           aria-describedby={undefined}
           className="fade-in fixed top-[18vh] left-1/2 z-50 -translate-x-1/2 rounded-xl border focus:outline-none"

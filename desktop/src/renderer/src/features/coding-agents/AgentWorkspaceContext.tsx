@@ -135,7 +135,7 @@ function PreviewDetails({
     <section
       className="rounded-md border p-3"
       aria-label={`Preview details for ${preview.label}`}
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-elevated)" }}
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

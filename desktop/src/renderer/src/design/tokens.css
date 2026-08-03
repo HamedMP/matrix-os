@@ -36,7 +36,8 @@
   /* ── Text ───────────────────────────────────────────────────── */
   --text-primary: #282c25;
   --text-secondary: #5b5f53;
-  --text-tertiary: #8a8576;
+  /* WCAG AA: 4.99:1 on --bg-surface, 4.86:1 on --bg-app. */
+  --text-tertiary: #73705f;
   --text-disabled: #b5b1a3;
   --text-on-accent: #fafaf5;
 
@@ -88,6 +89,11 @@
   --shadow-2: 0 6px 20px rgba(40, 44, 37, 0.1);
   --shadow-3: 0 18px 48px rgba(40, 44, 37, 0.16);
 
+  /* ── Chrome (scrollbars, dialog dim) ────────────────────────── */
+  --scrollbar-thumb: rgba(40, 44, 37, 0.18);
+  --scrollbar-thumb-hover: rgba(40, 44, 37, 0.3);
+  --overlay-dim: rgba(40, 44, 37, 0.35);
+
   /* ── Focus & motion ─────────────────────────────────────────── */
   --focus-ring: 0 0 0 3px rgba(67, 78, 63, 0.22);
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
@@ -109,7 +115,7 @@
 
   --forest: #1a1e1a;
   --forest-deep: #101210;
-  --forest-foreground: #eaeceA;
+  --forest-foreground: #eaecea;
   --forest-muted: rgba(234, 236, 234, 0.6);
 
   /* Brand surfaces stay identical across OS color schemes. The surrounding
@@ -124,7 +130,7 @@
   --border-default: rgba(140, 199, 190, 0.16);
   --border-strong: rgba(140, 199, 190, 0.24);
 
-  --text-primary: #eaeceA;
+  --text-primary: #eaecea;
   --text-secondary: #aab4ac;
   --text-tertiary: #7a8a80;
   --text-disabled: #55605a;
@@ -139,6 +145,10 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.5);
   --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.6);
+
+  --scrollbar-thumb: rgba(140, 199, 190, 0.22);
+  --scrollbar-thumb-hover: rgba(140, 199, 190, 0.36);
+  --overlay-dim: rgba(0, 0, 0, 0.55);
 
   --focus-ring: 0 0 0 3px rgba(140, 199, 190, 0.32);
 
