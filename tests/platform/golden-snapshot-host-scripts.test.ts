@@ -309,4 +309,13 @@ describe('golden snapshot host scripts', () => {
     expect(source).toContain(parentHome);
     expect(source.indexOf(parentHome)).toBeLessThan(source.indexOf(ownerDirectories));
   });
+
+  it('regenerates clone identity and verifies the exact target digest before activation', async () => {
+    const source = await readFile('distro/customer-vps/cloud-init.yaml', 'utf8');
+    expect(source).toContain('systemd-machine-id-setup');
+    expect(source).toContain('ssh-keygen -A');
+    expect(source).toMatch(/if \[ "\$\{MATRIX_IMAGE_SOURCE:-clean_image\}" = "snapshot" \]; then[\s\S]*systemctl enable --now docker\.service containerd\.service[\s\S]*fi/);
+    expect(source).toContain('MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}');
+    expect(source).toContain('target bundle provenance mismatch');
+  });
 });

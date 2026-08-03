@@ -26,6 +26,9 @@ export interface CustomerHostConfig {
   posthogHost: string;
   posthogPublicHost: string;
   posthogApiHost: string;
+  imageSource?: 'snapshot' | 'clean_image';
+  targetBundleSha256?: string;
+  snapshotSourceVersion?: string;
 }
 
 const SECRET_KEYS = [
@@ -48,9 +51,14 @@ function assertRenderable(input: CustomerHostConfig): void {
 
 export function renderCloudInitTemplate(template: string, input: CustomerHostConfig): string {
   assertRenderable(input);
+  const optionalDefaults: Partial<Record<keyof CustomerHostConfig, string>> = {
+    imageSource: 'clean_image',
+    targetBundleSha256: '',
+    snapshotSourceVersion: '',
+  };
   return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, rawKey: string) => {
     const key = rawKey as keyof CustomerHostConfig;
-    const value = input[key];
+    const value = input[key] ?? optionalDefaults[key];
     if (typeof value !== 'string') return match;
     return value;
   });
