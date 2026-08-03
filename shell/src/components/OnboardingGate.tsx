@@ -1,10 +1,12 @@
 "use client";
 
-import { Suspense, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { BillingGate } from "@/components/BillingGate";
 import { BootSequence } from "@/components/BootSequence";
 import { SignupBillingHandoff } from "@/components/auth/SignupBillingHandoff";
+import { normalizeDeviceReturnPath } from "@/lib/device-onboarding";
+import { navigateForOnboarding } from "@/lib/onboarding-navigation";
 import {
   isSignupBillingHandoffSearch,
   type SignupBillingHandoffLoadingSurface,
@@ -12,11 +14,20 @@ import {
 
 const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
+function DeviceReturnHandoff({ deviceReturnPath }: { deviceReturnPath: string }) {
+  useEffect(() => {
+    navigateForOnboarding(deviceReturnPath);
+  }, [deviceReturnPath]);
+
+  return null;
+}
+
 /**
  * Chooses the onboarding gate (spec 092 Phase C):
  * - Device-flow returns (`device_return`, used by the CLI and native macOS app)
- *   keep the proven BillingGate handoff that provisions and redirects back to the
- *   approving device — unchanged to avoid regressing that flow.
+ *   use BillingGate until provisioning starts. The platform boot page preserves
+ *   the return target, and a server-verified running shell completes the handoff
+ *   back to device approval.
  * - Every other (web) entry uses the journey-driven BootSequence.
  *
  * The page.tsx cutover is intentionally conservative; the web BootSequence path
@@ -34,12 +45,17 @@ function OnboardingGateInner({
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const signupBillingHandoff = isSignupBillingHandoffSearch(pathname, searchParams);
-  const isDeviceFlow = searchParams.get("device_return") !== null;
+  const rawDeviceReturnPath = searchParams.get("device_return");
+  const deviceReturnPath = normalizeDeviceReturnPath(rawDeviceReturnPath);
+  const isDeviceFlow = rawDeviceReturnPath !== null;
   const isBillingEntrypoint =
     searchParams.has("billing") ||
     searchParams.has("plans") ||
     searchParams.has("checkout");
 
+  if (platformSessionActive && deviceReturnPath) {
+    return <DeviceReturnHandoff deviceReturnPath={deviceReturnPath} />;
+  }
   if (isDeviceFlow || isBillingEntrypoint) {
     return (
       <BillingGate

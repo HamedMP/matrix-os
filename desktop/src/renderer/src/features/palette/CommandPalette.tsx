@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { Bot, ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
@@ -171,7 +171,7 @@ export default function CommandPalette() {
           borderColor: "var(--border-default)",
           boxShadow: "var(--shadow-3)",
         }}
-        onKeyDown={(e) => {
+        onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
           if (e.key === "Escape") setOpen(false);
         }}
       >

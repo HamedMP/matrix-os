@@ -10,33 +10,34 @@ Show the state of the entire production deployment.
 
 2. Check CI/CD:
    - Latest workflow runs: `gh run list --limit 5`
-   - Docker image build status: `gh run list --workflow=docker.yml --limit 3`
+   - Customer runtime bundles: `gh run list --workflow=host-bundle-release.yml --limit 3`
+   - Platform control plane: `gh run list --workflow=platform-cloud-run.yml --limit 3`
 
-3. Check production services (via platform API or SSH):
+3. Check production services through the platform API:
    - Platform health: `GET https://api.matrix-os.com/health`
    - Proxy health: check proxy endpoint
-   - Admin dashboard: `GET /admin/dashboard` for container counts and status
+   - Fleet state: `GET /vps/fleet` for customer VPS health and runtime versions
 
-4. Container overview:
-   - Total containers, running vs stopped
-   - Any unhealthy containers
-   - Image version drift (are all containers on the latest image?)
+4. Customer VPS overview:
+   - Total customer machines, healthy vs unhealthy
+   - Promoted host-bundle version and channel
+   - Runtime version drift from the promoted bundle
 
 5. Present a summary table:
    ```
-   Service       Status    Version
-   ---------     ------    -------
-   Platform      healthy   v0.3.0
-   Proxy         healthy   v0.3.0
-   Containers    12/15 running
-   CI            passing
-   Last deploy   2h ago
+   Surface          Status    Version
+   ---------------  --------  -------
+   Platform         healthy   <revision>
+   Proxy            healthy   <revision>
+   Customer fleet   15/15     <bundle version>
+   CI               passing
+   Last deploy      2h ago
    ```
 
-6. Flag any issues: unhealthy services, version drift, failing CI, containers stuck in stopped state.
+6. Flag any issues: unhealthy services, runtime version drift, failing CI, or
+   customer machines stuck in a transitional state.
 
 ## Environment
 
-- VPS host: configured via SSH config or `VPS_HOST` env var
 - Platform API: `https://api.matrix-os.com` (or `PLATFORM_API_URL`)
-- Platform secret: `PLATFORM_SECRET` in `.env` or `.env.docker`
+- Platform authentication: use the configured operator credentials; never print secrets

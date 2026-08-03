@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   buildXtermTheme,
   getAnsiPalette,
+  getTerminalMinimumContrastRatio,
   getTerminalThemePreset,
+  TERMINAL_MINIMUM_CONTRAST_RATIO,
   type AnsiPalette,
 } from "../../shell/src/components/terminal/terminal-themes.js";
 import type { Theme } from "../../shell/src/hooks/useTheme.js";
@@ -18,6 +20,20 @@ function assertCompleteAnsiPalette(palette: AnsiPalette) {
     expect(palette[key]).toBeDefined();
     expect(palette[key]).toMatch(/^#[0-9a-fA-F]{6}$/);
   }
+}
+
+function relativeLuminance(color: string): number {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16) / 255);
+  const [red = 0, green = 0, blue = 0] = channels.map((channel) =>
+    channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+  );
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrastRatio(first: string, second: string): number {
+  const lighter = Math.max(relativeLuminance(first), relativeLuminance(second));
+  const darker = Math.min(relativeLuminance(first), relativeLuminance(second));
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
 describe("Terminal Themes", () => {
@@ -45,8 +61,54 @@ describe("Terminal Themes", () => {
       foreground: "#3C3836",
       cursor: "#79740E",
       blue: "#458588",
+      black: "#282828",
     });
+    expect(preset.black).not.toBe(preset.background);
+    expect(contrastRatio(preset.black, preset.background)).toBeGreaterThanOrEqual(4.5);
     assertCompleteAnsiPalette(preset);
+  });
+
+  it("protects every standard and bright ANSI foreground in every light preset", () => {
+    const lightThemes: Array<Theme & { slug: string }> = [
+      {
+        name: "One Light",
+        slug: "default-light",
+        mode: "light",
+        colors: { background: "#fafafa", foreground: "#383a42", primary: "#4078f2" },
+        fonts: {},
+        radius: "8px",
+      },
+      {
+        name: "Solarized Light",
+        slug: "solarized-light",
+        mode: "light",
+        colors: { background: "#fdf6e3", foreground: "#657b83", primary: "#268bd2" },
+        fonts: {},
+        radius: "8px",
+      },
+      {
+        name: "GitHub Light",
+        slug: "github-light",
+        mode: "light",
+        colors: { background: "#ffffff", foreground: "#24292f", primary: "#0969da" },
+        fonts: {},
+        radius: "8px",
+      },
+    ];
+    const themes = [getTerminalThemePreset("light"), ...lightThemes.map((theme) => buildXtermTheme(theme, "system"))];
+
+    for (const theme of themes) {
+      const enforcedRatio = getTerminalMinimumContrastRatio(theme);
+      expect(enforcedRatio).toBe(TERMINAL_MINIMUM_CONTRAST_RATIO);
+      for (const key of ANSI_KEYS) {
+        expect(Math.max(contrastRatio(theme[key], theme.background), enforcedRatio)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it("leaves dark terminal rendering at xterm's default contrast behavior", () => {
+    expect(getTerminalMinimumContrastRatio(getTerminalThemePreset("dark"))).toBe(1);
+    expect(getTerminalMinimumContrastRatio(getTerminalThemePreset("matrix"))).toBe(1);
   });
 
   it("uses the Paper Matrix shell theme colors", () => {

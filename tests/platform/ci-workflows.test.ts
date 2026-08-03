@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('CI workflows', () => {
@@ -62,6 +62,77 @@ describe('CI workflows', () => {
     expect(readme).toContain('Screenshot workflow removed');
   });
 
+  it('ships customer runtime bundles without publishing legacy Docker images', () => {
+    const root = process.cwd();
+    const workflowsDirectory = join(root, '.github/workflows');
+    const workflowReadme = readFileSync(join(workflowsDirectory, 'README.md'), 'utf8');
+    const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
+    const datedUpgradeGuide = readFileSync(
+      join(root, 'docs/dev/upgrade-2026-04-02.md'),
+      'utf8',
+    );
+    const contributorGuide = readFileSync(join(root, 'CONTRIBUTING.md'), 'utf8');
+    const orchestrator = readFileSync(join(root, 'packages/platform/src/orchestrator.ts'), 'utf8');
+    const platformCompose = readFileSync(join(root, 'distro/docker-compose.platform.yml'), 'utf8');
+    const deployStatusCommand = readFileSync(
+      join(root, '.claude/commands/deploy-status.md'),
+      'utf8',
+    );
+    const releaseCommand = readFileSync(join(root, '.claude/commands/release.md'), 'utf8');
+    const shipCommand = readFileSync(join(root, '.claude/commands/ship.md'), 'utf8');
+    const workflowSources = readdirSync(workflowsDirectory)
+      .filter((fileName) => fileName.endsWith('.yml') || fileName.endsWith('.yaml'))
+      .map((fileName) => readFileSync(join(workflowsDirectory, fileName), 'utf8'));
+
+    expect(existsSync(join(workflowsDirectory, 'docker.yml'))).toBe(false);
+    expect(existsSync(join(workflowsDirectory, 'host-bundle-release.yml'))).toBe(true);
+    expect(workflowReadme).toContain('Matrix OS does not publish customer runtime Docker images');
+    expect(workflowReadme).toContain('Docker remains supported for local development and CI validation only');
+    expect(workflowReadme).not.toContain('| `docker.yml`');
+    expect(releaseDocs).toContain('## Release Artifact Inventory');
+    expect(releaseDocs).toContain('VPS host bundle');
+    expect(releaseDocs).toContain('Platform service image');
+    expect(releaseDocs).toContain('Mobile native builds');
+    expect(releaseDocs).toContain('Mobile OTA update');
+    expect(releaseDocs).toContain('Desktop installers and OTA metadata');
+    expect(releaseDocs).toContain('`@finnaai/matrix` CLI');
+    expect(datedUpgradeGuide).toContain('procedure is retired');
+    expect(datedUpgradeGuide).toContain('[Release Process](releases.md)');
+    expect(orchestrator).toContain("image = 'matrixos-user:local'");
+    expect(platformCompose).toContain(
+      'PLATFORM_IMAGE=${PLATFORM_IMAGE:-matrixos-user:local}',
+    );
+    expect(platformCompose).toContain('image: matrixos-user:local');
+    expect(platformCompose).not.toContain(
+      'image: ${PLATFORM_IMAGE:-matrixos-user:local}',
+    );
+    expect(contributorGuide).toContain('| Host bundle | `host-bundle-release.yml`');
+    expect(contributorGuide).toContain('| Platform | `platform-cloud-run.yml`');
+    expect(contributorGuide).toContain('Customer releases are VPS-native host bundles');
+    expect(deployStatusCommand).toContain('host-bundle-release.yml');
+    expect(deployStatusCommand).toContain('platform-cloud-run.yml');
+    expect(releaseCommand).toContain('host-bundle-release.yml');
+    expect(shipCommand).toContain('host-bundle-release.yml');
+
+    for (const activeSource of [
+      contributorGuide,
+      datedUpgradeGuide,
+      orchestrator,
+      platformCompose,
+      deployStatusCommand,
+      releaseCommand,
+      shipCommand,
+    ]) {
+      expect(activeSource).not.toContain('ghcr.io/hamedmp/matrix-os');
+      expect(activeSource).not.toContain('docker.yml');
+    }
+
+    for (const workflow of workflowSources) {
+      expect(workflow).not.toContain('ghcr.io/hamedmp/matrix-os');
+      expect(workflow).not.toMatch(/packages:\s*write/);
+    }
+  });
+
   it('reuses one Docker test image artifact across scenario jobs', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/docker-test.yml'), 'utf8');
@@ -93,6 +164,24 @@ describe('CI workflows', () => {
     expect(smokeHeader).not.toContain("if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'");
     expect(workflow).toContain('name: Record push coverage');
     expect(workflow).toContain('Full Docker scenario matrix covers push runs; PR smoke runs only on pull_request events.');
+  });
+
+  it('routes PR and main Docker checks through the tested relevance classifier', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/docker-test.yml'), 'utf8');
+    const readme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
+
+    expect(workflow).toContain('node scripts/ci/docker-relevance.mjs');
+    expect(workflow).toContain('--base "origin/$GITHUB_BASE_REF"');
+    expect(workflow).toContain('--head "$GITHUB_SHA"');
+    expect(workflow).toContain('--commit "$GITHUB_SHA"');
+    expect(workflow).toContain('--format github >> "$GITHUB_OUTPUT"');
+    expect(workflow).toContain('[ "$GITHUB_EVENT_NAME" = "merge_group" ]');
+    expect(workflow).toContain('[ "$GITHUB_EVENT_NAME" = "schedule" ]');
+    expect(workflow).toContain('[ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]');
+    expect(workflow).not.toContain('case "$file" in');
+    expect(readme).toContain('scripts/ci/docker-relevance.mjs');
+    expect(readme).toMatch(/merge\s+queue, nightly, and manual runs remain comprehensive/);
   });
 
   it('gives Docker scenario jobs enough timeout for slow artifact transfer before tests start', () => {
@@ -231,6 +320,20 @@ describe('CI workflows', () => {
     expect(workflow).toContain('gcloud secrets versions access latest --secret "$secret_name"');
     expect(workflow).toContain('roles/secretmanager.secretAccessor');
     expect(workflow).toContain('CLOUD_RUN_SERVICE_ACCOUNT');
+  });
+
+  it('preflights the Stripe webhook lifecycle contract before production deployment', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Verify Stripe webhook lifecycle events');
+    expect(workflow).toContain('checkout.session.completed');
+    expect(workflow).toContain('checkout.session.expired');
+    expect(workflow).toContain('/billing/webhooks/stripe');
+    expect(workflow).toContain('https://api.stripe.com/v1/webhook_endpoints');
+    expect(workflow).toContain('stripe-secret-key');
+    expect(workflow).toContain('has_more');
+    expect(workflow).toContain('starting_after');
   });
 
   it('keeps production platform Cloud Run warm while allowing staging to scale to zero', () => {

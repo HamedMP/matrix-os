@@ -143,7 +143,7 @@ RUN apk add --no-cache \
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
 # AI coding CLIs. Codex advances only after both provider protocols are verified.
-ARG CODEX_VERSION=0.144.6
+ARG CODEX_VERSION=0.146.0
 ARG OPENCODE_AI_VERSION=latest
 ARG PI_CODING_AGENT_VERSION=latest
 RUN npm install -g \
@@ -153,9 +153,13 @@ RUN npm install -g \
 RUN npm install -g --ignore-scripts \
     "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
 
-RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+# Hermes 0.19.1+ requires nemo-relay, which does not publish musl wheels.
+# Keep the legacy Alpine image on the latest compatible release and pass the
+# same tag to the installer so both the script and cloned checkout are pinned.
+ARG HERMES_VERSION=v2026.7.20
+RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_VERSION}/scripts/install.sh" \
     -o /tmp/hermes-agent-install.sh && \
-    bash /tmp/hermes-agent-install.sh --skip-setup && \
+    bash /tmp/hermes-agent-install.sh --branch "${HERMES_VERSION}" --skip-setup && \
     rm -f /tmp/hermes-agent-install.sh
 
 # Browser IDE served only on the private Docker network and exposed publicly

@@ -8,6 +8,13 @@ const billingGateRender = vi.hoisted(() => vi.fn());
 const bootSequenceRender = vi.hoisted(() => vi.fn());
 const navigationState = vi.hoisted(() => ({ suspend: false }));
 const suspendedSearchParams = new Promise<never>(() => {});
+const onboardingNavigation = vi.hoisted(() => ({
+  navigate: vi.fn(),
+}));
+
+vi.mock("@/lib/onboarding-navigation", () => ({
+  navigateForOnboarding: onboardingNavigation.navigate,
+}));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => window.location.pathname,
@@ -60,6 +67,7 @@ describe("OnboardingGate", () => {
     billingGateRender.mockClear();
     bootSequenceRender.mockClear();
     navigationState.suspend = false;
+    onboardingNavigation.navigate.mockClear();
     window.history.replaceState({}, "", "/");
   });
 
@@ -163,7 +171,7 @@ describe("OnboardingGate", () => {
     expect(screen.queryByText("Loading your Matrix computer…")).toBeNull();
   });
 
-  it("keeps device approval billing on BillingGate", async () => {
+  it("returns a server-verified device flow to approval after the boot page reaches the shell", async () => {
     window.history.replaceState({}, "", "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK");
 
     render(
@@ -172,11 +180,13 @@ describe("OnboardingGate", () => {
       </OnboardingGate>,
     );
 
-    expect(await screen.findByTestId("billing-gate")).toBeTruthy();
-    expect(screen.queryByTestId("boot-sequence")).toBeNull();
-    expect(billingGateRender).toHaveBeenCalledWith({
-      platformSessionActive: true,
-      loadingSurface: "default",
+    await vi.waitFor(() => {
+      expect(onboardingNavigation.navigate).toHaveBeenCalledWith(
+        "/auth/device?user_code=BCDF-GHJK",
+      );
     });
+    expect(screen.queryByTestId("billing-gate")).toBeNull();
+    expect(screen.queryByTestId("boot-sequence")).toBeNull();
+    expect(billingGateRender).not.toHaveBeenCalled();
   });
 });

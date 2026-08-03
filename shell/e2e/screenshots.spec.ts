@@ -1,7 +1,89 @@
 import { test, expect } from "@playwright/test";
 
+type MenuBarTheme = "standard" | "macos-glass";
+
+async function useCanvasMode(page: import("@playwright/test").Page) {
+  const canvasMode = page.getByRole("button", { name: "Canvas mode" });
+  if ((await canvasMode.getAttribute("aria-pressed")) !== "true") {
+    await canvasMode.click();
+  }
+  await expect(canvasMode).toHaveAttribute("aria-pressed", "true");
+}
+
+async function useMenuBarTheme(page: import("@playwright/test").Page, theme: MenuBarTheme) {
+  await page.evaluate((themeName) => {
+    document.documentElement.setAttribute(
+      "data-theme-style",
+      themeName === "macos-glass" ? "macos-glass" : "flat",
+    );
+  }, theme);
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-theme-style",
+    theme === "macos-glass" ? "macos-glass" : "flat",
+  );
+}
+
+async function expectResponsiveMenuBar(page: import("@playwright/test").Page, width: number) {
+  const full = width >= 1024;
+  const header = page.locator("[data-menu-bar]");
+  await expect(header).toBeVisible();
+  await expect(header).toHaveCSS("height", "32px");
+
+  const geometry = await header.evaluate((element) => {
+    const headerRect = element.getBoundingClientRect();
+    const visibleControls = [...element.querySelectorAll<HTMLElement>("button, input")]
+      .filter((control) => {
+        const style = getComputedStyle(control);
+        return style.display !== "none" && style.visibility !== "hidden";
+      })
+      .map((control) => {
+        const rect = control.getBoundingClientRect();
+        return { label: control.getAttribute("aria-label") ?? control.textContent, top: rect.top, bottom: rect.bottom };
+      });
+    return {
+      headerTop: headerRect.top,
+      headerBottom: headerRect.bottom,
+      visibleControls,
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    };
+  });
+  expect(geometry.headerBottom - geometry.headerTop).toBe(32);
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
+  expect(
+    geometry.visibleControls.filter(
+      (control) => control.top < geometry.headerTop - 0.5 || control.bottom > geometry.headerBottom + 0.5,
+    ),
+  ).toEqual([]);
+
+  if (full) {
+    const fullApplicationActions = page.getByTestId("full-application-actions");
+    await expect(fullApplicationActions).toBeVisible();
+    await expect(fullApplicationActions.getByRole("button", { name: "File", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "More application actions" })).toBeHidden();
+    await expect(page.getByRole("slider", { name: "Zoom level" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "More canvas controls" })).toBeHidden();
+    await expect(page.getByText("Canvas", { exact: true })).toBeVisible();
+  } else {
+    const fullApplicationActions = page.getByTestId("full-application-actions");
+    await expect(fullApplicationActions).toBeHidden();
+    await expect(fullApplicationActions.getByRole("button", { name: "File", exact: true })).toBeHidden();
+    await expect(page.getByRole("button", { name: "More application actions" })).toBeVisible();
+    await expect(page.getByRole("slider", { name: "Zoom level" })).toBeHidden();
+    await expect(page.getByRole("button", { name: "More canvas controls" })).toBeVisible();
+    await expect(page.getByText("Canvas", { exact: true })).toBeHidden();
+    await expect(page.locator('[data-menu-clock="compact"]')).toBeVisible();
+    await expect(page.locator('[data-menu-clock="full"]')).toBeHidden();
+  }
+}
+
 test.describe("Visual regression", () => {
   test.beforeEach(async ({ page }) => {
+    // Match the platform-owned app shell request boundary so the server-rendered
+    // page enters the authenticated workspace before client screenshots begin.
+    await page.setExtraHTTPHeaders({
+      "x-matrix-platform-session": "platform",
+    });
     // Mock gateway APIs so the shell renders without a running backend
     await page.route("**/api/settings/**", (route) => {
       const pathname = new URL(route.request().url()).pathname;
@@ -32,6 +114,25 @@ test.describe("Visual regression", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([]),
+      }),
+    );
+    await page.route("**/api/shell/bootstrap", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          layout: { windows: [] },
+          apps: [],
+          modules: [],
+          icons: {},
+        }),
+      }),
+    );
+    await page.route("**/api/layout", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true }),
       }),
     );
     // Block WebSocket upgrade requests so they don't keep reconnecting
@@ -68,6 +169,46 @@ test.describe("Visual regression", () => {
     await page.mouse.move(720, 450);
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("settings-panel.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("billing checkout selection conflict", async ({ page }) => {
+    await page.route("**/billing/status**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ access: { runtimeProxyAllowed: false } }),
+      }),
+    );
+    await page.route("**/billing/checkout", (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Checkout selection conflicts with an open session",
+          code: "checkout_selection_conflict",
+          selection: {
+            planSlug: "matrix_starter",
+            interval: "annual",
+            regionSlug: "region_nbg1",
+          },
+        }),
+      }),
+    );
+
+    await page.getByTestId("dock-settings").dispatchEvent("click");
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(page.getByText("Not active")).toBeVisible();
+    await page.getByRole("button", { name: "Continue to pay" }).click();
+    await expect(
+      page.getByText(
+        "A Starter annual checkout in Nuremberg, Germany is already open. Select those choices to continue it.",
+      ),
+    ).toBeVisible();
+    await page.mouse.move(720, 450);
+    await page.waitForTimeout(300);
+    await expect(page).toHaveScreenshot("billing-checkout-selection-conflict.png", {
       maxDiffPixelRatio: 0.01,
     });
   });
@@ -136,4 +277,44 @@ test.describe("Visual regression", () => {
       maxDiffPixelRatio: 0.01,
     });
   });
+
+  for (const theme of ["standard", "macos-glass"] as const) {
+    test(`menu bar stays single-line while resizing in ${theme}`, async ({ page }) => {
+      await useCanvasMode(page);
+      await useMenuBarTheme(page, theme);
+
+      const widths = [1440, 1024, 900, 768, 900, 1440];
+      for (let index = 0; index < widths.length; index += 1) {
+        const width = widths[index]!;
+        await page.setViewportSize({ width, height: 900 });
+        await expectResponsiveMenuBar(page, width);
+
+        if (width === 900 && index === 4) {
+          const trigger = page.getByRole("button", { name: "More application actions" });
+          await trigger.focus();
+          await page.keyboard.press("Enter");
+          const menu = page.getByRole("menu", { name: "More application actions" });
+          await expect(menu).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(trigger).toBeFocused();
+
+          await page.keyboard.press("Enter");
+          const newWindow = page.getByRole("menuitem", { name: /^New Window/ });
+          await newWindow.focus();
+          await page.keyboard.press("Enter");
+          await expect(page.getByRole("button", { name: "Terminal", exact: true })).toBeVisible();
+        }
+      }
+    });
+
+    test(`compact ${theme} menu bar`, async ({ page }) => {
+      await useCanvasMode(page);
+      await useMenuBarTheme(page, theme);
+      await page.setViewportSize({ width: 900, height: 900 });
+      await expectResponsiveMenuBar(page, 900);
+      await expect(page).toHaveScreenshot(`menu-bar-compact-${theme}.png`, {
+        maxDiffPixelRatio: 0.01,
+      });
+    });
+  }
 });

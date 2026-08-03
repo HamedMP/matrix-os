@@ -290,6 +290,48 @@ describe("BillingSection", () => {
     );
   });
 
+  it("explains how to resume a checkout with different selections", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout") {
+        return new Response(JSON.stringify({
+          error: "Checkout selection conflicts with an open session",
+          code: "checkout_selection_conflict",
+          selection: {
+            planSlug: "matrix_starter",
+            interval: "annual",
+            regionSlug: "region_nbg1",
+          },
+        }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    expect(
+      await screen.findByText(
+        "A Starter annual checkout in Nuremberg, Germany is already open. Select those choices to continue it.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("Checkout is unavailable. Try again in a moment.")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/checkout",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("uses provisioning copy when billing is shown before the hosted computer exists", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;

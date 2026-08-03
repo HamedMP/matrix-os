@@ -113,6 +113,21 @@ function captureBillingTelemetry(
   );
 }
 
+function checkoutSelectionConflictMessage(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const selection = value as Record<string, unknown>;
+  const profile = MATRIX_BILLING_SERVER_PROFILES.find(
+    (candidate) => candidate.planSlug === selection.planSlug,
+  );
+  const region = MATRIX_BILLING_REGIONS.find(
+    (candidate) => candidate.featureSlug === selection.regionSlug,
+  );
+  if (!profile || !region || (selection.interval !== "monthly" && selection.interval !== "annual")) {
+    return null;
+  }
+  return `A ${profile.label} ${selection.interval} checkout in ${region.label} is already open. Select those choices to continue it.`;
+}
+
 function CheckoutPanel({
   mode,
   onCheckoutIntent,
@@ -154,8 +169,11 @@ function CheckoutPanel({
     captureBillingTelemetry("checkout_stripe_available", telemetryPropertiesRef.current);
   }, []);
 
-  function reportCheckoutError(errorKind: string) {
-    setCheckoutError("Checkout is unavailable. Try again in a moment.");
+  function reportCheckoutError(
+    errorKind: string,
+    message = "Checkout is unavailable. Try again in a moment.",
+  ) {
+    setCheckoutError(message);
     captureBillingTelemetry("checkout_error", {
       ...telemetryPropertiesRef.current,
       error_kind: errorKind,
@@ -196,18 +214,40 @@ function CheckoutPanel({
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),
       });
-      if (!response.ok) {
-        reportCheckoutError("http_error");
-        return;
-      }
       const body = (await response.json().catch((err: unknown) => {
         captureBillingTelemetry("checkout_response_parse_error", {
           ...telemetryPropertiesRef.current,
           error_kind: err instanceof Error ? err.name : typeof err,
         });
         return null;
-      })) as { url?: string } | null;
-      if (!body?.url) {
+      })) as { code?: unknown; selection?: unknown; url?: unknown } | null;
+      if (!response.ok) {
+        if (response.status === 409 && body?.code === "checkout_selection_conflict") {
+          const message = checkoutSelectionConflictMessage(body.selection);
+          reportCheckoutError(
+            "checkout_selection_conflict",
+            message ?? "A checkout with different choices is already open for this computer.",
+          );
+          return;
+        }
+        if (response.status === 409 && body?.code === "checkout_pending") {
+          reportCheckoutError(
+            "checkout_pending",
+            "Checkout is still being confirmed. Try again in a moment.",
+          );
+          return;
+        }
+        if (response.status === 409 && body?.code === "runtime_already_subscribed") {
+          reportCheckoutError(
+            "runtime_already_subscribed",
+            "Billing is already active for this computer. Refresh to continue.",
+          );
+          return;
+        }
+        reportCheckoutError(`http_${response.status}`);
+        return;
+      }
+      if (typeof body?.url !== "string" || body.url.length === 0) {
         reportCheckoutError("invalid_response");
         return;
       }

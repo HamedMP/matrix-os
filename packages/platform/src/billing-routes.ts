@@ -61,11 +61,17 @@ const BILLING_CHECKOUT_EXPIRED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_EXPIRED ?? 'matrix_billing_checkout_expired';
 const BILLING_SUBSCRIPTION_UPDATED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED ?? 'matrix_billing_subscription_updated';
+const BillingRegionSlugSchema = z.enum([
+  'region_fsn1',
+  'region_nbg1',
+  'region_ash',
+  'region_hil',
+]);
 
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.enum(['monthly', 'annual']).default('monthly'),
-  regionSlug: z.enum(['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil']).default('region_fsn1'),
+  regionSlug: BillingRegionSlugSchema.default('region_fsn1'),
   developerTools: DeveloperToolsWithDefaultSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   returnPath: z.string().min(1).max(2048).optional().refine(
@@ -103,6 +109,14 @@ export interface StripeCheckoutSessionInput {
   cancelUrl: string;
 }
 
+export interface StripeCheckoutSessionProjection {
+  status: 'open' | 'complete' | 'expired';
+  url: string | null;
+  clerkUserId: string | null;
+  priceId: string | null;
+  regionSlug: string | null;
+}
+
 export interface StripeBillingClient {
   apiTimeoutMs: number;
   /**
@@ -111,6 +125,7 @@ export interface StripeBillingClient {
    * to the Clerk user from server-written metadata.
    */
   createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{ url: string; id: string }>;
+  retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;
   createPortalSession(input: {
     customerId: string;
     returnUrl: string;
@@ -251,8 +266,7 @@ export function createBillingRoutes(options: {
       const serverType = selectedPlan
         ? loadRuntimeCatalog(env).profiles.find((profile) => profile.sku === selectedPlan.defaultCatalogSku)?.serverType
         : undefined;
-      const attempt = await claimCheckoutAttempt(options.db, {
-        id: randomUUID(),
+      const checkoutClaim = {
         clerkUserId,
         createdAt: currentTime.toISOString(),
         developerTools: parsed.data.developerTools,
@@ -261,12 +275,98 @@ export function createBillingRoutes(options: {
         billingInterval: parsed.data.interval,
         regionSlug: parsed.data.regionSlug,
         ...(serverType ? { serverType } : {}),
+      };
+      let attempt = await claimCheckoutAttempt(options.db, {
+        id: randomUUID(),
+        ...checkoutClaim,
       });
+      if (!attempt.claimed) {
+        const isLegacyOpenAttempt = attempt.attempt.status === 'open'
+          && attempt.attempt.stripeSessionId !== null
+          && (
+            !attempt.attempt.planSlug
+            || !attempt.attempt.billingInterval
+            || !attempt.attempt.regionSlug
+          );
+        if (isLegacyOpenAttempt) {
+          const legacyStripeSessionId = attempt.attempt.stripeSessionId;
+          if (!legacyStripeSessionId) throw new Error('checkout_session_id_missing');
+          const session = await options.stripe.retrieveCheckoutSession(legacyStripeSessionId);
+          if (session.clerkUserId !== clerkUserId) {
+            throw new Error('checkout_session_owner_mismatch');
+          }
+          if (session.status === 'complete') {
+            await resolveCheckoutAttempt(
+              options.db,
+              legacyStripeSessionId,
+              'paid',
+              currentTime.toISOString(),
+            );
+            return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+          }
+          if (session.status === 'expired') {
+            await resolveCheckoutAttempt(
+              options.db,
+              legacyStripeSessionId,
+              'expired',
+              currentTime.toISOString(),
+            );
+            attempt = await claimCheckoutAttempt(options.db, {
+              id: randomUUID(),
+              ...checkoutClaim,
+            });
+          } else {
+            const recoveredPlan = session.priceId
+              ? loadStripePriceCatalog(env).priceToPlan.get(session.priceId)
+              : undefined;
+            const recoveredRegion = BillingRegionSlugSchema.safeParse(session.regionSlug);
+            if (!session.url || !recoveredPlan || !recoveredRegion.success) {
+              throw new Error('checkout_session_selection_missing');
+            }
+            if (
+              recoveredPlan.planSlug === parsed.data.planSlug
+              && recoveredPlan.interval === parsed.data.interval
+              && recoveredRegion.data === parsed.data.regionSlug
+            ) {
+              return c.json({ url: session.url }, 200);
+            }
+            return c.json({
+              error: 'Checkout selection conflicts with an open session',
+              code: 'checkout_selection_conflict',
+              selection: {
+                planSlug: recoveredPlan.planSlug,
+                interval: recoveredPlan.interval,
+                regionSlug: recoveredRegion.data,
+              },
+            }, 409);
+          }
+        }
+      }
       if (!attempt.claimed) {
         if (attempt.selectionMatches && attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl) {
           return c.json({ url: attempt.attempt.checkoutUrl }, 200);
         }
-        return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+        if (
+          !attempt.selectionMatches
+          && attempt.attempt.status === 'open'
+          && attempt.attempt.planSlug
+          && attempt.attempt.billingInterval
+          && attempt.attempt.regionSlug
+        ) {
+          return c.json({
+            error: 'Checkout selection conflicts with an open session',
+            code: 'checkout_selection_conflict',
+            selection: {
+              planSlug: attempt.attempt.planSlug,
+              interval: attempt.attempt.billingInterval,
+              regionSlug: attempt.attempt.regionSlug,
+            },
+          }, 409);
+        }
+        return c.json({
+          error: 'Checkout is already starting',
+          code: 'checkout_pending',
+        }, 409);
       }
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
       const session = await options.stripe.createCheckoutSession({
