@@ -315,6 +315,7 @@ describe('customer VPS terminal runtime services', () => {
       for (const name of [
         'launch-remote.sh',
         'pack-evidence.sh',
+        'pane-probe.sh',
         'run-remote.sh',
         'production-acceptance.sh',
       ]) {
@@ -335,6 +336,7 @@ describe('customer VPS terminal runtime services', () => {
         ...[
           'launch-remote.sh',
           'pack-evidence.sh',
+          'pane-probe.sh',
           'run-remote.sh',
           'production-acceptance.sh',
         ].map((name) => join(spikes, name)),
@@ -352,6 +354,7 @@ describe('customer VPS terminal runtime services', () => {
       expect(statSync(join(nativeDir, 'pty.node')).mode & 0o777).toBe(0o644);
       expect(statSync(join(generation, 'supervisor-acceptor')).mode & 0o777).toBe(0o755);
       expect(statSync(join(spikes, 'launch-remote.sh')).mode & 0o777).toBe(0o755);
+      expect(statSync(join(spikes, 'pane-probe.sh')).mode & 0o777).toBe(0o755);
     } finally {
       rmSync(generation, { recursive: true, force: true });
     }

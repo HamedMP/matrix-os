@@ -67,8 +67,9 @@ else
     --collect \
     --no-block \
     --property=Type=exec \
+    --property=Restart=no \
     --property=KillMode=control-group \
-    --property=RuntimeMaxSec=1800 \
+    --property=RuntimeMaxSec=2400 \
     --property=StandardOutput=null \
     --property=StandardError=null \
     --property=TimeoutStopSec=30 \

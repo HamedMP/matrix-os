@@ -252,6 +252,15 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).toContain('echo "evidence_diagnostic=${diagnostic}" >&2');
+    expect(workflow).toContain('base_wait_started=0');
+    expect(workflow).toContain('base_wait_started=$SECONDS');
+    expect(workflow).toContain('$((SECONDS - base_wait_started)) -ge 90');
+    expect(workflow).toContain('last_pack_success=$SECONDS');
+    expect(workflow).toContain('$((SECONDS - last_pack_success)) -ge 120');
+    expect(workflow).toContain('evidence_gateway_unavailable_${http_code}');
+    expect(workflow).toContain('last_semantic_pack_success=$SECONDS');
+    expect(workflow).toContain('$((SECONDS - last_semantic_pack_success)) -ge 120');
+    expect(workflow).toContain('evidence_gateway_response_invalid_${http_code}');
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
@@ -308,8 +317,25 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expect(previewWorkflow).toContain("MATRIX_TERMINAL_RUNTIME_SPIKE: '1'");
     expect(buildScript).toContain('if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then');
-    expect(buildScript).toContain('chmod 0755 "$terminal_generation_build/spikes/"{launch-remote,pack-evidence,run-remote,production-acceptance}.sh');
+    expect(buildScript).toContain('chmod 0755 "$terminal_generation_build/spikes/"{launch-remote,pack-evidence,pane-probe,run-remote,production-acceptance}.sh');
     expectAll(buildScript, ['matrix-terminal-spike.slice" "$STAGE_DIR/systemd/matrix-terminal-spike.slice"', 'matrix-terminal-spike-template.service" "$STAGE_DIR/systemd/matrix-terminal-spike@.service"']);
+  });
+  it('binds every spike control operation to the installed exact-head generation', async () => {
+    const [buildScript, control] = await Promise.all([
+      readRepo('scripts/build-host-bundle.sh'),
+      readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-control'),
+    ]);
+    expect(buildScript).toContain(
+      '"$terminal_generation_build/spikes/build-head-sha"',
+    );
+    expectAll(control, [
+      'generation_head_path="/opt/matrix/libexec/terminal-runtime/current/spikes/build-head-sha"',
+      'spike_control_generation_mismatch',
+      '[ "$generation_head" != "$pr_head_sha" ]',
+    ]);
+    expect(control.indexOf('[ "$generation_head" != "$pr_head_sha" ]')).toBeLessThan(
+      control.indexOf('exec /usr/bin/bash "$target"'),
+    );
   });
   it('requires an exact-head production acceptance matrix beyond S1 and S2', async () => {
     const [workflow, helper, runner, verifier] = await Promise.all([
@@ -393,11 +419,18 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(workflow).toContain('--unpack "$envelope" "$evidence_parent" "$HEAD_SHA"');
     expect(workflow).not.toContain('tar --extract');
     expect(workflow).not.toContain('REMOTE_STATUS:');
-    expectAll(workflow, ['test("^(?:spike|evidence)_[a-z0-9_]+\\\\n?$")', 'elif .timedOut == true then "spike_pack_command_timeout"', 'elif .truncated == true then "spike_pack_command_truncated"', 'elif .exitCode != 0 then "spike_pack_command_failed"', 'spike_pack_evidence_incomplete_[a-z0-9_]+_(descriptor|launch|cgroup|readiness|notify)_[a-z0-9_]+_[a-z0-9_]+']);
+    expectAll(workflow, ['test("^(?:spike|evidence)_[a-z0-9_]+\\\\n?$")', 'elif .timedOut == true then "spike_pack_command_timeout"', 'elif .truncated == true then "spike_pack_command_truncated"', 'elif .exitCode != 0 then "spike_pack_command_failed"', 'spike_pack_evidence_(?:incomplete|failed)_[a-z0-9_]+', 'spike_pack_evidence_incomplete_[a-z0-9_]+_stalled_base_[a-z0-9_]+']);
+    expect(workflow).toContain('spike_pack_evidence_failed_[a-z0-9_]+');
+    expect(workflow).toContain(
+      'if [ "$diagnostic" = spike_pack_command_failed ]; then',
+    );
+    expect(workflow).not.toContain(
+      'spike_pack_evidence_incomplete_[a-z0-9_]+_(descriptor|launch|cgroup|readiness|notify)',
+    );
     expect(launcher).toContain('systemd-run');
     expect(launcher).toContain('--collect');
     expect(launcher).toContain('--no-block');
-    expect(launcher).toContain('--property=RuntimeMaxSec=1800');
+    expect(launcher).toContain('--property=RuntimeMaxSec=2400');
     expect(launcher).toContain(
       "list-units --all --plain --no-legend 'matrix-terminal-runtime-spike-*.service'",
     );
@@ -418,6 +451,28 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       '${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}_${progress_stage}',
     );
     expect(packer).toContain('progress-stage.txt');
+    expectAll(packer, [
+      'keeper_responsive keeper_zellij keeper_shell keeper_agent',
+      'r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}',
+      'spike_pack_evidence_failed_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}',
+      'progress_started=',
+      'progress_age=$((progress_now - progress_started))',
+      'progress_stage="stalled_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}"',
+    ]);
+    expectAll(runner, [
+      'write_progress base_ready',
+      'write_progress base_attach',
+      'write_progress base_detached',
+      'write_progress base_gateway_restart',
+      'write_progress base_gateway_crash',
+      'write_progress base_shell_restart',
+      'write_progress base_stop',
+      'write_progress base_stopped',
+    ]);
+    expect(runner).toContain('for _ in $(seq 1 "$limit"); do');
+    expect(runner).not.toContain(
+      'deadline=$((SECONDS + (limit + 9) / 10))',
+    );
     expect(packer).toContain('^[a-z0-9_]{1,32}$');
     expect(packer).not.toContain('${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}" >&2');
     expect(packer).toMatch(/verify-evidence\.mjs \\\n\s+"\$evidence_root" --pack "\$pr_head_sha"/);
@@ -469,6 +524,13 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       'setup_fs_bounded 15 /usr/bin/install -d -o matrix -g matrix -m 0700 "$runtime_root"',
       '/usr/bin/bash "$support_root/pane-probe.sh"',
     ]);
+    expect(paneProbe).not.toContain('ZELLIJ_SESSION_NAME');
+    expect(keeper).toContain('MATRIX_TERMINAL_RUNTIME_ID: runtimeId');
+    expect(paneProbe).toContain(
+      'runtime_id="${MATRIX_TERMINAL_RUNTIME_ID:-}"',
+    );
+    expect(paneProbe).toContain('[[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]] || exit 22');
+    expect(paneProbe).toContain('session_name="matrix-t-$runtime_id"');
     expect(runner).not.toContain('/usr/bin/chown -R root:root "$support_root.next"');
     expect(runner).not.toContain(
       'setup_fs_bounded 30 /usr/bin/rm -rf -- "$runtime_root"',
@@ -551,7 +613,10 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).not.toContain(
       'client_pid="$(/opt/matrix/runtime/node/bin/node "$source_dir/zellij-delete-client.mjs"',
     );
-    expect(runner).not.toContain('systemctl_bounded reset-failed');
+    expect(runner).not.toContain('systemctl_bounded reset-failed "${units[@]}"');
+    expect(runner).toContain('systemctl_bounded reset-failed matrix-gateway.service');
+    expect(runner).toContain('systemctl_bounded start --no-block matrix-gateway.service');
+    expect(runner).toContain('wait_main_pid_changed matrix-gateway.service "$gateway_pid" 150');
     expect(runner).toContain(
       'request_runtime_start "${unit_prefix}${runtime_id}.service"',
     );
@@ -599,7 +664,6 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).not.toContain(
       'systemctl_bounded reset-failed "${units[@]}"',
     );
-    expect(runner).not.toContain('systemctl_bounded reset-failed');
     expect(runner).not.toContain('systemctl_bounded set-property');
     expect(runner).toContain('--kill-after=1s 5s pkill');
     expect(runner).not.toContain('sleep 2\ncleanup');
@@ -644,7 +708,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).not.toContain('/usr/bin/timeout --signal=TERM --kill-after=2s 15s runuser');
     expect(runner).toContain('wait_file');
     expect(keeper).toContain("cgroupRoles(cgroup.path, descriptor.intent === 'create')");
-    expectAll(keeper, ["createRequire('/opt/matrix/libexec/terminal-runtime/current/package.json')", "throw new Error('native_binding', { cause: error })"]);
+    expectAll(keeper, [
+      'const keeperExecutable = await realpath(fileURLToPath(import.meta.url))',
+      'const require = createRequire(keeperExecutable)',
+      "throw new Error('native_binding', { cause: error })",
+    ]);
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
     expect(keeper.indexOf('await notifyReady()')).toBeLessThan(keeper.indexOf('await writeReadiness('));
     expect(runner).toContain('confirmations/${recovery_id}.gated');
@@ -785,8 +853,49 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(unit).not.toContain('EnvironmentFile=');
     expect(unit).not.toContain('[Install]');
     expect(keeper).toContain("!process.cmdline.includes('list-sessions')");
-    expect([keeper.includes("execFileAsync(zellij, ['list-sessions'"), keeper.includes('detached: true'), keeper.includes("process.kill(-child.pid, 'SIGKILL')"), keeper.includes("stdio: ['ignore', handle.fd, 'ignore']"), keeper.includes("stdio: ['ignore', 'pipe', 'ignore']")]).toEqual([false, true, true, true, false]);
+    expect(keeper).toContain("const sessionQueryWorkerMode = process.argv[2] === '--session-query-worker'");
+    expect(keeper).toContain("spawnProcess(process.execPath, [keeperExecutable, '--session-query-worker', runtimeId]");
+    expect(keeper).toContain("process.kill(-pid, 'SIGKILL')");
+    expect(keeper).toContain("stdio: ['ignore', 'ignore', 'ignore', 'ipc']");
+    expect(keeper).toContain("spawnProcess(zellij, ['list-sessions', '--no-formatting']");
+    expect(keeper).toContain('startupWatchdog = setTimeout');
+    expect(keeper).toContain("void failStartup('readiness_timeout')");
+    expect(keeper).toContain('await recordStartupStage();\n    if (responsive && detected');
+    expect(keeper).toContain('{ stage: startupStage, ...roleSnapshot }');
+    expect(keeper).not.toContain("stdio: ['ignore', handle.fd, 'ignore']");
     expect(keeper.indexOf('const detected = await cgroupRoles')).toBeLessThan(keeper.indexOf('const responsive = Boolean(detected && await exactSessionResponds'));
+  });
+  it('fails a stalled startup quickly with monotonic keeper diagnostics', async () => {
+    const [launcher, packer, runner, keeper] = await Promise.all([
+      readRepo('scripts/spikes/terminal-runtime/launch-remote.sh'),
+      readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'),
+      readRepo('scripts/spikes/terminal-runtime/run-remote.sh'),
+      readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
+    ]);
+    expect(launcher).toContain('--property=Restart=no');
+    expect(runner).toContain('"$runtime_root/startup-stages"');
+    expect(runner).toContain(
+      'command_bounded 20 /opt/matrix/runtime/node/bin/node \\\n'
+      + '    "$source_dir/build-evidence.mjs"',
+    );
+    expect(runner).toContain('systemctl_bounded stop --no-block "$base_unit"');
+    expect(keeper).toContain('async function recordStartupStage()');
+    expect(keeper).toContain('await recordStartupStage();');
+    expect(keeper).toContain('startup-stages/${runtimeId}.json');
+    expect(packer).toContain('/proc/uptime');
+    expect(packer).toContain('ActiveEnterTimestampMonotonic');
+    expect(packer).toContain('-p MainPID --value');
+    expect(packer).toContain('/proc/${runner_pid}/wchan');
+    expect(packer).toContain('/proc/${base_pid}/wchan');
+    expect(packer).toContain('/proc/${base_pid}/comm');
+    expect(packer).toContain('TimeoutStartUSec');
+    expect(packer).toContain('NRestarts');
+    expect(packer).toContain('startup-stages/${base_id}.json');
+    expect(packer).toContain('stalled_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}');
+    expect(packer).toContain('/usr/bin/stat -c %Y "$progress_path"');
+    expect(packer).toContain('/usr/bin/date +%s');
+    expect(packer).toContain('${base_role}_${base_wait}_${base_cgroup_count}');
+    expect(packer).toContain('${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}');
   });
   it('activates the aggregate slice before starting the first template instance', async () => {
     const runner = await readRepo('scripts/spikes/terminal-runtime/run-remote.sh');

@@ -134,6 +134,7 @@ normalize_terminal_runtime_generation_permissions() {
     for executable in \
       launch-remote.sh \
       pack-evidence.sh \
+      pane-probe.sh \
       run-remote.sh \
       production-acceptance.sh; do
       chmod 0755 "$generation_dir/spikes/$executable" || return 1
@@ -152,6 +153,7 @@ verify_terminal_runtime_generation_permissions() {
     for executable in \
       launch-remote.sh \
       pack-evidence.sh \
+      pane-probe.sh \
       run-remote.sh \
       production-acceptance.sh; do
       [ "$(stat -c %a "$generation_dir/spikes/$executable")" = "755" ] ||
@@ -162,6 +164,7 @@ verify_terminal_runtime_generation_permissions() {
     ! -path "$generation_dir/supervisor-acceptor" \
     ! -path "$generation_dir/spikes/launch-remote.sh" \
     ! -path "$generation_dir/spikes/pack-evidence.sh" \
+    ! -path "$generation_dir/spikes/pane-probe.sh" \
     ! -path "$generation_dir/spikes/run-remote.sh" \
     ! -path "$generation_dir/spikes/production-acceptance.sh" \
     ! -perm 0644 -print -quit | grep -q .; then

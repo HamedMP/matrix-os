@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-session_name="${ZELLIJ_SESSION_NAME:-}"
-[[ "$session_name" =~ ^matrix-t-([0-9a-f]{32})$ ]] || exit 22
-runtime_id="${BASH_REMATCH[1]}"
+runtime_id="${MATRIX_TERMINAL_RUNTIME_ID:-}"
+[[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]] || exit 22
+session_name="matrix-t-$runtime_id"
 release_file="/run/matrix-terminal-runtime-spikes/${runtime_id:1}/pane-release/$session_name"
 for _ in $(seq 1 100); do
   [ -f "$release_file" ] && break

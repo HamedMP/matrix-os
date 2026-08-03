@@ -84,18 +84,23 @@ cleanup() {
   /usr/bin/timeout --signal=TERM --kill-after=1s 5s pkill -f 'zellij attach matrix-t-[0-9a-f]{32}' >/dev/null 2>&1 || true
 }
 build_summary() {
-  /opt/matrix/runtime/node/bin/node "$source_dir/build-evidence.mjs" "$evidence_root" "$pr_head_sha" || true
+  command_bounded 20 /opt/matrix/runtime/node/bin/node \
+    "$source_dir/build-evidence.mjs" "$evidence_root" "$pr_head_sha" || true
 }
 write_progress() {
   local progress_stage="$1"
   local progress_tmp="$evidence_root/.progress-stage.$$"
+  local progress_uptime_tmp="$evidence_root/.progress-uptime.$$"
   case "$progress_stage" in
-    startup_cleanup|runtime_setup|runtime_dirs|unit_check|binary_check|binary_version|binary_manifest|binary_digest|binary_metadata|config_dump|config_check|cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach|base_start|base_start_requested|base_release|base_wait_ready|keeper_loss|server_loss|memory_pressure|recovery_restore|corruption_fallback|summary_build) ;;
+    startup_cleanup|runtime_setup|runtime_dirs|unit_check|binary_check|binary_version|binary_manifest|binary_digest|binary_metadata|config_dump|config_check|cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach|base_start|base_start_requested|base_release|base_wait_ready|base_ready|base_attach|base_detached|base_gateway_restart|base_gateway_crash|base_shell_restart|base_stop|base_stopped|keeper_loss|server_loss|memory_pressure|recovery_restore|corruption_fallback|summary_build) ;;
     *) return 2 ;;
   esac
   printf '%s\n' "$progress_stage" >"$progress_tmp"
+  /usr/bin/awk '{ print $1 }' /proc/uptime >"$progress_uptime_tmp"
   chmod 0600 "$progress_tmp"
+  chmod 0600 "$progress_uptime_tmp"
   mv -f -- "$progress_tmp" "$evidence_root/progress-stage.txt"
+  mv -f -- "$progress_uptime_tmp" "$evidence_root/progress-uptime.txt"
 }
 systemctl_bounded() {
   command_bounded 35 /usr/bin/systemctl "$@"
@@ -206,7 +211,7 @@ if [[ -e "$runtime_root" || -L "$runtime_root" || -e "$state_root" || -L "$state
   exit 3
 fi
 write_progress runtime_dirs
-if ! setup_fs_bounded 15 /usr/bin/install -d -o matrix -g matrix -m 0700 "$runtime_root" "$runtime_root/descriptors" "$runtime_root/readiness" "$runtime_root/outcomes" "$runtime_root/startup-failures" "$runtime_root/confirmations" "$runtime_root/pane-release" ||
+if ! setup_fs_bounded 15 /usr/bin/install -d -o matrix -g matrix -m 0700 "$runtime_root" "$runtime_root/descriptors" "$runtime_root/readiness" "$runtime_root/outcomes" "$runtime_root/startup-failures" "$runtime_root/startup-stages" "$runtime_root/confirmations" "$runtime_root/pane-release" ||
   ! setup_fs_bounded 15 /usr/bin/install -d -o matrix -g matrix -m 0700 "$owner_home/system/terminal-runtime-spikes" "$state_root" "$cache_root" "$config_root" "$config_home_root" "$data_root" ||
   ! setup_fs_bounded 15 /usr/bin/install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"; then
   echo "spike_runtime_dirs_failed" >&2
@@ -314,7 +319,7 @@ start_runtime() {
   runtime_id="$1"
   intent="${2:-create}"
   session_name="matrix-t-${runtime_id}"
-  rm -f -- "$runtime_root/readiness/${runtime_id}.json" "$runtime_root/outcomes/${runtime_id}.json" "$runtime_root/startup-failures/${runtime_id}.json" "$runtime_root/confirmations/${runtime_id}.pass" "$runtime_root/confirmations/${runtime_id}.gated" "$runtime_root/pane-release/${session_name}"
+  rm -f -- "$runtime_root/readiness/${runtime_id}.json" "$runtime_root/outcomes/${runtime_id}.json" "$runtime_root/startup-failures/${runtime_id}.json" "$runtime_root/startup-stages/${runtime_id}.json" "$runtime_root/confirmations/${runtime_id}.pass" "$runtime_root/confirmations/${runtime_id}.gated" "$runtime_root/pane-release/${session_name}"
   descriptor "$runtime_id" "$intent"
   request_runtime_start "${unit_prefix}${runtime_id}.service"
 }
@@ -323,14 +328,12 @@ release_pane() {
     "$runtime_root/pane-release/matrix-t-$1"
 }
 wait_state() {
-  unit="$1"
-  desired="$2"
-  limit="${3:-300}"
+  local unit="$1" desired="$2" limit="${3:-300}" runtime_id readiness_path
+  [[ "$limit" =~ ^[1-9][0-9]{0,3}$ ]] || return 2
   runtime_id="${unit#${unit_prefix}}"
   runtime_id="${runtime_id%.service}"
   readiness_path="$runtime_root/readiness/${runtime_id}.json"
-  deadline=$((SECONDS + (limit + 9) / 10))
-  while [ "$SECONDS" -lt "$deadline" ]; do
+  for _ in $(seq 1 "$limit"); do
     if [ "$desired" = active ] && [ -f "$readiness_path" ]; then return 0; fi
     if [ -f "$runtime_root/startup-failures/${runtime_id}.json" ]; then return 1; fi
     sleep 0.1
@@ -338,11 +341,10 @@ wait_state() {
   return 1
 }
 wait_not_active() {
-  unit="$1"
+  local unit="$1" runtime_id
   runtime_id="${unit#${unit_prefix}}"
   runtime_id="${runtime_id%.service}"
-  deadline=$((SECONDS + 30))
-  while [ "$SECONDS" -lt "$deadline" ]; do
+  for _ in $(seq 1 300); do
     if [ -f "$runtime_root/outcomes/${runtime_id}.json" ] ||
       [ -f "$runtime_root/startup-failures/${runtime_id}.json" ]; then return 0; fi
     sleep 0.1
@@ -376,9 +378,9 @@ record_pid_cgroup() {
   printf '%s\t%s\t%s\n' "$label" "$pid" "$membership" >>"$output"
 }
 wait_main_pid_changed() {
-  unit="$1"
-  previous="$2"
-  for _ in $(seq 1 600); do
+  local unit="$1" previous="$2" limit="${3:-600}" current
+  [[ "$limit" =~ ^[1-9][0-9]{0,3}$ ]] || return 2
+  for _ in $(seq 1 "$limit"); do
     current="$(systemctl_value_bounded "$unit" MainPID 2>/dev/null || true)"
     if printf '%s' "$current" | grep -Eq '^[1-9][0-9]*$' &&
       [ "$current" != "$previous" ] && { [ "$unit" != matrix-gateway.service ] ||
@@ -426,6 +428,7 @@ if ! release_pane "$base_id"; then
 fi
 write_progress base_wait_ready
 if ! wait_state "$base_unit" active; then
+  systemctl_bounded stop --no-block "$base_unit" >/dev/null 2>&1 || true
   wait_not_active "$base_unit" || true
   systemctl_bounded show "$base_unit" -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus >"$evidence_root/s1/base-startup-unit.txt" || true
   if [ -f "$runtime_root/startup-failures/${base_id}.json" ]; then
@@ -433,6 +436,7 @@ if ! wait_state "$base_unit" active; then
   fi
   exit 10
 fi
+write_progress base_ready
 cp "$runtime_root/readiness/${base_id}.json" "$evidence_root/s1/base-readiness.json"
 systemctl_bounded show "$base_unit" -p MainPID -p ControlGroup -p ActiveState -p SubState -p MemoryHigh -p TasksMax >"$evidence_root/s1/base-unit.txt"
 pid_cgroups="$evidence_root/s1/pid-cgroups.tsv"
@@ -470,6 +474,7 @@ if [ -n "$gateway_before_cgroup" ] && [ "$gateway_before_cgroup" != "$base_cgrou
 fi
 attach_receipt="$runtime_root/attach-${base_id}.json"
 rm -f -- "$attach_receipt"
+write_progress base_attach
 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/runtime/node/bin/node "$support_root/attach-probe.mjs" "$base_id" &
 attach_parent=$!
 for _ in $(seq 1 100); do
@@ -490,10 +495,12 @@ if [ -n "$membership" ] && [ "$membership" != "$base_cgroup" ]; then
 fi
 kill "$attach_helper" 2>/dev/null || true
 bounded_wait_child "$attach_parent"
+write_progress base_detached
 sleep 0.5
 if roles_alive "$base_id"; then mark_pass s1 detachPreservesPids; else
   /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" detach || true
 fi
+write_progress base_gateway_restart
 if systemctl_bounded restart matrix-gateway.service >/dev/null 2>&1; then
   gateway_restart_pid="$(wait_main_pid_changed matrix-gateway.service "$gateway_before_pid" || true)"
   if [ -n "$gateway_restart_pid" ] && roles_alive "$base_id"; then
@@ -501,15 +508,22 @@ if systemctl_bounded restart matrix-gateway.service >/dev/null 2>&1; then
     mark_pass s1 gatewayRestartPreservesPids
   fi
 fi
+write_progress base_gateway_crash
 gateway_pid="$(systemctl_value_bounded matrix-gateway.service MainPID 2>/dev/null || true)"
 if printf '%s' "$gateway_pid" | grep -Eq '^[1-9][0-9]*$'; then
   kill -KILL "$gateway_pid" 2>/dev/null || true
-  gateway_crash_pid="$(wait_main_pid_changed matrix-gateway.service "$gateway_pid" || true)"
+  gateway_crash_pid="$(wait_main_pid_changed matrix-gateway.service "$gateway_pid" 150 || true)"
+  if [ -z "$gateway_crash_pid" ]; then
+    systemctl_bounded reset-failed matrix-gateway.service >/dev/null 2>&1 || true
+    systemctl_bounded start --no-block matrix-gateway.service >/dev/null 2>&1 || true
+    gateway_crash_pid="$(wait_main_pid_changed matrix-gateway.service "$gateway_pid" || true)"
+  fi
   if [ -n "$gateway_crash_pid" ] && roles_alive "$base_id"; then
     record_pid_cgroup gateway-after-crash "$gateway_crash_pid" "$pid_cgroups" || true
     mark_pass s1 gatewayCrashPreservesPids
   fi
 fi
+write_progress base_shell_restart
 shell_before_pid="$(systemctl_value_bounded matrix-shell.service MainPID 2>/dev/null || true)"
 record_pid_cgroup shell-service-before "$shell_before_pid" "$pid_cgroups" || true
 if systemctl_bounded restart matrix-shell.service >/dev/null 2>&1; then
@@ -523,6 +537,7 @@ record_pid_cgroup runtime-main-after-events "$main_pid" "$pid_cgroups" || true
 if [ -f "$runtime_root/role-diagnostic-${base_id}.json" ]; then
   cp "$runtime_root/role-diagnostic-${base_id}.json" "$evidence_root/s1/base-runtime-roles.json"
 fi
+write_progress base_stop
 exec {base_events_fd}<"/sys/fs/cgroup${base_cgroup}/cgroup.events"
 systemctl_bounded stop --no-block "$base_unit" >/dev/null 2>&1 || true
 if wait_cgroup_empty "$base_events_fd" "/sys/fs/cgroup${base_cgroup}" "$base_unit"; then
@@ -530,6 +545,7 @@ if wait_cgroup_empty "$base_events_fd" "/sys/fs/cgroup${base_cgroup}" "$base_uni
   mark_pass s1 stopEmptiesCgroup
 fi
 exec {base_events_fd}<&-
+write_progress base_stopped
 # S1: deterministic keeper and server failures.
 write_progress keeper_loss
 start_runtime "$keeper_id"
