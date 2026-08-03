@@ -71,6 +71,7 @@ jobs:
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
       PRODUCTION_PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
     steps:
       - name: Check preview configuration
         id: config
@@ -85,12 +86,51 @@ jobs:
             echo "CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT must be set in the Preview environment; refusing to fall back to another SA." >&2
             exit 1
           fi
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ]; then
+            echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required for the preview shell build." >&2
+            exit 1
+          fi
+          if [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "Refusing to build a preview shell with the example Clerk key." >&2
+            exit 1
+          fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve PR source
+        id: source
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "Invalid PR number." >&2
+            exit 1
+          fi
+          head_sha="$EVENT_HEAD_SHA"
+          head_repo="$EVENT_HEAD_REPO"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            head_sha="$(jq -r '.head.sha' <<< "$pr_json")"
+            head_repo="$(jq -r '.head.repo.full_name' <<< "$pr_json")"
+          fi
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "Fork PRs never receive platform preview credentials." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid PR head SHA." >&2
+            exit 1
+          fi
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
         if: steps.config.outputs.configured == 'true'
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.source.outputs.head_sha }}
 
       - name: Authenticate to Google Cloud
         if: steps.config.outputs.configured == 'true'
@@ -103,12 +143,12 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          head_sha="${{ steps.source.outputs.head_sha }}"
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
             --config cloudbuild.platform.yaml \
-            --substitutions "_IMAGE=$image" \
+            --substitutions "_IMAGE=$image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY},_NEXT_PUBLIC_MATRIX_APP_URL=https://preview.matrix-os.com" \
             --quiet
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 

@@ -6,6 +6,36 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("preview platform workflow", () => {
+  it("resolves the requested PR head for manual preview deployments", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("Resolve PR source");
+    expect(workflow).toContain('gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"');
+    expect(workflow).toContain("head_sha=$head_sha");
+    expect(workflow).toContain("ref: ${{ steps.source.outputs.head_sha }}");
+    expect(workflow).toContain('head_sha="${{ steps.source.outputs.head_sha }}"');
+    expect(workflow).not.toContain("ref: ${{ github.event.pull_request.head.sha || github.sha }}");
+  });
+
+  it("bakes the Clerk publishable key into the preview shell image", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}",
+    );
+    expect(workflow).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required");
+    expect(workflow).toContain(
+      "_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}",
+    );
+    expect(workflow).toContain("_NEXT_PUBLIC_MATRIX_APP_URL=https://preview.matrix-os.com");
+  });
+
   it("sources the deployed control-plane origin from the selected environment", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/platform-cloud-run.yml"),
