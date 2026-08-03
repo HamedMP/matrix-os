@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Kysely, PostgresDialect, sql, type InsertObject, type Transaction } from 'kysely';
+import { Kysely, PostgresDialect, sql, type Generated, type InsertObject, type Transaction } from 'kysely';
 import pg from 'pg';
 import { z } from 'zod/v4';
 import type {
@@ -62,6 +62,13 @@ interface UserMachinesTable {
   public_ipv6: string | null;
   status: string;
   image_version: string | null;
+  source_snapshot_id: string | null;
+  source_base_generation: string | null;
+  target_bundle_version: string | null;
+  target_bundle_sha256: string | null;
+  recovery_create_action_id: number | null;
+  recovery_encrypted_payload: string | null;
+  recovery_old_server_id: number | null;
   server_type: string | null;
   location: string | null;
   registration_token_hash: string | null;
@@ -89,6 +96,15 @@ export interface ProvisioningJobsTable {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  target_bundle_version: string | null;
+  target_bundle_sha256: string | null;
+  image_source: string;
+  snapshot_id: string | null;
+  snapshot_lease_id: string | null;
+  snapshot_create_intent_id: Generated<string | null>;
+  activation_step: string;
+  provider_create_action_id: number | null;
+  fallback_reason: string | null;
 }
 
 interface HostBundleReleasesTable {
@@ -586,6 +602,13 @@ export interface UserMachineRecord {
   publicIPv6: string | null;
   status: string;
   imageVersion: string | null;
+  sourceSnapshotId: string | null;
+  sourceBaseGeneration: string | null;
+  targetBundleVersion: string | null;
+  targetBundleSha256: string | null;
+  recoveryCreateActionId: number | null;
+  recoveryEncryptedPayload: string | null;
+  recoveryOldServerId: number | null;
   serverType: string | null;
   location: string | null;
   registrationTokenHash: string | null;
@@ -809,6 +832,13 @@ export interface NewUserMachine {
   publicIPv6?: string | null;
   status: string;
   imageVersion?: string | null;
+  sourceSnapshotId?: string | null;
+  sourceBaseGeneration?: string | null;
+  targetBundleVersion?: string | null;
+  targetBundleSha256?: string | null;
+  recoveryCreateActionId?: number | null;
+  recoveryEncryptedPayload?: string | null;
+  recoveryOldServerId?: number | null;
   serverType?: string | null;
   location?: string | null;
   registrationTokenHash?: string | null;
@@ -825,6 +855,12 @@ export interface NewUserMachine {
 
 export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview']);
 export type UserMachineProvisioningClass = z.infer<typeof UserMachineProvisioningClassSchema>;
+const NullableProviderActionIdSchema = z.coerce.number().int().positive()
+  .max(Number.MAX_SAFE_INTEGER).nullable();
+
+export function parseNullableProviderActionId(value: number | string | null): number | null {
+  return NullableProviderActionIdSchema.parse(value);
+}
 
 export interface NewProviderDeletionQueueRecord {
   id: string;
@@ -907,6 +943,13 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       public_ipv6 TEXT,
       status TEXT NOT NULL DEFAULT 'provisioning',
       image_version TEXT,
+      source_snapshot_id TEXT,
+      source_base_generation TEXT,
+      target_bundle_version TEXT,
+      target_bundle_sha256 TEXT,
+      recovery_create_action_id BIGINT,
+      recovery_encrypted_payload TEXT,
+      recovery_old_server_id BIGINT,
       server_type TEXT,
       location TEXT,
       registration_token_hash TEXT,
@@ -925,6 +968,13 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS provisioning_class TEXT NOT NULL DEFAULT 'customer'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS access_clerk_user_ids TEXT[] NOT NULL DEFAULT '{}'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS source_snapshot_id TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS source_base_generation TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS target_bundle_version TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS target_bundle_sha256 TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_create_action_id BIGINT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_encrypted_payload TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_old_server_id BIGINT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS location TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
@@ -972,6 +1022,15 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       completed_at TEXT
     )
   `.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS target_bundle_version TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS target_bundle_sha256 TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS image_source TEXT NOT NULL DEFAULT 'unresolved'`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS snapshot_id TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS snapshot_lease_id TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS snapshot_create_intent_id TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS activation_step TEXT NOT NULL DEFAULT 'selecting'`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS provider_create_action_id BIGINT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS fallback_reason TEXT`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_dispatch
     ON provisioning_jobs(status, available_at, lease_expires_at)
@@ -1507,6 +1566,21 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     ON golden_snapshot_create_intents(snapshot_id, state)
     WHERE completed_at IS NULL
   `.execute(db);
+  await sql`
+    ALTER TABLE provisioning_jobs
+    DROP CONSTRAINT IF EXISTS provisioning_jobs_snapshot_create_intent_id_fkey
+  `.execute(db);
+  await sql`
+    ALTER TABLE provisioning_jobs
+    ADD CONSTRAINT provisioning_jobs_snapshot_create_intent_id_fkey
+    FOREIGN KEY (snapshot_create_intent_id)
+    REFERENCES golden_snapshot_create_intents(intent_id)
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_provisioning_jobs_snapshot_create_intent
+    ON provisioning_jobs(snapshot_create_intent_id)
+    WHERE snapshot_create_intent_id IS NOT NULL
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS golden_snapshot_cleanup (
@@ -1591,6 +1665,24 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`
     CREATE INDEX IF NOT EXISTS idx_provider_deletion_queue_pending
     ON provider_deletion_queue(next_attempt_at)
+    WHERE completed_at IS NULL
+  `.execute(db);
+  await sql`
+    WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY provider_server_id ORDER BY created_at, id
+      ) AS ordinal
+      FROM provider_deletion_queue
+      WHERE completed_at IS NULL
+    )
+    UPDATE provider_deletion_queue
+    SET completed_at = created_at,
+        last_error = COALESCE(last_error, 'deduplicated provider deletion')
+    WHERE id IN (SELECT id FROM ranked WHERE ordinal > 1)
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_deletion_queue_server_active
+    ON provider_deletion_queue(provider_server_id)
     WHERE completed_at IS NULL
   `.execute(db);
 
@@ -1875,6 +1967,15 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     publicIPv6: row.public_ipv6,
     status: row.status,
     imageVersion: row.image_version,
+    sourceSnapshotId: row.source_snapshot_id,
+    sourceBaseGeneration: row.source_base_generation,
+    targetBundleVersion: row.target_bundle_version,
+    targetBundleSha256: row.target_bundle_sha256,
+    recoveryCreateActionId: parseNullableProviderActionId(
+      row.recovery_create_action_id as number | string | null,
+    ),
+    recoveryEncryptedPayload: row.recovery_encrypted_payload,
+    recoveryOldServerId: row.recovery_old_server_id,
     serverType: row.server_type,
     location: row.location,
     registrationTokenHash: row.registration_token_hash,
@@ -1904,6 +2005,13 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     public_ipv6: record.publicIPv6 ?? null,
     status: record.status,
     image_version: record.imageVersion ?? null,
+    source_snapshot_id: record.sourceSnapshotId ?? null,
+    source_base_generation: record.sourceBaseGeneration ?? null,
+    target_bundle_version: record.targetBundleVersion ?? null,
+    target_bundle_sha256: record.targetBundleSha256 ?? null,
+    recovery_create_action_id: record.recoveryCreateActionId ?? null,
+    recovery_encrypted_payload: record.recoveryEncryptedPayload ?? null,
+    recovery_old_server_id: record.recoveryOldServerId ?? null,
     server_type: record.serverType ?? null,
     location: record.location ?? null,
     registration_token_hash: record.registrationTokenHash ?? null,
@@ -1933,6 +2041,13 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.publicIPv6 !== undefined) update.public_ipv6 = values.publicIPv6;
   if (values.status !== undefined) update.status = values.status;
   if (values.imageVersion !== undefined) update.image_version = values.imageVersion;
+  if (values.sourceSnapshotId !== undefined) update.source_snapshot_id = values.sourceSnapshotId;
+  if (values.sourceBaseGeneration !== undefined) update.source_base_generation = values.sourceBaseGeneration;
+  if (values.targetBundleVersion !== undefined) update.target_bundle_version = values.targetBundleVersion;
+  if (values.targetBundleSha256 !== undefined) update.target_bundle_sha256 = values.targetBundleSha256;
+  if (values.recoveryCreateActionId !== undefined) update.recovery_create_action_id = values.recoveryCreateActionId;
+  if (values.recoveryEncryptedPayload !== undefined) update.recovery_encrypted_payload = values.recoveryEncryptedPayload;
+  if (values.recoveryOldServerId !== undefined) update.recovery_old_server_id = values.recoveryOldServerId;
   if (values.serverType !== undefined) update.server_type = values.serverType;
   if (values.location !== undefined) update.location = values.location;
   if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
@@ -2983,11 +3098,30 @@ export async function claimUserMachineRecovery(
   db: PlatformDB,
   clerkUserId: string,
   runtimeSlot = 'primary',
+  intent?: {
+    machineId: string;
+    encryptedPayload: string;
+    serverType: string;
+    registrationTokenHash: string;
+    registrationTokenExpiresAt: string;
+  },
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
     .updateTable('user_machines')
-    .set({
+    .set(intent ? {
+      machine_id: intent.machineId,
+      recovery_encrypted_payload: intent.encryptedPayload,
+      recovery_old_server_id: sql<number | null>`hetzner_server_id`,
+      server_type: intent.serverType,
+      registration_token_hash: intent.registrationTokenHash,
+      registration_token_expires_at: intent.registrationTokenExpiresAt,
+      status: 'recovering',
+      hetzner_server_id: null,
+      recovery_create_action_id: null,
+      failure_code: null,
+      failure_at: null,
+    } : {
       status: 'recovering',
       hetzner_server_id: null,
       public_ipv4: null,
@@ -3057,6 +3191,8 @@ export async function insertProviderDeletion(
   await db.executor
     .insertInto('provider_deletion_queue')
     .values(toProviderDeletionRow(record))
+    .onConflict((oc) => oc.column('provider_server_id')
+      .where('completed_at', 'is', null).doNothing())
     .execute();
 }
 
