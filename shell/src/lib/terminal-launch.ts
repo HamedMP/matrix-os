@@ -11,6 +11,10 @@ export interface TerminalLaunchConfig {
   claudeMode?: boolean;
 }
 
+// Replace with the first official T3 release containing PR #5115 before this leaves preview.
+const T3_PREVIEW_PACKAGE =
+  "https://github.com/HamedMP/t3code/releases/download/matrix-preview-pr-5115-1faf1ad4f/t3-pr5115-1faf1ad4f.tgz";
+
 const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
   "claude-login": {
     action: "claude-login",
@@ -36,12 +40,13 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
       'export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"',
       'export MATRIX_T3_HOME="${MATRIX_HOME:-$HOME}/system/t3code"',
       'mkdir -p "$MATRIX_T3_HOME"',
+      `export MATRIX_T3_PACKAGE="${T3_PREVIEW_PACKAGE}"`,
       'case "${MATRIX_HANDLE:-}" in ""|*[!a-z0-9-]*) printf \'Matrix computer handle is unavailable or invalid.\\n\'; exit 1 ;; esac',
       'if [ "${#MATRIX_HANDLE}" -lt 2 ] || [ "${#MATRIX_HANDLE}" -gt 63 ]; then printf \'Matrix computer handle is unavailable or invalid.\\n\'; exit 1; fi',
       'export MATRIX_T3_PUBLIC_BASE_URL="https://app.matrix-os.com/vm/$MATRIX_HANDLE/api/integrations/t3/"',
-      "printf 'T3 Code wants to install its pinned official CLI (t3@0.0.32) and expose its local server through this Matrix OS computer.\\nNo T3 account or Matrix credentials are required. Anyone with the one-time pairing link can connect, so keep it private. Continue? [y/N] '",
+      "printf 'T3 Code wants to install the pinned CLI build paired with this Matrix preview and expose its local server through this Matrix OS computer.\\nNo T3 account or Matrix credentials are required. Anyone with the one-time pairing link can connect, so keep it private. Continue? [y/N] '",
       "read -r MATRIX_T3_CONFIRM",
-      'case "$MATRIX_T3_CONFIRM" in [yY]|[yY][eE][sS]) printf \'\\nChecking for an existing T3 Code server.\\n\\n\'; if npx --yes t3@0.0.32 pair --pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL" --base-dir "$MATRIX_T3_HOME"; then printf \'\\nA fresh pairing link was created for the running server.\\n\'; else printf \'\\nStarting T3 Code locally. Scan or paste the pairing link shown below in the T3 Code app. Keep this Terminal session running.\\n\\n\'; exec npx --yes t3@0.0.32 serve --host 127.0.0.1 --port 3773 --pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL" --base-dir "$MATRIX_T3_HOME"; fi ;; *) printf \'T3 Code setup canceled.\\n\' ;; esac',
+      'case "$MATRIX_T3_CONFIRM" in [yY]|[yY][eE][sS]) printf \'\\nChecking for an existing T3 Code server.\\n\\n\'; if npx --yes "$MATRIX_T3_PACKAGE" pair --pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL" --base-dir "$MATRIX_T3_HOME"; then printf \'\\nA fresh pairing link was created for the running server.\\n\'; else printf \'\\nStarting T3 Code locally. Scan or paste the pairing link shown below in the T3 Code app. Keep this Terminal session running.\\n\\n\'; exec npx --yes "$MATRIX_T3_PACKAGE" serve --host 127.0.0.1 --port 3773 --pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL" --base-dir "$MATRIX_T3_HOME"; fi ;; *) printf \'T3 Code setup canceled.\\n\' ;; esac',
     ].join(" && "),
   },
 };
