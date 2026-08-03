@@ -40,4 +40,25 @@ describe("preview platform workflow", () => {
     expect(deriveOrigin).toBeGreaterThan(bootstrap);
     expect(finalDeploy).toBeGreaterThan(deriveOrigin);
   });
+
+  it("recognizes the isolated Cloud Run service host behind the preview domain", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain('local session_hosts="$2"');
+    expect(workflow).toContain(
+      'PREVIEW_SERVICE_DOMAIN="${service_base_url#https://}"',
+    );
+    expect(workflow).toContain(
+      'PREVIEW_SESSION_HOSTS="${PREVIEW_DOMAIN},${PREVIEW_SERVICE_DOMAIN}"',
+    );
+    expect(workflow).toContain(
+      "MATRIX_APP_DOMAIN_HOSTS=${session_hosts}",
+    );
+    expect(workflow).toContain(
+      'deploy_preview "$PREVIEW_API_ORIGIN" "$PREVIEW_SESSION_HOSTS"',
+    );
+  });
 });
