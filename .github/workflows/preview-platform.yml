@@ -180,17 +180,17 @@ jobs:
           preview_ipv4="$(jq -r '.publicIPv4' <<< "$preview_machine")"
           preview_image_version="$(jq -r '.imageVersion // "unknown"' <<< "$preview_machine")"
           preview_owner_clerk_user_id="$(jq -r '.clerkUserId' <<< "$preview_machine")"
-          preview_access_clerk_user_ids="$(jq -r '.accessClerkUserIds | join(":")' <<< "$preview_machine")"
+          preview_access_clerk_user_ids="$(jq -r '(.accessClerkUserIds // []) | join(":")' <<< "$preview_machine")"
           if ! jq -e '
             (.machineId | test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
             and (.handle | test("^pr-[1-9][0-9]{0,9}$"))
             and (.publicIPv4 | type == "string" and length >= 7 and length <= 15)
             and (.imageVersion | type == "string" and length >= 1 and length <= 128)
             and (.clerkUserId | type == "string" and test("^[A-Za-z0-9_-]{3,256}$"))
-            and (.accessClerkUserIds | type == "array" and length <= 8)
-            and (.accessClerkUserIds | all(type == "string" and test("^[A-Za-z0-9_-]{3,256}$")))
-            and ((.accessClerkUserIds | unique | length) == (.accessClerkUserIds | length))
-            and (.clerkUserId as $owner | (.accessClerkUserIds | index($owner) | not))
+            and ((.accessClerkUserIds // []) | type == "array" and length <= 8)
+            and ((.accessClerkUserIds // []) | all(type == "string" and test("^[A-Za-z0-9_-]{3,256}$")))
+            and (((.accessClerkUserIds // []) | unique | length) == ((.accessClerkUserIds // []) | length))
+            and (.clerkUserId as $owner | ((.accessClerkUserIds // []) | index($owner) | not))
           ' <<< "$preview_machine" > /dev/null; then
             echo "Preview fleet returned an invalid route." >&2
             exit 1

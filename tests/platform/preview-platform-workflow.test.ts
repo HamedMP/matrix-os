@@ -108,7 +108,8 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_HANDLE=${preview_handle}");
     expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_IPV4=${preview_ipv4}");
     expect(workflow).toContain("preview_owner_clerk_user_id=\"$(jq -r '.clerkUserId' <<< \"$preview_machine\")\"");
-    expect(workflow).toContain("preview_access_clerk_user_ids=\"$(jq -r '.accessClerkUserIds | join(\":\")' <<< \"$preview_machine\")\"");
+    expect(workflow).toContain("preview_access_clerk_user_ids=\"$(jq -r '(.accessClerkUserIds // []) | join(\":\")' <<< \"$preview_machine\")\"");
+    expect(workflow).toContain("(.accessClerkUserIds // []) | type == \"array\"");
     expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_OWNER_CLERK_USER_ID=${preview_owner_clerk_user_id}");
     expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_ACCESS_CLERK_USER_IDS=${preview_access_clerk_user_ids}");
     expect(workflow).toContain("CUSTOMER_VPS_TLS_VERIFY=false");
