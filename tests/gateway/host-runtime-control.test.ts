@@ -42,19 +42,19 @@ describe("fixed host runtime control", () => {
       1,
       "/opt/matrix/bin/matrix-agent-runtime-control",
       ["status"],
-      expect.objectContaining({ timeout: 70_000, maxBuffer: 4_096, signal }),
+      expect.objectContaining({ timeout: 10_000, maxBuffer: 4_096, signal }),
     );
     expect(exec).toHaveBeenNthCalledWith(
       2,
       "/opt/matrix/bin/matrix-agent-runtime-control",
       ["switch", "openclaw"],
-      expect.any(Object),
+      expect.objectContaining({ timeout: 330_000, maxBuffer: 4_096, signal }),
     );
     expect(exec).toHaveBeenNthCalledWith(
       3,
       "/opt/matrix/bin/matrix-agent-runtime-control",
       ["stop", "hermes"],
-      expect.any(Object),
+      expect.objectContaining({ timeout: 90_000, maxBuffer: 4_096, signal }),
     );
   });
 

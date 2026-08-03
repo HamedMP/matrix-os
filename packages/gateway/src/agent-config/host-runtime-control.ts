@@ -9,6 +9,13 @@ import { AgentConfigError } from "./errors.js";
 const HOST_CONTROL_PATH = "/opt/matrix/bin/matrix-agent-runtime-control";
 const MAX_CONTROL_OUTPUT_BYTES = 4_096;
 const MAX_TOKEN_FILE_BYTES = 256;
+// Includes the 30s host lock plus bounded systemd/readiness work; switch also
+// leaves enough time for the script's complete rollback path (320s maximum).
+const HOST_CONTROL_TIMEOUT_MS = {
+  status: 10_000,
+  stop: 90_000,
+  switch: 330_000,
+} as const;
 
 const RuntimeIdSchema = z.enum(["hermes", "openclaw"]);
 const RuntimeStatusSchema = z.object({
@@ -110,10 +117,15 @@ export function createHostRuntimeControl(options: {
   const run = options.exec
     ?? promisify(execFile) as unknown as HostControlExecutor;
 
-  async function execute(args: readonly string[], signal: AbortSignal) {
+  async function execute(
+    operation: keyof typeof HOST_CONTROL_TIMEOUT_MS,
+    runtime: z.infer<typeof RuntimeIdSchema> | undefined,
+    signal: AbortSignal,
+  ) {
+    const args = runtime === undefined ? [operation] : [operation, runtime];
     try {
       return await run(HOST_CONTROL_PATH, args, {
-        timeout: 70_000,
+        timeout: HOST_CONTROL_TIMEOUT_MS[operation],
         maxBuffer: MAX_CONTROL_OUTPUT_BYTES,
         signal,
         windowsHide: true,
@@ -131,7 +143,7 @@ export function createHostRuntimeControl(options: {
     signal: AbortSignal,
   ): Promise<void> {
     const id = RuntimeIdSchema.parse(runtime);
-    const result = await execute([operation, id], signal);
+    const result = await execute(operation, id, signal);
     const stdout = boundedText(result.stdout);
     if (stdout === null) throw new AgentConfigError("invalid_response");
     try {
@@ -145,7 +157,7 @@ export function createHostRuntimeControl(options: {
 
   return {
     async status(signal) {
-      const result = await execute(["status"], signal);
+      const result = await execute("status", undefined, signal);
       const stdout = boundedText(result.stdout);
       if (stdout === null) throw new AgentConfigError("invalid_response");
       try {
