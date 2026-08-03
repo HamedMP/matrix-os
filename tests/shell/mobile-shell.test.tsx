@@ -12,6 +12,9 @@ import { drainTerminalLaunchQueue } from "../../shell/src/lib/terminal-launch.js
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
 let fileChangeHandler: ((path: string, event: "add" | "change" | "unlink") => void) | null = null;
+const settingsMock = vi.hoisted(() => ({
+  onOpenAgentTerminal: undefined as undefined | ((action: "openclaw-install") => void),
+}));
 
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: (handler: typeof fileChangeHandler) => {
@@ -36,7 +39,10 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/Settings.js", () => ({
-  Settings: () => null,
+  Settings: ({ onOpenAgentTerminal }: { onOpenAgentTerminal?: (action: "openclaw-install") => void }) => {
+    settingsMock.onOpenAgentTerminal = onOpenAgentTerminal;
+    return <button onClick={() => onOpenAgentTerminal?.("openclaw-install")}>Install OpenClaw from Settings</button>;
+  },
 }));
 
 vi.mock("sonner", () => ({
@@ -118,6 +124,8 @@ describe("mobile shell", () => {
       configurable: true,
     });
     setDesktopViewport();
+    settingsMock.onOpenAgentTerminal = undefined;
+    window.sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -273,6 +281,20 @@ describe("mobile shell", () => {
     await waitFor(() => {
       expect(drainTerminalLaunchQueue().map((launch) => launch.action)).toEqual(["t3-connect"]);
     });
+  });
+
+  it("opens a visible terminal for agent setup from mobile Settings", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+    fireEvent.click(screen.getByRole("button", { name: "Install OpenClaw from Settings" }));
+
+    expect(await screen.findByTestId("terminal-app")).toBeTruthy();
+    expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toContain("openclaw-install");
   });
 
   it("hides the bottom dock while the terminal command composer is focused", async () => {

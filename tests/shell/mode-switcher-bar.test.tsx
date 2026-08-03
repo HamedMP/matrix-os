@@ -16,6 +16,8 @@ describe("ModeSwitcherBar", () => {
     render(<ModeSwitcherBar />);
     expect(screen.getByRole("button", { name: /developer/i }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: /canvas/i }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("Developer").className).toContain("hidden");
+    expect(screen.getByText("Developer").className).toContain("lg:inline");
   });
 
   it("switches mode on click", async () => {

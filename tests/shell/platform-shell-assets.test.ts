@@ -49,6 +49,8 @@ describe("platform-owned shell assets", () => {
       .toBe("/_next/static/chunks/app.js");
     expect(getPlatformShellAssetUpstreamPath("/__platform-shell/matrix-logo.svg"))
       .toBe("/matrix-logo.svg");
+    expect(getPlatformShellAssetUpstreamPath("/__platform-shell/wallpapers/moraine-lake.jpg"))
+      .toBe("/wallpapers/moraine-lake.jpg");
 
     for (const rejectedPath of [
       "/__platform-shell/api/auth/computers",
@@ -66,15 +68,15 @@ describe("platform-owned shell assets", () => {
     vi.stubEnv("NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX", "/__platform-shell");
     vi.resetModules();
     const { platformShellAssetPath } = await import("../../shell/src/lib/platform-shell-assets");
-    expect(platformShellAssetPath("/runtime-shell-backdrop.webp")).toBe(
-      "/__platform-shell/runtime-shell-backdrop.webp",
+    expect(platformShellAssetPath("/wallpapers/moraine-lake.jpg")).toBe(
+      "/__platform-shell/wallpapers/moraine-lake.jpg",
     );
 
     vi.stubEnv("NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX", "");
     vi.resetModules();
     const customerAssets = await import("../../shell/src/lib/platform-shell-assets");
-    expect(customerAssets.platformShellAssetPath("/runtime-shell-backdrop.webp"))
-      .toBe("/runtime-shell-backdrop.webp");
+    expect(customerAssets.platformShellAssetPath("/wallpapers/moraine-lake.jpg"))
+      .toBe("/wallpapers/moraine-lake.jpg");
   });
 
   it("keeps manifest, icon, and social metadata on the same platform revision", async () => {

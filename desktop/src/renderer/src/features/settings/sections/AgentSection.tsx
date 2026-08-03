@@ -9,6 +9,7 @@ import { useConnection } from "../../../stores/connection";
 import { useTabs } from "../../../stores/tabs";
 import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../../coding-agents/provider-setup-terminal";
 import { Card, Empty, SectionHeader } from "./section-kit";
+import AgentRuntimeSettingsCard from "./AgentRuntimeSettingsCard";
 
 const SOUL_PATH = "/files/system/soul.md";
 const AGENT_PATH = "/api/settings/agent";
@@ -463,13 +464,15 @@ function RuntimeProvidersCard() {
 }
 
 export default function AgentSection() {
+  const runtimeScope = useConnection((state) => `${state.runtimeSlot}:${state.authGeneration}`);
   return (
     <>
       <SectionHeader
-        title="Agent (Hermes)"
-        description="Hermes is your OS agent. Tune its model and reasoning, edit its standing instructions (SOUL), and check which coding agents are connected."
+        title="Agent"
+        description="Tune Matrix Chat, choose the runtime for messaging channels, authenticate providers, edit SOUL, and check which coding agents are connected."
       />
       <ModelEffortCard />
+      <AgentRuntimeSettingsCard key={runtimeScope} />
       <RuntimeProvidersCard />
       <ProvidersCard />
       <SoulEditor />

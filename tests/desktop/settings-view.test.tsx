@@ -49,8 +49,8 @@ describe("SettingsView", () => {
 
     render(<SettingsView />);
 
-    // The Agent (Hermes) section renders instead of the default Account.
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Agent (Hermes)" })).not.toBeNull());
+    // The unified Agent section renders instead of the default Account.
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Agent" })).not.toBeNull());
     expect(useUi.getState().requestedSettingsSection).toBeNull();
   });
 

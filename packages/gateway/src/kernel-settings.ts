@@ -1,21 +1,37 @@
 import {
   DEFAULT_KERNEL_EFFORT,
   DEFAULT_KERNEL_MODEL,
-  type KernelEffort,
 } from "@matrix-os/kernel";
+import { z } from "zod/v4";
 
-export const KERNEL_MODELS = [
-  { id: "claude-opus-4-6", label: "Claude Opus 4.6", tier: "Most capable" },
-  { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", tier: "Balanced" },
-  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", tier: "Fastest" },
+export const KERNEL_MODEL_IDS = [
+  "claude-opus-4-6",
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5",
 ] as const;
 
-export const KERNEL_MODEL_IDS = KERNEL_MODELS.map((model) => model.id) as [string, ...string[]];
+export const KernelModelSchema = z.enum(KERNEL_MODEL_IDS);
+export type KernelModel = z.infer<typeof KernelModelSchema>;
+
+const KERNEL_MODEL_DETAILS = {
+  "claude-opus-4-6": { label: "Claude Opus 4.6", tier: "Most capable" },
+  "claude-sonnet-4-5": { label: "Claude Sonnet 4.5", tier: "Balanced" },
+  "claude-haiku-4-5": { label: "Claude Haiku 4.5", tier: "Fastest" },
+} as const satisfies Record<KernelModel, { label: string; tier: string }>;
+
+export const KERNEL_MODELS = KERNEL_MODEL_IDS.map((id) => ({
+  id,
+  ...KERNEL_MODEL_DETAILS[id],
+}));
+
 export const KERNEL_EFFORTS = ["low", "medium", "high", "max"] as const;
+export const KernelEffortSchema = z.enum(KERNEL_EFFORTS);
+export type KernelEffort = z.infer<typeof KernelEffortSchema>;
+
 export const KERNEL_DEFAULTS = {
   model: DEFAULT_KERNEL_MODEL,
   effort: DEFAULT_KERNEL_EFFORT,
-} as const;
+} as const satisfies { model: KernelModel; effort: KernelEffort };
 
 export interface KernelModelOption {
   id: string;
@@ -23,14 +39,14 @@ export interface KernelModelOption {
   tier: string;
 }
 
-export function normalizeKernelModel(value: unknown): string | null {
-  return typeof value === "string" && KERNEL_MODEL_IDS.includes(value) ? value : null;
+export function normalizeKernelModel(value: unknown): KernelModel | null {
+  const parsed = KernelModelSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 export function normalizeKernelEffort(value: unknown): KernelEffort | null {
-  return typeof value === "string" && (KERNEL_EFFORTS as readonly string[]).includes(value)
-    ? value as KernelEffort
-    : null;
+  const parsed = KernelEffortSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 export function resolveKernelModelOption(model: string): KernelModelOption {

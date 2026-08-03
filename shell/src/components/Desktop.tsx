@@ -517,8 +517,8 @@ export function Desktop({ launchAppPath, terminalLaunchAction, onOpenCommandPale
     });
   }, [dockXOffset, wmOpenWindow, wmRestoreAndFocusWindow]);
 
-  const openSetupTerminal = (launchPath: string) => {
-    openTerminalWithAction((targetId) => enqueueTerminalLaunch(launchPath, targetId));
+  const openSetupTerminal = (action: TerminalLaunchAction) => {
+    openTerminalWithAction((targetId) => enqueueTerminalLaunch(action, targetId));
   };
 
   // Vocal mode's open_app tool and auto-open-after-build both go through
@@ -1733,7 +1733,14 @@ export function Desktop({ launchAppPath, terminalLaunchAction, onOpenCommandPale
         </div>
       </div>
 
-      <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <Settings
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onOpenAgentTerminal={(action) => {
+          setSettingsOpen(false);
+          openSetupTerminal(action);
+        }}
+      />
       {/* Single ChatPopover instance shared by desktop + mobile dock
           buttons. Lives outside both dock-orientation branches so it
           isn't unmounted when the viewport orientation flips. */}

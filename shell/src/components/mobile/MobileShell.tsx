@@ -308,20 +308,24 @@ export function MobileShell({ launchAppPath, terminalLaunchAction, onOpenCommand
     setView("app");
   }, []);
 
-  const openTerminalLaunch = useCallback((app: MobileApp, action: TerminalLaunchAction) => {
-    const id = `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    setOpenStack((prev) => {
-      const withoutOldestTerminal = prev.filter((entry, index) => {
-        if (entry.app.path !== "__terminal__") return true;
-        const terminalCount = prev.filter((candidate) => candidate.app.path === "__terminal__").length;
-        if (terminalCount < MAX_TERMINAL_INSTANCES) return true;
-        return index !== prev.findIndex((candidate) => candidate.app.path === "__terminal__");
-      });
-      return [...withoutOldestTerminal, { id, app, openedAt: Date.now() }];
-    });
+  const openAgentSetupTerminal = useCallback((
+    action: TerminalLaunchAction,
+    consumeLocation = false,
+  ) => {
+    const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
+    if (!terminal) return;
+    const terminals = stackRef.current.filter((entry) => entry.app.path === "__terminal__");
+    const reusable = terminals.length >= MAX_TERMINAL_INSTANCES
+      ? terminals[terminals.length - 1]
+      : undefined;
+    const id = reusable?.id ?? `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    setOpenStack((previous) => reusable
+      ? [...previous.filter((entry) => entry.id !== reusable.id), reusable]
+      : [...previous, { id, app: terminal, openedAt: Date.now() }]);
+    setSettingsOpen(false);
     setView("app");
     requestAnimationFrame(() => {
-      if (enqueueTerminalLaunchAction(action, id)) {
+      if (enqueueTerminalLaunchAction(action, id) && consumeLocation) {
         consumeTerminalLaunchActionFromLocation();
       }
     });
@@ -337,12 +341,12 @@ export function MobileShell({ launchAppPath, terminalLaunchAction, onOpenCommand
     launchPathConsumedRef.current = launchKey;
     if (launchAppPath === "__terminal__" && terminalLaunchAction) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- imperative one-shot launch: the external URL requests a new canonical Terminal instance and queues its fixed action. The dedupe ref prevents repeated launches.
-      openTerminalLaunch(app, terminalLaunchAction);
+      openAgentSetupTerminal(terminalLaunchAction, true);
       return;
     }
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state, react-doctor/no-adjust-state-on-prop-change -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
     openApp(app);
-  }, [apps, launchAppPath, openApp, openTerminalLaunch, terminalLaunchAction]);
+  }, [apps, launchAppPath, openAgentSetupTerminal, openApp, terminalLaunchAction]);
 
   const closeApp = (openId: string) => {
     const closed = stackRef.current.find((o) => o.id === openId);
@@ -568,7 +572,11 @@ export function MobileShell({ launchAppPath, terminalLaunchAction, onOpenCommand
         }}
       />
 
-      <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <Settings
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onOpenAgentTerminal={openAgentSetupTerminal}
+      />
     </div>
     </MotionConfig>
   );

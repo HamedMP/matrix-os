@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { MarkdownEditor } from "../MarkdownEditor";
 import { getGatewayUrl } from "@/lib/gateway";
 import { UserIcon } from "lucide-react";
+import { AgentRuntimePanel } from "./AgentRuntimePanel";
+import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 
 const GATEWAY = getGatewayUrl();
 const AGENT_FETCH_TIMEOUT_MS = 10_000;
@@ -16,7 +18,11 @@ interface Identity {
   displayName?: string;
 }
 
-export function AgentSection() {
+export function AgentSection({
+  onOpenTerminal,
+}: {
+  onOpenTerminal?: (action: TerminalLaunchAction) => void;
+}) {
   const [identity, setIdentity] = useState<Identity>({});
   const [soulContent, setSoulContent] = useState("");
   const [saving, setSaving] = useState(false);
@@ -56,17 +62,13 @@ export function AgentSection() {
     setSaving(true);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `saving` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
-      await fetch(`${GATEWAY}/api/bridge/data`, {
-        method: "POST",
+      const response = await fetch(`${GATEWAY}/files/system/soul.md`, {
+        method: "PUT",
         signal: AbortSignal.timeout(AGENT_FETCH_TIMEOUT_MS),
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "write",
-          app: "_system",
-          key: "soul-backup",
-          value: content,
-        }),
+        headers: { "Content-Type": "text/markdown; charset=utf-8" },
+        body: content,
       });
+      if (!response.ok) throw new Error("SOUL update failed");
       setSoulContent(content);
     } finally {
       setSaving(false);
@@ -76,6 +78,8 @@ export function AgentSection() {
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <h2 className="text-lg font-semibold">Agent</h2>
+
+      <AgentRuntimePanel onOpenTerminal={onOpenTerminal} />
 
       <Card>
         <CardHeader>

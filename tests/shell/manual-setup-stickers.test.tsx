@@ -27,8 +27,8 @@ describe("ManualSetupStickers", () => {
     fireEvent.click(screen.getByRole("button", { name: /run github browser login/i }));
 
     expect(onOpenTerminal).toHaveBeenCalledTimes(2);
-    expect(onOpenTerminal.mock.calls[0]?.[0]).toMatch(/^__terminal__:setup-claude-login-/);
-    expect(onOpenTerminal.mock.calls[1]?.[0]).toMatch(/^__terminal__:setup-github-ssh-login-/);
+    expect(onOpenTerminal.mock.calls[0]?.[0]).toBe("claude-login");
+    expect(onOpenTerminal.mock.calls[1]?.[0]).toBe("github-ssh-login");
   });
 
   it("opens Hermes instead of the old voice onboarding", () => {

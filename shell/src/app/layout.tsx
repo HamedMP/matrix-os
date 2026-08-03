@@ -129,6 +129,7 @@ export default async function RootLayout({
     // build time (default /sign-in and /sign-up); without them Clerk falls
     // back to the hosted Account Portal (accounts.matrix-os.com).
     <ClerkProvider>
+      {/* react-doctor-disable-next-line react-doctor/no-render-in-render -- pre-existing document helper selects whether PostHog identity is included while preserving one shared html/body definition; it returns only this request's static document tree and owns no component state. */}
       {renderDocument(true)}
     </ClerkProvider>
   );
