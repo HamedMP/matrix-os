@@ -65,7 +65,9 @@ describe("terminal launch paths", () => {
     });
     expect(config?.command).toContain('MATRIX_T3_HOME="${MATRIX_HOME:-$HOME}/system/t3code"');
     expect(config?.command).toContain("read -r MATRIX_T3_CONFIRM");
-    expect(config?.command).toContain('MATRIX_T3_PUBLIC_BASE_URL="https://app.matrix-os.com/vm/$MATRIX_HANDLE/api/integrations/t3/"');
+    expect(config?.command).toContain(
+      `MATRIX_T3_PUBLIC_BASE_URL="${window.location.origin}/vm/$MATRIX_HANDLE/api/integrations/t3/"`,
+    );
     expect(config?.command).toContain(`MATRIX_T3_PACKAGE="${T3_PREVIEW_PACKAGE}"`);
     expect(config?.command).toContain('npx --yes "$MATRIX_T3_PACKAGE" pair');
     expect(config?.command).toContain('npx --yes "$MATRIX_T3_PACKAGE" serve');
@@ -131,7 +133,7 @@ describe("terminal launch paths", () => {
       });
       expect(approved.status).toBe(0);
       expect(readFileSync(marker, "utf8").trim().split("\n")).toEqual([
-        `--yes ${T3_PREVIEW_PACKAGE} pair --pairing-base-url https://app.matrix-os.com/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
+        `--yes ${T3_PREVIEW_PACKAGE} pair --pairing-base-url ${window.location.origin}/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
       ]);
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -170,8 +172,8 @@ describe("terminal launch paths", () => {
 
       expect(result.status).toBe(0);
       expect(readFileSync(marker, "utf8").trim().split("\n")).toEqual([
-        `--yes ${T3_PREVIEW_PACKAGE} pair --pairing-base-url https://app.matrix-os.com/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
-        `--yes ${T3_PREVIEW_PACKAGE} serve --host 127.0.0.1 --port 3773 --pairing-base-url https://app.matrix-os.com/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
+        `--yes ${T3_PREVIEW_PACKAGE} pair --pairing-base-url ${window.location.origin}/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
+        `--yes ${T3_PREVIEW_PACKAGE} serve --host 127.0.0.1 --port 3773 --pairing-base-url ${window.location.origin}/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
       ]);
     } finally {
       rmSync(root, { force: true, recursive: true });

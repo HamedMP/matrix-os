@@ -14,6 +14,24 @@ export interface TerminalLaunchConfig {
 // Replace with the first official T3 release containing PR #5115 before this leaves preview.
 const T3_PREVIEW_PACKAGE =
   "https://github.com/HamedMP/t3code/releases/download/matrix-preview-pr-5115-662e50904/t3-pr5115-662e50904.tgz";
+const DEFAULT_MATRIX_APP_ORIGIN = "https://app.matrix-os.com";
+const T3_PUBLIC_ORIGIN_PLACEHOLDER = "__MATRIX_T3_PUBLIC_ORIGIN__";
+
+function getT3PublicOrigin(): string {
+  if (typeof window !== "undefined") {
+    const browserUrl = new URL(window.location.href);
+    if (browserUrl.protocol === "http:" || browserUrl.protocol === "https:") {
+      return browserUrl.origin;
+    }
+  }
+
+  const configuredUrl = process.env.NEXT_PUBLIC_MATRIX_APP_URL;
+  if (configuredUrl && URL.canParse(configuredUrl)) {
+    const parsed = new URL(configuredUrl);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.origin;
+  }
+  return DEFAULT_MATRIX_APP_ORIGIN;
+}
 
 const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
   "claude-login": {
@@ -43,13 +61,21 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
       `export MATRIX_T3_PACKAGE="${T3_PREVIEW_PACKAGE}"`,
       'case "${MATRIX_HANDLE:-}" in ""|*[!a-z0-9-]*) printf \'Matrix computer handle is unavailable or invalid.\\n\'; exit 1 ;; esac',
       'if [ "${#MATRIX_HANDLE}" -lt 2 ] || [ "${#MATRIX_HANDLE}" -gt 63 ]; then printf \'Matrix computer handle is unavailable or invalid.\\n\'; exit 1; fi',
-      'export MATRIX_T3_PUBLIC_BASE_URL="https://app.matrix-os.com/vm/$MATRIX_HANDLE/api/integrations/t3/"',
+      `export MATRIX_T3_PUBLIC_BASE_URL="${T3_PUBLIC_ORIGIN_PLACEHOLDER}/vm/$MATRIX_HANDLE/api/integrations/t3/"`,
       "printf 'T3 Code wants to install the pinned CLI build paired with this Matrix preview and expose its local server through this Matrix OS computer.\\nNo T3 account or Matrix credentials are required. Anyone with the one-time pairing link can connect, so keep it private. Continue? [y/N] '",
       "read -r MATRIX_T3_CONFIRM",
       'case "$MATRIX_T3_CONFIRM" in [yY]|[yY][eE][sS]) printf \'\\nChecking for an existing T3 Code server.\\n\\n\'; if npx --yes "$MATRIX_T3_PACKAGE" pair --pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL" --base-dir "$MATRIX_T3_HOME"; then printf \'\\nA fresh pairing link was created for the running server.\\n\'; else printf \'\\nStarting T3 Code locally. Scan or paste the pairing link shown below in the T3 Code app. Keep this Terminal session running.\\n\\n\'; exec npx --yes "$MATRIX_T3_PACKAGE" serve --host 127.0.0.1 --port 3773 --pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL" --base-dir "$MATRIX_T3_HOME"; fi ;; *) printf \'T3 Code setup canceled.\\n\' ;; esac',
     ].join(" && "),
   },
 };
+
+function materializeTerminalLaunchConfig(config: TerminalLaunchConfig): TerminalLaunchConfig {
+  if (config.action !== "t3-connect") return config;
+  return {
+    ...config,
+    command: config.command.replace(T3_PUBLIC_ORIGIN_PLACEHOLDER, getT3PublicOrigin()),
+  };
+}
 
 function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -77,12 +103,12 @@ export function parseTerminalLaunchPath(path: string): TerminalLaunchConfig | nu
   if (!path.startsWith("__terminal__:setup-")) return null;
   const match = path.match(/^__terminal__:setup-(claude-login|codex-login|github-ssh-login|t3-connect)(?:-[A-Za-z0-9]+)?$/);
   if (!match) return null;
-  return TERMINAL_ACTIONS[match[1] as TerminalLaunchAction];
+  return materializeTerminalLaunchConfig(TERMINAL_ACTIONS[match[1] as TerminalLaunchAction]);
 }
 
 function parseTerminalLaunchAction(value: string | null): TerminalLaunchConfig | null {
   if (!value || !Object.hasOwn(TERMINAL_ACTIONS, value)) return null;
-  return TERMINAL_ACTIONS[value as TerminalLaunchAction];
+  return materializeTerminalLaunchConfig(TERMINAL_ACTIONS[value as TerminalLaunchAction]);
 }
 
 export function parseTerminalLaunchActionFromSearch(search: string): TerminalLaunchConfig | null {
