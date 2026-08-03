@@ -12,7 +12,7 @@ interface ShellAuthLayoutProps {
 
 export function ShellAuthLayout({ eyebrow, title, body, children }: ShellAuthLayoutProps) {
   return (
-    <main data-matrix-auth-shell="true" className="relative min-h-screen overflow-hidden bg-[#F7F6F0] text-[#323D2E]">
+    <main data-matrix-auth-shell="true" className="relative h-dvh overflow-x-hidden overflow-y-auto bg-[#F7F6F0] text-[#323D2E]">
       <div
         className="pointer-events-none absolute inset-0"
         style={{
@@ -30,7 +30,7 @@ export function ShellAuthLayout({ eyebrow, title, body, children }: ShellAuthLay
         }}
       />
 
-      <section className="relative mx-auto grid min-h-screen w-full max-w-6xl items-center gap-10 px-6 py-10 md:px-10 lg:grid-cols-[minmax(0,1fr)_minmax(380px,430px)] lg:gap-20 lg:px-14">
+      <section className="relative mx-auto grid min-h-full w-full max-w-6xl items-center gap-10 px-6 py-10 md:px-10 lg:grid-cols-[minmax(0,1fr)_minmax(380px,430px)] lg:gap-20 lg:px-14">
         <div className="space-y-8 border-b border-[#323D2E]/10 pb-8 lg:border-b-0 lg:pb-0">
           <div className="inline-flex items-center gap-2 rounded-full border border-[#D06F25]/20 bg-[#D06F25]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#D06F25]">
             <SparklesIcon className="size-3.5" aria-hidden="true" />
