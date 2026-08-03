@@ -226,7 +226,7 @@ export function ProjectThreadList({
     <nav
       aria-label="Project conversations"
       className="flex min-h-0 w-[clamp(220px,24vw,288px)] shrink-0 flex-col border-r"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-secondary)" }}
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
     >
       <div className="flex items-center justify-between px-3 pb-2 pt-3">
         <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
@@ -238,7 +238,7 @@ export function ProjectThreadList({
           title={`New chat in ${projectLabel}`}
           disabled={!canCreate}
           onClick={() => onNewChat()}
-          className="rounded p-1 outline-none hover:bg-[var(--bg-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+          className="rounded p-1 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
           style={{ color: "var(--text-tertiary)" }}
         >
           <Plus size={13} />

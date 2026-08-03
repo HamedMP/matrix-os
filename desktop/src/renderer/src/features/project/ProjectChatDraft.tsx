@@ -158,7 +158,7 @@ export function ProjectChatDraft({
     <section
       aria-label={`New chat in ${projectLabel}`}
       className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden"
-      style={{ background: "var(--bg-primary)" }}
+      style={{ background: "var(--bg-app)" }}
       data-slot="project-chat-draft"
     >
       <ProjectChatHero
@@ -211,7 +211,7 @@ export function ProjectChatDraft({
             />
           ) : (
             <div
-              className="rounded-2xl border p-4 text-sm"
+              className="rounded-[var(--radius-xl)] border p-4 text-sm"
               style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)", color: "var(--text-secondary)" }}
             >
               Agent runs are not available on this runtime yet.

@@ -241,6 +241,45 @@ describe("ProjectChatsView hero layout", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("hides the inspector entirely while the draft pane is showing", async () => {
+    mockOperator();
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    // The first listed chat auto-selects, so the inspector split appears once
+    // the workspace finishes loading.
+    expect(await screen.findByTestId("inspector-split")).toBeTruthy();
+
+    act(() => {
+      useProjectView.getState().setSelectedThread("matrix-os", null);
+    });
+
+    // Draft state: the hero takes the full width — no inspector panel, no
+    // split, and no collapse toggle.
+    expect(await screen.findByText("What should we work on?")).toBeTruthy();
+    expect(screen.queryByTestId("inspector-split")).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Conversation tools" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Hide conversation tools" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show conversation tools" })).toBeNull();
+  });
+
+  it("brings the inspector back when a thread is selected from the rail", async () => {
+    mockOperator();
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByTestId("inspector-split");
+
+    act(() => {
+      useProjectView.getState().setSelectedThread("matrix-os", null);
+    });
+    await screen.findByText("What should we work on?");
+    expect(screen.queryByTestId("inspector-split")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
+
+    expect(await screen.findByTestId("inspector-split")).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide conversation tools" })).toBeTruthy();
+  });
+
   it("collapses to a full-width hero transcript and persists the choice", async () => {
     const { saved } = mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);

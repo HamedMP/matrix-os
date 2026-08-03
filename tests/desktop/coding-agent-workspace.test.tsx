@@ -3979,7 +3979,10 @@ describe("ProjectChatsView", () => {
 
     render(<ProjectChatsView projectId="matrix-os" active />);
 
-    const newChat = await screen.findByRole("button", { name: "New chat in selected project" });
+    // With no thread selected the draft pane owns the full width and the
+    // inspector (with its toolbar new chat) is hidden; the rail's new-chat
+    // button drives the same openNewChat path instead.
+    const newChat = await screen.findByRole("button", { name: "New chat in Matrix OS" });
     // The button is disabled until the async project-workspace hydration
     // populates selectedProjectId; clicking earlier is silently ignored.
     await waitFor(() => expect(newChat.hasAttribute("disabled")).toBe(false));
@@ -4001,7 +4004,9 @@ describe("ProjectChatsView", () => {
 
     render(<ProjectChatsView projectId="matrix-os" active />);
 
-    const newChat = await screen.findByRole("button", { name: "New chat in selected project" });
+    // The inspector (and its toolbar new chat) is hidden in draft state, so
+    // the rail's new-chat button drives the same openNewChat path.
+    const newChat = await screen.findByRole("button", { name: "New chat in Matrix OS" });
     // The button is disabled until the async project-workspace hydration
     // populates selectedProjectId; clicking earlier is silently ignored.
     await waitFor(() => expect(newChat.hasAttribute("disabled")).toBe(false));
@@ -4012,6 +4017,6 @@ describe("ProjectChatsView", () => {
     // With no chat selected the draft composer is always rendered; a failed
     // resolve must not seed it.
     expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
-    expect(screen.getByRole("button", { name: "New chat in selected project" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New chat in Matrix OS" })).toBeTruthy();
   });
 });

@@ -52,7 +52,7 @@ export function PromptInput({
 
   return (
     <div
-      className="prompt-card flex flex-col overflow-hidden rounded-2xl border"
+      className="prompt-card flex flex-col overflow-hidden rounded-[var(--radius-xl)] border"
       style={{ background: "var(--bg-surface)" }}
     >
       <textarea

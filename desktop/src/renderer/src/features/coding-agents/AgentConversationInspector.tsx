@@ -1,4 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import * as RadixTooltip from "@radix-ui/react-tooltip";
+import { Activity, FileDiff, FolderOpen, Globe, SquareTerminal, type LucideIcon } from "lucide-react";
 
 export type AgentConversationInspectorTab = "changes" | "files" | "terminal" | "preview" | "activity";
 
@@ -41,6 +43,20 @@ const TAB_LABELS: Record<AgentConversationInspectorTab, string> = {
   activity: "Activity",
 };
 
+const TAB_ICONS: Record<AgentConversationInspectorTab, LucideIcon> = {
+  changes: FileDiff,
+  files: FolderOpen,
+  terminal: SquareTerminal,
+  preview: Globe,
+  activity: Activity,
+};
+
+// Tabs are icon-first: a tab shows its full label only when the tablist is
+// wide enough for every tab to carry icon + label + badge without truncation
+// (~96px per tab). Below that the icon and count badge stand alone and the
+// tooltip carries the name — labels never ellipsis.
+const TAB_LABEL_MIN_WIDTH_PX = 96;
+
 export function AgentConversationInspector({
   defaultTab,
   selectedTab: controlledTab,
@@ -61,6 +77,9 @@ export function AgentConversationInspector({
   const selectedTab = controlledTab ?? internalTab;
   const instanceId = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const tablistRef = useRef<HTMLDivElement | null>(null);
+  // Icon-only until the tablist proves it has room for full labels.
+  const [labelsVisible, setLabelsVisible] = useState(false);
 
   const tabs: AgentConversationInspectorTab[] = files === undefined
     ? ["changes", "terminal", "preview", "activity"]
@@ -82,6 +101,20 @@ export function AgentConversationInspector({
       : [defaultTab, controlledTab],
   );
   const visitedTabSet = useMemo(() => new Set(visitedTabs), [visitedTabs]);
+
+  // Labels appear only when every tab fits icon + label + badge; otherwise
+  // the tabs stay icon-first with tooltips carrying the names.
+  useEffect(() => {
+    const node = tablistRef.current;
+    if (!node || typeof ResizeObserver !== "function") return undefined;
+    const threshold = tabs.length * TAB_LABEL_MIN_WIDTH_PX;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? node.clientWidth;
+      setLabelsVisible(width >= threshold);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [tabs.length]);
 
   function selectTab(tab: AgentConversationInspectorTab, focusIndex?: number) {
     setVisitedTabs((current) => current.includes(tab) ? current : [...current, tab]);
@@ -131,56 +164,73 @@ export function AgentConversationInspector({
         {composer}
       </div>
       <div
+        ref={tablistRef}
         role="tablist"
         aria-label="Conversation tools"
         className="grid shrink-0 gap-1 border-b p-1.5"
         style={{
           gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))`,
           borderColor: "var(--border-subtle)",
-          background: "var(--bg-secondary)",
+          background: "var(--bg-sunken)",
         }}
       >
+        <RadixTooltip.Provider delayDuration={400}>
         {tabs.map((tabId, index) => {
           const selected = tabId === selectedTab;
           const label = TAB_LABELS[tabId];
+          const TabIcon = TAB_ICONS[tabId];
           // Surfaces without a meaningful count (the file browser) render no
           // badge rather than a permanent zero.
           const count = counts[tabId];
           return (
-            <button
-              key={tabId}
-              ref={(node) => { tabRefs.current[index] = node; }}
-              id={`${instanceId}-${tabId}-tab`}
-              type="button"
-              role="tab"
-              aria-label={count === undefined ? label : `${label} ${count}`}
-              aria-selected={selected}
-              aria-controls={`${instanceId}-${tabId}-panel`}
-              tabIndex={selected ? 0 : -1}
-              className="no-drag flex min-w-0 items-center justify-center gap-1 rounded-md border px-1 py-2 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              style={{
-                borderColor: selected ? "var(--border-default)" : "transparent",
-                background: selected ? "var(--bg-elevated)" : "transparent",
-                color: selected ? "var(--text-primary)" : "var(--text-tertiary)",
-              }}
-              onClick={() => selectTab(tabId)}
-              onKeyDown={(event) => handleTabKeyDown(event, index)}
-            >
-              <span className="truncate">{label}</span>
-              {count === undefined ? null : (
-                <span
-                  className="min-w-3.5 shrink-0 rounded-full px-0.5 text-center text-[9px] tabular-nums"
+            <RadixTooltip.Root key={tabId}>
+              <RadixTooltip.Trigger asChild>
+                <button
+                  ref={(node) => { tabRefs.current[index] = node; }}
+                  id={`${instanceId}-${tabId}-tab`}
+                  type="button"
+                  role="tab"
+                  aria-label={count === undefined ? label : `${label} ${count}`}
+                  aria-selected={selected}
+                  aria-controls={`${instanceId}-${tabId}-panel`}
+                  tabIndex={selected ? 0 : -1}
+                  className="no-drag flex min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-md border px-2 py-2 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   style={{
-                    background: selected ? "var(--accent-muted)" : "var(--bg-surface)",
-                    color: selected ? "var(--accent)" : "var(--text-tertiary)",
+                    borderColor: selected ? "var(--border-default)" : "transparent",
+                    background: selected ? "var(--bg-raised)" : "transparent",
+                    color: selected ? "var(--text-primary)" : "var(--text-tertiary)",
                   }}
+                  onClick={() => selectTab(tabId)}
+                  onKeyDown={(event) => handleTabKeyDown(event, index)}
                 >
-                  {count}
-                </span>
-              )}
-            </button>
+                  <TabIcon size={14} className="shrink-0" aria-hidden="true" />
+                  {labelsVisible ? <span className="whitespace-nowrap">{label}</span> : null}
+                  {count === undefined ? null : (
+                    <span
+                      className="min-w-3.5 shrink-0 rounded-full px-0.5 text-center text-[9px] tabular-nums"
+                      style={{
+                        background: selected ? "var(--accent-muted)" : "var(--bg-surface)",
+                        color: selected ? "var(--accent)" : "var(--text-tertiary)",
+                      }}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              </RadixTooltip.Trigger>
+              <RadixTooltip.Portal>
+                <RadixTooltip.Content
+                  sideOffset={6}
+                  className="z-[100] rounded-md px-2 py-1 text-xs"
+                  style={{ background: "var(--forest-deep)", color: "var(--forest-foreground)", boxShadow: "var(--shadow-2)" }}
+                >
+                  {label}
+                </RadixTooltip.Content>
+              </RadixTooltip.Portal>
+            </RadixTooltip.Root>
           );
         })}
+        </RadixTooltip.Provider>
       </div>
       {tabs.map((tabId) => {
         const selected = tabId === selectedTab;

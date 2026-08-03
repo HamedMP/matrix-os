@@ -357,8 +357,13 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
 
   // Slice 2 hero layout: the conversation and the tools inspector sit in a
   // resizable split; collapsing the inspector yields a full-width hero
-  // transcript. Width and collapsed state persist per project.
+  // transcript. Width and collapsed state persist per project. While the
+  // draft pane is showing (no thread selected on a project-workspace
+  // runtime) the inspector is not rendered at all — the hero gets the full
+  // width. Legacy runtimes keep the inspector because their new-chat
+  // composer lives inside it.
   const inspectorRegionId = `project-${projectId}-inspector`;
+  const draftVisible = selectedThreadId === null && projectWorkspaceEnabled;
 
   // The inspector tab is controlled so live surfaces can gate on visibility:
   // the embedded terminal releases the single app-wide socket attachment
@@ -425,7 +430,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       id={inspectorRegionId}
       aria-label="Conversation tools"
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-      style={{ background: "var(--bg-secondary)" }}
+      style={{ background: "var(--bg-sunken)" }}
     >
       <AgentConversationInspector
         defaultTab={inspectorDefaultTab}
@@ -437,13 +442,14 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         counts={inspectorCounts}
         toolbar={(
           <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Conversation tools</h2>
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Conversation tools</h2>
               <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>Inspect the current project without leaving the chat</p>
             </div>
             {projectWorkspaceEnabled ? (
               <Button
                 variant="primary"
+                className="h-7 shrink-0 whitespace-nowrap"
                 aria-label="New chat in selected project"
                 onClick={() => {
                   void openNewChat();
@@ -537,7 +543,11 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         onNewChat={(taskId) => void openNewChat(taskId)}
         onRetry={() => void refreshWorkspace(projectId)}
       />
-      {!inspectorHydrated ? (
+      {draftVisible ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {conversationColumn}
+        </div>
+      ) : !inspectorHydrated ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {conversationColumn}
         </div>
@@ -642,7 +652,7 @@ function InspectorToggle({
       aria-controls={controls}
       title={label}
       onClick={onToggle}
-      className="no-drag absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-md border outline-none transition-colors hover:brightness-105 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      className="no-drag absolute right-2.5 top-2.5 z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border outline-none transition-colors hover:brightness-105 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       style={{
         borderColor: "var(--border-subtle)",
         background: "var(--bg-surface)",

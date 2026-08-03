@@ -83,7 +83,7 @@ describe("AgentConversationView composer card presentation", () => {
 
     const card = composer!.querySelector(".prompt-card");
     expect(card).not.toBeNull();
-    expect(card!.className).toContain("rounded-2xl");
+    expect(card!.className).toContain("rounded-[var(--radius-xl)]");
     expect(card!.className).toContain("border");
   });
 

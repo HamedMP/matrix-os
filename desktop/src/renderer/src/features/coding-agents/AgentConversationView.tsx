@@ -1,13 +1,18 @@
 import type { AgentAttachment, AgentThreadEvent, AgentThreadSnapshot, RuntimeSummary } from "@matrix-os/contracts";
 import {
   Check,
+  CircleAlert,
+  CircleCheck,
   Copy,
   Eye,
   FileDiff,
   FileText,
   GitPullRequest,
+  Hourglass,
   Image as ImageIcon,
+  Info,
   Link2,
+  MessageSquarePlus,
   Minus,
   ScrollText,
   SquarePen,
@@ -288,7 +293,7 @@ function UserRow({ event }: { event: Extract<AgentThreadEvent, { type: "user.mes
       <MessageContent>
         <Bubble variant="secondary" align="end">
           <BubbleContent
-            className="rounded-2xl rounded-br-md border-[var(--border-subtle)] px-3.5 whitespace-pre-wrap"
+            className="rounded-[var(--radius-xl)] rounded-br-md border-[var(--border-subtle)] px-3.5 whitespace-pre-wrap"
             style={
               collapsible && !expanded
                 ? { maxHeight: 176, maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)" }
@@ -486,6 +491,27 @@ function approvalLabel(decision: string) {
   return "Decide";
 }
 
+// Pure status events ("Thread created", "Terminal bound", "Thread
+// completed", …) render as compact single-line timeline rows: a small
+// leading glyph, the bounded copy, and the timestamp at the right — no card
+// background, border, or shadow, so they read as history instead of
+// dominating the conversation.
+function systemEventIcon(event: AgentThreadEvent) {
+  switch (event.type) {
+    case "thread.created": return MessageSquarePlus;
+    case "thread.completed": return CircleCheck;
+    case "thread.error": return CircleAlert;
+    case "terminal.bound": return SquareTerminal;
+    case "turn.accepted": return Hourglass;
+    case "approval.resolved":
+    case "user_input.answered": return CircleCheck;
+    case "approval.requested":
+    case "user_input.requested": return CircleAlert;
+    case "file.changed": return FileDiff;
+    default: return Info;
+  }
+}
+
 function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
   event: AgentThreadEvent;
   answeredInputs: ReadonlySet<string>;
@@ -504,6 +530,42 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
   const input = event.type === "user_input.requested" ? event.request : null;
   const approvalKey = approval ? codingAgentApprovalActionKey(approval.threadId, approval.approvalId) : null;
   const inputKey = input ? codingAgentInputActionKey(input.threadId, input.requestId) : null;
+  // Events carrying a live action — a pending approval decision, a pending
+  // input answer, or an openable review — keep the card treatment; every
+  // other status event collapses to a compact timeline row.
+  const interactive = Boolean(
+    (approval && approvalKey && !resolvedApprovals.has(approvalKey))
+    || (input && inputKey && !answeredInputs.has(inputKey))
+    || event.type === "review.ready",
+  );
+  if (!interactive) {
+    const Glyph = systemEventIcon(event);
+    const failed = event.type === "thread.error";
+    return (
+      <div className="flex w-full items-center gap-2 px-1 py-0.5" data-slot="system-event-row">
+        <Glyph
+          size={12}
+          className="shrink-0"
+          style={{ color: failed ? "var(--danger)" : "var(--text-tertiary)" }}
+          aria-hidden="true"
+        />
+        <p className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+          <span className="font-medium" style={{ color: failed ? "var(--danger)" : "var(--text-secondary)" }}>
+            {copy.title}
+          </span>
+          {copy.detail ? (
+            <>
+              <span aria-hidden="true"> · </span>
+              <span>{copy.detail}</span>
+            </>
+          ) : null}
+        </p>
+        <span className="shrink-0 text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+          {occurredAtLabel(event.occurredAt)}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="w-full rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
       <div className="flex items-center justify-between gap-3">
@@ -670,16 +732,20 @@ export function AgentConversationView({
   const showWorking = running && !streamingAssistant;
 
   return (
-    <section aria-label={`Conversation ${snapshot.thread.title}`} className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-primary)" }}>
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-        <div className="min-w-0">
+    <section aria-label={`Conversation ${snapshot.thread.title}`} className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-app)" }}>
+      {/* pr-12 reserves the top-right corner for the floating inspector
+          toggle (ProjectChatsView overlays it at right-2.5 top-2.5), so the
+          attention pill is never clipped beneath it; the title column is the
+          only element allowed to shrink and truncate. */}
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 pr-12" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+        <div className="min-w-0 flex-1">
           <span className="sr-only">Thread details</span>
           <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{snapshot.thread.title}</h2>
           <p className="flex min-w-0 items-center gap-1 truncate text-xs capitalize" style={{ color: "var(--text-tertiary)" }}>
             <span>{snapshot.thread.providerId}</span><span aria-hidden="true">·</span><span>{snapshot.thread.status.replaceAll("_", " ")}</span>
           </p>
         </div>
-        {snapshot.thread.attention !== "none" ? <span className="rounded-full px-2 py-1 text-[10px] font-semibold capitalize" style={{ background: "var(--warning-muted)", color: "var(--warning)" }}>{snapshot.thread.attention.replaceAll("_", " ")}</span> : null}
+        {snapshot.thread.attention !== "none" ? <span className="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold capitalize" style={{ background: "var(--warning-muted)", color: "var(--warning)" }}>{snapshot.thread.attention.replaceAll("_", " ")}</span> : null}
       </header>
       <Conversation key={`transcript:${snapshot.thread.id}`}>
         <ConversationContent>

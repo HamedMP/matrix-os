@@ -305,4 +305,77 @@ describe("AgentConversationView transcript", () => {
 
     expect(screen.getByText("Send a message to start the conversation.")).toBeTruthy();
   });
+
+  it("renders system status events as compact timeline rows, not cards", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          {
+            type: "thread.created",
+            eventId: "evt_created_1",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:00:05.000Z",
+            thread: { id: "thread_alpha", title: "Fix settings route" },
+          } as unknown as AgentThreadEvent,
+          {
+            type: "terminal.bound",
+            eventId: "evt_terminal_1",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:00:10.000Z",
+            terminalSessionId: "term_1",
+          } as AgentThreadEvent,
+          {
+            type: "thread.completed",
+            eventId: "evt_completed_thread",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:04:00.000Z",
+            outcome: "success",
+          } as AgentThreadEvent,
+        ], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    // Same bounded copy as before, on a single compact row per event…
+    const rows = document.querySelectorAll('[data-slot="system-event-row"]');
+    expect(rows).toHaveLength(3);
+    const createdRow = screen.getByText("Thread created").closest('[data-slot="system-event-row"]');
+    expect(createdRow).not.toBeNull();
+    expect(createdRow!.textContent).toContain("Fix settings route");
+    expect(screen.getByText("Terminal bound")).toBeTruthy();
+    expect(screen.getByText("Thread completed")).toBeTruthy();
+    // …with a leading glyph, a right-aligned time, and no card anatomy.
+    expect(createdRow!.querySelector("svg")).not.toBeNull();
+    expect(createdRow!.textContent).toMatch(/\d{1,2}:\d{2}/);
+    expect(createdRow!.className).not.toContain("border");
+    expect(createdRow!.className).not.toContain("rounded-lg");
+    expect(createdRow!.className).not.toContain("shadow");
+  });
+
+  it("keeps the review-ready event on its actionable card", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          {
+            type: "review.ready",
+            eventId: "evt_review_1",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:03:00.000Z",
+            reviewId: "rev_1",
+            summary: { changedFileCount: 2, additions: 12, deletions: 4, partial: false },
+          } as AgentThreadEvent,
+        ])}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect(screen.getByText("Review ready")).toBeTruthy();
+    expect(screen.getByText("2 files changed, +12 -4")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open review from thread" })).toBeTruthy();
+    expect(document.querySelector('[data-slot="system-event-row"]')).toBeNull();
+  });
 });
