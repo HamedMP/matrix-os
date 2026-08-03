@@ -9,7 +9,7 @@ import {
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
 } from "./lib/proxy-routes";
-import { getPublicOrigin } from "./lib/public-origin";
+import { getConfiguredAppOrigin, getPublicOrigin } from "./lib/public-origin";
 import {
   canPlatformUserAccessShell,
   isPlatformBearerValid,
@@ -95,6 +95,17 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
   return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
+function setConfiguredClerkOriginHeaders(request: ProxyRequestLike): void {
+  const configuredOrigin = getConfiguredAppOrigin();
+  if (!configuredOrigin) {
+    return;
+  }
+
+  const publicUrl = new URL(configuredOrigin);
+  request.headers.set("x-forwarded-host", publicUrl.host);
+  request.headers.set("x-forwarded-proto", publicUrl.protocol.slice(0, -1));
+}
+
 // Clerk handler for authenticated routes
 const withClerk = clerkMiddleware(async (auth, request) => {
   // Layer 1: Clerk authentication (skip public routes)
@@ -177,6 +188,10 @@ export function proxy(
   // admin bearer token is never injected onto an unauthenticated request. The
   // platform-verified fast-path above covers the pre-authenticated
   // backend-to-backend case.
+  // Cloud Run exposes its internal service origin to Next.js. Clerk derives
+  // handshake redirects from these forwarded headers, so pin them to the
+  // configured public origin before Clerk validates the redirect URL.
+  setConfiguredClerkOriginHeaders(request);
   return withClerk(request, event);
 }
 

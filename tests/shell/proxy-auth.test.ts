@@ -838,6 +838,50 @@ describe("proxy auth: sign-in redirects", () => {
     });
     expect(nextResponseRedirect).toHaveBeenCalledTimes(1);
   });
+
+  it("canonicalizes Clerk handshake headers when Cloud Run exposes its internal origin", async () => {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "pk_test_proxy_auth");
+    vi.stubEnv("NEXT_PUBLIC_MATRIX_APP_URL", "https://preview.matrix-os.com");
+
+    const clerkRequestHandler = vi.fn(async (request: unknown, event: unknown) => ({
+      kind: "clerk",
+      request,
+      event,
+    }));
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn(() => clerkRequestHandler),
+    }));
+
+    class MockNextResponse extends Response {
+      static next = vi.fn((init?: unknown) => ({ kind: "next", init }));
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+    const request = {
+      headers: new Headers({
+        host: "127.0.0.1:3200",
+        "x-forwarded-host": "matrix-platform-preview-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-proto": "http",
+      }),
+      nextUrl: {
+        host: "matrix-platform-preview-jqxkjdhtkq-ey.a.run.app",
+        pathname: "/vm/pr-1126",
+        protocol: "http:",
+        search: "?launch=__terminal__&terminal_action=t3-connect",
+      },
+    } as Parameters<typeof proxy>[0];
+
+    await proxy(request, {} as Parameters<typeof proxy>[1]);
+
+    expect(clerkRequestHandler).toHaveBeenCalledTimes(1);
+    const clerkRequest = clerkRequestHandler.mock.calls[0]?.[0] as typeof request;
+    expect(clerkRequest.headers.get("x-forwarded-host")).toBe("preview.matrix-os.com");
+    expect(clerkRequest.headers.get("x-forwarded-proto")).toBe("https");
+  });
 });
 
 describe("proxy auth: Layer 3 bearer token injection", () => {
