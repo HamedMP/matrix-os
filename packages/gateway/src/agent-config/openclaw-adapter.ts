@@ -39,8 +39,9 @@ const ModelChoiceSchema = z.object({
   alias: z.string().trim().min(1).max(160).optional(),
   available: z.boolean().optional(),
   contextWindow: z.number().int().positive().max(10_000_000).optional(),
+  contextTokens: z.number().int().positive().max(10_000_000).optional(),
   reasoning: z.boolean().optional(),
-}).strict();
+}).passthrough();
 const ModelsListSchema = z.object({
   models: z.array(ModelChoiceSchema).max(2_048),
 }).strict();
@@ -67,15 +68,19 @@ const ConfigSnapshotSchema = z.object({
   config: z.object({
     agents: z.object({
       defaults: z.object({
-        model: z.object({
-          primary: z.string().trim().min(1).max(241).nullish(),
-        }).passthrough().optional(),
+        model: z.union([
+          z.string().trim().min(1).max(241),
+          z.object({
+            primary: z.string().trim().min(1).max(241).nullish(),
+          }).passthrough(),
+        ]).optional(),
       }).passthrough().optional(),
     }).passthrough().optional(),
   }).passthrough(),
 }).passthrough();
 const MutationResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
 const HealthResponseSchema = z.object({
+  ok: z.literal(true),
   ts: z.number().finite().optional(),
 }).passthrough();
 
@@ -124,7 +129,7 @@ function actionForAuth(authKind: AgentAuthKind) {
 }
 
 function authReady(status: string): boolean {
-  return status === "ok" || status === "static";
+  return status === "ok" || status === "static" || status === "expiring";
 }
 
 function normalizeCatalog(
@@ -142,12 +147,15 @@ function normalizeCatalog(
       grouped.set(model.provider, entries);
     }
     const duplicateIndex = entries.findIndex((entry) => entry.id === model.id);
-    if (duplicateIndex === -1 && entries.length < MAX_MODELS_PER_PROVIDER) {
-      entries.push(model);
-    } else if (duplicateIndex !== -1
+    if (duplicateIndex !== -1
       && entries[duplicateIndex]?.available !== true
       && model.available === true) {
       entries[duplicateIndex] = model;
+    } else if (duplicateIndex === -1 && entries.length < MAX_MODELS_PER_PROVIDER) {
+      entries.push(model);
+    } else if (duplicateIndex === -1 && model.available === true) {
+      const unavailableIndex = entries.findIndex((entry) => entry.available !== true);
+      if (unavailableIndex !== -1) entries[unavailableIndex] = model;
     }
   }
 
@@ -167,7 +175,7 @@ function normalizeCatalog(
       capabilities: [
         "tools" as const,
         ...(model.reasoning === true ? ["reasoning" as const] : []),
-        ...(model.contextWindow !== undefined && model.contextWindow >= 100_000
+        ...((model.contextWindow ?? model.contextTokens ?? 0) >= 100_000
           ? ["long_context" as const]
           : []),
       ],
@@ -213,7 +221,10 @@ export function createOpenClawRuntimeAdapter(options: {
     const snapshot = ConfigSnapshotSchema.parse(
       await options.rpc.call("config.get", {}, signal),
     );
-    const primary = snapshot.config.agents?.defaults?.model?.primary ?? null;
+    const modelConfig = snapshot.config.agents?.defaults?.model;
+    const primary = typeof modelConfig === "string"
+      ? modelConfig
+      : modelConfig?.primary ?? null;
     let selection: AgentMessagingSelection;
     try {
       selection = parsePrimary(primary ?? undefined);
@@ -258,12 +269,10 @@ export function createOpenClawRuntimeAdapter(options: {
   }
 
   async function catalog(signal: AbortSignal) {
-    const modelResponse = await options.rpc.call("models.list", { view: "all" }, signal);
-    const authResponse = await options.rpc.call(
-      "models.authStatus",
-      { refresh: false },
-      signal,
-    );
+    const [modelResponse, authResponse] = await Promise.all([
+      options.rpc.call("models.list", { view: "configured" }, signal),
+      options.rpc.call("models.authStatus", { refresh: false }, signal),
+    ]);
     return normalizeCatalog(modelResponse, authResponse);
   }
 
@@ -279,18 +288,24 @@ export function createOpenClawRuntimeAdapter(options: {
     ) !== true) {
       throw new AgentConfigError("not_configured");
     }
-    const previous = await readConfig(signal);
+    const previous = await readConfig(signal, true);
     const primary = `${input.provider}/${input.model}`;
+    let patchMayHaveApplied = false;
     try {
       // A transport failure can occur after OpenClaw accepted the patch but
       // before Matrix received the response. Keep the write inside the
       // restore boundary so an unknown outcome is treated like a mismatch.
       await patchPrimary(primary, previous.hash, signal);
+      patchMayHaveApplied = true;
       const verified = await readConfig(signal);
       if (verified.primary !== primary) throw new AgentConfigError("invalid_response");
       return verified.selection;
     } catch (error) {
-      await restorePrimary(previous.primary);
+      const outcomeIsAmbiguous = !(error instanceof AgentConfigError)
+        || error.kind === "runtime_unavailable";
+      if (patchMayHaveApplied || outcomeIsAmbiguous) {
+        await restorePrimary(previous.primary);
+      }
       if (error instanceof AgentConfigError) throw error;
       throw new AgentConfigError("invalid_response", error);
     }
@@ -339,7 +354,7 @@ export function createOpenClawRuntimeAdapter(options: {
     },
     catalog,
     async selection(signal) {
-      return (await readConfig(signal)).selection;
+      return (await readConfig(signal, true)).selection;
     },
     configure,
     async prepare(signal) {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createOpenClawRuntimeAdapter } from "../../packages/gateway/src/agent-config/openclaw-adapter.js";
+import { AgentConfigError } from "../../packages/gateway/src/agent-config/errors.js";
 
 function createRpc(responses: Record<string, unknown[]>) {
   return {
@@ -108,7 +109,7 @@ describe("OpenClaw messaging runtime adapter", () => {
     expect(rpc.call).toHaveBeenNthCalledWith(
       1,
       "models.list",
-      { view: "all" },
+      { view: "configured" },
       expect.any(AbortSignal),
     );
     expect(rpc.call).toHaveBeenNthCalledWith(
@@ -117,6 +118,68 @@ describe("OpenClaw messaging runtime adapter", () => {
       { refresh: false },
       expect.any(AbortSignal),
     );
+  });
+
+  it("accepts OpenClaw catalog metadata and expiring credentials", async () => {
+    const rpc = createRpc({
+      "models.list": [{
+        models: [{
+          id: "claude-opus-4-6",
+          name: "Claude Opus 4.6",
+          provider: "anthropic",
+          available: true,
+          contextTokens: 200_000,
+          releaseDate: "2026-04-01",
+        }],
+      }],
+      "models.authStatus": [{
+        ts: 1_789_000_000_000,
+        providers: [{
+          provider: "anthropic",
+          status: "expiring",
+          profiles: [{ profileId: "anthropic:default", type: "oauth", status: "expiring" }],
+        }],
+      }],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    await expect(adapter.catalog(new AbortController().signal)).resolves.toEqual([
+      expect.objectContaining({
+        id: "anthropic",
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+        models: [expect.objectContaining({
+          id: "claude-opus-4-6",
+          capabilities: ["tools", "long_context"],
+        })],
+      }),
+    ]);
+  });
+
+  it("retains an available model when a provider catalog exceeds its cap", async () => {
+    const providerModels = [
+      ...Array.from({ length: 128 }, (_, index) => ({
+        id: `unavailable-${index}`,
+        name: `Unavailable ${index}`,
+        provider: "anthropic",
+        available: false,
+      })),
+      {
+        id: "available-model",
+        name: "Available Model",
+        provider: "anthropic",
+        available: true,
+      },
+    ];
+    const rpc = createRpc({
+      "models.list": [{ models: providerModels }],
+      "models.authStatus": [{ ts: 1_789_000_000_000, providers: [] }],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    const catalog = await adapter.catalog(new AbortController().signal);
+
+    expect(catalog[0]?.models).toHaveLength(128);
+    expect(catalog[0]?.models.some((model) => model.id === "available-model")).toBe(true);
   });
 
   it("caps provider grouping during catalog ingestion", async () => {
@@ -141,6 +204,24 @@ describe("OpenClaw messaging runtime adapter", () => {
 
   it("reads the selected provider/model only from the redacted config snapshot", async () => {
     const rpc = createRpc({ "config.get": [config("anthropic/claude-opus-4-6")] });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    await expect(adapter.selection(new AbortController().signal)).resolves.toEqual({
+      runtime: "openclaw",
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      configured: true,
+    });
+  });
+
+  it("accepts OpenClaw's shorthand string model configuration", async () => {
+    const rpc = createRpc({
+      "config.get": [{
+        valid: true,
+        hash: "config-hash",
+        config: { agents: { defaults: { model: "anthropic/claude-opus-4-6" } } },
+      }],
+    });
     const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
 
     await expect(adapter.selection(new AbortController().signal)).resolves.toEqual({
@@ -280,6 +361,48 @@ describe("OpenClaw messaging runtime adapter", () => {
     });
   });
 
+  it("does not overwrite a concurrent selection after a rejected patch", async () => {
+    const rpc = createRpc({
+      "models.list": [models],
+      "models.authStatus": [auth],
+      "config.get": [config("openai/gpt-5.4", "before-hash")],
+      "config.patch": [new AgentConfigError("agent_config_conflict")],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    await expect(adapter.configure({
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+    }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "agent_config_conflict",
+    });
+
+    expect(rpc.call.mock.calls.filter(([method]) => method === "config.patch")).toHaveLength(1);
+    expect(rpc.call.mock.calls.filter(([method]) => method === "config.get")).toHaveLength(1);
+  });
+
+  it("recovers from a malformed existing primary when configuring a valid model", async () => {
+    const rpc = createRpc({
+      "models.list": [models],
+      "models.authStatus": [auth],
+      "config.get": [
+        config("INVALID PRIMARY", "before-hash"),
+        config("anthropic/claude-opus-4-6", "after-hash"),
+      ],
+      "config.patch": [{ ok: true }],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    await expect(adapter.configure({
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+    }, new AbortController().signal)).resolves.toMatchObject({
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      configured: true,
+    });
+  });
+
   it("can restore an initially unset primary after a verification mismatch", async () => {
     const rpc = createRpc({
       "models.list": [models],
@@ -334,7 +457,7 @@ describe("OpenClaw messaging runtime adapter", () => {
     expect(stoppedRpc.call).not.toHaveBeenCalled();
 
     const activeRpc = createRpc({
-      health: [{ ts: 1_789_000_000_000 }],
+      health: [{ ok: true, ts: 1_789_000_000_000 }],
       "config.get": [config("anthropic/claude-opus-4-6")],
     });
     const active = createOpenClawRuntimeAdapter({ rpc: activeRpc, lifecycle: lifecycle() });
@@ -347,7 +470,7 @@ describe("OpenClaw messaging runtime adapter", () => {
     });
 
     const malformedRpc = createRpc({
-      health: [{ ts: 1_789_000_000_001 }],
+      health: [{ ok: true, ts: 1_789_000_000_001 }],
       "config.get": [config("INVALID PRIMARY")],
     });
     const malformed = createOpenClawRuntimeAdapter({ rpc: malformedRpc, lifecycle: lifecycle() });
@@ -357,5 +480,19 @@ describe("OpenClaw messaging runtime adapter", () => {
       selectionState: "active",
       configured: false,
     });
+
+    const unhealthyRpc = createRpc({
+      health: [{ ok: false, ts: 1_789_000_000_002 }],
+    });
+    const unhealthy = createOpenClawRuntimeAdapter({
+      rpc: unhealthyRpc,
+      lifecycle: lifecycle(),
+    });
+    await expect(unhealthy.probe(new AbortController().signal)).rejects.toBeDefined();
+    expect(unhealthyRpc.call).not.toHaveBeenCalledWith(
+      "config.get",
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });
