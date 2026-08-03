@@ -83,6 +83,13 @@ Do not run this step without explicit operator authorization for a disposable He
 
 The spike must create one builder, one snapshot, and two validation clones; measure Action/image readiness, verify cross-location/architecture/disk rejection behavior, simulate a lost response, confirm exact-label reconciliation, validate cloud-init freshness/unique identity, delete exact resources, and prove the project returns to its starting resource count. Record only synthetic IDs and coarse timings in public artifacts.
 
+Builders and validation clones use a dedicated smallest-supported local-disk shape,
+independent of the customer plan: `cx23` for x86 and `cax11` for Arm by default.
+`GOLDEN_SNAPSHOT_SERVER_TYPE` may override that bounded provider identifier. The
+configured shape must match the compatibility architecture and have at least
+`GOLDEN_SNAPSHOT_MINIMUM_DISK_GB`; verify current location availability with the
+provider before enabling builds. The callback phase is bounded to one hour by default.
+
 ## 7. Rollout verification
 
 Keep selection disabled until the disposable spike passes. Then enable synthetic builds, preview/test machines, and a bounded customer cohort in sequence. At every stage verify exact bundle registration, 60% median improvement, p95 at or below 90 seconds, zero forbidden-state findings, bounded snapshot count, and immediate clean-image fallback when the feature switch is disabled.

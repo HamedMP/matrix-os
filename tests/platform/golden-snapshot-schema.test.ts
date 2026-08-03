@@ -69,7 +69,11 @@ describe('golden snapshot schema', () => {
       auditRetentionMs: 90 * 24 * 60 * 60 * 1000,
       reconciliationBatchSize: 25,
     };
-    expect(GoldenSnapshotRuntimeConfigSchema.parse(base).maxConcurrentBuilds).toBe(2);
+    expect(GoldenSnapshotRuntimeConfigSchema.parse(base)).toMatchObject({
+      maxConcurrentBuilds: 2,
+      callbackDeadlineMs: 60 * 60 * 1000,
+    });
+    expect(GoldenSnapshotRuntimeConfigSchema.safeParse({ ...base, serverType: 'INVALID!' }).success).toBe(false);
     expect(GoldenSnapshotRuntimeConfigSchema.safeParse({ ...base, maxConcurrentBuilds: 0 }).success).toBe(false);
     expect(GoldenSnapshotRuntimeConfigSchema.safeParse({ ...base, maxConcurrentBuilds: 11 }).success).toBe(false);
     expect(GoldenSnapshotRuntimeConfigSchema.safeParse({ ...base, retentionLimit: 0 }).success).toBe(false);

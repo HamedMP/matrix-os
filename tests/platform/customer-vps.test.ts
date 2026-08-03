@@ -139,8 +139,10 @@ describe('platform/customer-vps', () => {
       enabled: false,
       buildsEnabled: false,
       rolloutPercent: 0,
+      serverType: 'cx23',
       maxBuildAttempts: 5,
       maxConcurrentBuilds: 2,
+      callbackDeadlineMs: 60 * 60 * 1000,
       retentionLimit: 20,
       freshnessMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
       testModeTtlMs: 24 * 60 * 60 * 1000,
@@ -153,6 +155,7 @@ describe('platform/customer-vps', () => {
       GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '25',
       GOLDEN_SNAPSHOT_MAX_BUILD_ATTEMPTS: '3',
       GOLDEN_SNAPSHOT_MAX_CONCURRENT_BUILDS: '4',
+      GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS: '2700000',
       GOLDEN_SNAPSHOT_RETENTION_LIMIT: '12',
       GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS: '120000',
       GOLDEN_SNAPSHOT_TEST_MODE_TTL_MS: '180000',
@@ -165,6 +168,7 @@ describe('platform/customer-vps', () => {
       rolloutPercent: 25,
       maxBuildAttempts: 3,
       maxConcurrentBuilds: 4,
+      callbackDeadlineMs: 45 * 60 * 1000,
       retentionLimit: 12,
       freshnessMaxAgeMs: 120000,
       testModeTtlMs: 180000,
@@ -172,10 +176,21 @@ describe('platform/customer-vps', () => {
       compatibility: expect.objectContaining({ architecture: 'x86', region: 'eu-central' }),
     });
 
+    expect(() => loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_ARCHITECTURE: 'arm',
+    })).toThrow(/x86/);
+    expect(loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_SERVER_TYPE: 'cpx11',
+    }).goldenSnapshots.serverType).toBe('cpx11');
+    expect(() => loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_SERVER_TYPE: 'INVALID!',
+    })).toThrow();
+
     expect(loadCustomerVpsConfig({
       GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '101',
       GOLDEN_SNAPSHOT_MAX_BUILD_ATTEMPTS: '0',
       GOLDEN_SNAPSHOT_MAX_CONCURRENT_BUILDS: '11',
+      GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS: '3600001',
       GOLDEN_SNAPSHOT_RETENTION_LIMIT: '31',
       GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS: '999',
       GOLDEN_SNAPSHOT_TEST_MODE_TTL_MS: '999',
@@ -185,6 +200,7 @@ describe('platform/customer-vps', () => {
       rolloutPercent: 0,
       maxBuildAttempts: 5,
       maxConcurrentBuilds: 2,
+      callbackDeadlineMs: 60 * 60 * 1000,
       retentionLimit: 20,
       freshnessMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
       testModeTtlMs: 24 * 60 * 60 * 1000,

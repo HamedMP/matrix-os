@@ -70,21 +70,16 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     UploadPartCommand,
     getSignedUrl,
   } = await loadS3();
-  const s3 = new S3Client({
+  const s3Config = {
     region: "auto",
     endpoint,
     forcePathStyle: config.forcePathStyle ?? false,
     credentials: { accessKeyId, secretAccessKey },
-  });
-
-  function rewritePublicEndpoint(url: string): string {
-    if (!publicEndpoint) return url;
-    const signed = new URL(url);
-    const publicUrl = new URL(publicEndpoint);
-    signed.protocol = publicUrl.protocol;
-    signed.host = publicUrl.host;
-    return signed.toString();
-  }
+  };
+  const s3 = new S3Client(s3Config);
+  const presignS3 = publicEndpoint
+    ? new S3Client({ ...s3Config, endpoint: publicEndpoint })
+    : s3;
 
   return {
     async getPresignedGetUrl(
@@ -95,10 +90,10 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
       // AWS SDK version mismatch: S3Client and getSignedUrl have divergent
       // generics across @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner.
       // Runtime behavior is correct; the cast only avoids cross-package type skew.
-      return rewritePublicEndpoint(await getSignedUrl(s3 as any, command as any, {
+      return getSignedUrl(presignS3 as any, command as any, {
         expiresIn,
         signingDate: new Date(),
-      }));
+      });
     },
 
     async getPresignedPutUrl(
@@ -114,11 +109,11 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
       // AWS SDK version mismatch: S3Client and getSignedUrl have divergent
       // generics across @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner.
       // Runtime behavior is correct; the cast only avoids cross-package type skew.
-      return rewritePublicEndpoint(await getSignedUrl(s3 as any, command as any, {
+      return getSignedUrl(presignS3 as any, command as any, {
         expiresIn,
         signingDate: new Date(),
         unhoistableHeaders: new Set(["content-length"]),
-      }));
+      });
     },
 
     async createMultipartUpload(key: string): Promise<string> {
@@ -147,10 +142,10 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
       // AWS SDK version mismatch: S3Client and getSignedUrl have divergent
       // generics across @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner.
       // Runtime behavior is correct; the cast only avoids cross-package type skew.
-      return rewritePublicEndpoint(await getSignedUrl(s3 as any, command as any, {
+      return getSignedUrl(presignS3 as any, command as any, {
         expiresIn,
         signingDate: new Date(),
-      }));
+      });
     },
 
     async getObject(
@@ -193,6 +188,7 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
 
     destroy(): void {
       s3.destroy();
+      if (presignS3 !== s3) presignS3.destroy();
     },
   };
 }

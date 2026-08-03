@@ -1,12 +1,20 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod/v4';
 
+export const GoldenSnapshotBundleVersionSchema = z.string()
+  .min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/);
+
 const SAFE_COMPATIBILITY_VALUE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export const GoldenSnapshotBaseGenerationSchema = z.string()
   .min(1)
   .max(64)
   .regex(SAFE_COMPATIBILITY_VALUE);
+
+// V1 host bundles contain x86-only runtime artifacts. Persisted compatibility
+// remains architecture-aware so a future bundle format can add ARM safely, but
+// current builder configuration must fail closed instead of advertising ARM.
+export const GoldenSnapshotBuildArchitectureSchema = z.literal('x86');
 
 export const GoldenSnapshotStateSchema = z.enum([
   'candidate',
@@ -52,16 +60,20 @@ export const GoldenSnapshotCompatibilitySchema = z.object({
 export type GoldenSnapshotCompatibility = z.infer<typeof GoldenSnapshotCompatibilitySchema>;
 
 export const DEFAULT_GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const DEFAULT_GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS = 60 * 60 * 1000;
 
 export const GoldenSnapshotRuntimeConfigSchema = z.object({
   enabled: z.boolean(),
   buildsEnabled: z.boolean(),
   rolloutPercent: z.number().int().min(0).max(100),
+  serverType: z.string().min(1).max(64).regex(SAFE_COMPATIBILITY_VALUE).optional(),
   compatibility: GoldenSnapshotCompatibilitySchema,
   maxBuildAttempts: z.number().int().min(1).max(10),
   maxConcurrentBuilds: z.number().int().min(1).max(10),
   buildLeaseMs: z.number().int().min(60_000).max(30 * 60 * 1000),
   provisioningLeaseMs: z.number().int().min(60_000).max(30 * 60 * 1000),
+  callbackDeadlineMs: z.number().int().min(60_000).max(60 * 60 * 1000)
+    .default(DEFAULT_GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS),
   retentionLimit: z.number().int().min(1).max(29),
   freshnessMaxAgeMs: z.number().int().min(60_000).max(365 * 24 * 60 * 60 * 1000),
   testModeTtlMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60 * 1000),
