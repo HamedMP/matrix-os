@@ -130,6 +130,7 @@ const STALE_MOUSE_FOCUS_GUARD_MS = 5_000;
 const FOCUS_MOUSE_SUPPRESS_MS = 1_000;
 const SAFE_SHELL_SERVER_ERROR_CODES = new Set([
   "auth_expired",
+  "replay_unavailable",
   "session_not_found",
   "zellij_failed",
 ]);

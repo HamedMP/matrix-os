@@ -13,7 +13,7 @@ export type TerminalServerMessage =
   | { type: "replay-start" }
   | { type: "replay-end" }
   | { type: "exit"; code: number | null }
-  | { type: "error"; message: string };
+  | { type: "error"; code: string | null; message: string };
 
 export interface TerminalCanonicalSize {
   cols: number;
@@ -110,6 +110,7 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
     case "error":
       return {
         type: "error",
+        code: typeof msg.code === "string" && msg.code.length <= 64 ? msg.code : null,
         message: typeof msg.message === "string" ? msg.message : "Unknown error",
       };
     default:

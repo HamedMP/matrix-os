@@ -63,15 +63,21 @@ class FakePty {
   }
 }
 
-function socket(): ShellWsSocket & { sent: unknown[]; closed: boolean } {
+function socket(): ShellWsSocket & {
+  sent: unknown[];
+  closed: boolean;
+  closeCalls: Array<{ code?: number; reason?: string }>;
+} {
   return {
     sent: [],
     closed: false,
+    closeCalls: [],
     send(data: string) {
       this.sent.push(JSON.parse(data));
     },
-    close() {
+    close(code?: number, reason?: string) {
       this.closed = true;
+      this.closeCalls.push({ code, reason });
     },
   };
 }
@@ -852,7 +858,7 @@ describe("zellij terminal WebSocket", () => {
     handler.dispose();
   });
 
-  it("skips delivery to a slow client without pausing the shared attach", async () => {
+  it("disconnects a backpressured client and replays its first missing frame without affecting healthy clients", async () => {
     const pty = new FakePty();
     const fastWs = socket();
     const handler = createShellWsHandler({
@@ -863,19 +869,40 @@ describe("zellij terminal WebSocket", () => {
     });
 
     await handler.open({ ws: fastWs, session: "main", fromSeq: 0 });
-    const slowWs = Object.assign(socket(), { bufferedAmount: 1_000 });
+    const slowWs = Object.assign(socket(), { bufferedAmount: 0 });
     await handler.open({ ws: slowWs, session: "main", fromSeq: 0 });
-    const slowSentBefore = slowWs.sent.length;
 
-    pty.emitData("burst");
-    expect(fastWs.sent).toContainEqual({ type: "output", seq: 0, data: "burst" });
-    expect(slowWs.sent.length).toBe(slowSentBefore);
+    pty.emitData("N");
+    expect(slowWs.sent).toContainEqual({ type: "output", seq: 0, data: "N" });
+
+    slowWs.bufferedAmount = 1_000;
+    pty.emitData("N+1");
+    slowWs.bufferedAmount = 0;
+    pty.emitData("N+2");
+
+    expect(slowWs.sent).not.toContainEqual({ type: "output", seq: 1, data: "N+1" });
+    expect(slowWs.sent).not.toContainEqual({ type: "output", seq: 2, data: "N+2" });
+    expect(slowWs.closeCalls).toEqual([{ code: 1013, reason: "Reconnect to resume" }]);
+    expect(fastWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
+      { type: "output", seq: 0, data: "N" },
+      { type: "output", seq: 1, data: "N+1" },
+      { type: "output", seq: 2, data: "N+2" },
+    ]);
+
+    const replayWs = socket();
+    await handler.open({ ws: replayWs, session: "main", fromSeq: 1 });
+    expect(replayWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
+      { type: "output", seq: 1, data: "N+1" },
+      { type: "output", seq: 2, data: "N+2" },
+    ]);
     expect(pty.pauseCount).toBe(0);
     expect(pty.resumeCount).toBe(0);
-    handler.dispose();
+    await handler.dispose();
+    expect(fastWs.closed).toBe(true);
+    expect(replayWs.closed).toBe(true);
   });
 
-  it("never pauses a shared attach for a slow sole socket; delivery is skipped instead", async () => {
+  it("persists output before disconnecting a backpressured sole socket", async () => {
     const pty = new FakePty();
     const append = vi.fn(async () => undefined);
     const handler = createShellWsHandler({
@@ -893,21 +920,222 @@ describe("zellij terminal WebSocket", () => {
       flowControl: { highWaterMark: 10 },
     });
 
-    const slowWs = Object.assign(socket(), { bufferedAmount: 1_000 });
+    const slowWs = Object.assign(socket(), { bufferedAmount: 0 });
     await handler.open({ ws: slowWs, session: "main", fromSeq: 0 });
     const sentBefore = slowWs.sent.length;
 
+    slowWs.bufferedAmount = 1_000;
     pty.emitData("still persists");
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(pty.pauseCount).toBe(0);
-    expect(slowWs.sent.length).toBe(sentBefore); // frame skipped for the slow socket
+    expect(slowWs.sent.length).toBe(sentBefore);
+    expect(slowWs.closeCalls).toEqual([{ code: 1013, reason: "Reconnect to resume" }]);
     const persisted = append.mock.calls
       .flatMap((call) => call[1] as Array<{ type: string; data?: string }>)
       .filter((r) => r.type === "output")
       .map((r) => r.data);
     expect(persisted).toContain("still persists");
-    handler.dispose();
+    await handler.dispose();
+  });
+
+  it("evicts a failed sender while continuing delivery to healthy subscribers", async () => {
+    const pty = new FakePty();
+    const healthyWs = socket();
+    const failedWs = socket();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4096,
+    });
+
+    await handler.open({ ws: failedWs, session: "main", fromSeq: 0 });
+    await handler.open({ ws: healthyWs, session: "main", fromSeq: 0 });
+    failedWs.send = () => {
+      throw new Error("internal socket failure");
+    };
+
+    pty.emitData("first");
+    pty.emitData("second");
+
+    expect(failedWs.closeCalls).toEqual([{ code: 1011, reason: "Connection interrupted" }]);
+    expect(healthyWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
+      { type: "output", seq: 0, data: "first" },
+      { type: "output", seq: 1, data: "second" },
+    ]);
+    await handler.dispose();
+  });
+
+  it("keeps subscriber resources bounded during a sustained backpressure burst", async () => {
+    const pty = new FakePty();
+    const healthyWs = socket();
+    const slowWs = Object.assign(socket(), { bufferedAmount: 0 });
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 64 * 1024,
+      maxAttachedClients: 2,
+      flowControl: { highWaterMark: 10 },
+    });
+
+    await handler.open({ ws: healthyWs, session: "main", fromSeq: 0 });
+    await handler.open({ ws: slowWs, session: "main", fromSeq: 0 });
+    slowWs.bufferedAmount = 11;
+    for (let index = 0; index < 4_096; index += 1) {
+      pty.emitData("x".repeat(64));
+    }
+
+    expect(slowWs.closeCalls).toEqual([{ code: 1013, reason: "Reconnect to resume" }]);
+    expect(healthyWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toHaveLength(4_096);
+    expect(handler.pendingPersistBytes()).toBe(0);
+    expect(pty.pauseCount).toBe(0);
+
+    // The disconnected subscriber released its capped slot immediately, and
+    // replay uses the shared 64 KiB ring rather than a per-client output queue.
+    const replacementWs = socket();
+    await handler.open({ ws: replacementWs, session: "main", fromSeq: 4_095 });
+    expect(replacementWs.sent).toContainEqual({
+      type: "output",
+      seq: 4_095,
+      data: "x".repeat(64),
+    });
+    await handler.dispose();
+  });
+
+  it("buffers no per-client frames while replay is loading and catches up in sequence order", async () => {
+    const pty = new FakePty();
+    const replayRead = deferred<Array<{ type: "output"; seq: number; data: string }>>();
+    const readSince = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => replayRead.promise)
+      .mockResolvedValue([]);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince,
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const firstWs = socket();
+    const first = await handler.open({ ws: firstWs, session: "main", fromSeq: 0 });
+    pty.emitData("zero");
+    first.onClose();
+
+    const replayWs = socket();
+    const opening = handler.open({ ws: replayWs, session: "main", fromSeq: 0 });
+    await vi.waitFor(() => expect(readSince).toHaveBeenCalledTimes(3));
+    pty.emitData("one");
+    expect(replayWs.sent).not.toContainEqual({ type: "output", seq: 1, data: "one" });
+
+    replayRead.resolve([]);
+    await opening;
+    expect(replayWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
+      { type: "output", seq: 0, data: "zero" },
+      { type: "output", seq: 1, data: "one" },
+    ]);
+    await handler.dispose();
+  });
+
+  it("closes the final replay-to-live handoff race without skipping a concurrent frame", async () => {
+    const pty = new FakePty();
+    const replayRead = deferred<Array<{ type: "output"; seq: number; data: string }>>();
+    const readSince = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => replayRead.promise)
+      .mockResolvedValue([]);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince,
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const firstWs = socket();
+    const first = await handler.open({ ws: firstWs, session: "main", fromSeq: 0 });
+    pty.emitData("zero");
+    first.onClose();
+
+    const replayWs = socket();
+    const opening = handler.open({ ws: replayWs, session: "main", fromSeq: 0 });
+    await vi.waitFor(() => expect(readSince).toHaveBeenCalledTimes(3));
+    replayRead.resolve([]);
+    queueMicrotask(() => {
+      queueMicrotask(() => pty.emitData("one"));
+    });
+    await opening;
+    pty.emitData("two");
+
+    expect(replayWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
+      { type: "output", seq: 0, data: "zero" },
+      { type: "output", seq: 1, data: "one" },
+      { type: "output", seq: 2, data: "two" },
+    ]);
+    await handler.dispose();
+  });
+
+  it("flushes a trailing partial escape sequence into its final replay frame", async () => {
+    const pty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "codex-main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => 0),
+        readSince: vi.fn(async () => [{ type: "output" as const, seq: 0, data: "prompt\x1b[" }]),
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const replayWs = socket();
+    await handler.open({ ws: replayWs, session: "codex-main", fromSeq: 0 });
+
+    expect(replayWs.sent.filter((frame) => (frame as { type?: string }).type === "output")).toEqual([
+      { type: "output", seq: 0, data: "prompt\x1b[" },
+    ]);
+    await handler.dispose();
+  });
+
+  it("closes with a generic error instead of skipping unavailable replay output", async () => {
+    const pty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4,
+    });
+    const liveWs = socket();
+    const live = await handler.open({ ws: liveWs, session: "main", fromSeq: 0 });
+    pty.emitData("zero");
+    pty.emitData("one");
+    live.onClose();
+
+    const replayWs = socket();
+    await handler.open({ ws: replayWs, session: "main", fromSeq: 0 });
+
+    expect(replayWs.sent).toContainEqual({
+      type: "error",
+      code: "replay_unavailable",
+      message: "Terminal history unavailable",
+    });
+    expect(replayWs.sent).not.toContainEqual(expect.objectContaining({ type: "output" }));
+    expect(replayWs.closeCalls).toContainEqual({ code: 1008, reason: "Terminal history unavailable" });
+    expect(JSON.stringify(replayWs.sent)).not.toContain("maxReplayBytes");
+    await handler.dispose();
   });
 
   it("caps attaches per session and evicts the stalest client first", async () => {
