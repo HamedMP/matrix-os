@@ -321,6 +321,21 @@ describe('terminal runtime spike evidence', () => {
     );
     expect(updater).toContain('name="matrix-terminal-spike-pane"');
   });
+  it('carries the compatible stable updater through a dormant preview bootstrap', async () => {
+    const workflow = await readRepo('.github/workflows/preview-vps.yml');
+    expect(workflow).toContain(
+      'cp distro/customer-vps/host-bin/matrix-sync-agent "$RUNNER_TEMP/"',
+    );
+    expect(workflow).toContain(
+      'install -m 0755 "$RUNNER_TEMP/matrix-sync-agent" distro/customer-vps/host-bin/matrix-sync-agent',
+    );
+    expect(workflow).toContain(
+      'git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-sync-agent',
+    );
+    expect(workflow.indexOf('install -m 0755 "$RUNNER_TEMP/matrix-sync-agent"')).toBeLessThan(
+      workflow.indexOf('MATRIX_TERMINAL_RUNTIME_DORMANT=1 ./scripts/build-host-bundle.sh'),
+    );
+  });
   it('keeps panes runtime-agnostic and gates readiness in the keeper', async () => {
     const [keeper, paneProbe] = await Promise.all([
       readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
