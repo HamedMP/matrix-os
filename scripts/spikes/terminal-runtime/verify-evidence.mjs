@@ -157,9 +157,9 @@ export async function reportGateChecks(inputRoot) {
       'runtime_id', 'descriptor_schema', 'descriptor_runtime', 'descriptor_cwd',
       'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
       'cgroup_unit', 'confirmation_inventory', 'confirmation_target',
-      'confirmation_write', 'readiness_timeout', 'startup_failed',
+      'confirmation_send', 'confirmation_acceptance', 'readiness_timeout', 'startup_failed',
     ]);
-    const confirmationStates = new Set(['waiting', 'inventory', 'target', 'write', 'sent']);
+    const confirmationStates = new Set(['waiting', 'inventory', 'target', 'send', 'acceptance', 'accepted']);
     const roleShape = typeof startup.responsive === 'boolean' && Number.isInteger(startup.zellij) && startup.zellij >= 0 && startup.zellij <= 16 && typeof startup.shell === 'boolean' && typeof startup.agent === 'boolean';
     const confirmationShape = typeof startup.gateRecorded === 'boolean' && typeof startup.paneReleased === 'boolean' && confirmationStates.has(startup.confirmationState) && Number.isInteger(startup.heldPaneCount) && startup.heldPaneCount >= 0 && startup.heldPaneCount <= 16 && typeof startup.confirmationSent === 'boolean';
     const baseShape = hasExactKeys(startup, ['stage', 'code', 'gateRecorded', 'paneReleased', 'confirmationState', 'heldPaneCount', 'confirmationSent', 'responsive', 'zellij', 'shell', 'agent']) && confirmationShape && roleShape;
@@ -240,9 +240,9 @@ export async function reportGateChecks(inputRoot) {
       'runtime_id', 'descriptor_schema', 'descriptor_runtime', 'descriptor_cwd',
       'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
       'cgroup_unit', 'confirmation_inventory', 'confirmation_target',
-      'confirmation_write', 'readiness_timeout', 'startup_failed',
+      'confirmation_send', 'confirmation_acceptance', 'readiness_timeout', 'startup_failed',
     ]);
-    const confirmationStates = new Set(['waiting', 'inventory', 'target', 'write', 'sent']);
+    const confirmationStates = new Set(['waiting', 'inventory', 'target', 'send', 'acceptance', 'accepted']);
     if (hasExactKeys(recovery, ['stage', 'code', 'gateRecorded', 'paneReleased', 'confirmationState', 'heldPaneCount', 'confirmationSent', 'responsive', 'zellij', 'shell', 'agent']) && typeof recovery.gateRecorded === 'boolean' && typeof recovery.paneReleased === 'boolean' && confirmationStates.has(recovery.confirmationState) && Number.isInteger(recovery.heldPaneCount) && recovery.heldPaneCount >= 0 && recovery.heldPaneCount <= 16 && typeof recovery.confirmationSent === 'boolean' && typeof recovery.responsive === 'boolean' && Number.isInteger(recovery.zellij) && recovery.zellij >= 0 && recovery.zellij <= 16 && typeof recovery.shell === 'boolean' && typeof recovery.agent === 'boolean' && stages.has(recovery.stage) && codes.has(recovery.code)) {
       failures.push(`s2:recovery=${recovery.stage}/${recovery.code}/gate:${Number(recovery.gateRecorded)}/release:${Number(recovery.paneReleased)}/confirmation:${recovery.confirmationState}/held:${recovery.heldPaneCount}/sent:${Number(recovery.confirmationSent)}/roles:${Number(recovery.responsive)},${recovery.zellij},${Number(recovery.shell)},${Number(recovery.agent)}`);
     }
