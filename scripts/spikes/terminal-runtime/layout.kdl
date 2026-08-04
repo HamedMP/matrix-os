@@ -1,5 +1,5 @@
 layout {
   tab name="main" {
-    pane command="/opt/matrix/bin/matrix-terminal-spike-pane"
+    pane
   }
 }

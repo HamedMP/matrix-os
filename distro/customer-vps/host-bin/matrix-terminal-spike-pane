@@ -5,5 +5,4 @@ if [ "$#" -ne 0 ]; then
   exit 64
 fi
 
-/usr/bin/bash -c 'exec -a matrix-agent-probe sleep 86400' &
-exec /usr/bin/bash --noprofile --norc -i
+exec -a matrix-agent-probe /usr/bin/sleep 86400

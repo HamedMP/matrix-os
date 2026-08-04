@@ -34,6 +34,8 @@ The target architecture was authorized only after both disposable-VPS spikes pas
 
 The spike MUST prove that a foreground keeper can remain the service main process while owning a Zellij server, shell/pane, and optional agent inside one per-runtime cgroup. It MUST record the gateway, browser attach client, keeper, Zellij server, initial shell/pane, and agent PIDs plus `/proc/<pid>/cgroup` before and after:
 
+A fresh create MUST start from a command-free Zellij layout containing the initial shell. Only after the exact session responds and the supervisor's one-shot launch authorization is present may the keeper issue one fixed, typed `new-pane` action for the stable pane helper and validate Zellij's returned pane identity. Readiness then requires both the initial shell and requested workload process in the runtime cgroup. The keeper MUST NOT synthesize Enter, raw carriage return, or any other confirmation input to start a held pane. This explicit fresh-create action is not a resurrection bypass: Recover never invokes it, waits for Zellij's native held-command banner, and remains unready until that confirmation gate is observed.
+
 1. detaching all browser clients;
 2. stopping, restarting, and crashing the gateway;
 3. restarting the shell service;
@@ -257,7 +259,7 @@ As an existing Matrix OS owner, I want saved terminal names and working director
 
 - **FR-014**: The public lifecycle state set MUST be `starting`, `live`, `interrupted`, `recoverable`, `recovering`, `deleting`, `exited`, and `failed`, with bounded recovery reasons.
 - **FR-015**: Evidence precedence MUST be: durable delete intent; unit/cgroup/keeper/readiness/live-Zellij evidence; current descriptor and operation generation; valid receipt and resurrection state; then presentation-only agent metadata.
-- **FR-016**: `live` MUST require an active ready unit, a live keeper client, an exact responsive Zellij session, and verified keeper/server/shell cgroup membership. A spawn event, receipt, attach client, or agent metadata alone MUST NOT report liveness.
+- **FR-016**: `live` MUST require an active ready unit, a live keeper client, an exact responsive Zellij session, and verified keeper/server/shell cgroup membership. Fresh create MUST use a command-free initial-shell layout, followed only after exact-session response and one-shot launch authorization by a fixed typed pane-helper action whose returned pane identity and required workload membership are verified. Recover MUST never issue that action or inject confirmation input. A spawn event, receipt, attach client, or agent metadata alone MUST NOT report liveness.
 - **FR-017**: Reconciliation MUST implement every edge case in this spec, MUST never automatically kill a populated validated runtime because metadata is missing/corrupt, and MUST never start or kill a process based solely on an unsupported receipt.
 - **FR-018**: Boot-ID mismatch with no active unit MUST reconcile a prior-live runtime to `interrupted`. Host boot MUST NOT start a terminal, command, or agent; only explicit Recover may start a recovery unit.
 - **FR-019**: Authoritative runtime loss or explicit fresh-process recovery MAY clear stale agent-running presentation state; inactive receipt metadata alone MUST NOT.

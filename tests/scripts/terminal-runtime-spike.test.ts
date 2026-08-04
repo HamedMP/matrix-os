@@ -295,13 +295,16 @@ describe('terminal runtime spike evidence', () => {
     expect(template).toContain('/opt/matrix/libexec/terminal-runtime/current/spikes/keeper.mjs');
     expect(keeper).toContain('/opt/matrix/libexec/terminal-runtime/current/spikes/layout.kdl');
   });
-  it('launches the initial pane from the immutable installed generation', async () => {
+  it('starts a plain initial shell and launches the fixed workload pane explicitly', async () => {
     const layout = await readRepo('scripts/spikes/terminal-runtime/layout.kdl');
-    expect(layout).toContain(
-      'pane command="/opt/matrix/bin/matrix-terminal-spike-pane"',
-    );
+    const keeper = await readRepo('scripts/spikes/terminal-runtime/keeper.mjs');
+    expect(layout).toContain('    pane\n');
+    expect(layout).not.toContain('command=');
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
+    expect(keeper).toContain(
+      "['--session', sessionName, 'action', 'new-pane', '--', WORKLOAD_PANE]",
+    );
   });
   it('launches spike panes through a self-contained fixed non-sensitive wrapper', async () => {
     const [wrapper, buildScript, updater] = await Promise.all([
@@ -311,9 +314,10 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expectAll(wrapper, [
       'if [ "$#" -ne 0 ]; then',
-      "exec -a matrix-agent-probe sleep 86400",
-      'exec /usr/bin/bash --noprofile --norc -i',
+      'exec -a matrix-agent-probe /usr/bin/sleep 86400',
     ]);
+    expect(wrapper).not.toContain(' &');
+    expect(wrapper).not.toContain('bash --noprofile');
     expect(wrapper).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(wrapper).not.toContain('--force-run-commands');
     expect(buildScript).toContain(
@@ -344,29 +348,25 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
     expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath)');
     expect(keeper).toContain(
-      "if (paneReleased && descriptor.intent === 'create' && !confirmationSent)",
+      "if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched)",
     );
     expect(keeper).not.toContain(
       "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
-    expect(keeper).toContain("['--session', sessionName, 'action', 'list-panes', '--all', '--json']");
-    expect(keeper).toContain("['--session', sessionName, 'action', 'send-keys', 'Enter', '--pane-id', String(pane.id)]");
-    expect(keeper).toContain("confirmationState = 'inventory'");
-    expect(keeper).toContain("confirmationState = 'target'");
-    expect(keeper).toContain("confirmationState = 'send'");
-    expect(keeper).toContain("confirmationState = 'acceptance'");
-    expect(keeper).toContain("confirmationState = 'accepted'");
-    expect(keeper).toContain("throw new Error('confirmation_inventory'");
-    expect(keeper).toContain("throw new Error('confirmation_target')");
-    expect(keeper).toContain("throw new Error('confirmation_send'");
-    expect(keeper).toContain("throw new Error('confirmation_acceptance'");
-    expect(keeper).toContain("if (panes.length === 0)");
-    expect(keeper).toContain("confirmationState = 'waiting'");
-    expect(keeper).toContain('return;');
+    expect(keeper).toContain("const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane'");
+    expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--', WORKLOAD_PANE]");
+    expect(keeper).toContain("throw new Error('workload_launch'");
+    expect(keeper).toContain("throw new Error('workload_target')");
+    expect(keeper).toContain("confirmationState = descriptor.intent === 'create' ? 'not_required' : 'waiting'");
+    expect(keeper).toContain("confirmationState = 'gated'");
+    expect(keeper).not.toContain('confirmHeldCreatePane');
+    expect(keeper).not.toContain("'action', 'send-keys'");
     expect(keeper).not.toContain("'action', 'write', '13'");
     expect(keeper).not.toContain("pty.write('\\r')");
     expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
-    expect(keeper).toContain('const detected = paneReleased');
+    expect(keeper.indexOf('const responsive = paneReleased')).toBeLessThan(
+      keeper.indexOf("descriptor.intent === 'create' && !workloadPaneLaunched"),
+    );
     expect(paneProbe).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
     expect(paneProbe).not.toContain('/proc/self/cgroup');
     expect(paneProbe).not.toContain('pane-release');
@@ -930,14 +930,14 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain('startupWatchdog = setTimeout');
     expect(keeper).toContain("void failStartup('readiness_timeout')");
     expect(keeper).toContain(
-      "paneReleased && descriptor.intent === 'create' && !confirmationSent",
+      "paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched",
     );
     expect(keeper).not.toContain(
       "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
     expect(keeper).not.toContain("descriptor.intent === 'recover' && !confirmationSent");
     expect(keeper).not.toContain('--force-run-commands');
-    expect(keeper).toContain('await recordStartupStage();\n    if (paneReleased && responsive && detected');
+    expect(keeper).toContain('await launchCreateWorkloadPane(sessionName, env)');
     expect(keeper).toContain('function startupSnapshot()');
     expect(keeper).toContain('gateRecorded,');
     expect(keeper).toContain('paneReleased: paneReleasedRecorded,');
@@ -945,7 +945,12 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain('heldPaneCount,');
     expect(keeper).toContain('...startupSnapshot()');
     expect(keeper).not.toContain("stdio: ['ignore', handle.fd, 'ignore']");
-    expect(keeper.indexOf('const detected = paneReleased')).toBeLessThan(keeper.indexOf('const responsive = Boolean(detected && await exactSessionResponds'));
+    expect(keeper.indexOf('const responsive = paneReleased')).toBeLessThan(
+      keeper.indexOf('const detected = paneReleased'),
+    );
+    expect(keeper.indexOf('const detected = paneReleased')).toBeLessThan(
+      keeper.indexOf('await recordStartupStage();\n    if (paneReleased && responsive && detected'),
+    );
   });
   it('fails a stalled startup quickly with monotonic keeper diagnostics', async () => {
     const [launcher, packer, runner, keeper] = await Promise.all([
@@ -1081,7 +1086,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     });
     await writeFile(
       join(root, 's1', 'base-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', gateRecorded: true, paneReleased: true, confirmationState: 'send', heldPaneCount: 1, confirmationSent: false, responsive: false, zellij: 1, shell: false, agent: false, exitCode: 1, signal: 0 })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', gateRecorded: false, paneReleased: true, confirmationState: 'not_required', heldPaneCount: 0, confirmationSent: false, responsive: false, zellij: 1, shell: false, agent: false, exitCode: 1, signal: 0 })}\n`,
       'utf8',
     );
     await writeFile(
@@ -1100,7 +1105,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     await mkdir(join(root, 's2'));
     await writeFile(
       join(root, 's2', 'recovery-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', gateRecorded: true, paneReleased: true, confirmationState: 'accepted', heldPaneCount: 0, confirmationSent: true, responsive: true, zellij: 2, shell: true, agent: false })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', gateRecorded: true, paneReleased: true, confirmationState: 'gated', heldPaneCount: 0, confirmationSent: false, responsive: true, zellij: 2, shell: true, agent: false })}\n`,
       'utf8',
     );
     await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure\n', 'utf8');
@@ -1117,11 +1122,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     );
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
-      's1:startup=readiness/client_exit/gate:1/release:1/confirmation:send/held:1/sent:0',
+      's1:startup=readiness/client_exit/gate:0/release:1/confirmation:not_required/held:0/sent:0',
       's1:pty-exit=1/0',
       's1:unit=failed/failed/timeout/1/16',
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
-      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:accepted/held:0/sent:1/roles:1,2,1,0',
+      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:gated/held:0/sent:0/roles:1,2,1,0',
       's2:resolution=original:2/recovered:1/panes:2/held:2/drop:0/markers:9999',
       's1:memory=slice_no_pressure',
       'spike:preflight=binary_version_checked',
@@ -1131,9 +1136,9 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     await symlink('/etc/passwd', join(root, 's1', 'base-runtime-roles.json'));
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
-      's1:startup=readiness/client_exit/gate:1/release:1/confirmation:send/held:1/sent:0',
+      's1:startup=readiness/client_exit/gate:0/release:1/confirmation:not_required/held:0/sent:0',
       's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
-      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:accepted/held:0/sent:1/roles:1,2,1,0',
+      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:gated/held:0/sent:0/roles:1,2,1,0',
       's2:resolution=original:2/recovered:1/panes:2/held:2/drop:0/markers:9999',
       's1:memory=slice_no_pressure',
       'spike:preflight=binary_version_checked',
