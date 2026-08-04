@@ -117,9 +117,9 @@ describe("parseBrowserEntries", () => {
 describe("sortBrowserEntries", () => {
   const entries = parseBrowserEntries([
     { name: "b.ts", type: "file", size: 100, modified: "2026-06-20T00:00:00.000Z" },
-    { name: "z-dir", type: "directory" },
+    { name: "z-dir", type: "directory", children: 8 },
     { name: "a.ts", type: "file", size: 900, modified: "2026-06-24T00:00:00.000Z" },
-    { name: "a-dir", type: "directory" },
+    { name: "a-dir", type: "directory", children: 2 },
   ]);
 
   it("keeps directories first and toggles name direction", () => {
@@ -139,8 +139,8 @@ describe("sortBrowserEntries", () => {
 
   it("sorts by size and modified within each group", () => {
     expect(sortBrowserEntries(entries, "size", "desc").map((entry) => entry.name)).toEqual([
-      "a-dir",
       "z-dir",
+      "a-dir",
       "a.ts",
       "b.ts",
     ]);

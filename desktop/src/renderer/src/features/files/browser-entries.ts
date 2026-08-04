@@ -58,7 +58,9 @@ export function sortBrowserEntries(
   const compare = (a: BrowserEntry, b: BrowserEntry): number => {
     let primary = 0;
     if (key === "size") {
-      primary = (a.sizeBytes ?? -1) - (b.sizeBytes ?? -1);
+      const aSize = a.type === "directory" ? a.children : a.sizeBytes;
+      const bSize = b.type === "directory" ? b.children : b.sizeBytes;
+      primary = (aSize ?? -1) - (bSize ?? -1);
     } else if (key === "modified") {
       primary = (a.modifiedAt ?? "").localeCompare(b.modifiedAt ?? "");
     } else {
