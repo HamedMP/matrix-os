@@ -303,8 +303,9 @@ describe('terminal runtime spike evidence', () => {
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
     expect(keeper).toContain(
-      "['--session', sessionName, 'action', 'new-pane', '--', WORKLOAD_PANE]",
+      "['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', WORKLOAD_PANE]",
     );
+    expect(keeper).toContain("const WORKLOAD_PANE_NAME = 'matrix-runtime-workload-probe'");
   });
   it('launches spike panes through a self-contained fixed non-sensitive wrapper', async () => {
     const [wrapper, buildScript, updater] = await Promise.all([
@@ -354,7 +355,7 @@ describe('terminal runtime spike evidence', () => {
       "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
     expect(keeper).toContain("const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane'");
-    expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--', WORKLOAD_PANE]");
+    expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', WORKLOAD_PANE]");
     expect(keeper).toContain("throw new Error('workload_launch'");
     expect(keeper).not.toContain("throw new Error('workload_target')");
     expect(keeper).not.toContain('const target = stdout.trim()');
@@ -379,6 +380,27 @@ describe('terminal runtime spike evidence', () => {
     expect(paneProbe).not.toContain('/proc/self/cgroup');
     expect(paneProbe).not.toContain('pane-release');
     expect(keeper).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
+  });
+  it('records a bounded privacy-safe workload pane state for failed readiness', async () => {
+    const [keeper, packer] = await Promise.all([
+      readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
+      readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'),
+    ]);
+    expectAll(keeper, [
+      "const WORKLOAD_PANE_STATES = new Set([",
+      "['--session', sessionName, 'action', 'list-panes', '--all', '--json']",
+      'panes.length > 16',
+      'pane.terminal_command === WORKLOAD_PANE',
+      "pane.pane_command?.startsWith('matrix-agent-probe ')",
+      'workloadPaneState',
+    ]);
+    expectAll(packer, [
+      'keeper_workload',
+      'failure_workload',
+      'w${keeper_workload}',
+      'w${failure_workload}',
+      '/^(not_launched|missing|running|held_success|held_failure|other|ambiguous)$/.test(v.workloadPaneState)',
+    ]);
   });
   it('can remove only its immutable disposable preview before a clean proof', async () => {
     const workflow = await readFile(

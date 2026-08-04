@@ -14,6 +14,16 @@ const runtimeRoot = `/run/matrix-terminal-runtime-spikes/${runNamespace}`;
 const stateRoot = `/home/matrix/home/system/terminal-runtime-spikes/${runNamespace}`;
 const zellij = '/opt/matrix/bin/zellij';
 const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane';
+const WORKLOAD_PANE_NAME = 'matrix-runtime-workload-probe';
+const WORKLOAD_PANE_STATES = new Set([
+  'not_launched',
+  'missing',
+  'running',
+  'held_success',
+  'held_failure',
+  'other',
+  'ambiguous',
+]);
 let stopping = false;
 let monitor;
 let startupWatchdog;
@@ -30,6 +40,7 @@ let paneReleasedRecorded = false;
 let confirmationState = 'waiting';
 const heldPaneCount = 0;
 let workloadPaneLaunched = false;
+let workloadPaneState = 'not_launched';
 let startupFailureStarted = false;
 let startupStageRevision = 0;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
@@ -181,7 +192,7 @@ async function launchCreateWorkloadPane(sessionName, env) {
     // Successful completion is followed by authoritative cgroup role checks.
     await execFileAsync(
       zellij,
-      ['--session', sessionName, 'action', 'new-pane', '--', WORKLOAD_PANE],
+      ['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', WORKLOAD_PANE],
       { env, timeout: 2000, maxBuffer: 16 * 1024 },
     );
   } catch (error) {
@@ -189,6 +200,44 @@ async function launchCreateWorkloadPane(sessionName, env) {
   }
   workloadPaneLaunched = true;
   await recordStartupStage();
+}
+async function inspectWorkloadPane(sessionName, env) {
+  try {
+    const { stdout } = await execFileAsync(
+      zellij,
+      ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
+      { env, timeout: 2000, maxBuffer: 64 * 1024 },
+    );
+    const panes = JSON.parse(stdout);
+    if (!Array.isArray(panes) || panes.length > 16) return 'ambiguous';
+    const matching = panes.filter((pane) => pane !== null
+      && typeof pane === 'object'
+      && !Array.isArray(pane)
+      && pane.is_plugin === false
+      && pane.title === WORKLOAD_PANE_NAME
+      && pane.terminal_command === WORKLOAD_PANE);
+    if (matching.length === 0) return 'missing';
+    if (matching.length !== 1) return 'ambiguous';
+    const [pane] = matching;
+    if (typeof pane.is_held !== 'boolean' || typeof pane.exited !== 'boolean') return 'ambiguous';
+    if (pane.exit_status !== null
+      && (!Number.isInteger(pane.exit_status) || pane.exit_status < 0 || pane.exit_status > 255)) {
+      return 'ambiguous';
+    }
+    if (pane.is_held || pane.exited) {
+      if (pane.exit_status === 0) return 'held_success';
+      if (Number.isInteger(pane.exit_status)) return 'held_failure';
+      return 'other';
+    }
+    const commandLooksRunning = typeof pane.pane_command === 'string'
+      && pane.pane_command.length <= 128
+      && pane.pane_command?.startsWith('matrix-agent-probe ')
+      && pane.pane_command === 'matrix-agent-probe 86400';
+    return commandLooksRunning ? 'running' : 'other';
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return 'ambiguous';
+  }
 }
 async function processInfo(pid) {
   try {
@@ -231,6 +280,9 @@ async function writeReadiness(value) {
   });
 }
 function startupSnapshot() {
+  const boundedWorkloadPaneState = WORKLOAD_PANE_STATES.has(workloadPaneState)
+    ? workloadPaneState
+    : 'ambiguous';
   return {
     stage: startupStage,
     gateRecorded,
@@ -238,6 +290,7 @@ function startupSnapshot() {
     confirmationState,
     heldPaneCount,
     confirmationSent,
+    workloadPaneState: boundedWorkloadPaneState,
     ...roleSnapshot,
   };
 }
@@ -365,6 +418,9 @@ async function main() {
     roleSnapshot.responsive = responsive;
     if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched) {
       await launchCreateWorkloadPane(sessionName, env);
+    }
+    if (descriptor.intent === 'create' && workloadPaneLaunched) {
+      workloadPaneState = await inspectWorkloadPane(sessionName, env);
     }
     const detected = paneReleased && (descriptor.intent === 'recover' || workloadPaneLaunched)
       ? await cgroupRoles(cgroup.path, descriptor.intent === 'create')
