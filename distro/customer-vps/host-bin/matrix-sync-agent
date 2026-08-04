@@ -171,7 +171,7 @@ reload_terminal_user_manager() {
     HOME=/home/matrix/home \
     XDG_RUNTIME_DIR="/run/user/$matrix_uid" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$matrix_uid/bus" \
-    systemctl --user daemon-reload
+    /usr/bin/timeout --signal=KILL 30 /usr/bin/systemctl --user daemon-reload
 }
 
 cleanup_terminal_runtime_generations() {

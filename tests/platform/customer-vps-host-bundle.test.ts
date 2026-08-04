@@ -720,10 +720,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('x-matrix-acceptance-signature');
     expect(workflow).toContain('x-matrix-acceptance-response-signature');
     expect(workflow).toContain('classify_recovery_phase');
-    expect(workflow).toContain('[ "$recovery_phase" = safe ]');
-    expect(workflow).toContain('[ "$recovery_phase" = idle ]');
-    expect(workflow).toContain('[ "$recovery_phase" = unsafe ]');
-    expect(workflow).toContain('[ "$recovery_phase" = invalid ]');
+    expect(workflow).toContain('idle|prepare|download|verify|extract|terminal-runtime)');
+    expect(workflow).toContain('app-install|host-bin|health|invalid)');
+    expect(workflow).toContain('[ "$recovery_phase" = terminal-runtime ]');
+    expect(workflow).toContain('if ! matrix_uid="$(jq -er');
+    expect(workflow).toContain('Owner user-manager reload failed during bounded recovery.');
     expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]');
     expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]');
     expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]');
@@ -1055,6 +1056,20 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const gatewayStart = syncAgent.indexOf('sudo systemctl start matrix-gateway matrix-shell', daemonReload);
     expect(daemonReload).toBeGreaterThan(-1);
     expect(gatewayStart).toBeGreaterThan(daemonReload);
+  });
+
+  it('bounds the terminal user-manager reload before app replacement', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const reloadStart = syncAgent.indexOf('reload_terminal_user_manager()');
+    const appInstall = syncAgent.indexOf('write_update_phase app-install');
+    const reloadBody = syncAgent.slice(reloadStart, syncAgent.indexOf('\n}', reloadStart));
+
+    expect(reloadStart).toBeGreaterThanOrEqual(0);
+    expect(reloadStart).toBeLessThan(appInstall);
+    expect(reloadBody).toContain('/usr/bin/timeout --signal=KILL 30');
+    expect(reloadBody).toContain('systemctl --user daemon-reload');
   });
 
   it('restarts the optional Hermes dashboard after replacing its host wrapper', () => {

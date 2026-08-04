@@ -261,41 +261,60 @@ jobs:
           }
           classify_recovery_phase() {
             local response="$RUNNER_TEMP/user-systemd-recovery-phase.json" body
-            body='{"command":["/usr/bin/sudo","/bin/bash","-c","marker=/opt/matrix/staging/update-phase; if [ -L \"$marker\" ] || { [ -e \"$marker\" ] && [ ! -f \"$marker\" ]; }; then printf \"invalid\\n\"; elif [ ! -e \"$marker\" ]; then printf \"idle\\n\"; else IFS= read -r phase <\"$marker\" || phase=; case \"$phase\" in prepare|download|verify|extract) printf \"safe\\n\" ;; terminal-runtime|app-install|host-bin|health) printf \"unsafe\\n\" ;; *) printf \"invalid\\n\" ;; esac; fi"]}'
+            body='{"command":["/usr/bin/sudo","/bin/bash","-c","marker=/opt/matrix/staging/update-phase; if [ -L \"$marker\" ] || { [ -e \"$marker\" ] && [ ! -f \"$marker\" ]; }; then printf \"invalid\\n\"; elif [ ! -e \"$marker\" ]; then printf \"idle\\n\"; else IFS= read -r phase <\"$marker\" || phase=; case \"$phase\" in prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) printf \"%s\\n\" \"$phase\" ;; *) printf \"invalid\\n\" ;; esac; fi"]}'
             send_signed_command "$body" "$response"
-            jq -er '.stdout | select(. == "safe\n" or . == "idle\n" or . == "unsafe\n" or . == "invalid\n") | rtrimstr("\n")' \
+            jq -er '.stdout | select(test("^(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)\\n$")) | rtrimstr("\n")' \
               "$response"
           }
           if [ "$current_version" != "$target_version" ]; then
             recovery_phase="$(classify_recovery_phase)"
-            if [ "$recovery_phase" = unsafe ] || [ "$recovery_phase" = invalid ]; then
-              echo "Refusing to interrupt updater in bounded ${recovery_phase} phase." >&2
+            case "$recovery_phase" in
+              idle|prepare|download|verify|extract|terminal-runtime) ;;
+              app-install|host-bin|health|invalid)
+                echo "Refusing to interrupt updater in bounded ${recovery_phase} phase." >&2
+                exit 1
+                ;;
+            esac
+            response="$RUNNER_TEMP/user-systemd-recovery.json"
+            body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]}'
+            send_signed_command "$body" "$response"
+            stop_deadline=$((SECONDS + 90))
+            updater_active=unknown
+            while [ "$SECONDS" -lt "$stop_deadline" ]; do
+              body='{"command":["/usr/bin/systemctl","show","matrix-sync-agent.service","--property=ActiveState"]}'
+              send_signed_command "$body" "$response"
+              updater_active="$(jq -r '.stdout // ""' "$response" | sed -n 's/^ActiveState=//p')"
+              if [ "$updater_active" = inactive ] || [ "$updater_active" = failed ]; then
+                break
+              fi
+              sleep 5
+            done
+            if [ "$updater_active" != inactive ] && [ "$updater_active" != failed ]; then
+              echo "Updater did not stop within the bounded recovery window." >&2
               exit 1
             fi
-            if [ "$recovery_phase" = safe ] || [ "$recovery_phase" = idle ]; then
-              response="$RUNNER_TEMP/user-systemd-recovery.json"
-              body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]}'
-              send_signed_command "$body" "$response"
-              stop_deadline=$((SECONDS + 90))
-              updater_active=unknown
-              while [ "$SECONDS" -lt "$stop_deadline" ]; do
-                body='{"command":["/usr/bin/systemctl","show","matrix-sync-agent.service","--property=ActiveState"]}'
-                send_signed_command "$body" "$response"
-                updater_active="$(jq -r '.stdout // ""' "$response" | sed -n 's/^ActiveState=//p')"
-                if [ "$updater_active" = inactive ] || [ "$updater_active" = failed ]; then
-                  break
-                fi
-                sleep 5
-              done
-              if [ "$updater_active" != inactive ] && [ "$updater_active" != failed ]; then
-                echo "Updater did not stop within the bounded recovery window." >&2
+            if [ "$recovery_phase" = terminal-runtime ]; then
+              body='{"command":["/usr/bin/id","-u","matrix"]}'
+              if ! send_signed_command "$body" "$response"; then
+                echo "Owner user-manager reload failed during bounded recovery." >&2
                 exit 1
               fi
-              body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]}'
-              send_signed_command "$body" "$response"
-              body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}'
-              send_signed_command "$body" "$response"
+              if ! matrix_uid="$(jq -er '.stdout | select(test("^[0-9]{1,10}\\n$")) | rtrimstr("\n")' "$response")"; then
+                echo "Owner user-manager reload failed during bounded recovery." >&2
+                exit 1
+              fi
+              body="$(jq -cn --arg runtime_dir "/run/user/${matrix_uid}" \
+                --arg bus "unix:path=/run/user/${matrix_uid}/bus" \
+                '{command:["/usr/bin/sudo","-u","matrix","/usr/bin/env","HOME=/home/matrix/home",("XDG_RUNTIME_DIR=" + $runtime_dir),("DBUS_SESSION_BUS_ADDRESS=" + $bus),"/usr/bin/timeout","--signal=KILL","30","/usr/bin/systemctl","--user","daemon-reload"],timeoutMs:45000}')"
+              if ! send_signed_command "$body" "$response"; then
+                echo "Owner user-manager reload failed during bounded recovery." >&2
+                exit 1
+              fi
             fi
+            body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]}'
+            send_signed_command "$body" "$response"
+            body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}'
+            send_signed_command "$body" "$response"
             deploy_body="$(jq -cn --arg version "$target_version" --arg handle "$HANDLE" \
               '{version: $version, handle: $handle}')"
             code="$(curl --silent --show-error --max-time 120 -o "$RUNNER_TEMP/recovery-deploy.json" \
