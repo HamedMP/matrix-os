@@ -1090,7 +1090,10 @@ prepare_exact_head_runtime() {
     systemctl is-active --quiet matrix-sync-agent.service && break
     sleep 1
   done
-  systemctl is-active --quiet matrix-sync-agent.service
+  if ! systemctl is-active --quiet matrix-sync-agent.service; then
+    diagnose_update_failure "$preview_version"
+    return 1
+  fi
   installed_bounded_updater_is_ready
 
   current_failure=exact-head-reapply

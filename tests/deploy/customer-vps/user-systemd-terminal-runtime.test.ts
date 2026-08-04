@@ -321,6 +321,9 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(prepareWorker).toContain(
       '"$(path_state /opt/matrix/app/.update-error.json)" = missing',
     );
+    expect(prepareWorker).toContain(
+      'diagnose_update_failure "$preview_version"',
+    );
     expect(acceptance).not.toMatch(/\bjq\b/);
     expect(acceptance).toContain("matrix-terminal-user-keeper:");
     expect(acceptance).toContain("ExecMainStatus");
