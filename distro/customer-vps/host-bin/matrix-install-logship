@@ -151,7 +151,7 @@ loki.source.journal "matrix_shell" {
 }
 
 loki.source.journal "matrix_sync" {
-  matches       = "_SYSTEMD_UNIT=matrix-sync-agent.service"
+  matches       = "_SYSTEMD_UNIT=matrix-update-runtime.service"
   relabel_rules = loki.relabel.journal.rules
   labels        = { source = "journal", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
   forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]

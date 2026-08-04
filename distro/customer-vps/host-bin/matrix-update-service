@@ -1,0 +1,496 @@
+#!/usr/bin/env python3
+"""Root-owned typed update boundary for Matrix OS host bundles."""
+
+from __future__ import annotations
+
+import grp
+import json
+import os
+import pwd
+import re
+import secrets
+import signal
+import socket
+import stat
+import struct
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+MAX_FRAME_BYTES = 128 * 1024
+ALLOWED_OPERATIONS = {"Apply", "Repair", "Rollback", "Status"}
+ALLOWED_CHANNELS = {"stable", "canary", "beta", "dev"}
+VERSION_RE = re.compile(r"^(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}$")
+RUNTIME_DIR = Path("/run/matrix-update-runtime")
+SOCKET_PATH = RUNTIME_DIR / "update.sock"
+REQUEST_PATH = RUNTIME_DIR / "request.json"
+INFLIGHT_PATH = RUNTIME_DIR / "inflight.json"
+STATE_PATH = RUNTIME_DIR / "operation-state"
+PHASE_PATH = RUNTIME_DIR / "operation-phase"
+FAILURE_CODE_PATH = RUNTIME_DIR / "last-failure-code"
+WORKER_PATH = "/opt/matrix/bin/matrix-sync-agent"
+SO_PEERCRED = getattr(socket, "SO_PEERCRED", 17)
+ALLOWED_PHASES = {
+    "idle",
+    "admitted",
+    "resolving",
+    "downloading",
+    "validating",
+    "extracting",
+    "preparing",
+    "committing",
+    "health_check",
+    "rollback",
+    "failed",
+}
+ALLOWED_FAILURE_CODES = {
+    "operation_failed",
+    "prepared_release_metadata_invalid",
+    "staging_invalid",
+    "insufficient_disk_space",
+    "bundle_download_failed",
+    "bundle_size_mismatch",
+    "bundle_checksum_mismatch",
+    "bundle_archive_invalid",
+    "bundle_validation_timeout",
+    "bundle_extraction_failed",
+    "bundle_extraction_timeout",
+    "bundle_shape_invalid",
+    "bundle_ownership_timeout",
+    "rollback_ownership_timeout",
+    "terminal_runtime_candidate_invalid",
+    "terminal_runtime_generation_install_failed",
+    "update_runtime_install_failed",
+    "privilege_boundary_install_failed",
+    "terminal_runtime_wrapper_install_failed",
+    "zellij_candidate_staging_failed",
+    "zellij_candidate_commit_failed",
+    "zellij_candidate_metadata_failed",
+    "zellij_installed_digest_mismatch",
+    "terminal_runtime_legacy_migration_failed",
+    "systemd_unit_install_failed",
+    "terminal_runtime_supervisor_enable_failed",
+    "terminal_runtime_supervisor_start_failed",
+    "terminal_runtime_supervisor_cleanup_failed",
+    "update_runtime_enable_failed",
+    "legacy_update_bridge_disable_failed",
+    "health_check_failed",
+}
+
+
+class ProtocolError(Exception):
+    """A bounded request failed strict protocol validation."""
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ProtocolError("duplicate key")
+        result[key] = value
+    return result
+
+
+def parse_request(payload: bytes) -> dict[str, Any]:
+    if not payload or len(payload) > MAX_FRAME_BYTES:
+        raise ProtocolError("invalid frame size")
+    try:
+        request = json.loads(payload.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, ProtocolError) as error:
+        raise ProtocolError("invalid json") from error
+    if not isinstance(request, dict):
+        raise ProtocolError("request must be an object")
+    operation = request.get("operation")
+    if request.get("schemaVersion") != 1 or operation not in ALLOWED_OPERATIONS:
+        raise ProtocolError("unsupported request")
+    if operation == "Apply":
+        if set(request) != {"schemaVersion", "operation", "target"}:
+            raise ProtocolError("unexpected apply field")
+        target = request.get("target")
+        if not isinstance(target, dict) or set(target) != {"kind", "value"}:
+            raise ProtocolError("invalid target")
+        kind = target.get("kind")
+        value = target.get("value")
+        if kind == "channel":
+            if value not in ALLOWED_CHANNELS:
+                raise ProtocolError("invalid channel")
+        elif kind == "version":
+            if not isinstance(value, str) or not VERSION_RE.fullmatch(value):
+                raise ProtocolError("invalid version")
+        else:
+            raise ProtocolError("invalid target kind")
+    elif operation == "Status":
+        if set(request) == {"schemaVersion", "operation"}:
+            pass
+        elif (
+            set(request) == {"schemaVersion", "operation", "diagnostics"}
+            and request.get("diagnostics") is True
+        ):
+            pass
+        else:
+            raise ProtocolError("unexpected status field")
+    elif set(request) != {"schemaVersion", "operation"}:
+        raise ProtocolError("unexpected operation field")
+    return request
+
+
+def _response(payload: dict[str, Any]) -> bytes:
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    if not encoded or len(encoded) > MAX_FRAME_BYTES:
+        raise RuntimeError("response exceeds protocol bound")
+    return struct.pack(">I", len(encoded)) + encoded
+
+
+def _error(code: str, message: str) -> bytes:
+    return _response({
+        "schemaVersion": 1,
+        "ok": False,
+        "code": code,
+        "message": message,
+    })
+
+
+def _read_exact(connection: socket.socket, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = connection.recv(remaining)
+        if not chunk:
+            raise ProtocolError("truncated frame")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def read_frame(connection: socket.socket) -> bytes:
+    header = _read_exact(connection, 4)
+    (length,) = struct.unpack(">I", header)
+    if length == 0 or length > MAX_FRAME_BYTES:
+        raise ProtocolError("invalid frame length")
+    return _read_exact(connection, length)
+
+
+def _fsync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def publish_request(request: dict[str, Any]) -> bool:
+    encoded = json.dumps(request, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    temporary = RUNTIME_DIR / f".request.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=True) as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            os.link(temporary, REQUEST_PATH, follow_symlinks=False)
+        except FileExistsError:
+            return False
+        _fsync_directory(RUNTIME_DIR)
+        return True
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _write_state(state: str) -> None:
+    temporary = RUNTIME_DIR / f".state.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as output:
+            output.write(state)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, STATE_PATH)
+        _fsync_directory(RUNTIME_DIR)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _read_state() -> str:
+    try:
+        metadata = os.lstat(STATE_PATH)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_size not in {4, 6, 7}
+        ):
+            return "idle"
+        descriptor = os.open(STATE_PATH, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                opened.st_dev != metadata.st_dev
+                or opened.st_ino != metadata.st_ino
+                or opened.st_nlink != 1
+                or stat.S_IMODE(opened.st_mode) != 0o600
+            ):
+                return "idle"
+            state = os.read(descriptor, 8).decode("ascii")
+        finally:
+            os.close(descriptor)
+        return state if state in {"failed", "idle", "running"} else "idle"
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return "idle"
+
+
+def _read_root_value(
+    path: Path,
+    allowed: set[str],
+    maximum_bytes: int,
+    allowed_modes: set[int],
+) -> str | None:
+    try:
+        metadata = os.lstat(path)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) not in allowed_modes
+            or metadata.st_size < 1
+            or metadata.st_size > maximum_bytes
+        ):
+            return None
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                opened.st_dev != metadata.st_dev
+                or opened.st_ino != metadata.st_ino
+                or opened.st_nlink != 1
+                or stat.S_IMODE(opened.st_mode) not in allowed_modes
+            ):
+                return None
+            value = os.read(descriptor, maximum_bytes + 1).decode("ascii").strip()
+        finally:
+            os.close(descriptor)
+        return value if value in allowed else None
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+
+
+def _read_diagnostics(status: str) -> tuple[str, str | None]:
+    if status == "idle":
+        return ("idle", None)
+    if status == "failed":
+        failure_code = _read_root_value(
+            FAILURE_CODE_PATH,
+            ALLOWED_FAILURE_CODES,
+            65,
+            {0o600, 0o640},
+        )
+        return ("failed", failure_code)
+    phase = _read_root_value(PHASE_PATH, ALLOWED_PHASES, 16, {0o600})
+    if phase in {None, "idle", "failed"}:
+        phase = "admitted"
+    return (phase, None)
+
+
+def _resume_pending_request(
+    worker: subprocess.Popen[bytes],
+    expected_owner_uid: int = 0,
+) -> None:
+    try:
+        metadata = os.lstat(REQUEST_PATH)
+    except FileNotFoundError:
+        return
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != expected_owner_uid
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_size < 1
+        or metadata.st_size > MAX_FRAME_BYTES
+    ):
+        try:
+            REQUEST_PATH.unlink()
+        except FileNotFoundError:
+            pass
+        _write_state("idle")
+        return
+    if worker.poll() is not None:
+        raise RuntimeError("update worker unavailable")
+    _write_state("running")
+    # The worker consumes an already-published typed request on its first loop.
+    # Do not signal a newly spawned process before its USR1 trap is installed.
+
+
+def _recover_interrupted_operation(expected_owner_uid: int = 0) -> bool:
+    try:
+        metadata = os.lstat(INFLIGHT_PATH)
+    except FileNotFoundError:
+        return False
+    valid = (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == expected_owner_uid
+        and metadata.st_nlink in {1, 2}
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and 1 <= metadata.st_size <= MAX_FRAME_BYTES
+    )
+    if not valid:
+        print("matrix-update-service: invalid_inflight", file=sys.stderr)
+    _write_state("failed")
+    for path in (REQUEST_PATH, INFLIGHT_PATH):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    _fsync_directory(INFLIGHT_PATH.parent)
+    return True
+
+
+def _prepare_runtime_directory(matrix_gid: int) -> None:
+    RUNTIME_DIR.mkdir(mode=0o750, parents=True, exist_ok=True)
+    if RUNTIME_DIR.is_symlink() or not RUNTIME_DIR.is_dir():
+        raise RuntimeError("runtime directory is not a directory")
+    os.chown(RUNTIME_DIR, 0, matrix_gid)
+    os.chmod(RUNTIME_DIR, 0o750)
+    try:
+        SOCKET_PATH.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _peer_uid(connection: socket.socket) -> int:
+    credentials = connection.getsockopt(socket.SOL_SOCKET, SO_PEERCRED, struct.calcsize("3i"))
+    _pid, uid, _gid = struct.unpack("3i", credentials)
+    return uid
+
+
+def _serve_connection(
+    connection: socket.socket,
+    matrix_uid: int,
+    worker: subprocess.Popen[bytes],
+) -> None:
+    connection.settimeout(10)
+    if _peer_uid(connection) not in {0, matrix_uid}:
+        connection.sendall(_error("unavailable", "Update service unavailable"))
+        return
+    try:
+        request = parse_request(read_frame(connection))
+    except (ProtocolError, TimeoutError, socket.timeout):
+        connection.sendall(_error("invalid_request", "Update request rejected"))
+        return
+    if request["operation"] == "Status":
+        status = "running" if REQUEST_PATH.exists() else _read_state()
+        response: dict[str, Any] = {
+            "schemaVersion": 1,
+            "ok": True,
+            "status": status,
+        }
+        if request.get("diagnostics") is True:
+            phase, failure_code = _read_diagnostics(status)
+            response["phase"] = phase
+            response["failureCode"] = failure_code
+        connection.sendall(_response(response))
+        return
+    if worker.poll() is not None:
+        connection.sendall(_error("unavailable", "Update service unavailable"))
+        return
+    if REQUEST_PATH.exists() or _read_state() == "running":
+        connection.sendall(_error("busy", "Update operation failed"))
+        return
+    _write_state("running")
+    try:
+        published = publish_request(request)
+    except OSError:
+        published = False
+    if not published:
+        # A root-published request may have won the no-replace link race. Keep
+        # that queued operation authoritative; otherwise undo our admission
+        # state so a failed publication cannot wedge the service until restart.
+        queued = REQUEST_PATH.exists()
+        if not queued:
+            _write_state("idle")
+        connection.sendall(_error("busy" if queued else "failed", "Update operation failed"))
+        return
+    # The worker checks the typed request before every bounded six-second
+    # sleep. Avoid asynchronous wakeup signals entirely: the service socket can
+    # accept immediately after spawn, before a shell trap could be proven ready.
+    connection.sendall(_response({"schemaVersion": 1, "ok": True, "status": "accepted"}))
+
+
+def run_service() -> int:
+    if os.geteuid() != 0:
+        print("matrix-update-service: root_required", file=sys.stderr)
+        return 1
+    matrix_user = pwd.getpwnam("matrix")
+    matrix_group = grp.getgrnam("matrix")
+    _prepare_runtime_directory(matrix_group.gr_gid)
+    interrupted = _recover_interrupted_operation()
+    if not interrupted and _read_state() != "failed":
+        _write_state("idle")
+    worker = subprocess.Popen(
+        [WORKER_PATH, "--worker"],
+        stdin=subprocess.DEVNULL,
+        close_fds=True,
+    )
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(SOCKET_PATH))
+    os.chown(SOCKET_PATH, 0, matrix_group.gr_gid)
+    os.chmod(SOCKET_PATH, 0o660)
+    listener.listen(16)
+    listener.settimeout(1)
+    if not interrupted:
+        _resume_pending_request(worker)
+
+    stopping = False
+
+    def stop_service(_signum: int, _frame: object) -> None:
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGTERM, stop_service)
+    signal.signal(signal.SIGINT, stop_service)
+    try:
+        while not stopping:
+            if worker.poll() is not None:
+                return 1
+            try:
+                connection, _ = listener.accept()
+            except socket.timeout:
+                continue
+            with connection:
+                try:
+                    _serve_connection(connection, matrix_user.pw_uid, worker)
+                except (OSError, RuntimeError):
+                    try:
+                        connection.sendall(_error("failed", "Update operation failed"))
+                    except OSError:
+                        pass
+        return 0
+    finally:
+        listener.close()
+        try:
+            SOCKET_PATH.unlink()
+        except FileNotFoundError:
+            pass
+        if worker.poll() is None:
+            worker.terminate()
+            try:
+                worker.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                worker.kill()
+                worker.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_service())

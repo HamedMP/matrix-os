@@ -174,7 +174,7 @@ describe('customer VPS terminal runtime services', () => {
     );
     const startFailure = updater.slice(
       updater.indexOf(
-        'if ! sudo systemctl start matrix-terminal-runtime.service; then',
+        'if ! systemctl start matrix-terminal-runtime.service; then',
       ),
       updater.indexOf('log "Terminal runtime supervisor enabled"'),
     );
@@ -187,13 +187,13 @@ describe('customer VPS terminal runtime services', () => {
       '[ ! -f "$snapshot/supervisor-was-active" ] || return 1',
     );
     expect(cleanup).toContain(
-      'sudo systemctl stop matrix-terminal-runtime.service',
+      'systemctl stop matrix-terminal-runtime.service',
     );
     expect(cleanup).toContain(
-      'sudo systemctl reset-failed matrix-terminal-runtime.service',
+      'systemctl reset-failed matrix-terminal-runtime.service',
     );
     expect(cleanup).toContain(
-      'if sudo systemctl is-active --quiet matrix-terminal-runtime.service; then',
+      'if systemctl is-active --quiet matrix-terminal-runtime.service; then',
     );
     expect(startFailure.indexOf(
       'terminate_new_terminal_runtime_supervisor_after_failed_start',
@@ -327,7 +327,7 @@ describe('customer VPS terminal runtime services', () => {
       'restore_terminal_runtime_after_failed_update',
     );
     expect(updater).toContain(
-      'sudo rm -rf -- "$APP_DIR/.terminal-runtime.failed-update"',
+      'rm -rf -- "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"',
     );
     expect(updater).not.toContain(
       'systemctl stop matrix-terminal-session@',

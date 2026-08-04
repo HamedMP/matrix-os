@@ -163,9 +163,9 @@ describe('terminal runtime spike evidence', () => {
     expect(syncAgent).toContain("! -name 'matrix-terminal-*'");
     expect(syncAgent).toContain('backup_zellij_for_rollback');
     expect(syncAgent).toContain('restore_zellij_after_rollback');
-    expect(syncAgent).toContain('readonly ZELLIJ_ROLLBACK_DIR="$APP_DIR/.zellij.rollback"');
+    expect(syncAgent).toContain('readonly ZELLIJ_ROLLBACK_DIR="$ROLLBACK_STATE_DIR/zellij.rollback"');
     expect(syncAgent).toContain('local rollback_next="${ZELLIJ_ROLLBACK_DIR}.next"');
-    expect(syncAgent).toContain('sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"');
+    expect(syncAgent).toContain('mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"');
     const rollbackBackup = syncAgent.slice(
       syncAgent.indexOf('backup_zellij_for_rollback()'),
       syncAgent.indexOf('restore_zellij_after_rollback()'),
@@ -174,7 +174,7 @@ describe('terminal runtime spike evidence', () => {
       rollbackBackup.indexOf('clear_zellij_rollback'),
     );
     expect(rollbackBackup.indexOf('clear_zellij_rollback')).toBeLessThan(
-      rollbackBackup.indexOf('sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"'),
+      rollbackBackup.indexOf('mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"'),
     );
     expect(syncAgent).toContain(
       'if [ -f "$extract_dir/bin/zellij" ]; then\n    backup_zellij_for_rollback',
@@ -183,14 +183,14 @@ describe('terminal runtime spike evidence', () => {
       syncAgent.lastIndexOf('backup_zellij_for_rollback'),
     );
     expect(syncAgent).toContain(
-      'if [ -f "$extract_dir/bin/zellij" ]; then\n        sudo rm -f -- "$ZELLIJ_BUILD_METADATA"',
+      'if [ -f "$extract_dir/bin/zellij" ]; then\n        rm -f -- "$ZELLIJ_BUILD_METADATA"',
     );
     expect(syncAgent.indexOf('backup_zellij_for_rollback')).toBeLessThan(
       syncAgent.indexOf('mv -f "$zellij_next" "$BIN_DIR/zellij"'),
     );
     const rollbackBody = syncAgent.slice(syncAgent.indexOf('do_rollback()'));
     expect(rollbackBody.indexOf('restore_zellij_after_rollback')).toBeLessThan(
-      rollbackBody.indexOf('sudo chown -R matrix:matrix "$APP_DIR"'),
+      rollbackBody.indexOf('chown -R matrix:matrix "$APP_DIR"'),
     );
     expect(rollbackBody.indexOf('restore_zellij_after_rollback')).toBeLessThan(
       rollbackBody.indexOf('systemctl start matrix-gateway matrix-shell'),
@@ -215,10 +215,15 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('timeout-minutes: 80');
     expect(workflow).toContain('deadline=$((SECONDS + 2400))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
+    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
+    expect(workflow).toContain('echo "update_diagnostic=${update_diagnostic}"');
+    expect(workflow).toContain(
+      'test("^Update service: (idle|running|failed) phase=(idle|admitted|resolving|downloading|validating|extracting|preparing|committing|health_check|rollback|failed) failure=(none|[a-z0-9_]{1,64})\\\\n$")',
+    );
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
-    expect(workflow.match(/--insecure/g)).toHaveLength(2);
+    expect(workflow.match(/--insecure/g)).toHaveLength(3);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).not.toContain('VPS_SSH_KEY');

@@ -1,17 +1,12 @@
 [Unit]
-Description=Matrix OS customer sync agent
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=/opt/matrix/bin/matrix-sync-agent
+Description=Matrix OS legacy update-service bridge
+After=matrix-update-runtime.service
+Wants=matrix-update-runtime.service
 
 [Service]
-User=matrix
-Group=matrix
-EnvironmentFile=/opt/matrix/env/host.env
-WorkingDirectory=/opt/matrix
-ExecStart=/opt/matrix/bin/matrix-sync-agent
-Restart=on-failure
-RestartSec=10
+Type=oneshot
+ExecStart=/usr/bin/true
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
