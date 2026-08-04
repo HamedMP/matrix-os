@@ -165,8 +165,10 @@ jobs:
         with:
           ref: ${{ needs.gate.outputs.head }}
       - name: Recover the exact-head disposable preview updater
+        id: preview
         run: |
           set -euo pipefail
+          [ "$TEST_ONLY_ACTIVATION" = "MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1" ]
           candidate_ids="$(gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" \
             --jq '[.workflow_runs[] | select(.head_sha == "'"$HEAD_SHA"'" and .status == "completed")]
@@ -230,16 +232,18 @@ jobs:
                 .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
             ' "$timestamp" "$nonce")"
             headers="$RUNNER_TEMP/user-systemd-recovery-headers"
-            curl --fail --silent --show-error --max-time 45 --insecure \
+            if ! curl --fail --silent --show-error --max-time 45 --insecure \
               --resolve "app.matrix-os.com:443:${address}" \
               -D "$headers" -o "$response" -X POST \
               'https://app.matrix-os.com/api/internal/terminal-acceptance/run' \
               -H "x-matrix-acceptance-timestamp: $timestamp" \
               -H "x-matrix-acceptance-nonce: $nonce" \
               -H "x-matrix-acceptance-signature: $signature" \
-              -H 'content-type: application/json' --data-binary "$body"
+              -H 'content-type: application/json' --data-binary "$body"; then
+              return 1
+            fi
             response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
-            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+            if ! ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
               import { createHash, createHmac, timingSafeEqual } from "node:crypto";
               import { readFile } from "node:fs/promises";
               const [timestamp, nonce, signature, path] = process.argv.slice(1);
@@ -249,7 +253,9 @@ jobs:
                 .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
               if (!/^[0-9a-f]{64}$/.test(signature) ||
                 !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
-            ' "$timestamp" "$nonce" "$response_signature" "$response"
+            ' "$timestamp" "$nonce" "$response_signature" "$response"; then
+              return 1
+            fi
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
           }
@@ -276,37 +282,70 @@ jobs:
           body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}'
           send_signed_command "$body" "$response"
 
-          if [ "$current_version" = "$target_version" ]; then
-            echo "Verified the exact-head disposable preview updater is active."
-          else
-            echo "Queued the immutable exact-head preview bundle before recovering its updater."
-          fi
-      - name: Resolve exact-head disposable preview
-        id: preview
-        run: |
-          set -euo pipefail
-          [ "$TEST_ONLY_ACTIVATION" = "MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1" ]
-          deadline=$((SECONDS + 3600))
+          deadline=$((SECONDS + 1200))
+          inactive_samples=0
+          probe_failures=0
           while [ "$SECONDS" -lt "$deadline" ]; do
-            fleet="$(curl --fail --silent --show-error --max-time 30 \
+            if ! fleet="$(curl --fail --silent --show-error --max-time 30 \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
-              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"; then
+              sleep 15
+              continue
+            fi
             machine="$(jq -ce --arg handle "$HANDLE" '
               [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
                 and .status == "running")] | if length == 1 then .[0] else {} end
             ' <<<"$fleet")"
             version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
-            address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-            if [[ "$version" == *"-${HEAD_SHA:0:7}"* ]] &&
-              printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-              echo "::add-mask::$address"
+            fleet_address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+            if [ "$version" = "$target_version" ] && [ "$fleet_address" = "$address" ]; then
               echo "address=$address" >>"$GITHUB_OUTPUT"
               echo "version=$version" >>"$GITHUB_OUTPUT"
               exit 0
             fi
+
+            body='{"command":["/usr/bin/systemctl","show","matrix-sync-agent.service","--property=ActiveState","--property=SubState","--property=Result","--property=ExecMainStatus"]}'
+            if send_signed_command "$body" "$response"; then
+              probe_failures=0
+              service_state="$(jq -r '.stdout // ""' "$response")"
+              active_state="$(sed -n 's/^ActiveState=//p' <<<"$service_state")"
+              sub_state="$(sed -n 's/^SubState=//p' <<<"$service_state")"
+              result="$(sed -n 's/^Result=//p' <<<"$service_state")"
+              exec_status="$(sed -n 's/^ExecMainStatus=//p' <<<"$service_state")"
+              case "$active_state" in
+                active|activating|inactive|failed|deactivating) ;;
+                *) active_state=other ;;
+              esac
+              case "$sub_state" in
+                running|start|dead|failed|auto-restart|exited|stop-sigterm|stop-post|start-pre|start-post) ;;
+                *) sub_state=other ;;
+              esac
+              case "$result" in
+                success|exit-code|signal|timeout|core-dump|watchdog|start-limit-hit|resources|protocol|none) ;;
+                *) result=other ;;
+              esac
+              if ! printf '%s' "$exec_status" | grep -Eq '^[0-9]{1,3}$'; then
+                exec_status=other
+              fi
+              if [ "$active_state" = active ] || [ "$active_state" = activating ]; then
+                inactive_samples=0
+              else
+                inactive_samples=$((inactive_samples + 1))
+                if [ "$inactive_samples" -ge 3 ]; then
+                  echo "Updater unavailable: active=${active_state} sub=${sub_state} result=${result} exit=${exec_status}." >&2
+                  exit 1
+                fi
+              fi
+            else
+              probe_failures=$((probe_failures + 1))
+              if [ "$probe_failures" -ge 5 ]; then
+                echo "Updater state probe remained unavailable." >&2
+                exit 1
+              fi
+            fi
             sleep 15
           done
-          echo "Exact-head preview was unavailable." >&2
+          echo "Exact-head preview was unavailable after a bounded wait." >&2
           exit 1
       - name: Install bounded acceptance assets through the authenticated runtime
         env:
