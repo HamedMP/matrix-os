@@ -580,6 +580,50 @@ describe("pi provider adapter — event normalization", () => {
     expect(completed).toMatchObject({ type: "tool.completed", outcome: "failed" });
   });
 
+  it("keeps fallback tool ids stable through completion", async () => {
+    const lines = [
+      sessionLine(SESSION_ID),
+      JSON.stringify({ type: "agent_start" }),
+      JSON.stringify({ type: "turn_start" }),
+      JSON.stringify({
+        type: "tool_execution_start",
+        toolCallId: null,
+        toolName: "read",
+        args: { path: "README.md" },
+      }),
+      JSON.stringify({
+        type: "tool_execution_end",
+        toolCallId: null,
+        toolName: "read",
+        result: { content: [{ type: "text", text: "contents" }] },
+        isError: false,
+      }),
+      JSON.stringify({ type: "turn_end", message: { role: "assistant", content: [] }, toolResults: [] }),
+      JSON.stringify({ type: "agent_end", messages: [], willRetry: false }),
+      JSON.stringify({ type: "agent_settled" }),
+    ];
+    const fake = fakeSpawn({ lines });
+    const provider = providerFor(fake.spawnFn);
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Read README.md"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+    const parsed = parseCodingAgentProviderRunResult(result, threadSummary().id);
+    const started = parsed.events.find((event) => event.type === "tool.started");
+    const completed = parsed.events.find((event) => event.type === "tool.completed");
+
+    expect(started).toMatchObject({ type: "tool.started" });
+    expect(completed).toMatchObject({ type: "tool.completed", outcome: "success" });
+    if (started?.type !== "tool.started" || completed?.type !== "tool.completed") {
+      throw new Error("tool events missing");
+    }
+    expect(completed.toolCallId).toBe(started.toolCallId);
+  });
+
   it("caps tool output and marks truncation", async () => {
     const hugeOutput = "y".repeat(60_000);
     const lines = [

@@ -372,7 +372,7 @@ function createPiRunCollector(options: PiRunCollectorOptions) {
         return;
       }
       case "tool_execution_end": {
-        const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${++fallbackToolCounter}`);
+        const toolCallId = safeReferenceId(event.toolCallId, `tool_${options.scope}_${fallbackToolCounter}`);
         const result = event.result;
         const resultText = result && typeof result === "object"
           ? contentText((result as Record<string, unknown>).content)
