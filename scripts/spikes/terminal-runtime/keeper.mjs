@@ -202,7 +202,7 @@ async function regularFileExists(path) {
 async function verifyWorkloadHelper() {
   workloadHelperState = 'not_checked';
   workloadHelperExitStatus = null;
-  const child = spawnProcess(WORKLOAD_PANE, [], {
+  const child = spawnProcess(NODE, [WORKLOAD_PANE], {
     detached: true,
     env: zellijEnvironment(),
     stdio: ['ignore', 'ignore', 'ignore'],
@@ -252,7 +252,7 @@ async function launchCreateWorkloadPane(sessionName, env) {
     // Successful completion is followed by authoritative cgroup role checks.
     await execFileAsync(
       zellij,
-      ['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', WORKLOAD_PANE],
+      ['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', NODE, WORKLOAD_PANE],
       { env, timeout: 2000, maxBuffer: 16 * 1024 },
     );
   } catch (error) {
@@ -276,7 +276,7 @@ async function inspectWorkloadPane(sessionName, env) {
       && !Array.isArray(pane)
       && pane.is_plugin === false
       && pane.title === WORKLOAD_PANE_NAME
-      && pane.terminal_command === WORKLOAD_PANE);
+      && pane.terminal_command === `${NODE} ${WORKLOAD_PANE}`);
     if (matching.length === 0) return 'missing';
     if (matching.length !== 1) return 'ambiguous';
     const [pane] = matching;
