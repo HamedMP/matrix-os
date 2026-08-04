@@ -253,6 +253,23 @@ jobs:
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
           }
+          if [ "$current_version" != "$target_version" ]; then
+            deploy_body="$(jq -cn --arg version "$target_version" --arg handle "$HANDLE" \
+              '{version: $version, handle: $handle}')"
+            code="$(curl --silent --show-error --max-time 120 -o "$RUNNER_TEMP/recovery-deploy.json" \
+              -w '%{http_code}' -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" -H 'content-type: application/json' \
+              --data-binary "$deploy_body")"
+            if [ "$code" != 200 ] ||
+              ! jq -e --arg handle "$HANDLE" '
+                .triggered == 1 and .failed == 0 and
+                (.results | length == 1 and .[0].handle == $handle and .[0].status == "triggered")
+              ' "$RUNNER_TEMP/recovery-deploy.json" >/dev/null; then
+              echo "Exact-head preview deploy recovery failed with HTTP ${code}." >&2
+              exit 1
+            fi
+          fi
+
           response="$RUNNER_TEMP/user-systemd-recovery.json"
           body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]}'
           send_signed_command "$body" "$response"
@@ -261,24 +278,9 @@ jobs:
 
           if [ "$current_version" = "$target_version" ]; then
             echo "Verified the exact-head disposable preview updater is active."
-            exit 0
+          else
+            echo "Queued the immutable exact-head preview bundle before recovering its updater."
           fi
-
-          deploy_body="$(jq -cn --arg version "$target_version" --arg handle "$HANDLE" \
-            '{version: $version, handle: $handle}')"
-          code="$(curl --silent --show-error --max-time 120 -o "$RUNNER_TEMP/recovery-deploy.json" \
-            -w '%{http_code}' -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
-            -H "authorization: Bearer ${PLATFORM_SECRET}" -H 'content-type: application/json' \
-            --data-binary "$deploy_body")"
-          if [ "$code" != 200 ] ||
-            ! jq -e --arg handle "$HANDLE" '
-              .triggered == 1 and .failed == 0 and
-              (.results | length == 1 and .[0].handle == $handle and .[0].status == "triggered")
-            ' "$RUNNER_TEMP/recovery-deploy.json" >/dev/null; then
-            echo "Exact-head preview deploy recovery failed with HTTP ${code}." >&2
-            exit 1
-          fi
-          echo "Recovered the updater and re-triggered the immutable exact-head preview bundle."
       - name: Resolve exact-head disposable preview
         id: preview
         run: |
