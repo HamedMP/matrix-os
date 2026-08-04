@@ -79,7 +79,15 @@ export function ProjectChatDraft({
     const store = useDraftChat.getState();
     const hasPickerChanges = providerSelectionTouchedRef.current
       && (draft.providerId !== initialDraft.providerId || draft.mode !== initialDraft.mode);
-    if (hasComposerContent(draft) || hasPickerChanges) store.setDraft(projectId, draft);
+    const draftToPersist = providerSelectionTouchedRef.current
+      ? draft
+      : {
+          ...draft,
+          providerId: initialDraft.providerId,
+          mode: initialDraft.mode,
+          sandboxMode: initialDraft.sandboxMode,
+        };
+    if (hasComposerContent(draftToPersist) || hasPickerChanges) store.setDraft(projectId, draftToPersist);
     else store.clearDraft(projectId);
   }, [projectId, draft, initialDraft]);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
