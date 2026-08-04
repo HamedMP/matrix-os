@@ -719,6 +719,12 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('select(.handle == $handle and .runtimeSlot == $handle');
     expect(workflow).toContain('x-matrix-acceptance-signature');
     expect(workflow).toContain('x-matrix-acceptance-response-signature');
+    expect(workflow).toContain('classify_recovery_phase');
+    expect(workflow).toContain('[ "$recovery_phase" = safe ]');
+    expect(workflow).toContain('[ "$recovery_phase" = idle ]');
+    expect(workflow).toContain('[ "$recovery_phase" = unsafe ]');
+    expect(workflow).toContain('[ "$recovery_phase" = invalid ]');
+    expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]');
     expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]');
     expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]');
     expect(workflow).toContain("'{version: $version, handle: $handle}'");

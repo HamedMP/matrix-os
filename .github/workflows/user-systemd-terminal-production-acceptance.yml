@@ -259,7 +259,43 @@ jobs:
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
           }
+          classify_recovery_phase() {
+            local response="$RUNNER_TEMP/user-systemd-recovery-phase.json" body
+            body='{"command":["/usr/bin/sudo","/bin/bash","-c","marker=/opt/matrix/staging/update-phase; if [ -L \"$marker\" ] || { [ -e \"$marker\" ] && [ ! -f \"$marker\" ]; }; then printf \"invalid\\n\"; elif [ ! -e \"$marker\" ]; then printf \"idle\\n\"; else IFS= read -r phase <\"$marker\" || phase=; case \"$phase\" in prepare|download|verify|extract) printf \"safe\\n\" ;; terminal-runtime|app-install|host-bin|health) printf \"unsafe\\n\" ;; *) printf \"invalid\\n\" ;; esac; fi"]}'
+            send_signed_command "$body" "$response"
+            jq -er '.stdout | select(. == "safe\n" or . == "idle\n" or . == "unsafe\n" or . == "invalid\n") | rtrimstr("\n")' \
+              "$response"
+          }
           if [ "$current_version" != "$target_version" ]; then
+            recovery_phase="$(classify_recovery_phase)"
+            if [ "$recovery_phase" = unsafe ] || [ "$recovery_phase" = invalid ]; then
+              echo "Refusing to interrupt updater in bounded ${recovery_phase} phase." >&2
+              exit 1
+            fi
+            if [ "$recovery_phase" = safe ] || [ "$recovery_phase" = idle ]; then
+              response="$RUNNER_TEMP/user-systemd-recovery.json"
+              body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]}'
+              send_signed_command "$body" "$response"
+              stop_deadline=$((SECONDS + 90))
+              updater_active=unknown
+              while [ "$SECONDS" -lt "$stop_deadline" ]; do
+                body='{"command":["/usr/bin/systemctl","show","matrix-sync-agent.service","--property=ActiveState"]}'
+                send_signed_command "$body" "$response"
+                updater_active="$(jq -r '.stdout // ""' "$response" | sed -n 's/^ActiveState=//p')"
+                if [ "$updater_active" = inactive ] || [ "$updater_active" = failed ]; then
+                  break
+                fi
+                sleep 5
+              done
+              if [ "$updater_active" != inactive ] && [ "$updater_active" != failed ]; then
+                echo "Updater did not stop within the bounded recovery window." >&2
+                exit 1
+              fi
+              body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]}'
+              send_signed_command "$body" "$response"
+              body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}'
+              send_signed_command "$body" "$response"
+            fi
             deploy_body="$(jq -cn --arg version "$target_version" --arg handle "$HANDLE" \
               '{version: $version, handle: $handle}')"
             code="$(curl --silent --show-error --max-time 120 -o "$RUNNER_TEMP/recovery-deploy.json" \
@@ -275,12 +311,6 @@ jobs:
               exit 1
             fi
           fi
-
-          response="$RUNNER_TEMP/user-systemd-recovery.json"
-          body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]}'
-          send_signed_command "$body" "$response"
-          body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}'
-          send_signed_command "$body" "$response"
 
           deadline=$((SECONDS + 1200))
           inactive_samples=0

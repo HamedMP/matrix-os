@@ -374,8 +374,14 @@ describe("customer VPS user-systemd terminal runtime", () => {
       workflow.indexOf("- name: Recover the exact-head disposable preview updater"),
       workflow.indexOf("- name: Install bounded acceptance assets through the authenticated runtime"),
     );
+    expect(recoveryStep).toContain("classify_recovery_phase");
+    expect(recoveryStep).toContain("prepare|download|verify|extract)");
+    expect(recoveryStep).toContain("terminal-runtime|app-install|host-bin|health)");
+    expect(recoveryStep).toContain(
+      'body=\'{"command":["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]}\'',
+    );
     expect(recoveryStep.indexOf('deploy_body="$(jq -cn')).toBeGreaterThanOrEqual(0);
-    expect(recoveryStep.indexOf('deploy_body="$(jq -cn')).toBeLessThan(
+    expect(recoveryStep.indexOf('deploy_body="$(jq -cn')).toBeGreaterThan(
       recoveryStep.indexOf(
         'body=\'{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}\'',
       ),
