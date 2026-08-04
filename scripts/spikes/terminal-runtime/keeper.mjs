@@ -25,6 +25,14 @@ const WORKLOAD_PANE_STATES = new Set([
   'other',
   'ambiguous',
 ]);
+const WORKLOAD_HELPER_STATES = new Set([
+  'not_checked',
+  'spawn_error',
+  'early_exit',
+  'running',
+  'cleanup_error',
+  'cleanup_timeout',
+]);
 let stopping = false;
 let monitor;
 let startupWatchdog;
@@ -43,6 +51,8 @@ const heldPaneCount = 0;
 let workloadPaneLaunched = false;
 let workloadPaneState = 'not_launched';
 let workloadPaneExitStatus = null;
+let workloadHelperState = 'not_checked';
+let workloadHelperExitStatus = null;
 let startupFailureStarted = false;
 let startupStageRevision = 0;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
@@ -190,6 +200,8 @@ async function regularFileExists(path) {
   }
 }
 async function verifyWorkloadHelper() {
+  workloadHelperState = 'not_checked';
+  workloadHelperExitStatus = null;
   const child = spawnProcess(WORKLOAD_PANE, [], {
     detached: true,
     env: zellijEnvironment(),
@@ -203,20 +215,35 @@ async function verifyWorkloadHelper() {
     close,
     new Promise((resolve) => setTimeout(() => resolve({ kind: 'running' }), 250)),
   ]);
-  if (first.kind !== 'running' || !child.pid) {
+  if (first.kind === 'error' || !child.pid) {
+    workloadHelperState = 'spawn_error';
     throw new Error('workload_helper');
   }
+  if (first.kind === 'close') {
+    workloadHelperState = 'early_exit';
+    workloadHelperExitStatus = Number.isInteger(first.code) && first.code >= 0 && first.code <= 255
+      ? first.code
+      : null;
+    throw new Error('workload_helper');
+  }
+  workloadHelperState = 'running';
   try {
     process.kill(-child.pid, 'SIGKILL');
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-    if (code !== 'ESRCH') throw new Error('workload_helper', { cause: error });
+    if (code !== 'ESRCH') {
+      workloadHelperState = 'cleanup_error';
+      throw new Error('workload_helper', { cause: error });
+    }
   }
   const stopped = await Promise.race([
     close.then(() => true),
     new Promise((resolve) => setTimeout(() => resolve(false), 1000)),
   ]);
-  if (!stopped) throw new Error('workload_helper');
+  if (!stopped) {
+    workloadHelperState = 'cleanup_timeout';
+    throw new Error('workload_helper');
+  }
 }
 async function launchCreateWorkloadPane(sessionName, env) {
   await verifyWorkloadHelper();
@@ -315,6 +342,14 @@ async function writeReadiness(value) {
   });
 }
 function startupSnapshot() {
+  const boundedWorkloadHelperState = WORKLOAD_HELPER_STATES.has(workloadHelperState)
+    ? workloadHelperState
+    : 'spawn_error';
+  const boundedWorkloadHelperExitStatus = workloadHelperExitStatus === null ||
+    Number.isInteger(workloadHelperExitStatus) && workloadHelperExitStatus >= 0
+      && workloadHelperExitStatus <= 255
+    ? workloadHelperExitStatus
+    : null;
   const boundedWorkloadPaneState = WORKLOAD_PANE_STATES.has(workloadPaneState)
     ? workloadPaneState
     : 'ambiguous';
@@ -329,6 +364,8 @@ function startupSnapshot() {
     confirmationState,
     heldPaneCount,
     confirmationSent,
+    workloadHelperState: boundedWorkloadHelperState,
+    workloadHelperExitStatus: boundedWorkloadHelperExitStatus,
     workloadPaneState: boundedWorkloadPaneState,
     workloadPaneExitStatus: boundedWorkloadPaneExitStatus,
     ...roleSnapshot,

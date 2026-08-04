@@ -329,12 +329,35 @@ describe('terminal runtime spike evidence', () => {
     expect(updater).toContain('name="matrix-terminal-spike-pane"');
   });
   it('preflights the exact installed workload helper before asking Zellij to launch it', async () => {
-    const keeper = await readRepo('scripts/spikes/terminal-runtime/keeper.mjs');
+    const [keeper, packer] = await Promise.all([
+      readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
+      readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'),
+    ]);
     expectAll(keeper, [
       'async function verifyWorkloadHelper()',
       "spawnProcess(WORKLOAD_PANE, [], {",
       "throw new Error('workload_helper')",
       'await verifyWorkloadHelper();',
+      "const WORKLOAD_HELPER_STATES = new Set([",
+      'workloadHelperState',
+      'workloadHelperExitStatus',
+      "workloadHelperState = 'spawn_error'",
+      "workloadHelperState = 'early_exit'",
+      "workloadHelperState = 'running'",
+      "workloadHelperState = 'cleanup_error'",
+      "workloadHelperState = 'cleanup_timeout'",
+    ]);
+    expectAll(packer, [
+      'keeper_helper',
+      'keeper_helper_exit',
+      'failure_helper',
+      'failure_helper_exit',
+      'v.workloadHelperState',
+      'v.workloadHelperExitStatus',
+      'q${keeper_helper}',
+      'j${keeper_helper_exit}',
+      'q${failure_helper}',
+      'j${failure_helper_exit}',
     ]);
     expect(keeper.indexOf('await verifyWorkloadHelper();')).toBeLessThan(
       keeper.indexOf('await launchCreateWorkloadPane(sessionName, env);'),
