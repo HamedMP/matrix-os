@@ -164,6 +164,109 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.gate.outputs.head }}
+      - name: Recover the exact-head disposable preview updater
+        run: |
+          set -euo pipefail
+          preview_run_id="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" \
+            --jq '[.workflow_runs[] | select(.head_sha == "'"$HEAD_SHA"'" and .status == "completed")]
+              | sort_by(.created_at) | reverse | .[0].id // empty')"
+          if ! printf '%s' "$preview_run_id" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "No completed exact-head Preview VPS run is available." >&2
+            exit 1
+          fi
+          preview_artifact="$RUNNER_TEMP/exact-head-preview"
+          gh run download "$preview_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "preview-bundle-${PR}" --dir "$preview_artifact"
+          target_version="$(jq -er '.version' "$preview_artifact/release.json")"
+          if ! printf '%s' "$target_version" |
+            grep -Eq "^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-pr${PR}-[0-9a-f]{7}$" ||
+            [ "${target_version##*-}" != "${HEAD_SHA:0:7}" ]; then
+            echo "The completed preview artifact is not for the immutable acceptance head." >&2
+            exit 1
+          fi
+
+          fleet="$(curl --fail --silent --show-error --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+          machine="$(jq -ce --arg handle "$HANDLE" '
+            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+              and .status == "running")] | if length == 1 then .[0] else error("invalid preview") end
+          ' <<<"$fleet")"
+          current_version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+          address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+          if ! printf '%s' "$current_version" |
+            grep -Eq "^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-pr${PR}-[0-9a-f]{7}$" ||
+            ! printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+            echo "Refusing updater recovery outside the exact disposable PR preview." >&2
+            exit 1
+          fi
+          echo "::add-mask::$address"
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          send_signed_command() {
+            local body="$1" response="$2" timestamp nonce signature response_signature headers
+            timestamp="$(date +%s)"
+            nonce="$(openssl rand -hex 16)"
+            signature="$(ACCEPTANCE_SIGNING_KEY="$token" ACCEPTANCE_BODY="$body" node --input-type=module -e '
+              import{createHash,createHmac}from"node:crypto";
+              const digest=createHash("sha256").update(process.env.ACCEPTANCE_BODY).digest("hex");
+              process.stdout.write(createHmac("sha256",process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
+            ' "$timestamp" "$nonce")"
+            headers="$RUNNER_TEMP/user-systemd-recovery-headers"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" \
+              -D "$headers" -o "$response" -X POST \
+              'https://app.matrix-os.com/api/internal/terminal-acceptance/run' \
+              -H "x-matrix-acceptance-timestamp: $timestamp" \
+              -H "x-matrix-acceptance-nonce: $nonce" \
+              -H "x-matrix-acceptance-signature: $signature" \
+              -H 'content-type: application/json' --data-binary "$body"
+            response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+              import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+              import { readFile } from "node:fs/promises";
+              const [timestamp, nonce, signature, path] = process.argv.slice(1);
+              const body = await readFile(path);
+              const digest = createHash("sha256").update(body).digest("hex");
+              const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+              if (!/^[0-9a-f]{64}$/.test(signature) ||
+                !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            ' "$timestamp" "$nonce" "$response_signature" "$response"
+            jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
+              "$response" >/dev/null
+          }
+          response="$RUNNER_TEMP/user-systemd-recovery.json"
+          body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]}'
+          send_signed_command "$body" "$response"
+          body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}'
+          send_signed_command "$body" "$response"
+
+          if [ "$current_version" = "$target_version" ]; then
+            echo "Verified the exact-head disposable preview updater is active."
+            exit 0
+          fi
+
+          deploy_body="$(jq -cn --arg version "$target_version" --arg handle "$HANDLE" \
+            '{version: $version, handle: $handle}')"
+          code="$(curl --silent --show-error --max-time 120 -o "$RUNNER_TEMP/recovery-deploy.json" \
+            -w '%{http_code}' -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" -H 'content-type: application/json' \
+            --data-binary "$deploy_body")"
+          if [ "$code" != 200 ] ||
+            ! jq -e --arg handle "$HANDLE" '
+              .triggered == 1 and .failed == 0 and
+              (.results | length == 1 and .[0].handle == $handle and .[0].status == "triggered")
+            ' "$RUNNER_TEMP/recovery-deploy.json" >/dev/null; then
+            echo "Exact-head preview deploy recovery failed with HTTP ${code}." >&2
+            exit 1
+          fi
+          echo "Recovered the updater and re-triggered the immutable exact-head preview bundle."
       - name: Resolve exact-head disposable preview
         id: preview
         run: |

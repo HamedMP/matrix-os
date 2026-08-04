@@ -795,6 +795,28 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       .toBeLessThan(workflow.indexOf('name: Comment preview URL on PR'));
   });
 
+  it('user-systemd acceptance recovers only its exact disposable preview updater', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(
+      join(root, '.github/workflows/user-systemd-terminal-production-acceptance.yml'),
+      'utf8',
+    );
+
+    expect(workflow).toContain('name: Recover the exact-head disposable preview updater');
+    expect(workflow).toContain('preview-bundle-${PR}');
+    expect(workflow).toContain("jq -er '.version'");
+    expect(workflow).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR}-[0-9a-f]{7}$');
+    expect(workflow).toContain('select(.handle == $handle and .runtimeSlot == $handle');
+    expect(workflow).toContain('x-matrix-acceptance-signature');
+    expect(workflow).toContain('x-matrix-acceptance-response-signature');
+    expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]');
+    expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]');
+    expect(workflow).toContain("'{version: $version, handle: $handle}'");
+    expect(workflow).toContain('--data-binary "$deploy_body"');
+    expect(workflow.indexOf('name: Recover the exact-head disposable preview updater'))
+      .toBeLessThan(workflow.indexOf('name: Resolve exact-head disposable preview'));
+  });
+
   it('preview VPS workflow uses the durable preview provision contract', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
