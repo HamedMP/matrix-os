@@ -356,7 +356,15 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain("const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane'");
     expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--', WORKLOAD_PANE]");
     expect(keeper).toContain("throw new Error('workload_launch'");
-    expect(keeper).toContain("throw new Error('workload_target')");
+    expect(keeper).not.toContain("throw new Error('workload_target')");
+    expect(keeper).not.toContain('const target = stdout.trim()');
+    expect(keeper).toContain('workloadPaneLaunched = true');
+    expect(keeper.indexOf('await execFileAsync(')).toBeLessThan(
+      keeper.indexOf('workloadPaneLaunched = true'),
+    );
+    expect(keeper.indexOf('workloadPaneLaunched = true')).toBeLessThan(
+      keeper.indexOf('await cgroupRoles(cgroup.path, descriptor.intent === \'create\')'),
+    );
     expect(keeper).toContain("confirmationState = descriptor.intent === 'create' ? 'not_required' : 'waiting'");
     expect(keeper).toContain("confirmationState = 'gated'");
     expect(keeper).not.toContain('confirmHeldCreatePane');
