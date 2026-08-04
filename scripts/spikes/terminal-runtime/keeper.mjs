@@ -13,6 +13,7 @@ const runNamespace = runtimeId.slice(1);
 const runtimeRoot = `/run/matrix-terminal-runtime-spikes/${runNamespace}`;
 const stateRoot = `/home/matrix/home/system/terminal-runtime-spikes/${runNamespace}`;
 const zellij = '/opt/matrix/bin/zellij';
+const NODE = '/opt/matrix/runtime/node/bin/node';
 const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane';
 const WORKLOAD_PANE_NAME = 'matrix-runtime-workload-probe';
 const WORKLOAD_PANE_STATES = new Set([
@@ -56,6 +57,7 @@ const STARTUP_FAILURE_CODES = new Set([
   'client_exit',
   'cgroup_unified',
   'cgroup_unit',
+  'workload_helper',
   'workload_launch',
   'readiness_timeout',
 ]);
@@ -187,7 +189,37 @@ async function regularFileExists(path) {
     throw error;
   }
 }
+async function verifyWorkloadHelper() {
+  const child = spawnProcess(WORKLOAD_PANE, [], {
+    detached: true,
+    env: zellijEnvironment(),
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  const close = new Promise((resolve) => {
+    child.once('error', () => resolve({ kind: 'error' }));
+    child.once('close', (code, signal) => resolve({ kind: 'close', code, signal }));
+  });
+  const first = await Promise.race([
+    close,
+    new Promise((resolve) => setTimeout(() => resolve({ kind: 'running' }), 250)),
+  ]);
+  if (first.kind !== 'running' || !child.pid) {
+    throw new Error('workload_helper');
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code !== 'ESRCH') throw new Error('workload_helper', { cause: error });
+  }
+  const stopped = await Promise.race([
+    close.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 1000)),
+  ]);
+  if (!stopped) throw new Error('workload_helper');
+}
 async function launchCreateWorkloadPane(sessionName, env) {
+  await verifyWorkloadHelper();
   try {
     // The production candidate does not reliably emit its documented pane ID.
     // Successful completion is followed by authoritative cgroup role checks.
@@ -232,7 +264,7 @@ async function inspectWorkloadPane(sessionName, env) {
       if (Number.isInteger(pane.exit_status)) return 'held_failure';
       return 'other';
     }
-    const commandLooksRunning = pane.pane_command === '/usr/bin/sleep 86400';
+    const commandLooksRunning = pane.pane_command === `${NODE} ${WORKLOAD_PANE}`;
     return commandLooksRunning ? 'running' : 'other';
   } catch (error) {
     if (!(error instanceof Error)) throw error;
@@ -262,10 +294,10 @@ async function cgroupRoles(cgroupPath, requireWorkload) {
     .filter((process) => process.comm === 'zellij' && !process.cmdline.includes('list-sessions'))
     .map((process) => process.pid);
   const shell = processes.find((entry) => entry.comm === 'bash');
-  const agent = processes.find((process) => process.comm === 'sleep'
+  const agent = processes.find((process) => process.comm === 'MainThread'
     && process.cmdline.length === 2
-    && process.cmdline[0] === '/usr/bin/sleep'
-    && process.cmdline[1] === '86400');
+    && process.cmdline[0] === NODE
+    && process.cmdline[1] === WORKLOAD_PANE);
   roleSnapshot = { ...roleSnapshot, zellij: zellijPids.length, shell: Boolean(shell), agent: Boolean(agent) };
   if (zellijPids.length < 2 || (requireWorkload && (!shell || !agent))) return null;
   return {
