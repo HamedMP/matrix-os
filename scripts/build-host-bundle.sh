@@ -18,7 +18,12 @@ GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE
 UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.sh}"
 
 rm -rf "$DIST_DIR"
-mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd"
+mkdir -p \
+  "$STAGE_DIR/bin" \
+  "$STAGE_DIR/app" \
+  "$STAGE_DIR/runtime" \
+  "$STAGE_DIR/systemd" \
+  "$STAGE_DIR/libexec/terminal-runtime/v1"
 
 pnpm install --frozen-lockfile
 pnpm rebuild node-pty
@@ -26,6 +31,7 @@ pnpm --filter '@matrix-os/observability' build
 pnpm --filter '@matrix-os/brand' build
 pnpm --filter '@matrix-os/kernel' build
 pnpm --filter '@matrix-os/gateway' build
+pnpm --filter '@matrix-os/terminal-runtime' build
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 : "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle}"
@@ -91,11 +97,78 @@ INSTALLER_NO_MODIFY_PATH=1 UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin" sh "$DIS
 chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
+terminal_generation_build="$STAGE_DIR/libexec/terminal-runtime/v1/payload"
+install -d -m 0755 \
+  "$terminal_generation_build/node_modules/node-pty/build/Release" \
+  "$terminal_generation_build/node_modules/node-pty/lib" \
+  "$terminal_generation_build/node_modules/zod"
+install -m 0755 \
+  "$ROOT_DIR/packages/terminal-runtime/dist/"*.js \
+  "$terminal_generation_build/"
+install -m 0644 \
+  "$ROOT_DIR/packages/terminal-runtime/package.json" \
+  "$terminal_generation_build/package.json"
+install -m 0644 \
+  "$ROOT_DIR/packages/terminal-runtime/assets/config.kdl" \
+  "$terminal_generation_build/config.kdl"
+install -m 0644 \
+  "$ROOT_DIR/packages/terminal-runtime/assets/layout.kdl" \
+  "$terminal_generation_build/layout.kdl"
+cc -std=c11 -Wall -Wextra -Werror -O2 \
+  "$ROOT_DIR/packages/terminal-runtime/native/supervisor-acceptor.c" \
+  -o "$terminal_generation_build/supervisor-acceptor"
+install -m 0644 \
+  "$(readlink -f "$ROOT_DIR/node_modules/node-pty")/package.json" \
+  "$terminal_generation_build/node_modules/node-pty/package.json"
+cp -aL --no-preserve=links \
+  "$(readlink -f "$ROOT_DIR/node_modules/node-pty")/lib/." \
+  "$terminal_generation_build/node_modules/node-pty/lib/"
+install -m 0755 \
+  "$(readlink -f "$ROOT_DIR/node_modules/node-pty")/build/Release/pty.node" \
+  "$terminal_generation_build/node_modules/node-pty/build/Release/pty.node"
+install -m 0644 \
+  "$(readlink -f "$ROOT_DIR/node_modules/zod")/package.json" \
+  "$terminal_generation_build/node_modules/zod/package.json"
+cp -aL --no-preserve=links \
+  "$(readlink -f "$ROOT_DIR/node_modules/zod")/v4" \
+  "$terminal_generation_build/node_modules/zod/v4"
+if find "$terminal_generation_build" -type l -print -quit | grep -q .; then
+  echo "terminal_runtime_generation_contains_symlink" >&2
+  exit 1
+fi
+if find "$terminal_generation_build" -type f -links +1 -print -quit |
+  grep -q .; then
+  echo "terminal_runtime_generation_contains_hardlink" >&2
+  exit 1
+fi
+(
+  cd "$terminal_generation_build"
+  LC_ALL=C find . -type f ! -name runtime-manifest.sha256 -printf '%P\n' |
+    LC_ALL=C sort |
+    while IFS= read -r runtime_file; do
+      if [[ ! "$runtime_file" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+        echo "terminal_runtime_manifest_path_invalid" >&2
+        exit 1
+      fi
+      sha256sum "$runtime_file"
+    done >runtime-manifest.sha256
+)
+terminal_generation_id="$(
+  sha256sum "$terminal_generation_build/runtime-manifest.sha256" |
+    awk '{print $1}'
+)"
+mv \
+  "$terminal_generation_build" \
+  "$STAGE_DIR/libexec/terminal-runtime/v1/$terminal_generation_id"
+ln -s \
+  "v1/$terminal_generation_id" \
+  "$STAGE_DIR/libexec/terminal-runtime/current"
+
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
+chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-terminal-supervisor" "$STAGE_DIR/bin/matrix-terminal-keeper" "$STAGE_DIR/bin/matrix-terminal-pane" "$STAGE_DIR/bin/matrix-terminal-runtime-op" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
@@ -135,7 +208,7 @@ node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
 HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
   node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
-tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd release.json incremental-manifest.json
+tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd libexec release.json incremental-manifest.json
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

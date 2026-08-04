@@ -202,6 +202,10 @@ describe('terminal runtime durable state contracts', () => {
           result: { ok: true, value: { lifecycleState: 'different' } },
         }),
       ).rejects.toThrow('operation_state_conflict');
+      await expect(
+        state.operations.removeCompleted(OPERATION_ID),
+      ).resolves.toBeUndefined();
+      await expect(state.operations.read(OPERATION_ID)).resolves.toBeNull();
     } finally {
       await state?.close();
       await rm(root, { recursive: true, force: true });

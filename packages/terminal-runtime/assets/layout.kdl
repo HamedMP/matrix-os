@@ -1,0 +1,5 @@
+layout {
+    pane command="/opt/matrix/bin/matrix-terminal-pane" {
+        args "shell"
+    }
+}

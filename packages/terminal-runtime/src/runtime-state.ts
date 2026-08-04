@@ -32,6 +32,8 @@ async function closeResources(
 export async function createRuntimeState(options: {
   durableRoot: string;
   runtimeRoot: string;
+  durableOwner?: { uid: number; gid: number };
+  runtimeOwner?: { uid: number; gid: number };
   authorizeDescriptorClaim?: (input: {
     runtimeId: string;
     operationId: string;
@@ -46,18 +48,23 @@ export async function createRuntimeState(options: {
   let descriptorDirectory: SecureDirectory;
   let locks: FlockManager;
   try {
-    durableDirectory = await SecureDirectory.open(options.durableRoot);
+    durableDirectory = await SecureDirectory.open(options.durableRoot, {
+      owner: options.durableOwner,
+    });
     resources.push(durableDirectory);
     receiptsDirectory = await SecureDirectory.open(
       join(options.durableRoot, 'receipts'),
+      { owner: options.durableOwner },
     );
     resources.push(receiptsDirectory);
     operationsDirectory = await SecureDirectory.open(
       join(options.durableRoot, 'operations'),
+      { owner: options.durableOwner },
     );
     resources.push(operationsDirectory);
     descriptorDirectory = await SecureDirectory.open(
       join(options.runtimeRoot, 'descriptors'),
+      { owner: options.runtimeOwner },
     );
     resources.push(descriptorDirectory);
     locks = await FlockManager.open(join(options.runtimeRoot, 'locks'));

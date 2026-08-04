@@ -1,0 +1,24 @@
+[Unit]
+Description=Matrix terminal runtime supervisor
+After=local-fs.target
+Before=matrix-gateway.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=root
+Group=matrix
+RuntimeDirectory=matrix-terminal-runtime
+RuntimeDirectoryMode=0750
+ExecStart=/opt/matrix/bin/matrix-terminal-supervisor
+KillMode=control-group
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+TimeoutStopSec=30
+StandardOutput=null
+StandardError=journal
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

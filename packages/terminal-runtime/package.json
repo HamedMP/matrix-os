@@ -9,9 +9,11 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
+    "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "node-pty": "^1.1.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

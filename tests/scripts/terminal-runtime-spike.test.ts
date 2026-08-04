@@ -158,7 +158,9 @@ describe('terminal runtime spike evidence', () => {
     expect(syncAgent).toContain('zellij_candidate_digest_mismatch');
     expect(syncAgent).toContain('mv -f "$zellij_next" "$BIN_DIR/zellij"');
     expect(syncAgent).toContain('zellij_installed_digest_mismatch');
-    expect(syncAgent).toContain("! -name 'zellij' ! -name 'zellij.build.json'");
+    expect(syncAgent).toContain("! -name 'zellij'");
+    expect(syncAgent).toContain("! -name 'zellij.build.json'");
+    expect(syncAgent).toContain("! -name 'matrix-terminal-*'");
     expect(syncAgent).toContain('backup_zellij_for_rollback');
     expect(syncAgent).toContain('restore_zellij_after_rollback');
     expect(syncAgent).toContain('readonly ZELLIJ_ROLLBACK_DIR="$APP_DIR/.zellij.rollback"');
