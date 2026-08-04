@@ -4,7 +4,7 @@
 # running that PR's host bundle, reachable at app.matrix-os.com/vm/pr-<N>.
 #
 # Flow:
-#   deploy   — on label / push while labeled: build bundle v<date>-pr<N>-<sha7>,
+#   deploy   — on label / push while labeled: build a unique exact-head bundle,
 #              publish register-only (--channel none, never promoted),
 #              provision pr-<N> if absent, deploy the exact version, comment.
 #   teardown — on PR close or explicit manual dispatch: delete the pr-<N> VPS.
@@ -126,7 +126,7 @@ jobs:
           fi
           if [ "$action" = "deploy_existing" ]; then
             if ! printf '%s' "$REQUESTED_VERSION" |
-              grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-[0-9a-f]{7}$" ||
+              grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$" ||
               [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then
               echo "Invalid pinned preview version" >&2
               exit 1
@@ -195,7 +195,7 @@ jobs:
           REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}
         run: |
           set -euo pipefail
-          VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"
+          VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Preview version: $VERSION"
 

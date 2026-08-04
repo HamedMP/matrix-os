@@ -773,7 +773,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
-    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
     expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
     expect(workflow).toContain('dist/host-bundle/objects/**');
     expect(workflow).toContain('./scripts/publish-release.sh "$VERSION" --channel none');
@@ -812,7 +812,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('actions/runs/${candidate}/artifacts');
     expect(workflow).toContain('select(.name == $name and .expired == false)');
     expect(workflow).not.toContain('gh run download "$preview_run_id"');
-    expect(workflow).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR}-[0-9a-f]{7}$');
+    expect(workflow).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$');
     expect(workflow).toContain('select(.handle == $handle and .runtimeSlot == $handle');
     expect(workflow).toContain('x-matrix-acceptance-signature');
     expect(workflow).toContain('x-matrix-acceptance-response-signature');
@@ -931,7 +931,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then');
     expect(workflow).toContain('ref: ${{ needs.gate.outputs.head_sha }}');
     expect(workflow).toContain('REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}');
-    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('^v[0-9]{4}\\\\.[0-9]{2}\\\\.[0-9]{2}-pr${PR_NUMBER}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$');
     expect(workflow).toContain('Invalid pinned preview version');
     expect(workflow).toContain('[ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]');
   });
