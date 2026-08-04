@@ -45,7 +45,6 @@ const STARTUP_FAILURE_CODES = new Set([
   'cgroup_unified',
   'cgroup_unit',
   'workload_launch',
-  'workload_target',
   'readiness_timeout',
 ]);
 function exit(code) {
@@ -177,20 +176,16 @@ async function regularFileExists(path) {
   }
 }
 async function launchCreateWorkloadPane(sessionName, env) {
-  let stdout;
   try {
-    ({ stdout } = await execFileAsync(
+    // The production candidate does not reliably emit its documented pane ID.
+    // Successful completion is followed by authoritative cgroup role checks.
+    await execFileAsync(
       zellij,
       ['--session', sessionName, 'action', 'new-pane', '--', WORKLOAD_PANE],
       { env, timeout: 2000, maxBuffer: 16 * 1024 },
-    ));
+    );
   } catch (error) {
     throw new Error('workload_launch', { cause: error });
-  }
-  const target = stdout.trim();
-  const match = /^terminal_([0-9]{1,10})$/.exec(target);
-  if (!match || Number(match[1]) > 1_000_000) {
-    throw new Error('workload_target');
   }
   workloadPaneLaunched = true;
   await recordStartupStage();

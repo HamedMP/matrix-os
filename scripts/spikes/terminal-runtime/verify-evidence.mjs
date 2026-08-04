@@ -156,7 +156,7 @@ export async function reportGateChecks(inputRoot) {
     const codes = new Set([
       'runtime_id', 'descriptor_schema', 'descriptor_runtime', 'descriptor_cwd',
       'descriptor_intent', 'descriptor_size', 'native_binding', 'client_exit', 'cgroup_unified',
-      'cgroup_unit', 'workload_launch', 'workload_target',
+      'cgroup_unit', 'workload_launch',
       'readiness_timeout', 'startup_failed',
     ]);
     const confirmationStates = new Set(['waiting', 'not_required', 'gated']);
@@ -239,7 +239,7 @@ export async function reportGateChecks(inputRoot) {
     const codes = new Set([
       'runtime_id', 'descriptor_schema', 'descriptor_runtime', 'descriptor_cwd',
       'descriptor_intent', 'descriptor_size', 'native_binding', 'client_exit', 'cgroup_unified',
-      'cgroup_unit', 'workload_launch', 'workload_target',
+      'cgroup_unit', 'workload_launch',
       'readiness_timeout', 'startup_failed',
     ]);
     const confirmationStates = new Set(['waiting', 'not_required', 'gated']);
