@@ -383,6 +383,17 @@ describe("customer VPS user-systemd terminal runtime", () => {
       workflow.indexOf("- name: Install bounded acceptance assets through the authenticated runtime"),
     );
     expect(recoveryStep).toContain("classify_recovery_phase");
+    expect(recoveryStep).toContain("probe_runtime_readiness");
+    expect(recoveryStep).toContain('host_readiness="$(probe_runtime_readiness)"');
+    expect(recoveryStep).toContain(
+      'if [ "$current_version" != "$target_version" ] || [ "$host_readiness" != ready ]; then',
+    );
+    expect(recoveryStep).toContain('if [ "$host_readiness" = invalid ]; then');
+    expect(recoveryStep).toContain('host_readiness="$(probe_runtime_readiness 2>/dev/null || true)"');
+    expect(recoveryStep).toContain(
+      'if [ "$version" = "$target_version" ] && [ "$fleet_address" = "$address" ] &&\n' +
+        '              [ "$host_readiness" = ready ]; then',
+    );
     expect(recoveryStep).toContain("prepare|download|verify|extract|terminal-runtime)");
     expect(recoveryStep).toContain("app-install|host-bin|health|invalid)");
     expect(recoveryStep).toContain('if [ "$recovery_phase" = terminal-runtime ]; then');
