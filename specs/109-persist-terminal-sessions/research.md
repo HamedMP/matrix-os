@@ -128,6 +128,13 @@ Production recovery never passes `--force-run-commands`; cache
 corruption/incompatibility yields a fresh shell and bounded reason. A prior agent
 never resumes automatically.
 
+Fresh creation is intentionally separate from resurrection. It starts a plain
+shell layout, waits for the exact session plus one-shot launch authorization,
+then uses one fixed typed Zellij pane action for the stable helper and verifies
+the returned pane and cgroup workload. The keeper never sends Enter or raw input
+to a held pane. Recovery performs no such launch action and remains behind the
+native Zellij confirmation gate.
+
 **Rationale**: disposable-VPS evidence on 0.44.1 passed S1 but failed viewport
 and bounded-scrollback restoration. Source inspection found that released 0.44.3
 and upstream `main` omit serialized contents for command panes, retain the

@@ -13,6 +13,7 @@ const runNamespace = runtimeId.slice(1);
 const runtimeRoot = `/run/matrix-terminal-runtime-spikes/${runNamespace}`;
 const stateRoot = `/home/matrix/home/system/terminal-runtime-spikes/${runNamespace}`;
 const zellij = '/opt/matrix/bin/zellij';
+const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane';
 let stopping = false;
 let monitor;
 let startupWatchdog;
@@ -22,12 +23,13 @@ let startupStage = 'descriptor';
 let clientExited = false;
 let clientExitEvent = null;
 let ready = false;
-let confirmationSent = false;
+const confirmationSent = false;
 let renderWindow = '';
 let gateRecorded = false;
 let paneReleasedRecorded = false;
 let confirmationState = 'waiting';
-let heldPaneCount = 0;
+const heldPaneCount = 0;
+let workloadPaneLaunched = false;
 let startupFailureStarted = false;
 let startupStageRevision = 0;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
@@ -42,10 +44,8 @@ const STARTUP_FAILURE_CODES = new Set([
   'client_exit',
   'cgroup_unified',
   'cgroup_unit',
-  'confirmation_inventory',
-  'confirmation_target',
-  'confirmation_send',
-  'confirmation_acceptance',
+  'workload_launch',
+  'workload_target',
   'readiness_timeout',
 ]);
 function exit(code) {
@@ -176,94 +176,24 @@ async function regularFileExists(path) {
     throw error;
   }
 }
-async function confirmHeldCreatePane(sessionName, env) {
-  const options = { env, timeout: 2000, maxBuffer: 64 * 1024 };
-  confirmationState = 'inventory';
-  await recordStartupStage();
+async function launchCreateWorkloadPane(sessionName, env) {
   let stdout;
   try {
     ({ stdout } = await execFileAsync(
       zellij,
-      ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
-      options,
+      ['--session', sessionName, 'action', 'new-pane', '--', WORKLOAD_PANE],
+      { env, timeout: 2000, maxBuffer: 16 * 1024 },
     ));
   } catch (error) {
-    throw new Error('confirmation_inventory', { cause: error });
+    throw new Error('workload_launch', { cause: error });
   }
-  let listed;
-  try {
-    listed = JSON.parse(stdout);
-  } catch (error) {
-    throw new Error('confirmation_inventory', { cause: error });
+  const target = stdout.trim();
+  const match = /^terminal_([0-9]{1,10})$/.exec(target);
+  if (!match || Number(match[1]) > 1_000_000) {
+    throw new Error('workload_target');
   }
-  if (!Array.isArray(listed) || listed.length > 16) {
-    throw new Error('confirmation_inventory');
-  }
-  const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
-  heldPaneCount = panes.length;
-  if (panes.length === 0) {
-    confirmationState = 'waiting';
-    await recordStartupStage();
-    return;
-  }
-  confirmationState = 'target';
+  workloadPaneLaunched = true;
   await recordStartupStage();
-  if (panes.length !== 1 || !Number.isInteger(panes[0].id) || panes[0].id < 0) {
-    throw new Error('confirmation_target');
-  }
-  const [pane] = panes;
-  confirmationState = 'send';
-  await recordStartupStage();
-  try {
-    await execFileAsync(
-      zellij,
-      ['--session', sessionName, 'action', 'send-keys', 'Enter', '--pane-id', String(pane.id)],
-      options,
-    );
-  } catch (error) {
-    throw new Error('confirmation_send', { cause: error });
-  }
-  confirmationState = 'acceptance';
-  await recordStartupStage();
-  const acceptanceDeadline = Date.now() + 2000;
-  while (Date.now() < acceptanceDeadline) {
-    let acceptanceStdout;
-    try {
-      ({ stdout: acceptanceStdout } = await execFileAsync(
-        zellij,
-        ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
-        { ...options, timeout: Math.max(100, acceptanceDeadline - Date.now()) },
-      ));
-    } catch (error) {
-      throw new Error('confirmation_acceptance', { cause: error });
-    }
-    let acceptancePanes;
-    try {
-      acceptancePanes = JSON.parse(acceptanceStdout);
-    } catch (error) {
-      throw new Error('confirmation_acceptance', { cause: error });
-    }
-    if (!Array.isArray(acceptancePanes) || acceptancePanes.length > 16) {
-      throw new Error('confirmation_acceptance');
-    }
-    const target = acceptancePanes.find(
-      (candidate) => !candidate.is_plugin && candidate.id === pane.id,
-    );
-    if (!target || typeof target.is_held !== 'boolean') {
-      throw new Error('confirmation_acceptance');
-    }
-    heldPaneCount = acceptancePanes.filter(
-      (candidate) => !candidate.is_plugin && candidate.is_held,
-    ).length;
-    if (!target.is_held) {
-      confirmationState = 'accepted';
-      confirmationSent = true;
-      await recordStartupStage();
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error('confirmation_acceptance');
 }
 async function processInfo(pid) {
   try {
@@ -378,6 +308,7 @@ async function main() {
   const descriptorRaw = await readFile(descriptorPath, { encoding: 'utf8', flag: 'r' });
   if (Buffer.byteLength(descriptorRaw) > 4096) throw new Error('descriptor_size');
   const descriptor = parseDescriptor(JSON.parse(descriptorRaw));
+  confirmationState = descriptor.intent === 'create' ? 'not_required' : 'waiting';
   await unlink(descriptorPath);
   await setStartupStage('launch');
   const env = zellijEnvironment();
@@ -397,11 +328,20 @@ async function main() {
     renderWindow = `${renderWindow}${data}`.slice(-16_384);
     if (!gateRecorded && stripVTControlCharacters(renderWindow).includes('<ENTER> run')) {
       gateRecorded = true;
+      confirmationState = 'gated';
       try {
         await writeFile(`${runtimeRoot}/confirmations/${runtimeId}.gated`, '', { flag: 'wx', mode: 0o600 });
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-        if (code !== 'EEXIST') exit(20);
+        if (code !== 'EEXIST') {
+          exit(20);
+          return;
+        }
+      }
+      try {
+        await recordStartupStage();
+      } catch (error) {
+        exit(20);
       }
     }
   });
@@ -426,14 +366,14 @@ async function main() {
     if (clientExited) throw new Error('client_exit');
     const paneReleased = await regularFileExists(paneReleasePath);
     paneReleasedRecorded = paneReleased;
-    if (paneReleased && descriptor.intent === 'create' && !confirmationSent) {
-      await confirmHeldCreatePane(sessionName, env);
+    const responsive = paneReleased && await exactSessionResponds();
+    roleSnapshot.responsive = responsive;
+    if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched) {
+      await launchCreateWorkloadPane(sessionName, env);
     }
-    const detected = paneReleased
+    const detected = paneReleased && (descriptor.intent === 'recover' || workloadPaneLaunched)
       ? await cgroupRoles(cgroup.path, descriptor.intent === 'create')
       : null;
-    const responsive = Boolean(detected && await exactSessionResponds());
-    roleSnapshot.responsive = responsive;
     await recordStartupStage();
     if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
       roles = detected;
