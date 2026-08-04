@@ -318,6 +318,10 @@ async function main() {
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
     const paneReleased = await regularFileExists(paneReleasePath);
+    if (paneReleased && descriptor.intent === 'create' && gateRecorded && !confirmationSent) {
+      pty.write('\r');
+      confirmationSent = true;
+    }
     const detected = paneReleased
       ? await cgroupRoles(cgroup.path, descriptor.intent === 'create')
       : null;

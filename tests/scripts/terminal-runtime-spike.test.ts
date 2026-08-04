@@ -309,8 +309,12 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
     expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath)');
+    expect(keeper).toContain(
+      "if (paneReleased && descriptor.intent === 'create' && gateRecorded && !confirmationSent)",
+    );
+    expect(keeper).toContain("pty.write('\\r')");
+    expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
     expect(keeper).toContain('const detected = paneReleased');
-    expect(keeper).toContain('if (paneReleased && responsive && detected');
     expect(paneProbe).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
     expect(paneProbe).not.toContain('/proc/self/cgroup');
     expect(paneProbe).not.toContain('pane-release');
@@ -873,6 +877,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain("spawnProcess(zellij, ['list-sessions', '--no-formatting']");
     expect(keeper).toContain('startupWatchdog = setTimeout');
     expect(keeper).toContain("void failStartup('readiness_timeout')");
+    expect(keeper).toContain(
+      "paneReleased && descriptor.intent === 'create' && gateRecorded && !confirmationSent",
+    );
+    expect(keeper).not.toContain("descriptor.intent === 'recover' && gateRecorded && !confirmationSent");
+    expect(keeper).not.toContain('--force-run-commands');
     expect(keeper).toContain('await recordStartupStage();\n    if (paneReleased && responsive && detected');
     expect(keeper).toContain('{ stage: startupStage, ...roleSnapshot }');
     expect(keeper).not.toContain("stdio: ['ignore', handle.fd, 'ignore']");
