@@ -170,8 +170,10 @@ jobs:
           set -euo pipefail
           [ "$TEST_ONLY_ACTIVATION" = "MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1" ]
           candidate_ids="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" \
-            --jq '[.workflow_runs[] | select(.head_sha == "'"$HEAD_SHA"'" and .status == "completed")]
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${HEAD_SHA}&per_page=100" \
+            --jq '[.workflow_runs[] | select(.head_sha == "'"$HEAD_SHA"'" and
+                .status == "completed" and .conclusion == "success" and
+                (.event == "pull_request" or .event == "workflow_dispatch"))]
               | sort_by(.created_at) | reverse | .[].id')"
           preview_run_id=""
           for candidate in $candidate_ids; do

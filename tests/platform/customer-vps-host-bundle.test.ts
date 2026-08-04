@@ -710,6 +710,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
 
     expect(workflow).toContain('name: Recover the exact-head disposable preview updater');
+    expect(workflow).toContain('runs?head_sha=${HEAD_SHA}&per_page=100');
+    expect(workflow).not.toContain('runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100');
+    expect(workflow).toContain('(.event == "pull_request" or .event == "workflow_dispatch")');
+    expect(workflow).toContain('.conclusion == "success"');
     expect(workflow).toContain('gh run view "$preview_run_id" --repo "$GITHUB_REPOSITORY" --log');
     expect(workflow).toContain('Preview version: v[0-9]{4}');
     expect(workflow).toContain('actions/runs/${candidate}/artifacts');
