@@ -302,27 +302,19 @@ describe('terminal runtime spike evidence', () => {
     );
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
   });
-  it('derives pane runtime identity from the terminal unit cgroup', async () => {
+  it('keeps panes runtime-agnostic and gates readiness in the keeper', async () => {
     const [keeper, paneProbe] = await Promise.all([
       readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
       readRepo('scripts/spikes/terminal-runtime/pane-probe.sh'),
     ]);
-    expect(paneProbe).toContain('read -r cgroup_line </proc/self/cgroup || exit 22');
-    expect(paneProbe).toContain(
-      '[[ "$cgroup_path" =~ /matrix-terminal-spike@([0-9a-f]{32})[.]service$ ]] || exit 22',
-    );
+    expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
+    expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath)');
+    expect(keeper).toContain('const detected = paneReleased');
+    expect(keeper).toContain('if (paneReleased && responsive && detected');
     expect(paneProbe).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
+    expect(paneProbe).not.toContain('/proc/self/cgroup');
+    expect(paneProbe).not.toContain('pane-release');
     expect(keeper).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
-
-    const validCgroup = '/matrix-terminal-spike.slice/matrix-terminal-spike@1234567890abcdef1234567890abcdef.service';
-    const pattern = '/matrix-terminal-spike@([0-9a-f]{32})[.]service$';
-    const parsed = spawnSync(
-      '/usr/bin/bash',
-      ['-c', '[[ "$1" =~ $2 ]] && printf "%s" "${BASH_REMATCH[1]}"', 'bash', validCgroup, pattern],
-      { encoding: 'utf8' },
-    );
-    expect(parsed.status).toBe(0);
-    expect(parsed.stdout).toBe('1234567890abcdef1234567890abcdef');
   });
   it('can remove only its immutable disposable preview before a clean proof', async () => {
     const workflow = await readFile(
@@ -548,11 +540,9 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     ]);
     expect(paneProbe).not.toContain('ZELLIJ_SESSION_NAME');
     expect(keeper).not.toContain('MATRIX_TERMINAL_RUNTIME_ID: runtimeId');
-    expect(paneProbe).toContain('read -r cgroup_line </proc/self/cgroup || exit 22');
-    expect(paneProbe).toContain(
-      '[[ "$cgroup_path" =~ /matrix-terminal-spike@([0-9a-f]{32})[.]service$ ]] || exit 22',
-    );
-    expect(paneProbe).toContain('session_name="matrix-t-$runtime_id"');
+    expect(paneProbe).not.toContain('/proc/self/cgroup');
+    expect(paneProbe).not.toContain('pane-release');
+    expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
     expect(runner).not.toContain('/usr/bin/chown -R root:root "$support_root.next"');
     expect(runner).not.toContain(
       'setup_fs_bounded 30 /usr/bin/rm -rf -- "$runtime_root"',
@@ -607,11 +597,12 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(zellijDeleteClient).toContain("runIdentity.runId.padStart(20, '0')");
     expect(zellijDeleteClient).toContain('system/terminal-runtime-spikes/${runNamespace}/cache');
     expect(zellijDeleteClient).not.toContain('system/terminal-runtime-spike/cache');
-    for (const helper of [attachProbe, keeper, recordOutcome, recordRuntimeRoles, paneProbe]) {
+    for (const helper of [attachProbe, keeper, recordOutcome, recordRuntimeRoles]) {
       expect(helper).toContain('terminal-runtime-spikes');
       expect(helper).not.toContain('/run/matrix-terminal-runtime-spike/');
       expect(helper).not.toContain('system/terminal-runtime-spike/');
     }
+    expect(paneProbe).not.toContain('terminal-runtime-spike');
     expect(zellijDeleteClient).toContain("for (const signal of ['SIGTERM', 'SIGKILL'])");
     expect(zellijDeleteClient).toContain('process.kill(-workerPid, signal)');
     expect(zellijDeleteClient).toContain('timeoutSeconds > 60');
@@ -882,10 +873,10 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain("spawnProcess(zellij, ['list-sessions', '--no-formatting']");
     expect(keeper).toContain('startupWatchdog = setTimeout');
     expect(keeper).toContain("void failStartup('readiness_timeout')");
-    expect(keeper).toContain('await recordStartupStage();\n    if (responsive && detected');
+    expect(keeper).toContain('await recordStartupStage();\n    if (paneReleased && responsive && detected');
     expect(keeper).toContain('{ stage: startupStage, ...roleSnapshot }');
     expect(keeper).not.toContain("stdio: ['ignore', handle.fd, 'ignore']");
-    expect(keeper.indexOf('const detected = await cgroupRoles')).toBeLessThan(keeper.indexOf('const responsive = Boolean(detected && await exactSessionResponds'));
+    expect(keeper.indexOf('const detected = paneReleased')).toBeLessThan(keeper.indexOf('const responsive = Boolean(detected && await exactSessionResponds'));
   });
   it('fails a stalled startup quickly with monotonic keeper diagnostics', async () => {
     const [launcher, packer, runner, keeper] = await Promise.all([

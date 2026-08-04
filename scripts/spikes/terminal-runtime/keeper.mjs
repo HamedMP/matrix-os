@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile, spawn as spawnProcess } from 'node:child_process';
-import { readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { promisify, stripVTControlCharacters } from 'node:util';
@@ -160,6 +160,15 @@ async function ownCgroup() {
   if (!relative.includes('matrix-terminal-spike')) throw new Error('cgroup_unit');
   return { relative, path: `/sys/fs/cgroup${relative}` };
 }
+async function regularFileExists(path) {
+  try {
+    return (await lstat(path)).isFile();
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code === 'ENOENT') return false;
+    throw error;
+  }
+}
 async function processInfo(pid) {
   try {
     const [comm, cmdline] = await Promise.all([
@@ -266,6 +275,7 @@ async function main() {
   await setStartupStage('launch');
   const env = zellijEnvironment();
   const sessionName = `matrix-t-${runtimeId}`;
+  const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`;
   const args = descriptor.intent === 'recover'
     ? ['attach', sessionName]
     : ['--session', sessionName, '--new-session-with-layout', '/opt/matrix/libexec/terminal-runtime/current/spikes/layout.kdl'];
@@ -307,11 +317,14 @@ async function main() {
   let roles = null;
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
-    const detected = await cgroupRoles(cgroup.path, descriptor.intent === 'create');
+    const paneReleased = await regularFileExists(paneReleasePath);
+    const detected = paneReleased
+      ? await cgroupRoles(cgroup.path, descriptor.intent === 'create')
+      : null;
     const responsive = Boolean(detected && await exactSessionResponds());
     roleSnapshot.responsive = responsive;
     await recordStartupStage();
-    if (responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
+    if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
       roles = detected;
       break;
     }
