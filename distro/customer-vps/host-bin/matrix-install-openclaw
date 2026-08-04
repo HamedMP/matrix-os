@@ -15,6 +15,9 @@ MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 OPENCLAW_VERSION="${OPENCLAW_VERSION:-2026.7.1}"
 OPENCLAW_SHA512="${OPENCLAW_SHA512:-81efd7b2cf7d0870233cbfe29261ff505a223ab8dcc43078b16df2f66872083f9d616df0cd5ed329b015764ad7160006d9dd818e92687cff7bcd467eba6c68f2}"
 OPENCLAW_TARBALL_URL="${OPENCLAW_TARBALL_URL:-https://registry.npmjs.org/openclaw/-/openclaw-${OPENCLAW_VERSION}.tgz}"
+NODE_RUNTIME_VERSION="${NODE_RUNTIME_VERSION:-24.18.0}"
+NODE_RUNTIME_SHA256="${NODE_RUNTIME_SHA256:-783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8}"
+NODE_RUNTIME_TARBALL_URL="${NODE_RUNTIME_TARBALL_URL:-https://nodejs.org/dist/v${NODE_RUNTIME_VERSION}/node-v${NODE_RUNTIME_VERSION}-linux-x64.tar.gz}"
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$MATRIX_RUNTIME_HOME/.openclaw}"
 OPENCLAW_ENV_FILE="${OPENCLAW_ENV_FILE:-$MATRIX_RUNTIME_HOME/system/agent-runtime/openclaw.env}"
 
@@ -47,61 +50,123 @@ check_admission() {
   fi
 }
 
-check_node_version() {
-  local node_major node_minor
-  node_major="$($MATRIX_NODE_PREFIX/bin/node -p 'process.versions.node.split(".")[0]')"
-  node_minor="$($MATRIX_NODE_PREFIX/bin/node -p 'process.versions.node.split(".")[1]')"
-  if [ "$node_major" -ne 24 ] || { [ "$node_major" -eq 24 ] && [ "$node_minor" -lt 15 ]; }; then
+openclaw_node_is_compatible() {
+  local version="${1#v}" major minor patch
+  IFS=. read -r major minor patch <<EOF
+$version
+EOF
+  case "$major:$minor:$patch" in
+    *[!0-9:]*|::*|*:|*::*) return 1 ;;
+  esac
+  case "$major" in
+    22) [ "$minor" -gt 22 ] || { [ "$minor" -eq 22 ] && [ "$patch" -ge 3 ]; } ;;
+    23) return 1 ;;
+    24) [ "$minor" -ge 15 ] ;;
+    25) [ "$minor" -gt 9 ] || { [ "$minor" -eq 9 ] && [ "$patch" -ge 0 ]; } ;;
+    *) [ "$major" -gt 25 ] ;;
+  esac
+}
+
+upgrade_bundled_node_runtime() (
+  set -euo pipefail
+  local tmp_dir archive extracted replacement
+  [ "$(uname -m)" = "x86_64" ] || {
+    echo "matrix-install-openclaw: automatic Node runtime repair is unavailable on this architecture" >&2
+    exit 2
+  }
+  tmp_dir="$(mktemp -d /tmp/matrix-node-runtime.XXXXXX)"
+  replacement=""
+  cleanup_node_upgrade() {
+    [ -z "$replacement" ] || rm -f -- "$replacement"
+    rm -rf -- "$tmp_dir"
+  }
+  trap cleanup_node_upgrade EXIT INT TERM
+  archive="$tmp_dir/node-runtime.tar.gz"
+  extracted="$tmp_dir/node-v${NODE_RUNTIME_VERSION}-linux-x64"
+  replacement="$MATRIX_NODE_PREFIX/bin/.node-${NODE_RUNTIME_VERSION}.new"
+
+  log "updating the bundled Node runtime to ${NODE_RUNTIME_VERSION}"
+  curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
+    --connect-timeout 10 --max-time 300 \
+    "$NODE_RUNTIME_TARBALL_URL" -o "$archive"
+  printf '%s  %s\n' "$NODE_RUNTIME_SHA256" "$archive" >"$tmp_dir/node-runtime.sha256"
+  sha256sum -c "$tmp_dir/node-runtime.sha256"
+  tar -xzf "$archive" -C "$tmp_dir" "node-v${NODE_RUNTIME_VERSION}-linux-x64/bin/node"
+  install -o root -g "$MATRIX_RUNTIME_USER" -m 0755 "$extracted/bin/node" "$replacement"
+  "$replacement" --version >/dev/null
+  mv -f "$replacement" "$MATRIX_NODE_PREFIX/bin/node"
+  replacement=""
+)
+
+ensure_compatible_node_runtime() {
+  local installed_version
+  [ -x "$MATRIX_NODE_PREFIX/bin/node" ] || {
+    echo "matrix-install-openclaw: bundled Node runtime is unavailable" >&2
+    exit 2
+  }
+  installed_version="$($MATRIX_NODE_PREFIX/bin/node -p 'process.versions.node')"
+  if openclaw_node_is_compatible "$installed_version"; then
+    return
+  fi
+  upgrade_bundled_node_runtime
+  installed_version="$($MATRIX_NODE_PREFIX/bin/node -p 'process.versions.node')"
+  if ! openclaw_node_is_compatible "$installed_version"; then
     echo "matrix-install-openclaw: bundled Node runtime is incompatible" >&2
     exit 2
   fi
 }
 
-if ! id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
-  echo "matrix-install-openclaw: runtime user is unavailable" >&2
-  exit 1
-fi
+main() {
+  if ! id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
+    echo "matrix-install-openclaw: runtime user is unavailable" >&2
+    exit 1
+  fi
 
-check_node_version
-check_admission
+  check_admission
+  ensure_compatible_node_runtime
 
-install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_USER" -m 0700 \
-  "$OPENCLAW_STATE_DIR" "$(dirname "$OPENCLAW_ENV_FILE")"
+  install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_USER" -m 0700 \
+    "$OPENCLAW_STATE_DIR" "$(dirname "$OPENCLAW_ENV_FILE")"
 
-tmp_dir="$(mktemp -d /tmp/matrix-openclaw-install.XXXXXX)"
-cleanup() {
-  find "$tmp_dir" -mindepth 1 -maxdepth 1 -type l -delete 2>/dev/null || true
-  rm -rf "$tmp_dir"
+  tmp_dir="$(mktemp -d /tmp/matrix-openclaw-install.XXXXXX)"
+  cleanup() {
+    find "$tmp_dir" -mindepth 1 -maxdepth 1 -type l -delete 2>/dev/null || true
+    rm -rf "$tmp_dir"
+  }
+  trap cleanup EXIT INT TERM
+  archive="$tmp_dir/openclaw.tgz"
+
+  curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
+    --connect-timeout 10 --max-time 180 \
+    "$OPENCLAW_TARBALL_URL" -o "$archive"
+  printf '%s  %s\n' "$OPENCLAW_SHA512" "$archive" >"$tmp_dir/openclaw.sha512"
+  sha512sum -c "$tmp_dir/openclaw.sha512"
+  tar -tzf "$archive" package/npm-shrinkwrap.json package/package.json package/openclaw.mjs >/dev/null
+  chown "root:$MATRIX_RUNTIME_USER" "$tmp_dir" "$archive"
+  chmod 0750 "$tmp_dir"
+  chmod 0640 "$archive"
+
+  log "installing pinned OpenClaw runtime"
+  run_installer_as_runtime_user env \
+    HOME="$MATRIX_RUNTIME_HOME" \
+    OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" \
+    PATH="$MATRIX_NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
+    "$MATRIX_NODE_PREFIX/bin/npm" install --global --prefix "$MATRIX_NODE_PREFIX" "$archive"
+
+  test -x "$MATRIX_NODE_PREFIX/bin/openclaw"
+
+  if [ ! -s "$OPENCLAW_ENV_FILE" ]; then
+    token="$(openssl rand -hex 32)"
+    token_tmp="$(mktemp "$(dirname "$OPENCLAW_ENV_FILE")/.openclaw.env.XXXXXX")"
+    printf 'OPENCLAW_GATEWAY_TOKEN=%s\n' "$token" >"$token_tmp"
+    chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_USER" "$token_tmp"
+    chmod 0600 "$token_tmp"
+    mv -f "$token_tmp" "$OPENCLAW_ENV_FILE"
+  fi
+
+  log "OpenClaw ${OPENCLAW_VERSION} installed"
 }
-trap cleanup EXIT INT TERM
-archive="$tmp_dir/openclaw.tgz"
 
-curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
-  --connect-timeout 10 --max-time 180 \
-  "$OPENCLAW_TARBALL_URL" -o "$archive"
-printf '%s  %s\n' "$OPENCLAW_SHA512" "$archive" >"$tmp_dir/openclaw.sha512"
-sha512sum -c "$tmp_dir/openclaw.sha512"
-tar -tzf "$archive" package/npm-shrinkwrap.json package/package.json package/openclaw.mjs >/dev/null
-chown "root:$MATRIX_RUNTIME_USER" "$tmp_dir" "$archive"
-chmod 0750 "$tmp_dir"
-chmod 0640 "$archive"
-
-log "installing pinned OpenClaw runtime"
-run_installer_as_runtime_user env \
-  HOME="$MATRIX_RUNTIME_HOME" \
-  OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" \
-  PATH="$MATRIX_NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
-  "$MATRIX_NODE_PREFIX/bin/npm" install --global --prefix "$MATRIX_NODE_PREFIX" "$archive"
-
-test -x "$MATRIX_NODE_PREFIX/bin/openclaw"
-
-if [ ! -s "$OPENCLAW_ENV_FILE" ]; then
-  token="$(openssl rand -hex 32)"
-  token_tmp="$(mktemp "$(dirname "$OPENCLAW_ENV_FILE")/.openclaw.env.XXXXXX")"
-  printf 'OPENCLAW_GATEWAY_TOKEN=%s\n' "$token" >"$token_tmp"
-  chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_USER" "$token_tmp"
-  chmod 0600 "$token_tmp"
-  mv -f "$token_tmp" "$OPENCLAW_ENV_FILE"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
 fi
-
-log "OpenClaw ${OPENCLAW_VERSION} installed"

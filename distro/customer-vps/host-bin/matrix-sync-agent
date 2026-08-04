@@ -318,6 +318,11 @@ apply_update() {
       sudo systemctl start --no-block matrix-symphony.service || true
       log "Symphony service enabled"
     fi
+    if [ -f "$extract_dir/systemd/matrix-hermes-dashboard.service" ]; then
+      sudo systemctl enable matrix-hermes-dashboard.service
+      sudo systemctl restart --no-block matrix-hermes-dashboard.service || true
+      log "Hermes dashboard service refreshed"
+    fi
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
       sudo systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || true

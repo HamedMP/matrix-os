@@ -119,6 +119,17 @@ function response(value: unknown, status = 200) {
   });
 }
 
+function hermesConfiguration() {
+  return {
+    config: { model: "nous/hermes-4-405b" },
+    defaults: { model: "nous/hermes-4-405b" },
+    fields: {
+      model: { type: "string", description: "Default model", category: "general" },
+    },
+    categoryOrder: ["general"],
+  };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -128,6 +139,8 @@ describe("Canvas Agent runtime settings", () => {
     const view = makeView();
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).endsWith("/api/settings/api-key")) return response({ valid: true });
+      if (String(input).endsWith("/api/hermes/configuration")) return response(hermesConfiguration());
+      if (String(input).endsWith("/api/hermes/env")) return response({});
       return response(view);
     });
     vi.stubGlobal("fetch", fetcher);
@@ -159,7 +172,8 @@ describe("Canvas Agent runtime settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign in with Claude" }));
     expect(onOpenTerminal).toHaveBeenCalledWith("claude-login");
     fireEvent.click(screen.getByRole("button", { name: "Configure Hermes provider" }));
-    expect(onOpenTerminal).toHaveBeenCalledWith("hermes-model");
+    expect(await screen.findByRole("heading", { name: "Configure Hermes" })).toBeVisible();
+    expect(onOpenTerminal).not.toHaveBeenCalledWith(expect.stringContaining("hermes"));
   });
 
   it("offers visible provider setup when the selected runtime has no catalog", async () => {
@@ -173,12 +187,17 @@ describe("Canvas Agent runtime settings", () => {
     };
     view.runtime.options[0].configured = false;
     const onOpenTerminal = vi.fn();
-    vi.stubGlobal("fetch", vi.fn(async () => response(view)));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/hermes/configuration")) return response(hermesConfiguration());
+      if (String(input).endsWith("/api/hermes/env")) return response({});
+      return response(view);
+    }));
 
     render(<AgentRuntimePanel onOpenTerminal={onOpenTerminal} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Configure Hermes provider" }));
-    expect(onOpenTerminal).toHaveBeenCalledWith("hermes-model");
+    expect(await screen.findByRole("heading", { name: "Configure Hermes" })).toBeVisible();
+    expect(onOpenTerminal).not.toHaveBeenCalledWith(expect.stringContaining("hermes"));
   });
 
   it("switches only to an installed runtime with the current revision", async () => {

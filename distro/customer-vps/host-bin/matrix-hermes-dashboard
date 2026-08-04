@@ -11,6 +11,8 @@ fi
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 HERMES_HOME="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}"
 HERMES_BIN="${HERMES_BIN:-$MATRIX_RUNTIME_HOME/.local/bin/hermes}"
+auth_dir="$MATRIX_RUNTIME_HOME/system/agent-runtime"
+auth_file="$auth_dir/hermes-dashboard.env"
 
 if declare -F matrix_export_owner_env >/dev/null 2>&1; then
   matrix_export_owner_env
@@ -23,5 +25,77 @@ if [ ! -x "$HERMES_BIN" ]; then
   echo "matrix-hermes-dashboard: hermes binary not found at $HERMES_BIN; exiting" >&2
   exit 0
 fi
+
+umask 077
+mkdir -p "$auth_dir"
+chmod 0700 "$auth_dir"
+
+create_auth_file() {
+  local auth_tmp password secret
+  auth_tmp="$(mktemp "$auth_dir/.hermes-dashboard.env.XXXXXX")"
+  trap 'rm -f "${auth_tmp:-}"' RETURN
+  password="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+  secret="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+  printf '%s\n' \
+    'HERMES_DASHBOARD_BASIC_AUTH_USERNAME=matrix' \
+    "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=$password" \
+    "HERMES_DASHBOARD_BASIC_AUTH_SECRET=$secret" > "$auth_tmp"
+  chmod 0600 "$auth_tmp"
+  if mv -n "$auth_tmp" "$auth_file"; then
+    # GNU mv -n exits zero even when a racing process won. The temp file only
+    # disappears when this process installed it.
+    if [ ! -e "$auth_tmp" ]; then
+      auth_tmp=""
+    fi
+  fi
+}
+
+if [ ! -e "$auth_file" ] && [ ! -L "$auth_file" ]; then
+  create_auth_file
+fi
+
+if [ -L "$auth_file" ] || [ ! -f "$auth_file" ] || [ "$(stat -c '%a' "$auth_file")" != "600" ]; then
+  echo "matrix-hermes-dashboard: invalid dashboard credential file" >&2
+  exit 1
+fi
+
+HERMES_DASHBOARD_BASIC_AUTH_USERNAME=""
+HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=""
+HERMES_DASHBOARD_BASIC_AUTH_SECRET=""
+auth_entries=0
+while IFS='=' read -r key value || [ -n "$key$value" ]; do
+  [ -z "$key$value" ] && continue
+  case "$key" in
+    HERMES_DASHBOARD_BASIC_AUTH_USERNAME)
+      [ -z "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME" ] || exit 1
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME="$value"
+      ;;
+    HERMES_DASHBOARD_BASIC_AUTH_PASSWORD)
+      [ -z "$HERMES_DASHBOARD_BASIC_AUTH_PASSWORD" ] || exit 1
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="$value"
+      ;;
+    HERMES_DASHBOARD_BASIC_AUTH_SECRET)
+      [ -z "$HERMES_DASHBOARD_BASIC_AUTH_SECRET" ] || exit 1
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET="$value"
+      ;;
+    *)
+      echo "matrix-hermes-dashboard: invalid dashboard credential entry" >&2
+      exit 1
+      ;;
+  esac
+  auth_entries=$((auth_entries + 1))
+done < "$auth_file"
+
+if [ "$auth_entries" -ne 3 ] \
+  || [ "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME" != "matrix" ] \
+  || [[ ! "$HERMES_DASHBOARD_BASIC_AUTH_PASSWORD" =~ ^[a-f0-9]{64}$ ]] \
+  || [[ ! "$HERMES_DASHBOARD_BASIC_AUTH_SECRET" =~ ^[a-f0-9]{64}$ ]]; then
+  echo "matrix-hermes-dashboard: invalid dashboard credentials" >&2
+  exit 1
+fi
+export HERMES_DASHBOARD_BASIC_AUTH_USERNAME
+export HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+export HERMES_DASHBOARD_BASIC_AUTH_SECRET
+export HERMES_DASHBOARD_SESSION_TOKEN="$HERMES_DASHBOARD_BASIC_AUTH_SECRET"
 
 exec "$HERMES_BIN" dashboard --host 127.0.0.1 --port 9119
