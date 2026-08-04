@@ -1109,27 +1109,15 @@ prepare_exact_head_runtime() {
   fi
   installed_bounded_updater_is_ready
 
-  current_failure=exact-head-reapply
-  local deadline=$((SECONDS + 1800)) reapply_sync_pid
-  reapply_sync_pid="$(systemctl show matrix-sync-agent.service -p MainPID --value)"
-  [[ "$reapply_sync_pid" =~ ^[1-9][0-9]*$ ]]
-  runuser -u matrix -- /opt/matrix/bin/matrix-update --no-tail "$preview_version" >/dev/null
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$preview_version" ] &&
-      [ ! -e /opt/matrix/app/.update-now ] &&
-      [ "$(path_state /opt/matrix/staging/update-phase)" = missing ] &&
-      [ "$(path_state /opt/matrix/app/.update-error.json)" = missing ] &&
-      [ "$(systemctl show matrix-sync-agent.service -p MainPID --value)" != "$reapply_sync_pid" ] &&
-      installed_terminal_runtime_is_ready && wait_gateway; then
-      break
-    fi
-    if [ ! -e /opt/matrix/app/.update-now ] && [ -e /opt/matrix/app/.update-error.json ]; then
-      return 1
-    fi
-    sleep 2
-  done
-  [ "$SECONDS" -lt "$deadline" ]
+  current_failure=exact-head-runtime-readiness
+  [ -f /opt/matrix/app/BUNDLE_VERSION ]
+  [ ! -L /opt/matrix/app/BUNDLE_VERSION ]
+  [ "$(cat /opt/matrix/app/BUNDLE_VERSION)" = "$preview_version" ]
+  [ "$(path_state /opt/matrix/app/.update-now)" = missing ]
+  [ "$(path_state /opt/matrix/staging/update-phase)" = missing ]
+  [ "$(path_state /opt/matrix/app/.update-error.json)" = missing ]
   installed_terminal_runtime_is_ready
+  wait_gateway
 
   current_failure=gateway-activation
   install -d -o root -g root -m 0755 "$(dirname "$gateway_dropin")"

@@ -317,17 +317,16 @@ describe("customer VPS user-systemd terminal runtime", () => {
       '"$(path_state /opt/matrix/staging/update-phase)" = missing',
     );
     expect(prepareWorker).toContain(
-      'local deadline=$((SECONDS + 1800)) reapply_sync_pid',
-    );
-    expect(prepareWorker).toContain(
-      '"$(systemctl show matrix-sync-agent.service -p MainPID --value)" != "$reapply_sync_pid"',
+      '"$(cat /opt/matrix/app/BUNDLE_VERSION)" = "$preview_version"',
     );
     expect(prepareWorker).toContain(
       '"$(path_state /opt/matrix/app/.update-error.json)" = missing',
     );
-    expect(prepareWorker).toContain(
-      'diagnose_update_failure "$preview_version"',
+    expect(prepareWorker).toContain("installed_terminal_runtime_is_ready");
+    expect(prepareWorker).not.toContain(
+      'matrix-update --no-tail "$preview_version"',
     );
+    expect(prepareWorker).not.toContain("reapply_sync_pid");
     expect(acceptance).not.toMatch(/\bjq\b/);
     expect(acceptance).toContain("matrix-terminal-user-keeper:");
     expect(acceptance).toContain("ExecMainStatus");
