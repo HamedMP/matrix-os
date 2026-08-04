@@ -36,16 +36,17 @@ if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" 
   read -r failure_stage failure_code < <(/opt/matrix/runtime/node/bin/node -e '
     const fs=require("fs"),v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(!/^[a-z0-9_]{1,32}$/.test(v.stage)||!/^[a-z0-9_]{1,32}$/.test(v.code))process.exit(1);process.stdout.write(`${v.stage} ${v.code}\n`);
   ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-failures/${base_id}.json" 2>/dev/null || printf 'unknown unknown\n')
-  read -r keeper_stage keeper_responsive keeper_zellij keeper_shell keeper_agent keeper_gate keeper_release keeper_confirmation keeper_held keeper_workload < <(/opt/matrix/runtime/node/bin/node -e '
+  read -r keeper_stage keeper_responsive keeper_zellij keeper_shell keeper_agent keeper_gate keeper_release keeper_confirmation keeper_held keeper_workload keeper_workload_exit < <(/opt/matrix/runtime/node/bin/node -e '
     const fs=require("fs"),v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
     if(!/^(descriptor|launch|cgroup|readiness|notify)$/.test(v.stage)||typeof v.responsive!=="boolean"||
       !Number.isInteger(v.zellij)||v.zellij<0||v.zellij>999||typeof v.shell!=="boolean"||typeof v.agent!=="boolean"||
       typeof v.gateRecorded!=="boolean"||typeof v.paneReleased!=="boolean"||
       !/^(waiting|not_required|gated)$/.test(v.confirmationState)||
       !Number.isInteger(v.heldPaneCount)||v.heldPaneCount<0||v.heldPaneCount>16||
-      !/^(not_launched|missing|running|held_success|held_failure|other|ambiguous)$/.test(v.workloadPaneState))process.exit(1);
-    process.stdout.write(`${v.stage} ${v.responsive?1:0} ${v.zellij} ${v.shell?1:0} ${v.agent?1:0} ${v.gateRecorded?1:0} ${v.paneReleased?1:0} ${v.confirmationState} ${v.heldPaneCount} ${v.workloadPaneState}\n`);
-  ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-stages/${base_id}.json" 2>/dev/null || printf 'unknown 0 0 0 0 0 0 waiting 0 not_launched\n')
+      !/^(not_launched|missing|running|held_success|held_failure|other|ambiguous)$/.test(v.workloadPaneState)||
+      (v.workloadPaneExitStatus!==null&&(!Number.isInteger(v.workloadPaneExitStatus)||v.workloadPaneExitStatus<0||v.workloadPaneExitStatus>255)))process.exit(1);
+    process.stdout.write(`${v.stage} ${v.responsive?1:0} ${v.zellij} ${v.shell?1:0} ${v.agent?1:0} ${v.gateRecorded?1:0} ${v.paneReleased?1:0} ${v.confirmationState} ${v.heldPaneCount} ${v.workloadPaneState} ${v.workloadPaneExitStatus===null?"none":v.workloadPaneExitStatus}\n`);
+  ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-stages/${base_id}.json" 2>/dev/null || printf 'unknown 0 0 0 0 0 0 waiting 0 not_launched none\n')
   timeout_start="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p TimeoutStartUSec --value 2>/dev/null || true)"
   [[ "$timeout_start" =~ ^([0-9]{1,12}(us|ms|s|min|h)?|infinity)$ ]] || timeout_start=unknown
   restart_count="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p NRestarts --value 2>/dev/null || true)"
@@ -108,10 +109,10 @@ if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" 
     fi
     if [ "$progress_stalled" = true ]; then
       progress_stage="stalled_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}"
-      progress_stage="${progress_stage}_r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}_w${keeper_workload}"
+      progress_stage="${progress_stage}_r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}_w${keeper_workload}_e${keeper_workload_exit}"
     fi
   fi
-  echo "spike_pack_evidence_incomplete_${state}_${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}_r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}_w${keeper_workload}"
+  echo "spike_pack_evidence_incomplete_${state}_${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}_r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}_w${keeper_workload}_e${keeper_workload_exit}"
   exit 0
 fi
 summary_status="$(/opt/matrix/runtime/node/bin/node -e '
@@ -121,7 +122,7 @@ summary_status="$(/opt/matrix/runtime/node/bin/node -e '
   process.stdout.write(`${v.s1.status}_${v.s2.status}\n`);
 ' "$evidence_root/summary.json" 2>/dev/null || printf invalid)"
 if [ "$summary_status" != pass_pass ]; then
-  read -r failure_stage failure_code failure_responsive failure_zellij failure_shell failure_agent failure_gate failure_release failure_confirmation failure_held failure_workload failure_sent < <(/opt/matrix/runtime/node/bin/node -e '
+  read -r failure_stage failure_code failure_responsive failure_zellij failure_shell failure_agent failure_gate failure_release failure_confirmation failure_held failure_workload failure_workload_exit failure_sent < <(/opt/matrix/runtime/node/bin/node -e '
     const fs=require("fs"),v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
     if(!/^(descriptor|launch|cgroup|readiness|notify)$/.test(v.stage)||!/^[a-z0-9_]{1,32}$/.test(v.code)||
       typeof v.responsive!=="boolean"||!Number.isInteger(v.zellij)||v.zellij<0||v.zellij>999||
@@ -129,10 +130,11 @@ if [ "$summary_status" != pass_pass ]; then
       typeof v.paneReleased!=="boolean"||!/^(waiting|not_required|gated)$/.test(v.confirmationState)||
       !Number.isInteger(v.heldPaneCount)||v.heldPaneCount<0||v.heldPaneCount>16||
       !/^(not_launched|missing|running|held_success|held_failure|other|ambiguous)$/.test(v.workloadPaneState)||
+      (v.workloadPaneExitStatus!==null&&(!Number.isInteger(v.workloadPaneExitStatus)||v.workloadPaneExitStatus<0||v.workloadPaneExitStatus>255))||
       typeof v.confirmationSent!=="boolean")process.exit(1);
-    process.stdout.write(`${v.stage} ${v.code} ${v.responsive?1:0} ${v.zellij} ${v.shell?1:0} ${v.agent?1:0} ${v.gateRecorded?1:0} ${v.paneReleased?1:0} ${v.confirmationState} ${v.heldPaneCount} ${v.workloadPaneState} ${v.confirmationSent?1:0}\n`);
-  ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-failures/${base_id}.json" 2>/dev/null || printf 'unknown unknown 0 0 0 0 0 0 waiting 0 not_launched 0\n')
-  echo "spike_pack_evidence_failed_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}_g${failure_gate}_p${failure_release}_c${failure_confirmation}_h${failure_held}_w${failure_workload}_x${failure_sent}"
+    process.stdout.write(`${v.stage} ${v.code} ${v.responsive?1:0} ${v.zellij} ${v.shell?1:0} ${v.agent?1:0} ${v.gateRecorded?1:0} ${v.paneReleased?1:0} ${v.confirmationState} ${v.heldPaneCount} ${v.workloadPaneState} ${v.workloadPaneExitStatus===null?"none":v.workloadPaneExitStatus} ${v.confirmationSent?1:0}\n`);
+  ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-failures/${base_id}.json" 2>/dev/null || printf 'unknown unknown 0 0 0 0 0 0 waiting 0 not_launched none 0\n')
+  echo "spike_pack_evidence_failed_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}_g${failure_gate}_p${failure_release}_c${failure_confirmation}_h${failure_held}_w${failure_workload}_e${failure_workload_exit}_x${failure_sent}"
   exit 0
 fi
 /opt/matrix/runtime/node/bin/node \
