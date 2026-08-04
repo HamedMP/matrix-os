@@ -138,7 +138,27 @@ if [ "$summary_status" != pass_pass ]; then
       typeof v.confirmationSent!=="boolean")process.exit(1);
     process.stdout.write(`${v.stage} ${v.code} ${v.responsive?1:0} ${v.zellij} ${v.shell?1:0} ${v.agent?1:0} ${v.gateRecorded?1:0} ${v.paneReleased?1:0} ${v.confirmationState} ${v.heldPaneCount} ${v.workloadHelperState} ${v.workloadHelperExitStatus===null?"none":v.workloadHelperExitStatus} ${v.workloadPaneState} ${v.workloadPaneExitStatus===null?"none":v.workloadPaneExitStatus} ${v.confirmationSent?1:0}\n`);
   ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-failures/${base_id}.json" 2>/dev/null || printf 'unknown unknown 0 0 0 0 0 0 waiting 0 not_checked none not_launched none 0\n')
-  echo "spike_pack_evidence_failed_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}_g${failure_gate}_p${failure_release}_c${failure_confirmation}_h${failure_held}_q${failure_helper}_j${failure_helper_exit}_w${failure_workload}_e${failure_workload_exit}_x${failure_sent}"
+  failure_progress=unknown
+  failure_progress_path="$evidence_root/progress-stage.txt"
+  if [ -f "$failure_progress_path" ] && [ ! -L "$failure_progress_path" ]; then
+    failure_progress_size="$(/usr/bin/stat -c %s "$failure_progress_path" 2>/dev/null || true)"
+    if [[ "$failure_progress_size" =~ ^[0-9]{1,2}$ ]] &&
+      [ "$failure_progress_size" -le 33 ]; then
+      failure_progress_candidate="$(<"$failure_progress_path")"
+      if [[ "$failure_progress_candidate" =~ ^[a-z0-9_]{1,32}$ ]]; then
+        failure_progress="$failure_progress_candidate"
+      fi
+    fi
+  fi
+  failure_runner_status="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$runner_unit" -p ExecMainStatus --value 2>/dev/null || true)"
+  [[ "$failure_runner_status" =~ ^[0-9]{1,3}$ ]] || failure_runner_status=999
+  failure_base_state="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p ActiveState --value 2>/dev/null || true)"
+  [[ "$failure_base_state" =~ ^(active|activating|failed|inactive)$ ]] || failure_base_state=unknown
+  failure_base_substate="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p SubState --value 2>/dev/null | tr - _ || true)"
+  [[ "$failure_base_substate" =~ ^[a-z0-9_]{1,24}$ ]] || failure_base_substate=unknown
+  failure_base_status="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p ExecMainStatus --value 2>/dev/null || true)"
+  [[ "$failure_base_status" =~ ^[0-9]{1,3}$ ]] || failure_base_status=999
+  echo "spike_pack_evidence_failed_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}_g${failure_gate}_p${failure_release}_c${failure_confirmation}_h${failure_held}_q${failure_helper}_j${failure_helper_exit}_w${failure_workload}_e${failure_workload_exit}_x${failure_sent}_d${failure_progress}_u${failure_runner_status}_b${failure_base_state}_${failure_base_substate}_${failure_base_status}"
   exit 0
 fi
 /opt/matrix/runtime/node/bin/node \
