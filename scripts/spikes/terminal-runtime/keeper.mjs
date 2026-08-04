@@ -25,6 +25,9 @@ let ready = false;
 let confirmationSent = false;
 let renderWindow = '';
 let gateRecorded = false;
+let paneReleasedRecorded = false;
+let confirmationState = 'waiting';
+let heldPaneCount = 0;
 let startupFailureStarted = false;
 let startupStageRevision = 0;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
@@ -39,6 +42,9 @@ const STARTUP_FAILURE_CODES = new Set([
   'client_exit',
   'cgroup_unified',
   'cgroup_unit',
+  'confirmation_inventory',
+  'confirmation_target',
+  'confirmation_write',
   'readiness_timeout',
 ]);
 function exit(code) {
@@ -171,23 +177,49 @@ async function regularFileExists(path) {
 }
 async function confirmHeldCreatePane(sessionName, env) {
   const options = { env, timeout: 2000, maxBuffer: 64 * 1024 };
-  const { stdout } = await execFileAsync(
-    zellij,
-    ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
-    options,
-  );
-  const listed = JSON.parse(stdout);
-  if (!Array.isArray(listed) || listed.length > 16) throw new Error('startup_failed');
+  confirmationState = 'inventory';
+  await recordStartupStage();
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(
+      zellij,
+      ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
+      options,
+    ));
+  } catch (error) {
+    throw new Error('confirmation_inventory', { cause: error });
+  }
+  let listed;
+  try {
+    listed = JSON.parse(stdout);
+  } catch (error) {
+    throw new Error('confirmation_inventory', { cause: error });
+  }
+  if (!Array.isArray(listed) || listed.length > 16) {
+    throw new Error('confirmation_inventory');
+  }
   const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
+  heldPaneCount = panes.length;
+  confirmationState = 'target';
+  await recordStartupStage();
   if (panes.length !== 1 || !Number.isInteger(panes[0].id) || panes[0].id < 0) {
-    throw new Error('startup_failed');
+    throw new Error('confirmation_target');
   }
   const [pane] = panes;
-  await execFileAsync(
-    zellij,
-    ['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)],
-    options,
-  );
+  confirmationState = 'write';
+  await recordStartupStage();
+  try {
+    await execFileAsync(
+      zellij,
+      ['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)],
+      options,
+    );
+  } catch (error) {
+    throw new Error('confirmation_write', { cause: error });
+  }
+  confirmationState = 'sent';
+  confirmationSent = true;
+  await recordStartupStage();
 }
 async function processInfo(pid) {
   try {
@@ -229,10 +261,21 @@ async function writeReadiness(value) {
     mode: 0o600,
   });
 }
+function startupSnapshot() {
+  return {
+    stage: startupStage,
+    gateRecorded,
+    paneReleased: paneReleasedRecorded,
+    confirmationState,
+    heldPaneCount,
+    confirmationSent,
+    ...roleSnapshot,
+  };
+}
 async function recordStartupStage() {
   const temporaryPath = `${runtimeRoot}/startup-stages/.${runtimeId}.${process.pid}.${startupStageRevision++}.tmp`;
   const targetPath = `${runtimeRoot}/startup-stages/${runtimeId}.json`;
-  await writeFile(temporaryPath, `${JSON.stringify({ stage: startupStage, ...roleSnapshot })}\n`, {
+  await writeFile(temporaryPath, `${JSON.stringify(startupSnapshot())}\n`, {
     encoding: 'utf8',
     flag: 'wx',
     mode: 0o600,
@@ -254,7 +297,7 @@ async function recordStartupFailure(error) {
   const code = error instanceof Error && STARTUP_FAILURE_CODES.has(error.message)
     ? error.message
     : 'startup_failed';
-  const receipt = { stage: startupStage, code, confirmationSent, ...roleSnapshot };
+  const receipt = { code, ...startupSnapshot() };
   if (code === 'client_exit' && clientExitEvent) {
     receipt.exitCode = clientExitEvent.exitCode;
     receipt.signal = clientExitEvent.signal;
@@ -338,9 +381,9 @@ async function main() {
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
     const paneReleased = await regularFileExists(paneReleasePath);
+    paneReleasedRecorded = paneReleased;
     if (paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent) {
       await confirmHeldCreatePane(sessionName, env);
-      confirmationSent = true;
     }
     const detected = paneReleased
       ? await cgroupRoles(cgroup.path, descriptor.intent === 'create')
