@@ -157,8 +157,10 @@ describe("TerminalApp mobile actions", () => {
       expect(createCalls).toHaveLength(1);
       const body = JSON.parse(String(createCalls[0]?.[1]?.body ?? "{}")) as { cmd?: string };
       expect(body.cmd).toContain("bash -lc");
-      expect(body.cmd).toContain("t3@0.0.32 pair");
-      expect(body.cmd).toContain("t3@0.0.32 serve --host 127.0.0.1 --port 3773");
+      expect(body.cmd).toContain('npx --yes "$MATRIX_T3_PACKAGE" pair');
+      expect(body.cmd).toContain(
+        'npx --yes "$MATRIX_T3_PACKAGE" serve --host 127.0.0.1 --port 3773',
+      );
       expect(body.cmd).toContain('--pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL"');
     });
   });

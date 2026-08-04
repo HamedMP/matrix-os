@@ -23,6 +23,7 @@ describe("terminal launch paths", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     sessionStorage.clear();
+    window.history.replaceState({}, "", "/");
   });
 
   it("maps onboarding setup actions to startup commands", () => {
@@ -147,6 +148,46 @@ describe("terminal launch paths", () => {
       expect(readFileSync(marker, "utf8").trim().split("\n")).toEqual([
         `--yes ${T3_PREVIEW_PACKAGE} pair --pairing-base-url ${window.location.origin}/vm/test-handle/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
       ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("derives the Matrix handle from the owner-scoped VM URL when the shell omits it", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/vm/pr-1126?launch=__terminal__&terminal_action=t3-connect",
+    );
+    const config = parseTerminalLaunchActionFromSearch(window.location.search);
+    const root = mkdtempSync(join(tmpdir(), "matrix-t3-vm-handle-"));
+    const prefix = join(root, "node");
+    const bin = join(prefix, "bin");
+    const marker = join(root, "invoked");
+    const fakeNpx = join(bin, "npx");
+    const canonicalCommand = createCanonicalTerminalLaunchCommand(config?.command ?? "");
+    try {
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(fakeNpx, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$MATRIX_T3_TEST_MARKER"\n');
+      chmodSync(fakeNpx, 0o755);
+      const env = {
+        ...process.env,
+        MATRIX_HOME: root,
+        MATRIX_NODE_PREFIX: prefix,
+        MATRIX_T3_TEST_MARKER: marker,
+      };
+      delete env.MATRIX_HANDLE;
+
+      const result = spawnSync("sh", ["-c", canonicalCommand], {
+        encoding: "utf8",
+        env,
+        input: "y\n",
+      });
+
+      expect(result.status).toBe(0);
+      expect(readFileSync(marker, "utf8").trim()).toBe(
+        `--yes ${T3_PREVIEW_PACKAGE} pair --pairing-base-url ${window.location.origin}/vm/pr-1126/api/integrations/t3/ --base-dir ${join(root, "system/t3code")}`,
+      );
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

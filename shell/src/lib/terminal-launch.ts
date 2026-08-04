@@ -20,6 +20,8 @@ const T3_PREVIEW_PACKAGE =
   "https://github.com/HamedMP/t3code/releases/download/matrix-preview-pr-5115-662e50904/t3-pr5115-662e50904.tgz";
 const DEFAULT_MATRIX_APP_ORIGIN = "https://app.matrix-os.com";
 const T3_PUBLIC_ORIGIN_PLACEHOLDER = "__MATRIX_T3_PUBLIC_ORIGIN__";
+const T3_MATRIX_HANDLE_PLACEHOLDER = "__MATRIX_T3_HANDLE__";
+const MATRIX_HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/;
 
 function getT3PublicOrigin(): string {
   if (typeof window !== "undefined") {
@@ -35,6 +37,13 @@ function getT3PublicOrigin(): string {
     if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.origin;
   }
   return DEFAULT_MATRIX_APP_ORIGIN;
+}
+
+function getT3MatrixHandle(): string {
+  if (typeof window === "undefined") return "";
+  const match = window.location.pathname.match(/^\/vm\/([^/]+)(?:\/|$)/);
+  const handle = match?.[1] ?? "";
+  return MATRIX_HANDLE_PATTERN.test(handle) ? handle : "";
 }
 
 const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
@@ -83,6 +92,7 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
       'export MATRIX_T3_HOME="${MATRIX_HOME:-$HOME}/system/t3code"',
       'mkdir -p "$MATRIX_T3_HOME"',
       `export MATRIX_T3_PACKAGE="${T3_PREVIEW_PACKAGE}"`,
+      `export MATRIX_HANDLE="\${MATRIX_HANDLE:-${T3_MATRIX_HANDLE_PLACEHOLDER}}"`,
       'case "${MATRIX_HANDLE:-}" in ""|*[!a-z0-9-]*) printf \'Matrix computer handle is unavailable or invalid.\\n\'; exit 1 ;; esac',
       'if [ "${#MATRIX_HANDLE}" -lt 2 ] || [ "${#MATRIX_HANDLE}" -gt 63 ]; then printf \'Matrix computer handle is unavailable or invalid.\\n\'; exit 1; fi',
       `export MATRIX_T3_PUBLIC_BASE_URL="${T3_PUBLIC_ORIGIN_PLACEHOLDER}/vm/$MATRIX_HANDLE/api/integrations/t3/"`,
@@ -97,7 +107,9 @@ function materializeTerminalLaunchConfig(config: TerminalLaunchConfig): Terminal
   if (config.action !== "t3-connect") return config;
   return {
     ...config,
-    command: config.command.replace(T3_PUBLIC_ORIGIN_PLACEHOLDER, getT3PublicOrigin()),
+    command: config.command
+      .replace(T3_PUBLIC_ORIGIN_PLACEHOLDER, getT3PublicOrigin())
+      .replace(T3_MATRIX_HANDLE_PLACEHOLDER, getT3MatrixHandle()),
   };
 }
 
