@@ -8,6 +8,7 @@ import { clearPluginsRuntime } from "../features/plugins/plugins-store";
 import { clearProjectViewRuntime } from "./project-view";
 import { clearProjectWorkspaces } from "./project-workspaces";
 import { clearCodingAgentRuntimeSelection } from "./coding-agent-workspace";
+import { clearDraftChats } from "./draft-chat";
 import { useFileTree } from "./file-tree";
 import { useGit } from "./git";
 import { useSessions } from "./sessions";
@@ -82,6 +83,7 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
   });
   useThreads.setState({ threads: [], activeThreadId: null });
   clearCodingAgentRuntimeSelection();
+  clearDraftChats();
   clearProjectWorkspaces();
   clearProjectViewRuntime();
   clearInspectorLayoutRuntime();

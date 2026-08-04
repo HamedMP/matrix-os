@@ -5,6 +5,7 @@ import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
+import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useEditorTabs } from "../../desktop/src/renderer/src/features/editor/editor-tabs-store";
 import { useGit } from "../../desktop/src/renderer/src/stores/git";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
@@ -15,6 +16,7 @@ import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 
 describe("desktop runtime transition", () => {
   beforeEach(() => {
+    clearDraftChats();
     useBoard.setState({
       projects: [{ slug: "old-project", name: "Old project" }],
       activeProjectSlug: "old-project",
@@ -67,6 +69,18 @@ describe("desktop runtime transition", () => {
     expect(useCodingAgentWorkspace.getState()).toMatchObject({ activeThreadId: null, selectedReviewId: null });
     expect(useProjectWorkspaces.getState().entries).toEqual({});
     expect(useProjectView.getState().entries).toEqual({});
+  });
+
+  it("clears unsent chat drafts owned by the previous identity", () => {
+    useDraftChat.getState().setDraft("proj_old", {
+      providerId: "codex",
+      prompt: "private draft from the old identity",
+      mode: "default",
+    });
+
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+
+    expect(useDraftChat.getState().entries).toEqual({});
   });
 
   it("reopens the Home tab so the desktop is never left blank after a switch", () => {
