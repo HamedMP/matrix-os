@@ -875,6 +875,24 @@ describe("pi provider adapter — resume", () => {
 });
 
 describe("pi provider adapter — failures", () => {
+  it("does not reject a completed run when Pi returns an invalid session id", async () => {
+    const fake = fakeSpawn({ lines: textRunLines("not-a-valid-session", "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+    const thread = threadSummary();
+
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread,
+      request: createRequest("Say hi"),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+    const parsed = parseCodingAgentProviderRunResult(result, thread.id);
+
+    expect(parsed.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "completed" });
+    expect(parsed.resumeState).toBeUndefined();
+  });
+
   it("maps a non-zero exit into a safe failure without leaking stderr", async () => {
     const fake = fakeSpawn({
       lines: [sessionLine(SESSION_ID)],

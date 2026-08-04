@@ -778,8 +778,13 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     ];
   }
 
-  function packResumeState(sessionId: string, cwd: string): string {
-    return JSON.stringify(PiResumeStateSchema.parse({ s: sessionId, c: cwd }));
+  function packResumeState(sessionId: string, cwd: string): string | null {
+    const parsed = PiResumeStateSchema.safeParse({ s: sessionId, c: cwd });
+    if (!parsed.success) {
+      logCodingAgentWarning("pi provider resume state invalid", new Error("run returned invalid resume state"));
+      return null;
+    }
+    return JSON.stringify(parsed.data);
   }
 
   function parseResumeState(raw: string): { sessionId: string; cwd: string | null } | null {
@@ -903,13 +908,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         now,
         nextEventId,
       });
+      const conversationId = packResumeState(run.sessionId, cwd);
       return {
         events: [
           runningEvent,
           ...run.events,
           ...terminalEvents(thread.id, run.outcome, now, nextEventId),
         ],
-        resumeState: { conversationId: packResumeState(run.sessionId, cwd) },
+        ...(conversationId ? { resumeState: { conversationId } } : {}),
       };
     },
 
@@ -948,10 +954,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         now,
         nextEventId,
       });
+      const conversationId = packResumeState(run.sessionId, cwd);
       return {
         events: run.events,
         outcome: run.outcome,
-        resumeState: { conversationId: packResumeState(run.sessionId, cwd) },
+        resumeState: conversationId ? { conversationId } : resumeState,
       };
     },
 
