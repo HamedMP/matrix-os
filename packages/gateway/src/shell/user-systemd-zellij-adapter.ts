@@ -173,12 +173,11 @@ export function createUserSystemdZellijAdapter(options: {
 
     async createSession(input) {
       const existing = await options.controller.findByDisplayName("terminal", input.name);
+      if (existing) {
+        throw shellError("session_interrupted", "Session requires explicit recovery", 409);
+      }
       const health = await baseAdapter.health();
       if (!health.ok) throw shellError("zellij_failed", "Shell operation failed", 500);
-      if (existing) {
-        cacheDescriptor(await options.controller.start(existing.runtimeId));
-        return;
-      }
       const nextRuntimeId = generateRuntimeId();
       const cwd = input.cwd ?? homePath;
       const layoutPath = join(homePath, "system", "zellij", "runtime-layouts", `${nextRuntimeId}.kdl`);

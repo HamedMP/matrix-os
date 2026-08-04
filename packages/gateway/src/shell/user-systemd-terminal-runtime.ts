@@ -242,6 +242,7 @@ export function createUserSystemdTerminalRuntime(options: {
   now?: () => string;
   readinessTimeoutMs?: number;
   generationLockHelperPath?: string;
+  removePath?: (path: string) => Promise<void>;
 }) {
   const homePath = resolve(options.homePath);
   const uid = options.uid ?? process.getuid?.();
@@ -251,6 +252,7 @@ export function createUserSystemdTerminalRuntime(options: {
   const now = options.now ?? (() => new Date().toISOString());
   const descriptorRoot = join(homePath, "system", "terminal-runtimes");
   const generationLockHelperPath = options.generationLockHelperPath;
+  const removePath = options.removePath ?? ((path: string) => rm(path, { force: true }));
   let mutationTail = Promise.resolve();
   const systemdEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -591,15 +593,29 @@ export function createUserSystemdTerminalRuntime(options: {
       return withMutationLock(async () => {
         const descriptor = await readDescriptor(parsed.data);
         await runSystemctl(["stop", unitName(parsed.data)]);
-        await rm(join(descriptorRoot, `${parsed.data}.json`), { force: true });
-        if (descriptor?.environmentPath) await rm(descriptor.environmentPath, { force: true });
-        const generatedLayoutRoot = join(homePath, "system", "zellij", "runtime-layouts");
-        if (
-          descriptor
-          && dirname(descriptor.layoutPath) === generatedLayoutRoot
-          && basename(descriptor.layoutPath).startsWith(`${descriptor.runtimeId}`)
-        ) {
-          await rm(descriptor.layoutPath, { force: true });
+        try {
+          const generatedLayoutRoot = join(homePath, "system", "zellij", "runtime-layouts");
+          const generatedEnvironmentRoot = join(descriptorRoot, "env");
+          if (
+            descriptor?.environmentPath
+            && dirname(descriptor.environmentPath) === generatedEnvironmentRoot
+            && basename(descriptor.environmentPath).startsWith(`${descriptor.runtimeId}-`)
+            && basename(descriptor.environmentPath).endsWith(".json")
+          ) {
+            await removePath(descriptor.environmentPath);
+          }
+          if (
+            descriptor
+            && dirname(descriptor.layoutPath) === generatedLayoutRoot
+            && basename(descriptor.layoutPath).startsWith(`${descriptor.runtimeId}`)
+            && basename(descriptor.layoutPath).endsWith(".kdl")
+          ) {
+            await removePath(descriptor.layoutPath);
+          }
+          await removePath(join(descriptorRoot, `${parsed.data}.json`));
+        } catch (err: unknown) {
+          if (err instanceof TerminalRuntimeUnavailableError) throw err;
+          throw new TerminalRuntimeUnavailableError(err);
         }
         return { ok: true };
       });

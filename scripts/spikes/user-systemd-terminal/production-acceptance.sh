@@ -34,6 +34,7 @@ readonly gateway_dropin=/etc/systemd/system/matrix-gateway.service.d/zz-user-sys
 readonly version_a="v0.0.0-user-systemd-accept-${head_sha:0:7}-${run_nonce}-a"
 readonly version_b="v0.0.0-user-systemd-accept-${head_sha:0:7}-${run_nonce}-b"
 readonly shell_name="u-s-${run_nonce}"
+readonly renamed_shell_name="u-r-${run_nonce}"
 readonly agent_name="u-a-${run_nonce}"
 readonly delete_name="u-d-${run_nonce}"
 readonly limit_name="u-l-${run_nonce}"
@@ -137,7 +138,7 @@ for entry in entries:
     if runtime_id != entry.name.removesuffix(".json") or not isinstance(display_name, str):
         continue
     if (
-        re.fullmatch(r"u-[sadlpc]-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}", display_name) is None
+        re.fullmatch(r"u-[sradlpc]-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}", display_name) is None
         and display_name != "acceptance-conflict-a"
     ):
         continue
@@ -528,6 +529,18 @@ create_session() {
 
 delete_session() {
   api_call DELETE "/api/terminal/sessions/$1?force=1" "" 200
+}
+
+rename_session() {
+  local body
+  body="$(python3 - "$2" <<'PY'
+import json
+import sys
+
+print(json.dumps({"name": sys.argv[1]}, separators=(",", ":")))
+PY
+  )"
+  api_call PUT "/api/terminal/sessions/$1/rename" "$body" 200
 }
 
 snapshot() {
@@ -1234,7 +1247,7 @@ verify_deleted() {
 
 cleanup_runtime_sessions() {
   wait_gateway || return 0
-  for name in "$shell_name" "$agent_name" "$delete_name" "$limit_name" "$post_rollback_name" "$current_generation_name"; do
+  for name in "$shell_name" "$renamed_shell_name" "$agent_name" "$delete_name" "$limit_name" "$post_rollback_name" "$current_generation_name"; do
     delete_session "$name" >/dev/null 2>&1 || true
   done
 }
@@ -1334,6 +1347,13 @@ EOF
   wait_snapshot "$agent_name" agent "$agent_baseline"
   mark ordinaryShellRuntime
   mark realCodingAgentRuntime
+
+  write_progress metadata-rename
+  rename_session "$shell_name" "$renamed_shell_name"
+  roles_match "$renamed_shell_name" shell "$shell_baseline"
+  rename_session "$renamed_shell_name" "$shell_name"
+  roles_match "$shell_name" shell "$shell_baseline"
+  mark metadataRenamePreservesRuntime
 
   write_progress resource-controls
   local gateway_cgroup shell_cgroup agent_cgroup

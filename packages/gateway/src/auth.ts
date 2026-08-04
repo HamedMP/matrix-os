@@ -161,6 +161,13 @@ function getClientIp(c: { req: { header: (name: string) => string | undefined } 
   );
 }
 
+function getTrustedProxyClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
+  // Customer-VPS nginx always overwrites X-Real-IP with its transport peer.
+  // CF-Connecting-IP is intentionally excluded because direct callers can
+  // supply it and rotate the signature-verification limiter key.
+  return c.req.header("x-real-ip")?.trim() || "trusted-proxy-address-unavailable";
+}
+
 export function authMiddleware(
   token: string | undefined,
   options?: { webhookProviders?: Set<string> },
@@ -221,7 +228,7 @@ export function authMiddleware(
     }
 
     if (ROUTE_SCOPED_SIGNATURE_PATHS.some((p) => normalizedPath === p)) {
-      const ip = getClientIp(c);
+      const ip = getTrustedProxyClientIp(c);
       if (!acceptanceSignatureRateLimiter.check(ip)) {
         return tooManyRequests(c);
       }
