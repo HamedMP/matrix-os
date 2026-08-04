@@ -329,6 +329,10 @@ review pass first, performed by whichever coding agent is doing the work -- Clau
 Code, Codex, or another. Run it on the actual diff (`git diff origin/main...HEAD`)
 after the local gates pass and before mentioning `@greptileai`.
 
+Opening a non-draft PR spends one automatic review on whatever the initial head
+happens to be, so do the local pass **before** you open the PR, not after. Every
+review from then on is one you explicitly pay for.
+
 - **Claude Code**: `/code-review`, or `/pr-review-toolkit:review-pr`, which launches
   the specialist agents (`silent-failure-hunter`, `code-reviewer`,
   `pr-test-analyzer`, `comment-analyzer`, `type-design-analyzer`). Note
@@ -426,8 +430,8 @@ blocker, not a green light):
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
-- **Greptile reviews only when you mention `@greptileai`, and it costs money** -- it does NOT run automatically on every commit. Request a review with a single `gh pr comment <number> --body "@greptileai review"` and only once the branch is final and every local gate has passed (`bun run typecheck`, `bun run check:patterns`, `bun run test`, plus `npx react-doctor@latest <project-dir>` for changed React projects). Never request a review to find out whether the change works. A PR with no Greptile comment is unreviewed because nobody asked -- do not mistake that for a review in progress.
-- **Do not spam Greptile re-review comments** -- one request per head SHA. A push that changes the head makes the previous review stale and needs exactly one new mention; while a review for the current head is running, wait and poll instead of mentioning it again.
+- **Greptile reviews the opening head automatically, then only when you mention `@greptileai`, and every run costs money** -- opening a non-draft PR triggers one review of the initial head within a few minutes; draft PRs get none. It does NOT re-review later commits on its own. After any push that changes the head, request a review with a single `gh pr comment <number> --body "@greptileai review"`, and only once the branch is final and every local gate has passed (`bun run typecheck`, `bun run check:patterns`, `bun run test`, plus `npx react-doctor@latest <project-dir>` for changed React projects). Never request a review to find out whether the change works. On a freshly opened non-draft PR, wait a few minutes for the automatic review rather than paying for a mention you did not need.
+- **Do not spam Greptile re-review comments** -- one request per head SHA. A push that changes the head makes the previous review stale and needs exactly one new mention; while a review for the current head is running, wait and poll instead of mentioning it again. Always check which commit the existing review covers -- the Greptile footer names its last reviewed commit, and a 5/5 against an older head does not satisfy the merge gate.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`

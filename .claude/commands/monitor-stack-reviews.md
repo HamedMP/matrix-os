@@ -46,10 +46,15 @@ final human review.
   restack descendants.
 - Treat unresolved human review threads, Codex review comments, and Greptile
   findings as blockers until fixed, acknowledged, or explicitly deferred.
-- Greptile does not review automatically and each run costs money. It runs only
-  when a comment mentions `@greptileai`. A PR with no Greptile comment is
-  unreviewed because nobody asked -- do not mistake that for a review in
-  progress and do not wait on one that was never requested.
+- Opening a non-draft PR spends one automatic Greptile review on the initial
+  head; drafts get none. After that, Greptile re-reviews only when a comment
+  mentions `@greptileai`, and each run costs money. On an older PR whose head
+  has moved, a missing review means nobody asked -- do not wait on one that was
+  never requested. On a PR opened minutes ago, give the automatic review time to
+  land before paying for a mention.
+- Check which commit a Greptile review covers before trusting it. The comment
+  footer names its last reviewed commit; a `5/5` against a superseded head does
+  not satisfy the gate.
 - Before requesting Greptile, run a local review pass with the coding agent you
   are already using (see "Local review before Greptile" in AGENTS.md) and make
   every local gate pass. Greptile is the paid final gate, not the first reviewer.

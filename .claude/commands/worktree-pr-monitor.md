@@ -34,7 +34,7 @@ OS PR loop:
 - Use a semantic branch and PR title. Do not prefix the PR title with agent/tool tags.
 - Never stage unrelated changes. Inspect `git status --short --branch` before staging.
 - Do not merge unless explicitly asked.
-- Greptile only reviews when a comment mentions `@greptileai`, and each run costs money. Request it once per head SHA, and only after every local gate passes. An absent Greptile review means nobody asked, not that a review is pending.
+- Opening a non-draft PR spends one automatic Greptile review on the initial head; drafts get none. Every review after that runs only when a comment mentions `@greptileai`, and each run costs money. Request it once per head SHA, and only after every local gate passes. On a PR whose head has moved, an absent review means nobody asked, not that one is pending.
 - Review the diff locally with your own coding agent before requesting Greptile. Greptile is the paid final gate, not the first reviewer.
 - If Greptile has reviewed the PR, GitHub mergeability alone is not enough. The loop is done only when the latest trusted Greptile result is `5/5`.
 - Treat human review, Codex review comments, and unresolved GitHub review threads as blockers until acknowledged or fixed.
@@ -78,7 +78,7 @@ OS PR loop:
      - `Invariants` for backend changes
 
 7. Request the Greptile review, then monitor until done.
-   - **Greptile does not review automatically.** It runs only when a comment mentions `@greptileai`, and every run costs money. A PR with no such comment will sit indefinitely with no review — that is not a review in progress.
+   - **Greptile auto-reviews only the opening head.** A non-draft PR gets one automatic review of its initial head within a few minutes; drafts get none. Later commits are never re-reviewed on their own — those runs happen only when a comment mentions `@greptileai`, and every run costs money. Once the head has moved, no review appears until someone asks — that is not a review in progress.
    - **Request it only when the branch is final and every local gate has already passed**: `bun run typecheck`, `bun run check:patterns`, `bun run test`, plus `npx react-doctor@latest <project-dir>` for each changed React project. Never request a review to find out whether the change works.
    - **Run a local review pass first, with the coding agent you are already using.** Greptile is the paid final gate, not the first reviewer. Review the real diff (`git diff origin/main...HEAD`) using `/code-review` in Claude Code, the equivalent review command in Codex, or the three review passes from `docs/dev/review-pipeline.md` (mechanical `check:patterns` sweep, trust-boundary sweep, atomicity/failure-mode review) plus the AGENTS.md Hard Rules. Fix what it finds and re-run the gates before requesting Greptile.
    - **Give the review a defect class, not "review this."** Name the shape to hunt (state written after an `await` with no generation guard; failures swallowed and returned to a fire-and-forget caller; renderer-built ids that fail their Zod contract schema), sweep every file touched, and fix the *class* rather than the named instance -- otherwise the next paid round rediscovers the same defect one file over.
