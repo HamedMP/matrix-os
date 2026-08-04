@@ -21,14 +21,15 @@ run_attempt_padded="${run_attempt_padded// /0}"
 run_namespace="${pr_head_sha:0:5}${run_id_padded}${run_attempt_padded}"
 evidence_name="matrix-terminal-spike-evidence-${pr_head_sha}-${run_nonce}"
 evidence_root="/tmp/${evidence_name}"
+base_id="1${run_namespace}"
 runner_unit="matrix-terminal-runtime-spike-${run_namespace}.service"
+base_unit="matrix-terminal-spike@${base_id}.service"
 if [ ! -d "$evidence_root" ] || [ -L "$evidence_root" ]; then
   state="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl is-active "$runner_unit" 2>/dev/null || true)"; [[ "$state" =~ ^(active|activating|failed|inactive)$ ]] || state=unknown
   echo "spike_pack_evidence_incomplete_no_root_${state}"; exit 0
 fi
 if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" ]; then
   state="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl is-active "$runner_unit" 2>/dev/null || true)"; [[ "$state" =~ ^(active|activating|failed|inactive)$ ]] || state=unknown
-  base_id="1${run_namespace}"; base_unit="matrix-terminal-spike@${base_id}.service"
   base_state="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p ActiveState --value 2>/dev/null || true)"; [[ "$base_state" =~ ^(active|activating|failed|inactive)$ ]] || base_state=unknown
   base_substate="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p SubState --value 2>/dev/null | tr - _ || true)"; [[ "$base_substate" =~ ^[a-z0-9_]{1,24}$ ]] || base_substate=unknown
   exec_status="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p ExecMainStatus --value 2>/dev/null || true)"; [[ "$exec_status" =~ ^[0-9]{1,3}$ ]] || exec_status=999
