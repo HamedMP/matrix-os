@@ -329,7 +329,7 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
     expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath)');
     expect(keeper).toContain(
-      "if (paneReleased && descriptor.intent === 'create' && !confirmationSent)",
+      "if (paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent)",
     );
     expect(keeper).toContain("pty.write('\\r')");
     expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
@@ -897,7 +897,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain('startupWatchdog = setTimeout');
     expect(keeper).toContain("void failStartup('readiness_timeout')");
     expect(keeper).toContain(
-      "paneReleased && descriptor.intent === 'create' && !confirmationSent",
+      "paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent",
     );
     expect(keeper).not.toContain("descriptor.intent === 'recover' && !confirmationSent");
     expect(keeper).not.toContain('--force-run-commands');

@@ -318,7 +318,7 @@ async function main() {
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
     const paneReleased = await regularFileExists(paneReleasePath);
-    if (paneReleased && descriptor.intent === 'create' && !confirmationSent) {
+    if (paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent) {
       pty.write('\r');
       confirmationSent = true;
     }
