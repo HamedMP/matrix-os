@@ -268,6 +268,22 @@ describe("composer provider/mode pickers", () => {
     await waitFor(() => expect(mode.value).toBe("review"));
   });
 
+  it("ignores an unready persisted provider when choosing the draft default", async () => {
+    const summary = summaryFixture();
+    const unreadySummary: RuntimeSummary = {
+      ...summary,
+      providers: summary.providers.map((provider) => provider.id === "claude"
+        ? { ...provider, availability: "auth_required", authStatus: "expired" }
+        : provider),
+    };
+    mockOperator({ preferredProviderId: "claude", summary: unreadySummary });
+    await openDraftComposer();
+
+    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
+    await waitFor(() => expect(provider.value).toBe("codex"));
+    expect((screen.getByLabelText("Agent mode") as HTMLSelectElement).value).toBe("default");
+  });
+
   it("uses the preferred non-pi provider sandbox when pi is the runtime default", async () => {
     const { invoke } = mockOperator({
       preferredProviderId: "codex",
