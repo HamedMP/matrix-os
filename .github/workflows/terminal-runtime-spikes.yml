@@ -442,6 +442,7 @@ jobs:
           }')"
           pack_response="$RUNNER_TEMP/terminal-runtime-spike-pack.json"
           evidence_deadline=$((SECONDS + 2100))
+          semantic_response_timeout=300
           pack_ready=false
           diagnostic=unavailable
           base_wait_started=0
@@ -510,8 +511,25 @@ jobs:
               echo "evidence_diagnostic=${diagnostic}" >&2
               exit 1
             fi
-            if [ $((SECONDS - last_semantic_pack_success)) -ge 120 ]; then
-              diagnostic="evidence_gateway_response_invalid_${http_code}"
+            if [ $((SECONDS - last_semantic_pack_success)) -ge "$semantic_response_timeout" ]; then
+              response_shape="$(jq -r '
+                if type != "object" then "non_object"
+                elif has("error") then "error_object"
+                elif ((.exitCode | type) == "number" or .exitCode == null) and
+                  (.timedOut | type) == "boolean" and
+                  (.truncated | type) == "boolean" and
+                  ((.signal | type) == "string" or .signal == null) and
+                  (.stdout | type) == "string" and (.stderr | type) == "string"
+                then "command_result_exit_" +
+                  (if .exitCode == null then "null" elif .exitCode == 0 then "zero" else "nonzero" end) +
+                  "_timeout_" + (if .timedOut then "1" else "0" end) +
+                  "_signal_" + (if .signal == null then "none" elif .signal == "SIGTERM" then "sigterm"
+                    elif .signal == "SIGKILL" then "sigkill" else "other" end) +
+                  "_stdout_" + (if .stdout == "" then "empty" else "set" end) +
+                  "_stderr_" + (if .stderr == "" then "empty" else "set" end)
+                else "unknown_object" end
+              ' "$pack_response" 2>/dev/null || printf invalid_json)"
+              diagnostic="evidence_gateway_response_invalid_${http_code}_${response_shape}"
               echo "evidence_diagnostic=${diagnostic}" >&2
               exit 1
             fi

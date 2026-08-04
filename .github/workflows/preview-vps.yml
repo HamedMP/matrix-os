@@ -610,6 +610,7 @@ jobs:
           for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"; do
             target_sha="$HEAD_SHA"
             target_generation="$ACTIVATION_GENERATION_TARGET"
+            attestation_retry_required=false
             if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then
               target_sha="$BOOTSTRAP_SHA"
               target_generation="$BOOTSTRAP_GENERATION_TARGET"
@@ -628,10 +629,17 @@ jobs:
                 echo "Reusing the exact dormant parent already installed on the preview."
                 continue
               fi
+              # A clean host applies this first bundle with the legacy updater
+              # process image. That process installs the typed updater bytes and
+              # units but predates terminal-runtime generation installation. A
+              # single pinned reapply through the newly installed updater is the
+              # compatibility bridge; both passes remain fully attested.
+              attestation_retry_required=true
             fi
             deploy_deadline=$((SECONDS + 4500))
             deploy_converged=false
             version_seen=false
+            attestation_retry_sent=false
             last_updater_diagnostic=""
             last_signal=$((SECONDS - 60))
             while [ "$SECONDS" -lt "$deploy_deadline" ]; do
@@ -686,6 +694,28 @@ jobs:
                     preview_install_matches "$address" "$target_version" "$target_sha" "$target_generation"; then
                     deploy_converged=true
                     break
+                  fi
+                  if [ "$attestation_retry_required" = true ] &&
+                    [ "$attestation_retry_sent" != true ] && [ "$updater_diagnostic_result" = "Update service: idle phase=idle failure=none" ]; then
+                    code=""
+                    if ! code="$(attempt "$target_version")"; then
+                      code=000
+                    fi
+                    if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                      echo "Preview deploy authorization failed." >&2
+                      exit 1
+                    fi
+                    if [ "$code" = "200" ] &&
+                      jq -e --arg handle "$HANDLE" '
+                        .triggered == 1 and .failed == 0 and (.results | length) == 1
+                        and .results[0].handle == $handle
+                        and .results[0].status == "triggered"
+                      ' /tmp/deploy.json >/dev/null; then
+                      attestation_retry_sent=true
+                      echo "Reapplying the pinned preview release through the installed updater for host-runtime attestation."
+                    else
+                      echo "Waiting for the preview update boundary."
+                    fi
                   fi
                   echo "Waiting for the installed preview release and terminal generation."
                 fi

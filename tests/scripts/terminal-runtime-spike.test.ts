@@ -76,6 +76,39 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
   return root;
 }
 describe('terminal runtime spike evidence', () => {
+  it('runs the evidence CLI when invoked through the immutable current-generation symlink', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'matrix-terminal-verifier-symlink-'));
+    roots.push(fixture);
+    const generation = join(fixture, 'generation');
+    const current = join(fixture, 'current');
+    await mkdir(generation);
+    await Promise.all([
+      writeFile(
+        join(generation, 'verify-evidence.mjs'),
+        await readRepo('scripts/spikes/terminal-runtime/verify-evidence.mjs'),
+      ),
+      writeFile(
+        join(generation, 'v0.44.3-matrix.1.build.json'),
+        await readRepo('scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json'),
+      ),
+    ]);
+    await symlink(generation, current, 'dir');
+    const root = await evidence();
+    const result = spawnSync(process.execPath, [
+      join(current, 'verify-evidence.mjs'),
+      root,
+      '--pack',
+      'a'.repeat(40),
+    ], { encoding: 'utf8' });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      schemaVersion: 1,
+      prHeadSha: 'a'.repeat(40),
+    });
+  });
+
   it('builds and verifies the pinned Matrix Zellij resurrection patch', async () => {
     const [
       builder,
@@ -259,8 +292,24 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('$((SECONDS - last_pack_success)) -ge 120');
     expect(workflow).toContain('evidence_gateway_unavailable_${http_code}');
     expect(workflow).toContain('last_semantic_pack_success=$SECONDS');
-    expect(workflow).toContain('$((SECONDS - last_semantic_pack_success)) -ge 120');
-    expect(workflow).toContain('evidence_gateway_response_invalid_${http_code}');
+    expect(workflow).toContain('semantic_response_timeout=300');
+    expect(workflow).toContain(
+      '$((SECONDS - last_semantic_pack_success)) -ge "$semantic_response_timeout"',
+    );
+    expect(workflow).toContain(
+      'evidence_gateway_response_invalid_${http_code}_${response_shape}',
+    );
+    expectAll(workflow, [
+      'if type != "object" then "non_object"',
+      'elif has("error") then "error_object"',
+      'elif ((.exitCode | type) == "number" or .exitCode == null)',
+      'then "command_result_exit_" +',
+      '(if .exitCode == null then "null" elif .exitCode == 0 then "zero" else "nonzero" end)',
+      '(if .signal == null then "none" elif .signal == "SIGTERM" then "sigterm"',
+      '(if .stdout == "" then "empty" else "set" end)',
+      '(if .stderr == "" then "empty" else "set" end)',
+      'else "unknown_object" end',
+    ]);
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
@@ -519,6 +568,9 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     }
     expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
+    expect(runner).toContain('readonly codex=/opt/matrix/runtime/node/bin/codex');
+    expect(runner).toContain('[ -x "$codex" ]');
+    expect(runner).not.toContain("sh -c 'command -v codex'");
     expect(workflow).not.toContain('VPS_SSH_KEY');
   });
   it('fails closed on incomplete, stale, or extended production evidence', async () => {
@@ -644,13 +696,27 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(packer).not.toContain('tar --create');
     expect(runner).toContain('bounded_wait_child "$attach_parent"');
     expect(runner).not.toContain('wait "$attach_parent" 2>/dev/null || true');
-    expect(runner).toContain("trap 'status=$?; build_summary; cleanup; exit $status' EXIT");
+    expect(runner).toContain("trap 'status=$?; cleanup; build_summary; exit $status' EXIT");
+    expect(runner).toMatch(
+      /trap - EXIT\ncleanup\nwrite_progress summary_build\nbuild_summary\nsummary_status=/,
+    );
+    expect(runner).not.toMatch(/build_summary\nsummary_status=[\s\S]*trap - EXIT\ncleanup/);
     expect(runner).toContain('write_progress base_start');
     expect(runner).toContain('write_progress base_start_requested');
     expect(runner).toContain('write_progress keeper_loss');
     expect(runner).toContain('write_progress server_loss');
     expect(runner).toContain('write_progress memory_pressure');
     expect(runner).toContain('write_progress recovery_restore');
+    expectAll(runner, [
+      'write_progress s2_cache_saved',
+      'write_progress s2_initial_stopped',
+      'write_progress s2_recover_started',
+      'write_progress s2_recover_ready',
+      'write_progress s2_viewport_checked',
+      'write_progress s2_cache_frozen',
+      'write_progress s2_restored_stopped',
+      'write_progress s2_delete',
+    ]);
     expect(runner).toContain('write_progress corruption_fallback');
     expect(runner).toContain('progress-stage.txt');
     expect(runner).toContain('command_bounded 35 /usr/bin/systemctl "$@"');
@@ -910,6 +976,20 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     );
     expect(runner).not.toContain(
       'printf \'MATRIX_CORRUPT_STATE\\n\' >"$corrupt_target"',
+    );
+    expect(runner).toContain('stop_runtime_empty() {');
+    expect(runner).toContain(
+      'if wait_not_active "$recovery_unit" &&\n'
+      + '      stop_runtime_empty "$recovery_unit" "$recovery_cgroup"; then\n'
+      + '      zellij_delete_if_present "$recovery_id" >/dev/null 2>&1 || true\n'
+      + '      rm -rf -- "$recovery_cache_dir"',
+    );
+    expect(runner).toContain(
+      'if stop_runtime_empty "$recovery_unit" "$recovery_cgroup"; then\n'
+      + '    zellij_delete_if_present "$recovery_id" >/dev/null 2>&1 || true\n'
+      + '    rm -rf -- "$recovery_cache_dir"\n'
+      + '    if [ ! -e "$recovery_cache_dir" ]; then mark_pass s2 deletionComplete; fi\n'
+      + '  fi',
     );
   });
   it('publishes a detached Zellij delete worker PID without stdout command substitution', async () => {
