@@ -1,4 +1,4 @@
-#!/opt/matrix/runtime/node/bin/node
+#!/usr/bin/env node
 
 if (process.argv.length !== 2) process.exit(64);
 

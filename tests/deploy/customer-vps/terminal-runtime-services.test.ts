@@ -205,12 +205,7 @@ describe('customer VPS terminal runtime services', () => {
     expect(helper).not.toContain('--force-run-commands');
     expect(helper).not.toContain('eval ');
     expect(helper).not.toContain('/opt/matrix/app');
-    expect(previewWorkflow).toContain(
-      'cp distro/customer-vps/host-bin/matrix-terminal-spike-pane "$RUNNER_TEMP/"',
-    );
-    expect(previewWorkflow).toContain(
-      'cp "$RUNNER_TEMP/matrix-terminal-spike-pane" distro/customer-vps/host-bin/',
-    );
+    expect(previewWorkflow).not.toContain('matrix-terminal-spike-pane');
   });
 
   it('rejects untyped spike helper operations and malformed exact-head SHAs', () => {

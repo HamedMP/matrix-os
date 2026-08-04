@@ -307,26 +307,30 @@ describe('terminal runtime spike evidence', () => {
     );
     expect(keeper).toContain("const WORKLOAD_PANE_NAME = 'matrix-runtime-workload-probe'");
   });
-  it('launches spike panes through a self-contained fixed non-sensitive wrapper', async () => {
+  it('launches spike panes through an immutable generation helper', async () => {
     const [wrapper, buildScript, updater] = await Promise.all([
-      readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-pane'),
+      readRepo('scripts/spikes/terminal-runtime/workload-pane.mjs'),
       readRepo('scripts/build-host-bundle.sh'),
       readRepo('distro/customer-vps/host-bin/matrix-sync-agent'),
     ]);
     expectAll(wrapper, [
-      '#!/opt/matrix/runtime/node/bin/node',
+      '#!/usr/bin/env node',
       'if (process.argv.length !== 2)',
       'setInterval(() => undefined, 60_000)',
     ]);
     expect(wrapper).not.toContain('exec -a');
     expect(wrapper).not.toContain('/usr/bin/sleep');
     expect(wrapper).not.toContain('bash --noprofile');
-    expect(wrapper).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
+    expect(wrapper).not.toContain('/opt/matrix/');
     expect(wrapper).not.toContain('--force-run-commands');
     expect(buildScript).toContain(
-      '"$STAGE_DIR/bin/matrix-terminal-spike-pane"',
+      'cp -a --no-preserve=links "$ROOT_DIR/scripts/spikes/terminal-runtime/." "$terminal_generation_build/spikes/"',
     );
-    expect(updater).toContain('name="matrix-terminal-spike-pane"');
+    expect(buildScript).toContain(
+      'rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-pane"',
+    );
+    expect(updater).toContain('rm -f -- "$BIN_DIR/matrix-terminal-spike-pane"');
+    expect(updater).not.toContain('name="matrix-terminal-spike-pane"');
   });
   it('preflights the exact installed workload helper before asking Zellij to launch it', async () => {
     const [keeper, packer] = await Promise.all([
@@ -392,14 +396,17 @@ describe('terminal runtime spike evidence', () => {
       readRepo('scripts/spikes/terminal-runtime/pane-probe.sh'),
     ]);
     expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
-    expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath)');
+    expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath);');
+    expect(keeper).toContain(
+      "const startupAuthorized = descriptor.intent === 'recover' || paneReleased;",
+    );
     expect(keeper).toContain(
       "if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched)",
     );
     expect(keeper).not.toContain(
       "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
-    expect(keeper).toContain("const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane'");
+    expect(keeper).toContain("const WORKLOAD_PANE = join(dirname(keeperExecutable), 'workload-pane.mjs')");
     expect(keeper).toContain("process.comm === 'MainThread'");
     expect(keeper).toContain('process.cmdline[0] === NODE');
     expect(keeper).toContain('process.cmdline[1] === WORKLOAD_PANE');
@@ -420,8 +427,8 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).not.toContain("'action', 'send-keys'");
     expect(keeper).not.toContain("'action', 'write', '13'");
     expect(keeper).not.toContain("pty.write('\\r')");
-    expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
-    expect(keeper.indexOf('const responsive = paneReleased')).toBeLessThan(
+    expect(keeper).toContain("if (startupAuthorized && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
+    expect(keeper.indexOf('const responsive = startupAuthorized')).toBeLessThan(
       keeper.indexOf("descriptor.intent === 'create' && !workloadPaneLaunched"),
     );
     expect(paneProbe).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
@@ -609,7 +616,10 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expectAll(packer, [
       'keeper_responsive keeper_zellij keeper_shell keeper_agent',
       'r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}',
-      'spike_pack_evidence_failed_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}',
+      'spike_pack_evidence_failed_${gate_failures}_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}',
+      'const allowed={s1:new Set(',
+      's1none_s2none',
+      's1${missing.s1.join("_")||"none"}_s2${missing.s2.join("_")||"none"}',
       'progress_started=',
       'progress_age=$((progress_now - progress_started))',
       'progress_stage="stalled_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}"',
@@ -868,6 +878,12 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       "throw new Error('native_binding', { cause: error })",
     ]);
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
+    expect(keeper).toContain(
+      "(descriptor.intent === 'create' || gateRecorded)",
+    );
+    expect(keeper).toContain(
+      "if (startupAuthorized && responsive && detected && (descriptor.intent === 'create' || gateRecorded))",
+    );
     expect(keeper.indexOf('await notifyReady()')).toBeLessThan(keeper.indexOf('await writeReadiness('));
     expect(runner).toContain('confirmations/${recovery_id}.gated');
     const gateProof = runner.indexOf('confirmations/${recovery_id}.gated');
@@ -1030,11 +1046,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain('heldPaneCount,');
     expect(keeper).toContain('...startupSnapshot()');
     expect(keeper).not.toContain("stdio: ['ignore', handle.fd, 'ignore']");
-    expect(keeper.indexOf('const responsive = paneReleased')).toBeLessThan(
-      keeper.indexOf('const detected = paneReleased'),
+    expect(keeper.indexOf('const responsive = startupAuthorized')).toBeLessThan(
+      keeper.indexOf('const detected = startupAuthorized'),
     );
-    expect(keeper.indexOf('const detected = paneReleased')).toBeLessThan(
-      keeper.indexOf('await recordStartupStage();\n    if (paneReleased && responsive && detected'),
+    expect(keeper.indexOf('const detected = startupAuthorized')).toBeLessThan(
+      keeper.indexOf('await recordStartupStage();\n    if (startupAuthorized && responsive && detected'),
     );
   });
   it('fails a stalled startup quickly with monotonic keeper diagnostics', async () => {

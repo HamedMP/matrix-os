@@ -349,14 +349,9 @@ install_update_runtime_bins() {
   else
     rm -f -- "$BIN_DIR/matrix-terminal-spike-control"
   fi
-  name="matrix-terminal-spike-pane"
-  if [ -f "$source_dir/$name" ] && [ ! -L "$source_dir/$name" ]; then
-    next="$BIN_DIR/.${name}.next"
-    install -o root -g root -m 0755 "$source_dir/$name" "$next"
-    mv -f -- "$next" "$BIN_DIR/$name"
-  else
-    rm -f -- "$BIN_DIR/matrix-terminal-spike-pane"
-  fi
+  # Retire the pre-generation spike workload helper from older previews. The
+  # current helper is manifest-pinned beside the keeper in its generation.
+  rm -f -- "$BIN_DIR/matrix-terminal-spike-pane"
 }
 
 install_host_bins_atomic() {
@@ -451,8 +446,7 @@ backup_terminal_runtime_for_failed_update() {
     "$BIN_DIR/matrix-terminal-keeper" \
     "$BIN_DIR/matrix-terminal-pane" \
     "$BIN_DIR/matrix-terminal-runtime-op" \
-    "$BIN_DIR/matrix-terminal-spike-control" \
-    "$BIN_DIR/matrix-terminal-spike-pane"; do
+    "$BIN_DIR/matrix-terminal-spike-control"; do
     name="$(basename "$artifact")"
     if [ -e "$artifact" ] || [ -L "$artifact" ]; then
       [ -f "$artifact" ] && [ ! -L "$artifact" ] || return 1
@@ -522,8 +516,7 @@ restore_terminal_runtime_after_failed_update() {
     matrix-terminal-keeper \
     matrix-terminal-pane \
     matrix-terminal-runtime-op \
-    matrix-terminal-spike-control \
-    matrix-terminal-spike-pane; do
+    matrix-terminal-spike-control; do
     artifact="$snapshot/bin/$name"
     if [ -f "$artifact" ] && [ ! -L "$artifact" ]; then
       restore_next="$BIN_DIR/.${name}.rollback-next"
