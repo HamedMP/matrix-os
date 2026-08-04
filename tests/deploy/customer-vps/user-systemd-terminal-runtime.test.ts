@@ -370,6 +370,16 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(workflow).toContain('echo "version=$version" >>"$GITHUB_OUTPUT"');
     expect(workflow).toContain("PREVIEW_VERSION: ${{ steps.preview.outputs.version }}");
     expect(workflow).toContain("$op,$sha,$nonce,$version");
+    const recoveryStep = workflow.slice(
+      workflow.indexOf("- name: Recover the exact-head disposable preview updater"),
+      workflow.indexOf("- name: Resolve exact-head disposable preview"),
+    );
+    expect(recoveryStep.indexOf('deploy_body="$(jq -cn')).toBeGreaterThanOrEqual(0);
+    expect(recoveryStep.indexOf('deploy_body="$(jq -cn')).toBeLessThan(
+      recoveryStep.indexOf(
+        'body=\'{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}\'',
+      ),
+    );
   });
 
   it("rejects permissive descriptor parsers and pins the keeper helper to the descriptor generation", () => {
