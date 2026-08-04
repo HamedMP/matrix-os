@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 if [ "$#" -ne 0 ]; then
   exit 64
 fi
 
-exec -a matrix-agent-probe /usr/bin/sleep 86400
+exec /usr/bin/sleep 86400

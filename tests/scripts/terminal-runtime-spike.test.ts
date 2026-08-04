@@ -314,9 +314,11 @@ describe('terminal runtime spike evidence', () => {
       readRepo('distro/customer-vps/host-bin/matrix-sync-agent'),
     ]);
     expectAll(wrapper, [
+      '#!/bin/sh',
       'if [ "$#" -ne 0 ]; then',
-      'exec -a matrix-agent-probe /usr/bin/sleep 86400',
+      'exec /usr/bin/sleep 86400',
     ]);
+    expect(wrapper).not.toContain('exec -a');
     expect(wrapper).not.toContain(' &');
     expect(wrapper).not.toContain('bash --noprofile');
     expect(wrapper).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
@@ -355,6 +357,9 @@ describe('terminal runtime spike evidence', () => {
       "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
     expect(keeper).toContain("const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane'");
+    expect(keeper).toContain("process.comm === 'sleep'");
+    expect(keeper).toContain("process.cmdline[0] === '/usr/bin/sleep'");
+    expect(keeper).toContain("process.cmdline[1] === '86400'");
     expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', WORKLOAD_PANE]");
     expect(keeper).toContain("throw new Error('workload_launch'");
     expect(keeper).not.toContain("throw new Error('workload_target')");
@@ -391,7 +396,7 @@ describe('terminal runtime spike evidence', () => {
       "['--session', sessionName, 'action', 'list-panes', '--all', '--json']",
       'panes.length > 16',
       'pane.terminal_command === WORKLOAD_PANE',
-      "pane.pane_command?.startsWith('matrix-agent-probe ')",
+      "pane.pane_command === '/usr/bin/sleep 86400'",
       'workloadPaneState',
       'workloadPaneExitStatus',
       'pane.exit_status',
