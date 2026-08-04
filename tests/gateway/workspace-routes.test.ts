@@ -207,7 +207,21 @@ describe("workspace API routes", () => {
     expect(projectManager.listManagedProjects).toHaveBeenCalled();
     const res = await app.request(jsonRequest("/api/projects/repo/worktrees", { branch: "main" }));
     expect(res.status).toBe(201);
-    expect(worktreeManager.createWorktree).toHaveBeenCalledWith({ projectSlug: "repo", branch: "main" });
+    expect(worktreeManager.createWorktree).toHaveBeenCalledWith({
+      projectSlug: "repo",
+      branch: "main",
+      pr: undefined,
+      createBranch: true,
+    });
+
+    const prRes = await app.request(jsonRequest("/api/projects/repo/worktrees", { pr: 42 }));
+    expect(prRes.status).toBe(201);
+    expect(worktreeManager.createWorktree).toHaveBeenCalledWith({
+      projectSlug: "repo",
+      branch: undefined,
+      pr: 42,
+      createBranch: undefined,
+    });
   });
 
   it("derives project owner scope from the injected principal owner scope", async () => {

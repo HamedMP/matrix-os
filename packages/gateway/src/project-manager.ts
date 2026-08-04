@@ -363,12 +363,42 @@ export function createProjectManager(options: {
           }
           const repoPath = join(targetProjectPath, "repo");
           await mkdir(repoPath, { recursive: true });
+          try {
+            await runCommand("git", ["init", "-b", "main"], {
+              cwd: repoPath,
+              timeout: DEFAULT_TIMEOUT_MS,
+            });
+            await runCommand("git", [
+              "-c",
+              "user.name=Matrix OS",
+              "-c",
+              "user.email=matrix-os@example.invalid",
+              "-c",
+              "commit.gpgSign=false",
+              "commit",
+              "--allow-empty",
+              "-m",
+              "chore: initialize scratch project",
+            ], {
+              cwd: repoPath,
+              timeout: DEFAULT_TIMEOUT_MS,
+            });
+          } catch (err: unknown) {
+            if (err instanceof Error) {
+              console.warn("[project-manager] Scratch Git initialization failed:", err.message);
+            } else {
+              console.warn("[project-manager] Scratch Git initialization failed:", err);
+            }
+            await rm(targetProjectPath, { recursive: true, force: true });
+            return genericError(502, "scratch_init_failed", "Scratch project initialization failed");
+          }
           const timestamp = nowIso(options.now);
           const project: ProjectConfig = {
             id: `proj_${randomUUID()}`,
             name,
             slug,
             localPath: repoPath,
+            defaultBranch: "main",
             addedAt: timestamp,
             updatedAt: timestamp,
             ownerScope,
