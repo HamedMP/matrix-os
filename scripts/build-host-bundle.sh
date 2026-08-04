@@ -201,10 +201,14 @@ ln -s \
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
-  chmod 0755 "$STAGE_DIR/bin/matrix-terminal-spike-control"
+  chmod 0755 \
+    "$STAGE_DIR/bin/matrix-terminal-spike-control" \
+    "$STAGE_DIR/bin/matrix-terminal-spike-pane"
   install -m 0644 "$ROOT_DIR/scripts/spikes/terminal-runtime/matrix-terminal-spike.slice" "$STAGE_DIR/systemd/matrix-terminal-spike.slice"; install -m 0644 "$ROOT_DIR/scripts/spikes/terminal-runtime/matrix-terminal-spike-template.service" "$STAGE_DIR/systemd/matrix-terminal-spike@.service"
 else
-  rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-control"
+  rm -f -- \
+    "$STAGE_DIR/bin/matrix-terminal-spike-control" \
+    "$STAGE_DIR/bin/matrix-terminal-spike-pane"
 fi
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.

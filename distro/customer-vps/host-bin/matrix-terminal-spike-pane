@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 0 ]; then
+  exit 64
+fi
+
+exec /usr/bin/bash \
+  /opt/matrix/libexec/terminal-runtime/current/spikes/pane-probe.sh

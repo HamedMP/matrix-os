@@ -298,9 +298,27 @@ describe('terminal runtime spike evidence', () => {
   it('launches the initial pane from the immutable installed generation', async () => {
     const layout = await readRepo('scripts/spikes/terminal-runtime/layout.kdl');
     expect(layout).toContain(
-      'pane command="/opt/matrix/libexec/terminal-runtime/current/spikes/pane-probe.sh"',
+      'pane command="/opt/matrix/bin/matrix-terminal-spike-pane"',
     );
+    expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
+  });
+  it('launches spike panes through a fixed non-sensitive wrapper', async () => {
+    const [wrapper, buildScript, updater] = await Promise.all([
+      readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-pane'),
+      readRepo('scripts/build-host-bundle.sh'),
+      readRepo('distro/customer-vps/host-bin/matrix-sync-agent'),
+    ]);
+    expectAll(wrapper, [
+      'if [ "$#" -ne 0 ]; then',
+      'exec /usr/bin/bash',
+      '/opt/matrix/libexec/terminal-runtime/current/spikes/pane-probe.sh',
+    ]);
+    expect(wrapper).not.toContain('--force-run-commands');
+    expect(buildScript).toContain(
+      '"$STAGE_DIR/bin/matrix-terminal-spike-pane"',
+    );
+    expect(updater).toContain('name="matrix-terminal-spike-pane"');
   });
   it('keeps panes runtime-agnostic and gates readiness in the keeper', async () => {
     const [keeper, paneProbe] = await Promise.all([
