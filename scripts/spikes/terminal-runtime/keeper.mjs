@@ -232,10 +232,7 @@ async function inspectWorkloadPane(sessionName, env) {
       if (Number.isInteger(pane.exit_status)) return 'held_failure';
       return 'other';
     }
-    const commandLooksRunning = typeof pane.pane_command === 'string'
-      && pane.pane_command.length <= 128
-      && pane.pane_command?.startsWith('matrix-agent-probe ')
-      && pane.pane_command === 'matrix-agent-probe 86400';
+    const commandLooksRunning = pane.pane_command === '/usr/bin/sleep 86400';
     return commandLooksRunning ? 'running' : 'other';
   } catch (error) {
     if (!(error instanceof Error)) throw error;
@@ -265,7 +262,10 @@ async function cgroupRoles(cgroupPath, requireWorkload) {
     .filter((process) => process.comm === 'zellij' && !process.cmdline.includes('list-sessions'))
     .map((process) => process.pid);
   const shell = processes.find((entry) => entry.comm === 'bash');
-  const agent = processes.find((process) => process.cmdline[0] === 'matrix-agent-probe');
+  const agent = processes.find((process) => process.comm === 'sleep'
+    && process.cmdline.length === 2
+    && process.cmdline[0] === '/usr/bin/sleep'
+    && process.cmdline[1] === '86400');
   roleSnapshot = { ...roleSnapshot, zellij: zellijPids.length, shell: Boolean(shell), agent: Boolean(agent) };
   if (zellijPids.length < 2 || (requireWorkload && (!shell || !agent))) return null;
   return {
