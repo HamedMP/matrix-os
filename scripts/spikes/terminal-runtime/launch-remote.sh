@@ -10,7 +10,7 @@ if ! printf '%s' "$pr_head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
   exit 2
 fi
 unit="matrix-terminal-runtime-spike-${pr_head_sha}.service"
-runner="/opt/matrix/app/scripts/spikes/terminal-runtime/run-remote.sh"
+runner="/opt/matrix/libexec/terminal-runtime/current/spikes/run-remote.sh"
 summary="/tmp/matrix-terminal-spike-evidence-${pr_head_sha}/summary.json"
 load_state="$(systemctl show "$unit" -p LoadState --value 2>/dev/null || true)"
 active_state="$(systemctl show "$unit" -p ActiveState --value 2>/dev/null || true)"
@@ -32,6 +32,7 @@ else
     --no-block \
     --property=Type=exec \
     --property=KillMode=control-group \
+    --property=RuntimeMaxSec=1800 \
     --property=StandardOutput=null \
     --property=StandardError=null \
     --property=TimeoutStopSec=30 \

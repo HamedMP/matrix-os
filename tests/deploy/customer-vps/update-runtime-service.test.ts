@@ -95,6 +95,34 @@ except module["ProtocolError"]:
     expect(updater).not.toMatch(/systemctl (?:stop|restart)[^\n]*matrix-sync-agent/);
   });
 
+  it("atomically installs ordinary host executables with fixed root permissions", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const service = read("distro/customer-vps/host-bin/matrix-update-service");
+    const cli = read("distro/customer-vps/host-bin/matrix-update");
+
+    expect(updater).toContain("install_host_bins_atomic()");
+    expect(updater).toContain(
+      'install -o root -g root -m 0755 "$source" "$next"',
+    );
+    expect(updater).toContain(
+      'mv -f -- "$next" "$BIN_DIR/$name"',
+    );
+    expect(updater).toContain(
+      'rm -f -- "$next"',
+    );
+    expect(updater).not.toContain(
+      '-exec cp -a {} "$BIN_DIR/"',
+    );
+    expect(updater).not.toContain(
+      'find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +',
+    );
+    expect(updater).toContain(
+      'write_update_failure_code "host_bin_install_failed"',
+    );
+    expect(service).toContain('"host_bin_install_failed"');
+    expect(cli).toContain('"host_bin_install_failed"');
+  });
+
   it("retires the enabled legacy bridge only after a healthy root-service update", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
     const healthy = updater.indexOf('if [ "$healthy" = true ]; then');
@@ -164,6 +192,7 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     const validator = read("distro/customer-vps/host-bin/matrix-validate-host-bundle");
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
     const build = read("scripts/build-host-bundle.sh");
+    const cloudInit = read("distro/customer-vps/cloud-init.yaml");
 
     expect(validator).toContain("MAX_ARCHIVE_MEMBERS = 200_000");
     expect(validator).toContain("MAX_ARCHIVE_BYTES");
@@ -192,6 +221,10 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(build).not.toContain(
       'find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +',
     );
+    expect(cloudInit).toContain('chmod -R g+rwX /opt/matrix/runtime/node');
+    expect(cloudInit).toContain(
+      'find /opt/matrix/runtime/node -type d -exec chmod g+s {} +',
+    );
   });
 
   it("keeps supervised activation dormant unless the bundle carries the fixed marker", () => {
@@ -201,7 +234,7 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
 
     expect(validator).toContain('"terminal-runtime-activation"');
     expect(build).toContain(
-      'activation_source="$ROOT_DIR/distro/customer-vps/terminal-runtime-activation"',
+      'install -m 0644 "$ROOT_DIR/distro/customer-vps/terminal-runtime-activation" "$STAGE_DIR/app/terminal-runtime-activation"',
     );
     expect(build).toContain(
       'install -m 0644 "$activation_source" "$STAGE_DIR/terminal-runtime-activation"',
@@ -230,15 +263,24 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
       'log "Terminal runtime supervisor ready"',
       migration,
     );
+    const supervisorProbe = updater.indexOf(
+      "/opt/matrix/bin/matrix-terminal-runtime-op probe",
+      supervisorReady,
+    );
     const gatewayStart = updater.indexOf(
       "systemctl start matrix-gateway matrix-shell",
-      supervisorReady,
+      supervisorProbe,
     );
 
     expect(activationCheck).toBeGreaterThan(-1);
     expect(migration).toBeGreaterThan(activationCheck);
     expect(supervisorReady).toBeGreaterThan(migration);
-    expect(gatewayStart).toBeGreaterThan(supervisorReady);
+    expect(supervisorProbe).toBeGreaterThan(supervisorReady);
+    expect(gatewayStart).toBeGreaterThan(supervisorProbe);
+    expect(updater).toContain('"terminal_runtime_supervisor_probe_timeout"');
+    expect(updater).toContain(
+      'write_update_failure_code "terminal_runtime_supervisor_probe_failed"',
+    );
     expect(updater).not.toContain("--force-run-commands");
   });
 
@@ -330,12 +372,8 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(updater.slice(prepareBeforeDowntime - 160, stopServices)).toContain(
       '"gateway_runtime_preparation_timeout"',
     );
-    expect(startBlock).toContain(
-      "if ! /opt/matrix/bin/matrix-prepare-gateway-runtime; then",
-    );
-    expect(startBlock).toContain(
-      'write_update_failure_code "gateway_runtime_preparation_failed"',
-    );
+    expect(updater.match(/matrix-prepare-gateway-runtime/g)).toHaveLength(1);
+    expect(startBlock).not.toContain("matrix-prepare-gateway-runtime");
     expect(startBlock).toContain(
       "if ! systemctl start matrix-gateway matrix-shell; then",
     );
@@ -358,12 +396,26 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(service).toContain('"terminal_runtime_gateway_probe_failed"');
     expect(cli).toContain('"terminal_runtime_gateway_probe_failed"');
     expect(helper).toContain(
-      'prepared_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
+      'compatibility_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
     );
-    expect(helper).toContain('"--prepare-supervised-v1"');
-    expect(helper).toContain(
+    for (const fragment of [
+      '"")',
       'matrix-prepare-gateway-runtime: runtime_not_prepared',
-    );
+      'boot_id_file="/proc/sys/kernel/random/boot_id"',
+      'printf \'supervised-v1\\n%s\\n\' "$boot_id"',
+      '"$(stat -c \'%U:%G:%a:%h\' "$compatibility_stamp")" != "root:root:600:1"',
+      '"--prepare-supervised-v1"',
+      'host_bin_dir="/opt/matrix/bin"',
+      'matrix-prepare-gateway-runtime: invalid_host_bin',
+      'for launcher in matrix-gateway matrix-shell matrix-code matrix-symphony matrix-agent-bridge matrix-sync-bundled-home-assets; do',
+      '"$(stat -c \'%U:%h\' "$host_bin_dir/$launcher")" != "root:1"',
+      'chown root:root "$host_bin_dir/$launcher"',
+      'chmod 0755 "$host_bin_dir/$launcher"',
+      'chmod 0644 "$host_bin_dir/matrix-owner-env"',
+    ]) {
+      expect(helper).toContain(fragment);
+    }
+    expect(helper).not.toContain('rm -f -- "$compatibility_stamp"');
     expect(helper).not.toContain("-type f ! -links 1");
     expect(helper).not.toContain("-type f -print0");
   });
@@ -401,6 +453,14 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(build).toContain("terminal_runtime_package_manifest_invalid");
     expect(build).toContain(
       'await import("@matrix-os/terminal-runtime")',
+    );
+    const stagedPostinstall =
+      'cp -a "$ROOT_DIR/scripts/fix-node-pty-perms.mjs" "$STAGE_DIR/app/scripts/fix-node-pty-perms.mjs"';
+    expect(build).toContain(stagedPostinstall);
+    expect(build.indexOf(stagedPostinstall)).toBeLessThan(
+      build.indexOf(
+        "pnpm --dir \"$STAGE_DIR/app\" --config.enable-global-virtual-store=false --filter '@matrix-os/gateway...' --filter 'shell...' install --prod --frozen-lockfile",
+      ),
     );
   });
 
@@ -513,6 +573,39 @@ assert response_for({
     expect(updater).toMatch(
       /bundle_ownership_timeout[\s\S]*quarantine_update_tree "\$extract_dir"/,
     );
+  });
+
+  it("publishes only an allowlisted coarse update failure code for owner diagnostics", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+
+    expect(updater.match(/readonly UPDATE_FAILURE_CODE=/g)).toHaveLength(1);
+    expect(updater).toContain("write_update_failure_code()");
+    expect(updater).toContain(
+      'mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .last-failure-code.XXXXXXXXXX',
+    );
+    expect(updater).toContain(
+      'install -o root -g matrix -m 0640 "$temporary" "$committed"',
+    );
+    expect(updater).toContain(
+      'mv -f -- "$committed" "$UPDATE_FAILURE_CODE"',
+    );
+    for (const code of [
+      "prepared_release_metadata_invalid",
+      "staging_invalid",
+      "insufficient_disk_space",
+      "bundle_download_failed",
+      "bundle_size_mismatch",
+      "bundle_checksum_mismatch",
+      "bundle_archive_invalid",
+      "bundle_extraction_failed",
+      "bundle_shape_invalid",
+      "terminal_runtime_generation_install_failed",
+      "terminal_runtime_legacy_migration_failed",
+      "terminal_runtime_supervisor_start_failed",
+      "health_check_failed",
+    ]) {
+      expect(updater).toContain(`write_update_failure_code "${code}"`);
+    }
   });
 
   it("resumes a root-published request without signaling the worker before its handler is ready", () => {

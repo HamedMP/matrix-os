@@ -26,77 +26,89 @@ server_id="3${pr_head_sha:0:31}"
 memory_ids=("4${pr_head_sha:0:31}" "5${pr_head_sha:0:31}" "6${pr_head_sha:0:31}")
 recovery_id="7${pr_head_sha:0:31}"
 cleanup() {
-  for runtime_id in "$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id"; do
-    systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
-    /usr/bin/timeout 15s runuser -u matrix -- env \
-      HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" \
-      XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$config_home_root" \
-      XDG_DATA_HOME="$data_root" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" \
-      ZELLIJ_CONFIG_DIR="$config_root" ZELLIJ_CONFIG_FILE="$config_root/config.kdl" \
-      /opt/matrix/bin/zellij delete-session "matrix-t-${runtime_id}" --force >/dev/null 2>&1 || true
-    systemctl reset-failed "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
+  local runtime_ids=("$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id"); local units=() delete_pids=()
+  for runtime_id in "${runtime_ids[@]}"; do units+=("${unit_prefix}${runtime_id}.service"); done
+  /usr/bin/timeout --signal=TERM --kill-after=2s 35s systemctl stop "${units[@]}" >/dev/null 2>&1 || true
+  for runtime_id in "${runtime_ids[@]}"; do
+    ( /usr/bin/timeout --signal=TERM --kill-after=2s 15s runuser -u matrix -- env \
+      HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$config_home_root" \
+      XDG_DATA_HOME="$data_root" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" ZELLIJ_CONFIG_DIR="$config_root" ZELLIJ_CONFIG_FILE="$config_root/config.kdl" \
+      /opt/matrix/bin/zellij delete-session "matrix-t-${runtime_id}" --force >/dev/null 2>&1 || true ) &
+    delete_pids+=("$!")
   done
-  systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null 2>&1 || true
-  pkill -f 'zellij attach matrix-t-[0-9a-f]{32}' >/dev/null 2>&1 || true
+  for child in "${delete_pids[@]}"; do wait "$child" || true; done
+  /usr/bin/timeout --signal=TERM --kill-after=1s 5s systemctl reset-failed "${units[@]}" >/dev/null 2>&1 || true
+  /usr/bin/timeout --signal=TERM --kill-after=1s 5s systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null 2>&1 || true
+  /usr/bin/timeout --signal=TERM --kill-after=1s 5s pkill -f 'zellij attach matrix-t-[0-9a-f]{32}' >/dev/null 2>&1 || true
 }
 build_summary() {
   /opt/matrix/runtime/node/bin/node "$source_dir/build-evidence.mjs" "$evidence_root" "$pr_head_sha" || true
 }
+rm -rf -- "$evidence_root"
+install -d -o root -g root -m 0700 "$evidence_root"
 cleanup
-trap 'status=$?; cleanup; build_summary; exit $status' EXIT
+trap 'status=$?; build_summary; cleanup; exit $status' EXIT
 rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"
 install -d -o root -g root -m 0700 "$evidence_root" "$evidence_root/s1" "$evidence_root/s1/checks" "$evidence_root/s2" "$evidence_root/s2/checks"
-record_preflight() {
-  printf '%s\n' "$1" >"$evidence_root/preflight-stage.txt"
-}
-record_preflight initialized
 install -d -o matrix -g matrix -m 0700 "$runtime_root" "$runtime_root/descriptors" "$runtime_root/readiness" "$runtime_root/outcomes" "$runtime_root/startup-failures" "$runtime_root/confirmations" "$runtime_root/pane-release"
 install -d -o matrix -g matrix -m 0700 "$owner_home/system/terminal-runtime-spike" "$cache_root" "$config_root" "$config_home_root" "$data_root"
 install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"
 rm -rf -- "$support_root.next"
-install -d -o root -g root -m 0755 "$support_root.next" "$support_root.next/node_modules"
+install -d -o root -g root -m 0755 "$support_root.next"
 for file in attach-probe.mjs keeper.mjs record-outcome.mjs record-runtime-roles.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
   install -o root -g root -m 0755 "$source_dir/$file" "$support_root.next/$file"
 done
-cp -aL /opt/matrix/app/node_modules/node-pty "$support_root.next/node_modules/node-pty"
 chown -R root:root "$support_root.next"
 rm -rf -- "$support_root.previous"
 if [ -d "$support_root" ]; then mv "$support_root" "$support_root.previous"; fi
 mv "$support_root.next" "$support_root"
-record_preflight support_installed
-install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike.slice" /etc/systemd/system/matrix-terminal-spike.slice
-install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike@.service" /etc/systemd/system/matrix-terminal-spike@.service
-systemctl daemon-reload
-systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null
-record_preflight units_installed
+if ! /usr/bin/timeout --signal=TERM --kill-after=1s 5s systemctl cat matrix-terminal-spike.slice matrix-terminal-spike@.service >/dev/null; then echo "spike_units_unavailable" >&2; exit 3; fi
 zellij_version="$(/opt/matrix/bin/zellij --version 2>/dev/null || true)"
 if [ "$zellij_version" != "zellij 0.44.3" ]; then
   echo "spike_wrong_zellij" >&2
   exit 3
 fi
-record_preflight binary_version_checked
 zellij_build_metadata="/opt/matrix/bin/zellij.build.json"
-candidate_build_record="/opt/matrix/app/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json"
-expected_zellij_binary_sha256="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["binarySha256"])' "$candidate_build_record")"
-record_preflight binary_manifest_read
-zellij_binary_sha256="$(sha256sum /opt/matrix/bin/zellij | awk '{print $1}')"
+candidate_build_record="$source_dir/v0.44.3-matrix.1.build.json"
+expected_digest_file="$evidence_root/s2/expected-digest.txt"
+if ! /usr/bin/timeout --signal=TERM --kill-after=1s 5s \
+  /usr/bin/sed -nE 's/^[[:space:]]*"binarySha256":[[:space:]]*"([0-9a-f]{64})"[[:space:]]*$/\1/p' \
+  "$candidate_build_record" >"$expected_digest_file"; then
+  echo "spike_invalid_zellij_manifest" >&2; exit 3
+fi
+exec 9<"$expected_digest_file"
+IFS= read -r expected_zellij_binary_sha256 <&9 || expected_zellij_binary_sha256=""
+if IFS= read -r unexpected_digest <&9 ||
+  ! [[ "$expected_zellij_binary_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+  exec 9<&-
+  echo "spike_invalid_zellij_manifest" >&2
+  exit 3
+fi
+exec 9<&-
+actual_digest_file="$evidence_root/s2/actual-digest.txt"
+if ! /usr/bin/timeout --signal=TERM --kill-after=1s 5s \
+  /usr/bin/sha256sum /opt/matrix/bin/zellij >"$actual_digest_file"; then
+  echo "spike_zellij_digest_failed" >&2
+  exit 3
+fi
+IFS=' ' read -r zellij_binary_sha256 digest_path digest_extra <"$actual_digest_file" ||
+  zellij_binary_sha256=""
 printf 'expected=%s\nactual=%s\n' "$expected_zellij_binary_sha256" "$zellij_binary_sha256" >"$evidence_root/s2/binary-digest.txt"
-if [ "$zellij_binary_sha256" != "$expected_zellij_binary_sha256" ]; then
+if [ "$zellij_binary_sha256" != "$expected_zellij_binary_sha256" ] ||
+  [ "$digest_path" != "/opt/matrix/bin/zellij" ] || [ -n "${digest_extra:-}" ]; then
   echo "spike_wrong_zellij_binary" >&2
   exit 3
 fi
-record_preflight binary_digest_checked
-if ! python3 -c 'import json,sys; values=[json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]; raise SystemExit(0 if values[0] == values[1] else 1)' "$zellij_build_metadata" "$candidate_build_record"; then
+if ! /usr/bin/timeout --signal=TERM --kill-after=1s 5s \
+  /usr/bin/cmp --silent "$zellij_build_metadata" "$candidate_build_record"; then
   echo "spike_wrong_zellij_build" >&2
   exit 3
 fi
-record_preflight binary_metadata_checked
 install -m 0600 "$zellij_build_metadata" "$evidence_root/s2/zellij-build.json"
 default_config_tmp="/tmp/matrix-terminal-default-config-${run_key}.kdl"
 runuser -u matrix -- env \
   HOME="$owner_home" XDG_CACHE_HOME="$cache_root" ZELLIJ_CONFIG_DIR="$config_root" \
   /opt/matrix/bin/zellij setup --dump-config >"$default_config_tmp"
-record_preflight config_dumped
 viewport_option=""
 if grep -Eq '^[[:space:]]*(//[[:space:]]*)?serialize_pane_viewport[[:space:]]' "$default_config_tmp"; then
   viewport_option="serialize_pane_viewport"
@@ -120,7 +132,6 @@ chown matrix:matrix "$config_root/config.kdl"
 chmod 0600 "$config_root/config.kdl"
 if [ -n "$viewport_option" ] && runuser -u matrix -- env HOME="$owner_home" XDG_CACHE_HOME="$cache_root" ZELLIJ_CONFIG_DIR="$config_root" /opt/matrix/bin/zellij setup --check >/dev/null 2>&1; then
   printf 'pass\n' >"$evidence_root/s2/checks/exactOptionSyntax.pass"
-  record_preflight config_validated
 fi
 mark_pass() {
   printf 'pass\n' >"$evidence_root/$1/checks/$2.pass"
@@ -150,18 +161,25 @@ wait_state() {
   unit="$1"
   desired="$2"
   limit="${3:-300}"
-  for _ in $(seq 1 "$limit"); do
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-    [ "$state" = "$desired" ] && return 0
+  runtime_id="${unit#${unit_prefix}}"
+  runtime_id="${runtime_id%.service}"
+  readiness_path="$runtime_root/readiness/${runtime_id}.json"
+  deadline=$((SECONDS + (limit + 9) / 10))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ "$desired" = active ] && [ -f "$readiness_path" ]; then return 0; fi
+    if [ -f "$runtime_root/startup-failures/${runtime_id}.json" ]; then return 1; fi
     sleep 0.1
   done
   return 1
 }
 wait_not_active() {
   unit="$1"
-  for _ in $(seq 1 300); do
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-    [ "$state" != "active" ] && [ "$state" != "activating" ] && return 0
+  runtime_id="${unit#${unit_prefix}}"
+  runtime_id="${runtime_id%.service}"
+  deadline=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ -f "$runtime_root/outcomes/${runtime_id}.json" ] ||
+      [ -f "$runtime_root/startup-failures/${runtime_id}.json" ]; then return 0; fi
     sleep 0.1
   done
   return 1
@@ -170,14 +188,18 @@ wait_file() {
   for _ in $(seq 1 300); do [ -f "$1" ] && return 0; sleep 0.1; done
   return 1
 }
+bounded_wait_child() {
+  child="$1"
+  if /usr/bin/timeout 10s tail --pid="$child" -f /dev/null; then wait "$child" 2>/dev/null || true; return; fi
+  kill -TERM "$child" 2>/dev/null || true
+  if /usr/bin/timeout 5s tail --pid="$child" -f /dev/null; then wait "$child" 2>/dev/null || true; return; fi
+  kill -KILL "$child" 2>/dev/null || true
+  wait "$child" 2>/dev/null || true
+}
 roles_alive() {
-  readiness_path="$runtime_root/readiness/$1.json"
-  /opt/matrix/runtime/node/bin/node -e '
-    const fs = require("fs");
-    const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    const pids = [value.roles.keeper, ...value.roles.zellij, value.roles.shell, value.roles.agent];
-    process.exit(pids.every((pid) => Number.isInteger(pid) && fs.existsSync(`/proc/${pid}`)) ? 0 : 1);
-  ' "$readiness_path"
+  readiness_path="$runtime_root/readiness/$1.json"; readiness=""; readiness_regex="^\\{\"runtimeId\":\"$1\",\"sessionName\":\"matrix-t-$1\",\"cgroup\":\"/[-A-Za-z0-9_.@/]+\",\"roles\":\\{\"keeper\":([1-9][0-9]*),\"zellij\":\\[([1-9][0-9]*(,[1-9][0-9]*)+)\\],\"shell\":([0-9]+),\"agent\":([0-9]+)\\}\\}$"; IFS= read -r readiness <"$readiness_path" || return 1
+  [[ "$readiness" =~ $readiness_regex ]] || return 1; pids=("${BASH_REMATCH[1]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}"); IFS=, read -r -a zellij_pids <<<"${BASH_REMATCH[2]}"
+  for pid in "${pids[@]}" "${zellij_pids[@]}"; do [ "$pid" -eq 0 ] || [ -d "/proc/$pid" ] || return 1; done
 }
 record_pid_cgroup() {
   label="$1"
@@ -192,9 +214,10 @@ wait_main_pid_changed() {
   unit="$1"
   previous="$2"
   for _ in $(seq 1 600); do
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
     current="$(systemctl show "$unit" -p MainPID --value 2>/dev/null || true)"
-    if [ "$state" = active ] && printf '%s' "$current" | grep -Eq '^[1-9][0-9]*$' && [ "$current" != "$previous" ]; then
+    if printf '%s' "$current" | grep -Eq '^[1-9][0-9]*$' &&
+      [ "$current" != "$previous" ] && { [ "$unit" != matrix-gateway.service ] ||
+      curl --fail --silent --max-time 1 http://127.0.0.1:4000/health >/dev/null; }; then
       printf '%s' "$current"
       return 0
     fi
@@ -215,27 +238,24 @@ zellij_cmd() {
 wait_cgroup_empty() {
   events_fd="$1"
   cgroup_path="$2"
-  unit="$3"
   for _ in $(seq 1 300); do
     if grep -Eq '^populated 0$' "/proc/self/fd/${events_fd}" 2>/dev/null; then return 0; fi
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-    if [ ! -e "$cgroup_path/cgroup.events" ] && [ "$state" != active ] && [ "$state" != activating ] && [ "$state" != deactivating ]; then return 0; fi
+    if [ ! -e "$cgroup_path/cgroup.events" ]; then return 0; fi
     sleep 0.1
   done
   return 1
 }
 # S1: readiness and stable ownership.
-record_preflight s1_started
 start_runtime "$base_id"
 base_unit="${unit_prefix}${base_id}.service"
 sleep 0.3
-if [ "$(systemctl is-active "$base_unit" 2>/dev/null || true)" = "activating" ] && [ ! -e "$runtime_root/readiness/${base_id}.json" ]; then
+if [ ! -e "$runtime_root/readiness/${base_id}.json" ]; then
   mark_pass s1 readinessGated
 fi
 release_pane "$base_id"
 if ! wait_state "$base_unit" active; then
   wait_not_active "$base_unit" || true
-  systemctl show "$base_unit" -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus >"$evidence_root/s1/base-startup-unit.txt" || true
+  /usr/bin/timeout 5s systemctl show "$base_unit" -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus >"$evidence_root/s1/base-startup-unit.txt" || true
   if [ -f "$runtime_root/startup-failures/${base_id}.json" ]; then
     cp "$runtime_root/startup-failures/${base_id}.json" "$evidence_root/s1/base-startup-failure.json"
   fi
@@ -297,7 +317,7 @@ if [ -n "$membership" ] && [ "$membership" != "$base_cgroup" ]; then
   mark_pass s1 attachOutsideCgroup
 fi
 kill "$attach_helper" 2>/dev/null || true
-wait "$attach_parent" 2>/dev/null || true
+bounded_wait_child "$attach_parent"
 sleep 0.5
 if roles_alive "$base_id"; then mark_pass s1 detachPreservesPids; else
   /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" detach || true
@@ -522,7 +542,7 @@ if wait_state "$recovery_unit" active; then
       zellij_cmd --session "$recovery_session" action save-session >/dev/null 2>&1 || true
       sleep 6
       freeze_after="$(find "$recovery_cache_dir" -type f -printf '%P %s %T@\n' | sort | sha256sum)"
-      if [ "$freeze_before" = "$freeze_after" ] && [ "$(systemctl is-active "$recovery_unit")" = active ] && ! runuser -u matrix -- mv "$recovery_cache_dir" "${recovery_cache_dir}.replaced" 2>/dev/null; then mark_pass s2 liveSerializationDisableSafe; fi
+      if [ "$freeze_before" = "$freeze_after" ] && roles_alive "$recovery_id" && ! runuser -u matrix -- mv "$recovery_cache_dir" "${recovery_cache_dir}.replaced" 2>/dev/null; then mark_pass s2 liveSerializationDisableSafe; fi
       chown -R matrix:matrix "$recovery_cache_dir"
       find "$recovery_cache_dir" -type d -exec chmod 0700 {} + && find "$recovery_cache_dir" -type f -exec chmod 0600 {} +
     fi
@@ -533,9 +553,7 @@ if wait_state "$recovery_unit" active; then
     fi
   fi
   if [ -n "$corrupt_target" ] && [[ "$corrupt_target" == "$cache_root"/* ]]; then
-    # An arbitrary identifier is valid KDL and therefore does not prove the
-    # corruption path. Leave both nested nodes unclosed so the exact production
-    # parser must reject this state before the fresh-shell fallback is exercised.
+    # Leave nested nodes unclosed so the parser must reject the cache.
     printf 'layout {\n  pane {\n' >"$corrupt_target"
     start_runtime "$recovery_id" recover
     if wait_not_active "$recovery_unit"; then

@@ -63,8 +63,12 @@ export type GatewayTerminalDeleteResult =
 
 export function resolveGatewayTerminalRuntimeMode(
   value: string | undefined,
+  nodeEnv = process.env.NODE_ENV,
 ): GatewayTerminalRuntimeMode {
-  if (value === undefined || value === "" || value === "legacy") return "legacy";
+  if (value === undefined || value === "") {
+    return nodeEnv === "production" ? "supervised" : "legacy";
+  }
+  if (value === "legacy") return "legacy";
   if (value === "supervised") return "supervised";
   throw new Error("terminal_runtime_mode_invalid");
 }

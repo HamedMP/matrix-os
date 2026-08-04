@@ -340,7 +340,10 @@ export async function createGateway(config: GatewayConfig) {
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   const terminalRuntimeMode = config.terminalRuntime?.mode ??
-    resolveGatewayTerminalRuntimeMode(process.env.MATRIX_TERMINAL_RUNTIME_MODE);
+    resolveGatewayTerminalRuntimeMode(
+      process.env.MATRIX_TERMINAL_RUNTIME_MODE,
+      process.env.NODE_ENV,
+    );
   const terminalSessionsPersistPath = join(homePath, "system", "terminal-sessions.json");
   // PTY session handles are process-local and cannot survive a gateway restart.
   // Zellij shell sessions are the canonical durable terminal surface; reset this

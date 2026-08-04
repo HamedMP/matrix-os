@@ -59,6 +59,7 @@ jobs:
       pr: ${{ steps.decide.outputs.pr }}
       handle: ${{ steps.decide.outputs.handle }}
       head_sha: ${{ steps.decide.outputs.head_sha }}
+      base_sha: ${{ steps.decide.outputs.base_sha }}
       head_ref: ${{ steps.decide.outputs.head_ref }}
       requested_version: ${{ steps.decide.outputs.requested_version }}
     steps:
@@ -71,6 +72,7 @@ jobs:
           LABELED_NAME: ${{ github.event.label.name }}
           HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-vps') }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
@@ -85,11 +87,13 @@ jobs:
           fi
 
           head_sha="$EVENT_HEAD_SHA"
+          base_sha="$EVENT_BASE_SHA"
           head_ref="$EVENT_HEAD_REF"
           head_repo="$EVENT_HEAD_REPO"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
             head_sha="$(jq -r .head.sha <<< "$pr_json")"
+            base_sha="$(jq -r .base.sha <<< "$pr_json")"
             head_ref="$(jq -r .head.ref <<< "$pr_json")"
             head_repo="$(jq -r .head.repo.full_name <<< "$pr_json")"
           fi
@@ -114,9 +118,13 @@ jobs:
             echo "Invalid PR head SHA" >&2
             exit 1
           fi
+          if [ "$action" = "deploy" ] && ! printf '%s' "$base_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid PR base SHA" >&2
+            exit 1
+          fi
           if [ "$action" = "deploy_existing" ]; then
             if ! printf '%s' "$REQUESTED_VERSION" |
-              grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-[0-9a-f]{7}$" ||
+              grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-([0-9]+-[0-9]+-)?[0-9a-f]{7}$" ||
               [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then
               echo "Invalid pinned preview version" >&2
               exit 1
@@ -127,6 +135,7 @@ jobs:
             echo "pr=$PR_NUMBER"
             echo "handle=pr-$PR_NUMBER"
             echo "head_sha=$head_sha"
+            echo "base_sha=$base_sha"
             echo "head_ref=$head_ref"
             echo "requested_version=$REQUESTED_VERSION"
           } >> "$GITHUB_OUTPUT"
@@ -137,7 +146,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.action == 'deploy'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
       NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
@@ -147,10 +156,12 @@ jobs:
       MATRIX_TERMINAL_RUNTIME_SPIKE: '1'
     outputs:
       version: ${{ steps.version.outputs.version }}
+      bootstrap_version: ${{ steps.version.outputs.bootstrap_version }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.gate.outputs.head_sha }}
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v6
 
@@ -197,13 +208,36 @@ jobs:
         env:
           PR_NUMBER: ${{ needs.gate.outputs.pr }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+          BASE_SHA: ${{ needs.gate.outputs.base_sha }}
           REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}
         run: |
           set -euo pipefail
-          VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"
+          VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git diff --unified=0 "$BASE_SHA" "$HEAD_SHA" -- \
+            packages/gateway/src/shell/runtime-client.ts |
+            grep -F 'return nodeEnv === "production" ? "supervised" : "legacy";' >/dev/null; then
+            echo "bootstrap_version=v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${BASE_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          fi
           echo "Preview version: $VERSION"
 
+      - name: Build dormant parent bootstrap bundle
+        if: steps.version.outputs.bootstrap_version != ''
+        env:
+          HOST_BUNDLE_VERSION: ${{ steps.version.outputs.bootstrap_version }}
+          HOST_BUNDLE_CHANNEL: none
+          MATRIX_BUILD_SHA: ${{ needs.gate.outputs.base_sha }}
+          MATRIX_BUILD_REF: bootstrap
+          HOST_BUNDLE_ZELLIJ_BUILD_DIR: ${{ runner.temp }}/matrix-zellij
+        run: |
+          set -euo pipefail
+          cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"
+          git checkout --detach "${{ needs.gate.outputs.base_sha }}"
+          cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/
+          ./scripts/build-host-bundle.sh
+          mv dist/host-bundle dist/bootstrap
+          rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control
+          git checkout --detach "${{ needs.gate.outputs.head_sha }}"
       - name: Build host bundle
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
@@ -214,18 +248,25 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/build-host-bundle.sh
+          mv dist/host-bundle dist/activation
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v7
         with:
           name: preview-bundle-${{ needs.gate.outputs.pr }}
           path: |
-            dist/host-bundle/matrix-host-bundle.tar.gz
-            dist/host-bundle/matrix-host-bundle.tar.gz.sha256
-            dist/host-bundle/incremental-manifest.json
-            dist/host-bundle/objects/**
-            dist/host-bundle/manifest.json
-            dist/host-bundle/release.json
+            dist/activation/matrix-host-bundle.tar.gz
+            dist/activation/matrix-host-bundle.tar.gz.sha256
+            dist/activation/incremental-manifest.json
+            dist/activation/objects/**
+            dist/activation/manifest.json
+            dist/activation/release.json
+            dist/bootstrap/matrix-host-bundle.tar.gz
+            dist/bootstrap/matrix-host-bundle.tar.gz.sha256
+            dist/bootstrap/incremental-manifest.json
+            dist/bootstrap/objects/**
+            dist/bootstrap/manifest.json
+            dist/bootstrap/release.json
           if-no-files-found: error
           retention-days: 3
 
@@ -234,7 +275,7 @@ jobs:
     needs: [gate, build]
     if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 180
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
@@ -246,7 +287,11 @@ jobs:
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
       HANDLE: ${{ needs.gate.outputs.handle }}
+      PR_NUMBER: ${{ needs.gate.outputs.pr }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
+      BOOTSTRAP_VERSION: ${{ needs.build.outputs.bootstrap_version }}
+      HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+      BASE_SHA: ${{ needs.gate.outputs.base_sha }}
     steps:
       - uses: actions/checkout@v6
         if: needs.gate.outputs.action == 'deploy'
@@ -258,14 +303,20 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: preview-bundle-${{ needs.gate.outputs.pr }}
-          path: dist/host-bundle
+          path: dist
 
-      - name: Publish release (register-only, no channel)
+      - name: Publish releases (register-only, no channel)
         if: needs.gate.outputs.action == 'deploy'
         run: |
           set -euo pipefail
-          ./scripts/publish-release.sh "$VERSION" --channel none \
-            --changelog "Preview bundle for PR #${{ needs.gate.outputs.pr }}"
+          for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation; do
+            phase_version="$VERSION"
+            [ "$phase" = bootstrap ] && phase_version="$BOOTSTRAP_VERSION"
+            rm -rf dist/host-bundle
+            cp -a "dist/$phase" dist/host-bundle
+            ./scripts/publish-release.sh "$phase_version" --channel none \
+              --changelog "Preview bundle for PR #${{ needs.gate.outputs.pr }}"
+          done
 
       - name: Provision or resume preview VPS
         run: |
@@ -382,28 +433,175 @@ jobs:
             done
           fi
 
-      - name: Deploy preview bundle to preview VPS
+      - name: Deploy preview bundles to preview VPS
         run: |
           set -euo pipefail
           attempt() {
+            local target_version="$1"
             curl -sS --max-time 120 -o /tmp/deploy.json -w '%{http_code}' \
               -X POST "${PLATFORM_PUBLIC_URL}/vps/deploy" \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
               -H "content-type: application/json" \
-              -d "{\"version\":\"${VERSION}\",\"handle\":\"${HANDLE}\"}"
+              -d "{\"version\":\"${target_version}\",\"handle\":\"${HANDLE}\"}"
           }
-          code="$(attempt)"
-          if [ "$code" != "200" ]; then
-            echo "Deploy returned HTTP ${code}; retrying once in 30s..."
-            sleep 30
-            code="$(attempt)"
-          fi
-          if [ "$code" != "200" ]; then
-            echo "Deploy failed with HTTP ${code} (body in workflow log)" >&2
-            cat /tmp/deploy.json >&2
+          gateway_token="$(node --input-type=module -e 'import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.argv[2]).update(process.argv[1]).digest("hex"));' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$gateway_token"
+          diagnostic_body="$(jq -cn '{command:["/opt/matrix/bin/matrix-update","diagnose"],timeoutMs:10000}')"
+          is_public_ipv4() {
+            node -e '
+              const parts = process.argv[1].split(".").map(Number);
+              const valid = parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+              process.exit(!valid || parts[0] === 0 || parts[0] === 10 || parts[0] === 127 || parts[0] >= 224 ||
+                (parts[0] === 169 && parts[1] === 254) || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+                (parts[0] === 192 && parts[1] === 168) ? 1 : 0);
+            ' "$1"
+          }
+          updater_diagnostic() {
+            local address="$1" code diagnostic_response="$RUNNER_TEMP/preview-updater-diagnostic.json"
+            if ! is_public_ipv4 "$address"; then
+              return 1
+            fi
+            rm -f -- "$diagnostic_response"
+            code="$(curl --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" -o "$diagnostic_response" -w '%{http_code}' \
+              -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' --data-binary "$diagnostic_body")" || return 1
+            [ "$code" = 200 ] &&
+              jq -er 'if (
+                type == "object" and .exitCode == 0 and
+                .timedOut == false and .truncated == false and
+                .signal == null and .stderr == "" and
+                (.stdout | test("^Update service: (?:idle|running|failed) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+)\\n$"))
+              ) then .stdout | rtrimstr("\n") else empty end' "$diagnostic_response"
+          }
+          updater_idle() {
+            local diagnostic
+            diagnostic="$(updater_diagnostic "$1")" || return 1
+            [ "$diagnostic" = "Update service: idle phase=idle failure=none" ]
+          }
+          preview_gateway_ready() {
+            local address="$1" response="$RUNNER_TEMP/preview-gateway-ready.json" body
+            is_public_ipv4 "$address" || return 1
+            body="$(jq -cn '{command:["/usr/bin/true"],timeoutMs:10000}')"
+            curl --fail --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" -o "$response" \
+              -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' --data-binary "$body" &&
+              jq -e '
+                .exitCode == 0 and .timedOut == false and .truncated == false and
+                .signal == null and .stdout == "" and .stderr == ""
+              ' "$response" >/dev/null
+          }
+          wait_for_preview_gateway() {
+            local address="$1" deadline=$((SECONDS + 600))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              if preview_gateway_ready "$address"; then return 0; fi
+              sleep 10
+            done
+            return 1
+          }
+          fleet="$(curl -fsS --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL}/vps/fleet")"
+          address="$(jq -er --arg handle "$HANDLE" '
+            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+            | if length == 1 then .[0].publicIPv4 else error("preview_unavailable") end
+          ' <<<"$fleet")"
+          if ! wait_for_preview_gateway "$address"; then
+            echo "Preview gateway did not become ready before bundle deployment." >&2
             exit 1
           fi
-          jq . /tmp/deploy.json
+          for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"; do
+            if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then
+              fleet="$(curl -fsS --max-time 30 \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                "${PLATFORM_PUBLIC_URL}/vps/fleet")"
+              machine="$(jq -ce --arg handle "$HANDLE" '
+                  [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+                  | if length == 1 then .[0] else {} end
+                ' <<<"$fleet")"
+              deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+              address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+              if [[ "$deployed" == *"-${BASE_SHA:0:7}" ]] &&
+                updater_idle "$address"; then
+                echo "Reusing the exact dormant parent already installed on the preview."
+                continue
+              fi
+            fi
+            deploy_deadline=$((SECONDS + 4500))
+            deploy_converged=false
+            version_seen=false
+            last_updater_diagnostic=""
+            last_signal=$((SECONDS - 60))
+            while [ "$SECONDS" -lt "$deploy_deadline" ]; do
+              if [ "$version_seen" != true ] && [ $((SECONDS - last_signal)) -ge 60 ]; then
+                last_signal="$SECONDS"
+                code=""
+                if ! code="$(attempt "$target_version")"; then
+                  code=000
+                fi
+                if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                  echo "Preview deploy authorization failed." >&2
+                  exit 1
+                fi
+                if [ "$code" = "200" ] &&
+                  jq -e --arg handle "$HANDLE" '
+                    .triggered == 1 and .failed == 0 and (.results | length) == 1
+                    and .results[0].handle == $handle
+                    and .results[0].status == "triggered"
+                  ' /tmp/deploy.json >/dev/null; then
+                  jq '{triggered, failed, results: [.results[] | {handle, status}]}' \
+                    /tmp/deploy.json
+                else
+                  echo "Waiting for the preview update boundary."
+                fi
+              fi
+
+              if fleet="$(curl -fsS --max-time 30 \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                "${PLATFORM_PUBLIC_URL}/vps/fleet")"; then
+                machine="$(jq -ce --arg handle "$HANDLE" '
+                    [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+                    | if length == 1 then .[0] else {} end
+                  ' <<<"$fleet")"
+                deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+                address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+                if [ "$deployed" = "$target_version" ]; then
+                  version_seen=true
+                  if updater_idle "$address"; then
+                    deploy_converged=true
+                    break
+                  fi
+                  echo "Waiting for the preview updater to become idle."
+                else
+                  updater_diagnostic_result=""
+                  if updater_diagnostic_result="$(updater_diagnostic "$address")"; then
+                    if [ "$updater_diagnostic_result" != "$last_updater_diagnostic" ]; then
+                      echo "Preview updater state: ${updater_diagnostic_result}"
+                      last_updater_diagnostic="$updater_diagnostic_result"
+                    fi
+                    case "$updater_diagnostic_result" in
+                      "Update service: failed phase=failed failure="*)
+                        echo "Preview updater failed after rollback: ${updater_diagnostic_result}" >&2
+                        exit 1
+                        ;;
+                    esac
+                  fi
+                fi
+              fi
+              sleep 15
+            done
+            if [ "$deploy_converged" != true ]; then
+              final_diagnostic="$(updater_diagnostic "$address" || true)"
+              [ -z "$final_diagnostic" ] ||
+                echo "Preview updater state at timeout: ${final_diagnostic}" >&2
+              echo "Deployment of ${target_version} did not converge." >&2
+              exit 1
+            fi
+          done
 
       - name: Comment preview URL on PR
         if: github.event_name == 'pull_request'

@@ -89,6 +89,23 @@ describe('customer VPS terminal runtime services', () => {
     }
   });
 
+  it('restricts the one-shot legacy migration operation to the root updater', () => {
+    const runtimeOp = read('packages/terminal-runtime/src/runtime-op.ts');
+    const wrapper = read(
+      'distro/customer-vps/host-bin/matrix-terminal-runtime-op',
+    );
+
+    expect(runtimeOp).toContain("mode === 'migrate-legacy'");
+    expect(runtimeOp).toContain('process.getuid?.() !== 0');
+    expect(runtimeOp).toContain("throw new Error('migration_unauthorized')");
+    expect(wrapper).toContain(
+      'serve-peer|serve-keeper|maintenance|migrate-legacy|probe',
+    );
+    expect(runtimeOp).toContain("mode === 'probe'");
+    expect(runtimeOp).toContain("operation: 'List'");
+    expect(runtimeOp).toContain("throw new Error('probe_unauthorized')");
+  });
+
   it('compiles a warning-free SO_PEERCRED acceptor with fixed socket and worker paths', () => {
     const sourcePath = join(
       root,
@@ -136,7 +153,7 @@ describe('customer VPS terminal runtime services', () => {
     expect(build).toContain("pnpm --filter '@matrix-os/terminal-runtime' build");
     expect(build).toContain('packages/terminal-runtime/native/supervisor-acceptor.c');
     expect(build).toContain('$STAGE_DIR/libexec/terminal-runtime/v1');
-    expect(build).toContain('libexec release.json');
+    expect(build).toContain('terminal_runtime_package_manifest_invalid');
     expect(build).toContain('runtime-manifest.sha256');
     expect(updater).toContain('/opt/matrix/libexec/terminal-runtime/v1');
     expect(updater).toContain('/opt/matrix/libexec/terminal-runtime/current');
@@ -166,6 +183,46 @@ describe('customer VPS terminal runtime services', () => {
     );
   });
 
+  it('runs disposable-VPS spikes only through a preview-only typed root helper', () => {
+    const build = read('scripts/build-host-bundle.sh');
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const workflow = read('.github/workflows/terminal-runtime-spikes.yml');
+    const helper = read(
+      'distro/customer-vps/host-bin/matrix-terminal-spike-control',
+    );
+    expect(build).not.toContain('$STAGE_DIR/app/scripts/spikes/terminal-runtime');
+    expect(updater).toContain('/opt/matrix/bin/matrix-terminal-spike-control *');
+    expect(workflow).not.toContain('/opt/matrix/app/scripts/spikes/terminal-runtime');
+    expect(helper).not.toContain('--force-run-commands');
+    expect(helper).not.toContain('eval ');
+    expect(helper).not.toContain('/opt/matrix/app');
+  });
+
+  it('rejects untyped spike helper operations and malformed exact-head SHAs', () => {
+    const helper = join(
+      root,
+      'distro/customer-vps/host-bin/matrix-terminal-spike-control',
+    );
+    for (const args of [
+      [],
+      ['launch'],
+      ['pack', 'main'],
+      ['acceptance-launch', 'main'],
+      ['acceptance-launch', 'a'.repeat(40)],
+      ['acceptance-launch', 'a'.repeat(40), 'latest'],
+      ['acceptance-shell', 'a'.repeat(40)],
+      ['delete', 'a'.repeat(40)],
+      ['launch', 'a'.repeat(40), 'extra'],
+      ['launch', '../' + 'a'.repeat(37)],
+    ]) {
+      const result = spawnSync('bash', [helper, ...args], {
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('spike_control_invalid_request');
+    }
+  });
+
   it('terminates only a newly introduced supervisor before failed-start rollback', () => {
     const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
     const cleanup = extractShellFunction(
@@ -183,56 +240,26 @@ describe('customer VPS terminal runtime services', () => {
       updater.indexOf('# Claims one root-published protocol request'),
     );
 
-    expect(updater).toContain(
-      'systemctl is-active --quiet matrix-terminal-runtime.service',
-    );
+    expect(updater).toContain('systemctl is-active --quiet matrix-terminal-runtime.service');
     expect(updater).toContain('supervisor-was-active');
-    expect(cleanup).toContain(
-      '[ ! -f "$snapshot/supervisor-was-active" ] || return 0',
-    );
-    expect(cleanup).toContain(
-      'if ! systemctl is-active --quiet matrix-terminal-runtime.service; then',
-    );
-    expect(cleanup).toContain(
-      'systemctl stop matrix-terminal-runtime.service',
-    );
-    expect(cleanup).toContain(
-      'systemctl reset-failed matrix-terminal-runtime.service',
-    );
-    expect(cleanup).toContain(
-      'if systemctl is-active --quiet matrix-terminal-runtime.service; then',
-    );
-    expect(startFailure.indexOf(
-      'terminate_new_terminal_runtime_supervisor_after_failed_start',
-    )).toBeGreaterThan(startFailure.indexOf(
-      'terminal_runtime_supervisor_start_failed',
-    ));
+    expect(cleanup).toContain('[ ! -f "$snapshot/supervisor-was-active" ] || return 0');
+    expect(cleanup).toContain('if ! systemctl is-active --quiet matrix-terminal-runtime.service; then');
+    expect(cleanup).toContain('systemctl stop matrix-terminal-runtime.service');
+    expect(cleanup).toContain('systemctl reset-failed matrix-terminal-runtime.service');
+    expect(cleanup).toContain('if systemctl is-active --quiet matrix-terminal-runtime.service; then');
+    expect(startFailure.indexOf('terminate_new_terminal_runtime_supervisor_after_failed_start')).toBeGreaterThan(startFailure.indexOf('terminal_runtime_supervisor_start_failed'));
     expect(startFailure.indexOf('restore_staged_runtime_after_failed_update')).toBeGreaterThan(
-      startFailure.indexOf(
-        'terminate_new_terminal_runtime_supervisor_after_failed_start',
-      ),
+      startFailure.indexOf('terminate_new_terminal_runtime_supervisor_after_failed_start'),
     );
     const cleanupFailure = startFailure.slice(
-      startFailure.indexOf(
-        'if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then',
-      ),
+      startFailure.indexOf('if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then'),
       startFailure.indexOf('restore_staged_runtime_after_failed_update'),
     );
-    expect(cleanupFailure).not.toContain(
-      'restore_staged_runtime_after_failed_update',
-    );
-    expect(cleanupFailure).toContain(
-      'terminal_runtime_supervisor_cleanup_preserved_host_layer',
-    );
-    expect(
-      updater.match(/systemctl stop matrix-terminal-runtime\.service/g),
-    ).toHaveLength(1);
-    expect(rollbackBody).toContain(
-      'terminate_new_terminal_runtime_supervisor_after_failed_start',
-    );
-    expect(rollbackBody.indexOf(
-      'terminate_new_terminal_runtime_supervisor_after_failed_start',
-    )).toBeLessThan(rollbackBody.indexOf('mv "$APP_DIR.rollback" "$APP_DIR"'));
+    expect(cleanupFailure).not.toContain('restore_staged_runtime_after_failed_update');
+    expect(cleanupFailure).toContain('terminal_runtime_supervisor_cleanup_preserved_host_layer');
+    expect(updater.match(/systemctl stop matrix-terminal-runtime\.service/g)).toHaveLength(1);
+    expect(rollbackBody).toContain('terminate_new_terminal_runtime_supervisor_after_failed_start');
+    expect(rollbackBody.indexOf('terminate_new_terminal_runtime_supervisor_after_failed_start')).toBeLessThan(rollbackBody.indexOf('mv "$APP_DIR.rollback" "$APP_DIR"'));
     expect(updater).not.toContain('systemctl stop matrix-terminal-session@');
   });
 
@@ -348,5 +375,35 @@ describe('customer VPS terminal runtime services', () => {
       'systemctl stop matrix-terminal-session@',
     );
     expect(updater).toContain('terminal_runtime_supervisor_start_failed');
+  });
+
+  it('migrates legacy metadata before starting the activated gateway without touching live terminal units', () => {
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const activation = read('distro/customer-vps/terminal-runtime-activation');
+    const migration = updater.indexOf(
+      '/opt/matrix/bin/matrix-terminal-runtime-op migrate-legacy',
+    );
+    const gatewayStart = updater.indexOf(
+      'systemctl start matrix-gateway matrix-shell',
+      migration,
+    );
+    const supervisorEnable = updater.indexOf(
+      'systemctl enable matrix-terminal-runtime.service',
+      migration,
+    );
+    const supervisorStart = updater.indexOf(
+      'systemctl start matrix-terminal-runtime.service',
+      migration,
+    );
+
+    expect(activation).toBe('supervised-v1\n');
+    expect(migration).toBeGreaterThan(-1);
+    expect(gatewayStart).toBeGreaterThan(migration);
+    expect(supervisorEnable).toBeGreaterThan(migration);
+    expect(supervisorStart).toBeGreaterThan(supervisorEnable);
+    expect(supervisorStart).toBeLessThan(gatewayStart);
+    expect(updater).not.toContain('systemctl stop matrix-terminal-session@');
+    expect(updater).not.toContain('systemctl restart matrix-terminal-runtime.service');
+    expect(updater).not.toContain('systemctl restart matrix-terminal.slice');
   });
 });

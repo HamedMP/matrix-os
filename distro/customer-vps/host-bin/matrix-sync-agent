@@ -290,6 +290,36 @@ install_update_runtime_bins() {
   fi
 }
 
+install_host_bins_atomic() {
+  local source_dir="$1" source name next
+  while IFS= read -r -d '' source; do
+    name="$(basename "$source")"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 1
+    next="$BIN_DIR/.${name}.next"
+    rm -f -- "$next"
+    if ! install -o root -g root -m 0755 "$source" "$next"; then
+      rm -f -- "$next"
+      return 1
+    fi
+    if ! mv -f -- "$next" "$BIN_DIR/$name"; then
+      rm -f -- "$next"
+      return 1
+    fi
+  done < <(
+    find "$source_dir" -maxdepth 1 -type f \
+      ! -name 'zellij' \
+      ! -name 'zellij.build.json' \
+      ! -name 'matrix-terminal-*' \
+      ! -name 'matrix-update-service' \
+      ! -name 'matrix-sync-agent' \
+      ! -name 'matrix-update' \
+      ! -name 'matrix-validate-host-bundle' \
+      ! -name 'matrix-tool-pack-control' \
+      ! -name 'matrix-symphony-control' \
+      -print0
+  )
+}
+
 install_matrix_sudoers() {
   local sudoers_next="/etc/sudoers.d/.matrix.next"
   install -d -o root -g root -m 0750 /etc/sudoers.d
@@ -986,28 +1016,31 @@ apply_update() {
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
-      find "$extract_dir/bin" -maxdepth 1 -type f \
-        ! -name 'zellij' \
-        ! -name 'zellij.build.json' \
-        ! -name 'matrix-terminal-*' \
-        ! -name 'matrix-update-service' \
-        ! -name 'matrix-sync-agent' \
-        ! -name 'matrix-update' \
-        ! -name 'matrix-validate-host-bundle' \
-        -exec cp -a {} "$BIN_DIR/" \;
     else
-      find "$extract_dir/bin" -maxdepth 1 -type f \
-        ! -name 'matrix-terminal-*' \
-        ! -name 'matrix-update-service' \
-        ! -name 'matrix-sync-agent' \
-        ! -name 'matrix-update' \
-        ! -name 'matrix-validate-host-bundle' \
-        -exec cp -a {} "$BIN_DIR/" \;
       if [ -f "$extract_dir/bin/zellij" ]; then
+        zellij_next="$BIN_DIR/.zellij.next"
+        rm -f -- "$zellij_next"
+        if ! install -o root -g root -m 0755 \
+          "$extract_dir/bin/zellij" "$zellij_next" ||
+          ! mv -f -- "$zellij_next" "$BIN_DIR/zellij"; then
+          rm -f -- "$zellij_next"
+          log "ERROR: zellij install failed"
+          restore_staged_runtime_after_failed_update ||
+            log "ERROR: host runtime restore after zellij install failure failed"
+          rm -rf "$extract_dir" "$bundle_file"
+          return 1
+        fi
         rm -f -- "$ZELLIJ_BUILD_METADATA"
       fi
     fi
-    find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
+    if ! install_host_bins_atomic "$extract_dir/bin"; then
+      log "ERROR: host_bin_install_failed"
+      write_update_failure_code "host_bin_install_failed"
+      restore_staged_runtime_after_failed_update ||
+        log "ERROR: host runtime restore after host bin failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
     log "Updated bin scripts"
   fi
   if [ "$terminal_runtime_activation" = "supervised-v1" ]; then
@@ -1079,6 +1112,35 @@ apply_update() {
           return 1
         fi
         log "Terminal runtime supervisor ready"
+        if run_bounded_phase \
+          "preparing" \
+          "terminal_runtime_supervisor_probe_timeout" \
+          /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+          /usr/sbin/runuser --user matrix -- \
+          /usr/bin/env -i \
+          HOME=/home/matrix \
+          MATRIX_HOME=/home/matrix/home \
+          PATH=/opt/matrix/runtime/node/bin:/opt/matrix/bin:/usr/bin:/bin \
+          /opt/matrix/bin/matrix-terminal-runtime-op probe; then
+          log "Terminal runtime supervisor protocol ready"
+        else
+          supervisor_probe_status=$?
+          log "ERROR: terminal_runtime_supervisor_probe_failed"
+          if [ "$supervisor_probe_status" -ne 124 ]; then
+            write_update_failure_code "terminal_runtime_supervisor_probe_failed"
+          fi
+          if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
+            log "ERROR: terminal_runtime_supervisor_cleanup_failed"
+            write_update_failure_code "terminal_runtime_supervisor_cleanup_failed"
+            log "WARN: terminal_runtime_supervisor_cleanup_preserved_host_layer"
+            rm -rf "$extract_dir" "$bundle_file"
+            return 1
+          fi
+          restore_staged_runtime_after_failed_update ||
+            log "ERROR: host runtime restore after terminal supervisor probe failure failed"
+          rm -rf "$extract_dir" "$bundle_file"
+          return 1
+        fi
         candidate_gateway_mount="$UPDATE_RUNTIME_DIR/candidate-gateway-app"
         if (
           install -d -o root -g matrix -m 0750 "$candidate_gateway_mount" &&
@@ -1185,14 +1247,6 @@ exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
   fi
 
   log "Starting services..."
-  if ! /opt/matrix/bin/matrix-prepare-gateway-runtime; then
-    log "ERROR: gateway_runtime_preparation_failed"
-    write_update_failure_code "gateway_runtime_preparation_failed"
-    do_rollback failed-update ||
-      log "ERROR: rollback after gateway runtime preparation failure failed"
-    rm -rf "$extract_dir" "$bundle_file"
-    return 1
-  fi
   if ! systemctl start matrix-gateway matrix-shell; then
     log "ERROR: gateway_start_failed"
     write_update_failure_code "gateway_start_failed"
@@ -1704,6 +1758,7 @@ write_update_failure_code() {
     terminal_runtime_candidate_invalid|\
     terminal_runtime_generation_install_failed|\
     update_runtime_install_failed|\
+    host_bin_install_failed|\
     privilege_boundary_install_failed|\
     terminal_runtime_wrapper_install_failed|\
     zellij_candidate_staging_failed|\
@@ -1720,6 +1775,8 @@ write_update_failure_code() {
     terminal_runtime_gateway_projection_failed|\
     terminal_runtime_gateway_request_failed|\
     terminal_runtime_gateway_probe_failed|\
+    terminal_runtime_supervisor_probe_timeout|\
+    terminal_runtime_supervisor_probe_failed|\
     update_runtime_enable_failed|\
     legacy_update_bridge_disable_failed|\
     gateway_runtime_preparation_timeout|\

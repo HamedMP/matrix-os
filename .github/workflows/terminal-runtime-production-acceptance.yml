@@ -1,0 +1,340 @@
+name: Terminal Runtime Production Acceptance
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+concurrency:
+  group: terminal-runtime-production-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  gate:
+    if: >-
+      github.event.label.name == 'terminal-production-acceptance' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.resolve.outputs.pr }}
+      head: ${{ steps.resolve.outputs.head }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      handle: ${{ steps.resolve.outputs.handle }}
+    steps:
+      - id: resolve
+        name: Resolve immutable same-repository head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}")"
+          head="$(jq -r .head.sha <<<"$pr_json")"
+          ref="$(jq -r .head.ref <<<"$pr_json")"
+          repo="$(jq -r .head.repo.full_name <<<"$pr_json")"
+          if [ "$repo" != "$GITHUB_REPOSITORY" ] ||
+            [ "$head" != "$EVENT_HEAD" ] ||
+            ! printf '%s' "$head" | grep -Eq '^[0-9a-f]{40}$' ||
+            ! jq -e '.labels | any(.name == "preview-vps") and
+              any(.name == "terminal-production-acceptance")' <<<"$pr_json" >/dev/null; then
+            echo "Acceptance requires the immutable same-repository preview head." >&2
+            exit 1
+          fi
+          {
+            echo "pr=$PR"
+            echo "head=$head"
+            echo "ref=$ref"
+            echo "handle=pr-$PR"
+          } >>"$GITHUB_OUTPUT"
+  build:
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+      NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
+      NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
+      MATRIX_TERMINAL_RUNTIME_SPIKE: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: 28
+          elixir-version: 1.19
+      - name: Build verified production Zellij once
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          rustup toolchain install 1.92.0 --profile minimal --component rustfmt \
+            --target x86_64-unknown-linux-musl
+          rustup default 1.92.0
+          ./scripts/terminal-runtime/zellij/build.sh "$RUNNER_TEMP/matrix-zellij"
+      - name: Build two exact-head acceptance bundles
+        env:
+          HEAD_SHA: ${{ needs.gate.outputs.head }}
+          HEAD_REF: ${{ needs.gate.outputs.ref }}
+          RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ] ||
+            [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "A real Clerk publishable key is required." >&2
+            exit 1
+          fi
+          for suffix in a b; do
+            version="v0.0.0-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
+            HOST_BUNDLE_VERSION="$version" HOST_BUNDLE_CHANNEL=none \
+              MATRIX_BUILD_SHA="$HEAD_SHA" MATRIX_BUILD_REF="$HEAD_REF" \
+              HOST_BUNDLE_ZELLIJ_BUILD_DIR="$RUNNER_TEMP/matrix-zellij" \
+              ./scripts/build-host-bundle.sh
+            mv dist/host-bundle "dist/acceptance-${suffix}"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: terminal-production-bundles-${{ needs.gate.outputs.head }}
+          path: |
+            dist/acceptance-a/matrix-host-bundle.tar.gz
+            dist/acceptance-a/matrix-host-bundle.tar.gz.sha256
+            dist/acceptance-a/manifest.json
+            dist/acceptance-a/incremental-manifest.json
+            dist/acceptance-a/objects/**
+            dist/acceptance-b/matrix-host-bundle.tar.gz
+            dist/acceptance-b/matrix-host-bundle.tar.gz.sha256
+            dist/acceptance-b/manifest.json
+            dist/acceptance-b/incremental-manifest.json
+            dist/acceptance-b/objects/**
+          if-no-files-found: error
+          retention-days: 3
+  publish:
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BUNDLES_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}
+      R2_ENDPOINT: ${{ vars.R2_BUNDLES_ENDPOINT || vars.R2_ENDPOINT || format('https://{0}.r2.cloudflarestorage.com', secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID) }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: terminal-production-bundles-${{ needs.gate.outputs.head }}
+          path: dist
+      - name: Publish both immutable register-only bundles
+        env:
+          HEAD_SHA: ${{ needs.gate.outputs.head }}
+          PR: ${{ needs.gate.outputs.pr }}
+          RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          for suffix in a b; do
+            rm -rf dist/host-bundle
+            cp -a "dist/acceptance-${suffix}" dist/host-bundle
+            version="v0.0.0-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
+            ./scripts/publish-release.sh "$version" --channel none \
+              --changelog "Terminal production acceptance for PR #${PR}"
+          done
+  prove:
+    needs: [gate, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      HANDLE: ${{ needs.gate.outputs.handle }}
+      HEAD_SHA: ${{ needs.gate.outputs.head }}
+      PR: ${{ needs.gate.outputs.pr }}
+      RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - name: Wait for exact-head S1/S2 proof
+        env:
+          HEAD_REF: ${{ needs.gate.outputs.ref }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 3600))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            runs="$(gh run list --workflow terminal-runtime-spikes.yml \
+              --branch "$HEAD_REF" --limit 20 \
+              --json headSha,status,conclusion)"
+            if jq -e --arg head "$HEAD_SHA" '
+              any(.[];
+                .headSha == $head and
+                .status == "completed" and
+                .conclusion == "success"
+              )
+            ' <<<"$runs" >/dev/null; then
+              exit 0
+            fi
+            if jq -e --arg head "$HEAD_SHA" '
+              ([.[] | select(
+                .headSha == $head and
+                (.status == "queued" or .status == "in_progress")
+              )] | length) == 0 and
+              any(.[];
+                .headSha == $head and
+                .status == "completed" and
+                (.conclusion == "failure" or .conclusion == "cancelled")
+              )
+            ' <<<"$runs" >/dev/null; then
+              echo "Exact-head S1/S2 proof failed." >&2
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for exact-head S1/S2 proof." >&2
+          exit 1
+      - name: Resolve exact-head disposable preview
+        id: preview
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 2400))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            fleet="$(curl --fail --silent --show-error --max-time 30 \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+            machine="$(jq -ce --arg handle "$HANDLE" '
+              [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+                and .status == "running")] | if length == 1 then .[0] else {} end
+            ' <<<"$fleet")"
+            version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+            address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+            if [[ "$version" == *"-${HEAD_SHA:0:7}"* ]] &&
+              printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+              echo "::add-mask::$address"
+              echo "address=$address" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Exact-head preview was unavailable." >&2
+          exit 1
+      - name: Run two-bundle, failure, rollback, and pre-reboot matrix
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+        run: |
+          set -euo pipefail
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          call_helper() {
+            local operation="$1" response="$RUNNER_TEMP/helper.json"
+            body="$(jq -cn --arg op "$operation" --arg sha "$HEAD_SHA" \
+              --arg nonce "$RUN_NONCE" '{
+              command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control",$op,$sha,$nonce],
+              timeoutMs:30000}')"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
+              --data-binary "$body"
+            jq -er 'select(.exitCode==0 and .timedOut==false and
+              .truncated==false and .signal==null) | .stdout' "$response"
+          }
+          call_helper acceptance-launch
+          deadline=$((SECONDS + 18000))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if state="$(call_helper acceptance-status 2>/dev/null)" &&
+              grep -q '^phase1-ready$' <<<"$state"; then break; fi
+            if grep -q '^failed$' <<<"${state:-}"; then exit 1; fi
+            sleep 15
+          done
+          grep -q '^phase1-ready$' <<<"${state:-}"
+          call_helper acceptance-reboot
+      - name: Wait for reboot and resume explicit recovery
+        id: recover
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+        run: |
+          set -euo pipefail
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          call_helper() {
+            body="$(jq -cn --arg op "$1" --arg sha "$HEAD_SHA" \
+              --arg nonce "$RUN_NONCE" '{
+              command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control",$op,$sha,$nonce],
+              timeoutMs:30000}')"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -o "$RUNNER_TEMP/helper.json" -X POST \
+              'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
+              --data-binary "$body"
+            jq -er 'select(.exitCode==0 and .timedOut==false and
+              .truncated==false and .signal==null) | .stdout' "$RUNNER_TEMP/helper.json"
+          }
+          sleep 20
+          deadline=$((SECONDS + 900))
+          until call_helper acceptance-status >/dev/null 2>&1; do
+            [ "$SECONDS" -lt "$deadline" ] || exit 1
+            sleep 15
+          done
+          call_helper acceptance-resume
+          deadline=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if state="$(call_helper acceptance-status 2>/dev/null)" &&
+              grep -q '^complete$' <<<"$state"; then break; fi
+            if grep -q '^failed$' <<<"${state:-}"; then exit 1; fi
+            sleep 10
+          done
+          grep -q '^complete$' <<<"${state:-}"
+          call_helper acceptance-pack | base64 --decode >"$RUNNER_TEMP/evidence.json"
+          output="$RUNNER_TEMP/terminal-production-evidence"
+          mkdir -m 0700 "$output"
+          evidence="$(node scripts/spikes/terminal-runtime/verify-production-evidence.mjs \
+            --unpack "$RUNNER_TEMP/evidence.json" "$output" "$HEAD_SHA")"
+          result="$(node scripts/spikes/terminal-runtime/verify-production-evidence.mjs \
+            "$evidence" --expected-head "$HEAD_SHA")"
+          digest="$(jq -er .summarySha256 <<<"$result")"
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+          echo "evidence=$evidence" >>"$GITHUB_OUTPUT"
+      - name: Validate the complete production matrix
+        env:
+          EVIDENCE: ${{ steps.recover.outputs.evidence }}
+        run: |
+          set -euo pipefail
+          node scripts/spikes/terminal-runtime/verify-production-evidence.mjs \
+            "$EVIDENCE" --expected-head "$HEAD_SHA"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: terminal-production-acceptance-${{ needs.gate.outputs.head }}
+          path: ${{ steps.recover.outputs.evidence }}
+          if-no-files-found: error
+          retention-days: 14
+      - name: Comment exact-head production evidence
+        env:
+          DIGEST: ${{ steps.recover.outputs.digest }}
+        run: |
+          set -euo pipefail
+          body="**Terminal production acceptance passed**
+          - Commit: \`${HEAD_SHA}\`
+          - Two bundles, forced failure, explicit rollback, reboot, recovery, races, corruption fallback, and delete: pass
+          - Evidence SHA-256: \`${DIGEST}\`
+          - Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          The bounded artifact contains lifecycle check names only; terminal contents, credentials, paths, names, PIDs, and host addresses are excluded."
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" >/dev/null

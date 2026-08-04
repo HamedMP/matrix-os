@@ -345,7 +345,8 @@ describe('customer VPS host bundle', () => {
     expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
-    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools --tools-only');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
+    expect(unit).not.toContain('--tools-only');
     expect(unit).toContain('Restart=on-failure');
     expect(installer).toContain('is_tool_installed()');
     expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
@@ -375,9 +376,12 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('if [ "$MODE" != "--tools-only" ]; then');
     expect(installer).toContain('if [ "$MODE" = "--sandbox-only" ]; then');
     expect(gatewayUnit).not.toContain('matrix-install-developer-tools');
-    expect(gatewayUnit).not.toContain('matrix-prepare-gateway-runtime');
-    expect(gatewayRuntime).toContain('[ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]');
-    expect(gatewayRuntime).toContain('cmp -s "$activation_file" <(printf');
+    expect(gatewayUnit).not.toContain('ExecStartPre=');
+    expect(gatewayRuntime).toContain(
+      'compatibility_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
+    );
+    expect(gatewayRuntime).toContain('boot_id_file="/proc/sys/kernel/random/boot_id"');
+    expect(gatewayRuntime).not.toContain('rm -f -- "$compatibility_stamp"');
     expect(gatewayRuntime).toContain('find -P "$node_path" -xdev');
     expect(gatewayRuntime).toContain('chmod g+rwX "$node_modules" "$node_bin"');
     expect(gatewayRuntime).toContain('chmod g+rws "$directory"');
@@ -853,11 +857,65 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
-    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
-    expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
-    expect(workflow).toContain('dist/host-bundle/objects/**');
-    expect(workflow).toContain('./scripts/publish-release.sh "$VERSION" --channel none');
-    expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/deploy"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${BASE_SHA:0:7}');
+    expect(workflow).not.toContain('dist/activation/**');
+    expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
+    expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
+    expect(workflow).toContain('cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"');
+    expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
+    expect(workflow).toContain('rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control');
+    expect(workflow).not.toContain('activation_watch');
+    expect(workflow).toContain('BASE_SHA: ${{ needs.gate.outputs.base_sha }}');
+    expect(workflow).toContain(
+      'if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
+    );
+    expect(workflow).toContain('Reusing the exact dormant parent already installed on the preview.');
+    expect(workflow).not.toContain(
+      '[[ "$deployed" =~ ^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-([0-9]+-[0-9]+-)?[0-9a-f]{7}$ ]]',
+    );
+    expect(workflow).toContain('wait_for_preview_gateway "$address"');
+    expect(workflow.indexOf('wait_for_preview_gateway "$address"')).toBeLessThan(
+      workflow.indexOf(
+        'for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"',
+      ),
+    );
+  });
+
+  it('preview VPS workflow waits for fleet version and an idle updater before advancing', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const deployLoop = workflow.slice(
+      workflow.indexOf('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"'),
+      workflow.indexOf('      - name: Comment preview URL on PR'),
+    );
+
+    expect(deployLoop).toContain('last_signal=$((SECONDS - 60))');
+    expect(deployLoop).toContain('version_seen=false');
+    expect(deployLoop).toContain('if [ "$version_seen" != true ] && [ $((SECONDS - last_signal)) -ge 60 ]; then');
+    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
+    expect(workflow).toContain(
+      '[ "$diagnostic" = "Update service: idle phase=idle failure=none" ]',
+    );
+    expect(workflow).toContain(
+      'test("^Update service: (?:idle|running|failed) phase=[a-z_]+ failure=(?:none|[a-z0-9_]+)\\\\n$")',
+    );
+    expect(deployLoop).toContain(
+      'updater_diagnostic_result="$(updater_diagnostic "$address")"',
+    );
+    expect(deployLoop).toContain(
+      '"Update service: failed phase=failed failure="*',
+    );
+    expect(deployLoop).toContain(
+      'Preview updater failed after rollback: ${updater_diagnostic_result}',
+    );
+    expect(deployLoop).toContain('Preview updater state: ${updater_diagnostic_result}');
+    expect(deployLoop).toContain('Preview updater state at timeout: ${final_diagnostic}');
+    expect(deployLoop).toContain('version_seen=true');
+    expect(deployLoop).toContain('Waiting for the preview updater to become idle.');
+    expect(deployLoop).toContain('deploy_converged=true');
+    expect(deployLoop).toContain('Deployment of ${target_version} did not converge.');
+    expect(workflow).not.toContain('${stderr}');
   });
 
   it('preview VPS workflow uses the durable preview provision contract', () => {
@@ -930,7 +988,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then');
     expect(workflow).toContain('ref: ${{ needs.gate.outputs.head_sha }}');
     expect(workflow).toContain('REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}');
-    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('([0-9]+-[0-9]+-)?[0-9a-f]{7}$');
     expect(workflow).toContain('Invalid pinned preview version');
     expect(workflow).toContain('[ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]');
   });
@@ -963,6 +1022,16 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain("if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')");
     expect(workflow).toContain("if: needs.gate.outputs.action == 'deploy'");
     expect(workflow).toContain("VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}");
+  });
+
+  it('preview deployment validates each target instead of trusting aggregate HTTP 200', () => {
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8');
+    expect(workflow).toContain('deploy_deadline=$((SECONDS + 4500))');
+    expect(workflow.slice(workflow.indexOf('  deploy:'), workflow.indexOf('  teardown:'))).toContain('timeout-minutes: 180');
+    expect(workflow).toContain('.triggered == 1 and .failed == 0 and (.results | length) == 1');
+    expect(workflow).toMatch(/\.results\[0\]\.handle == \$handle[\s\S]*\.results\[0\]\.status == "triggered"/);
+    expect(workflow).toContain('Waiting for the preview update boundary.');
+    expect(workflow).toContain('Deployment of ${target_version} did not converge.');
   });
 
   it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {

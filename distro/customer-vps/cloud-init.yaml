@@ -585,6 +585,8 @@ runcmd:
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+    chmod -R g+rwX /opt/matrix/runtime/node
+    find /opt/matrix/runtime/node -type d -exec chmod g+s {} +
     if [ -d /opt/matrix/libexec ]; then
       chown -R root:root /opt/matrix/libexec
     fi

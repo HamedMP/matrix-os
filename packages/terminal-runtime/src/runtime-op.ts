@@ -2,6 +2,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { read } from 'node:fs';
 import {
   readFile,
+  lstat,
   realpath,
   stat,
 } from 'node:fs/promises';
@@ -21,6 +22,7 @@ import {
   encodeFrame,
   MAX_FRAME_BYTES,
 } from './framing.js';
+import { createSupervisorClient } from './client.js';
 import {
   decodePeerCredentials,
   handleSupervisorFrame,
@@ -30,7 +32,8 @@ import {
   createSystemdExecutor,
 } from './systemd.js';
 import { createRuntimeArtifactManager } from './recovery-state.js';
-
+import { migrateLegacyTerminalState } from './legacy-migration.js';
+import { SecureDirectory } from './storage.js';
 const execFile = promisify(execFileCallback);
 const HOME = '/home/matrix/home';
 const DURABLE_ROOT = `${HOME}/system/terminal-runtime`;
@@ -39,7 +42,6 @@ const KeeperRequestSchema = z.object({
   version: z.literal(1),
   runtimeId: RuntimeIdSchema,
 }).strict();
-
 async function readPeer(): Promise<ReturnType<typeof decodePeerCredentials>> {
   const bytes = Buffer.alloc(12);
   let offset = 0;
@@ -62,7 +64,6 @@ async function readPeer(): Promise<ReturnType<typeof decodePeerCredentials>> {
   }
   return decodePeerCredentials(bytes);
 }
-
 async function readRequest(): Promise<Buffer> {
   return await new Promise<Buffer>((resolveRequest, rejectRequest) => {
     const chunks: Buffer[] = [];
@@ -106,7 +107,6 @@ async function readRequest(): Promise<Buffer> {
     process.stdin.resume();
   });
 }
-
 async function writeResponse(response: Buffer): Promise<void> {
   await new Promise<void>((resolveWrite, rejectWrite) => {
     const timer = setTimeout(() => {
@@ -121,7 +121,6 @@ async function writeResponse(response: Buffer): Promise<void> {
     });
   });
 }
-
 async function resolveCwd(cwd: HomeRelativeCwd): Promise<HomeRelativeCwd> {
   const parsed = HomeRelativeCwdSchema.parse(cwd);
   const home = await realpath(HOME);
@@ -135,7 +134,59 @@ async function resolveCwd(cwd: HomeRelativeCwd): Promise<HomeRelativeCwd> {
     path: ownerRelative === '' ? '' : ownerRelative,
   });
 }
-
+async function resolveLegacyCwd(candidate?: string): Promise<HomeRelativeCwd> {
+  const home = await realpath(HOME);
+  const target = await realpath(resolve(home, candidate ?? '.'));
+  if (target !== home && !target.startsWith(`${home}${sep}`)) {
+    throw new Error('cwd_unavailable');
+  }
+  const ownerRelative = relative(home, target);
+  return HomeRelativeCwdSchema.parse({
+    kind: 'home-relative',
+    path: ownerRelative === '' ? '' : ownerRelative,
+  });
+}
+async function resolveLegacyWorkspaceCwd(input: {
+  projectSlug?: string;
+  worktreeId?: string;
+}): Promise<string | undefined> {
+  if (!input.projectSlug) return undefined;
+  if (input.worktreeId) {
+    return resolve(
+      HOME,
+      'projects',
+      input.projectSlug,
+      'worktrees',
+      input.worktreeId,
+    );
+  }
+  const projectPath = resolve(HOME, 'projects', input.projectSlug);
+  const projectStat = await lstat(projectPath);
+  if (projectStat.isSymbolicLink() || !projectStat.isDirectory()) {
+    throw new Error('cwd_unavailable');
+  }
+  const projectDirectory = await SecureDirectory.open(
+    projectPath,
+  );
+  try {
+    const config = z.object({
+      localPath: z.string().min(1).max(4096),
+    }).passthrough().parse(await projectDirectory.readJson('config.json'));
+    return config.localPath;
+  } finally {
+    await projectDirectory.close();
+  }
+}
+async function readBootId(): Promise<string> {
+  const bootId = (await readFile(
+    '/proc/sys/kernel/random/boot_id',
+    'utf8',
+  )).trim();
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(bootId)) {
+    throw new Error('boot_id_invalid');
+  }
+  return bootId;
+}
 async function belongsToRuntimeCgroup(
   pid: number,
   runtimeId: string,
@@ -149,7 +200,6 @@ async function belongsToRuntimeCgroup(
     return cgroup.endsWith(expected) && !cgroup.includes('..');
   });
 }
-
 async function inspectProcesses(path: string): Promise<{
   keeper: boolean;
   zellijClient: boolean;
@@ -181,7 +231,6 @@ async function inspectProcesses(path: string): Promise<{
     processes.filter((value) => value !== null),
   );
 }
-
 async function sessionResponds(runtimeId: string): Promise<boolean> {
   const environment = {
     HOME,
@@ -216,13 +265,11 @@ async function sessionResponds(runtimeId: string): Promise<boolean> {
     throw error;
   }
 }
-
 async function readOwner() {
   const owner = await stat(HOME);
   if (owner.uid === 0) throw new Error('owner_invalid');
   return { uid: owner.uid, gid: owner.gid };
 }
-
 async function createHostState(owner: { uid: number; gid: number }) {
   const executor = createSystemdExecutor({
     inspectProcesses: async (path) => await inspectProcesses(path),
@@ -243,7 +290,6 @@ async function createHostState(owner: { uid: number; gid: number }) {
   });
   return { state, executor, owner, artifacts };
 }
-
 async function servePeer(): Promise<void> {
   const peer = await readPeer();
   const owner = await readOwner();
@@ -267,7 +313,6 @@ async function servePeer(): Promise<void> {
     await host.state.close();
   }
 }
-
 async function serveKeeper(): Promise<void> {
   const peer = await readPeer();
   const owner = await readOwner();
@@ -288,7 +333,6 @@ async function serveKeeper(): Promise<void> {
     await host.state.close();
   }
 }
-
 async function maintenance(): Promise<void> {
   let stopping = false;
   let resolveStopped: () => void = () => undefined;
@@ -343,14 +387,46 @@ async function maintenance(): Promise<void> {
     if (timer) clearTimeout(timer);
   }
 }
-
+async function migrateLegacy(): Promise<void> {
+  if (process.getuid?.() !== 0) {
+    throw new Error('migration_unauthorized');
+  }
+  const host = await createHostState(await readOwner());
+  try {
+    await migrateLegacyTerminalState({
+      homePath: HOME,
+      state: host.state,
+      resolveCwd: resolveLegacyCwd,
+      resolveWorkspaceCwd: resolveLegacyWorkspaceCwd,
+      bootId: await readBootId(),
+    });
+    process.stdout.write('terminal_runtime_legacy_migration_complete\n');
+  } finally {
+    await host.state.close();
+  }
+}
+async function probeSupervisor(): Promise<void> {
+  const owner = await readOwner();
+  if (process.getuid?.() !== owner.uid) {
+    throw new Error('probe_unauthorized');
+  }
+  const response = await createSupervisorClient({ timeoutMs: 5_000 }).request({
+    version: 1,
+    operation: 'List',
+    operationId: createOperationId(),
+    input: {},
+  });
+  if (!response.ok) throw new Error('supervisor_probe_failed');
+  process.stdout.write('terminal_runtime_supervisor_ready\n');
+}
 export async function runRuntimeOp(mode: string | undefined): Promise<void> {
   if (mode === 'serve-peer') return await servePeer();
   if (mode === 'serve-keeper') return await serveKeeper();
   if (mode === 'maintenance') return await maintenance();
+  if (mode === 'migrate-legacy') return await migrateLegacy();
+  if (mode === 'probe') return await probeSupervisor();
   throw new Error('runtime_op_invalid');
 }
-
 if (process.argv[1]?.endsWith('/runtime-op.js')) {
   try {
     await runRuntimeOp(process.argv[2]);

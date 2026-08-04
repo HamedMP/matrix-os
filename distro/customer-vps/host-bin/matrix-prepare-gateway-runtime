@@ -2,28 +2,35 @@
 set -euo pipefail
 
 activation_file="/opt/matrix/app/terminal-runtime-activation"
+boot_id_file="/proc/sys/kernel/random/boot_id"
+compatibility_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"
+host_bin_dir="/opt/matrix/bin"
 node_path="/opt/matrix/runtime/node"
 node_modules="$node_path/lib/node_modules"
 node_bin="$node_path/bin"
 runtime_root="/opt/matrix/runtime"
-prepared_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"
 mode="${1:-}"
+boot_id=""
+
+load_boot_id() {
+  [ -f "$boot_id_file" ] && [ ! -L "$boot_id_file" ] || return 1
+  IFS= read -r boot_id <"$boot_id_file" || return 1
+  [[ "$boot_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+}
 
 case "$mode" in
   "")
     if [ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]; then
       exit 0
     fi
-    if [ ! -f "$activation_file" ] ||
-      [ -L "$activation_file" ] ||
-      ! cmp -s "$activation_file" <(printf 'supervised-v1\n'); then
-      echo "matrix-prepare-gateway-runtime: invalid_activation" >&2
-      exit 1
-    fi
-    if [ ! -f "$prepared_stamp" ] ||
-      [ -L "$prepared_stamp" ] ||
-      [ "$(stat -c '%U:%G:%a' "$prepared_stamp")" != "root:matrix:644" ] ||
-      ! cmp -s "$prepared_stamp" <(printf 'supervised-v1\n'); then
+    if ! load_boot_id ||
+      [ ! -f "$activation_file" ] || [ -L "$activation_file" ] ||
+      ! cmp -s "$activation_file" <(printf 'supervised-v1\n') ||
+      [ ! -f "$compatibility_stamp" ] || [ -L "$compatibility_stamp" ] ||
+      [ "$(stat -c '%U:%G:%a:%h' "$compatibility_stamp")" != "root:root:600:1" ] ||
+      ! cmp -s "$compatibility_stamp" <(
+        printf 'supervised-v1\n%s\n' "$boot_id"
+      ); then
       echo "matrix-prepare-gateway-runtime: runtime_not_prepared" >&2
       exit 1
     fi
@@ -35,6 +42,32 @@ case "$mode" in
     exit 1
     ;;
 esac
+
+if [ ! -d "$host_bin_dir" ] || [ -L "$host_bin_dir" ] ||
+  [ "$(stat -c '%U' "$host_bin_dir")" != "root" ]; then
+  echo "matrix-prepare-gateway-runtime: invalid_host_bin" >&2
+  exit 1
+fi
+chown root:matrix "$host_bin_dir"
+chmod 0750 "$host_bin_dir"
+for launcher in matrix-gateway matrix-shell matrix-code matrix-symphony matrix-agent-bridge matrix-sync-bundled-home-assets; do
+  if [ ! -f "$host_bin_dir/$launcher" ] ||
+    [ -L "$host_bin_dir/$launcher" ] ||
+    [ "$(stat -c '%U:%h' "$host_bin_dir/$launcher")" != "root:1" ]; then
+    echo "matrix-prepare-gateway-runtime: invalid_host_bin" >&2
+    exit 1
+  fi
+  chown root:root "$host_bin_dir/$launcher"
+  chmod 0755 "$host_bin_dir/$launcher"
+done
+if [ ! -f "$host_bin_dir/matrix-owner-env" ] ||
+  [ -L "$host_bin_dir/matrix-owner-env" ] ||
+  [ "$(stat -c '%U:%h' "$host_bin_dir/matrix-owner-env")" != "root:1" ]; then
+  echo "matrix-prepare-gateway-runtime: invalid_host_bin" >&2
+  exit 1
+fi
+chown root:root "$host_bin_dir/matrix-owner-env"
+chmod 0644 "$host_bin_dir/matrix-owner-env"
 
 for required in "$runtime_root" "$node_path" "$node_modules" "$node_bin"; do
   [ -d "$required" ] && [ ! -L "$required" ] || {
@@ -60,10 +93,14 @@ done < <(
     -type d -print0
 )
 
+if ! load_boot_id; then
+  echo "matrix-prepare-gateway-runtime: invalid_boot_id" >&2
+  exit 1
+fi
 temporary="$(mktemp --tmpdir="$runtime_root" .gateway-runtime-supervised-v1.XXXXXXXXXX)"
 trap 'rm -f -- "$temporary"' EXIT
-printf 'supervised-v1\n' >"$temporary"
-chown root:matrix "$temporary"
-chmod 0644 "$temporary"
-mv -f -- "$temporary" "$prepared_stamp"
+printf 'supervised-v1\n%s\n' "$boot_id" >"$temporary"
+chown root:root "$temporary"
+chmod 0600 "$temporary"
+mv -f -- "$temporary" "$compatibility_stamp"
 trap - EXIT

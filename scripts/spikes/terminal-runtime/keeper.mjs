@@ -1,24 +1,24 @@
 #!/usr/bin/env node
-import { execFile } from 'node:child_process';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { execFile, spawn as spawnProcess } from 'node:child_process';
+import { open, readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { promisify, stripVTControlCharacters } from 'node:util';
 const execFileAsync = promisify(execFile);
-const require = createRequire(import.meta.url);
-const { spawn } = require('node-pty');
+const require = createRequire('/opt/matrix/libexec/terminal-runtime/current/package.json');
 const runtimeId = process.argv[2] ?? '';
 const runtimeRoot = '/run/matrix-terminal-runtime-spike';
 const zellij = '/opt/matrix/bin/zellij';
 let stopping = false;
 let monitor;
 let pty;
+let spawnPty;
 let startupStage = 'descriptor';
 let clientExited = false;
 let clientExitEvent = null;
 let ready = false;
 let confirmationSent = false;
 let renderWindow = '';
-let gateRecorded = false;
+let gateRecorded = false, sessionQuery = 0;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
 const STARTUP_FAILURE_CODES = new Set([
   'runtime_id',
@@ -27,6 +27,7 @@ const STARTUP_FAILURE_CODES = new Set([
   'descriptor_cwd',
   'descriptor_intent',
   'descriptor_size',
+  'native_binding',
   'client_exit',
   'cgroup_unified',
   'cgroup_unit',
@@ -68,16 +69,24 @@ function zellijEnvironment() {
   };
 }
 async function exactSessionResponds(sessionName, env) {
+  const probePath = `${runtimeRoot}/session-query-${runtimeId}-${sessionQuery++}`; const handle = await open(probePath, 'wx', 0o600); await unlink(probePath);
   try {
-    const { stdout } = await execFileAsync(zellij, ['list-sessions', '--no-formatting'], {
-      env,
-      timeout: 2000,
-      maxBuffer: 64 * 1024,
+    const succeeded = await new Promise((resolve) => {
+      let settled = false;
+      const child = spawnProcess(zellij, ['list-sessions', '--no-formatting'], { env, detached: true, stdio: ['ignore', handle.fd, 'ignore'] });
+      const finish = (result) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
+      const timer = setTimeout(() => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch (error) {
+          const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+          if (code !== 'ESRCH') roleSnapshot.responsive = false;
+        } finish(false);
+      }, 2000);
+      child.on('error', () => finish(false));
+      child.on('exit', (code) => finish(code === 0));
     });
-    return stdout.split(/\r?\n/).some((line) => line.trim().split(/\s+/)[0] === sessionName);
-  } catch (error) {
-    return false;
-  }
+    if (!succeeded) return false; const output = Buffer.alloc(64 * 1024 + 1); const { bytesRead } = await handle.read(output, 0, output.length, 0);
+    if (bytesRead > 64 * 1024) return false;
+    return output.subarray(0, bytesRead).toString('utf8').split(/\r?\n/).some((line) => line.trim().split(/\s+/)[0] === sessionName);
+  } finally { await handle.close(); }
 }
 async function ownCgroup() {
   const membership = await readFile('/proc/self/cgroup', 'utf8');
@@ -158,6 +167,9 @@ async function recordStartupFailure(error) {
 }
 async function main() {
   if (!/^[0-9a-f]{32}$/.test(runtimeId)) throw new Error('runtime_id');
+  let nativePty; try { nativePty = require('node-pty'); } catch (error) { throw new Error('native_binding', { cause: error }); }
+  if (typeof nativePty.spawn !== 'function') throw new Error('native_binding');
+  spawnPty = nativePty.spawn;
   const descriptorPath = `${runtimeRoot}/descriptors/${runtimeId}.json`;
   const descriptorRaw = await readFile(descriptorPath, { encoding: 'utf8', flag: 'r' });
   if (Buffer.byteLength(descriptorRaw) > 4096) throw new Error('descriptor_size');
@@ -169,7 +181,7 @@ async function main() {
   const args = descriptor.intent === 'recover'
     ? ['attach', sessionName]
     : ['--session', sessionName, '--new-session-with-layout', '/opt/matrix/libexec/terminal-runtime-spike/layout.kdl'];
-  pty = spawn(zellij, args, {
+  pty = spawnPty(zellij, args, {
     name: 'xterm-256color',
     cols: 120,
     rows: 40,
@@ -207,10 +219,8 @@ async function main() {
   let roles = null;
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
-    const [responsive, detected] = await Promise.all([
-      exactSessionResponds(sessionName, env),
-      cgroupRoles(cgroup.path, descriptor.intent === 'create'),
-    ]);
+    const detected = await cgroupRoles(cgroup.path, descriptor.intent === 'create');
+    const responsive = Boolean(detected && await exactSessionResponds(sessionName, env));
     roleSnapshot.responsive = responsive;
     if (responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
       roles = detected;
@@ -219,9 +229,9 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!roles) throw new Error('readiness_timeout');
-  await writeReadiness({ runtimeId, sessionName, cgroup: cgroup.relative, roles });
   startupStage = 'notify';
   await notifyReady();
+  await writeReadiness({ runtimeId, sessionName, cgroup: cgroup.relative, roles });
   if (clientExited) throw new Error('client_exit');
   ready = true;
   let checking = false;
