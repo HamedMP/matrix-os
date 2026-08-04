@@ -14,7 +14,10 @@ stopEmptiesCgroup keeperLossDeterministic serverLossDeterministic readinessGated
 const REQUIRED_S2_CHECKS = `exactOptionSyntax cacheMappedByRuntime layoutRestored viewportRestored
 scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
 deletionComplete diskAccountingBounded liveSerializationDisableSafe`.split(/\s+/);
-const CANDIDATE_BUILD_RECORD_URL = new URL('./zellij-v0.44.3-matrix.1.build.json', import.meta.url);
+const CANDIDATE_BUILD_RECORD_URL = new URL(
+  '../../terminal-runtime/zellij/v0.44.3-matrix.1.build.json',
+  import.meta.url,
+);
 const EXPECTED_ZELLIJ_BUILD = Object.freeze(
   JSON.parse(await readFile(CANDIDATE_BUILD_RECORD_URL, 'utf8')),
 );

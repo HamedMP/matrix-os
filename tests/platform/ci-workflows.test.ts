@@ -107,6 +107,15 @@ describe('CI workflows', () => {
     expect(scenariosHeader).not.toContain('timeout-minutes: 20');
   });
 
+  it('gives unit-test shards enough timeout for observed runner setup and test runtime', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const unitHeader = workflow.match(/unit:\n[\s\S]*?strategy:/)?.[0] ?? '';
+
+    expect(unitHeader).toContain('timeout-minutes: 20');
+    expect(unitHeader).not.toContain('timeout-minutes: 10');
+  });
+
   it('retries Docker compose image pulls before scenario startup', () => {
     const root = process.cwd();
     const harness = readFileSync(join(root, 'scripts/docker-test/lib.sh'), 'utf8');

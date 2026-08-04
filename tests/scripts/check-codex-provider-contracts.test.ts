@@ -3,7 +3,9 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import contract from "../../packages/gateway/src/coding-agents/codex-exec-contract.json" with { type: "json" };
+import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
+import appServerContract from "../../packages/gateway/src/coding-agents/codex-app-server-contract.json" with { type: "json" };
+import execContract from "../../packages/gateway/src/coding-agents/codex-exec-contract.json" with { type: "json" };
 import { verifyCodexProviderContracts } from "../../scripts/lib/codex-provider-contract-check.mjs";
 
 const scriptPath = fileURLToPath(
@@ -11,6 +13,14 @@ const scriptPath = fileURLToPath(
 );
 
 describe("Codex provider contract checker", () => {
+  it("pins the reviewed 0.146.0 package across every runtime contract", () => {
+    expect(CODEX_VERIFIED_VERSION).toBe("0.146.0");
+    expect(execContract.latestVerifiedVersion).toBe(CODEX_VERIFIED_VERSION);
+    expect(appServerContract.latestVerifiedVersion).toBe(CODEX_VERIFIED_VERSION);
+    expect(execContract.verifiedVersions).toHaveProperty(CODEX_VERIFIED_VERSION);
+    expect(appServerContract.verifiedVersions).toHaveProperty(CODEX_VERIFIED_VERSION);
+  });
+
   it("requires exact-version digests and protocol semantics to evolve together", () => {
     const version = "1.2.3";
     const execSchema = Buffer.from("thread.started\nturn.completed\nitem.started", "utf8");
@@ -61,7 +71,7 @@ describe("Codex provider contract checker", () => {
   });
 
   it("fails closed when either provider schema is omitted", () => {
-    const result = spawnSync(process.execPath, [scriptPath, contract.latestVerifiedVersion], {
+    const result = spawnSync(process.execPath, [scriptPath, execContract.latestVerifiedVersion], {
       encoding: "utf8",
     });
 
