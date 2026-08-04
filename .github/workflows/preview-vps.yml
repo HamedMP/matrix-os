@@ -43,7 +43,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}
+  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.run_id || 'active' }}
   cancel-in-progress: ${{ github.event.action != 'closed' && github.event_name != 'schedule' }}
 
 env:

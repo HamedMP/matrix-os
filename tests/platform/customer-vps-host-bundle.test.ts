@@ -712,6 +712,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('name: Recover the exact-head disposable preview updater');
     expect(workflow).toContain('gh run view "$preview_run_id" --repo "$GITHUB_REPOSITORY" --log');
     expect(workflow).toContain('Preview version: v[0-9]{4}');
+    expect(workflow).toContain('actions/runs/${candidate}/artifacts');
+    expect(workflow).toContain('select(.name == $name and .expired == false)');
     expect(workflow).not.toContain('gh run download "$preview_run_id"');
     expect(workflow).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR}-[0-9a-f]{7}$');
     expect(workflow).toContain('select(.handle == $handle and .runtimeSlot == $handle');
@@ -723,6 +725,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('--data-binary "$deploy_body"');
     expect(workflow.indexOf('name: Recover the exact-head disposable preview updater'))
       .toBeLessThan(workflow.indexOf('name: Resolve exact-head disposable preview'));
+  });
+
+  it('unrelated PR labels cannot cancel an active preview deployment', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain("github.event.action == 'labeled'");
+    expect(workflow).toContain("github.event.label.name != 'preview-vps'");
+    expect(workflow).toContain('github.run_id || \'active\'');
   });
 
   it('preview VPS workflow uses the durable preview provision contract', () => {
