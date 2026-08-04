@@ -819,6 +819,20 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('[ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]');
   });
 
+  it('manual preview dispatch can tear down one exact disposable PR handle', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('teardown_preview:');
+    expect(workflow).toContain('TEARDOWN_PREVIEW: ${{ inputs.teardown_preview }}');
+    expect(workflow).toContain('if [ "$TEARDOWN_PREVIEW" = "true" ]; then');
+    expect(workflow).toContain('action="teardown"');
+    expect(workflow.indexOf('if [ "$TEARDOWN_PREVIEW" = "true" ]; then'))
+      .toBeLessThan(workflow.indexOf('if [ "$VERIFY_INVENTORY" = "true" ]; then'));
+    expect(workflow).toContain("if: needs.gate.outputs.action == 'teardown'");
+    expect(workflow).toContain('select(.handle == $h and .status != "deleted")');
+  });
+
   it('manual preview verification uses a short-lived token from an active QA session', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');

@@ -7,7 +7,7 @@
 #   deploy   — on label / push while labeled: build bundle v<date>-pr<N>-<sha7>,
 #              publish register-only (--channel none, never promoted),
 #              provision pr-<N> if absent, deploy the exact version, comment.
-#   teardown — on PR close: delete the pr-<N> VPS.
+#   teardown — on PR close or explicit manual dispatch: delete the pr-<N> VPS.
 #   reaper   — daily: delete any pr-* VPS whose PR is closed or older than 72h,
 #              so orphans cannot accumulate Hetzner cost.
 #
@@ -34,6 +34,11 @@ on:
         type: string
       verify_inventory:
         description: "Only verify the deployed preview in the authenticated computer inventory"
+        required: false
+        default: false
+        type: boolean
+      teardown_preview:
+        description: "Delete only this PR's disposable preview VPS"
         required: false
         default: false
         type: boolean
@@ -75,6 +80,7 @@ jobs:
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
+          TEARDOWN_PREVIEW: ${{ inputs.teardown_preview }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -96,12 +102,16 @@ jobs:
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ "$VERIFY_INVENTORY" = "true" ]; then
-              action="verify"
-            elif [ -n "$REQUESTED_VERSION" ]; then
-              action="deploy_existing"
+            if [ "$TEARDOWN_PREVIEW" = "true" ]; then
+              action="teardown"
             else
-              action="deploy"
+              if [ "$VERIFY_INVENTORY" = "true" ]; then
+                action="verify"
+              elif [ -n "$REQUESTED_VERSION" ]; then
+                action="deploy_existing"
+              else
+                action="deploy"
+              fi
             fi
           elif [ "$EVENT_ACTION" = "closed" ]; then
             if [ "$HAS_LABEL" = "true" ]; then action="teardown"; fi
