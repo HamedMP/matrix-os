@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { invoke, onEvent } from "../lib/operator";
 import { createApiClient, type ApiClient } from "../lib/api";
+import { clearDraftChats } from "./draft-chat";
 import { advanceRuntimeGeneration } from "./runtime-generation";
 import { reconcileDesktopRuntimeChange } from "./runtime-transition";
 
@@ -52,7 +53,10 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         || previous.authGeneration !== status.authGeneration;
       // Advance BEFORE publishing the new identity so a response settling in
       // between is already considered stale.
-      if (identityChanged) advanceRuntimeGeneration();
+      if (identityChanged) {
+        advanceRuntimeGeneration();
+        clearDraftChats();
+      }
       const api = status.signedIn
         ? createApiClient({
             baseUrl: status.platformHost,
@@ -77,7 +81,10 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     } catch (err: unknown) {
       console.warn("[connection] failed to refresh auth status:", err instanceof Error ? err.message : String(err));
       // Dropping to signed-out is an identity change too.
-      if (get().status !== "signed-out") advanceRuntimeGeneration();
+      if (get().status !== "signed-out") {
+        advanceRuntimeGeneration();
+        clearDraftChats();
+      }
       set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
     }
   },

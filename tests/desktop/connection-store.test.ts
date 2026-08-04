@@ -7,10 +7,12 @@ import {
   wireConnectionEvents,
 } from "@desktop/renderer/src/stores/connection";
 import { useBoard } from "@desktop/renderer/src/stores/board";
+import { clearDraftChats, useDraftChat } from "@desktop/renderer/src/stores/draft-chat";
 
 type Listener = (payload: unknown) => void;
 
 beforeEach(() => {
+  clearDraftChats();
   useConnection.setState({
     status: "loading",
     handle: null,
@@ -27,6 +29,45 @@ afterEach(() => {
 });
 
 describe("connection event wiring", () => {
+  it("clears unsent drafts when an auth event replaces the identity", async () => {
+    const listeners = new Map<string, Listener>();
+    useConnection.setState({
+      status: "signed-in",
+      handle: "old-owner",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      authGeneration: 1,
+    });
+    useDraftChat.getState().setDraft("matrix-os", {
+      providerId: "codex",
+      mode: "default",
+      sandboxMode: "workspace_write",
+      prompt: "private draft from old-owner",
+      projectId: "matrix-os",
+    });
+    window.operator = {
+      invoke: vi.fn(async () => ({
+        signedIn: true,
+        handle: "new-owner",
+        platformHost: "https://platform.test",
+        runtimeSlot: "primary",
+        authGeneration: 2,
+      })),
+      on: vi.fn((channel: string, callback: Listener) => {
+        listeners.set(channel, callback);
+        return () => listeners.delete(channel);
+      }),
+    };
+
+    wireConnectionEvents();
+    listeners.get("auth:changed")?.({});
+
+    await vi.waitFor(() => {
+      expect(useConnection.getState().handle).toBe("new-owner");
+    });
+    expect(useDraftChat.getState().draftFor("matrix-os")).toBeNull();
+  });
+
   it("keeps the previous desktop state intact until the trusted runtime switch succeeds", async () => {
     useBoard.setState({ projects: [{ slug: "old", name: "Old" }], activeProjectSlug: "old" });
     const invoke = vi.fn(async (channel: string) => {

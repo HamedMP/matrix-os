@@ -11,7 +11,7 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
-import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
+import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 
 const NOW = "2026-07-12T12:00:00.000Z";
@@ -216,6 +216,7 @@ describe("draft chat implicit thread creation", () => {
     await waitFor(() => {
       expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_new_draft");
     });
+    expect(useDraftChat.getState().draftFor("matrix-os")).toBeNull();
     expect(await screen.findByRole("region", { name: /Conversation/ })).toBeTruthy();
     expect(screen.queryByLabelText("Message new chat")).toBeNull();
     // The rail refreshes so the new thread appears in the list.

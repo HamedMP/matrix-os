@@ -158,6 +158,7 @@ export function ProjectChatDraft({
         return;
       }
       providerSelectionTouchedRef.current = false;
+      useDraftChat.getState().clearDraft(projectId);
       setDraft(initialDraft);
       onCreated();
     } finally {
