@@ -303,7 +303,7 @@ describe('terminal runtime spike evidence', () => {
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
     expect(keeper).toContain(
-      "['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', WORKLOAD_PANE]",
+      "['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', NODE, WORKLOAD_PANE]",
     );
     expect(keeper).toContain("const WORKLOAD_PANE_NAME = 'matrix-runtime-workload-probe'");
   });
@@ -335,7 +335,7 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expectAll(keeper, [
       'async function verifyWorkloadHelper()',
-      "spawnProcess(WORKLOAD_PANE, [], {",
+      "spawnProcess(NODE, [WORKLOAD_PANE], {",
       "throw new Error('workload_helper')",
       'await verifyWorkloadHelper();',
       "const WORKLOAD_HELPER_STATES = new Set([",
@@ -403,7 +403,7 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain("process.comm === 'MainThread'");
     expect(keeper).toContain('process.cmdline[0] === NODE');
     expect(keeper).toContain('process.cmdline[1] === WORKLOAD_PANE');
-    expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', WORKLOAD_PANE]");
+    expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', NODE, WORKLOAD_PANE]");
     expect(keeper).toContain("throw new Error('workload_launch'");
     expect(keeper).not.toContain("throw new Error('workload_target')");
     expect(keeper).not.toContain('const target = stdout.trim()');
@@ -438,7 +438,7 @@ describe('terminal runtime spike evidence', () => {
       "const WORKLOAD_PANE_STATES = new Set([",
       "['--session', sessionName, 'action', 'list-panes', '--all', '--json']",
       'panes.length > 16',
-      'pane.terminal_command === WORKLOAD_PANE',
+      'pane.terminal_command === `${NODE} ${WORKLOAD_PANE}`',
       'pane.pane_command === `${NODE} ${WORKLOAD_PANE}`',
       'workloadPaneState',
       'workloadPaneExitStatus',
