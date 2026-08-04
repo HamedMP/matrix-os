@@ -11,6 +11,7 @@ import {
   getPaneSessionId,
   getSessionIds,
   layoutUsesOnlyCanonicalShellSessions,
+  mergeTerminalLayoutSnapshots,
   migrateLayoutRuntimeReferences,
   removeSessionFromPaneTree,
   renameSessionInTree,
@@ -153,6 +154,42 @@ describe("terminal layout helpers", () => {
       sessionId: "renamed-again",
       runtimeId,
       displayName: "renamed-again",
+    });
+  });
+
+  it("merges migrated runtime references into a newer sibling pane tree", () => {
+    const runtimeId = "0123456789abcdef0123456789abcdef";
+    const merged = mergeTerminalLayoutSnapshots({
+      tabs: [{ id: "shared", label: "Old name", paneTree: {
+        type: "pane", id: "existing", cwd: DEFAULT_CWD,
+        sessionId: "renamed", runtimeId, displayName: "renamed",
+      } }],
+      activeTabId: "shared",
+      sidebarOpen: true,
+    }, {
+      tabs: [{ id: "shared", label: "Current", paneTree: {
+        type: "split", direction: "horizontal", ratio: 0.5,
+        children: [
+          { type: "pane", id: "existing", cwd: DEFAULT_CWD,
+            sessionId: "old-name" },
+          { type: "pane", id: "new", cwd: DEFAULT_CWD,
+            sessionId: "sibling" },
+        ],
+      } }],
+      activeTabId: "shared",
+      sidebarOpen: false,
+    });
+
+    expect(merged).toMatchObject({
+      tabs: [{ id: "shared", label: "Current", paneTree: {
+        type: "split",
+        children: [
+          { id: "existing", sessionId: "renamed", runtimeId,
+            displayName: "renamed" },
+          { id: "new", sessionId: "sibling" },
+        ],
+      } }],
+      sidebarOpen: false,
     });
   });
 });

@@ -35,6 +35,7 @@ import {
   genId,
   hasPaneId,
   layoutUsesOnlyCanonicalShellSessions,
+  mergeTerminalLayoutSnapshots,
   migrateLayoutRuntimeReferences,
   removeSessionFromPaneTree,
   renameSessionInTree,
@@ -113,7 +114,9 @@ let terminalLayoutMutationRevision = 0;
 let activeTerminalLayoutWrite: {
   generation: number;
   controller: AbortController;
+  layout: TerminalLayout;
   startImmediately: boolean;
+  preserveRuntimeReferences: boolean;
   layoutRevision: number;
 } | null = null;
 let pendingImmediateTerminalLayoutWrite: {
@@ -122,28 +125,12 @@ let pendingImmediateTerminalLayoutWrite: {
   start: (layout: TerminalLayout) => Promise<void>;
 } | null = null;
 
-function mergeImmediateTerminalLayouts(
-  earlier: TerminalLayout,
-  later: TerminalLayout,
-): TerminalLayout {
-  const tabs = [...(earlier.tabs ?? [])];
-  for (const tab of later.tabs ?? []) {
-    const existingIndex = tabs.findIndex((candidate) => candidate.id === tab.id);
-    if (existingIndex === -1) tabs.push(tab);
-    else tabs[existingIndex] = tab;
-  }
-  return {
-    tabs,
-    activeTabId: later.activeTabId ?? earlier.activeTabId,
-    sidebarOpen: later.sidebarOpen ?? earlier.sidebarOpen,
-  };
-}
-
 function enqueueTerminalLayoutWrite(
   layout: TerminalLayout,
   options: {
     keepalive: boolean;
     startImmediately?: boolean;
+    preserveRuntimeReferences?: boolean;
     layoutRevision?: number;
     failureMessage: string;
   },
@@ -158,7 +145,9 @@ function enqueueTerminalLayoutWrite(
     activeTerminalLayoutWrite = {
       generation,
       controller,
+      layout: writeLayout,
       startImmediately: options.startImmediately === true,
+      preserveRuntimeReferences: options.preserveRuntimeReferences === true,
       layoutRevision: options.layoutRevision ?? generation,
     };
     try {
@@ -200,7 +189,7 @@ function enqueueTerminalLayoutWrite(
       };
     } else if (layoutRevision >= pendingImmediateTerminalLayoutWrite.layoutRevision) {
       pendingImmediateTerminalLayoutWrite = {
-        layout: mergeImmediateTerminalLayouts(
+        layout: mergeTerminalLayoutSnapshots(
           pendingImmediateTerminalLayoutWrite.layout,
           layout,
         ),
@@ -208,7 +197,7 @@ function enqueueTerminalLayoutWrite(
         start: performWrite,
       };
     } else {
-      pendingImmediateTerminalLayoutWrite.layout = mergeImmediateTerminalLayouts(
+      pendingImmediateTerminalLayoutWrite.layout = mergeTerminalLayoutSnapshots(
         layout,
         pendingImmediateTerminalLayoutWrite.layout,
       );
@@ -227,8 +216,12 @@ function enqueueTerminalLayoutWrite(
           return;
         }
         const priorTail = terminalLayoutWriteTail;
-        activeTerminalLayoutWrite?.controller.abort();
-        const write = pending.start(pending.layout);
+        const active = activeTerminalLayoutWrite;
+        const layout = active?.preserveRuntimeReferences
+          ? mergeTerminalLayoutSnapshots(active.layout, pending.layout)
+          : pending.layout;
+        active?.controller.abort();
+        const write = pending.start(layout);
         terminalLayoutWriteTail = Promise.allSettled([priorTail, write])
           .then(() => undefined);
       });
@@ -320,6 +313,7 @@ function runtimeLayoutSessions(snapshot: ShellSessionSnapshot | null) {
 async function persistMigratedTerminalLayout(layout: TerminalLayout): Promise<void> {
   await enqueueTerminalLayoutWrite(layout, {
     keepalive: false,
+    preserveRuntimeReferences: true,
     failureMessage: "Failed to persist migrated terminal layout",
   });
 }

@@ -17,6 +17,60 @@ export interface TerminalLayout {
   sidebarOpen?: boolean;
 }
 
+type Pane = Extract<PaneNode, { type: "pane" }>;
+
+function findPane(node: PaneNode, paneId: string): Pane | null {
+  if (node.type === "pane") return node.id === paneId ? node : null;
+  return findPane(node.children[0], paneId) ??
+    findPane(node.children[1], paneId);
+}
+
+function mergePaneSnapshots(earlier: PaneNode, later: PaneNode): PaneNode {
+  if (later.type === "split") {
+    return {
+      ...later,
+      children: [
+        mergePaneSnapshots(earlier, later.children[0]),
+        mergePaneSnapshots(earlier, later.children[1]),
+      ],
+    };
+  }
+  const priorPane = findPane(earlier, later.id);
+  if (!priorPane?.runtimeId || later.runtimeId) return later;
+  return {
+    ...later,
+    sessionId: priorPane.sessionId,
+    runtimeId: priorPane.runtimeId,
+    displayName: priorPane.displayName,
+    compatMode: priorPane.compatMode,
+  };
+}
+
+export function mergeTerminalLayoutSnapshots(
+  earlier: TerminalLayout,
+  later: TerminalLayout,
+): TerminalLayout {
+  const tabs = [...(earlier.tabs ?? [])];
+  for (const laterTab of later.tabs ?? []) {
+    const index = tabs.findIndex((tab) => tab.id === laterTab.id);
+    if (index === -1) {
+      tabs.push(laterTab);
+      continue;
+    }
+    const earlierTab = tabs[index]!;
+    tabs[index] = {
+      ...earlierTab,
+      ...laterTab,
+      paneTree: mergePaneSnapshots(earlierTab.paneTree, laterTab.paneTree),
+    };
+  }
+  return {
+    tabs,
+    activeTabId: later.activeTabId ?? earlier.activeTabId,
+    sidebarOpen: later.sidebarOpen ?? earlier.sidebarOpen,
+  };
+}
+
 export interface RuntimeLayoutSession {
   name: string;
   runtimeId?: string;

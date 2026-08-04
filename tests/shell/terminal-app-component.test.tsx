@@ -3525,6 +3525,76 @@ describe("TerminalApp", () => {
     migratingView.unmount();
   });
 
+  it("carries an active runtime-reference migration into a sibling pagehide save", async () => {
+    let finishMigration: ((response: Response) => void) | undefined;
+    const layoutWrites: Array<{ body: string; signal?: AbortSignal | null }> = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        layoutWrites.push({ body: String(init.body), signal: init.signal });
+        if (layoutWrites.length === 1) {
+          return new Promise<Response>((resolve) => { finishMigration = resolve; });
+        }
+        return Promise.resolve(mockJsonResponse({ ok: true }));
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve(mockJsonResponse({
+          tabs: [{ id: "bench-tab", label: "old-bench", paneTree: {
+            type: "pane", id: "bench-pane", cwd: "projects",
+            sessionId: "old-bench",
+          } }],
+          activeTabId: "bench-tab",
+        }));
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve(mockJsonResponse({
+          sessions: [{ name: "bench",
+            runtimeId: "0123456789abcdef0123456789abcdef",
+            lifecycleState: "live", aliases: [{ name: "old-bench" }] }],
+          runtimeLifecycle: "supervised",
+        }));
+      }
+      return Promise.resolve(mockJsonResponse({ ok: true }));
+    }));
+
+    const migratingView = render(<TerminalApp />);
+    await vi.waitFor(() => expect(layoutWrites).toHaveLength(1));
+    const siblingView = render(<TerminalApp initialSessionId="sibling" />);
+    await vi.waitFor(() => expect(within(siblingView.container)
+      .getByTestId("terminal-pane-grid")).toBeTruthy());
+    const siblingProps = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+    act(() => siblingProps.onSessionAttached(
+      siblingProps.paneTree.id, "sibling-updated"));
+    await act(async () => { await Promise.resolve(); });
+    act(() => window.dispatchEvent(new Event("pagehide")));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(layoutWrites).toHaveLength(2);
+    expect(layoutWrites[0]?.signal).toMatchObject({ aborted: true });
+    const saved = JSON.parse(layoutWrites[1]!.body) as {
+      tabs?: Array<{ paneTree: { sessionId?: string; runtimeId?: string } }>;
+    };
+    expect(saved.tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ paneTree: expect.objectContaining({
+        sessionId: "bench",
+        runtimeId: "0123456789abcdef0123456789abcdef",
+      }) }),
+      expect.objectContaining({ paneTree: expect.objectContaining({
+        sessionId: "sibling-updated",
+      }) }),
+    ]));
+
+    await act(async () => {
+      finishMigration?.(mockJsonResponse({ ok: true }));
+      await Promise.resolve();
+    });
+    siblingView.unmount();
+    migratingView.unmount();
+  });
+
   it("renders explicit interrupted recovery and keeps server errors bounded", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
