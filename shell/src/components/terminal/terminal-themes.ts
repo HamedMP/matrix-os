@@ -39,7 +39,9 @@ const palettes: Record<string, AnsiPalette> = {
     brightWhite: "#F0EFE5",
   },
   "matrix-shell-light": {
-    black: "#FBF1C7",
+    // Gruvbox dark0. ANSI color 0 is an explicit foreground and must not reuse
+    // the Paper light background, otherwise SGR 30 and palette index 0 vanish.
+    black: "#282828",
     red: "#CC241D",
     green: "#79740E",
     yellow: "#B57614",
@@ -384,6 +386,21 @@ function inferMode(bg: string): "light" | "dark" {
   const b = parseInt(hex.substring(4, 6), 16);
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance < 0.5 ? "dark" : "light";
+}
+
+export const TERMINAL_MINIMUM_CONTRAST_RATIO = 4.5;
+const XTERM_DEFAULT_MINIMUM_CONTRAST_RATIO = 1;
+
+/**
+ * Keep contrast enforcement terminal-local and bounded to light backgrounds.
+ * xterm applies this option in its normal renderer and the WebGL addon.
+ */
+export function getTerminalMinimumContrastRatio(
+  theme: Pick<XtermTheme, "background">,
+): number {
+  return inferMode(theme.background) === "light"
+    ? TERMINAL_MINIMUM_CONTRAST_RATIO
+    : XTERM_DEFAULT_MINIMUM_CONTRAST_RATIO;
 }
 
 export function getAnsiPalette(themeSlug: string, backgroundHex: string): AnsiPalette {

@@ -66,38 +66,35 @@ jobs:
           MAC_CERTIFICATE_PASSWORD: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE_PASSWORD || secrets.CSC_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -n "${MAC_CERTIFICATE:-}" ]; then
-            cert_delimiter="MATRIX_DESKTOP_CERT_$(uuidgen | tr '[:lower:]' '[:upper:]' | tr -d '-')"
-            password_delimiter="MATRIX_DESKTOP_CERT_PASSWORD_$(uuidgen | tr '[:lower:]' '[:upper:]' | tr -d '-')"
-            {
-              echo "CSC_LINK<<$cert_delimiter"
-              printf '%s\n' "$MAC_CERTIFICATE"
-              echo "$cert_delimiter"
-              echo "CSC_KEY_PASSWORD<<$password_delimiter"
-              printf '%s\n' "${MAC_CERTIFICATE_PASSWORD:-}"
-              echo "$password_delimiter"
-            } >> "$GITHUB_ENV"
-          else
-            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+          if [ -z "${MAC_CERTIFICATE:-}" ]; then
+            echo "MATRIX_DESKTOP_MAC_CERTIFICATE or CSC_LINK is required" >&2
+            exit 1
           fi
+          if [ -z "${MAC_CERTIFICATE_PASSWORD:-}" ]; then
+            echo "MATRIX_DESKTOP_MAC_CERTIFICATE_PASSWORD or CSC_KEY_PASSWORD is required" >&2
+            exit 1
+          fi
+          cert_delimiter="MATRIX_DESKTOP_CERT_$(uuidgen | tr '[:lower:]' '[:upper:]' | tr -d '-')"
+          password_delimiter="MATRIX_DESKTOP_CERT_PASSWORD_$(uuidgen | tr '[:lower:]' '[:upper:]' | tr -d '-')"
+          {
+            echo "CSC_LINK<<$cert_delimiter"
+            printf '%s\n' "$MAC_CERTIFICATE"
+            echo "$cert_delimiter"
+            echo "CSC_KEY_PASSWORD<<$password_delimiter"
+            printf '%s\n' "$MAC_CERTIFICATE_PASSWORD"
+            echo "$password_delimiter"
+          } >> "$GITHUB_ENV"
 
       - name: Validate Apple notarization secrets
         shell: bash
         run: |
           set -euo pipefail
-          present=0
-          missing=0
           for var in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            if [ -n "${!var:-}" ]; then
-              present=$((present + 1))
-            else
-              missing=$((missing + 1))
+            if [ -z "${!var:-}" ]; then
+              echo "Missing required Apple notarization secret: $var" >&2
+              exit 1
             fi
           done
-          if [ "$present" -gt 0 ] && [ "$missing" -gt 0 ]; then
-            echo "APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set together for notarization." >&2
-            exit 1
-          fi
 
       - name: Apply desktop release version
         if: ${{ inputs.version != '' || inputs.version_suffix != '' }}
@@ -169,7 +166,27 @@ jobs:
             exit 1
           fi
 
-      - name: Smoke test macOS DMG mount
+      - name: Verify macOS signature and notarization
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find desktop/dist -maxdepth 2 -type d -name "Matrix OS.app" -print -quit)"
+          if [ -z "$app_path" ]; then
+            echo "Missing unpacked macOS app for signature verification" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign -dv --verbose=4 "$app_path" 2>&1 \
+            | grep "Authority=Developer ID Application" >/dev/null
+          xcrun stapler validate "$app_path"
+          spctl --assess --type execute --verbose=4 "$app_path"
+          if pnpm exec asar list "$app_path/Contents/Resources/app.asar" \
+            | grep "node_modules/@matrix-os/contracts" >/dev/null; then
+            echo "Packaged app contains raw @matrix-os/contracts sources" >&2
+            exit 1
+          fi
+
+      - name: Smoke test macOS DMG mount and Launch smoke test macOS app
         shell: bash
         env:
           ARTIFACT_BASE: ${{ steps.mac_artifact.outputs.artifact_base }}
@@ -178,7 +195,12 @@ jobs:
           dmg_path="desktop/dist/${ARTIFACT_BASE}.dmg"
           mount_dir="$(mktemp -d)"
           copy_dir="$(mktemp -d)"
+          app_pid=""
           cleanup() {
+            if [ -n "$app_pid" ]; then
+              kill "$app_pid" 2>/dev/null || true
+              wait "$app_pid" 2>/dev/null || true
+            fi
             hdiutil detach "$mount_dir" -quiet || true
             rm -rf "$mount_dir" "$copy_dir"
           }
@@ -187,6 +209,24 @@ jobs:
           ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"
           if [ ! -x "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" ]; then
             echo "Copied macOS app is missing executable entrypoint" >&2
+            exit 1
+          fi
+          app_log="$copy_dir/matrix-os-launch.log"
+          OPERATOR_USER_DATA_DIR="$copy_dir/user-data" \
+            "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" --disable-gpu >"$app_log" 2>&1 &
+          app_pid=$!
+          for _ in {1..10}; do
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              wait "$app_pid" || true
+              cat "$app_log"
+              echo "Packaged macOS app exited during launch smoke test" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          if grep -q "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING" "$app_log"; then
+            cat "$app_log"
+            echo "Packaged macOS app attempted to load raw TypeScript from node_modules" >&2
             exit 1
           fi
 

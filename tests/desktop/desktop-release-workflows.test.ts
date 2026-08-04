@@ -59,10 +59,19 @@ describe("desktop release workflows", () => {
     expect(config).not.toContain("MATRIX_DESKTOP_UPDATE_CHANNEL ?? process.env.OPERATOR_UPDATE_CHANNEL");
   });
 
-  it("bundles preload runtime schema dependencies for sandboxed IPC validation", () => {
-    const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
+  it("keeps raw workspace TypeScript out of the packaged app archive", () => {
+    const builder = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
 
-    expect(config).toContain('externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })');
+    expect(builder).toContain('- "!**/node_modules/@matrix-os/contracts/**"');
+  });
+
+  it("bundles runtime schema dependencies into the Electron main process", () => {
+    const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
+    const bundledContracts = config.match(
+      /externalizeDepsPlugin\(\{ exclude: \["zod", "@matrix-os\/contracts"\] \}\)/g,
+    );
+
+    expect(bundledContracts).toHaveLength(2);
   });
 
   it("records the full canary app version in the release manifest", () => {
@@ -77,6 +86,24 @@ describe("desktop release workflows", () => {
     expect(workflow).not.toContain("version_suffix:");
   });
 
+  it("recreates the disposable canary release after preparing the complete artifact set", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
+    const downloadIndex = workflow.indexOf("uses: actions/download-artifact@v6");
+    const manifestIndex = workflow.indexOf("name: Generate release manifest");
+    const notesIndex = workflow.indexOf("name: Write release notes");
+    const cleanupIndex = workflow.indexOf("name: Remove previous desktop-canary release");
+    const publishIndex = workflow.indexOf("name: Publish desktop-canary prerelease");
+
+    expect(workflow).toContain("GH_TOKEN: ${{ github.token }}");
+    expect(workflow).toContain("gh release delete desktop-canary --yes");
+    expect(workflow).not.toContain("gh release delete desktop-canary --yes --cleanup-tag");
+    expect(downloadIndex).toBeGreaterThan(-1);
+    expect(manifestIndex).toBeGreaterThan(downloadIndex);
+    expect(notesIndex).toBeGreaterThan(manifestIndex);
+    expect(cleanupIndex).toBeGreaterThan(notesIndex);
+    expect(publishIndex).toBeGreaterThan(cleanupIndex);
+  });
+
   it("patches exact release versions and validates notarization inputs before packaging", () => {
     const build = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
     const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
@@ -84,12 +111,21 @@ describe("desktop release workflows", () => {
 
     expect(build).toContain("Validate Apple notarization secrets");
     expect(build).toContain("Prepare mac signing environment");
-    expect(build).toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
+    expect(build).toContain("MATRIX_DESKTOP_MAC_CERTIFICATE or CSC_LINK is required");
+    expect(build).toContain("MATRIX_DESKTOP_MAC_CERTIFICATE_PASSWORD or CSC_KEY_PASSWORD is required");
+    expect(build).not.toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
     expect(build).toContain("cert_delimiter=\"MATRIX_DESKTOP_CERT_$(uuidgen");
     expect(build).toContain("password_delimiter=\"MATRIX_DESKTOP_CERT_PASSWORD_$(uuidgen");
     expect(build).toContain("MAC_CERTIFICATE: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
     expect(build).not.toContain("CSC_LINK: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
-    expect(build).toContain("APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set together");
+    expect(build).toContain("Missing required Apple notarization secret");
+    expect(build).toContain("Verify macOS signature and notarization");
+    expect(build).toContain('codesign --verify --deep --strict --verbose=2 "$app_path"');
+    expect(build).toContain('grep "Authority=Developer ID Application" >/dev/null');
+    expect(build).toContain('xcrun stapler validate "$app_path"');
+    expect(build).toContain('spctl --assess --type execute --verbose=4 "$app_path"');
+    expect(build).toContain("Launch smoke test macOS app");
+    expect(build).toContain("ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING");
     expect(build).toContain("Apply desktop release version");
     expect(build).toContain("RELEASE_VERSION: ${{ inputs.version }}");
     expect(build).toContain("j.version = exact ||");

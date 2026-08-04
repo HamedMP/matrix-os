@@ -104,6 +104,33 @@ codex plugin remove matrix-onboarding@matrix-os
 codex plugin add matrix-os@matrix-os
 ```
 
+## Move a Local Task to Matrix
+
+The repo-scoped `matrix-handoff` skill under `.agents/skills/matrix-handoff/` safely moves the
+active working tree and a continuation brief to a new project directory on the user's Matrix
+computer, then starts Codex or Claude there. Claude also exposes the workflow as
+`/matrix-handoff` through `.claude/commands/matrix-handoff.md`.
+
+The workflow has two explicit phases:
+
+1. Preview the filtered file count, optional repository-matched transcript, destination, agent,
+   and a SHA-256 scope approval token.
+2. After the user approves that exact scope, rerun with `--approve TOKEN`. The script stages the
+   inputs again and refuses to upload if the files, brief, transcript, agent, profile, or
+   destination basis changed after preview.
+
+Common secret files, `.env` files, private keys, `.git`, dependencies, and generated output are
+excluded. Use `--no-history` for a summary-only handoff that does not discover or upload a raw
+agent transcript. Authentication is never copied; GitHub and the selected coding agent must use
+their own browser/device flow or Matrix-managed key inside the runtime.
+
+Example prompts:
+
+```text
+Use $matrix-handoff to move this task to Matrix with Codex, using --no-history.
+/matrix-handoff --agent claude --no-history
+```
+
 ## Preconfigure Agent In Matrix
 
 Recommended target state:

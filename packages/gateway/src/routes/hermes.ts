@@ -22,6 +22,13 @@ import {
   isRequestPrincipalError,
   mapRequestPrincipalError,
 } from "../request-principal.js";
+import {
+  createHermesDashboardClient,
+  HermesUnavailableError,
+  type HermesDashboardClient,
+} from "../agent-config/hermes-client.js";
+
+export { validateHermesDashboardUrl } from "../agent-config/hermes-client.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -35,88 +42,6 @@ const SAFE_SLUG = /^[a-z][a-z0-9_-]{0,62}$/;
 
 // PairingId: UUID v4 format or simple alphanumeric token up to 128 chars.
 const PAIRING_ID_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
-
-// ---------------------------------------------------------------------------
-// URL validation (exported for tests)
-// ---------------------------------------------------------------------------
-
-/**
- * Validate that the given URL resolves to loopback (127.x, ::1, localhost).
- * Throws if the URL is non-loopback to prevent SSRF.
- */
-export function validateHermesDashboardUrl(rawUrl: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch (err) {
-    console.error("[hermes-proxy] invalid HERMES_DASHBOARD_URL:", err instanceof Error ? err.message : typeof err);
-    throw new Error(`HERMES_DASHBOARD_URL is not a valid URL: ${rawUrl}`);
-  }
-
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
-
-  // IPv6 loopback
-  if (hostname === "::1") return;
-
-  // Hostname "localhost" acceptable (resolves to 127.x or ::1 on
-  // well-configured hosts).  Residual DNS-rebinding risk documented in §4.
-  if (hostname === "localhost") return;
-
-  // IPv4: must start with 127.
-  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-    if (hostname.startsWith("127.")) return;
-    throw new Error(
-      `HERMES_DASHBOARD_URL must resolve to loopback; got ${hostname}`,
-    );
-  }
-
-  throw new Error(
-    `HERMES_DASHBOARD_URL must be a loopback address (127.x, ::1, localhost); got ${hostname}`,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Upstream fetch helper
-// ---------------------------------------------------------------------------
-
-const DEFAULT_HERMES_BASE_URL = "http://127.0.0.1:9119";
-
-function getBaseUrl(): string {
-  return process.env.HERMES_DASHBOARD_URL ?? DEFAULT_HERMES_BASE_URL;
-}
-
-class HermesUnavailableError extends Error {
-  constructor(cause?: unknown) {
-    super("Hermes upstream is unavailable");
-    this.name = "HermesUnavailableError";
-    if (cause !== undefined) this.cause = cause;
-  }
-}
-
-type FetchInit = Omit<RequestInit, "signal" | "redirect">;
-
-/**
- * Fetch from Hermes dashboard.
- * - Hard timeout of 10 s.
- * - redirect: "error" (no redirect following).
- * - Maps connection/abort errors → HermesUnavailableError.
- */
-async function hermesFetch(path: string, init: FetchInit = {}): Promise<Response> {
-  const url = `${getBaseUrl()}${path}`;
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: AbortSignal.timeout(10_000),
-      redirect: "error",
-    });
-  } catch (err) {
-    console.error(
-      "[hermes-proxy] upstream fetch failed:",
-      err instanceof Error ? err.message : String(err),
-    );
-    throw new HermesUnavailableError(err);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Response helpers (use `any` for c — consistent with canvas/routes.ts pattern)
@@ -192,7 +117,7 @@ const TelegramOnboardingApplySchema = z.object({
 // ---------------------------------------------------------------------------
 
 export interface HermesRouteDeps {
-  // Reserved — upstream base URL comes from process.env.HERMES_DASHBOARD_URL.
+  client?: HermesDashboardClient;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +126,7 @@ export interface HermesRouteDeps {
 
 export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
   const app = new Hono();
+  const hermesFetch = (_deps.client ?? createHermesDashboardClient()).fetch;
 
   // ------------------------------------------------------------------
   // GET /status  (aggregates /api/status + /api/model/info into coarse shape)

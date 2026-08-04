@@ -8,6 +8,7 @@ directories:
 files:
   - out/**
   - "!**/.vite/**"
+  - "!**/node_modules/@matrix-os/contracts/**"
 asarUnpack: []
 protocols:
   - name: Matrix OS

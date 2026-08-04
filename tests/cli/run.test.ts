@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import {
   createOrAttachRunSession,
   exitCodeFromRunResult,
+  hasUnsupportedLongTtySpelling,
   inferRunAgent,
   parseRunCommand,
   quoteCommandArg,
@@ -159,6 +160,14 @@ describe("run CLI command", () => {
     expect(parseRunCommand(["--tty", "--", "claude"])).toEqual(["claude"]);
   });
 
+  it("detects unsupported long t spellings only in Matrix arguments", () => {
+    expect(hasUnsupportedLongTtySpelling(["--t", "--", "claude"])).toBe(true);
+    expect(hasUnsupportedLongTtySpelling(["--t=true", "--", "claude"])).toBe(true);
+    expect(hasUnsupportedLongTtySpelling(["--t=false", "--", "claude"])).toBe(true);
+    expect(hasUnsupportedLongTtySpelling(["--", "echo", "--t"])).toBe(false);
+    expect(hasUnsupportedLongTtySpelling(["--", "echo", "--t=true"])).toBe(false);
+  });
+
   it("shows the standard -t and --tty flags in help", async () => {
     const result = await runMatrixCli(["run", "--help"]);
 
@@ -166,6 +175,22 @@ describe("run CLI command", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toMatch(/-t, --tty/);
     expect(result.stdout).not.toMatch(/\s--t(?:\s|$)/m);
+  });
+
+  it("rejects the unsupported --t spelling", async () => {
+    const result = await runMatrixCli(["run", "--t", "--", "echo", "ok"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("`--t` is not supported; use `-t` or `--tty`");
+  });
+
+  it("rejects an unsupported --t=value spelling", async () => {
+    const result = await runMatrixCli(["run", "--t=true", "--", "echo", "ok"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("`--t` is not supported; use `-t` or `--tty`");
   });
 
   it("infers agents behind env and inline environment assignments", () => {

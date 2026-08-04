@@ -599,8 +599,20 @@ describe("SSRF guard: HERMES_DASHBOARD_URL validation", () => {
     );
     // External host — should throw
     expect(() => validateHermesDashboardUrl("http://example.com:9119")).toThrow();
-    expect(() => validateHermesDashboardUrl("http://192.168.1.100:9119")).toThrow();
+    expect(() => validateHermesDashboardUrl("http://192.168.1.100:9119"))
+      .toThrow(/192\.168\.1\.100/);
     expect(() => validateHermesDashboardUrl("http://0.0.0.0:9119")).toThrow();
+  });
+
+  it("rejects non-HTTP loopback URL schemes", async () => {
+    const { validateHermesDashboardUrl } = await import(
+      "../../packages/gateway/src/routes/hermes.js"
+    );
+
+    expect(() => validateHermesDashboardUrl("file://127.0.0.1/etc/passwd"))
+      .toThrow(/file:/);
+    expect(() => validateHermesDashboardUrl("ws://127.0.0.1:9119"))
+      .toThrow(/ws:/);
   });
 
   it("accepts loopback addresses", async () => {

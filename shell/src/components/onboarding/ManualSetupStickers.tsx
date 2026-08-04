@@ -4,10 +4,10 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2Icon, GithubIcon, MessageCircleIcon, SparklesIcon, TerminalIcon, XIcon } from "lucide-react";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
-import { createTerminalLaunchPath } from "@/lib/terminal-launch";
+import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 
 interface ManualSetupStickersProps {
-  onOpenTerminal: (path: string) => void;
+  onOpenTerminal: (action: TerminalLaunchAction) => void;
   onAskHermes: () => void;
   onClose: () => void;
 }
@@ -245,11 +245,11 @@ export function ManualSetupStickers({ onOpenTerminal, onAskHermes, onClose }: Ma
             Hermes keeps Matrix useful even when no external agent is connected.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            <StickerButton onClick={() => onOpenTerminal(createTerminalLaunchPath("claude-login"))}>
+            <StickerButton onClick={() => onOpenTerminal("claude-login")}>
               <TerminalIcon className="size-4" aria-hidden="true" />
               Open Claude login
             </StickerButton>
-            <StickerButton variant="light" onClick={() => onOpenTerminal(createTerminalLaunchPath("codex-login"))}>
+            <StickerButton variant="light" onClick={() => onOpenTerminal("codex-login")}>
               <SparklesIcon className="size-4" aria-hidden="true" />
               Open Codex login
             </StickerButton>
@@ -273,7 +273,7 @@ export function ManualSetupStickers({ onOpenTerminal, onAskHermes, onClose }: Ma
             created inside the runtime. Do not upload local private keys.
           </p>
           <div className="mt-5">
-            <StickerButton onClick={() => onOpenTerminal(createTerminalLaunchPath("github-ssh-login"))}>
+            <StickerButton onClick={() => onOpenTerminal("github-ssh-login")}>
               <GithubIcon className="size-4" aria-hidden="true" />
               Run GitHub browser login
             </StickerButton>

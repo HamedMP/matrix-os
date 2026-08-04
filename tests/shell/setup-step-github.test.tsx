@@ -3,15 +3,8 @@ import React from "react";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/terminal-launch", () => ({
-  createTerminalLaunchPath: (action: string) => `__terminal__:setup-${action}-abc123`,
-}));
-
 async function load() {
   vi.resetModules();
-  vi.mock("@/lib/terminal-launch", () => ({
-    createTerminalLaunchPath: (action: string) => `__terminal__:setup-${action}-abc123`,
-  }));
   return await import("../../shell/src/components/onboarding/steps/GithubStep.js");
 }
 
@@ -24,7 +17,7 @@ describe("GithubStep", () => {
     vi.restoreAllMocks();
   });
 
-  it("case 1: expanded + not authenticated → clicking 'Authorize GitHub' calls onOpenTerminal with github-ssh-login path", async () => {
+  it("case 1: expanded + not authenticated → clicking 'Authorize GitHub' calls onOpenTerminal with github-ssh-login", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url: any) => {
       if (String(url).includes("/api/github/status")) {
         return new Response(
@@ -52,9 +45,7 @@ describe("GithubStep", () => {
 
     fireEvent.click(screen.getByText("Authorize GitHub"));
 
-    expect(onOpenTerminal).toHaveBeenCalledWith(
-      expect.stringContaining("github-ssh-login"),
-    );
+    expect(onOpenTerminal).toHaveBeenCalledWith("github-ssh-login");
   });
 
   it("case 2: authenticated user → renders @hamedmp", async () => {

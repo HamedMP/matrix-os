@@ -54,7 +54,11 @@ import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
-import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
+import {
+  enqueueTerminalLaunch,
+  TERMINAL_SETUP_WINDOW_PATH,
+  type TerminalLaunchAction,
+} from "@/lib/terminal-launch";
 import {
   loadShellSnapshot,
   saveShellSnapshot,
@@ -473,7 +477,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
   }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
-  const openSetupTerminal = (launchPath: string) => {
+  const openSetupTerminal = (action: TerminalLaunchAction) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
     const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
@@ -506,7 +510,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           );
         }
       }
-      enqueueTerminalLaunch(launchPath, win?.id);
+      enqueueTerminalLaunch(action, win?.id);
     });
   };
 
@@ -1711,7 +1715,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         </div>
       </div>
 
-      <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <Settings
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onOpenAgentTerminal={(action) => {
+          setSettingsOpen(false);
+          openSetupTerminal(action);
+        }}
+      />
       {/* Single ChatPopover instance shared by desktop + mobile dock
           buttons. Lives outside both dock-orientation branches so it
           isn't unmounted when the viewport orientation flips. */}

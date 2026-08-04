@@ -83,6 +83,15 @@ jobs:
         run: |
           printf 'Automated Matrix OS Desktop canary for %s.\n' "$GITHUB_SHA" > RELEASE_NOTES.md
 
+      - name: Remove previous desktop-canary release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view desktop-canary >/dev/null 2>&1; then
+            gh release delete desktop-canary --yes
+          fi
+
       - name: Publish desktop-canary prerelease
         uses: softprops/action-gh-release@v3
         with:

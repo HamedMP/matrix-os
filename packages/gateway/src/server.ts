@@ -184,7 +184,12 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
-import { createHermesRoutes, validateHermesDashboardUrl } from "./routes/hermes.js";
+import { createHermesRoutes } from "./routes/hermes.js";
+import {
+  createHermesDashboardClient,
+  validateHermesDashboardUrl,
+} from "./agent-config/hermes-client.js";
+import { createAgentRuntimeServices } from "./agent-config/runtime-services.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -2169,7 +2174,10 @@ export async function createGateway(config: GatewayConfig) {
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
                 }
-              }, undefined, abortController)
+              }, undefined, abortController, {
+                model: parsed.model,
+                effort: parsed.effort,
+              })
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
                 captureGatewayProductEvent("agent_task_dispatch_failed", {
@@ -3970,18 +3978,34 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  // T978-T979: Settings API routes
-  const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
-  app.route("/api/settings", settingsRoutes);
-
   // Spec 101: Hermes dashboard proxy (loopback only, auth-gated)
+  const hermesDashboardUrl = process.env.HERMES_DASHBOARD_URL
+    ?? "http://127.0.0.1:9119";
   try {
-    validateHermesDashboardUrl(process.env.HERMES_DASHBOARD_URL ?? "http://127.0.0.1:9119");
+    validateHermesDashboardUrl(hermesDashboardUrl);
   } catch (err) {
-    console.error("[hermes-proxy] startup validation failed:", err instanceof Error ? err.message : String(err));
+    console.error(
+      "[hermes-proxy] startup validation failed:",
+      err instanceof Error ? err.message : "UnknownError",
+    );
     throw err;
   }
-  app.route("/api/hermes", createHermesRoutes());
+  const hermesClient = createHermesDashboardClient({ baseUrl: hermesDashboardUrl });
+  const agentRuntimeServices = createAgentRuntimeServices({
+    homePath,
+    client: hermesClient,
+  });
+  await agentRuntimeServices.controller.reconcile();
+
+  // T978-T979: Settings API routes
+  const settingsRoutes = createSettingsRoutes({
+    homePath,
+    channelManager,
+    agentRuntimeSource: agentRuntimeServices.source,
+    agentRuntimeController: agentRuntimeServices.controller,
+  });
+  app.route("/api/settings", settingsRoutes);
+  app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
   if (messagingRepository) {
     app.route("/api/messages", createMessagingRoutes({
@@ -4266,6 +4290,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await agentRuntimeServices.controller.close();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();

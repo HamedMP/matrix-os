@@ -1,0 +1,4 @@
+interface:
+  display_name: "Matrix Handoff"
+  short_description: "Move the current coding task to Matrix OS"
+  default_prompt: "Package this repository and current task context safely, upload it to my Matrix computer, and continue there."

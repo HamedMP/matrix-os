@@ -2593,11 +2593,18 @@ describe("platform proxy routing", () => {
     expect(html).toContain("function clerkSignOutWithTimeout()");
     expect(html).toContain("window.location.replace(signOutTarget)");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
-    expect(html).toContain("signal: controller.signal");
-    expect(html).toContain("window.clearTimeout(timeoutId);");
+    expect(html).toContain("signal: AbortSignal.timeout(10000)");
     expect(html).toContain(".auth-card.default-installs-card");
+    expect(html).toContain("state.className = 'settings-window';");
+    expect(html).toContain("title.textContent = 'Settings';");
+    expect(html).toContain("sidebar.className = 'settings-sidebar';");
+    expect(html).toContain("activeItem.textContent = 'Default installs';");
+    expect(html).toContain("billingItem.textContent = 'Billing';");
+    expect(html).toContain("billingStatus.textContent = 'Completed';");
+    expect(html).toContain("unavailableStatus.textContent = 'Unavailable until your VPS is ready';");
+    expect(html).toContain("accountFooter.className = 'settings-account-footer';");
     expect(html).toContain("setDefaultInstallsCard(true);");
-    expect(html).toContain("state.className = 'session-state default-installs-state';");
+    expect(html).toContain("content.className = 'default-installs-state';");
     expect(html).toContain("kicker.textContent = 'Default installs';");
     expect(html).toContain("heading.textContent = 'Choose what Matrix installs first';");
     expect(html).toContain("toolsHeading.textContent = 'Developer tools';");
@@ -2614,7 +2621,6 @@ describe("platform proxy routing", () => {
     expect(html).toContain("stripCheckoutReturnParams()");
     expect(html).toContain("if (provisionStarted)");
     expect(html).toContain("maxBillingConfirmationPolls");
-    expect(html).toContain("provisioningPolls = 0;");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
@@ -2631,14 +2637,18 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain("showCheckoutUnavailableState();");
     expect(html).not.toContain("Opening secure checkout");
     expect(html).toContain("retryProvisioningAfterBillingDelay(developerTools)");
-    expect(html).toContain("Confirming billing");
+    expect(html).toContain("setProvisionControls(false, null);\n      billingRetryTimeoutId = window.setTimeout");
     expect(html).toContain("provisioning_conflict");
-    expect(html).toContain("if (body && body.code === 'provisioning_conflict') {\n                billingConfirmationPolls = 0;\n                provisioningPolls = 0;");
+    expect(html).toContain("if (body && body.code === 'provisioning_conflict') {\n                billingConfirmationPolls = 0;\n                continueWithClerkSession(true);");
     expect(html).toContain("checkoutJustCompleted = false;");
-    expect(html).toContain("Starting your Matrix computer");
-    expect(html).toContain("Preparing your Matrix computer");
+    expect(html).not.toContain("Starting your Matrix computer");
+    expect(html).not.toContain("Preparing your Matrix computer");
     expect(html).toContain("method: 'DELETE'");
-    expect(html).toContain("Loading your Matrix computer");
+    expect(html).not.toContain("Loading your Matrix computer");
+    expect(html).not.toContain("function pollProvisioningSession()");
+    expect(html).toContain("continueWithClerkSession(true);");
+    expect(html).toContain("setProvisionControls(true, null);");
+    expect(html).toContain("setProvisionControls(false, provisioningRetryError);");
     expect(html).not.toContain("ask the operator to provision this account");
     expect(html).not.toContain("You are already signed in");
   });
@@ -2660,7 +2670,7 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("if (res.status === 402) {\n            openBillingSettingsFromClerkSession();");
+    expect(html).toContain("if (res.status === 402) {\n            if (afterProvision) showProvisionRetryError();\n            else openBillingSettingsFromClerkSession();");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
@@ -3001,7 +3011,7 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(fetchMock).toHaveBeenCalled();
-    expect(html).toContain("Loading your Matrix computer");
+    expect(html).not.toContain("Loading your Matrix computer");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
@@ -3012,6 +3022,76 @@ describe("platform proxy routing", () => {
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Matrix OS shell unavailable");
     expect(html).not.toContain("Open Billing settings");
+  });
+
+  it("uses the dedicated existing-brand fallback when marked auth-shell loading fails", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    await deleteContainer(db, "alice");
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?billing=setup&handoff=signup", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "__session=clerk-new",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("content-security-policy")).toContain("script-src 'self' 'nonce-");
+    const html = await res.text();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(html).toContain('data-matrix-signup-billing-handoff="true"');
+    expect(html).toContain('viewBox="0 0 510 660"');
+    expect(html).toContain('<span class="wordmark-text">matrix-os</span>');
+    expect(html).toContain("Loading billing status");
+    expect(html).toContain("var retryDelays = [2000, 3000, 4000];");
+    expect(html).toContain("signal: AbortSignal.timeout(10000)");
+    expect(html).not.toContain("Welcome back to Matrix");
+    expect(html).not.toContain('data-matrix-platform-fallback-auth="true"');
+  });
+
+  it("keeps genuinely signed-out marked fallback users on the dedicated page before marketing sign-in", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?billing=setup&handoff=signup", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('var marketingSignInUrl = "https://matrix-os.com/sign-in";');
+    expect(html).toContain("if (!window.Clerk.user || !window.Clerk.session)");
+    expect(html).toContain("window.location.replace(marketingSignInUrl)");
+    expect(html).not.toContain("Welcome back to Matrix");
   });
 
   it("keeps legacy no-container app-domain users on the platform auth page", async () => {
@@ -3046,11 +3126,12 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain('var redirectTarget = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";');
     expect(html).toContain('var deviceReturnTarget = "/auth/device?user_code=BCDF-GHJK";');
+    expect(html).toContain("var provisionHandoffTarget = deviceReturnTarget ? redirectTarget : '/';");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("var billingSetupTarget = ");
     expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
-    expect(html).toContain("window.location.replace(deviceReturnTarget || payload.redirectTo || redirectTarget);");
+    expect(html).toContain("window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toBe("auth shell");

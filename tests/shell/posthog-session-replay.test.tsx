@@ -11,6 +11,7 @@ const posthogMock = vi.hoisted(() => ({
   identify: vi.fn(),
   reset: vi.fn(),
   captureException: vi.fn(),
+  setPersonProperties: vi.fn(),
 }));
 
 vi.mock("posthog-js", () => ({
@@ -31,6 +32,7 @@ async function importShellPostHog() {
 describe("shell session replay init", () => {
   beforeEach(() => {
     posthogMock.init.mockClear();
+    posthogMock.setPersonProperties.mockClear();
     vi.unstubAllEnvs();
   });
 
@@ -54,6 +56,26 @@ describe("shell session replay init", () => {
       maskTextSelector: "[data-ph-mask]",
       blockSelector: ".ph-no-capture",
     });
+  });
+
+  it("sets onboarding attribution as a first-touch person property", async () => {
+    const { setPostHogPersonPropertiesOnce } = await importShellPostHog();
+
+    setPostHogPersonPropertiesOnce(
+      {
+        acquisition_source: "tiktok",
+        acquisition_source_question: "acquisition_source_v1",
+      },
+      TEST_CONFIG,
+    );
+
+    expect(posthogMock.setPersonProperties).toHaveBeenCalledWith(
+      {},
+      {
+        acquisition_source: "tiktok",
+        acquisition_source_question: "acquisition_source_v1",
+      },
+    );
   });
 
   it("keeps session recording disabled when NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY is set", async () => {

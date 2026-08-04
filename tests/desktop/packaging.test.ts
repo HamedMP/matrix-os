@@ -41,4 +41,32 @@ describe("desktop packaging", () => {
     expect(entitlementKeys).not.toContain("com.apple.security.network.client");
     expect(entitlementKeys).not.toContain("com.apple.security.files.user-selected.read-write");
   });
+
+  it("does not ship raw TypeScript workspace contracts in the app archive", () => {
+    const raw = readFileSync(join(process.cwd(), "desktop/electron-builder.yml"), "utf8");
+    const config = parse(raw) as { files?: string[] };
+    const packageJson = JSON.parse(
+      readFileSync(join(process.cwd(), "desktop/package.json"), "utf8"),
+    ) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(config.files).toContain("!**/node_modules/@matrix-os/contracts/**");
+    expect(packageJson.dependencies).not.toHaveProperty("@matrix-os/contracts");
+    expect(packageJson.devDependencies?.["@matrix-os/contracts"]).toBe("workspace:*");
+  });
+
+  it("gives electron-vite a resolvable Electron dependency in the global virtual store", () => {
+    const raw = readFileSync(join(process.cwd(), "package.json"), "utf8");
+    const packageJson = JSON.parse(raw) as {
+      pnpm?: {
+        packageExtensions?: Record<string, { dependencies?: Record<string, string> }>;
+      };
+    };
+
+    expect(packageJson.pnpm?.packageExtensions?.["electron-vite@*"]?.dependencies?.electron).toBe(
+      "^41.0.3",
+    );
+  });
 });

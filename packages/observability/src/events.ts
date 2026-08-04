@@ -24,6 +24,8 @@ export const MATRIX_TELEMETRY_EVENTS = {
   ADD_COMPUTER_FAILED: "matrix_add_computer_failed",
   BILLING_WEBHOOK_FAILED: "matrix_billing_webhook_failed",
   ONBOARDING_FAILED: "matrix_onboarding_failed",
+  ONBOARDING_ACQUISITION_SOURCE_VIEWED: "matrix_onboarding_acquisition_source_viewed",
+  ONBOARDING_ACQUISITION_SOURCE_SUBMITTED: "matrix_onboarding_acquisition_source_submitted",
   HOST_BUNDLE_RELEASE_REGISTERED: "host_bundle_release_registered",
   HOST_BUNDLE_CHANNEL_PROMOTED: "host_bundle_channel_promoted",
   RUNTIME_UPGRADE_REQUESTED: "matrix_runtime_upgrade_requested",

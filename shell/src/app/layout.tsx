@@ -1,6 +1,15 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import { Inter, Instrument_Sans, JetBrains_Mono, Cormorant_Garamond, Geist, Geist_Mono, Orbitron } from "next/font/google";
+import {
+  Cormorant_Garamond,
+  Geist,
+  Geist_Mono,
+  Instrument_Sans,
+  Instrument_Serif,
+  Inter,
+  JetBrains_Mono,
+  Orbitron,
+} from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
@@ -25,6 +34,13 @@ const inter = Inter({
 const instrumentSans = Instrument_Sans({
   variable: "--font-instrument",
   subsets: ["latin"],
+});
+
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-serif-display",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
 });
 
 const jetbrainsMono = JetBrains_Mono({
@@ -109,7 +125,7 @@ export default async function RootLayout({
       // replay without rebuilding the bundle.
       data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
-      <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable} ${geistSans.variable} ${geistMono.variable}`}>
+      <body className={`${inter.variable} ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable} ${geistSans.variable} ${geistMono.variable}`}>
         {children}
         {includePostHogIdentify ? <PostHogIdentify /> : null}
         <PwaRegister />
@@ -129,6 +145,7 @@ export default async function RootLayout({
     // build time (default /sign-in and /sign-up); without them Clerk falls
     // back to the hosted Account Portal (accounts.matrix-os.com).
     <ClerkProvider>
+      {/* react-doctor-disable-next-line react-doctor/no-render-in-render -- pre-existing document helper selects whether PostHog identity is included while preserving one shared html/body definition; it returns only this request's static document tree and owns no component state. */}
       {renderDocument(true)}
     </ClerkProvider>
   );
