@@ -3896,7 +3896,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("coalesces sibling pagehide saves to the most recently changed surface", async () => {
+  it("coalesces sibling pagehide saves without dropping either surface", async () => {
     const finishLayoutWrites: Array<(response: Response) => void> = [];
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -3965,13 +3965,13 @@ describe("TerminalApp", () => {
     ));
     expect(layoutPutCalls).toHaveLength(1);
     expect(layoutPutCalls[0]?.[1]?.signal).toMatchObject({ aborted: false });
-    expect(JSON.parse(String(layoutPutCalls[0]?.[1]?.body))).toMatchObject({
-      tabs: [{
-        paneTree: {
-          sessionId: "session-second-pagehide",
-        },
-      }],
-    });
+    const savedLayout = JSON.parse(String(layoutPutCalls[0]?.[1]?.body)) as {
+      tabs: Array<{ paneTree: { sessionId?: string } }>;
+    };
+    expect(savedLayout.tabs.map((tab) => tab.paneTree.sessionId)).toEqual([
+      "session-first-pagehide",
+      "session-second-pagehide",
+    ]);
 
     await act(async () => {
       for (const finish of finishLayoutWrites) {

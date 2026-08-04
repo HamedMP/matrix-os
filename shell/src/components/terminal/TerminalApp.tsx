@@ -117,9 +117,27 @@ let activeTerminalLayoutWrite: {
   layoutRevision: number;
 } | null = null;
 let pendingImmediateTerminalLayoutWrite: {
+  layout: TerminalLayout;
   layoutRevision: number;
-  start: () => Promise<void>;
+  start: (layout: TerminalLayout) => Promise<void>;
 } | null = null;
+
+function mergeImmediateTerminalLayouts(
+  earlier: TerminalLayout,
+  later: TerminalLayout,
+): TerminalLayout {
+  const tabs = [...(earlier.tabs ?? [])];
+  for (const tab of later.tabs ?? []) {
+    const existingIndex = tabs.findIndex((candidate) => candidate.id === tab.id);
+    if (existingIndex === -1) tabs.push(tab);
+    else tabs[existingIndex] = tab;
+  }
+  return {
+    tabs,
+    activeTabId: later.activeTabId ?? earlier.activeTabId,
+    sidebarOpen: later.sidebarOpen ?? earlier.sidebarOpen,
+  };
+}
 
 function enqueueTerminalLayoutWrite(
   layout: TerminalLayout,
@@ -131,9 +149,8 @@ function enqueueTerminalLayoutWrite(
   },
 ): Promise<void> {
   const gatewayUrl = getGatewayUrl();
-  const body = JSON.stringify(layout);
   const generation = ++terminalLayoutWriteGeneration;
-  const performWrite = async () => {
+  const performWrite = async (writeLayout = layout) => {
     if (!options.startImmediately && generation < terminalLayoutWriteGeneration) {
       return;
     }
@@ -148,7 +165,7 @@ function enqueueTerminalLayoutWrite(
       const response = await fetch(`${gatewayUrl}/api/terminal/layout`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body,
+        body: JSON.stringify(writeLayout),
         keepalive: options.keepalive,
         signal: AbortSignal.any([
           controller.signal,
@@ -175,14 +192,26 @@ function enqueueTerminalLayoutWrite(
   if (options.startImmediately) {
     const scheduleFlush = pendingImmediateTerminalLayoutWrite === null;
     const layoutRevision = options.layoutRevision ?? generation;
-    if (
-      pendingImmediateTerminalLayoutWrite === null ||
-      layoutRevision >= pendingImmediateTerminalLayoutWrite.layoutRevision
-    ) {
+    if (pendingImmediateTerminalLayoutWrite === null) {
       pendingImmediateTerminalLayoutWrite = {
+        layout,
         layoutRevision,
         start: performWrite,
       };
+    } else if (layoutRevision >= pendingImmediateTerminalLayoutWrite.layoutRevision) {
+      pendingImmediateTerminalLayoutWrite = {
+        layout: mergeImmediateTerminalLayouts(
+          pendingImmediateTerminalLayoutWrite.layout,
+          layout,
+        ),
+        layoutRevision,
+        start: performWrite,
+      };
+    } else {
+      pendingImmediateTerminalLayoutWrite.layout = mergeImmediateTerminalLayouts(
+        layout,
+        pendingImmediateTerminalLayoutWrite.layout,
+      );
     }
     if (scheduleFlush) {
       queueMicrotask(() => {
@@ -199,7 +228,7 @@ function enqueueTerminalLayoutWrite(
         }
         const priorTail = terminalLayoutWriteTail;
         activeTerminalLayoutWrite?.controller.abort();
-        const write = pending.start();
+        const write = pending.start(pending.layout);
         terminalLayoutWriteTail = Promise.allSettled([priorTail, write])
           .then(() => undefined);
       });
@@ -214,7 +243,7 @@ function enqueueTerminalLayoutWrite(
         err instanceof Error ? err.name : "unknown",
       );
     })
-    .then(performWrite);
+    .then(() => performWrite());
   terminalLayoutWriteTail = write;
   return write;
 }
