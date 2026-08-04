@@ -37,37 +37,18 @@ describe("legacy terminal migration", () => {
     const createdAt = "2026-07-25T10:00:00.000Z";
     await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
       sessions: {
-        "release-watch": {
-          name: "release-watch",
-          status: "active",
-          createdAt,
-          updatedAt: createdAt,
-          cwd: join(homePath, "projects", "example"),
-          tabs: [],
-          command: "print-secret",
-        },
-        "../escape": {
-          name: "../escape",
-          status: "active",
-          createdAt,
-          updatedAt: createdAt,
-          cwd: "/etc",
-          tabs: [],
-        },
+        "release-watch": { name: "release-watch", status: "active", createdAt,
+          updatedAt: createdAt, cwd: join(homePath, "projects", "example"),
+          tabs: [], command: "print-secret" },
+        "../escape": { name: "../escape", status: "active", createdAt,
+          updatedAt: createdAt, cwd: "/etc", tabs: [] },
       },
     }));
     await writeFile(join(homePath, "system", "sessions", "sess_alpha.json"), JSON.stringify({
-      id: "sess_alpha",
-      kind: "agent",
-      projectSlug: "example",
-      runtime: {
-        type: "zellij",
-        status: "running",
-        zellijSession: "legacy-agent-session",
-      },
-      prompt: "never-copy-this",
-      provider: "claude",
-      ownerId: "owner",
+      id: "sess_alpha", kind: "agent", projectSlug: "example",
+      runtime: { type: "zellij", status: "running",
+        zellijSession: "legacy-agent-session" },
+      prompt: "never-copy-this", provider: "claude", ownerId: "owner",
     }));
     let nextId = 0;
     const result = await migrateLegacyTerminalState({
@@ -94,23 +75,15 @@ describe("legacy terminal migration", () => {
       expect(serialized).not.toContain("claude");
       expect(serialized).not.toContain("legacy-agent-session");
     }
-    expect(await state.names.resolve("release-watch", Date.now())).toMatchObject({
-      runtimeId: IDS[0],
-      source: "canonical",
-    });
-    expect(await state.names.resolve("sess_alpha", Date.now())).toMatchObject({
-      runtimeId: IDS[1],
-      source: "canonical",
-    });
+    expect(await state.names.resolve("release-watch", Date.now()))
+      .toMatchObject({ runtimeId: IDS[0], source: "canonical" });
+    expect(await state.names.resolve("sess_alpha", Date.now()))
+      .toMatchObject({ runtimeId: IDS[1], source: "canonical" });
     const workspace = JSON.parse(await readFile(join(homePath, "system", "sessions", "sess_alpha.json"), "utf8")) as Record<string, unknown>;
     expect(workspace).toMatchObject({
-      runtime: {
-        type: "zellij",
-        status: "degraded",
-        runtimeId: IDS[1],
+      runtime: { type: "zellij", status: "degraded", runtimeId: IDS[1],
         zellijSession: `matrix-t-${IDS[1]}`,
-        fallbackReason: "terminal_runtime_interrupted",
-      },
+        fallbackReason: "terminal_runtime_interrupted" },
       writeMode: "closed",
     });
     await state.close();
@@ -118,16 +91,9 @@ describe("legacy terminal migration", () => {
   it("is idempotent and falls back to the owner home for unavailable cwd", async () => {
     const { homePath, state } = await fixture();
     await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
-      sessions: {
-        main: {
-          name: "main",
-          status: "active",
-          createdAt: "2026-07-25T10:00:00.000Z",
-          updatedAt: "2026-07-25T10:00:00.000Z",
-          cwd: "/deleted/project",
-          tabs: [],
-        },
-      },
+      sessions: { main: { name: "main", status: "active",
+        createdAt: "2026-07-25T10:00:00.000Z",
+        updatedAt: "2026-07-25T10:00:00.000Z", cwd: "/deleted/project", tabs: [] } },
     }));
     let calls = 0;
     const migrate = async () => await migrateLegacyTerminalState({
@@ -155,22 +121,12 @@ describe("legacy terminal migration", () => {
   it("keeps colliding shell and workspace records on distinct immutable runtimes", async () => {
     const { homePath, state } = await fixture();
     await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
-      sessions: {
-        main: {
-          name: "main",
-          status: "active",
-          cwd: homePath,
-        },
-      },
+      sessions: { main: { name: "main", status: "active", cwd: homePath } },
     }));
     await writeFile(join(homePath, "system", "sessions", "main.json"), JSON.stringify({
-      id: "main",
-      kind: "agent",
-      runtime: {
-        type: "zellij",
-        status: "running",
-        zellijSession: "legacy-agent-main",
-      },
+      id: "main", kind: "agent",
+      runtime: { type: "zellij", status: "running",
+        zellijSession: "legacy-agent-main" },
     }));
     let nextId = 0;
     const migrate = async () => await migrateLegacyTerminalState({
@@ -181,11 +137,8 @@ describe("legacy terminal migration", () => {
       bootId: "migration-boot",
       createId: () => IDS[nextId++]!,
     });
-    await expect(migrate()).resolves.toMatchObject({
-      migrated: 2,
-      existing: 0,
-      workspaceRecordsUpdated: 1,
-    });
+    await expect(migrate()).resolves.toMatchObject({ migrated: 2, existing: 0,
+      workspaceRecordsUpdated: 1 });
     const workspace = JSON.parse(await readFile(join(homePath, "system", "sessions", "main.json"), "utf8")) as { runtime: { runtimeId: string } };
     expect(workspace.runtime.runtimeId).toBe(IDS[1]);
     expect(workspace.runtime.runtimeId).not.toBe(IDS[0]);
@@ -194,16 +147,11 @@ describe("legacy terminal migration", () => {
     expect(receipts.map((receipt) => receipt.runtimeId).sort()).toEqual([IDS[0], IDS[1]]);
     const workspaceReceipt = receipts.find((receipt) => receipt.runtimeId === IDS[1]);
     expect(workspaceReceipt?.displayName).toMatch(/^main-agent-[0-9a-f]{12}$/);
-    expect(await state.names.resolve("main", Date.now())).toMatchObject({
-      runtimeId: IDS[0],
-    });
+    expect(await state.names.resolve("main", Date.now()))
+      .toMatchObject({ runtimeId: IDS[0] });
     expect(await state.names.resolve(workspaceReceipt!.displayName, Date.now())).toMatchObject({ runtimeId: IDS[1] });
-    await expect(migrate()).resolves.toMatchObject({
-      migrated: 0,
-      existing: 1,
-      skipped: 1,
-      workspaceRecordsUpdated: 0,
-    });
+    await expect(migrate()).resolves.toMatchObject({ migrated: 0, existing: 1,
+      skipped: 1, workspaceRecordsUpdated: 0 });
     expect(nextId).toBe(2);
     await state.close();
   });
@@ -260,15 +208,9 @@ describe("legacy terminal migration", () => {
         },
       },
     }));
-    const legacyWorkspace = {
-      id: "main",
-      kind: "agent",
-      runtime: {
-        type: "zellij",
-        status: "running",
-        zellijSession: "legacy-agent-main",
-      },
-    };
+    const legacyWorkspace = { id: "main", kind: "agent",
+      runtime: { type: "zellij", status: "running",
+        zellijSession: "legacy-agent-main" } };
     const workspacePath = join(homePath, "system", "sessions", "main.json");
     await writeFile(workspacePath, JSON.stringify(legacyWorkspace));
     let nextId = 0;
@@ -293,13 +235,53 @@ describe("legacy terminal migration", () => {
     await writeFile(join(homePath, "system", "shell-sessions.json"),
       JSON.stringify({ sessions: {} }));
     failWorkspace = false;
-    await expect(migrate()).resolves.toMatchObject({
-      migrated: 1,
-      existing: 0,
-      workspaceRecordsUpdated: 1,
-    });
+    await expect(migrate()).resolves.toMatchObject({ migrated: 1, existing: 0,
+      workspaceRecordsUpdated: 1 });
     expect(nextId).toBe(2);
     expect(await state.receipts.list()).toHaveLength(2);
+    await state.close();
+  });
+  it("preserves a workspace intent when a same-name shell appears before retry", async () => {
+    const { homePath, state } = await fixture();
+    const workspacePath = join(homePath, "system", "sessions", "main.json");
+    await writeFile(workspacePath, JSON.stringify({ id: "main", kind: "agent",
+      runtime: { type: "zellij", status: "running" } }));
+    let nextId = 0;
+    let cwdAvailable = false;
+    const migrate = async () => await migrateLegacyTerminalState({
+      homePath,
+      state,
+      resolveCwd: async (candidate) => {
+        if (!cwdAvailable) throw new Error("cwd_unavailable");
+        return await cwdResolver(homePath)(candidate);
+      },
+      resolveWorkspaceCwd: async () => "/unavailable",
+      now: () => new Date("2026-07-26T10:00:00.000Z"),
+      bootId: "migration-boot",
+      createId: () => IDS[nextId++]!,
+    });
+
+    await expect(migrate()).rejects.toThrow("cwd_unavailable");
+    expect(JSON.parse(await readFile(workspacePath, "utf8"))).toMatchObject({
+      terminalRuntimeMigration: { runtimeId: IDS[0], displayName: "main" } });
+    await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
+      sessions: { main: { name: "main", status: "active", cwd: homePath } },
+    }));
+    cwdAvailable = true;
+
+    await expect(migrate()).resolves.toMatchObject({ migrated: 2, existing: 0 });
+    expect(nextId).toBe(2);
+    expect(await state.names.resolve("main", Date.now()))
+      .toMatchObject({ runtimeId: IDS[1] });
+    const migratedWorkspace = JSON.parse(await readFile(workspacePath, "utf8")) as {
+      terminalRuntimeMigration: { runtimeId: string; displayName: string };
+    };
+    expect(migratedWorkspace.terminalRuntimeMigration).toEqual({ schemaVersion: 1,
+      runtimeId: IDS[0], displayName: `main-agent-${IDS[0]}` });
+    expect(await state.names.resolve(
+      migratedWorkspace.terminalRuntimeMigration.displayName,
+      Date.now(),
+    )).toMatchObject({ runtimeId: IDS[0] });
     await state.close();
   });
   it("rejects symlinked legacy sources without creating recovery state", async () => {

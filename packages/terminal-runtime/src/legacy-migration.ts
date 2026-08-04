@@ -225,12 +225,28 @@ export async function migrateLegacyTerminalState(options: {
         if (intent && !validIntentNames.includes(intent.displayName)) throw new Error('legacy_migration_identity_conflict');
         let migrationDisplayName = intent?.displayName ?? preferredDisplayName;
         let runtimeId = intent?.runtimeId;
-        const resolved =
+        let resolved =
           await options.state.names.resolve(migrationDisplayName, now().getTime());
         const orphan = intent ? null :
           await options.state.receipts.findByDisplayName(migrationDisplayName);
         if (runtimeId && resolved && resolved.runtimeId !== runtimeId) {
-          throw new Error('legacy_migration_identity_conflict');
+          if (!intent || !candidate.workspace || !collidesWithShell ||
+            migrationDisplayName !== candidate.displayName) {
+            throw new Error('legacy_migration_identity_conflict');
+          }
+          const collisionName = runtimeCollisionDisplayName(candidate, runtimeId);
+          const collisionResolution =
+            await options.state.names.resolve(collisionName, now().getTime());
+          const collisionReceipt =
+            await options.state.receipts.findByDisplayName(collisionName);
+          if ((collisionResolution && collisionResolution.runtimeId !== runtimeId) ||
+            (collisionReceipt && collisionReceipt.runtimeId !== runtimeId)) {
+            throw new Error('legacy_migration_identity_conflict');
+          }
+          migrationDisplayName = collisionName;
+          resolved = collisionResolution;
+          await markWorkspaceMigration({ directory: sessionsDirectory, candidate,
+            runtimeId, displayName: migrationDisplayName });
         }
         if (!runtimeId && !candidate.workspace) {
           runtimeId = resolved?.runtimeId ?? orphan?.runtimeId;
