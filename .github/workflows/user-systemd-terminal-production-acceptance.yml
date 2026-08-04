@@ -261,6 +261,104 @@ jobs:
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
           }
+          probe_runtime_readiness() {
+            local response="$RUNNER_TEMP/user-systemd-runtime-readiness.json" body readiness_script
+            read -r -d '' readiness_script <<'BASH' || true
+          set -u
+          target="$1"
+          path_state() {
+            local path="$1"
+            if [ -L "$path" ] || { [ -e "$path" ] && [ ! -f "$path" ]; }; then
+              printf 'invalid\n'
+            elif [ -f "$path" ]; then
+              printf 'present\n'
+            else
+              printf 'missing\n'
+            fi
+          }
+
+          bundle_state="$(path_state /opt/matrix/app/BUNDLE_VERSION)"
+          case "$bundle_state" in
+            invalid) printf 'invalid\n'; exit 0 ;;
+            missing) printf 'pending\n'; exit 0 ;;
+          esac
+          IFS= read -r installed_version </opt/matrix/app/BUNDLE_VERSION || installed_version=
+          if [ "$installed_version" != "$target" ]; then
+            printf 'pending\n'
+            exit 0
+          fi
+
+          for marker in /opt/matrix/app/.update-now /opt/matrix/staging/update-phase /opt/matrix/app/.update-error.json; do
+            marker_state="$(path_state "$marker")"
+            case "$marker_state" in
+              invalid) printf 'invalid\n'; exit 0 ;;
+              present) printf 'pending\n'; exit 0 ;;
+            esac
+          done
+
+          runtime_marker=/opt/matrix/app/TERMINAL_RUNTIME_GENERATION
+          runtime_state="$(path_state "$runtime_marker")"
+          case "$runtime_state" in
+            invalid) printf 'invalid\n'; exit 0 ;;
+            missing) printf 'pending\n'; exit 0 ;;
+          esac
+          IFS= read -r generation <"$runtime_marker" || generation=
+          if ! printf '%s' "$generation" | grep -Eq '^gen_[0-9a-f]{64}$'; then
+            printf 'invalid\n'
+            exit 0
+          fi
+          generation_dir="/opt/matrix/terminal-runtime/generations/${generation}"
+          if [ -L "$generation_dir" ] || { [ -e "$generation_dir" ] && [ ! -d "$generation_dir" ]; }; then
+            printf 'invalid\n'
+            exit 0
+          fi
+          if [ ! -d "$generation_dir" ]; then
+            printf 'pending\n'
+            exit 0
+          fi
+          for asset in zellij matrix-terminal-user-keeper.mjs matrix-terminal-attach.mjs; do
+            asset_path="${generation_dir}/${asset}"
+            if [ -L "$asset_path" ] || { [ -e "$asset_path" ] && [ ! -f "$asset_path" ]; }; then
+              printf 'invalid\n'
+              exit 0
+            fi
+            if [ ! -f "$asset_path" ]; then
+              printf 'pending\n'
+              exit 0
+            fi
+          done
+          generation_helper=/opt/matrix/bin/matrix-terminal-generation-id
+          if [ -L "$generation_helper" ] || { [ -e "$generation_helper" ] && [ ! -f "$generation_helper" ]; }; then
+            printf 'invalid\n'
+            exit 0
+          fi
+          if [ ! -x "$generation_helper" ]; then
+            printf 'pending\n'
+            exit 0
+          fi
+          actual_generation="$("$generation_helper" \
+            "$generation_dir/zellij" \
+            "$generation_dir/matrix-terminal-user-keeper.mjs" \
+            "$generation_dir/matrix-terminal-attach.mjs" 2>/dev/null)" || {
+            printf 'pending\n'
+            exit 0
+          }
+          if [ "$actual_generation" != "$generation" ]; then
+            printf 'invalid\n'
+            exit 0
+          fi
+          if ! runuser -u matrix -- "$generation_dir/zellij" --version >/dev/null 2>&1; then
+            printf 'pending\n'
+            exit 0
+          fi
+          printf 'ready\n'
+          BASH
+            body="$(jq -cn --arg script "$readiness_script" --arg target "$target_version" \
+              '{command:["/usr/bin/sudo","/bin/bash","-c",$script,"matrix-runtime-readiness",$target],timeoutMs:45000}')"
+            send_signed_command "$body" "$response"
+            jq -er '.stdout | select(test("^(ready|pending|invalid)\\n$")) | rtrimstr("\n")' \
+              "$response"
+          }
           classify_recovery_phase() {
             local response="$RUNNER_TEMP/user-systemd-recovery-phase.json" body
             body='{"command":["/usr/bin/sudo","/bin/bash","-c","marker=/opt/matrix/staging/update-phase; if [ -L \"$marker\" ] || { [ -e \"$marker\" ] && [ ! -f \"$marker\" ]; }; then printf \"invalid\\n\"; elif [ ! -e \"$marker\" ]; then printf \"idle\\n\"; else IFS= read -r phase <\"$marker\" || phase=; case \"$phase\" in prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) printf \"%s\\n\" \"$phase\" ;; *) printf \"invalid\\n\" ;; esac; fi"]}'
@@ -268,7 +366,13 @@ jobs:
             jq -er '.stdout | select(test("^(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)\\n$")) | rtrimstr("\n")' \
               "$response"
           }
-          if [ "$current_version" != "$target_version" ]; then
+          response="$RUNNER_TEMP/user-systemd-recovery.json"
+          host_readiness="$(probe_runtime_readiness)"
+          if [ "$host_readiness" = invalid ]; then
+            echo "Refusing exact-head recovery from invalid runtime state." >&2
+            exit 1
+          fi
+          if [ "$current_version" != "$target_version" ] || [ "$host_readiness" != ready ]; then
             recovery_phase="$(classify_recovery_phase)"
             case "$recovery_phase" in
               idle|prepare|download|verify|extract|terminal-runtime) ;;
@@ -277,7 +381,6 @@ jobs:
                 exit 1
                 ;;
             esac
-            response="$RUNNER_TEMP/user-systemd-recovery.json"
             body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]}'
             send_signed_command "$body" "$response"
             stop_deadline=$((SECONDS + 90))
@@ -349,7 +452,16 @@ jobs:
             ' <<<"$fleet")"
             version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
             fleet_address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-            if [ "$version" = "$target_version" ] && [ "$fleet_address" = "$address" ]; then
+            host_readiness=""
+            if [ "$fleet_address" = "$address" ]; then
+              host_readiness="$(probe_runtime_readiness 2>/dev/null || true)"
+            fi
+            if [ "$host_readiness" = invalid ]; then
+              echo "Exact-head runtime entered invalid state during recovery." >&2
+              exit 1
+            fi
+            if [ "$version" = "$target_version" ] && [ "$fleet_address" = "$address" ] &&
+              [ "$host_readiness" = ready ]; then
               echo "address=$address" >>"$GITHUB_OUTPUT"
               echo "version=$version" >>"$GITHUB_OUTPUT"
               exit 0
