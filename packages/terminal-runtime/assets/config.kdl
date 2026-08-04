@@ -1,1 +1,6 @@
-// Recovery serialization remains dormant until the recovery lifecycle layer.
+session_serialization true
+serialize_pane_viewport true
+scrollback_lines_to_serialize 10000
+serialization_interval 5
+pane_frames false
+default_shell "/bin/bash"

@@ -20,6 +20,7 @@ import type {
   CreateSessionOptions,
   ZellijAdapter,
 } from "./zellij.js";
+import { shellError } from "./errors.js";
 
 const MAX_RUNTIME_PROJECTIONS = 2_048;
 const RecoveryModeSchema = z.enum(["serialized", "fresh-shell"]).nullable();
@@ -43,9 +44,22 @@ const RenameProjectionSchema = z.object({
   displayName: DisplayNameSchema,
   metadataRevision: MetadataRevisionSchema,
 }).strict();
+const DeleteProjectionSchema = z.union([
+  z.object({
+    runtimeId: RuntimeIdSchema,
+    deleted: z.literal(true),
+  }).strict(),
+  z.object({
+    runtimeId: RuntimeIdSchema,
+    lifecycleState: z.literal("deleting"),
+  }).strict(),
+]);
 
 export type GatewayTerminalRuntimeProjection = z.infer<typeof RuntimeProjectionSchema>;
 export type GatewayTerminalRuntimeMode = "legacy" | "supervised";
+export type GatewayTerminalDeleteResult =
+  | { runtimeId: string; deleted: true }
+  | { runtimeId: string; deleted: false; lifecycleState: "deleting" };
 
 export function resolveGatewayTerminalRuntimeMode(
   value: string | undefined,
@@ -88,7 +102,8 @@ export interface GatewayTerminalRuntimeClient {
     displayName: string;
     baseRevision: number;
   }): Promise<GatewayTerminalRuntimeProjection>;
-  delete(runtimeId: string): Promise<void>;
+  recover(runtimeId: string): Promise<GatewayTerminalRuntimeProjection>;
+  delete(runtimeId: string): Promise<GatewayTerminalDeleteResult>;
 }
 
 function terminalRuntimeError(code: string): Error {
@@ -206,14 +221,33 @@ export function createGatewayTerminalRuntimeClient(options: {
         lifecycleState: "live",
       });
     },
-    async delete(runtimeId) {
+    async recover(runtimeId) {
       const trustedId = RuntimeIdSchema.parse(runtimeId);
-      await responseResult(supervisor, {
+      const result = await responseResult(supervisor, {
         version: 1,
         operationId: createOperationId(),
-        operation: "Delete",
+        operation: "Recover",
         input: { runtimeId: trustedId },
       });
+      return RuntimeProjectionSchema.parse(result);
+    },
+    async delete(runtimeId) {
+      const trustedId = RuntimeIdSchema.parse(runtimeId);
+      const result = DeleteProjectionSchema.parse(
+        await responseResult(supervisor, {
+          version: 1,
+          operationId: createOperationId(),
+          operation: "Delete",
+          input: { runtimeId: trustedId },
+        }),
+      );
+      return "deleted" in result
+        ? result
+        : {
+            runtimeId: result.runtimeId,
+            deleted: false,
+            lifecycleState: result.lifecycleState,
+          };
     },
   };
 }
@@ -274,12 +308,38 @@ export function createSupervisedZellijAdapter(options: {
   }
 
   async function mappedName(name: string): Promise<string> {
-    return zellijIdentity((await resolveName(name)).runtimeId);
+    const projection = await resolveName(name);
+    if (projection.lifecycleState !== "live") {
+      throw shellError("session_not_live", "Session is not ready", 409);
+    }
+    return zellijIdentity(projection.runtimeId);
+  }
+
+  async function listRuntimeProjections() {
+    const projections = await options.runtime.list();
+    byName.clear();
+    for (const projection of projections) remember(projection);
+    return projections;
   }
 
   return {
     runtimeProjection(name: string) {
       return byName.get(DisplayNameSchema.parse(name)) ?? null;
+    },
+    listRuntimeProjections,
+    async recoverSession(name: string) {
+      const projection = await resolveName(name);
+      if (projection.lifecycleState === "live") return projection;
+      const recovered = await options.runtime.recover(projection.runtimeId);
+      const next = RuntimeProjectionSchema.parse({
+        ...projection,
+        ...recovered,
+        displayName: projection.displayName,
+        metadataRevision:
+          recovered.metadataRevision ?? projection.metadataRevision,
+      });
+      remember(next);
+      return next;
     },
     async health() {
       try {
@@ -294,11 +354,9 @@ export function createSupervisedZellijAdapter(options: {
       }
     },
     async listSessions() {
-      const projections = await options.runtime.list();
-      byName.clear();
+      const projections = await listRuntimeProjections();
       const live: string[] = [];
       for (const projection of projections) {
-        remember(projection);
         if (
           projection.displayName &&
           ["starting", "live", "recovering"].includes(projection.lifecycleState)
@@ -322,8 +380,22 @@ export function createSupervisedZellijAdapter(options: {
     },
     async deleteSession(name) {
       const projection = await resolveName(name);
-      await options.runtime.delete(projection.runtimeId);
-      if (projection.displayName) byName.delete(projection.displayName);
+      const result = await options.runtime.delete(projection.runtimeId);
+      if (result.deleted) {
+        if (projection.displayName) byName.delete(projection.displayName);
+        return { deleted: true as const };
+      }
+      const deleting = RuntimeProjectionSchema.parse({
+        ...projection,
+        lifecycleState: "deleting",
+        recoverable: false,
+        recoveryReason: null,
+      });
+      remember(deleting);
+      return {
+        deleted: false as const,
+        lifecycleState: "deleting" as const,
+      };
     },
     async renameSession(name, nextName) {
       const projection = await resolveName(name);
@@ -342,8 +414,12 @@ export function createSupervisedZellijAdapter(options: {
       await options.zellij.validateLayout(path);
     },
     attachSession(name: string, attachOptions: AttachOptions = {}) {
+      const projection = resolved(name);
+      if (projection.lifecycleState !== "live") {
+        throw shellError("session_not_live", "Session is not ready", 409);
+      }
       return options.zellij.attachSession(
-        zellijIdentity(resolved(name).runtimeId),
+        zellijIdentity(projection.runtimeId),
         attachOptions,
       );
     },

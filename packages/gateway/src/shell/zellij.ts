@@ -96,11 +96,34 @@ export interface ZellijAdapter {
     recoveryReason: string | null;
     metadataRevision?: number;
   } | null;
+  listRuntimeProjections?(): Promise<Array<{
+    runtimeId: string;
+    displayName?: string;
+    lifecycleState: string;
+    recoverable: boolean;
+    recoveryReason: string | null;
+    metadataRevision?: number;
+  }>>;
+  recoverSession?(name: string): Promise<{
+    runtimeId: string;
+    displayName?: string;
+    lifecycleState: string;
+    recoverable: boolean;
+    recoveryReason: string | null;
+    metadataRevision?: number;
+  }>;
   health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
   listSessions(): Promise<string[]>;
   focusedPaneCwd(name: string): Promise<string | null>;
   createSession(options: CreateSessionOptions): Promise<void>;
-  deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
+  deleteSession(
+    name: string,
+    options?: { force?: boolean },
+  ): Promise<
+    void |
+    { deleted: true } |
+    { deleted: false; lifecycleState: "deleting" }
+  >;
   renameSession(name: string, nextName: string): Promise<void>;
   validateLayout(path: string): Promise<void>;
   attachSession(name: string, options?: AttachOptions): ShellAttachProcess;

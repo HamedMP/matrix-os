@@ -19,6 +19,51 @@ afterEach(async () => {
 });
 
 describe("shell registry", () => {
+  it("projects supervised interrupted state and recovers by immutable identity", async () => {
+    const root = await tempRoot();
+    let projection = {
+      runtimeId: "0123456789abcdef0123456789abcdef",
+      displayName: "calm-otter",
+      lifecycleState: "interrupted",
+      recoverable: true,
+      recoveryReason: "history_unavailable",
+      metadataRevision: 1,
+    };
+    const adapter = {
+      listSessions: vi.fn(async () => []),
+      listRuntimeProjections: vi.fn(async () => [projection]),
+      runtimeProjection: vi.fn(() => projection),
+      recoverSession: vi.fn(async () => {
+        projection = {
+          ...projection,
+          lifecycleState: "recovering",
+          recoverable: false,
+        };
+        return projection;
+      }),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.list()).resolves.toMatchObject([{
+      name: "calm-otter",
+      status: "exited",
+      runtimeId: "0123456789abcdef0123456789abcdef",
+      lifecycleState: "interrupted",
+      recoverable: true,
+      recoveryReason: "history_unavailable",
+    }]);
+    await expect(registry.recover("calm-otter")).resolves.toMatchObject({
+      name: "calm-otter",
+      runtimeId: "0123456789abcdef0123456789abcdef",
+      lifecycleState: "recovering",
+      recoverable: false,
+    });
+    expect(adapter.recoverSession).toHaveBeenCalledWith("calm-otter");
+    expect(adapter.createSession).not.toHaveBeenCalled();
+  });
+
   it("decorates listed sessions concurrently", async () => {
     const root = await tempRoot();
     const live = new Set<string>();
@@ -1528,6 +1573,45 @@ describe("shell registry", () => {
     expect(persisted.sessions.main).toBeUndefined();
     expect(persisted.sessions.docs).toBeDefined();
     expect(persisted.aliases?.["matrix-sess_run_8162a7cca11891c0"]).toBeUndefined();
+  });
+
+  it("retains metadata while supervised deletion is still draining its cgroup", async () => {
+    const root = await tempRoot();
+    const live = new Set<string>();
+    const adapter = {
+      listSessions: vi.fn(async () => [...live]),
+      createSession: vi.fn(async ({ name }: { name: string }) => {
+        live.add(name);
+      }),
+      deleteSession: vi.fn(async () => ({
+        deleted: false,
+        lifecycleState: "deleting" as const,
+      })),
+      runtimeProjection: vi.fn(() => ({
+        runtimeId: "0123456789abcdef0123456789abcdef",
+        lifecycleState: "live",
+        recoverable: false,
+        recoveryReason: null,
+        metadataRevision: 1,
+      })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+    await registry.create({ name: "calm-otter" });
+
+    await expect(registry.delete("calm-otter")).resolves.toEqual({
+      deleted: false,
+      lifecycleState: "deleting",
+    });
+    const persisted = JSON.parse(
+      await readFile(
+        join(root, "system", "shell-sessions.json"),
+        "utf8",
+      ),
+    );
+    expect(persisted.sessions["calm-otter"]).toMatchObject({
+      runtimeId: "0123456789abcdef0123456789abcdef",
+      lifecycleState: "deleting",
+    });
   });
 
   it("force deletes live orphan zellij sessions missing from metadata", async () => {

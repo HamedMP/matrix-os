@@ -54,7 +54,11 @@ function runtimeClient(): GatewayTerminalRuntimeClient {
     createShell: vi.fn(async () => ({ ...LIVE, lifecycleState: "starting" })),
     createAgent: vi.fn(async () => ({ ...LIVE, lifecycleState: "starting" })),
     rename: vi.fn(async () => ({ ...LIVE, displayName: "swift-otter", metadataRevision: 2 })),
-    delete: vi.fn(async () => undefined),
+    recover: vi.fn(async () => ({ ...LIVE, lifecycleState: "recovering" })),
+    delete: vi.fn(async () => ({
+      runtimeId: RUNTIME_ID,
+      deleted: true as const,
+    })),
   };
 }
 
@@ -125,5 +129,64 @@ describe("supervised shell adapter", () => {
     expect(() => adapter.attachSession("missing-session")).toThrow("terminal_runtime_not_resolved");
     expect(runtime.createShell).not.toHaveBeenCalled();
     expect(runtime.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("lists interrupted runtimes without attaching and recovers exactly once", async () => {
+    const interrupted = {
+      ...LIVE,
+      lifecycleState: "interrupted" as const,
+      recoverable: true,
+      recoveryReason: "history_unavailable" as const,
+      recoveryMode: "fresh-shell" as const,
+    };
+    const runtime = runtimeClient();
+    vi.mocked(runtime.list).mockResolvedValue([interrupted]);
+    vi.mocked(runtime.recover).mockResolvedValue({
+      ...interrupted,
+      lifecycleState: "recovering",
+      recoverable: false,
+    });
+    const direct = directAdapter();
+    const adapter = createSupervisedZellijAdapter({
+      runtime,
+      zellij: direct.adapter,
+    });
+
+    await expect(adapter.listSessions()).resolves.toEqual([]);
+    await expect(adapter.listRuntimeProjections?.()).resolves.toEqual([
+      interrupted,
+    ]);
+    await expect(adapter.recoverSession?.("calm-otter")).resolves
+      .toMatchObject({
+        runtimeId: RUNTIME_ID,
+        displayName: "calm-otter",
+        lifecycleState: "recovering",
+      });
+
+    expect(runtime.recover).toHaveBeenCalledOnce();
+    expect(runtime.recover).toHaveBeenCalledWith(RUNTIME_ID);
+    expect(runtime.createShell).not.toHaveBeenCalled();
+    expect(direct.adapter.createSession).not.toHaveBeenCalled();
+  });
+
+  it("reports deletion as pending while the supervisor still sees a populated cgroup", async () => {
+    const runtime = runtimeClient();
+    vi.mocked(runtime.delete).mockResolvedValue({
+      runtimeId: RUNTIME_ID,
+      deleted: false,
+      lifecycleState: "deleting",
+    });
+    const direct = directAdapter();
+    const adapter = createSupervisedZellijAdapter({
+      runtime,
+      zellij: direct.adapter,
+    });
+    await adapter.listSessions();
+
+    await expect(adapter.deleteSession("calm-otter")).resolves.toEqual({
+      deleted: false,
+      lifecycleState: "deleting",
+    });
+    expect(direct.adapter.deleteSession).not.toHaveBeenCalled();
   });
 });

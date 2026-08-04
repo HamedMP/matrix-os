@@ -8,6 +8,7 @@ function session(input: {
   status: "active" | "exited";
   ageMs: number;
   kind?: string;
+  lifecycleState?: string;
 }) {
   const stamp = new Date(Date.now() - input.ageMs).toISOString();
   return {
@@ -16,6 +17,9 @@ function session(input: {
     createdAt: stamp,
     updatedAt: stamp,
     ...(input.kind ? { kind: input.kind } : {}),
+    ...(input.lifecycleState
+      ? { lifecycleState: input.lifecycleState }
+      : {}),
   };
 }
 
@@ -37,6 +41,13 @@ describe("shell session reaper", () => {
         session({ name: "fresh-tagged", status: "exited", ageMs: 2 * DAY, kind: "session" }),
         session({ name: "old-legacy", status: "exited", ageMs: 30 * DAY }),
         session({ name: "old-active", status: "active", ageMs: 30 * DAY, kind: "session" }),
+        session({
+          name: "old-activating",
+          status: "exited",
+          ageMs: 30 * DAY,
+          kind: "session",
+          lifecycleState: "recovering",
+        }),
       ]),
       delete: vi.fn(async (name: string) => {
         deleted.push(name);
