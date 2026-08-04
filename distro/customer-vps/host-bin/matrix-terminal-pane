@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 1 ] || [ "$1" != "shell" ]; then
+if [ "$#" -ne 1 ] || [[ "$1" != "shell" && "$1" != "agent" ]]; then
   exit 64
 fi
 

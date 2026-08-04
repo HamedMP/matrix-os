@@ -89,6 +89,13 @@ export interface AttachOptions {
 }
 
 export interface ZellijAdapter {
+  runtimeProjection?(name: string): {
+    runtimeId: string;
+    lifecycleState: string;
+    recoverable: boolean;
+    recoveryReason: string | null;
+    metadataRevision?: number;
+  } | null;
   health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
   listSessions(): Promise<string[]>;
   focusedPaneCwd(name: string): Promise<string | null>;
@@ -138,6 +145,9 @@ const SAFE_ATTACH_ENV_KEYS = new Set([
   "USER",
   "WAYLAND_DISPLAY",
   "XAUTHORITY",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
   "XDG_RUNTIME_DIR",
 ]);
 

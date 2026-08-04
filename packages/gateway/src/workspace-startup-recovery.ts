@@ -212,19 +212,22 @@ export async function runWorkspaceStartupRecovery(
 export function createWorkspaceStartupRecovery(options: {
   homePath: string;
   eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
+  agentSessionManager?: WorkspaceStartupRecoveryDeps["agentSessionManager"];
 }) {
   const homePath = resolve(options.homePath);
   const stateOps = createStateOps({ homePath });
   const projectManager = createProjectManager({ homePath });
   const worktreeManager = createWorktreeManager({ homePath });
-  const agentLauncher = createAgentLauncher({ cwd: homePath });
-  const zellijRuntime = createZellijRuntime({ homePath });
-  const agentSessionManager = createAgentSessionManager({
-    homePath,
-    worktreeManager,
-    agentLauncher,
-    zellijRuntime,
-  });
+  const agentSessionManager = options.agentSessionManager ?? (() => {
+    const agentLauncher = createAgentLauncher({ cwd: homePath });
+    const zellijRuntime = createZellijRuntime({ homePath });
+    return createAgentSessionManager({
+      homePath,
+      worktreeManager,
+      agentLauncher,
+      zellijRuntime,
+    });
+  })();
 
   return {
     run: () => runWorkspaceStartupRecovery({

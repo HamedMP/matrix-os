@@ -29,7 +29,15 @@ type AgentLauncher = ReturnType<typeof createAgentLauncher>;
 type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
 type AgentSandbox = ReturnType<typeof createAgentSandbox>;
 type SessionRuntimeBridge = ReturnType<typeof createSessionRuntimeBridge>;
-type ZellijRuntime = ReturnType<typeof createZellijRuntime>;
+type ZellijRuntime = Pick<
+  ReturnType<typeof createZellijRuntime>,
+  | "start"
+  | "attachCommand"
+  | "observeCommand"
+  | "sendInput"
+  | "kill"
+  | "health"
+>;
 type ReviewStore = ReturnType<typeof createReviewStore>;
 type TaskManager = ReturnType<typeof createTaskManager>;
 type PreviewManager = ReturnType<typeof createPreviewManager>;

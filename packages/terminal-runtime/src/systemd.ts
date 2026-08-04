@@ -37,7 +37,10 @@ export function classifyRuntimeProcesses(
       process.args.some((argument) => argument.endsWith('/keeper.js'))),
     zellijClient: zellij.length >= 2,
     zellijServer: zellij.length >= 2,
-    shell: processes.some((process) => process.comm === 'bash'),
+    shell: processes.some((process) =>
+      process.comm === 'bash' ||
+      process.args.some((argument) => argument.endsWith('/pane.js')) &&
+        process.args.includes('agent')),
   };
 }
 

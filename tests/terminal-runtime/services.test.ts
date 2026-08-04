@@ -12,6 +12,7 @@ import {
 import {
   unitNameForRuntimeId,
 } from '../../packages/terminal-runtime/src/contracts.js';
+import { buildProviderLaunch } from '../../packages/terminal-runtime/src/pane.js';
 import {
   decodePeerCredentials,
   handleSupervisorFrame,
@@ -82,6 +83,18 @@ describe('terminal runtime service boundary', () => {
       zellijServer: false,
       shell: true,
     });
+    expect(classifyRuntimeProcesses([
+      { comm: 'node', args: ['/generation/keeper.js'] },
+      { comm: 'zellij', args: ['zellij', '--session', `matrix-t-${runtimeId}`] },
+      { comm: 'zellij', args: ['zellij', '--server', `matrix-t-${runtimeId}`] },
+      { comm: 'node', args: ['/generation/pane.js', 'agent'] },
+      { comm: 'codex', args: ['codex', 'app-server'] },
+    ])).toEqual({
+      keeper: true,
+      zellijClient: true,
+      zellijServer: true,
+      shell: true,
+    });
   });
 
   it('keeps all user-derived launch data out of keeper argv and preserves command gating', () => {
@@ -109,7 +122,7 @@ describe('terminal runtime service boundary', () => {
       '--session',
       `matrix-t-${runtimeId}`,
       '--new-session-with-layout',
-      '/opt/matrix/libexec/terminal-runtime/current/layout.kdl',
+      '/opt/matrix/libexec/terminal-runtime/current/agent-layout.kdl',
     ]);
     expect(create.cwd).toBe('/home/matrix/home/projects/example');
     expect(JSON.stringify(create.args)).not.toContain('configurationRef');
@@ -118,10 +131,12 @@ describe('terminal runtime service boundary', () => {
     expect(create.env.ZELLIJ_CONFIG_FILE).toBe(
       '/opt/matrix/libexec/terminal-runtime/current/config.kdl',
     );
+    expect(create.env.MATRIX_TERMINAL_CONFIGURATION_REF).toBe(operationId);
     expect(Object.keys(create.env).sort()).toEqual([
       'HOME',
       'LANG',
       'MATRIX_HOME',
+      'MATRIX_TERMINAL_CONFIGURATION_REF',
       'PATH',
       'TERM',
       'XDG_CACHE_HOME',
@@ -131,6 +146,108 @@ describe('terminal runtime service boundary', () => {
       'ZELLIJ_CONFIG_DIR',
       'ZELLIJ_CONFIG_FILE',
     ]);
+  });
+
+  it.each(['claude', 'codex', 'opencode', 'pi'] as const)(
+    'builds a fixed %s provider launch with dynamic data on stdin or fd 3',
+    (agent) => {
+      const prompt = 'repair the private project';
+      const launch = buildProviderLaunch({
+        schemaVersion: 1,
+        agent,
+        cwd: { kind: 'home-relative', path: 'projects/private' },
+        prompt,
+        mode: 'plan',
+        approvalPolicy: 'on-request',
+        sandbox: {
+          enabled: true,
+          mode: 'workspace-write',
+          writableRoots: [
+            { kind: 'home-relative', path: 'projects/private' },
+          ],
+          denyWriteRoots: [
+            { kind: 'home-relative', path: 'system' },
+          ],
+        },
+        ...(agent === 'codex'
+          ? {
+              providerEventPath: 'system/session-output/example.jsonl',
+              codexExpectedVersion: '0.145.0',
+            }
+          : {}),
+      }, '/home/matrix/home');
+
+      expect(JSON.stringify(launch.args)).not.toContain(prompt);
+      expect(JSON.stringify(launch.args)).not.toContain('/home/matrix/home');
+      expect(JSON.stringify(launch.args)).not.toContain('on-request');
+      expect(JSON.stringify(launch.args)).not.toContain('workspace-write');
+      expect(`${launch.stdin ?? ''}${launch.fdPayload ?? ''}`).toContain(prompt);
+      expect(launch.cwd).toBe('/home/matrix/home/projects/private');
+    },
+  );
+
+  it('rejects Claude on-failure approval in supervised mode', () => {
+    expect(() => buildProviderLaunch({
+      schemaVersion: 1,
+      agent: 'claude',
+      cwd: { kind: 'home-relative', path: 'projects/private' },
+      prompt: 'repair the private project',
+      mode: 'default',
+      approvalPolicy: 'on-failure',
+      sandbox: {
+        enabled: true,
+        mode: 'workspace-write',
+        writableRoots: [],
+        denyWriteRoots: [],
+      },
+    }, '/home/matrix/home')).toThrow('claude_approval_policy_unsupported');
+  });
+
+  it.each(['plan', 'review'] as const)(
+    'rejects Claude on-failure approval in supervised %s mode',
+    (mode) => {
+      expect(() => buildProviderLaunch({
+        schemaVersion: 1,
+        agent: 'claude',
+        cwd: { kind: 'home-relative', path: 'projects/private' },
+        prompt: 'repair the private project',
+        mode,
+        approvalPolicy: 'on-failure',
+        sandbox: {
+          enabled: true,
+          mode: 'workspace-write',
+          writableRoots: [],
+          denyWriteRoots: [],
+        },
+      }, '/home/matrix/home')).toThrow('claude_approval_policy_unsupported');
+    },
+  );
+
+  it('hands the selected Codex executable to the runner through fd 3 only', () => {
+    const codexExecutable = '/opt/matrix/runtime/node/bin/codex';
+    const launch = buildProviderLaunch({
+      schemaVersion: 1,
+      agent: 'codex',
+      cwd: { kind: 'home-relative', path: 'projects/private' },
+      prompt: 'repair the private project',
+      mode: 'default',
+      approvalPolicy: 'never',
+      sandbox: {
+        enabled: true,
+        mode: 'workspace-write',
+        writableRoots: [],
+        denyWriteRoots: [],
+      },
+      providerEventPath: 'system/session-output/example.jsonl',
+      codexExpectedVersion: '0.145.0',
+      codexExecutable,
+    }, '/home/matrix/home');
+
+    expect(JSON.parse(launch.fdPayload ?? '{}')).toMatchObject({
+      command: codexExecutable,
+    });
+    expect(JSON.stringify([launch.file, ...launch.args]))
+      .not.toContain(codexExecutable);
   });
 
   it('notifies readiness only after exact session and complete cgroup evidence pass', async () => {

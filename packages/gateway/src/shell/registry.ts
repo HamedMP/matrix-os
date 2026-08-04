@@ -35,6 +35,13 @@ export interface ShellRegistryAdapter {
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession?(name: string, nextName: string): Promise<void>;
+  runtimeProjection?(name: string): {
+    runtimeId: string;
+    lifecycleState: string;
+    recoverable: boolean;
+    recoveryReason: string | null;
+    metadataRevision?: number;
+  } | null;
 }
 
 const ShellSessionSchema = z.object({
@@ -65,6 +72,20 @@ const ShellSessionSchema = z.object({
   visualStatusUpdatedAt: z.string().optional(),
   agent: AgentKindSchema.optional(),
   cwd: z.string().max(4096).optional(),
+  runtimeId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+  lifecycleState: z.enum([
+    "starting",
+    "live",
+    "interrupted",
+    "recoverable",
+    "recovering",
+    "deleting",
+    "exited",
+    "failed",
+  ]).optional(),
+  recoverable: z.boolean().optional(),
+  recoveryReason: z.string().max(64).nullable().optional(),
+  metadataRevision: z.number().int().positive().optional(),
 });
 
 const RegistryFileSchema = z.object({
@@ -94,7 +115,7 @@ export type ShellSession = Omit<PersistedShellSession, "cwd"> & {
   aliases: ShellSessionAlias[];
   references: ShellSessionReference[];
   recoverable: boolean;
-  recoveryReason?: "missing_runtime_session";
+  recoveryReason?: string | null;
   agent?: AgentKind;
   subtitle?: string;
   lastAction?: string;
@@ -160,6 +181,7 @@ export class ShellRegistry {
           ...(existing ?? this.adoptSession(name, now)),
           status: "active" as const,
           updatedAt: existing?.status === "active" ? existing.updatedAt : now,
+          ...this.runtimeFields(name),
         };
         activeSessions.push(session);
         if (!existing || existing.status !== "active") {
@@ -194,6 +216,7 @@ export class ShellRegistry {
         ...(existing ?? this.adoptSession(targetName, now)),
         status: "active" as const,
         updatedAt: existing?.status === "active" ? existing.updatedAt : now,
+        ...this.runtimeFields(targetName),
       };
       if (!existing || existing.status !== "active") {
         file.sessions[targetName] = session;
@@ -229,6 +252,7 @@ export class ShellRegistry {
           ...(layoutName ? { layoutName } : {}),
           ...(agent ? { agent } : {}),
           ...(cwd ? { cwd } : {}),
+          ...this.runtimeFields(name),
         };
         file.sessions[name] = session;
         await this.write(file);
@@ -252,6 +276,7 @@ export class ShellRegistry {
         kind: "session",
         ...(agent ? { agent } : {}),
         ...(cwd ? { cwd } : {}),
+        ...this.runtimeFields(name),
       };
       file.sessions[name] = session;
       if (file.order) {
@@ -296,6 +321,7 @@ export class ShellRegistry {
       const next: PersistedShellSession = {
         ...existing,
         updatedAt: now,
+        ...this.runtimeFields(targetName),
         ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
         ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
       };
@@ -361,22 +387,26 @@ export class ShellRegistry {
       this.retargetAliasesAndReferences(file, targetName, safeNextName);
 
       await this.options.adapter.renameSession(targetName, safeNextName);
+      Object.assign(next, this.runtimeFields(safeNextName));
+      const immutableRuntimeIdentity = Boolean(existing.runtimeId);
       let scrollbackRenamed = false;
       let preferencesRenamed = false;
       let agentStateRenamed = false;
       try {
-        await this.options.scrollbackStore?.rename(targetName, safeNextName);
-        scrollbackRenamed = true;
-        await this.options.preferencesStore?.rename(targetName, safeNextName);
-        preferencesRenamed = true;
-        try {
-          await this.agentStateStore.rename(targetName, safeNextName);
-          agentStateRenamed = true;
-        } catch (err: unknown) {
-          console.warn(
-            "[shell] failed to rename agent session state:",
-            err instanceof Error ? err.message : String(err),
-          );
+        if (!immutableRuntimeIdentity) {
+          await this.options.scrollbackStore?.rename(targetName, safeNextName);
+          scrollbackRenamed = true;
+          await this.options.preferencesStore?.rename(targetName, safeNextName);
+          preferencesRenamed = true;
+          try {
+            await this.agentStateStore.rename(targetName, safeNextName);
+            agentStateRenamed = true;
+          } catch (err: unknown) {
+            console.warn(
+              "[shell] failed to rename agent session state:",
+              err instanceof Error ? err.message : String(err),
+            );
+          }
         }
         if (file.order) {
           const nextLive = new Set(live);
@@ -442,7 +472,8 @@ export class ShellRegistry {
       const safeName = validateSessionName(name);
       const file = await this.read();
       const targetName = this.resolveSessionName(file, safeName);
-      if (!file.sessions[targetName]) {
+      const persistedSession = file.sessions[targetName];
+      if (!persistedSession) {
         if (!options.force) {
           throw shellError("session_not_found", "Session not found", 404);
         }
@@ -458,8 +489,11 @@ export class ShellRegistry {
       }
       this.removeReferencesForTarget(file, targetName);
       this.removeAliasesForTarget(file, targetName);
-      await this.cleanupScrollback(targetName);
-      await this.cleanupAgentState(targetName);
+      const storageIdentity = this.storageIdentity(persistedSession ?? {
+        name: targetName,
+      });
+      await this.cleanupScrollback(storageIdentity);
+      await this.cleanupAgentState(storageIdentity);
       await this.write(file);
     });
   }
@@ -514,16 +548,36 @@ export class ShellRegistry {
       attachedClients: 0,
       placement: "active",
       lastSeenSeq: null,
+      ...this.runtimeFields(name),
     };
   }
 
+  private runtimeFields(name: string): Partial<PersistedShellSession> {
+    const projection = this.options.adapter.runtimeProjection?.(name);
+    if (!projection) return {};
+    return {
+      runtimeId: projection.runtimeId,
+      lifecycleState: projection.lifecycleState as PersistedShellSession["lifecycleState"],
+      recoverable: projection.recoverable,
+      recoveryReason: projection.recoveryReason,
+      ...(projection.metadataRevision
+        ? { metadataRevision: projection.metadataRevision }
+        : {}),
+    };
+  }
+
+  private storageIdentity(session: Pick<PersistedShellSession, "name" | "runtimeId">): string {
+    return session.runtimeId ? `matrix-t-${session.runtimeId}` : session.name;
+  }
+
   private async decorateSession(session: PersistedShellSession, file?: RegistryFile): Promise<ShellSession> {
+    const storageIdentity = this.storageIdentity(session);
     const [activity, agentSnapshot, focusedPaneCwd] = await Promise.all([
-      this.options.scrollbackStore?.latestActivity?.(session.name),
-      this.readAgentSnapshot(session.name),
+      this.options.scrollbackStore?.latestActivity?.(storageIdentity),
+      this.readAgentSnapshot(storageIdentity),
       this.readFocusedPaneCwd(session.name),
     ]);
-    const latestSeq = activity?.latestSeq ?? await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
+    const latestSeq = activity?.latestSeq ?? await this.options.scrollbackStore?.latestSeq(storageIdentity) ?? null;
     const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
     const references = file ? this.referencesForTarget(file, session.name) : [];

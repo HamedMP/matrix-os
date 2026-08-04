@@ -14,6 +14,8 @@ import {
 import { claimKeeperDescriptor } from './keeper-client.js';
 
 const KEEPER_LAYOUT = '/opt/matrix/libexec/terminal-runtime/current/layout.kdl';
+const AGENT_LAYOUT =
+  '/opt/matrix/libexec/terminal-runtime/current/agent-layout.kdl';
 const ZELLIJ_CONFIG =
   '/opt/matrix/libexec/terminal-runtime/current/config.kdl';
 const ZELLIJ = '/opt/matrix/bin/zellij';
@@ -82,7 +84,7 @@ export function keeperEnvironment(
   return {
     HOME: home,
     MATRIX_HOME: home,
-    PATH: '/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin',
+    PATH: `${home}/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin`,
     LANG: 'C.UTF-8',
     TERM: 'xterm-256color',
     XDG_CACHE_HOME: join(stateRoot, 'zellij-cache'),
@@ -100,6 +102,11 @@ export function buildKeeperLaunch(
 ): KeeperLaunch {
   const descriptor = DescriptorSchema.parse(rawDescriptor);
   const sessionName = `matrix-t-${descriptor.runtimeId}`;
+  const environment = keeperEnvironment(home);
+  if (descriptor.launch.kind === 'agent') {
+    environment.MATRIX_TERMINAL_CONFIGURATION_REF =
+      descriptor.launch.configurationRef;
+  }
   return {
     file: ZELLIJ,
     args: descriptor.intent === 'recover'
@@ -108,10 +115,10 @@ export function buildKeeperLaunch(
           '--session',
           sessionName,
           '--new-session-with-layout',
-          KEEPER_LAYOUT,
+          descriptor.launch.kind === 'agent' ? AGENT_LAYOUT : KEEPER_LAYOUT,
         ],
     cwd: ownerPath(home, descriptor.cwd.path),
-    env: keeperEnvironment(home),
+    env: environment,
   };
 }
 
@@ -226,7 +233,10 @@ async function cgroupRoles(
     .filter((entry) =>
       entry.comm === 'zellij' && !entry.args.includes('list-sessions'))
     .sort((left, right) => left.pid - right.pid);
-  const shell = processes.find((entry) => entry.comm === 'bash');
+  const shell = processes.find((entry) =>
+    entry.comm === 'bash' ||
+    entry.args.some((argument) => argument.endsWith('/pane.js')) &&
+      entry.args.includes('agent'));
   if (!keeper || zellij.length < 2 || (requireShell && !shell)) return null;
   return {
     keeper: keeper.pid,

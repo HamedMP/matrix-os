@@ -1,4 +1,5 @@
 import type { SpawnFn } from "../dispatcher.js";
+import type { SupervisorClient } from "@matrix-os/terminal-runtime";
 
 export interface GatewayConfig {
   homePath: string;
@@ -7,6 +8,10 @@ export interface GatewayConfig {
   maxTurns?: number;
   spawnFn?: SpawnFn;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
+  terminalRuntime?: {
+    mode: "legacy" | "supervised";
+    supervisor?: SupervisorClient;
+  };
 }
 
 export type ServerMessage =

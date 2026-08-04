@@ -48,6 +48,7 @@ import { createWorkspaceSessionOrchestrator } from "./workspace-session-orchestr
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
+import { createSupervisedZellijRuntime } from "./supervised-zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
@@ -249,6 +250,12 @@ import {
   shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
+  createSupervisedZellijAdapter,
+  initializeGatewayTerminalRuntime,
+  resolveGatewayTerminalRuntimeMode,
+  supervisedZellijEnvironment,
+} from "./shell/runtime-client.js";
+import {
   CLIENT_ERROR_LOG_BODY_LIMIT,
   ClientErrorReportSchema,
   forwardClientErrorToPostHog,
@@ -332,6 +339,8 @@ export async function createGateway(config: GatewayConfig) {
   });
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
+  const terminalRuntimeMode = config.terminalRuntime?.mode ??
+    resolveGatewayTerminalRuntimeMode(process.env.MATRIX_TERMINAL_RUNTIME_MODE);
   const terminalSessionsPersistPath = join(homePath, "system", "terminal-sessions.json");
   // PTY session handles are process-local and cannot survive a gateway restart.
   // Zellij shell sessions are the canonical durable terminal surface; reset this
@@ -345,8 +354,40 @@ export async function createGateway(config: GatewayConfig) {
     bufferSize: 1024 * 1024,
     persistPath: terminalSessionsPersistPath,
     autoRestore: false,
+    ...(terminalRuntimeMode === "supervised"
+      ? { externalEnv: supervisedZellijEnvironment(homePath) }
+      : {}),
   });
-  const workspaceZellijRuntime = createZellijRuntime({ homePath });
+  const terminalRuntimeClient = await initializeGatewayTerminalRuntime({
+    mode: terminalRuntimeMode,
+    nodeEnv: process.env.NODE_ENV,
+    homePath,
+    ...(config.terminalRuntime?.supervisor
+      ? { supervisor: config.terminalRuntime.supervisor }
+      : {}),
+  });
+  const directZellijAdapter = terminalRuntimeMode === "supervised"
+    ? createZellijAdapter({
+        cwd: homePath,
+        env: {
+          ...process.env,
+          ...supervisedZellijEnvironment(homePath),
+        },
+      })
+    : createZellijAdapter({ homePath });
+  const zellijAdapter = terminalRuntimeClient
+    ? createSupervisedZellijAdapter({
+        runtime: terminalRuntimeClient,
+        zellij: directZellijAdapter,
+      })
+    : directZellijAdapter;
+  const workspaceZellijRuntime = terminalRuntimeClient
+    ? createSupervisedZellijRuntime({
+        homePath,
+        runtime: terminalRuntimeClient,
+        zellij: directZellijAdapter,
+      })
+    : createZellijRuntime({ homePath });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge({
     homePath,
     registry: sessionRegistry,
@@ -354,7 +395,6 @@ export async function createGateway(config: GatewayConfig) {
   });
   const shellScrollbackStore = new ScrollbackStore({ homePath });
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
-  const zellijAdapter = createZellijAdapter({ homePath });
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
@@ -442,6 +482,7 @@ export async function createGateway(config: GatewayConfig) {
     cwd: homePath,
     runtimeHome: homePath,
     codexExecutable,
+    terminalRuntimeMode,
   });
   let internalIntegrationBaseUrl: string | null = null;
   const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -559,6 +600,9 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
+  let workspaceAgentSessionManager:
+    | ReturnType<typeof createAgentSessionManager>
+    | undefined;
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
@@ -573,6 +617,7 @@ export async function createGateway(config: GatewayConfig) {
       inputWriter: (sessionId, input, signal) =>
         workspaceZellijRuntime.sendInput(sessionId, input, signal),
     });
+    workspaceAgentSessionManager = codingAgentSessionManager;
     const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       projectManager: codingAgentProjectManager,
       worktreeManager: codingAgentWorktreeManager,
@@ -2870,6 +2915,9 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({
     homePath,
     eventPublisher: workspaceEventPublisher,
+    ...(workspaceAgentSessionManager
+      ? { agentSessionManager: workspaceAgentSessionManager }
+      : {}),
   }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");

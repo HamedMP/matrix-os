@@ -60,9 +60,18 @@ export function createSessionRuntimeBridge(options: {
         if (!session.runtime.zellijSession) {
           return failure(409, "session_unavailable", "Session is not attachable");
         }
-        command = splitCommand(parsed.data.mode === "observe"
-          ? options.zellijRuntime.observeCommand(session.id)
-          : options.zellijRuntime.attachCommand(session.id));
+        command = session.runtime.zellijSession.startsWith("matrix-t-")
+          ? {
+              command: "zellij",
+              args: [
+                "attach",
+                session.runtime.zellijSession,
+                ...(parsed.data.mode === "observe" ? ["--index", "0"] : []),
+              ],
+            }
+          : splitCommand(parsed.data.mode === "observe"
+              ? options.zellijRuntime.observeCommand(session.id)
+              : options.zellijRuntime.attachCommand(session.id));
       } else if (session.runtime.type === "tmux") {
         if (!session.runtime.tmuxSession) {
           return failure(409, "session_unavailable", "Session is not attachable");

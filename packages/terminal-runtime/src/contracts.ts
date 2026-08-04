@@ -32,6 +32,31 @@ export const LaunchDataSchema = z.discriminatedUnion('kind', [
     configurationRef: OperationIdSchema,
   }).strict(),
 ]);
+export const AgentProviderSchema = z.enum(['claude', 'codex', 'opencode', 'pi']);
+export const AgentExecutablePathSchema = z.string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .regex(/^\/[^\u0000\r\n]+$/);
+const AgentConfigurationSandboxSchema = z.object({
+  enabled: z.boolean(),
+  mode: z.enum(['read-only', 'workspace-write', 'danger-full-access']).optional(),
+  writableRoots: z.array(HomeRelativeCwdSchema).max(20),
+  denyWriteRoots: z.array(HomeRelativeCwdSchema).max(20),
+  adminOverride: z.boolean().optional(),
+}).strict();
+export const AgentConfigurationSchema = z.object({
+  schemaVersion: z.literal(1),
+  agent: AgentProviderSchema,
+  cwd: HomeRelativeCwdSchema,
+  prompt: z.string().min(1).max(64 * 1024).optional(),
+  mode: z.enum(['default', 'plan', 'review', 'full_access']),
+  approvalPolicy: z.enum(['untrusted', 'on-request', 'on-failure', 'never']),
+  sandbox: AgentConfigurationSandboxSchema,
+  providerEventPath: HomeRelativePathSchema.optional(),
+  codexExpectedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+  codexExecutable: AgentExecutablePathSchema.optional(),
+}).strict();
 export const ReceiptSchema = z.object({
   schemaVersion: z.literal(1),
   runtimeId: RuntimeIdSchema,
@@ -164,6 +189,7 @@ export type Receipt = z.infer<typeof ReceiptSchema>;
 export type NameIndex = z.infer<typeof NameIndexSchema>;
 export type OperationRecord = z.infer<typeof OperationRecordSchema>;
 export type Descriptor = z.infer<typeof DescriptorSchema>;
+export type AgentConfiguration = z.infer<typeof AgentConfigurationSchema>;
 export type HomeRelativeCwd = z.infer<typeof HomeRelativeCwdSchema>;
 export type ProtocolRequest = z.infer<typeof ProtocolRequestSchema>;
 export type ProtocolResponse = z.infer<typeof ProtocolResponseSchema>;

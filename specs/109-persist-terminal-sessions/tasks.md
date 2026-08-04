@@ -51,14 +51,14 @@
 
 ## Phase 3: User Story 1 — Deployment-Surviving Shell and Agent Runtimes (P1)
 
-- [ ] T026 [P] [US1] Add failing production fail-closed and local direct-spawn tests in `tests/gateway/terminal-runtime-client.test.ts`
-- [ ] T027 [P] [US1] Add failing shell create/list/attach/delete immutable-runtime integration tests in `tests/gateway/shell-terminal-runtime.test.ts`
-- [ ] T028 [P] [US1] Add failing agent stdin/FD launch and sensitive-argv scan tests in `tests/gateway/agent-terminal-runtime.test.ts`
-- [ ] T029 [US1] Inject one compatible runtime client at terminal route registration in `packages/gateway/src/server.ts` and `packages/gateway/src/shell/runtime-client.ts`
-- [ ] T030 [US1] Route production shell creation/list/attach/delete through runtime IDs while retaining local node-pty in `packages/gateway/src/shell/zellij.ts` and `packages/gateway/src/shell/registry.ts`
-- [ ] T031 [US1] Route coding-agent terminal creation and liveness through supervised runtimes in `packages/gateway/src/zellij-runtime.ts` and `packages/gateway/src/agent-session-service.ts`
-- [ ] T032 [US1] Remove prompts/settings/cwd/dynamic options from Matrix-managed provider argv/layouts by using stdin or anonymous FDs in `packages/gateway/src/agent-launcher.ts` and `packages/gateway/src/coding-agents/`
-- [ ] T033 [US1] Preserve attach PTYs in the gateway cgroup and drain only subscribers/attach clients on shutdown in `packages/gateway/src/shell/terminal-websocket.ts` and `packages/gateway/src/server.ts`
+- [X] T026 [P] [US1] Add failing production fail-closed and local direct-spawn tests in `tests/gateway/terminal-runtime-client.test.ts`
+- [X] T027 [P] [US1] Add failing shell create/list/attach/delete immutable-runtime integration tests in `tests/gateway/shell-terminal-runtime.test.ts`
+- [X] T028 [P] [US1] Add failing agent stdin/FD launch and sensitive-argv scan tests in `tests/gateway/agent-terminal-runtime.test.ts`
+- [X] T029 [US1] Inject one compatible runtime client at terminal route registration in `packages/gateway/src/server.ts` and `packages/gateway/src/shell/runtime-client.ts`
+- [X] T030 [US1] Route production shell creation/list/attach/delete through runtime IDs while retaining local node-pty in `packages/gateway/src/shell/zellij.ts` and `packages/gateway/src/shell/registry.ts`
+- [X] T031 [US1] Route coding-agent terminal creation and liveness through supervised runtimes in `packages/gateway/src/zellij-runtime.ts` and `packages/gateway/src/agent-session-service.ts`
+- [X] T032 [US1] Remove prompts/settings/cwd/dynamic options from Matrix-managed provider argv/layouts by using stdin or anonymous FDs in `packages/gateway/src/agent-launcher.ts` and `packages/gateway/src/coding-agents/`
+- [X] T033 [US1] Preserve attach PTYs in the gateway cgroup and drain only subscribers/attach clients on shutdown in `packages/gateway/src/shell/terminal-websocket.ts` and `packages/gateway/src/server.ts`
 
 **Independent test**: gateway crash/restart changes only gateway and attach PIDs; keeper, server, shell, and agent stay unchanged and attachable.
 

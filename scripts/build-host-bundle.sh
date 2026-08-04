@@ -114,6 +114,13 @@ install -m 0644 \
 install -m 0644 \
   "$ROOT_DIR/packages/terminal-runtime/assets/layout.kdl" \
   "$terminal_generation_build/layout.kdl"
+install -m 0644 \
+  "$ROOT_DIR/packages/terminal-runtime/assets/agent-layout.kdl" \
+  "$terminal_generation_build/agent-layout.kdl"
+install -m 0755 \
+  "$ROOT_DIR/packages/gateway/src/coding-agents/codex-app-server-runner.mjs" \
+  "$ROOT_DIR/packages/gateway/src/coding-agents/codex-provider-version-check.mjs" \
+  "$terminal_generation_build/"
 cc -std=c11 -Wall -Wextra -Werror -O2 \
   "$ROOT_DIR/packages/terminal-runtime/native/supervisor-acceptor.c" \
   -o "$terminal_generation_build/supervisor-acceptor"

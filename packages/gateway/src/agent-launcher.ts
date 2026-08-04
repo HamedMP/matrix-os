@@ -4,8 +4,13 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
+import { createOperationId } from "@matrix-os/terminal-runtime";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
+import {
+  buildSupervisedAgentLaunch,
+  type SupervisedAgentConfiguration,
+} from "./coding-agents/supervised-launch.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -51,6 +56,10 @@ export interface AgentLaunchSpec {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  supervised?: {
+    configurationRef: string;
+    configuration: SupervisedAgentConfiguration;
+  };
 }
 
 type CommandRunner = (
@@ -395,6 +404,7 @@ export function createAgentLauncher(options: {
   runtimeHome?: string;
   codexExecutable?: string;
   now?: () => number;
+  terminalRuntimeMode?: "legacy" | "supervised";
 } = {}) {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const cwd = options.cwd ?? process.cwd();
@@ -510,6 +520,42 @@ export function createAgentLauncher(options: {
     detectAgents: detectAgentInstallations,
 
     buildLaunch(input: AgentLaunchInput): AgentLaunchSpec {
+      if (options.terminalRuntimeMode === "supervised") {
+        if (!input.sandbox) {
+          throw new Error("Agent sandbox preflight is required");
+        }
+        const supervisedCodexExecutable = input.agent === "codex"
+          ? input.codexExecutable ?? options.codexExecutable
+          : undefined;
+        const supervised = buildSupervisedAgentLaunch({
+          operationId: createOperationId(),
+          agent: input.agent,
+          cwd: input.cwd,
+          ...(input.prompt ? { prompt: input.prompt } : {}),
+          ...(input.mode ? { mode: input.mode } : {}),
+          ...(input.approvalPolicy
+            ? { approvalPolicy: input.approvalPolicy }
+            : {}),
+          sandbox: input.sandbox,
+          homePath: input.runtimeHome ?? options.runtimeHome,
+          ...(supervisedCodexExecutable
+            ? { codexExecutable: supervisedCodexExecutable }
+            : {}),
+          ...(input.providerEventPath
+            ? { providerEventPath: input.providerEventPath }
+            : {}),
+        });
+        return {
+          command: supervised.matrixArgv[0],
+          args: [supervised.matrixArgv[1]],
+          cwd: input.cwd,
+          env: {},
+          supervised: {
+            configurationRef: supervised.descriptor.configurationRef,
+            configuration: supervised.configuration,
+          },
+        };
+      }
       return buildAgentLaunch({
         ...input,
         runtimeHome: input.runtimeHome ?? options.runtimeHome,
