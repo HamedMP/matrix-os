@@ -16,6 +16,7 @@ readonly state_file="${state_root}/state"; readonly probe=/opt/matrix/libexec/te
 readonly verifier=/opt/matrix/libexec/terminal-runtime/current/spikes/verify-production-evidence.mjs; readonly version_a="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-a"
 readonly version_b="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-b"; readonly unit_prefix=matrix-terminal-session@
 readonly home=/home/matrix/home; readonly cache_root="${home}/system/terminal-runtime/zellij-cache"; readonly uid="$(id -u matrix)"
+readonly codex=/opt/matrix/runtime/node/bin/codex
 readonly -a zellij_env=(
   env HOME="$home" MATRIX_HOME="$home" LANG=C.UTF-8 TERM=xterm-256color
   PATH="$home/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin"
@@ -65,12 +66,8 @@ phase1() {
   zellij --session "$session_name" action write-chars -- \
     "exec bash -lc 'while true; do printf \"MATRIX_ACCEPT_LOOP\\n\"; sleep 1; done'"
   zellij --session "$session_name" action send-keys Enter
-  local codex_path
-  codex_path="$(runuser -u matrix -- env \
-    PATH="$home/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
-    sh -c 'command -v codex')"
-  [[ "$codex_path" =~ ^(/home/matrix/home/.local/bin|/usr/local/bin|/opt/matrix/bin)/codex$ ]]
-  zellij --session "$session_name" action new-pane -- "$codex_path"
+  [ -x "$codex" ]
+  zellij --session "$session_name" action new-pane -- "$codex"
   for _ in $(seq 1 30); do
     local baseline shell_pid agent_pid
     baseline="$(roles "$runtime_id" 2>/dev/null || true)"

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import { lstat, mkdir, open, readFile, readdir, rm } from 'node:fs/promises';
 import { join, posix, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 export const MAX_EVIDENCE_FILE_BYTES = 256 * 1024;
 export const MAX_EVIDENCE_TOTAL_BYTES = 8 * 1024 * 1024;
 export const MAX_EVIDENCE_FILES = 256;
@@ -509,8 +509,13 @@ export async function validateEvidenceDirectory(inputRoot, expectedHeadSha) {
     summarySha256: createHash('sha256').update(summaryResult.body).digest('hex'),
   };
 }
-const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
-if (import.meta.url === invokedPath) {
+export function isMainModule(moduleUrl, invokedPath) {
+  return Boolean(
+    invokedPath
+      && realpathSync(resolve(invokedPath)) === realpathSync(fileURLToPath(moduleUrl)),
+  );
+}
+if (isMainModule(import.meta.url, process.argv[1])) {
   const root = process.argv[2];
   if (!root) {
     console.error('usage: verify-evidence.mjs <evidence-directory>');

@@ -921,6 +921,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(deployLoop).toContain('last_signal=$((SECONDS - 60))');
     expect(deployLoop).toContain('version_seen=false');
+    expect(deployLoop).toContain('attestation_retry_sent=false');
     expect(deployLoop).toContain('if [ "$version_seen" != true ] && [ $((SECONDS - last_signal)) -ge 60 ]; then');
     expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
     expect(workflow).toContain(
@@ -951,6 +952,13 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain('Preview updater state: ${updater_diagnostic_result}');
     expect(deployLoop).toContain('Preview updater state at timeout: ${final_diagnostic}');
     expect(deployLoop).toContain('version_seen=true');
+    expect(deployLoop).toContain(
+      'if [ "$attestation_retry_required" = true ] &&\n                    [ "$attestation_retry_sent" != true ] && [ "$updater_diagnostic_result" = "Update service: idle phase=idle failure=none" ]; then',
+    );
+    expect(deployLoop).toContain(
+      'echo "Reapplying the pinned preview release through the installed updater for host-runtime attestation."',
+    );
+    expect(deployLoop).toContain('attestation_retry_sent=true');
     expect(deployLoop).toContain('Waiting for the installed preview release and terminal generation.');
     expect(deployLoop).toContain('deploy_converged=true');
     expect(deployLoop).toContain('Deployment of ${target_version} did not converge.');
