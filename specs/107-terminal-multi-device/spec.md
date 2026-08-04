@@ -56,7 +56,7 @@ As a user with a terminal open on desktop web and CLI, I want to glance at the s
 1. **Given** a session with a canonical size negotiated from hard clients, **When** a soft client (web mobile viewport, native mobile) attaches, **Then** the session's canonical size is unchanged and every attach PTY remains at the canonical size.
 2. **Given** a mobile client viewing a 200x50 canonical grid, **When** content updates, **Then** the mobile renderer shows the full grid scaled to fit width, with pinch-zoom and pan available, and typing works.
 3. **Given** only soft clients are attached, **When** the session has no live hard client, **Then** the canonical size falls back to the persisted last canonical size, or the default when none exists.
-4. **Given** two hard clients with different sizes, **When** both are attached, **Then** the canonical size is the component-wise minimum of hard-client sizes (a CLI cannot scale its render), and each hard client whose terminal is larger sees the grid anchored top-left.
+4. **Given** desktop web and CLI hard clients with different sizes, **When** both are attached, **Then** the canonical size is the component-wise minimum of their declared sizes, and the larger client sees the real grid anchored top-left over a terminal-themed unused area.
 
 ---
 
@@ -108,7 +108,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 
 ### Edge Cases
 
-- A hard client (CLI) attaches with a terminal smaller than the current canonical size: canonical shrinks (min rule) and soft clients re-scale; when that CLI detaches, canonical returns to the min of remaining hard clients.
+- A hard client (desktop web or CLI) attaches with a terminal smaller than the current canonical size: canonical shrinks (min rule) and mobile soft clients re-scale; when that hard client detaches, canonical returns to the min of remaining hard clients.
 - Rapid attach/detach loops (mobile network flaps) must not thrash canonical size recomputation; size changes are debounced.
 - Resize frames continue to arrive from soft clients (older clients, race windows): the gateway records them as viewport hints but does not apply them to the PTY.
 - Workspace and tab names must satisfy the existing `SESSION_NAME_PATTERN`; tab names additionally cap at 64 chars and are validated with Zod at the route boundary.
@@ -132,10 +132,10 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 **Sizing**
 
 - **FR-006**: Each session MUST have a canonical size (cols x rows) owned by the gateway, persisted in the session registry, defaulting to 200x50 bounded by existing resize limits (cols 1-500, rows 1-200).
-- **FR-007**: Clients MUST declare a client class on attach: `hard` (cannot scale its render: CLI/TTY) or `soft` (can scale: web, native mobile). Both WS routes MUST carry this in the attach handshake. A connection without a class declaration (pre-upgrade client on either route) is classified `legacy`, never `hard`: legacy resize frames are applied (today's behavior) only while zero classified clients are attached to the session; once any classified client attaches, legacy clients' resize frames become viewport hints only. This guarantees an un-upgraded phone or browser can never shrink a session that an upgraded client is using, while pure-legacy setups behave exactly as today.
+- **FR-007**: Clients MUST declare a client class on attach: `hard` (desktop web and CLI/TTY, which render the real grid) or `soft` (mobile web and native mobile, which scale a canonical grid without affecting it). Both WS routes MUST carry this in the attach handshake. A connection without a class declaration (pre-upgrade client on either route) is classified `legacy`, never `hard`: legacy resize frames are applied (today's behavior) only while zero classified clients are attached to the session; once any classified client attaches, legacy clients' resize frames become viewport hints only. This guarantees an un-upgraded phone or browser can never shrink a session that an upgraded client is using, while pure-legacy setups behave exactly as today.
 - **FR-008**: Canonical size MUST equal the component-wise minimum across live hard clients' declared sizes; with no hard clients it retains the persisted value (or, in legacy-only sessions, follows legacy resizes per FR-007). Recomputation is debounced (default 500 ms).
 - **FR-009**: The gateway MUST resize every attach PTY to the canonical size and MUST ignore (but record as hints) resize frames that did not come from a hard client's own declared-size change.
-- **FR-010**: The web shell MUST render soft-client views by scaling the canonical grid to fit the container (font-size fit plus CSS transform fallback), with horizontal pan when scaled below the legibility floor. The `FitAddon`-driven `sendTerminalResize` path is removed for zellij sessions.
+- **FR-010**: Desktop and Canvas web terminals MUST attach as `hard` clients with `cols` and `rows` proposed by `FitAddon.proposeDimensions()`. Pane, sidebar, split, window, and font-metric changes MUST send deduplicated resize declarations without calling `fit()` or locally resizing xterm. Xterm MUST remain at the last gateway-confirmed dimensions until an `attached` or `canonical-size` frame arrives. Mobile web remains `soft`, scales the canonical grid to fit the container (font-size fit plus CSS transform fallback), and uses horizontal pan below the legibility floor. Every xterm root, viewport, and scrollable surface MUST use the active terminal background so fractional and shared-client gaps are themed rather than black.
 - **FR-011**: The native mobile client MUST stop sending resize frames for zellij sessions and MUST render the canonical grid scaled with pinch-zoom/pan.
 
 **Workspaces and tabs**
@@ -187,7 +187,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 
 - **Startup**: gateway boots as today; the reaper sweep and coalescing flush timers are created in gateway startup and disposed in the shutdown drain path alongside existing WS shutdown handling.
 - **Registry migration**: `~/system/shell-sessions.json` — the zellij `ShellRegistry` persist file (`packages/gateway/src/shell/registry.ts`) — gains optional fields (`kind: "workspace" | "legacy"`, `canonicalSize`, `tabs`, `cwd`). Old files load unchanged (fields optional, defaults applied); no schema-version break. Writes remain atomic via the existing atomic-write helper. This file is distinct from `~/system/terminal-sessions.json`, which belongs to the deprecated raw-PTY `SessionRegistry` (`packages/gateway/src/session-registry.ts`); that registry and file are untouched by this spec, and workspace metadata, canonical sizes, and reaper state live exclusively in `shell-sessions.json`.
-- **Cross-surface sync**: web shell (`TerminalApp`/`PaneGrid`/`TerminalPane`), CLI (`shell.ts`, `shell-client.ts`), native mobile (`terminal-client.ts`), and gateway must ship the attach-metadata change compatibly: the gateway treats missing client-class metadata with the FR-007 defaults so old clients keep working.
+- **Cross-surface sync**: desktop/Canvas web (`TerminalApp`/`PaneGrid`/`TerminalPane`) and CLI (`shell.ts`, `shell-client.ts`) declare hard sizes; mobile web and native mobile (`terminal-client.ts`) remain soft. The gateway treats missing client-class metadata with the FR-007 defaults so old clients keep working.
 - **Zellij config**: shipped config stays chrome-free; tab-navigation keybinds used by FR-015 fallback are pinned in the generated `config.kdl` so injection sequences are deterministic.
 
 ## Failure Modes
@@ -211,7 +211,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 ## Rollout Phasing
 
 1. **Phase 1 — output pipeline (gateway only)**: send-first delivery, recorder election, coalesced persistence, WS flow control, exited-session reaper (metadata-tagged sessions only; pre-existing legacy sessions are exempt per FR-018 until Phase 3 migration has run). No client changes; largest latency and write-amplification win; independently shippable.
-2. **Phase 2 — canonical sizing**: attach metadata + canonical size arbiter in gateway; web scaled rendering; mobile stops resizing; CLI declares hard size. Shippable behind compatible defaults.
+2. **Phase 2 — canonical sizing**: attach metadata + canonical size arbiter in gateway; desktop web and CLI declare hard sizes; mobile web/native mobile use scaled soft rendering and never resize the session. Shippable behind compatible defaults.
 3. **Phase 3 — workspaces/tabs with migration**: gateway tab routes hardening plus the FR-022 migration operation, web workspace/tab UI with automatic legacy conversion (FR-023), CLI workspace resolution, labeling, `migrate`, and `run -it` tab targeting (FR-024). Depends on Spike S1. Mobile and desktop surfaces adopt the same gateway contract in follow-up work coordinated against their in-flight PRs.
 
 ## Spikes (throwaway code before Phase 2/3 implementation)

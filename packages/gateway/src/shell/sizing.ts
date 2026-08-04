@@ -32,9 +32,9 @@ export function clampTerminalSize(size: TerminalSize): TerminalSize {
 /**
  * Canonical session size arbiter (spec 107 FR-006..009).
  *
- * Hard clients (CLI/TTY — cannot scale their render) negotiate the canonical
- * size as the component-wise minimum of their declared sizes. Soft clients
- * (web, native mobile — render the canonical grid scaled) never influence it.
+ * Hard clients (desktop web and CLI/TTY) negotiate the canonical size as the
+ * component-wise minimum of their declared sizes. Soft clients (mobile web and
+ * native mobile — render the canonical grid scaled) never influence it.
  * Legacy clients (no class declared) keep today's resize-follow behavior, but
  * only while zero classified clients are attached, so an un-upgraded client
  * can never shrink a session an upgraded client is using.
