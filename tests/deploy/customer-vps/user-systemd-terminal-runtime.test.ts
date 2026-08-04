@@ -313,16 +313,21 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("os.O_NOFOLLOW");
     expect(acceptance).toContain("prepare-exact-head-runtime");
     expect(acceptance).toContain("matrix-sync-agent.service");
-    expect(prepareWorker).toContain(
+    expect(acceptance).toContain(
       '"$(path_state /opt/matrix/staging/update-phase)" = missing',
     );
-    expect(prepareWorker).toContain(
+    expect(acceptance).toContain(
       '"$(cat /opt/matrix/app/BUNDLE_VERSION)" = "$preview_version"',
     );
-    expect(prepareWorker).toContain(
+    expect(acceptance).toContain(
       '"$(path_state /opt/matrix/app/.update-error.json)" = missing',
     );
-    expect(prepareWorker).toContain("installed_terminal_runtime_is_ready");
+    expect(acceptance).toContain("installed_terminal_runtime_is_ready");
+    expect(prepareWorker).toContain("exact_head_runtime_is_ready");
+    expect(prepareWorker).toContain("readiness_deadline=$((SECONDS + 1800))");
+    expect(prepareWorker).toContain("readiness_state=waiting");
+    expect(prepareWorker).toContain('diagnose_update_failure "$preview_version"');
+    expect(prepareWorker).toContain("readiness_state=ready");
     expect(prepareWorker).not.toContain(
       'matrix-update --no-tail "$preview_version"',
     );

@@ -1085,6 +1085,16 @@ installed_terminal_runtime_is_ready() {
     "$generation_dir/zellij" --version >/dev/null 2>&1
 }
 
+exact_head_runtime_is_ready() {
+  [ -f /opt/matrix/app/BUNDLE_VERSION ] &&
+    [ ! -L /opt/matrix/app/BUNDLE_VERSION ] &&
+    [ "$(cat /opt/matrix/app/BUNDLE_VERSION)" = "$preview_version" ] &&
+    [ "$(path_state /opt/matrix/app/.update-now)" = missing ] &&
+    [ "$(path_state /opt/matrix/staging/update-phase)" = missing ] &&
+    [ "$(path_state /opt/matrix/app/.update-error.json)" = missing ] &&
+    installed_terminal_runtime_is_ready
+}
+
 fail_prepare() {
   local status=$?
   trap - ERR
@@ -1110,13 +1120,32 @@ prepare_exact_head_runtime() {
   installed_bounded_updater_is_ready
 
   current_failure=exact-head-runtime-readiness
-  [ -f /opt/matrix/app/BUNDLE_VERSION ]
-  [ ! -L /opt/matrix/app/BUNDLE_VERSION ]
-  [ "$(cat /opt/matrix/app/BUNDLE_VERSION)" = "$preview_version" ]
-  [ "$(path_state /opt/matrix/app/.update-now)" = missing ]
-  [ "$(path_state /opt/matrix/staging/update-phase)" = missing ]
-  [ "$(path_state /opt/matrix/app/.update-error.json)" = missing ]
-  installed_terminal_runtime_is_ready
+  local readiness_deadline=$((SECONDS + 1800)) readiness_state=waiting
+  local trigger_state phase_state error_state
+  while [ "$SECONDS" -lt "$readiness_deadline" ]; do
+    if exact_head_runtime_is_ready; then
+      readiness_state=ready
+      break
+    fi
+
+    trigger_state="$(path_state /opt/matrix/app/.update-now)"
+    phase_state="$(path_state /opt/matrix/staging/update-phase)"
+    error_state="$(path_state /opt/matrix/app/.update-error.json)"
+    if [ -L /opt/matrix/app/BUNDLE_VERSION ] ||
+      [[ "$trigger_state" =~ ^(symlink|invalid)$ ]] ||
+      [[ "$phase_state" =~ ^(symlink|invalid)$ ]] ||
+      [[ "$error_state" =~ ^(symlink|invalid)$ ]] ||
+      { [ "$error_state" = present ] && [ "$trigger_state" = missing ] &&
+        [ "$phase_state" = missing ]; }; then
+      diagnose_update_failure "$preview_version"
+      return 1
+    fi
+    sleep 2
+  done
+  if [ "$readiness_state" != ready ]; then
+    diagnose_update_failure "$preview_version"
+    return 1
+  fi
   wait_gateway
 
   current_failure=gateway-activation
