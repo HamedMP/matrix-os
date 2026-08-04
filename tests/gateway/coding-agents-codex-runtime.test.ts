@@ -226,7 +226,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.145.0\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.145.1\n", stderr: "" })),
     });
     try {
       await expect(bridge.watch({
