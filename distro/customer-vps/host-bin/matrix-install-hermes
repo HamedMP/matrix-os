@@ -1,26 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+  echo "matrix-install-hermes: root_required" >&2
+  exit 77
+fi
+
 if [ -r /opt/matrix/env/host.env ]; then
   source /opt/matrix/env/host.env
 fi
 if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
-  matrix_export_owner_env
 fi
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 HERMES_INSTALLER_URL="${HERMES_INSTALLER_URL:-https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh}"
 HERMES_HOME="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}"
-HERMES_INSTALLER_PATH="${HERMES_INSTALLER_PATH:-/tmp/hermes-agent-install.sh}"
+HERMES_INSTALLER_PATH="$(mktemp)"
 MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 MATRIX_GATEWAY_URL="${MATRIX_GATEWAY_URL:-http://localhost:4000}"
+trap 'rm -f "${HERMES_INSTALLER_PATH:-}"' EXIT
 
 log() {
   printf 'matrix-install-hermes: %s\n' "$*"
 }
 
-if ! id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
+if ! /usr/bin/id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
   echo "matrix-install-hermes: runtime user not found: $MATRIX_RUNTIME_USER" >&2
   exit 1
 fi
@@ -48,24 +56,19 @@ curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
 chmod 0755 "$HERMES_INSTALLER_PATH"
 
 log "installing Hermes Agent for $MATRIX_RUNTIME_USER"
-# setpriv avoids PAM account checks: sudo fails outright when the invoking or
-# target account has an expired password (Hetzner expires root's on servers
-# created without SSH keys), which left first-boot installs crash-looping.
+# setpriv avoids PAM account checks for the dedicated runtime owner.
 run_installer_as_runtime_user() {
-  if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
-    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
-    return
-  fi
-  sudo -H -u "$MATRIX_RUNTIME_USER" "$@"
+  command -v setpriv >/dev/null 2>&1 || return 1
+  /usr/bin/setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
 }
-run_installer_as_runtime_user env \
+run_installer_as_runtime_user /usr/bin/env \
   HOME="$MATRIX_RUNTIME_HOME" \
   HERMES_HOME="$HERMES_HOME" \
   XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \
   XDG_DATA_HOME="$MATRIX_RUNTIME_HOME/.local/share" \
   XDG_CACHE_HOME="$MATRIX_RUNTIME_HOME/.cache" \
   PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
-  bash "$HERMES_INSTALLER_PATH" --skip-setup
+  /bin/bash "$HERMES_INSTALLER_PATH" --skip-setup
 
 for cli in uv uvx hermes; do
   if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/$cli" ]; then
@@ -75,7 +78,7 @@ done
 
 if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scripts/install-hermes-matrix-skills.sh" ]; then
   log "installing bundled Matrix Hermes skills"
-  run_installer_as_runtime_user env \
+  run_installer_as_runtime_user /usr/bin/env \
     HOME="$MATRIX_RUNTIME_HOME" \
     HERMES_HOME="$HERMES_HOME" \
     HERMES_BIN="$MATRIX_RUNTIME_HOME/.local/bin/hermes" \
@@ -83,9 +86,9 @@ if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scri
     XDG_DATA_HOME="$MATRIX_RUNTIME_HOME/.local/share" \
     XDG_CACHE_HOME="$MATRIX_RUNTIME_HOME/.cache" \
     PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
-    bash -lc "cd '$MATRIX_APP_DIR' && ./scripts/install-hermes-matrix-skills.sh '$MATRIX_APP_DIR'"
+    /bin/bash -lc "cd '$MATRIX_APP_DIR' && ./scripts/install-hermes-matrix-skills.sh '$MATRIX_APP_DIR'"
 
-  run_installer_as_runtime_user env \
+  run_installer_as_runtime_user /usr/bin/env \
     HOME="$MATRIX_RUNTIME_HOME" \
     HERMES_HOME="$HERMES_HOME" \
     XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \

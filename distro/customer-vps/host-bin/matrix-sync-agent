@@ -272,7 +272,9 @@ install_update_runtime_bins() {
     matrix-update-service \
     matrix-sync-agent \
     matrix-update \
-    matrix-validate-host-bundle; do
+    matrix-validate-host-bundle \
+    matrix-tool-pack-control \
+    matrix-symphony-control; do
     [ -f "$source_dir/$name" ] && [ ! -L "$source_dir/$name" ] || return 1
     next="$BIN_DIR/.${name}.next"
     install -o root -g root -m 0755 "$source_dir/$name" "$next"
@@ -286,6 +288,29 @@ install_update_runtime_bins() {
   else
     rm -f -- "$BIN_DIR/matrix-terminal-spike-control"
   fi
+}
+
+install_matrix_sudoers() {
+  local sudoers_next="/etc/sudoers.d/.matrix.next"
+  install -d -o root -g root -m 0750 /etc/sudoers.d
+  rm -f -- "$sudoers_next"
+  install -o root -g root -m 0440 /dev/null "$sudoers_next"
+  cat >"$sudoers_next" <<'EOF'
+matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-update *
+matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-tool-pack-control *
+matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-symphony-control *
+EOF
+  if [ -x "$BIN_DIR/matrix-terminal-spike-control" ] &&
+    [ ! -L "$BIN_DIR/matrix-terminal-spike-control" ]; then
+    printf '%s\n' \
+      'matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-terminal-spike-control *' \
+      >>"$sudoers_next"
+  fi
+  if ! visudo -cf "$sudoers_next" >/dev/null; then
+    rm -f -- "$sudoers_next"
+    return 1
+  fi
+  mv -f -- "$sudoers_next" /etc/sudoers.d/matrix
 }
 
 install_systemd_units_atomic() {
@@ -895,6 +920,12 @@ apply_update() {
     if ! install_update_runtime_bins "$extract_dir/bin"; then
       log "ERROR: update_runtime_install_failed"
       do_rollback failed-update || log "ERROR: rollback after update runtime install failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
+    if ! install_matrix_sudoers; then
+      log "ERROR: privilege_boundary_install_failed"
+      do_rollback failed-update || log "ERROR: rollback after privilege boundary failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi

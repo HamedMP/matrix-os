@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+activation_file="/opt/matrix/app/terminal-runtime-activation"
+node_path="/opt/matrix/runtime/node"
+node_modules="$node_path/lib/node_modules"
+node_bin="$node_path/bin"
+
+if [ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]; then
+  exit 0
+fi
+if [ ! -f "$activation_file" ] ||
+  [ -L "$activation_file" ] ||
+  ! cmp -s "$activation_file" <(printf 'supervised-v1\n'); then
+  echo "matrix-prepare-gateway-runtime: invalid_activation" >&2
+  exit 1
+fi
+
+for required in "$node_path" "$node_modules" "$node_bin"; do
+  [ -d "$required" ] && [ ! -L "$required" ] || {
+    echo "matrix-prepare-gateway-runtime: invalid_node_runtime" >&2
+    exit 1
+  }
+done
+
+if find -P "$node_path" -xdev \
+  \( -path "$node_modules/*" -o -path "$node_bin/*" \) \
+  -type f ! -links 1 -print -quit | grep -q .; then
+  echo "matrix-prepare-gateway-runtime: linked_node_runtime_file" >&2
+  exit 1
+fi
+
+chown root:matrix "$node_path" "$node_modules" "$node_bin"
+chmod g+rwX "$node_modules" "$node_bin"
+while IFS= read -r -d '' directory; do
+  chown root:matrix "$directory"
+  chmod g+rws "$directory"
+done < <(
+  find -P "$node_path" -xdev \
+    \( -path "$node_modules" -o -path "$node_modules/*" -o \
+       -path "$node_bin" -o -path "$node_bin/*" \) \
+    -type d -print0
+)
+while IFS= read -r -d '' file; do
+  chown root:matrix "$file"
+  chmod g+rw "$file"
+done < <(
+  find -P "$node_path" -xdev \
+    \( -path "$node_modules/*" -o -path "$node_bin/*" \) \
+    -type f -print0
+)

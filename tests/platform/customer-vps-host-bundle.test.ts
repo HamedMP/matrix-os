@@ -243,6 +243,7 @@ describe('customer VPS host bundle', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-tool-pack'), 'utf8');
+    const packControl = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-tool-pack-control'), 'utf8');
     const hermesInstaller = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-hermes'), 'utf8');
     const ownerEnv = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-owner-env'), 'utf8');
     const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
@@ -295,8 +296,10 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('pi) with_pack_lock "$pack" install_pi ;;');
     expect(installer).toContain('return 75');
     expect(installer).not.toContain('exit 0');
-    expect(installer).toContain('systemctl start matrix-linux-tools.service');
-    expect(installer).toContain('sudo systemctl start matrix-linux-tools.service');
+    expect(installer).toContain('/opt/matrix/bin/matrix-install-linux-tools');
+    expect(installer).not.toContain('sudo systemctl');
+    expect(packControl).toContain('linux-tools) UNIT="matrix-linux-tools.service"');
+    expect(packControl).toContain('/usr/bin/systemctl start "$UNIT"');
     expect(installer).toContain('failed=0');
     expect(installer).toContain('if ! wait "$pid"; then');
     expect(installer).toContain('exit "$failed"');
@@ -332,6 +335,7 @@ describe('customer VPS host bundle', () => {
     const codeServerUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code-server.service'), 'utf8');
     const codeUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code.service'), 'utf8');
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
+    const gatewayRuntime = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-prepare-gateway-runtime'), 'utf8');
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
     expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
@@ -366,16 +370,21 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('MODE="${1:-}"');
     expect(installer).toContain('if [ "$MODE" != "--tools-only" ]; then');
     expect(installer).toContain('if [ "$MODE" = "--sandbox-only" ]; then');
-    expect(gatewayUnit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-install-developer-tools --sandbox-only');
+    expect(gatewayUnit).not.toContain('matrix-install-developer-tools');
+    expect(gatewayUnit).not.toContain('matrix-prepare-gateway-runtime');
+    expect(gatewayRuntime).toContain('[ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]');
+    expect(gatewayRuntime).toContain('cmp -s "$activation_file" <(printf');
+    expect(gatewayRuntime).toContain('find -P "$node_path" -xdev');
+    expect(gatewayRuntime).toContain('chmod g+rwX "$node_modules" "$node_bin"');
+    expect(gatewayRuntime).toContain('chmod g+rws "$directory"');
     expect(gatewayUnit).toContain('TimeoutStartSec=720');
     expect(codeServerUnit).toContain('Description=Install Matrix OS code-server runtime');
     expect(codeServerUnit).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
     expect(codeServerUnit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
     expect(codeServerUnit).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(codeUnit).toContain('Description=Matrix OS customer code editor');
-    expect(codeUnit).toContain('After=matrix-restore.service');
-    expect(codeUnit).not.toContain('After=matrix-restore.service matrix-code-server.service');
-    expect(codeUnit).not.toContain('Wants=matrix-code-server.service');
+    expect(codeUnit).toContain('After=matrix-restore.service matrix-code-server.service');
+    expect(codeUnit).toContain('Wants=matrix-code-server.service');
     expect(codeUnit).toContain('ExecStart=/opt/matrix/bin/matrix-code');
     expect(codeUnit).toContain('TimeoutStartSec=1800');
     expect(codeUnit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');

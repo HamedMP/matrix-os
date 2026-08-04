@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Owner CLI for the typed Matrix root update service."""
 
 from __future__ import annotations
