@@ -86,6 +86,24 @@ describe("desktop release workflows", () => {
     expect(workflow).not.toContain("version_suffix:");
   });
 
+  it("recreates the disposable canary release after preparing the complete artifact set", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
+    const downloadIndex = workflow.indexOf("uses: actions/download-artifact@v6");
+    const manifestIndex = workflow.indexOf("name: Generate release manifest");
+    const notesIndex = workflow.indexOf("name: Write release notes");
+    const cleanupIndex = workflow.indexOf("name: Remove previous desktop-canary release");
+    const publishIndex = workflow.indexOf("name: Publish desktop-canary prerelease");
+
+    expect(workflow).toContain("GH_TOKEN: ${{ github.token }}");
+    expect(workflow).toContain("gh release delete desktop-canary --yes");
+    expect(workflow).not.toContain("gh release delete desktop-canary --yes --cleanup-tag");
+    expect(downloadIndex).toBeGreaterThan(-1);
+    expect(manifestIndex).toBeGreaterThan(downloadIndex);
+    expect(notesIndex).toBeGreaterThan(manifestIndex);
+    expect(cleanupIndex).toBeGreaterThan(notesIndex);
+    expect(publishIndex).toBeGreaterThan(cleanupIndex);
+  });
+
   it("patches exact release versions and validates notarization inputs before packaging", () => {
     const build = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
     const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
