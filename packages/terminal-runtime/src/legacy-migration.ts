@@ -201,8 +201,7 @@ export async function migrateLegacyTerminalState(options: {
   const now = options.now ?? (() => new Date());
   const createId = options.createId ?? createRuntimeId;
   const systemDirectory = await SecureDirectory.open(`${options.homePath}/system`);
-  const sessionsDirectory =
-    await SecureDirectory.open(`${options.homePath}/system/sessions`);
+  const sessionsDirectory = await SecureDirectory.open(`${options.homePath}/system/sessions`);
   let migrationError: unknown;
   try {
     const [shell, workspace] = await Promise.all([
