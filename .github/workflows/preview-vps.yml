@@ -272,9 +272,8 @@ jobs:
           }
           echo "terminal_generation_target=$terminal_generation_target" >>"$GITHUB_OUTPUT"
           mv dist/host-bundle dist/bootstrap
-          rm -f \
-            distro/customer-vps/host-bin/matrix-terminal-spike-control \
-            distro/customer-vps/host-bin/matrix-terminal-spike-pane
+          rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control
+          rm -f distro/customer-vps/host-bin/matrix-terminal-spike-pane
           rm -rf scripts/spikes/terminal-runtime
           git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime
           git checkout --detach "${{ needs.gate.outputs.head_sha }}"
