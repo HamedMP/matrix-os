@@ -169,6 +169,26 @@ async function regularFileExists(path) {
     throw error;
   }
 }
+async function confirmHeldCreatePane(sessionName, env) {
+  const options = { env, timeout: 2000, maxBuffer: 64 * 1024 };
+  const { stdout } = await execFileAsync(
+    zellij,
+    ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
+    options,
+  );
+  const listed = JSON.parse(stdout);
+  if (!Array.isArray(listed) || listed.length > 16) throw new Error('startup_failed');
+  const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
+  if (panes.length !== 1 || !Number.isInteger(panes[0].id) || panes[0].id < 0) {
+    throw new Error('startup_failed');
+  }
+  const [pane] = panes;
+  await execFileAsync(
+    zellij,
+    ['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)],
+    options,
+  );
+}
 async function processInfo(pid) {
   try {
     const [comm, cmdline] = await Promise.all([
@@ -319,7 +339,7 @@ async function main() {
     if (clientExited) throw new Error('client_exit');
     const paneReleased = await regularFileExists(paneReleasePath);
     if (paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent) {
-      pty.write('\r');
+      await confirmHeldCreatePane(sessionName, env);
       confirmationSent = true;
     }
     const detected = paneReleased

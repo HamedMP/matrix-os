@@ -331,7 +331,9 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain(
       "if (paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent)",
     );
-    expect(keeper).toContain("pty.write('\\r')");
+    expect(keeper).toContain("['--session', sessionName, 'action', 'list-panes', '--all', '--json']");
+    expect(keeper).toContain("['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)]");
+    expect(keeper).not.toContain("pty.write('\\r')");
     expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
     expect(keeper).toContain('const detected = paneReleased');
     expect(paneProbe).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
