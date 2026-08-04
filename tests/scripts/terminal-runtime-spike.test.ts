@@ -358,6 +358,14 @@ describe('terminal runtime spike evidence', () => {
       'j${keeper_helper_exit}',
       'q${failure_helper}',
       'j${failure_helper_exit}',
+      'failure_progress',
+      'failure_runner_status',
+      'failure_base_state',
+      'failure_base_substate',
+      'failure_base_status',
+      'd${failure_progress}',
+      'u${failure_runner_status}',
+      'b${failure_base_state}_${failure_base_substate}_${failure_base_status}',
     ]);
     expect(keeper.indexOf('await verifyWorkloadHelper();')).toBeLessThan(
       keeper.indexOf('await launchCreateWorkloadPane(sessionName, env);'),
