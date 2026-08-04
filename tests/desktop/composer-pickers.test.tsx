@@ -64,6 +64,27 @@ function summaryFixture(): RuntimeSummary {
   };
 }
 
+function piFirstSummaryFixture(): RuntimeSummary {
+  const summary = summaryFixture();
+  return {
+    ...summary,
+    providers: [
+      {
+        id: "pi",
+        kind: "pi",
+        displayName: "Pi",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default"],
+        defaultMode: "default",
+        setupActions: [],
+      },
+      ...summary.providers,
+    ],
+  };
+}
+
 function workspaceFixture(): ProjectAgentWorkspace {
   return {
     project: { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 2, attentionCount: 0 },
@@ -107,13 +128,15 @@ function mockOperator({
   preferredProviderId,
   loadPreferredProviderId,
   threadProviderId = "codex",
+  summary = summaryFixture(),
 }: {
   preferredProviderId?: string;
   loadPreferredProviderId?: () => Promise<string | null>;
   threadProviderId?: string;
+  summary?: RuntimeSummary;
 } = {}) {
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
-    if (channel === "runtime:get-summary") return summaryFixture();
+    if (channel === "runtime:get-summary") return summary;
     if (channel === "runtime:get-reviews") return { items: [], hasMore: false, limit: 50 };
     if (channel === "runtime:get-notification-preferences") {
       return { attentionPush: { approval: true, input: true, failed: true, completed: true } };
@@ -245,6 +268,27 @@ describe("composer provider/mode pickers", () => {
     await waitFor(() => expect(mode.value).toBe("review"));
   });
 
+  it("uses the preferred non-pi provider sandbox when pi is the runtime default", async () => {
+    const { invoke } = mockOperator({
+      preferredProviderId: "codex",
+      summary: piFirstSummaryFixture(),
+    });
+    await openDraftComposer();
+
+    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
+    await waitFor(() => expect(provider.value).toBe("codex"));
+    const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "Use my preferred provider" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({ providerId: "codex", sandboxMode: "workspace_write" }),
+      );
+    });
+  });
+
   it("applies a persisted provider that hydrates after a seeded draft opens", async () => {
     let resolvePreference!: (value: string | null) => void;
     mockOperator({
@@ -279,6 +323,25 @@ describe("composer provider/mode pickers", () => {
     expect(mode.value).toBe("review");
     // The new provider's modes replace the old provider's options.
     expect(Array.from(mode.options).map((option) => option.value)).toEqual(["default", "review"]);
+  });
+
+  it("updates the sandbox when switching from pi to a non-pi provider", async () => {
+    const { invoke } = mockOperator({ summary: piFirstSummaryFixture() });
+    await openDraftComposer();
+
+    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
+    expect(provider.value).toBe("pi");
+    fireEvent.change(provider, { target: { value: "codex" } });
+    const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "Switch providers safely" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({ providerId: "codex", sandboxMode: "workspace_write" }),
+      );
+    });
   });
 
   it("sends the picked provider and mode with the created thread", async () => {

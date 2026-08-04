@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   defaultAgentThreadComposerDraft,
+  defaultSandboxModeForProvider,
   type AgentThreadComposerDraft,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
@@ -53,7 +54,12 @@ export function ProjectChatDraft({
       ? summary.providers.find((provider) => provider.id === preferredProviderId)
       : undefined;
     if (!preferred) return base;
-    return { ...base, providerId: preferred.id, mode: preferred.defaultMode ?? base.mode };
+    return {
+      ...base,
+      providerId: preferred.id,
+      mode: preferred.defaultMode ?? base.mode,
+      sandboxMode: defaultSandboxModeForProvider(preferred),
+    };
   }, [summary, preferredProviderId]);
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(() => (
     seed ? mergeComposerSeed(initialDraft, seed.draft) : initialDraft
@@ -73,13 +79,18 @@ export function ProjectChatDraft({
   const [localFocusBumps, setLocalFocusBumps] = useState(0);
   const focusComposer = () => setLocalFocusBumps((count) => count + 1);
 
-  // Until a picker is touched, provider/mode are derived from the current
+  // Until a picker is touched, provider/mode/sandbox are derived from the current
   // runtime + persisted preference. Prompt and relation state remain local,
   // so late preference hydration never needs an effect that briefly renders a
   // stale provider or overwrites what the user typed.
   const effectiveDraft = providerSelectionTouchedRef.current
     ? draft
-    : { ...draft, providerId: initialDraft.providerId, mode: initialDraft.mode };
+    : {
+        ...draft,
+        providerId: initialDraft.providerId,
+        mode: initialDraft.mode,
+        sandboxMode: initialDraft.sandboxMode,
+      };
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -187,6 +198,7 @@ export function ProjectChatDraft({
                       ...current,
                       providerId: provider?.id,
                       mode: provider?.defaultMode ?? current.mode,
+                      sandboxMode: defaultSandboxModeForProvider(provider),
                     }));
                   }}
                   onModeChange={(mode) => {
