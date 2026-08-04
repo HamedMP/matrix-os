@@ -66,14 +66,15 @@ export function ProjectChatDraft({
   }, [summary, preferredProviderId]);
   // Selecting a thread unmounts this pane (the only route to the inspector
   // while drafting); the session-scoped draft store keeps the composed input
-  // alive across that round trip. A restored draft counts as provider-touched
-  // so the user's earlier picker choices survive verbatim.
-  const [restoredDraft] = useState(() => useDraftChat.getState().draftFor(projectId));
+  // alive across that round trip. Picker intent is stored independently so an
+  // untouched prompt can still adopt a preference that hydrates while closed.
+  const [restoredEntry] = useState(() => useDraftChat.getState().draftEntryFor(projectId));
+  const restoredDraft = restoredEntry?.draft ?? null;
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(() => {
     if (restoredDraft) return seed ? mergeComposerSeed(restoredDraft, seed.draft) : restoredDraft;
     return seed ? mergeComposerSeed(initialDraft, seed.draft) : initialDraft;
   });
-  const providerSelectionTouchedRef = useRef(restoredDraft !== null);
+  const providerSelectionTouchedRef = useRef(restoredEntry?.pickerTouched ?? false);
 
   useEffect(() => {
     const store = useDraftChat.getState();
@@ -87,8 +88,11 @@ export function ProjectChatDraft({
           mode: initialDraft.mode,
           sandboxMode: initialDraft.sandboxMode,
         };
-    if (hasComposerContent(draftToPersist) || hasPickerChanges) store.setDraft(projectId, draftToPersist);
-    else store.clearDraft(projectId);
+    if (hasComposerContent(draftToPersist) || hasPickerChanges) {
+      store.setDraft(projectId, draftToPersist, providerSelectionTouchedRef.current);
+    } else {
+      store.clearDraft(projectId);
+    }
   }, [projectId, draft, initialDraft]);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);

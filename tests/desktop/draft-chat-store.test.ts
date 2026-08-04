@@ -18,7 +18,16 @@ describe("draft-chat store", () => {
   it("stores and returns a per-project draft", () => {
     useDraftChat.getState().setDraft("matrix-os", draft("hello"));
     expect(useDraftChat.getState().draftFor("matrix-os")?.prompt).toBe("hello");
+    expect(useDraftChat.getState().draftEntryFor("matrix-os")?.pickerTouched).toBe(false);
     expect(useDraftChat.getState().draftFor("other")).toBeNull();
+  });
+
+  it("preserves whether the provider picker was explicitly changed", () => {
+    useDraftChat.getState().setDraft("matrix-os", draft("hello"), true);
+    expect(useDraftChat.getState().draftEntryFor("matrix-os")).toMatchObject({
+      draft: { prompt: "hello" },
+      pickerTouched: true,
+    });
   });
 
   it("clears a project's draft without touching others", () => {

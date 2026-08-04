@@ -10,13 +10,20 @@ export const MAX_DRAFT_CHAT_ENTRIES = 50;
 
 interface DraftChatEntry {
   draft: AgentThreadComposerDraft;
+  pickerTouched: boolean;
   touchedAt: number;
+}
+
+export interface DraftChatSnapshot {
+  draft: AgentThreadComposerDraft;
+  pickerTouched: boolean;
 }
 
 interface DraftChatState {
   entries: Record<string, DraftChatEntry>;
+  draftEntryFor: (projectId: string) => DraftChatSnapshot | null;
   draftFor: (projectId: string) => AgentThreadComposerDraft | null;
-  setDraft: (projectId: string, draft: AgentThreadComposerDraft) => void;
+  setDraft: (projectId: string, draft: AgentThreadComposerDraft, pickerTouched?: boolean) => void;
   clearDraft: (projectId: string) => void;
 }
 
@@ -27,10 +34,15 @@ export function clearDraftChats(): void {
 export const useDraftChat = create<DraftChatState>()((set, get) => ({
   entries: {},
 
+  draftEntryFor: (projectId) => {
+    const entry = get().entries[projectId];
+    return entry ? { draft: entry.draft, pickerTouched: entry.pickerTouched } : null;
+  },
+
   draftFor: (projectId) => get().entries[projectId]?.draft ?? null,
 
-  setDraft: (projectId, draft) => {
-    const merged = { ...get().entries, [projectId]: { draft, touchedAt: Date.now() } };
+  setDraft: (projectId, draft, pickerTouched = false) => {
+    const merged = { ...get().entries, [projectId]: { draft, pickerTouched, touchedAt: Date.now() } };
     const keys = Object.keys(merged);
     if (keys.length <= MAX_DRAFT_CHAT_ENTRIES) {
       set({ entries: merged });

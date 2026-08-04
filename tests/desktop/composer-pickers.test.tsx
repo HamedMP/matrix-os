@@ -366,6 +366,46 @@ describe("composer provider/mode pickers", () => {
     });
   });
 
+  it("restores an untouched draft with the provider preference that hydrates while it is closed", async () => {
+    let resolvePreference!: (value: string | null) => void;
+    const { invoke } = mockOperator({
+      loadPreferredProviderId: () => new Promise((resolve) => {
+        resolvePreference = resolve;
+      }),
+    });
+    await openDraftComposer();
+
+    const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "Keep my prompt, not the transient provider" } });
+    await waitFor(() => expect(useDraftChat.getState().draftFor("matrix-os")?.prompt).toBe(
+      "Keep my prompt, not the transient provider",
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
+    await screen.findByRole("region", { name: "Conversation Plan the auth work" });
+    await act(async () => {
+      resolvePreference("claude");
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+
+    const restored = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
+    await waitFor(() => expect((screen.getByLabelText("Agent provider") as HTMLSelectElement).value).toBe("claude"));
+    expect((screen.getByLabelText("Agent mode") as HTMLSelectElement).value).toBe("review");
+    expect(restored.value).toBe("Keep my prompt, not the transient provider");
+    fireEvent.keyDown(restored, { key: "Enter" });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({
+          providerId: "claude",
+          mode: "review",
+          prompt: "Keep my prompt, not the transient provider",
+        }),
+      );
+    });
+  });
+
   it("resets the mode to the new provider's default when the provider changes", async () => {
     mockOperator();
     await openDraftComposer();
