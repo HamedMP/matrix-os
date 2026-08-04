@@ -17,6 +17,7 @@ import { capabilityEnabled } from "../coding-agents/capabilities";
 import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
 import {
   clearComposerLaunchContext,
+  hasComposerContent,
   mergeComposerSeed,
   type ComposerSeed,
 } from "../coding-agents/composer-seed";
@@ -76,9 +77,11 @@ export function ProjectChatDraft({
 
   useEffect(() => {
     const store = useDraftChat.getState();
-    if (draft.prompt.trim().length > 0) store.setDraft(projectId, draft);
+    const hasPickerChanges = providerSelectionTouchedRef.current
+      && (draft.providerId !== initialDraft.providerId || draft.mode !== initialDraft.mode);
+    if (hasComposerContent(draft) || hasPickerChanges) store.setDraft(projectId, draft);
     else store.clearDraft(projectId);
-  }, [projectId, draft]);
+  }, [projectId, draft, initialDraft]);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);
   const createThread = useCodingAgentWorkspace((s) => s.createThread);

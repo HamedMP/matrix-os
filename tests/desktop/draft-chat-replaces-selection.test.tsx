@@ -12,7 +12,7 @@ import { useInspectorLayout } from "../../desktop/src/renderer/src/features/pane
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
-import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
+import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
@@ -27,17 +27,30 @@ function summaryFixture(): RuntimeSummary {
       { id: "codingAgentsReview", enabled: true },
       { id: "codingAgentsProjectWorkspace", enabled: true },
     ],
-    providers: [{
-      id: "codex",
-      kind: "codex",
-      displayName: "Codex",
-      availability: "available",
-      installStatus: "installed",
-      authStatus: "authenticated",
-      supportedModes: ["default"],
-      defaultMode: "default",
-      setupActions: [],
-    }],
+    providers: [
+      {
+        id: "codex",
+        kind: "codex",
+        displayName: "Codex",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default", "plan"],
+        defaultMode: "default",
+        setupActions: [],
+      },
+      {
+        id: "claude",
+        kind: "claude",
+        displayName: "Claude Code",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default", "review"],
+        defaultMode: "review",
+        setupActions: [],
+      },
+    ],
     projects: {
       items: [{ id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 2, attentionCount: 0 }],
       hasMore: false,
@@ -344,6 +357,45 @@ describe("draft chat replaces the selected thread", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
     const restored = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
     await waitFor(() => expect(restored.value).toBe("half-written thought"));
+  });
+
+  it("preserves a provider-only draft across thread selection and back", async () => {
+    mockOperator();
+    await renderWithSelectedThread();
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    await screen.findByLabelText("Message new chat");
+
+    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
+    fireEvent.change(provider, { target: { value: "claude" } });
+    await waitFor(() => expect(provider.value).toBe("claude"));
+    await waitFor(() => expect(useDraftChat.getState().draftFor("matrix-os")?.providerId).toBe("claude"));
+    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
+    expect(await screen.findByRole("region", { name: "Conversation Plan the auth work" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    await screen.findByLabelText("Message new chat");
+    await waitFor(() => expect((screen.getByLabelText("Agent provider") as HTMLSelectElement).value).toBe("claude"));
+    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("preserves a mode-only draft across thread selection and back", async () => {
+    mockOperator();
+    await renderWithSelectedThread();
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+
+    const mode = (await screen.findByLabelText("Agent mode")) as HTMLSelectElement;
+    fireEvent.change(mode, { target: { value: "plan" } });
+    await waitFor(() => expect(mode.value).toBe("plan"));
+    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
+    expect(await screen.findByRole("region", { name: "Conversation Plan the auth work" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    await waitFor(() => expect((screen.getByLabelText("Agent mode") as HTMLSelectElement).value).toBe("plan"));
+    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("does not clear a newer thread selection when project targeting resolves late", async () => {
