@@ -23,7 +23,28 @@ const T3_PUBLIC_ORIGIN_PLACEHOLDER = "__MATRIX_T3_PUBLIC_ORIGIN__";
 const T3_MATRIX_HANDLE_PLACEHOLDER = "__MATRIX_T3_HANDLE__";
 const MATRIX_HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/;
 
+function getConfiguredT3ProxyOrigin(): string | null {
+  const configuredUrl = process.env.NEXT_PUBLIC_MATRIX_T3_PROXY_ORIGIN;
+  if (!configuredUrl || !URL.canParse(configuredUrl)) return null;
+
+  const parsed = new URL(configuredUrl);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    return null;
+  }
+  return parsed.origin;
+}
+
 function getT3PublicOrigin(): string {
+  const configuredProxyOrigin = getConfiguredT3ProxyOrigin();
+  if (configuredProxyOrigin) return configuredProxyOrigin;
+
   if (typeof window !== "undefined") {
     const browserUrl = new URL(window.location.href);
     if (browserUrl.protocol === "http:" || browserUrl.protocol === "https:") {

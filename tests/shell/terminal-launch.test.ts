@@ -22,6 +22,7 @@ const T3_PREVIEW_PACKAGE =
 describe("terminal launch paths", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    delete process.env.NEXT_PUBLIC_MATRIX_T3_PROXY_ORIGIN;
     sessionStorage.clear();
     window.history.replaceState({}, "", "/");
   });
@@ -93,6 +94,33 @@ describe("terminal launch paths", () => {
       config?.command.indexOf('npx --yes "$MATRIX_T3_PACKAGE"') ?? -1,
     );
     expect(config?.command).toContain('--base-dir "$MATRIX_T3_HOME"');
+  });
+
+  it("uses the build-scoped T3 proxy origin for preview pairing links", () => {
+    process.env.NEXT_PUBLIC_MATRIX_T3_PROXY_ORIGIN = "https://preview.matrix-os.com";
+
+    const config = parseTerminalLaunchActionFromSearch(
+      "?launch=__terminal__&terminal_action=t3-connect",
+    );
+
+    expect(config?.command).toContain(
+      'MATRIX_T3_PUBLIC_BASE_URL="https://preview.matrix-os.com/vm/$MATRIX_HANDLE/api/integrations/t3/"',
+    );
+    expect(config?.command).not.toContain(
+      `MATRIX_T3_PUBLIC_BASE_URL="${window.location.origin}/vm/$MATRIX_HANDLE/api/integrations/t3/"`,
+    );
+  });
+
+  it("ignores an unsafe build-scoped T3 proxy origin", () => {
+    process.env.NEXT_PUBLIC_MATRIX_T3_PROXY_ORIGIN = "http://preview.matrix-os.com/steal";
+
+    const config = parseTerminalLaunchActionFromSearch(
+      "?launch=__terminal__&terminal_action=t3-connect",
+    );
+
+    expect(config?.command).toContain(
+      `MATRIX_T3_PUBLIC_BASE_URL="${window.location.origin}/vm/$MATRIX_HANDLE/api/integrations/t3/"`,
+    );
   });
 
   it("consumes the fixed handoff query after it has been queued", () => {
