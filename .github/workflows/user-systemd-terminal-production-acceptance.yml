@@ -175,14 +175,16 @@ jobs:
             echo "No completed exact-head Preview VPS run is available." >&2
             exit 1
           fi
-          preview_artifact="$RUNNER_TEMP/exact-head-preview"
-          gh run download "$preview_run_id" --repo "$GITHUB_REPOSITORY" \
-            --name "preview-bundle-${PR}" --dir "$preview_artifact"
-          target_version="$(jq -er '.version' "$preview_artifact/release.json")"
+          preview_log="$RUNNER_TEMP/exact-head-preview.log"
+          gh run view "$preview_run_id" --repo "$GITHUB_REPOSITORY" --log >"$preview_log"
+          target_version="$(grep -Eo \
+            'Preview version: v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-pr[0-9]+-[0-9a-f]{7}' \
+            "$preview_log" | sed 's/^Preview version: //' | sort -u)"
           if ! printf '%s' "$target_version" |
             grep -Eq "^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-pr${PR}-[0-9a-f]{7}$" ||
+            [[ "$target_version" == *$'\n'* ]] ||
             [ "${target_version##*-}" != "${HEAD_SHA:0:7}" ]; then
-            echo "The completed preview artifact is not for the immutable acceptance head." >&2
+            echo "The completed preview log is not for one immutable acceptance head." >&2
             exit 1
           fi
 
