@@ -167,12 +167,22 @@ jobs:
       - name: Recover the exact-head disposable preview updater
         run: |
           set -euo pipefail
-          preview_run_id="$(gh api \
+          candidate_ids="$(gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" \
             --jq '[.workflow_runs[] | select(.head_sha == "'"$HEAD_SHA"'" and .status == "completed")]
-              | sort_by(.created_at) | reverse | .[0].id // empty')"
+              | sort_by(.created_at) | reverse | .[].id')"
+          preview_run_id=""
+          for candidate in $candidate_ids; do
+            artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate}/artifacts")"
+            if jq -e --arg name "preview-bundle-${PR}" \
+              '[.artifacts[] | select(.name == $name and .expired == false)] | length == 1' \
+              <<<"$artifacts" >/dev/null; then
+              preview_run_id="$candidate"
+              break
+            fi
+          done
           if ! printf '%s' "$preview_run_id" | grep -Eq '^[1-9][0-9]*$'; then
-            echo "No completed exact-head Preview VPS run is available." >&2
+            echo "No completed exact-head Preview VPS artifact is available." >&2
             exit 1
           fi
           preview_log="$RUNNER_TEMP/exact-head-preview.log"
