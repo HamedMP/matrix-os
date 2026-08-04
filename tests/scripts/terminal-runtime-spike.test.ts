@@ -972,6 +972,9 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(packer).toContain('/proc/${base_pid}/comm');
     expect(packer).toContain('TimeoutStartUSec');
     expect(packer).toContain('NRestarts');
+    expect(packer).toContain(
+      'base_id="1${run_namespace}"\nrunner_unit="matrix-terminal-runtime-spike-${run_namespace}.service"',
+    );
     expect(packer).toContain('startup-stages/${base_id}.json');
     expect(packer).toContain('keeper_gate keeper_release keeper_confirmation keeper_held');
     expect(packer).toContain('_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}');
