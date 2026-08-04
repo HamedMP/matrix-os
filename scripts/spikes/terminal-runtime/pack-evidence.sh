@@ -40,7 +40,7 @@ if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" 
     if(!/^(descriptor|launch|cgroup|readiness|notify)$/.test(v.stage)||typeof v.responsive!=="boolean"||
       !Number.isInteger(v.zellij)||v.zellij<0||v.zellij>999||typeof v.shell!=="boolean"||typeof v.agent!=="boolean"||
       typeof v.gateRecorded!=="boolean"||typeof v.paneReleased!=="boolean"||
-      !/^(waiting|inventory|target|write|sent)$/.test(v.confirmationState)||
+      !/^(waiting|inventory|target|send|acceptance|accepted)$/.test(v.confirmationState)||
       !Number.isInteger(v.heldPaneCount)||v.heldPaneCount<0||v.heldPaneCount>16)process.exit(1);
     process.stdout.write(`${v.stage} ${v.responsive?1:0} ${v.zellij} ${v.shell?1:0} ${v.agent?1:0} ${v.gateRecorded?1:0} ${v.paneReleased?1:0} ${v.confirmationState} ${v.heldPaneCount}\n`);
   ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-stages/${base_id}.json" 2>/dev/null || printf 'unknown 0 0 0 0 0 0 waiting 0\n')
@@ -124,7 +124,7 @@ if [ "$summary_status" != pass_pass ]; then
     if(!/^(descriptor|launch|cgroup|readiness|notify)$/.test(v.stage)||!/^[a-z0-9_]{1,32}$/.test(v.code)||
       typeof v.responsive!=="boolean"||!Number.isInteger(v.zellij)||v.zellij<0||v.zellij>999||
       typeof v.shell!=="boolean"||typeof v.agent!=="boolean"||typeof v.gateRecorded!=="boolean"||
-      typeof v.paneReleased!=="boolean"||!/^(waiting|inventory|target|write|sent)$/.test(v.confirmationState)||
+      typeof v.paneReleased!=="boolean"||!/^(waiting|inventory|target|send|acceptance|accepted)$/.test(v.confirmationState)||
       !Number.isInteger(v.heldPaneCount)||v.heldPaneCount<0||v.heldPaneCount>16||typeof v.confirmationSent!=="boolean")process.exit(1);
     process.stdout.write(`${v.stage} ${v.code} ${v.responsive?1:0} ${v.zellij} ${v.shell?1:0} ${v.agent?1:0} ${v.gateRecorded?1:0} ${v.paneReleased?1:0} ${v.confirmationState} ${v.heldPaneCount} ${v.confirmationSent?1:0}\n`);
   ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-failures/${base_id}.json" 2>/dev/null || printf 'unknown unknown 0 0 0 0 0 0 waiting 0 0\n')

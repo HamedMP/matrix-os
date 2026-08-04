@@ -44,7 +44,8 @@ const STARTUP_FAILURE_CODES = new Set([
   'cgroup_unit',
   'confirmation_inventory',
   'confirmation_target',
-  'confirmation_write',
+  'confirmation_send',
+  'confirmation_acceptance',
   'readiness_timeout',
 ]);
 function exit(code) {
@@ -211,20 +212,58 @@ async function confirmHeldCreatePane(sessionName, env) {
     throw new Error('confirmation_target');
   }
   const [pane] = panes;
-  confirmationState = 'write';
+  confirmationState = 'send';
   await recordStartupStage();
   try {
     await execFileAsync(
       zellij,
-      ['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)],
+      ['--session', sessionName, 'action', 'send-keys', 'Enter', '--pane-id', String(pane.id)],
       options,
     );
   } catch (error) {
-    throw new Error('confirmation_write', { cause: error });
+    throw new Error('confirmation_send', { cause: error });
   }
-  confirmationState = 'sent';
-  confirmationSent = true;
+  confirmationState = 'acceptance';
   await recordStartupStage();
+  const acceptanceDeadline = Date.now() + 2000;
+  while (Date.now() < acceptanceDeadline) {
+    let acceptanceStdout;
+    try {
+      ({ stdout: acceptanceStdout } = await execFileAsync(
+        zellij,
+        ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
+        { ...options, timeout: Math.max(100, acceptanceDeadline - Date.now()) },
+      ));
+    } catch (error) {
+      throw new Error('confirmation_acceptance', { cause: error });
+    }
+    let acceptancePanes;
+    try {
+      acceptancePanes = JSON.parse(acceptanceStdout);
+    } catch (error) {
+      throw new Error('confirmation_acceptance', { cause: error });
+    }
+    if (!Array.isArray(acceptancePanes) || acceptancePanes.length > 16) {
+      throw new Error('confirmation_acceptance');
+    }
+    const target = acceptancePanes.find(
+      (candidate) => !candidate.is_plugin && candidate.id === pane.id,
+    );
+    if (!target || typeof target.is_held !== 'boolean') {
+      throw new Error('confirmation_acceptance');
+    }
+    heldPaneCount = acceptancePanes.filter(
+      (candidate) => !candidate.is_plugin && candidate.is_held,
+    ).length;
+    if (!target.is_held) {
+      confirmationState = 'accepted';
+      confirmationSent = true;
+      await recordStartupStage();
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('confirmation_acceptance');
 }
 async function processInfo(pid) {
   try {

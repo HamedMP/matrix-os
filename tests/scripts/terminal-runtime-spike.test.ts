@@ -350,17 +350,20 @@ describe('terminal runtime spike evidence', () => {
       "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
     expect(keeper).toContain("['--session', sessionName, 'action', 'list-panes', '--all', '--json']");
-    expect(keeper).toContain("['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)]");
+    expect(keeper).toContain("['--session', sessionName, 'action', 'send-keys', 'Enter', '--pane-id', String(pane.id)]");
     expect(keeper).toContain("confirmationState = 'inventory'");
     expect(keeper).toContain("confirmationState = 'target'");
-    expect(keeper).toContain("confirmationState = 'write'");
-    expect(keeper).toContain("confirmationState = 'sent'");
+    expect(keeper).toContain("confirmationState = 'send'");
+    expect(keeper).toContain("confirmationState = 'acceptance'");
+    expect(keeper).toContain("confirmationState = 'accepted'");
     expect(keeper).toContain("throw new Error('confirmation_inventory'");
     expect(keeper).toContain("throw new Error('confirmation_target')");
-    expect(keeper).toContain("throw new Error('confirmation_write'");
+    expect(keeper).toContain("throw new Error('confirmation_send'");
+    expect(keeper).toContain("throw new Error('confirmation_acceptance'");
     expect(keeper).toContain("if (panes.length === 0)");
     expect(keeper).toContain("confirmationState = 'waiting'");
     expect(keeper).toContain('return;');
+    expect(keeper).not.toContain("'action', 'write', '13'");
     expect(keeper).not.toContain("pty.write('\\r')");
     expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
     expect(keeper).toContain('const detected = paneReleased');
@@ -1075,7 +1078,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     });
     await writeFile(
       join(root, 's1', 'base-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', gateRecorded: true, paneReleased: true, confirmationState: 'write', heldPaneCount: 1, confirmationSent: false, responsive: false, zellij: 1, shell: false, agent: false, exitCode: 1, signal: 0 })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', gateRecorded: true, paneReleased: true, confirmationState: 'send', heldPaneCount: 1, confirmationSent: false, responsive: false, zellij: 1, shell: false, agent: false, exitCode: 1, signal: 0 })}\n`,
       'utf8',
     );
     await writeFile(
@@ -1094,7 +1097,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     await mkdir(join(root, 's2'));
     await writeFile(
       join(root, 's2', 'recovery-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', gateRecorded: true, paneReleased: true, confirmationState: 'sent', heldPaneCount: 1, confirmationSent: true, responsive: true, zellij: 2, shell: true, agent: false })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', gateRecorded: true, paneReleased: true, confirmationState: 'accepted', heldPaneCount: 0, confirmationSent: true, responsive: true, zellij: 2, shell: true, agent: false })}\n`,
       'utf8',
     );
     await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure\n', 'utf8');
@@ -1111,11 +1114,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     );
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
-      's1:startup=readiness/client_exit/gate:1/release:1/confirmation:write/held:1/sent:0',
+      's1:startup=readiness/client_exit/gate:1/release:1/confirmation:send/held:1/sent:0',
       's1:pty-exit=1/0',
       's1:unit=failed/failed/timeout/1/16',
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
-      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:sent/held:1/sent:1/roles:1,2,1,0',
+      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:accepted/held:0/sent:1/roles:1,2,1,0',
       's2:resolution=original:2/recovered:1/panes:2/held:2/drop:0/markers:9999',
       's1:memory=slice_no_pressure',
       'spike:preflight=binary_version_checked',
@@ -1125,9 +1128,9 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     await symlink('/etc/passwd', join(root, 's1', 'base-runtime-roles.json'));
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
-      's1:startup=readiness/client_exit/gate:1/release:1/confirmation:write/held:1/sent:0',
+      's1:startup=readiness/client_exit/gate:1/release:1/confirmation:send/held:1/sent:0',
       's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
-      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:sent/held:1/sent:1/roles:1,2,1,0',
+      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:accepted/held:0/sent:1/roles:1,2,1,0',
       's2:resolution=original:2/recovered:1/panes:2/held:2/drop:0/markers:9999',
       's1:memory=slice_no_pressure',
       'spike:preflight=binary_version_checked',
