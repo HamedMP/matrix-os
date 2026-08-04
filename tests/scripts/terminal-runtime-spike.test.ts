@@ -303,7 +303,7 @@ describe('terminal runtime spike evidence', () => {
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
   });
-  it('launches spike panes through a fixed non-sensitive wrapper', async () => {
+  it('launches spike panes through a self-contained fixed non-sensitive wrapper', async () => {
     const [wrapper, buildScript, updater] = await Promise.all([
       readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-pane'),
       readRepo('scripts/build-host-bundle.sh'),
@@ -311,9 +311,10 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expectAll(wrapper, [
       'if [ "$#" -ne 0 ]; then',
-      'exec /usr/bin/bash',
-      '/opt/matrix/libexec/terminal-runtime/current/spikes/pane-probe.sh',
+      "exec -a matrix-agent-probe sleep 86400",
+      'exec /usr/bin/bash --noprofile --norc -i',
     ]);
+    expect(wrapper).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(wrapper).not.toContain('--force-run-commands');
     expect(buildScript).toContain(
       '"$STAGE_DIR/bin/matrix-terminal-spike-pane"',
