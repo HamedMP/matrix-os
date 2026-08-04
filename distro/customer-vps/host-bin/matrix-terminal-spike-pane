@@ -1,8 +1,5 @@
-#!/bin/sh
-set -eu
+#!/opt/matrix/runtime/node/bin/node
 
-if [ "$#" -ne 0 ]; then
-  exit 64
-fi
+if (process.argv.length !== 2) process.exit(64);
 
-exec /usr/bin/sleep 86400
+setInterval(() => undefined, 60_000);

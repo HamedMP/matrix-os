@@ -314,12 +314,12 @@ describe('terminal runtime spike evidence', () => {
       readRepo('distro/customer-vps/host-bin/matrix-sync-agent'),
     ]);
     expectAll(wrapper, [
-      '#!/bin/sh',
-      'if [ "$#" -ne 0 ]; then',
-      'exec /usr/bin/sleep 86400',
+      '#!/opt/matrix/runtime/node/bin/node',
+      'if (process.argv.length !== 2)',
+      'setInterval(() => undefined, 60_000)',
     ]);
     expect(wrapper).not.toContain('exec -a');
-    expect(wrapper).not.toContain(' &');
+    expect(wrapper).not.toContain('/usr/bin/sleep');
     expect(wrapper).not.toContain('bash --noprofile');
     expect(wrapper).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(wrapper).not.toContain('--force-run-commands');
@@ -327,6 +327,18 @@ describe('terminal runtime spike evidence', () => {
       '"$STAGE_DIR/bin/matrix-terminal-spike-pane"',
     );
     expect(updater).toContain('name="matrix-terminal-spike-pane"');
+  });
+  it('preflights the exact installed workload helper before asking Zellij to launch it', async () => {
+    const keeper = await readRepo('scripts/spikes/terminal-runtime/keeper.mjs');
+    expectAll(keeper, [
+      'async function verifyWorkloadHelper()',
+      "spawnProcess(WORKLOAD_PANE, [], {",
+      "throw new Error('workload_helper')",
+      'await verifyWorkloadHelper();',
+    ]);
+    expect(keeper.indexOf('await verifyWorkloadHelper();')).toBeLessThan(
+      keeper.indexOf('await launchCreateWorkloadPane(sessionName, env);'),
+    );
   });
   it('carries the compatible stable updater through a dormant preview bootstrap', async () => {
     const workflow = await readRepo('.github/workflows/preview-vps.yml');
@@ -357,9 +369,9 @@ describe('terminal runtime spike evidence', () => {
       "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
     expect(keeper).toContain("const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane'");
-    expect(keeper).toContain("process.comm === 'sleep'");
-    expect(keeper).toContain("process.cmdline[0] === '/usr/bin/sleep'");
-    expect(keeper).toContain("process.cmdline[1] === '86400'");
+    expect(keeper).toContain("process.comm === 'MainThread'");
+    expect(keeper).toContain('process.cmdline[0] === NODE');
+    expect(keeper).toContain('process.cmdline[1] === WORKLOAD_PANE');
     expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', WORKLOAD_PANE]");
     expect(keeper).toContain("throw new Error('workload_launch'");
     expect(keeper).not.toContain("throw new Error('workload_target')");
@@ -396,7 +408,7 @@ describe('terminal runtime spike evidence', () => {
       "['--session', sessionName, 'action', 'list-panes', '--all', '--json']",
       'panes.length > 16',
       'pane.terminal_command === WORKLOAD_PANE',
-      "pane.pane_command === '/usr/bin/sleep 86400'",
+      'pane.pane_command === `${NODE} ${WORKLOAD_PANE}`',
       'workloadPaneState',
       'workloadPaneExitStatus',
       'pane.exit_status',
