@@ -200,6 +200,11 @@ async function confirmHeldCreatePane(sessionName, env) {
   }
   const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
   heldPaneCount = panes.length;
+  if (panes.length === 0) {
+    confirmationState = 'waiting';
+    await recordStartupStage();
+    return;
+  }
   confirmationState = 'target';
   await recordStartupStage();
   if (panes.length !== 1 || !Number.isInteger(panes[0].id) || panes[0].id < 0) {
@@ -382,7 +387,7 @@ async function main() {
     if (clientExited) throw new Error('client_exit');
     const paneReleased = await regularFileExists(paneReleasePath);
     paneReleasedRecorded = paneReleased;
-    if (paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent) {
+    if (paneReleased && descriptor.intent === 'create' && !confirmationSent) {
       await confirmHeldCreatePane(sessionName, env);
     }
     const detected = paneReleased

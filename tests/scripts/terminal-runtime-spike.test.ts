@@ -329,7 +329,10 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
     expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath)');
     expect(keeper).toContain(
-      "if (paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent)",
+      "if (paneReleased && descriptor.intent === 'create' && !confirmationSent)",
+    );
+    expect(keeper).not.toContain(
+      "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
     expect(keeper).toContain("['--session', sessionName, 'action', 'list-panes', '--all', '--json']");
     expect(keeper).toContain("['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)]");
@@ -340,6 +343,9 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain("throw new Error('confirmation_inventory'");
     expect(keeper).toContain("throw new Error('confirmation_target')");
     expect(keeper).toContain("throw new Error('confirmation_write'");
+    expect(keeper).toContain("if (panes.length === 0)");
+    expect(keeper).toContain("confirmationState = 'waiting'");
+    expect(keeper).toContain('return;');
     expect(keeper).not.toContain("pty.write('\\r')");
     expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
     expect(keeper).toContain('const detected = paneReleased');
@@ -906,7 +912,10 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain('startupWatchdog = setTimeout');
     expect(keeper).toContain("void failStartup('readiness_timeout')");
     expect(keeper).toContain(
-      "paneReleased && gateRecorded && descriptor.intent === 'create' && !confirmationSent",
+      "paneReleased && descriptor.intent === 'create' && !confirmationSent",
+    );
+    expect(keeper).not.toContain(
+      "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
     expect(keeper).not.toContain("descriptor.intent === 'recover' && !confirmationSent");
     expect(keeper).not.toContain('--force-run-commands');
