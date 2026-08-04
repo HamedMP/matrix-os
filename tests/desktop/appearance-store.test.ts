@@ -5,8 +5,11 @@ import { DEFAULT_THEME_ID } from "../../desktop/src/renderer/src/design/themes";
 import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance";
 
 describe("appearance store", () => {
+  let eventListeners: Map<string, (payload: unknown) => void>;
+
   beforeEach(() => {
-    useAppearance.setState({ mode: "system", themeId: DEFAULT_THEME_ID, hydrated: false });
+    useAppearance.setState({ mode: "system", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: false });
+    eventListeners = new Map();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockReturnValue({ matches: true }),
@@ -16,7 +19,12 @@ describe("appearance store", () => {
         if (channel === "state:get") return { value: { theme: "dark", themeId: "dracula" } };
         return { ok: true };
       }),
-      on: vi.fn(() => () => undefined),
+      on: vi.fn((channel: string, callback: (payload: unknown) => void) => {
+        eventListeners.set(channel, callback);
+        return () => {
+          eventListeners.delete(channel);
+        };
+      }),
     };
   });
 
@@ -51,7 +59,7 @@ describe("appearance store", () => {
     expect(document.documentElement.getAttribute("data-theme-id")).toBe("nord");
     expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
       key: "appearance",
-      value: { theme: "system", themeId: "nord" },
+      value: { theme: "system", themeId: "nord", zoom: 1 },
     });
   });
 
@@ -69,7 +77,7 @@ describe("appearance store", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(window.operator.invoke).toHaveBeenLastCalledWith("state:set", {
       key: "appearance",
-      value: { theme: "dark", themeId: "dracula" },
+      value: { theme: "dark", themeId: "dracula", zoom: 1 },
     });
   });
 
@@ -86,5 +94,66 @@ describe("appearance store", () => {
 
     expect(useAppearance.getState().hydrated).toBe(true);
     expect(document.documentElement.getAttribute("data-theme-id")).toBe(DEFAULT_THEME_ID);
+  });
+
+  it("defaults zoom to 1 and applies the persisted factor once after hydration", async () => {
+    window.operator.invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: { theme: "dark", themeId: "dracula", zoom: 1.4 } };
+      return { ok: true };
+    });
+
+    expect(useAppearance.getState().zoom).toBe(1);
+
+    await useAppearance.getState().load();
+
+    expect(useAppearance.getState().zoom).toBe(1.4);
+    expect(window.operator.invoke).toHaveBeenCalledWith("app:set-zoom", { factor: 1.4 });
+  });
+
+  it("clamps persisted zoom values into the supported range", async () => {
+    window.operator.invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: { theme: "dark", zoom: 9 } };
+      return { ok: true };
+    });
+
+    await useAppearance.getState().load();
+
+    expect(useAppearance.getState().zoom).toBe(2);
+    expect(window.operator.invoke).toHaveBeenCalledWith("app:set-zoom", { factor: 2 });
+  });
+
+  it("setZoom clamps, applies, and persists the factor", () => {
+    useAppearance.getState().setZoom(5);
+
+    expect(useAppearance.getState().zoom).toBe(2);
+    expect(window.operator.invoke).toHaveBeenCalledWith("app:set-zoom", { factor: 2 });
+    expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
+      key: "appearance",
+      value: { theme: "system", themeId: DEFAULT_THEME_ID, zoom: 2 },
+    });
+  });
+
+  it("setZoom snaps fractional steps onto the 0.1 grid", () => {
+    useAppearance.getState().setZoom(1.26);
+
+    expect(useAppearance.getState().zoom).toBe(1.3);
+  });
+
+  it("mirrors menu-driven zoom changes without re-applying them", async () => {
+    await useAppearance.getState().load();
+    const zoomChanged = eventListeners.get("app:zoom-changed");
+    expect(zoomChanged).toBeTruthy();
+    vi.mocked(window.operator.invoke).mockClear();
+
+    zoomChanged?.({ factor: 0.8 });
+
+    expect(useAppearance.getState().zoom).toBe(0.8);
+    expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
+      key: "appearance",
+      value: { theme: "dark", themeId: "dracula", zoom: 0.8 },
+    });
+    // Main already applied the factor for a menu step; the renderer must not
+    // echo it back through app:set-zoom.
+    expect(window.operator.invoke).not.toHaveBeenCalledWith("app:set-zoom", expect.anything());
   });
 });

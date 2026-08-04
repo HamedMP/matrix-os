@@ -112,7 +112,7 @@ function RuntimeOptions({
             className="rounded-lg border p-3"
             style={{
               borderColor: selected ? "var(--accent)" : "var(--border-subtle)",
-              background: selected ? "var(--accent-subtle)" : "var(--bg-sunken)",
+              background: selected ? "var(--accent-muted)" : "var(--bg-sunken)",
             }}
           >
             <div className="flex items-start justify-between gap-2">
@@ -264,7 +264,7 @@ function MessagingProvider({
             className="rounded-md border p-2 text-left"
             style={{
               borderColor: candidate.id === selectedProviderId ? "var(--accent)" : "var(--border-default)",
-              background: candidate.id === selectedProviderId ? "var(--accent-subtle)" : "transparent",
+              background: candidate.id === selectedProviderId ? "var(--accent-muted)" : "transparent",
             }}
             aria-label={`Choose ${candidate.displayName}`}
             aria-pressed={candidate.id === selectedProviderId}

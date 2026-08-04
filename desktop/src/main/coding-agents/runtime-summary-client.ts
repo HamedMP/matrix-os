@@ -342,6 +342,46 @@ export async function createCodingAgentTurn(
   throw new Error("conversation turn unavailable");
 }
 
+// Aborts one running thread and returns the authoritative aborted snapshot,
+// so callers can settle the conversation even when the event stream is down.
+// Error text stays generic -- provider detail must not reach client surfaces.
+export async function abortCodingAgentThread(
+  auth: AuthService,
+  request: { threadId: string },
+  fetchFn: FetchFn = fetch,
+): Promise<AgentThreadSnapshot> {
+  const token = auth.getToken();
+  const parsedThreadId = ThreadIdSchema.safeParse(request.threadId);
+  if (!token || !parsedThreadId.success) {
+    throw new Error("thread abort unavailable");
+  }
+
+  const url = buildRuntimeUrl(
+    auth,
+    `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/abort`,
+  );
+  const res = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ clientRequestId: `req_${crypto.randomUUID()}` }),
+    signal: AbortSignal.timeout(THREAD_TURN_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("thread abort unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = AgentThreadSnapshotSchema.safeParse(body);
+  if (!parsed.success || parsed.data.thread.id !== parsedThreadId.data) {
+    throw new Error("thread abort unavailable");
+  }
+  return parsed.data;
+}
+
 export async function fetchCodingAgentThreadSnapshot(
   auth: AuthService,
   options: { threadId: string },

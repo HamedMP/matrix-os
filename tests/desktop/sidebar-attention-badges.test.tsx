@@ -28,26 +28,25 @@ function kernelThread(id: string, overrides: Partial<AgentThread> = {}): AgentTh
   };
 }
 
-function summaryWithAttention(count: number) {
+function summaryWithProjectAttention(attentionCount: number) {
   return {
     runtime: { id: "rt_primary", label: "Primary", status: "available" },
     capabilities: [],
     providers: [],
-    projects: { items: [], hasMore: false, limit: 20 },
-    activeThreads: { items: [], hasMore: false, limit: 20 },
-    attentionThreads: {
-      items: Array.from({ length: count }, (_, index) => ({
-        id: `thread_attention_${index}`,
-        providerId: "codex",
-        title: `Attention ${index}`,
-        status: "waiting_for_approval",
-        attention: "approval_required",
-        createdAt: "2026-07-06T00:00:00.000Z",
-        updatedAt: "2026-07-06T00:01:00.000Z",
-      })),
+    projects: {
+      items: [{
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 1,
+        threadCount: 2,
+        attentionCount,
+      }],
       hasMore: false,
       limit: 20,
     },
+    activeThreads: { items: [], hasMore: false, limit: 20 },
+    attentionThreads: { items: [], hasMore: false, limit: 20 },
     terminalSessions: { items: [], hasMore: false, limit: 20 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: {
@@ -69,7 +68,7 @@ describe("Sidebar attention badges", () => {
       imageUrl: null,
       platformHost: "https://platform.test",
     });
-    useBoard.setState({ projects: [] });
+    useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
     useTabs.setState({ tabs: [], activeTabId: null });
     useThreads.setState({ threads: [], activeThreadId: null });
     useCodingAgentWorkspace.setState({ summary: null, activeThreadId: null });
@@ -99,8 +98,8 @@ describe("Sidebar attention badges", () => {
     expect(screen.getByRole("button", { name: /^Chat\s*2$/ })).toBeTruthy();
   });
 
-  it("shows the coding-agent attention count on the Agents row", () => {
-    useCodingAgentWorkspace.setState({ summary: summaryWithAttention(3) });
+  it("shows the coding-agent attention count on the project row", () => {
+    useCodingAgentWorkspace.setState({ summary: summaryWithProjectAttention(3) });
 
     render(
       <Tooltip.Provider>
@@ -108,10 +107,24 @@ describe("Sidebar attention badges", () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByRole("button", { name: /^Agents\s*3$/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Matrix OS\s*3$/ })).toBeTruthy();
+  });
+
+  it("no longer offers the retired Agents workspace row", () => {
+    useCodingAgentWorkspace.setState({ summary: summaryWithProjectAttention(3) });
+
+    render(
+      <Tooltip.Provider>
+        <Sidebar />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
   });
 
   it("shows no badges when nothing needs attention", () => {
+    useCodingAgentWorkspace.setState({ summary: summaryWithProjectAttention(0) });
+
     render(
       <Tooltip.Provider>
         <Sidebar />
@@ -119,6 +132,6 @@ describe("Sidebar attention badges", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Agents" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Matrix OS$/ })).toBeTruthy();
   });
 });

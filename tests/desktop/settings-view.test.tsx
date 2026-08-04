@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsView from "../../desktop/src/renderer/src/features/settings/SettingsView";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -52,6 +52,19 @@ describe("SettingsView", () => {
     // The unified Agent section renders instead of the default Account.
     await waitFor(() => expect(screen.getByRole("heading", { name: "Agent" })).not.toBeNull());
     expect(useUi.getState().requestedSettingsSection).toBeNull();
+  });
+
+  it("keeps the selected navigation highlight in sync with the visible section", () => {
+    render(<SettingsView />);
+    const providers = screen.getByRole("button", { name: "Providers" });
+    const integrations = screen.getByRole("button", { name: "Integrations" });
+
+    fireEvent.click(providers);
+    expect(providers.className).toContain("bg-[var(--bg-selected)]");
+
+    fireEvent.click(integrations);
+    expect(integrations.className).toContain("bg-[var(--bg-selected)]");
+    expect(providers.className).not.toContain("bg-[var(--bg-selected)]");
   });
 
   it("ignores unknown requested sections", async () => {

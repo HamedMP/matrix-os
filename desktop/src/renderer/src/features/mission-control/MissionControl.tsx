@@ -1,9 +1,11 @@
 import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useWorkspace, type PanelLayout } from "../../stores/workspace";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import Sidebar from "./Sidebar";
 import TabBar from "./TabBar";
 import TabContent from "./TabContent";
@@ -14,11 +16,13 @@ import QuickOpen from "../files/QuickOpen";
 import { useGlobalShortcuts } from "./shortcuts";
 import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
+import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
+  const runtimeScope = useConnection(codingAgentRuntimeScope);
   const loadProjects = useBoard((s) => s.loadProjects);
   const openTab = useTabs((s) => s.openTab);
   const tabCount = useTabs((s) => s.tabs.length);
@@ -94,6 +98,22 @@ export default function MissionControl() {
     const dispose = wireKernel();
     return dispose;
   }, [api, platformHost, runtimeSlot]);
+
+  // Eagerly load the coding-agent runtime summary: the Agents page used to own
+  // this fetch, and now the sidebar attention badges, project headers, and the
+  // command palette all read it. Runtime switches clear the store centrally
+  // (reconcileDesktopRuntimeChange), so this just (re)loads for the scope.
+  useEffect(() => {
+    if (!api || !CODING_AGENTS_DESKTOP_WORKSPACE) return;
+    const workspace = useCodingAgentWorkspace.getState();
+    workspace.ensureRuntimeScope(runtimeScope);
+    void workspace.refresh().then(() => {
+      const current = useCodingAgentWorkspace.getState();
+      if (current.notificationPreferencesStatus === "idle") {
+        void current.loadNotificationPreferences();
+      }
+    });
+  }, [api, runtimeScope, runtimeSlot]);
 
   return (
     <div className="flex flex-1 overflow-hidden">

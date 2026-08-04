@@ -1051,6 +1051,21 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(gatewayStart).toBeGreaterThan(daemonReload);
   });
 
+  it('restarts the optional Hermes dashboard after replacing its host wrapper', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('if [ -f "$extract_dir/systemd/matrix-hermes-dashboard.service" ]; then');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-hermes-dashboard.service');
+    expect(syncAgent).toContain('sudo systemctl restart --no-block matrix-hermes-dashboard.service || true');
+    expect(syncAgent.indexOf('log "Updated bin scripts"')).toBeLessThan(
+      syncAgent.indexOf('sudo systemctl restart --no-block matrix-hermes-dashboard.service || true'),
+    );
+    expect(syncAgent.indexOf('sudo systemctl restart --no-block matrix-hermes-dashboard.service || true')).toBeLessThan(
+      syncAgent.indexOf('sudo systemctl start matrix-gateway matrix-shell'),
+    );
+  });
+
   it('sync agent periodically cleans stale local bundle artifacts', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');

@@ -3,8 +3,12 @@ import { useEditorTabs } from "../features/editor/editor-tabs-store";
 import { resetKernel } from "../lib/kernel-wiring";
 import { useBoard } from "./board";
 import { useHermesChat } from "./hermes-chat";
-import { clearCodingAgentProjectRuntime } from "./coding-agent-project-workspace";
+import { clearInspectorLayoutRuntime } from "../features/panels/inspector-layout-store";
+import { clearPluginsRuntime } from "../features/plugins/plugins-store";
+import { clearProjectViewRuntime } from "./project-view";
+import { clearProjectWorkspaces } from "./project-workspaces";
 import { clearCodingAgentRuntimeSelection } from "./coding-agent-workspace";
+import { clearDraftChats } from "./draft-chat";
 import { useFileTree } from "./file-tree";
 import { useGit } from "./git";
 import { useSessions } from "./sessions";
@@ -79,7 +83,11 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
   });
   useThreads.setState({ threads: [], activeThreadId: null });
   clearCodingAgentRuntimeSelection();
-  clearCodingAgentProjectRuntime();
+  clearDraftChats();
+  clearProjectWorkspaces();
+  clearProjectViewRuntime();
+  clearInspectorLayoutRuntime();
+  clearPluginsRuntime();
   useUi.setState({
     createProjectOpen: false,
     createTaskOpen: false,

@@ -13,6 +13,9 @@ import type { AgentThreadSummary, RuntimeSummary, TerminalSessionSummary } from 
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
+import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
+import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -91,6 +94,19 @@ describe("CommandPalette", () => {
     useSessions.setState({ sessions: [] });
     useShellSessions.setState({ ...useShellSessions.getInitialState(), load: vi.fn().mockResolvedValue(undefined) }, true);
     useTabs.setState({ tabs: [], activeTabId: null, openTab: vi.fn() });
+    useProjectView.setState({ entries: {}, runtimeScope: null });
+    useProjectWorkspaces.setState({ entries: {} });
+    useProjectChatLauncher.setState({ composerRequest: null });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel === "state:set") return { ok: true };
+          throw new Error(`unexpected channel ${channel}`);
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
     useCodingAgentWorkspace.setState({
       summary: null,
       reviewsStatus: "idle",
@@ -163,24 +179,19 @@ describe("CommandPalette", () => {
     });
   });
 
-  it("opens the coding-agent workspace from the command palette", async () => {
-    const openTab = vi.fn();
-    useTabs.setState({ openTab });
-
+  it("no longer offers a retired Agents workspace entry", async () => {
     render(<CommandPalette />);
 
-    fireEvent.click(screen.getByText("Open Agents"));
-
-    expect(openTab).toHaveBeenCalledWith({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
-    });
+    expect(screen.queryByText("Open Agents")).toBeNull();
   });
 
-  it("routes new agent runs to the coding-agent workspace composer", async () => {
+  it("routes new agent runs into the default project's chats view", async () => {
     const openTab = vi.fn();
     useTabs.setState({ openTab });
+    useBoard.setState({
+      projects: [{ slug: "matrix-os", name: "Matrix OS" }],
+      activeProjectSlug: "matrix-os",
+    });
 
     render(<CommandPalette />);
 
@@ -188,17 +199,23 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("New agent run"));
 
     expect(openTab).toHaveBeenCalledWith({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
     });
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
+    expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId + 1);
     expect(useUi.getState().composerOpen).toBe(false);
   });
 
-  it("does not request composer focus when thread creation is unavailable", async () => {
+  it("opens the project chats view without composer focus when thread creation is unavailable", async () => {
     const openTab = vi.fn();
     useTabs.setState({ openTab });
+    useBoard.setState({
+      projects: [{ slug: "matrix-os", name: "Matrix OS" }],
+      activeProjectSlug: "matrix-os",
+    });
     useCodingAgentWorkspace.setState({ summary: runtimeSummaryWithThreads() });
 
     render(<CommandPalette />);
@@ -207,15 +224,24 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("New agent run"));
 
     expect(openTab).toHaveBeenCalledWith({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
     });
+    expect(useProjectChatLauncher.getState().composerRequest).toBeNull();
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId);
     expect(useUi.getState().composerOpen).toBe(false);
   });
 
-  it("opens loaded coding-agent reviews from the command palette", async () => {
+  it("falls back to the legacy composer when the runtime has no projects", async () => {
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("New agent run"));
+
+    expect(useUi.getState().composerOpen).toBe(true);
+  });
+
+  it("opens loaded coding-agent reviews in their project's chats view", async () => {
     const openTab = vi.fn();
     const selectReview = vi.fn().mockResolvedValue(undefined);
     useTabs.setState({ openTab });
@@ -248,14 +274,14 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("Open review PR #758"));
 
     expect(openTab).toHaveBeenCalledWith({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "matrix-os",
     });
     expect(selectReview).toHaveBeenCalledWith("rev_desktop_1");
   });
 
-  it("opens loaded coding-agent threads from the command palette", async () => {
+  it("opens loaded coding-agent threads in their project's chats view", async () => {
     const openTab = vi.fn();
     const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
     useTabs.setState({ openTab });
@@ -277,9 +303,9 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("Open thread Fix settings route"));
 
     expect(openTab).toHaveBeenCalledWith({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "matrix-os",
     });
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
   });
@@ -343,6 +369,7 @@ describe("CommandPalette", () => {
             title: "Shared urgent thread",
             status: "waiting_for_input",
             attention: "input_required",
+            projectId: "matrix-os",
             updatedAt: "2026-07-07T00:05:00.000Z",
           }),
         ],
@@ -372,9 +399,9 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("Open thread Shared urgent thread"));
 
     expect(openTab).toHaveBeenCalledWith({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "matrix-os",
     });
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_duplicate");
   });
@@ -426,9 +453,9 @@ describe("CommandPalette", () => {
     fireEvent.click(screen.getByText("Open review PR #811"));
 
     expect(openTab).toHaveBeenCalledWith({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "matrix-os",
     });
     expect(selectReview).toHaveBeenCalledWith("rev_recent");
   });

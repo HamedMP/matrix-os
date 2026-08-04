@@ -15,6 +15,7 @@ import {
   LoaderCircleIcon,
   RadioIcon,
   RefreshCwIcon,
+  Settings2Icon,
   TerminalIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,7 @@ import {
   type NormalizedAgentSettings,
 } from "@/lib/agent-config";
 import type { TerminalLaunchAction } from "@/lib/terminal-launch";
+import { HermesConfigurationDialog } from "./HermesConfigurationDialog";
 
 interface AgentRuntimePanelProps {
   onOpenTerminal?: (action: TerminalLaunchAction) => void;
@@ -300,22 +302,45 @@ function MessagingProviders({
   const selectedModel = providerModels.some((entry) => entry.id === preferredModel)
     ? preferredModel
     : providerModels[0]?.id ?? "";
-  const terminalAction = view.runtime.selected === "hermes" ? "hermes-model" : "openclaw-model-auth";
+  const isHermes = view.runtime.selected === "hermes";
+  const [hermesConfigOpen, setHermesConfigOpen] = useState(false);
+  const hermesVersion = view.runtime.options.find((runtime) => runtime.id === "hermes")?.version;
+  const terminalAction = "openclaw-model-auth";
+  const configureAction = isHermes ? (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => setHermesConfigOpen(true)}
+      aria-label="Configure Hermes provider"
+    >
+      <Settings2Icon className="size-3.5" /> Configure Hermes
+    </Button>
+  ) : onOpenTerminal ? (
+    <Button size="sm" variant="outline" onClick={() => onOpenTerminal(terminalAction)} aria-label="Configure Openclaw provider">
+      <TerminalIcon className="size-3.5" /> Configure OpenClaw
+    </Button>
+  ) : null;
+  const hermesDialog = (
+    <HermesConfigurationDialog
+      open={hermesConfigOpen}
+      onOpenChange={setHermesConfigOpen}
+      version={hermesVersion}
+    />
+  );
 
   if (providers.length === 0) {
     return (
-      <Card>
-        <CardContent className="flex min-h-32 flex-col items-center justify-center gap-2 py-8 text-center">
-          <AlertTriangleIcon className="size-5 text-muted-foreground" />
-          <p className="text-sm font-medium">No providers available</p>
-          <p className="max-w-sm text-xs text-muted-foreground">Start and configure the selected messaging runtime, then retry.</p>
-          {onOpenTerminal && (
-            <Button size="sm" variant="outline" onClick={() => onOpenTerminal(terminalAction)} aria-label={`Configure ${statusLabel(view.runtime.selected)} provider`}>
-              <TerminalIcon className="size-3.5" /> Configure {statusLabel(view.runtime.selected)}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+      <>
+        <Card>
+          <CardContent className="flex min-h-32 flex-col items-center justify-center gap-2 py-8 text-center">
+            <AlertTriangleIcon className="size-5 text-muted-foreground" />
+            <p className="text-sm font-medium">No providers available</p>
+            <p className="max-w-sm text-xs text-muted-foreground">Start and configure the selected messaging runtime, then retry.</p>
+            {configureAction}
+          </CardContent>
+        </Card>
+        {hermesDialog}
+      </>
     );
   }
 
@@ -372,17 +397,14 @@ function MessagingProviders({
             <span className="text-xs text-muted-foreground">{provider?.displayName}</span>
           </div>
           <div className="flex gap-2">
-            {onOpenTerminal && (
-              <Button size="sm" variant="outline" onClick={() => onOpenTerminal(terminalAction)} aria-label={`Configure ${statusLabel(view.runtime.selected)} provider`}>
-                <TerminalIcon className="size-3.5" /> Configure
-              </Button>
-            )}
+            {configureAction}
             <Button size="sm" disabled={busy || !selectedProviderId || !selectedModel} onClick={() => onSave(selectedProviderId, selectedModel)}>
               Save messaging model
             </Button>
           </div>
         </div>
       </CardContent>
+      {hermesDialog}
     </Card>
   );
 }

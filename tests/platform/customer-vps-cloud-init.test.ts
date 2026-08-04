@@ -329,6 +329,13 @@ exit 99
     expect(wrapper).toContain('source /opt/matrix/env/host.env');
     expect(wrapper).toContain('source /opt/matrix/bin/matrix-owner-env');
     expect(wrapper).toContain('HERMES_BIN=');
+    expect(wrapper).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME');
+    expect(wrapper).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD');
+    expect(wrapper).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET');
+    expect(wrapper).toContain('export HERMES_DASHBOARD_SESSION_TOKEN="$HERMES_DASHBOARD_BASIC_AUTH_SECRET"');
+    expect(wrapper).toContain('mktemp "$auth_dir/.hermes-dashboard.env.XXXXXX"');
+    expect(wrapper).toContain('chmod 0600 "$auth_tmp"');
+    expect(wrapper).toContain('mv -n "$auth_tmp" "$auth_file"');
     expect(wrapper).toContain('dashboard --host 127.0.0.1 --port 9119');
     expect(wrapper).toContain('exit 0');
 

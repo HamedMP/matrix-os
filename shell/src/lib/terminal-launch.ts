@@ -3,7 +3,6 @@ export type TerminalLaunchAction =
   | "codex-login"
   | "github-ssh-login"
   | "hermes-install"
-  | "hermes-model"
   | "openclaw-install"
   | "openclaw-model-auth";
 
@@ -35,11 +34,6 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
     action: "hermes-install",
     label: "Install Hermes",
     command: "/opt/matrix/bin/matrix-agent-runtime-control install hermes",
-  },
-  "hermes-model": {
-    action: "hermes-model",
-    label: "Hermes provider setup",
-    command: "hermes model",
   },
   "openclaw-install": {
     action: "openclaw-install",

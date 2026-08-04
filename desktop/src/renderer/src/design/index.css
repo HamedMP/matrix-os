@@ -5,6 +5,7 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
+@import "./chat.css";
 
 /* Map tokens into Tailwind v4 theme so utilities like bg-surface work. */
 @theme inline {
@@ -23,6 +24,13 @@
   --color-info: var(--info);
   --font-ui: var(--font-ui);
   --font-mono: var(--font-mono);
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  --text-md: var(--text-md);
+  --text-lg: var(--text-lg);
+  --text-xl: var(--text-xl);
+  --text-2xl: var(--text-2xl);
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius);
   --radius-lg: var(--radius-lg);
@@ -141,13 +149,13 @@ textarea,
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(40, 44, 37, 0.18);
+  background: var(--scrollbar-thumb);
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(40, 44, 37, 0.3);
+  background: var(--scrollbar-thumb-hover);
   background-clip: padding-box;
   border: 2px solid transparent;
 }

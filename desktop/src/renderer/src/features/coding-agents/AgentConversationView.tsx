@@ -1,10 +1,20 @@
-import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
+import type { AgentAttachment, AgentThreadEvent, AgentThreadSnapshot, RuntimeSummary } from "@matrix-os/contracts";
 import {
   Check,
+  CircleAlert,
+  CircleCheck,
   Copy,
   Eye,
+  FileDiff,
+  FileText,
   GitPullRequest,
+  Hourglass,
+  Image as ImageIcon,
+  Info,
+  Link2,
+  MessageSquarePlus,
   Minus,
+  ScrollText,
   SquarePen,
   SquareTerminal,
   Wrench,
@@ -13,8 +23,9 @@ import {
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../design/primitives";
+import { cn } from "../../lib/cn";
 import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
 import {
   codingAgentApprovalActionKey,
@@ -22,19 +33,36 @@ import {
   useCodingAgentWorkspace,
 } from "../../stores/coding-agent-workspace";
 import { safeUrlTransform } from "../editor/MarkdownPreview";
-import { Conversation, ConversationContent } from "../chat/elements/conversation";
+import {
+  Attachment,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "../chat/elements/attachment";
+import { Bubble, BubbleContent } from "../chat/elements/bubble";
+import { Conversation, ConversationContent, ConversationItem } from "../chat/elements/conversation";
+import { Marker, MarkerContent, MarkerIcon } from "../chat/elements/marker";
+import { Message, MessageContent, MessageFooter } from "../chat/elements/message";
 import { PromptInput } from "../chat/elements/prompt-input";
+import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
+import { AgentComposerPickers } from "./composer-pickers";
+import { ToolCallDetailMeta } from "./tool-call-detail";
+import { deriveTurnSummaries } from "./turn-summary";
 
 type ConversationStatus = "idle" | "loading" | "ready" | "error";
 type AssistantEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
 type ToolEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
+// `order` is the index of the item's first event; `endOrder` the index of its
+// last — turn summaries anchor to the row containing a turn's final event.
 type ConversationItem =
-  | { kind: "assistant"; key: string; events: AssistantEvent[]; order: number }
-  | { kind: "tool"; key: string; events: ToolEvent[]; order: number }
-  | { kind: "event"; event: AgentThreadEvent; order: number };
+  | { kind: "assistant"; key: string; events: AssistantEvent[]; order: number; endOrder: number }
+  | { kind: "tool"; key: string; events: ToolEvent[]; order: number; endOrder: number }
+  | { kind: "event"; event: AgentThreadEvent; order: number; endOrder: number };
 type TimelineItem =
   | Exclude<ConversationItem, { kind: "tool" }>
-  | { kind: "tool-run"; key: string; runs: Array<Extract<ConversationItem, { kind: "tool" }>>; order: number };
+  | { kind: "tool-run"; key: string; runs: Array<Extract<ConversationItem, { kind: "tool" }>>; order: number; endOrder: number };
 
 // Defensive ceiling for one rendered message; each delta is already bounded by
 // the event schema (4,000 chars / 16KB), so this only guards runaway joins.
@@ -46,34 +74,50 @@ const TOOL_RUN_COLLAPSE_THRESHOLD = 5;
 const TOOL_RUN_VISIBLE_TAIL = 3;
 
 const TRANSCRIPT_MARKDOWN_CLASS =
-  "prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-md [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-[var(--border-subtle)] [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--border-subtle)] [&_pre]:bg-[var(--bg-sunken)] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-[var(--border-subtle)] [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-[var(--border-subtle)] [&_th]:bg-[var(--bg-sunken)] [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_ul]:list-disc [&_ul]:pl-5";
+  "prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:text-md [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-[var(--border-subtle)] [&_li]:my-1 [&_li]:marker:text-[var(--text-tertiary)] [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--border-subtle)] [&_pre]:bg-[var(--bg-sunken)] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-[13px] [&_td]:border [&_td]:border-[var(--border-subtle)] [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-[var(--border-subtle)] [&_th]:bg-[var(--bg-sunken)] [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5";
 
 function conversationItems(events: AgentThreadEvent[]): ConversationItem[] {
-  const assistants = new Map<string, AssistantEvent[]>();
-  const tools = new Map<string, ToolEvent[]>();
+  const assistants = new Map<string, Extract<ConversationItem, { kind: "assistant" }>>();
+  const tools = new Map<string, Extract<ConversationItem, { kind: "tool" }>>();
   const items: ConversationItem[] = [];
   for (const [order, event] of events.entries()) {
     if (event.type === "assistant.text.delta" || event.type === "assistant.text.completed") {
       const group = assistants.get(event.messageId);
-      if (group) group.push(event);
-      else {
-        const next = [event];
-        assistants.set(event.messageId, next);
-        items.push({ kind: "assistant", key: `assistant:${event.messageId}`, events: next, order });
+      if (group) {
+        group.events.push(event);
+        group.endOrder = order;
+      } else {
+        const item: Extract<ConversationItem, { kind: "assistant" }> = {
+          kind: "assistant",
+          key: `assistant:${event.messageId}`,
+          events: [event],
+          order,
+          endOrder: order,
+        };
+        assistants.set(event.messageId, item);
+        items.push(item);
       }
       continue;
     }
     if (event.type === "tool.started" || event.type === "tool.output" || event.type === "tool.completed") {
       const group = tools.get(event.toolCallId);
-      if (group) group.push(event);
-      else {
-        const next = [event];
-        tools.set(event.toolCallId, next);
-        items.push({ kind: "tool", key: `tool:${event.toolCallId}`, events: next, order });
+      if (group) {
+        group.events.push(event);
+        group.endOrder = order;
+      } else {
+        const item: Extract<ConversationItem, { kind: "tool" }> = {
+          kind: "tool",
+          key: `tool:${event.toolCallId}`,
+          events: [event],
+          order,
+          endOrder: order,
+        };
+        tools.set(event.toolCallId, item);
+        items.push(item);
       }
       continue;
     }
-    items.push({ kind: "event", event, order });
+    items.push({ kind: "event", event, order, endOrder: order });
   }
   return items.sort((left, right) => left.order - right.order);
 }
@@ -89,9 +133,10 @@ function timelineItems(items: ConversationItem[]): TimelineItem[] {
     const previous = timeline.at(-1);
     if (previous?.kind === "tool-run") {
       previous.runs.push(item);
+      previous.endOrder = item.endOrder;
       continue;
     }
-    timeline.push({ kind: "tool-run", key: `run:${item.key}`, runs: [item], order: item.order });
+    timeline.push({ kind: "tool-run", key: `run:${item.key}`, runs: [item], order: item.order, endOrder: item.endOrder });
   }
   return timeline;
 }
@@ -144,8 +189,10 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-// Assistant messages render full-width markdown — no bubble — with a
-// hover-revealed meta row, matching the reference chat anatomy.
+// Assistant messages render full-width markdown in a ghost bubble — no framed
+// surface — with a hover-revealed footer, matching the reference chat anatomy.
+// The markdown pipeline (react-markdown + GFM + highlight + redaction) is
+// unchanged; Message/Bubble own layout only.
 function AssistantRow({ events }: { events: AssistantEvent[] }) {
   const { text, completed } = useMemo(() => assistantText(events), [events]);
   if (!text) {
@@ -154,36 +201,86 @@ function AssistantRow({ events }: { events: AssistantEvent[] }) {
     ) : null;
   }
   return (
-    <div className="group/assistant flex min-w-0 flex-col">
-      <div className={TRANSCRIPT_MARKDOWN_CLASS} style={{ color: "var(--text-primary)" }} data-selectable>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
-          urlTransform={safeUrlTransform}
-          components={{
-            // Never auto-fetch remote images: a transcript image would fire a
-            // request to an arbitrary host the moment the thread opens
-            // (tracking pixel / exfiltration channel). Degrade to inert text.
-            img: ({ alt, src: imageSrc }) => (
-              <span
-                className="rounded border px-1.5 py-0.5 font-mono text-[11px]"
-                style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+    <Message>
+      <MessageContent>
+        <Bubble variant="ghost">
+          <BubbleContent className="overflow-visible">
+            <div className={TRANSCRIPT_MARKDOWN_CLASS} style={{ color: "var(--text-primary)" }} data-selectable>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
+                urlTransform={safeUrlTransform}
+                components={{
+                  // Never auto-fetch remote images: a transcript image would fire a
+                  // request to an arbitrary host the moment the thread opens
+                  // (tracking pixel / exfiltration channel). Degrade to inert text.
+                  img: ({ alt, src: imageSrc }) => (
+                    <span
+                      className="rounded border px-1.5 py-0.5 font-mono text-[11px]"
+                      style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+                    >
+                      image: {alt || "untitled"}{typeof imageSrc === "string" && imageSrc ? ` (${imageSrc})` : ""}
+                    </span>
+                  ),
+                }}
               >
-                image: {alt || "untitled"}{typeof imageSrc === "string" && imageSrc ? ` (${imageSrc})` : ""}
-              </span>
-            ),
-          }}
-        >
-          {text}
-        </ReactMarkdown>
-      </div>
-      <div className="mt-1 flex items-center gap-2 opacity-0 transition-opacity group-hover/assistant:opacity-100">
-        <CopyButton text={text} label="Copy assistant message" />
-        <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-          {occurredAtLabel(events[0]?.occurredAt ?? "")}
-        </span>
-      </div>
-    </div>
+                {text}
+              </ReactMarkdown>
+            </div>
+          </BubbleContent>
+        </Bubble>
+        <MessageFooter className="mt-1 gap-2 opacity-0 transition-opacity group-hover/message:opacity-100">
+          <CopyButton text={text} label="Copy assistant message" />
+          <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+            {occurredAtLabel(events[0]?.occurredAt ?? "")}
+          </span>
+        </MessageFooter>
+      </MessageContent>
+    </Message>
+  );
+}
+
+const ATTACHMENT_KIND_LABEL: Record<AgentAttachment["kind"], string> = {
+  file: "File",
+  diff: "Diff",
+  image: "Image",
+  log_excerpt: "Log excerpt",
+  structured_ref: "Reference",
+};
+
+function attachmentKindIcon(kind: AgentAttachment["kind"]) {
+  if (kind === "image") return ImageIcon;
+  if (kind === "diff") return FileDiff;
+  if (kind === "log_excerpt") return ScrollText;
+  if (kind === "structured_ref") return Link2;
+  return FileText;
+}
+
+function attachmentSizeLabel(sizeBytes: number | undefined): string | null {
+  if (sizeBytes === undefined) return null;
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Transcript attachments are metadata-only (label, kind, size) — no URL ever
+// reaches the renderer, so cards always show the icon treatment and never an
+// <img> fetch. Composer-side attachment types are out of scope here.
+function UserAttachmentCard({ attachment }: { attachment: AgentAttachment }) {
+  const KindIcon = attachmentKindIcon(attachment.kind);
+  const size = attachmentSizeLabel(attachment.sizeBytes);
+  return (
+    <Attachment size="sm" state="done">
+      <AttachmentMedia>
+        <KindIcon />
+      </AttachmentMedia>
+      <AttachmentContent>
+        <AttachmentTitle>{attachment.label}</AttachmentTitle>
+        <AttachmentDescription>
+          {ATTACHMENT_KIND_LABEL[attachment.kind]}{size ? ` · ${size}` : ""}
+        </AttachmentDescription>
+      </AttachmentContent>
+    </Attachment>
   );
 }
 
@@ -192,40 +289,48 @@ function UserRow({ event }: { event: Extract<AgentThreadEvent, { type: "user.mes
   const lines = event.text.split("\n").length;
   const collapsible = event.text.length > COLLAPSED_USER_MAX_CHARS || lines > COLLAPSED_USER_MAX_LINES;
   return (
-    <div className="group/user flex flex-col items-end gap-1">
-      <div
-        className="relative max-w-[80%] overflow-hidden rounded-2xl rounded-br-md border px-3.5 py-2 text-sm whitespace-pre-wrap"
-        style={{
-          borderColor: "var(--border-subtle)",
-          background: "var(--bg-sunken)",
-          color: "var(--text-primary)",
-          ...(collapsible && !expanded
-            ? { maxHeight: 176, maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)" }
-            : {}),
-        }}
-        data-selectable
-      >
-        {event.text}
-      </div>
-      <div className="flex max-w-[80%] items-center gap-2">
-        {collapsible ? (
-          <button
-            type="button"
-            className="text-[11px]"
-            style={{ color: "var(--text-tertiary)" }}
-            onClick={() => setExpanded((value) => !value)}
+    <Message align="end">
+      <MessageContent>
+        <Bubble variant="secondary" align="end">
+          <BubbleContent
+            className="rounded-[var(--radius-xl)] rounded-br-md border-[var(--border-subtle)] px-3.5 whitespace-pre-wrap"
+            style={
+              collapsible && !expanded
+                ? { maxHeight: 176, maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)" }
+                : undefined
+            }
+            data-selectable
           >
-            {expanded ? "Show less" : "Show full message"}
-          </button>
+            {event.text}
+          </BubbleContent>
+        </Bubble>
+        {event.attachments?.length ? (
+          <AttachmentGroup role="group" aria-label="Message attachments" tabIndex={0}>
+            {event.attachments.map((attachment) => (
+              <UserAttachmentCard key={attachment.id} attachment={attachment} />
+            ))}
+          </AttachmentGroup>
         ) : null}
-        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover/user:opacity-100">
-          <CopyButton text={event.text} label="Copy your message" />
-          <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-            {occurredAtLabel(event.occurredAt)}
+        <MessageFooter className="max-w-[80%] gap-2">
+          {collapsible ? (
+            <button
+              type="button"
+              className="text-[11px]"
+              style={{ color: "var(--text-tertiary)" }}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "Show less" : "Show full message"}
+            </button>
+          ) : null}
+          <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100">
+            <CopyButton text={event.text} label="Copy your message" />
+            <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+              {occurredAtLabel(event.occurredAt)}
+            </span>
           </span>
-        </span>
-      </div>
-    </div>
+        </MessageFooter>
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -236,9 +341,10 @@ function toolKindIcon(displayName: string) {
   return Wrench;
 }
 
-// A tool call renders as a one-line chip: kind icon, heading, muted preview,
-// and a trailing status glyph. Expansion reveals the same bounded detail copy
-// the old cards showed — no raw payloads.
+// A tool call renders as a Marker-style one-line row: kind icon, heading
+// (shimmering while the call runs), muted preview, and a trailing status
+// glyph. Expansion reveals the same bounded detail copy the old cards showed
+// — no raw payloads.
 function ToolChip({ events }: { events: ToolEvent[] }) {
   const [open, setOpen] = useState(false);
   const started = events.find((event): event is Extract<ToolEvent, { type: "tool.started" }> => event.type === "tool.started");
@@ -253,32 +359,36 @@ function ToolChip({ events }: { events: ToolEvent[] }) {
   const StatusIcon = completed ? (failed ? X : Check) : Minus;
   return (
     <div className="flex min-w-0 flex-col">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left hover:bg-[var(--bg-hover)]"
-        aria-label={`Tool call ${name}`}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <KindIcon size={14} className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
-        <span
-          className="min-w-0 shrink truncate text-[12px] font-medium"
-          style={{ color: failed ? "var(--danger)" : "var(--text-primary)" }}
+      <Marker asChild>
+        <button
+          type="button"
+          className="rounded-md px-1 py-0.5 hover:bg-[var(--bg-hover)]"
+          aria-label={`Tool call ${name}`}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
         >
-          {name}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-          {detail}
-        </span>
-        <StatusIcon
-          size={13}
-          className="shrink-0"
-          style={{ color: failed ? "var(--danger)" : completed ? "var(--success)" : "var(--text-tertiary)" }}
-          aria-label={completed ? (failed ? "Failed" : "Completed") : "Running"}
-        />
-      </button>
+          <MarkerIcon>
+            <KindIcon className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
+          </MarkerIcon>
+          <MarkerContent
+            className={cn("shrink truncate text-[12px] font-medium", completed ? undefined : "shimmer")}
+            style={{ color: failed ? "var(--danger)" : "var(--text-primary)" }}
+          >
+            {name}
+          </MarkerContent>
+          <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+            {detail}
+          </span>
+          <StatusIcon
+            className="size-3.5 shrink-0"
+            style={{ color: failed ? "var(--danger)" : completed ? "var(--success)" : "var(--text-tertiary)" }}
+            aria-label={completed ? (failed ? "Failed" : "Completed") : "Running"}
+          />
+        </button>
+      </Marker>
       {open ? (
         <div className="mt-1 ml-7 border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
+          <ToolCallDetailMeta events={events} />
           <pre className="max-h-64 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }} data-selectable>
             {detail}
             {outputs.some((event) => event.truncated) ? "\nOutput was truncated for display." : ""}
@@ -325,14 +435,27 @@ function ToolRun({ runs }: { runs: Array<Extract<ConversationItem, { kind: "tool
 
 function WorkingRow() {
   return (
-    <div className="flex items-center gap-2" role="status" aria-label="Agent is working">
-      <span className="flex items-center gap-1">
+    <Marker role="status" aria-label="Agent is working" className="px-1">
+      <MarkerIcon className="flex items-center gap-1">
         <span className="h-1 w-1 animate-pulse rounded-full" style={{ background: "var(--text-tertiary)" }} />
         <span className="h-1 w-1 animate-pulse rounded-full [animation-delay:200ms]" style={{ background: "var(--text-tertiary)" }} />
         <span className="h-1 w-1 animate-pulse rounded-full [animation-delay:400ms]" style={{ background: "var(--text-tertiary)" }} />
-      </span>
-      <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Working…</span>
-    </div>
+      </MarkerIcon>
+      <MarkerContent className="shimmer text-[11px]">Working…</MarkerContent>
+    </Marker>
+  );
+}
+
+// Subtle per-turn receipt ("Worked for 5m 35s"), rendered after a turn's
+// terminal signal. Deliberately non-interactive this wave — no collapse.
+function WorkedRow({ label }: { label: string }) {
+  return (
+    <Marker aria-label={label} className="px-1">
+      <MarkerIcon>
+        <Check className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
+      </MarkerIcon>
+      <MarkerContent className="text-[11px]">{label}</MarkerContent>
+    </Marker>
   );
 }
 
@@ -368,6 +491,27 @@ function approvalLabel(decision: string) {
   return "Decide";
 }
 
+// Pure status events ("Thread created", "Terminal bound", "Thread
+// completed", …) render as compact single-line timeline rows: a small
+// leading glyph, the bounded copy, and the timestamp at the right — no card
+// background, border, or shadow, so they read as history instead of
+// dominating the conversation.
+function systemEventIcon(event: AgentThreadEvent) {
+  switch (event.type) {
+    case "thread.created": return MessageSquarePlus;
+    case "thread.completed": return CircleCheck;
+    case "thread.error": return CircleAlert;
+    case "terminal.bound": return SquareTerminal;
+    case "turn.accepted": return Hourglass;
+    case "approval.resolved":
+    case "user_input.answered": return CircleCheck;
+    case "approval.requested":
+    case "user_input.requested": return CircleAlert;
+    case "file.changed": return FileDiff;
+    default: return Info;
+  }
+}
+
 function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
   event: AgentThreadEvent;
   answeredInputs: ReadonlySet<string>;
@@ -386,6 +530,42 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
   const input = event.type === "user_input.requested" ? event.request : null;
   const approvalKey = approval ? codingAgentApprovalActionKey(approval.threadId, approval.approvalId) : null;
   const inputKey = input ? codingAgentInputActionKey(input.threadId, input.requestId) : null;
+  // Events carrying a live action — a pending approval decision, a pending
+  // input answer, or an openable review — keep the card treatment; every
+  // other status event collapses to a compact timeline row.
+  const interactive = Boolean(
+    (approval && approvalKey && !resolvedApprovals.has(approvalKey))
+    || (input && inputKey && !answeredInputs.has(inputKey))
+    || event.type === "review.ready",
+  );
+  if (!interactive) {
+    const Glyph = systemEventIcon(event);
+    const failed = event.type === "thread.error";
+    return (
+      <div className="flex w-full items-center gap-2 px-1 py-0.5" data-slot="system-event-row">
+        <Glyph
+          size={12}
+          className="shrink-0"
+          style={{ color: failed ? "var(--danger)" : "var(--text-tertiary)" }}
+          aria-hidden="true"
+        />
+        <p className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+          <span className="font-medium" style={{ color: failed ? "var(--danger)" : "var(--text-secondary)" }}>
+            {copy.title}
+          </span>
+          {copy.detail ? (
+            <>
+              <span aria-hidden="true"> · </span>
+              <span>{copy.detail}</span>
+            </>
+          ) : null}
+        </p>
+        <span className="shrink-0 text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+          {occurredAtLabel(event.occurredAt)}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="w-full rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
       <div className="flex items-center justify-between gap-3">
@@ -425,23 +605,45 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
   );
 }
 
-function ConversationComposer({ threadId, waitingForAction }: { threadId: string; waitingForAction: boolean }) {
+function ConversationComposer({
+  threadId,
+  waitingForAction,
+  threadBusy,
+  composerControls,
+}: {
+  threadId: string;
+  waitingForAction: boolean;
+  threadBusy: boolean;
+  // Left side of the composer bottom row (provider/mode pickers).
+  composerControls?: ReactNode;
+}) {
   const [message, setMessage] = useState("");
   const turnStatus = useCodingAgentWorkspace((state) => state.turnStatus);
   const turnThreadId = useCodingAgentWorkspace((state) => state.turnThreadId);
   const turnError = useCodingAgentWorkspace((state) => state.turnError);
   const send = useCodingAgentWorkspace((state) => state.sendThreadMessage);
   const submitting = turnStatus === "submitting" && turnThreadId === threadId;
+  // Stop renders while the thread is busy and the preload bridge carries the
+  // "runtime:abort-thread" channel (see abort-thread.ts).
+  const abortSupported = agentThreadAbortSupported();
 
   async function submit() {
-    if (!message.trim() || submitting || waitingForAction) return;
+    if (!message.trim() || waitingForAction || submitting) return;
+    // Every submit is a direct send. A follow-up aimed at a busy conversation
+    // returns a safe recoverable conflict, which surfaces through turnError.
+    // Pending messages are durable server-owned records (SPEC 105 FR-100), and
+    // queueing must be explicit rather than silent (FR-027, FR-101), so this
+    // client deliberately keeps no local queue: a renderer-only queue would be
+    // lost on reload and invisible to the mobile, browser, and CLI shells.
     const sent = await send({ threadId, message });
     if (sent) setMessage("");
   }
 
   return (
-    <div className="shrink-0 px-4 pb-4">
-      <div className="mx-auto w-full max-w-[760px]">
+    <div className="shrink-0 px-6 pb-5">
+      {/* Floating composer card: same centered column as the transcript; the
+          rounded/shadowed surface itself lives on PromptInput's prompt-card. */}
+      <div className="mx-auto w-full max-w-[46rem]" data-slot="conversation-composer">
         {turnThreadId === threadId && turnError ? (
           <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
         ) : null}
@@ -449,13 +651,20 @@ function ConversationComposer({ threadId, waitingForAction }: { threadId: string
           value={message}
           onChange={setMessage}
           onSubmit={() => void submit()}
-          busy={submitting}
-          disabled={waitingForAction || submitting}
+          onAbort={abortSupported ? () => void abortAgentThread(threadId) : undefined}
+          busy={submitting || threadBusy}
+          disabled={waitingForAction}
           // Matches the CreateAgentTurnRequestSchema message cap so oversized
           // drafts are prevented client-side instead of failing generically.
           maxLength={24_000}
           ariaLabel="Message conversation"
           placeholder={waitingForAction ? "Respond to the pending request above to continue" : "Ask a follow-up…"}
+          controls={composerControls}
+          footer={
+            threadBusy && !waitingForAction ? (
+              <span className="text-xs">Agent is working — send a follow-up once this turn finishes</span>
+            ) : undefined
+          }
         />
       </div>
     </div>
@@ -467,13 +676,41 @@ export function AgentConversationView({
   snapshot,
   error,
   canSendTurns,
+  summary,
 }: {
   status: ConversationStatus;
   snapshot: AgentThreadSnapshot | null;
   error: string | null;
   canSendTurns: boolean;
+  // When provided, the composer bar shows the thread's provider as a
+  // display-only picker (turns cannot change provider or mode).
+  summary?: RuntimeSummary;
 }) {
+  const threadRunning = snapshot?.thread.status === "running"
+    || snapshot?.thread.status === "starting"
+    || snapshot?.thread.status === "queued";
+  const threadActive = threadRunning
+    || snapshot?.thread.status === "waiting_for_approval"
+    || snapshot?.thread.status === "waiting_for_input";
   const items = useMemo(() => timelineItems(conversationItems(snapshot?.events.items ?? [])), [snapshot?.events.items]);
+  // Per-turn "Worked for Xs" rows, derived from event timestamps only.
+  const turnSummaryByItemKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const summary of deriveTurnSummaries(snapshot?.events.items ?? [], threadActive)) {
+      // Grouped assistant messages can complete after an intervening tool row
+      // while still rendering at their first-event position. Anchor the receipt
+      // to the last VISUAL timeline item that began within the finished turn.
+      let anchor: TimelineItem | undefined;
+      for (const item of items) {
+        if (item.order > summary.endOrder) break;
+        anchor = item;
+      }
+      if (!anchor) continue;
+      const key = anchor.kind === "event" ? `event:${anchor.event.eventId}` : anchor.key;
+      map.set(key, summary.label);
+    }
+    return map;
+  }, [items, snapshot?.events.items, threadActive]);
   const answeredInputs = useMemo(() => new Set((snapshot?.events.items ?? [])
     .filter((event) => event.type === "user_input.answered")
     .map((event) => codingAgentInputActionKey(event.threadId, event.requestId))), [snapshot?.events.items]);
@@ -488,32 +725,65 @@ export function AgentConversationView({
   if (status === "error") return <div className="flex min-h-[360px] items-center justify-center p-6 text-sm" style={{ color: "var(--danger)" }}>{error ?? "Thread state unavailable"}</div>;
   if (!snapshot) return <div className="flex min-h-[360px] items-center justify-center p-6 text-center text-sm" style={{ color: "var(--text-secondary)" }}>Choose a conversation from the project navigator, or start a new chat.</div>;
 
-  const running = snapshot.thread.status === "running" || snapshot.thread.status === "starting" || snapshot.thread.status === "queued";
+  const running = threadRunning;
   const lastItem = items.at(-1);
   const streamingAssistant = lastItem?.kind === "assistant"
     && !lastItem.events.some((event) => event.type === "assistant.text.completed");
   const showWorking = running && !streamingAssistant;
 
   return (
-    <section aria-label={`Conversation ${snapshot.thread.title}`} className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-primary)" }}>
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-        <div className="min-w-0">
+    <section aria-label={`Conversation ${snapshot.thread.title}`} className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-app)" }}>
+      {/* pr-12 reserves the top-right corner for the floating inspector
+          toggle (ProjectChatsView overlays it at right-2.5 top-2.5), so the
+          attention pill is never clipped beneath it; the title column is the
+          only element allowed to shrink and truncate. */}
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 pr-12" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+        <div className="min-w-0 flex-1">
           <span className="sr-only">Thread details</span>
           <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{snapshot.thread.title}</h2>
           <p className="flex min-w-0 items-center gap-1 truncate text-xs capitalize" style={{ color: "var(--text-tertiary)" }}>
             <span>{snapshot.thread.providerId}</span><span aria-hidden="true">·</span><span>{snapshot.thread.status.replaceAll("_", " ")}</span>
           </p>
         </div>
-        {snapshot.thread.attention !== "none" ? <span className="rounded-full px-2 py-1 text-[10px] font-semibold capitalize" style={{ background: "var(--warning-muted)", color: "var(--warning)" }}>{snapshot.thread.attention.replaceAll("_", " ")}</span> : null}
+        {snapshot.thread.attention !== "none" ? <span className="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold capitalize" style={{ background: "var(--warning-muted)", color: "var(--warning)" }}>{snapshot.thread.attention.replaceAll("_", " ")}</span> : null}
       </header>
       <Conversation key={`transcript:${snapshot.thread.id}`}>
         <ConversationContent>
-          {items.map((item) =>
-            item.kind === "assistant" ? <AssistantRow key={item.key} events={item.events} />
-              : item.kind === "tool-run" ? <ToolRun key={item.key} runs={item.runs} />
-                : item.event.type === "user.message" ? <UserRow key={item.event.eventId} event={item.event} />
-                  : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />)}
-          {showWorking ? <WorkingRow /> : null}
+          {items.map((item) => {
+            const itemKey = item.kind === "event" ? `event:${item.event.eventId}` : item.key;
+            const workedLabel = turnSummaryByItemKey.get(itemKey);
+            return (
+              <Fragment key={itemKey}>
+                {item.kind === "assistant" ? (
+                  <ConversationItem messageId={item.key}>
+                    <AssistantRow events={item.events} />
+                  </ConversationItem>
+                ) : item.kind === "tool-run" ? (
+                  <ConversationItem messageId={item.key}>
+                    <ToolRun runs={item.runs} />
+                  </ConversationItem>
+                ) : item.event.type === "user.message" ? (
+                  <ConversationItem messageId={`user:${item.event.messageId}`} scrollAnchor>
+                    <UserRow event={item.event} />
+                  </ConversationItem>
+                ) : (
+                  <ConversationItem messageId={`event:${item.event.eventId}`}>
+                    <SystemEvent event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />
+                  </ConversationItem>
+                )}
+                {workedLabel ? (
+                  <ConversationItem messageId={`turn-summary:${itemKey}`}>
+                    <WorkedRow label={workedLabel} />
+                  </ConversationItem>
+                ) : null}
+              </Fragment>
+            );
+          })}
+          {showWorking ? (
+            <ConversationItem messageId="agent:working">
+              <WorkingRow />
+            </ConversationItem>
+          ) : null}
           {items.length === 0 && !showWorking ? (
             <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
               {canSendTurns ? "Send a message to start the conversation." : "No messages yet."}
@@ -529,6 +799,17 @@ export function AgentConversationView({
           key={`composer:${snapshot.thread.id}`}
           threadId={snapshot.thread.id}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
+          threadBusy={running}
+          composerControls={
+            summary ? (
+              <AgentComposerPickers
+                summary={summary}
+                providerId={snapshot.thread.providerId}
+                mode={undefined}
+                readOnly
+              />
+            ) : undefined
+          }
         />
       ) : (
         <p

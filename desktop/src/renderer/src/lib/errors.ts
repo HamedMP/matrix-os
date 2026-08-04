@@ -35,3 +35,11 @@ export function toUserMessage(err: unknown): string {
   if (err instanceof AppError) return categoryMessage(err.category);
   return categoryMessage("server");
 }
+
+// Renderer diagnostics may identify an error class/category for support, but
+// must never echo provider, database, path, or secret-bearing message text.
+export function diagnosticErrorKind(err: unknown): string {
+  if (err instanceof AppError) return err.category;
+  if (err instanceof Error) return err.name;
+  return "Unknown error";
+}

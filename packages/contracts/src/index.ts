@@ -380,7 +380,7 @@ export type CodingAgentNotificationPreferences =
 export type CodingAgentNotificationPreferencesUpdate =
   z.infer<typeof CodingAgentNotificationPreferencesUpdateSchema>;
 
-export const ProviderKindSchema = z.enum(["claude", "codex", "opencode", "cursor", "custom"]);
+export const ProviderKindSchema = z.enum(["claude", "codex", "opencode", "cursor", "pi", "custom"]);
 export const ProviderAvailabilitySchema = z.enum([
   "available",
   "setup_required",
@@ -1057,10 +1057,16 @@ function runtimeCapabilityEnabled(summary: RuntimeSummary, id: z.infer<typeof Ru
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
 }
 
-function providerReady(provider: AgentProviderSummary): boolean {
+export function providerReady(provider: AgentProviderSummary): boolean {
   return provider.availability === "available" &&
     provider.installStatus === "installed" &&
     provider.authStatus === "authenticated";
+}
+
+export function defaultSandboxModeForProvider(
+  provider: AgentProviderSummary | undefined,
+): z.infer<typeof SandboxModeSchema> {
+  return provider?.kind === "pi" ? "read_only" : "workspace_write";
 }
 
 function defaultComposerProvider(summary: RuntimeSummary): AgentProviderSummary | undefined {
@@ -1079,7 +1085,7 @@ export function defaultAgentThreadComposerDraft(summaryInput: RuntimeSummary): A
     prompt: "",
     mode: provider?.defaultMode ?? "default",
     approvalPolicy: "on_request",
-    sandboxMode: "workspace_write",
+    sandboxMode: defaultSandboxModeForProvider(provider),
   });
 }
 
@@ -1133,7 +1139,11 @@ export function buildCreateAgentThreadRequestFromComposer(input: {
     worktreeId: draft.worktreeId,
     mode,
     approvalPolicy: draft.approvalPolicy ?? "on_request",
-    sandboxMode: draft.sandboxMode ?? "workspace_write",
+    // Pi's direct CLI adapter can currently enforce only read_only. Normalize
+    // stale drafts here as the final cross-shell guard after a provider switch.
+    sandboxMode: provider?.kind === "pi"
+      ? defaultSandboxModeForProvider(provider)
+      : draft.sandboxMode ?? defaultSandboxModeForProvider(provider),
     attachments: draft.attachments,
     clientRequestId: clientRequestId.data,
   });

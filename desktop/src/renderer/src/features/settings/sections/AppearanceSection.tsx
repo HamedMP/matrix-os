@@ -1,8 +1,8 @@
-import { Check } from "lucide-react";
-import { Button } from "../../../design/primitives";
+import { Check, Minus, Plus } from "lucide-react";
+import { Button, IconButton } from "../../../design/primitives";
 import { getThemeVariant, unifiedThemes } from "../../../design/themes";
 import { resolveThemeMode, type ThemeMode } from "../../../design/themes/apply";
-import { useAppearance } from "../../../stores/appearance";
+import { MAX_ZOOM, MIN_ZOOM, useAppearance, ZOOM_STEP } from "../../../stores/appearance";
 import { Card, SectionHeader } from "./section-kit";
 
 function ThemeSwatch({ themeId, mode, selected, onSelect, onArrowKey }: {
@@ -68,8 +68,10 @@ function ThemeSwatch({ themeId, mode, selected, onSelect, onArrowKey }: {
 export default function AppearanceSection() {
   const mode = useAppearance((s) => s.mode);
   const themeId = useAppearance((s) => s.themeId);
+  const zoom = useAppearance((s) => s.zoom);
   const setMode = useAppearance((s) => s.setMode);
   const setThemeId = useAppearance((s) => s.setThemeId);
+  const setZoom = useAppearance((s) => s.setZoom);
 
   // WAI-ARIA radio group: arrows select the adjacent swatch (wrapping) and
   // move focus to it.
@@ -95,6 +97,37 @@ export default function AppearanceSection() {
             </Button>
           ))}
         </div>
+      </Card>
+      <Card>
+        <span className="text-sm" style={{ color: "var(--text-secondary)" }}>Zoom</span>
+        <div className="flex items-center gap-2">
+          <IconButton
+            label="Zoom out (⌘-)"
+            disabled={zoom <= MIN_ZOOM}
+            onClick={() => setZoom(zoom - ZOOM_STEP)}
+          >
+            <Minus size={14} aria-hidden="true" />
+          </IconButton>
+          <span
+            className="w-12 text-center text-sm tabular-nums"
+            style={{ color: "var(--text-primary)" }}
+          >
+            {Math.round(zoom * 100)}%
+          </span>
+          <IconButton
+            label="Zoom in (⌘=)"
+            disabled={zoom >= MAX_ZOOM}
+            onClick={() => setZoom(zoom + ZOOM_STEP)}
+          >
+            <Plus size={14} aria-hidden="true" />
+          </IconButton>
+          <Button variant="subtle" disabled={zoom === 1} onClick={() => setZoom(1)}>
+            Reset
+          </Button>
+        </div>
+        <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+          Zooms the entire interface. ⌘=, ⌘-, and ⌘0 work anywhere in the app.
+        </p>
       </Card>
       <Card>
         <span className="text-sm" style={{ color: "var(--text-secondary)" }}>Theme</span>

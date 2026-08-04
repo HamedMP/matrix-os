@@ -47,6 +47,17 @@ function withAuth(app: Hono): Hono {
   return authed;
 }
 
+function authenticatedApp(deps: HermesRouteDeps): Hono {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    markAuthContextReady(c as Parameters<typeof markAuthContextReady>[0]);
+    c.set(JWT_CLAIMS_CONTEXT_KEY as never, { sub: "user-123" });
+    await next();
+  });
+  app.route("/api/hermes", createHermesRoutes(deps));
+  return app;
+}
+
 function upstreamJson(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -117,6 +128,159 @@ describe("Allowlist", () => {
 
     const res = await authed.request("/api/hermes/config/extra/unknown");
     expect(res.status).toBe(404);
+  });
+});
+
+describe("Hermes configuration management", () => {
+  const schema = {
+    fields: {
+      model: { type: "string", description: "Default model", category: "general" },
+      "agent.max_turns": { type: "number", description: "Maximum turns", category: "agent" },
+      "memory.memory_enabled": { type: "boolean", description: "Use memory", category: "memory" },
+      "approvals.mode": {
+        type: "select",
+        description: "Dangerous command approval mode",
+        category: "security",
+        options: ["ask", "deny"],
+      },
+      "auxiliary.vision.api_key": { type: "string", description: "Secret", category: "auxiliary" },
+    },
+    category_order: ["general", "agent", "memory", "security", "auxiliary"],
+  };
+  const currentConfig = {
+    model: "anthropic/claude-sonnet-4.6",
+    agent: { max_turns: 90 },
+    memory: { memory_enabled: true },
+    approvals: { mode: "ask" },
+    auxiliary: { vision: { api_key: "never-send-this-to-the-browser" } },
+  };
+
+  function makeClient(fetchImpl: HermesRouteDeps["client"]["fetch"]): NonNullable<HermesRouteDeps["client"]> {
+    return {
+      fetch: fetchImpl,
+      readJson: vi.fn(),
+      requestJson: vi.fn(),
+    };
+  }
+
+  it("aggregates the exact-version schema, defaults, and config without secret-bearing paths", async () => {
+    const upstreamFetch = vi.fn(async (path: string) => {
+      if (path === "/api/config") return upstreamJson(currentConfig);
+      if (path === "/api/config/defaults") return upstreamJson(currentConfig);
+      if (path === "/api/config/schema") return upstreamJson(schema);
+      return upstreamJson({}, 404);
+    });
+    const app = authenticatedApp({ client: makeClient(upstreamFetch) });
+
+    const res = await app.request("/api/hermes/configuration");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.config.auxiliary?.vision?.api_key).toBeUndefined();
+    expect(body.defaults.auxiliary?.vision?.api_key).toBeUndefined();
+    expect(body.fields["auxiliary.vision.api_key"]).toBeUndefined();
+    expect(body.fields["agent.max_turns"]).toEqual(expect.objectContaining({ type: "number" }));
+    expect(body.categoryOrder).toEqual(schema.category_order);
+    expect(upstreamFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("accepts the 679-field schema published by Hermes Agent 0.20", async () => {
+    const exactVersionFields = Object.fromEntries(Array.from({ length: 679 }, (_, index) => [
+      `section.field_${index}`,
+      { type: "string", description: `Field ${index}`, category: "section" },
+    ]));
+    const upstreamFetch = vi.fn(async (path: string) => {
+      if (path === "/api/config/schema") {
+        return upstreamJson({ fields: exactVersionFields, category_order: ["section"] });
+      }
+      if (path === "/api/config" || path === "/api/config/defaults") return upstreamJson({ section: {} });
+      return upstreamJson({}, 404);
+    });
+    const app = authenticatedApp({ client: makeClient(upstreamFetch) });
+
+    const res = await app.request("/api/hermes/configuration");
+
+    expect(res.status).toBe(200);
+    expect(Object.keys((await res.json()).fields)).toHaveLength(679);
+  });
+
+  it("validates and applies only changed schema paths while preserving server-side secrets", async () => {
+    let savedBody: unknown;
+    const upstreamFetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === "/api/config" && init?.method === "PUT") {
+        savedBody = JSON.parse(String(init.body));
+        return upstreamJson({ ok: true });
+      }
+      if (path === "/api/config") return upstreamJson(currentConfig);
+      if (path === "/api/config/schema") return upstreamJson(schema);
+      return upstreamJson({}, 404);
+    });
+    const app = authenticatedApp({ client: makeClient(upstreamFetch) });
+
+    const res = await app.request("/api/hermes/configuration", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        changes: [
+          { path: "agent.max_turns", value: 120 },
+          { path: "approvals.mode", value: "deny" },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(savedBody).toEqual({
+      config: {
+        ...currentConfig,
+        agent: { max_turns: 120 },
+        approvals: { mode: "deny" },
+      },
+    });
+    expect(JSON.stringify(await res.json())).not.toContain("never-send-this-to-the-browser");
+  });
+
+  it.each([
+    [{ path: "unknown.field", value: true }],
+    [{ path: "agent.max_turns", value: "unbounded" }],
+    [{ path: "approvals.mode", value: "yolo" }],
+    [{ path: "auxiliary.vision.api_key", value: "secret" }],
+    [{ path: "__proto__.polluted", value: true }],
+  ])("rejects unsafe or schema-invalid configuration changes", async (change) => {
+    const upstreamFetch = vi.fn(async (path: string) => {
+      if (path === "/api/config") return upstreamJson(currentConfig);
+      if (path === "/api/config/schema") return upstreamJson(schema);
+      return upstreamJson({}, 404);
+    });
+    const app = authenticatedApp({ client: makeClient(upstreamFetch) });
+
+    const res = await app.request("/api/hermes/configuration", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ changes: [change] }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(upstreamFetch).not.toHaveBeenCalledWith(
+      "/api/config",
+      expect.objectContaining({ method: "PUT" }),
+    );
+  });
+
+  it("removes a credential through Hermes' write-only env API", async () => {
+    const upstreamFetch = vi.fn(async () => upstreamJson({ ok: true }));
+    const app = authenticatedApp({ client: makeClient(upstreamFetch) });
+
+    const res = await app.request("/api/hermes/env", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key: "OPENROUTER_API_KEY" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(upstreamFetch).toHaveBeenCalledWith("/api/env", expect.objectContaining({
+      method: "DELETE",
+      body: JSON.stringify({ key: "OPENROUTER_API_KEY" }),
+    }));
   });
 });
 

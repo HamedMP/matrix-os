@@ -5,12 +5,17 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
-import { CodingAgentWorkspaceResumeStateSchema } from "../../shared/coding-agent-project-workspace";
+import { ProjectViewsStateSchema } from "../../shared/project-views";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
+// themeId and zoom are optional so older state files keep validating.
 const AppearanceSchema = z
-  .object({ theme: z.enum(["dark", "light", "system"]) })
+  .object({
+    theme: z.enum(["dark", "light", "system"]),
+    themeId: z.string().min(1).max(64).optional(),
+    zoom: z.number().min(0.5).max(2).optional(),
+  })
   .strict();
 
 const WindowBoundsSchema = z
@@ -35,6 +40,15 @@ const PanelLayoutsSchema = z.record(z.string().max(256), PanelLayoutSchema);
 
 const RecentsSchema = z.array(z.string().max(512)).max(50);
 
+const ProviderPreferencesSchema = z
+  .object({
+    defaultProviderId: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9_-]{0,79}$/)
+      .nullable(),
+  })
+  .strict();
+
 const ProfileSchema = z
   .object({
     handle: z.string().min(1).max(64),
@@ -54,7 +68,8 @@ const KEY_SCHEMAS = {
   panelLayouts: PanelLayoutsSchema,
   appearance: AppearanceSchema,
   recents: RecentsSchema,
-  codingAgentWorkspace: CodingAgentWorkspaceResumeStateSchema,
+  projectViews: ProjectViewsStateSchema,
+  providerPreferences: ProviderPreferencesSchema,
 } as const;
 
 export type LocalStoreKey = keyof typeof KEY_SCHEMAS;

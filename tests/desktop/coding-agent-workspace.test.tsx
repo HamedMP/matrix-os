@@ -3,14 +3,16 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import AgentWorkspace, {
+import ProjectChatsView, {
   clearComposerLaunchContext,
   mergeComposerSeed,
-} from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
+} from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
-import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
+import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
+import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
+import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
+import { openCodingAgentThread } from "../../desktop/src/renderer/src/lib/project-chat";
 import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/stores/runtime-transition";
-import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -681,25 +683,21 @@ class MockResizeObserver {
   disconnect() {}
 }
 
-describe("AgentWorkspace", () => {
+describe("ProjectChatsView", () => {
   beforeEach(() => {
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
+    clearDraftChats();
     useBoard.setState(useBoard.getInitialState(), true);
-    useCodingAgentProjectWorkspace.setState({
-      status: "idle",
-      runtimeId: null,
-      summary: null,
-      workspace: null,
-      error: null,
-      selectedProjectId: null,
-      selectedTaskId: null,
-      selectedThreadId: null,
-      viewMode: "conversation",
-    });
+    useProjectView.setState({ entries: {}, runtimeScope: null });
+    useProjectWorkspaces.setState({ entries: {} });
     useCodingAgentWorkspace.setState({
       status: "idle",
       summary: null,
       error: null,
+      runtimeScope: null,
+      notificationPreferencesStatus: "idle",
+      notificationPreferences: null,
+      notificationPreferencesError: null,
       reviewsStatus: "idle",
       reviews: null,
       reviewsError: null,
@@ -725,6 +723,7 @@ describe("AgentWorkspace", () => {
       turnThreadId: null,
       composerFocusRequestId: 0,
       reviewFocusRequestId: 0,
+      reviewFocusConsumedId: 0,
       approvalActionStatus: "idle",
       pendingApprovalId: null,
       approvalActionError: null,
@@ -767,10 +766,9 @@ describe("AgentWorkspace", () => {
   });
 
   it("renders provider, thread, and terminal summaries from trusted IPC", async () => {
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     expect(screen.getByText("Loading workspace...")).toBeTruthy();
-    await screen.findByText("Primary");
     await selectInspectorTab("Activity");
     expect(screen.getByText("Codex")).toBeTruthy();
     expect(screen.getByText("Fix settings route")).toBeTruthy();
@@ -820,7 +818,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
     await selectInspectorTab("Activity");
     await screen.findByText("Fix settings route");
     act(() => {
@@ -902,7 +900,7 @@ describe("AgentWorkspace", () => {
     });
   });
 
-  it("DT-001 through DT-003 hydrates the persistent project and conversation navigator", async () => {
+  it("DT-001 through DT-003 hydrates the project chats list and binds the selected conversation", async () => {
     const baseSummary = summaryFixture({ threadCreate: true });
     const summary = {
       ...baseSummary,
@@ -910,7 +908,6 @@ describe("AgentWorkspace", () => {
         ...baseSummary.capabilities,
         { id: "codingAgentsProjectWorkspace", enabled: true },
         { id: "codingAgentsConversationView", enabled: true },
-        { id: "codingAgentsKanbanView", enabled: true },
       ],
       projects: {
         items: [
@@ -977,47 +974,10 @@ describe("AgentWorkspace", () => {
       ...threadSnapshotFixture(),
       thread: workspace.projectThreads.items[0],
     };
-    let resolveManualSummary: (value: typeof summary) => void = () => undefined;
-    const manualSummary = new Promise<typeof summary>((resolve) => {
-      resolveManualSummary = resolve;
-    });
     let summaryRequestCount = 0;
-    const taskWire = {
-      id: "task_auth",
-      projectSlug: "matrix-os",
-      title: "Harden authentication",
-      description: "",
-      status: "running",
-      priority: "high",
-      order: 0,
-      parentTaskId: null,
-      linkedSessionId: null,
-      linkedWorktreeId: null,
-      previewIds: [],
-      tags: [],
-      updatedAt: "2026-07-10T12:00:00.000Z",
-      revision: 1,
-    };
-    const taskGet = vi.fn().mockResolvedValue({ tasks: [taskWire], nextCursor: null });
-    const taskPatch = vi.fn().mockResolvedValue({
-      task: { ...taskWire, status: "blocked", revision: 2 },
-    });
-    useConnection.setState({
-      api: {
-        baseUrl: "https://platform.test",
-        get: taskGet,
-        getText: vi.fn(),
-        post: vi.fn(),
-        patch: taskPatch,
-        put: vi.fn(),
-        delete: vi.fn(),
-        putText: vi.fn(),
-      } as unknown as ApiClient,
-    });
     window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
       if (channel === "runtime:get-summary") {
         summaryRequestCount += 1;
-        if (summaryRequestCount === 3) return manualSummary;
         return Promise.resolve({
           ...summary,
           serverTime: summaryRequestCount === 1
@@ -1045,11 +1005,10 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
-    expect(await screen.findByRole("button", { name: "Project Matrix OS" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Project Website" })).toBeTruthy();
-    const task = screen.getByRole("group", { name: "Task Harden authentication" });
+    // The thread list groups project chats separately from per-task chats.
+    const task = await screen.findByRole("group", { name: "Task Harden authentication" });
     expect(within(task).getByRole("button", { name: "Chat Plan auth changes" })).toBeTruthy();
     expect(within(task).getByRole("button", { name: "Chat Implement auth changes" })).toBeTruthy();
     expect(within(screen.getByRole("group", { name: "Project chats" })).getByRole(
@@ -1057,75 +1016,51 @@ describe("AgentWorkspace", () => {
       { name: "Chat Audit architecture" },
     )).toBeTruthy();
 
-    const identityBeforeKanban = {
-      selectedProjectId: useCodingAgentProjectWorkspace.getState().selectedProjectId,
-      selectedTaskId: useCodingAgentProjectWorkspace.getState().selectedTaskId,
-      selectedThreadId: useCodingAgentProjectWorkspace.getState().selectedThreadId,
-    };
-    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
-    expect(await screen.findByRole("region", { name: "Matrix OS Kanban" })).toBeTruthy();
-    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject(identityBeforeKanban);
-    await waitFor(() => expect(taskGet).toHaveBeenCalledWith(
-      "/api/projects/matrix-os/tasks?limit=100",
-    ));
-    const move = screen.getByLabelText("Move Harden authentication") as HTMLSelectElement;
-    await waitFor(() => expect(move.disabled).toBe(false));
-    fireEvent.change(move, { target: { value: "blocked" } });
-    await waitFor(() => expect(taskPatch).toHaveBeenCalledWith(
-      "/api/projects/matrix-os/tasks/task_auth",
-      { status: "blocked", order: 0 },
-    ));
-    fireEvent.click(screen.getByRole("button", { name: "Conversation" }));
-    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject(identityBeforeKanban);
-
-    await act(async () => {
-      await useCodingAgentWorkspace.getState().refresh();
-    });
+    // The first listed chat is auto-selected and its snapshot binds.
     await waitFor(() => {
-      const summaryRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
-        ([channel]) => channel === "runtime:get-summary",
-      );
-      expect(summaryRequests).toHaveLength(2);
-    });
-    expect(vi.mocked(window.operator.invoke).mock.calls.filter(
-      ([channel]) => channel === "runtime:get-project-workspace",
-    )).toHaveLength(2);
-
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
-    await waitFor(() => {
-      const summaryRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
-        ([channel]) => channel === "runtime:get-summary",
-      );
-      expect(summaryRequests).toHaveLength(3);
-    });
-    expect(vi.mocked(window.operator.invoke).mock.calls.filter(
-      ([channel]) => channel === "runtime:get-project-workspace",
-    )).toHaveLength(2);
-
-    resolveManualSummary(summary);
-    await waitFor(() => {
-      const workspaceRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
-        ([channel]) => channel === "runtime:get-project-workspace",
-      );
-      expect(workspaceRequests).toHaveLength(3);
+      expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_audit");
     });
     await waitFor(() => {
       expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_audit");
       expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_audit");
     });
 
+    // Selecting another chat in the list binds its conversation instead.
+    fireEvent.click(screen.getByRole("button", { name: "Chat Implement auth changes" }));
+    await waitFor(() => {
+      expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_fix");
+      expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_fix");
+    });
+
+    // A summary refresh keeps the workspace data stale-while-revalidate.
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+      await useProjectWorkspaces.getState().refresh("matrix-os");
+    });
+    const summaryRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
+      ([channel]) => channel === "runtime:get-summary",
+    );
+    expect(summaryRequests).toHaveLength(2);
+    const workspaceRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
+      ([channel]) => channel === "runtime:get-project-workspace",
+    );
+    expect(workspaceRequests).toHaveLength(2);
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_fix");
+
+    // An externally routed thread (notification/palette) selects inside the project.
     act(() => {
-      useCodingAgentWorkspace.setState({ activeThreadId: "thread_fix" });
+      openCodingAgentThread("thread_plan");
     });
     await waitFor(() => {
-      expect(useCodingAgentProjectWorkspace.getState().selectedThreadId).toBe("thread_fix");
+      expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_plan");
+      expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_plan");
     });
   });
 
   it("renders a clear new-run unavailable state when thread creation is disabled", async () => {
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
-    await screen.findByText("Primary");
+    await screen.findByText("New Run");
 
     expect(screen.getByText("New Run")).toBeTruthy();
     expect(screen.getByText("Agent runs are not available on this runtime yet.")).toBeTruthy();
@@ -1189,7 +1124,7 @@ describe("AgentWorkspace", () => {
         ],
       },
     };
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1200,7 +1135,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     // The grouped assistant message renders its full accumulated delta text as
     // markdown; only unambiguous credentials are masked, so ordinary paths and
@@ -1250,7 +1185,7 @@ describe("AgentWorkspace", () => {
         ],
       },
     };
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1261,7 +1196,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     // The transcript renders the full accumulated delta text, not a bounded
     // 240-char preview, so the entire repeated safe prose is present.
@@ -1274,10 +1209,12 @@ describe("AgentWorkspace", () => {
     const conversationSnapshot = {
       ...threadSnapshotFixture(),
       // The composer only accepts turns while the thread is not waiting on an
-      // approval or input answer, matching the gateway acceptTurn rule.
+      // approval or input answer, matching the gateway acceptTurn rule. A
+      // running thread shows the Stop (abort) control instead of Send, so this
+      // composer-path test uses a settled thread.
       thread: {
         ...threadSnapshotFixture().thread,
-        status: "running",
+        status: "completed",
         attention: "none",
       },
       events: {
@@ -1311,7 +1248,7 @@ describe("AgentWorkspace", () => {
         ],
       },
     };
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1333,13 +1270,13 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     expect(await screen.findByText("Please inspect the failing desktop test.")).toBeTruthy();
     expect(screen.getByText("I found the failing assertion and prepared a focused fix.")).toBeTruthy();
     const composer = screen.getByLabelText("Message conversation");
     fireEvent.change(composer, { target: { value: "Continue with the focused validation." } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.keyDown(composer, { key: "Enter" });
 
     await waitFor(() => {
       expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-turn", {
@@ -1352,7 +1289,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("withholds the same-thread composer when the runtime does not support turns", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
         return Promise.resolve(summaryFixture({ sameThreadTurns: false }));
@@ -1365,7 +1302,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     expect(await screen.findByRole("region", { name: "Conversation Fix settings route" })).toBeTruthy();
     expect(screen.queryByLabelText("Message conversation")).toBeNull();
@@ -1374,7 +1311,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("keeps the conversation draft and shows allowlisted recovery copy after a send conflict", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1384,7 +1321,9 @@ describe("AgentWorkspace", () => {
       if (channel === "runtime:get-thread-snapshot") {
         return Promise.resolve({
           ...threadSnapshotFixture(),
-          thread: { ...threadSnapshotFixture().thread, status: "running", attention: "none" },
+          // A settled thread keeps Send visible (running shows Stop instead);
+          // the stale 409 below simulates the server-side busy race.
+          thread: { ...threadSnapshotFixture().thread, status: "completed", attention: "none" },
         });
       }
       if (channel === "runtime:create-turn") {
@@ -1401,10 +1340,10 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
     const composer = await screen.findByLabelText("Message conversation");
     fireEvent.change(composer, { target: { value: "Keep this draft for retry." } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.keyDown(composer, { key: "Enter" });
 
     expect(await screen.findByText("This conversation is already running. Wait for it to finish and try again.")).toBeTruthy();
     expect((composer as HTMLTextAreaElement).value).toBe("Keep this draft for retry.");
@@ -1455,7 +1394,7 @@ describe("AgentWorkspace", () => {
         ],
       },
     };
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1466,7 +1405,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     // The tool call collapses into a chip that shows only bounded status copy;
     // it is closed by default and never exposes raw output.
@@ -1511,7 +1450,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Activity");
 
@@ -1530,9 +1469,9 @@ describe("AgentWorkspace", () => {
   });
 
   it("marks the active coding-agent thread as current in the thread list", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Activity");
 
@@ -1547,7 +1486,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Activity");
 
@@ -1566,7 +1505,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Preview");
 
@@ -1586,7 +1525,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Preview");
 
@@ -1616,7 +1555,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Activity");
 
@@ -1624,7 +1563,9 @@ describe("AgentWorkspace", () => {
     expect(await screen.findByText("Thread details")).toBeTruthy();
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_failed");
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
 
     await waitFor(() => {
       expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_failed");
@@ -1634,9 +1575,9 @@ describe("AgentWorkspace", () => {
   });
 
   it("hydrates selected thread details through trusted IPC", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Terminal");
 
@@ -1650,7 +1591,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("opens review-ready thread events through trusted review IPC", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1662,7 +1603,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     expect(await screen.findByText("Review ready")).toBeTruthy();
     expect(screen.getByText("2 files changed, +12 -4, partial")).toBeTruthy();
@@ -1680,7 +1621,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("submits approval decisions through trusted IPC and refreshes the thread details", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     const resolvedSnapshot = approvalResolvedThreadSnapshotFixture();
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
@@ -1690,7 +1631,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     const approve = await screen.findByRole("button", { name: /approve run tests/i });
     fireEvent.click(approve);
@@ -1885,7 +1826,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("keeps independent approval rows actionable while another approval is pending", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     let resolveFirstApproval: ((snapshot: ReturnType<typeof approvalResolvedThreadSnapshotFixture>) => void) | null = null;
     window.operator.invoke = vi.fn((channel: string, payload?: { approvalId?: string }) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
@@ -1902,7 +1843,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     const firstApprove = await screen.findByRole("button", { name: /approve run tests/i });
     const secondApprove = await screen.findByRole("button", { name: /approve inspect diff/i });
@@ -1923,7 +1864,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("does not apply pending approval state to another thread with the same approval id", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string, payload?: { approvalId?: string }) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1934,13 +1875,14 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     const alphaApprove = await screen.findByRole("button", { name: /approve run tests/i });
     fireEvent.click(alphaApprove);
     await waitFor(() => expect((alphaApprove as HTMLButtonElement).disabled).toBe(true));
 
     await act(async () => {
+      useProjectView.getState().setSelectedThread("matrix-os", "thread_beta");
       useCodingAgentWorkspace.setState({
         activeThreadId: "thread_beta",
         threadSnapshotStatus: "ready",
@@ -1954,7 +1896,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("shows approval submission errors only on the failed approval row", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string, payload?: { approvalId?: string }) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1965,7 +1907,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     fireEvent.click(await screen.findByRole("button", { name: /approve run tests/i }));
 
@@ -1975,7 +1917,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("does not apply approval errors to another thread with the same approval id", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string, payload?: { approvalId?: string }) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -1986,12 +1928,13 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     fireEvent.click(await screen.findByRole("button", { name: /approve run tests/i }));
     await screen.findByText("Approval could not be sent. Try again.");
 
     await act(async () => {
+      useProjectView.getState().setSelectedThread("matrix-os", "thread_beta");
       useCodingAgentWorkspace.setState({
         activeThreadId: "thread_beta",
         threadSnapshotStatus: "ready",
@@ -2004,7 +1947,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("submits user input answers through trusted IPC and refreshes the thread details", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     const answeredSnapshot = inputAnsweredThreadSnapshotFixture();
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
@@ -2014,7 +1957,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     const input = await screen.findByLabelText(/answer clarify failure/i);
     fireEvent.change(input, { target: { value: "Run the focused desktop workspace test." } });
@@ -2079,7 +2022,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("shows input submission errors only on the failed input row", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string, payload?: { inputRequestId?: string }) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -2090,7 +2033,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     const firstInput = await screen.findByLabelText(/answer clarify failure/i);
     fireEvent.change(firstInput, { target: { value: "Run workspace tests." } });
@@ -2102,7 +2045,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("keeps independent input prompts actionable while another prompt is pending", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     let resolveFirstInput: ((snapshot: ReturnType<typeof multiInputAnsweredThreadSnapshotFixture>) => void) | null = null;
     window.operator.invoke = vi.fn((channel: string, payload?: { inputRequestId?: string }) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
@@ -2119,7 +2062,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     fireEvent.change(await screen.findByLabelText(/answer clarify failure/i), { target: { value: "Run workspace tests." } });
     fireEvent.change(await screen.findByLabelText(/answer clarify review/i), { target: { value: "Check review summary." } });
@@ -2145,9 +2088,9 @@ describe("AgentWorkspace", () => {
   });
 
   it("clears selected thread details when the refreshed summary no longer includes the thread", async () => {
-    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Activity");
 
@@ -2167,7 +2110,9 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
 
     await waitFor(() => {
       expect(screen.queryByText("Thread details")).toBeNull();
@@ -2186,7 +2131,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Activity");
 
@@ -2215,7 +2160,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Activity");
 
@@ -2240,7 +2185,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await selectInspectorTab("Activity");
 
@@ -2250,7 +2195,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("renders read-only review summaries through trusted IPC", async () => {
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("Review");
     expect(screen.getByText("matrix-os")).toBeTruthy();
@@ -2261,7 +2206,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("loads a read-only review snapshot when a review is selected", async () => {
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -2284,7 +2229,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -2351,7 +2296,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     await act(async () => {
@@ -2417,7 +2362,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -2468,7 +2413,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -2527,7 +2472,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     fireEvent.click(await screen.findByRole("button", { name: /Open review PR #758/i }));
     await screen.findByText("PR #758 review details");
@@ -2568,7 +2513,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -2632,7 +2577,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     fireEvent.click(await screen.findByRole("button", { name: /Open review PR #758/i }));
     await screen.findByText("PR #758 review details");
@@ -2842,7 +2787,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("renders selectable review hunk metadata without raw diff contents", async () => {
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -2861,7 +2806,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("renders gateway-bounded review diff lines with old and new line references", async () => {
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -2906,7 +2851,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -2950,7 +2895,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByLabelText("Agent run prompt");
     fireEvent.change(screen.getByLabelText("Agent run prompt"), {
@@ -3094,7 +3039,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -3159,7 +3104,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -3200,7 +3145,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -3213,7 +3158,9 @@ describe("AgentWorkspace", () => {
     const prompt = screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement;
     expect(prompt.value).toContain("PR #758");
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
 
     await waitFor(() => {
       expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toContain("PR #758");
@@ -3251,7 +3198,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     const reviewButton = screen.getByRole("button", { name: /Open review PR #758/i });
@@ -3307,7 +3254,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -3355,7 +3302,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -3378,15 +3325,14 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
-    await screen.findByText("Primary");
     expect(await screen.findByText("Review state unavailable")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
   it("clears loaded review details when review summaries become unavailable", async () => {
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -3400,7 +3346,9 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
 
     expect(await screen.findByText("Review state unavailable")).toBeTruthy();
     expect(screen.queryByText("Validate ownership before returning snapshots.")).toBeNull();
@@ -3409,7 +3357,7 @@ describe("AgentWorkspace", () => {
   });
 
   it("clears loaded review details when runtime summary refresh fails", async () => {
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -3422,7 +3370,9 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
 
     await waitFor(() => {
       expect(screen.queryByText("Validate ownership before returning snapshots.")).toBeNull();
@@ -3443,7 +3393,7 @@ describe("AgentWorkspace", () => {
       }
       return Promise.reject(new Error("unexpected channel"));
     });
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("matrix-os");
     fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
@@ -3454,7 +3404,9 @@ describe("AgentWorkspace", () => {
       if (channel === "runtime:get-reviews") return Promise.resolve({ items: [], hasMore: false, limit: 50 });
       return Promise.reject(new Error("unexpected channel"));
     });
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
     await screen.findByText("No reviews.");
 
     resolveSnapshot(reviewSnapshotFixture());
@@ -3490,7 +3442,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByLabelText("Agent run prompt");
     fireEvent.change(screen.getByLabelText("Agent run prompt"), {
@@ -3539,7 +3491,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByLabelText("Agent run prompt");
     fireEvent.change(screen.getByLabelText("Agent run prompt"), {
@@ -3559,7 +3511,9 @@ describe("AgentWorkspace", () => {
         items: [],
       },
     };
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
 
     await waitFor(() => {
       expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_created_handle");
@@ -3598,7 +3552,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByLabelText("Agent run prompt");
     fireEvent.change(screen.getByLabelText("Agent run prompt"), {
@@ -3623,7 +3577,9 @@ describe("AgentWorkspace", () => {
         items: [],
       },
     };
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
 
     expect(await screen.findByText("Created Runs")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open created run Investigate retained workspace handle" }));
@@ -3647,7 +3603,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     const prompt = await screen.findByLabelText("Agent run prompt");
     expect(document.activeElement).not.toBe(prompt);
@@ -3671,7 +3627,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unexpected channel"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByLabelText("Agent run prompt");
     fireEvent.click(screen.getByRole("button", { name: "Start run" }));
@@ -3928,7 +3884,7 @@ describe("AgentWorkspace", () => {
       return Promise.reject(new Error("unavailable"));
     });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
     await screen.findByText("Runtime summary unavailable");
     expect(screen.queryByText(/home\/matrix/)).toBeNull();
@@ -4015,24 +3971,27 @@ describe("AgentWorkspace", () => {
     });
   }
 
-  it("opens the composer after a stale toolbar new chat resolves against a refreshed workspace", async () => {
+  it("opens the draft composer after a stale toolbar new chat resolves against a refreshed workspace", async () => {
     vi.mocked(toast.error).mockClear();
     wireProjectWorkspaceReadyIpc();
     // Seed the resolver before render so the component never observes the
     // store's real implementation.
     const resolveNewChatTarget = vi.fn(async () => ({ projectId: "matrix-os", taskId: "task_auth" }));
-    useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
+    useProjectWorkspaces.setState({ resolveNewChatTarget });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
-    const newChat = await screen.findByRole("button", { name: "New chat in selected project" });
+    // With no thread selected the draft pane owns the full width and the
+    // inspector (with its toolbar new chat) is hidden; the rail's new-chat
+    // button drives the same openNewChat path instead.
+    const newChat = await screen.findByRole("button", { name: "New chat in Matrix OS" });
     // The button is disabled until the async project-workspace hydration
     // populates selectedProjectId; clicking earlier is silently ignored.
     await waitFor(() => expect(newChat.hasAttribute("disabled")).toBe(false));
 
     fireEvent.click(newChat);
 
-    expect(await screen.findByLabelText("Agent run prompt")).toBeTruthy();
+    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
     expect(resolveNewChatTarget).toHaveBeenCalledWith("matrix-os", undefined);
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -4043,11 +4002,13 @@ describe("AgentWorkspace", () => {
     // Seed the resolver before render so the component never observes the
     // store's real implementation.
     const resolveNewChatTarget = vi.fn(async () => null);
-    useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
+    useProjectWorkspaces.setState({ resolveNewChatTarget });
 
-    render(<AgentWorkspace />);
+    render(<ProjectChatsView projectId="matrix-os" active />);
 
-    const newChat = await screen.findByRole("button", { name: "New chat in selected project" });
+    // The inspector (and its toolbar new chat) is hidden in draft state, so
+    // the rail's new-chat button drives the same openNewChat path.
+    const newChat = await screen.findByRole("button", { name: "New chat in Matrix OS" });
     // The button is disabled until the async project-workspace hydration
     // populates selectedProjectId; clicking earlier is silently ignored.
     await waitFor(() => expect(newChat.hasAttribute("disabled")).toBe(false));
@@ -4055,7 +4016,9 @@ describe("AgentWorkspace", () => {
     fireEvent.click(newChat);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
-    expect(screen.getByRole("button", { name: "New chat in selected project" })).toBeTruthy();
+    // With no chat selected the draft composer is always rendered; a failed
+    // resolve must not seed it.
+    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByRole("button", { name: "New chat in Matrix OS" })).toBeTruthy();
   });
 });

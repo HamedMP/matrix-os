@@ -1,28 +1,9 @@
 import {
-  IsoTimestampSchema,
   ProjectIdSchema,
   TaskIdSchema,
   ThreadIdSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-
-export const CodingAgentWorkspaceViewModeSchema = z.enum(["conversation", "kanban"]);
-export type CodingAgentWorkspaceViewMode = z.infer<
-  typeof CodingAgentWorkspaceViewModeSchema
->;
-
-export const CodingAgentWorkspaceResumeStateSchema = z.object({
-  runtimeScope: z.string().min(1).max(512).optional(),
-  selectedProjectId: ProjectIdSchema.nullable(),
-  selectedTaskId: TaskIdSchema.nullable(),
-  selectedThreadId: ThreadIdSchema.nullable(),
-  viewMode: CodingAgentWorkspaceViewModeSchema,
-  updatedAt: IsoTimestampSchema,
-}).strict();
-
-export type CodingAgentWorkspaceResumeState = z.infer<
-  typeof CodingAgentWorkspaceResumeStateSchema
->;
 
 export function codingAgentRuntimeScope(input: {
   handle: string | null;

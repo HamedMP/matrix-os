@@ -619,6 +619,7 @@ export async function createGateway(config: GatewayConfig) {
     const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
+      homePath,
       codexEvents: codexEventBridge,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
     });
@@ -3990,7 +3991,10 @@ export async function createGateway(config: GatewayConfig) {
     );
     throw err;
   }
-  const hermesClient = createHermesDashboardClient({ baseUrl: hermesDashboardUrl });
+  const hermesClient = createHermesDashboardClient({
+    baseUrl: hermesDashboardUrl,
+    authFilePath: join(homePath, "system/agent-runtime/hermes-dashboard.env"),
+  });
   const agentRuntimeServices = createAgentRuntimeServices({
     homePath,
     client: hermesClient,

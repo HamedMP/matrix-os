@@ -6,10 +6,10 @@ describe("createAppMenuTemplate", () => {
     const send = vi.fn();
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
-      codingAgentsWorkspace: true,
       isPackaged: true,
       openExternal: vi.fn(),
       send,
+      adjustZoom: vi.fn(),
     });
 
     const viewMenu = template.find((item) => item.label === "View");
@@ -28,39 +28,74 @@ describe("createAppMenuTemplate", () => {
     expect(send).toHaveBeenCalledWith("menu:navigate", { kind: "terminals" });
   });
 
-  it("adds a gated Agents menu entry that navigates to the coding-agent workspace", () => {
+  it("keeps the New Agent Thread menu entry that opens the project composer", () => {
     const send = vi.fn();
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
-      codingAgentsWorkspace: true,
       isPackaged: true,
       openExternal: vi.fn(),
       send,
+      adjustZoom: vi.fn(),
     });
 
-    const viewMenu = template.find((item) => item.label === "View");
-    const agentsItem = Array.isArray(viewMenu?.submenu)
-      ? viewMenu.submenu.find((item) => "label" in item && item.label === "Agents")
+    const fileMenu = template.find((item) => item.label === "File");
+    const newThreadItem = Array.isArray(fileMenu?.submenu)
+      ? fileMenu.submenu.find((item) => "label" in item && item.label === "New Agent Thread")
       : null;
 
-    expect(agentsItem).toBeTruthy();
-    expect(agentsItem && "accelerator" in agentsItem ? agentsItem.accelerator : null).toBe("Cmd+Alt+A");
-    if (!agentsItem || !("click" in agentsItem) || typeof agentsItem.click !== "function") {
-      throw new Error("Agents menu item is not clickable");
+    expect(newThreadItem).toBeTruthy();
+    if (!newThreadItem || !("click" in newThreadItem) || typeof newThreadItem.click !== "function") {
+      throw new Error("New Agent Thread menu item is not clickable");
     }
 
-    agentsItem.click({} as never, {} as never, {} as never);
+    newThreadItem.click({} as never, {} as never, {} as never);
 
-    expect(send).toHaveBeenCalledWith("menu:navigate", { kind: "agents" });
+    expect(send).toHaveBeenCalledWith("menu:action", { action: "new-thread" });
   });
 
-  it("omits the Agents menu entry when the desktop workspace flag is disabled", () => {
+  it("offers View-menu zoom items that route through the shared zoom path", () => {
+    const adjustZoom = vi.fn();
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
-      codingAgentsWorkspace: false,
       isPackaged: true,
       openExternal: vi.fn(),
       send: vi.fn(),
+      adjustZoom,
+    });
+
+    const viewMenu = template.find((item) => item.label === "View");
+    const submenu = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
+    const findItem = (label: string) =>
+      submenu.find((item) => "label" in item && item.label === label);
+
+    const cases = [
+      { label: "Zoom In", accelerator: "CmdOrCtrl+=", action: "in" },
+      { label: "Zoom Out", accelerator: "CmdOrCtrl+-", action: "out" },
+      { label: "Actual Size", accelerator: "CmdOrCtrl+0", action: "reset" },
+    ] as const;
+
+    for (const { label, accelerator, action } of cases) {
+      const item = findItem(label);
+      expect(item, label).toBeTruthy();
+      expect(item && "accelerator" in item ? item.accelerator : null).toBe(accelerator);
+      // Never the raw Electron zoom roles: clicks must round-trip through the
+      // shared zoom step so the change is broadcast and persisted.
+      expect(item && "role" in item ? item.role : null).toBeFalsy();
+      if (!item || !("click" in item) || typeof item.click !== "function") {
+        throw new Error(`${label} menu item is not clickable`);
+      }
+      item.click({} as never, {} as never, {} as never);
+      expect(adjustZoom).toHaveBeenCalledWith(action);
+    }
+  });
+
+  it("does not offer a retired Agents workspace entry", () => {
+    const template = createAppMenuTemplate({
+      appName: "Matrix OS",
+      isPackaged: true,
+      openExternal: vi.fn(),
+      send: vi.fn(),
+      adjustZoom: vi.fn(),
     });
 
     const viewMenu = template.find((item) => item.label === "View");

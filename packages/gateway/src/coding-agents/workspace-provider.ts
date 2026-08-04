@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   AgentThreadEventSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
@@ -11,6 +12,7 @@ import {
 } from "@matrix-os/contracts";
 import { SupportedAgentSchema, type SupportedAgent } from "../agent-launcher.js";
 import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
+import { createPiCodingAgentProvider, type PiCodingAgentProviderOptions } from "./pi-provider.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
@@ -44,12 +46,20 @@ export interface WorkspaceCodingAgentProviderSetOptions {
   runtime: WorkspaceRuntime;
   codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
   codexControl?: CodexControlClient;
+  homePath?: string;
+  pi?: Omit<PiCodingAgentProviderOptions, "homePath">;
 }
 
 export interface WorkspaceCodingAgentProviderSet {
   registryProviders: CodingAgentProviderAdapter[];
   executionProviders: CodingAgentProviderAdapter[];
   approvalsEnabled: boolean;
+}
+
+function defaultMatrixHome(): string {
+  const configured = process.env.MATRIX_HOME?.trim();
+  if (configured) return configured;
+  return join(process.env.HOME ?? process.env.USERPROFILE ?? ".", "matrixos");
 }
 
 function sessionIdForThread(threadId: string): string {
@@ -340,14 +350,23 @@ export function createWorkspaceCodingAgentProviderSet(
   options: WorkspaceCodingAgentProviderSetOptions,
 ): WorkspaceCodingAgentProviderSet {
   const agents = SupportedAgentSchema.array().max(4).parse(options.agents);
-  const registryProviders = agents.map((agent) => createWorkspaceCodingAgentProvider({
+  const registryProviders = agents.map((agent) => {
+    // pi runs as a direct-spawn JSON-stream adapter, not a terminal session.
+    if (agent === "pi") {
+      return createPiCodingAgentProvider({
+        homePath: options.homePath ?? defaultMatrixHome(),
+        ...(options.pi ?? {}),
+      });
+    }
+    return createWorkspaceCodingAgentProvider({
     providerId: agent,
     agent,
     runtime: options.runtime,
     runnable: agent === "codex" || agent === "claude",
     codexEvents: agent === "codex" ? options.codexEvents : undefined,
     codexControl: agent === "codex" ? options.codexControl : undefined,
-  }));
+    });
+  });
   return {
     registryProviders,
     executionProviders: registryProviders,

@@ -252,6 +252,82 @@ export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): Agen
   });
 }
 
+function codingAgentTaskSnapshot(
+  id: string,
+  taskId: string,
+  title: string,
+  status: AgentThreadSnapshot["thread"]["status"],
+): AgentThreadSnapshot {
+  const thread = codingAgentTaskThread(id, taskId, title, status);
+  return AgentThreadSnapshotSchema.parse({
+    thread,
+    events: {
+      items: [
+        {
+          type: "thread.created",
+          eventId: `evt_${id}_created`,
+          threadId: id,
+          occurredAt: NOW,
+          thread,
+        },
+        ...(id === "thread_task_auth_1" ? [
+          {
+            type: "user.message",
+            eventId: "evt_task_auth_user",
+            threadId: id,
+            occurredAt: NOW,
+            messageId: "msg_task_auth_user",
+            clientRequestId: "req_task_auth_user",
+            text: "Trace why the OAuth callback drops the return path.",
+            attachments: [{
+              id: "att_auth_callback",
+              kind: "file",
+              label: "auth-callback.ts",
+              path: "packages/platform/src/auth-callback.ts",
+              mimeType: "text/typescript",
+              sizeBytes: 4_812,
+            }],
+          },
+          {
+            type: "assistant.text.delta",
+            eventId: "evt_task_auth_assistant",
+            threadId: id,
+            occurredAt: NOW,
+            messageId: "msg_task_auth_assistant",
+            delta: "I found the return path being discarded during callback validation. I’ll preserve the verified destination and add a regression test.",
+          },
+          {
+            type: "assistant.text.completed",
+            eventId: "evt_task_auth_assistant_done",
+            threadId: id,
+            occurredAt: NOW,
+            messageId: "msg_task_auth_assistant",
+          },
+          {
+            type: "tool.started",
+            eventId: "evt_task_auth_tool",
+            threadId: id,
+            occurredAt: NOW,
+            toolCallId: "tool_task_auth_read",
+            displayName: "Read auth callback",
+            kind: "read",
+          },
+          {
+            type: "tool.completed",
+            eventId: "evt_task_auth_tool_done",
+            threadId: id,
+            occurredAt: NOW,
+            toolCallId: "tool_task_auth_read",
+            outcome: "success",
+          },
+        ] : []),
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  });
+}
+
 export function codingAgentSummary(): RuntimeSummary {
   return RuntimeSummarySchema.parse({
     runtime: {
@@ -284,6 +360,18 @@ export function codingAgentSummary(): RuntimeSummary {
         installStatus: "installed",
         authStatus: "authenticated",
         supportedModes: ["default", "plan"],
+        defaultMode: "default",
+        setupActions: [],
+        lastCheckedAt: NOW,
+      },
+      {
+        id: "pi",
+        displayName: "Pi",
+        kind: "pi",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default"],
         defaultMode: "default",
         setupActions: [],
         lastCheckedAt: NOW,
@@ -486,8 +574,74 @@ export async function startStubGateway(): Promise<StubGateway> {
       json(res, 200, { projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
       return;
     }
+    if (req.method === "GET" && path === "/api/settings/skills") {
+      json(res, 200, [
+        { name: "code-review", file: ".agents/skills/code-review/SKILL.md", enabled: true },
+        { name: "ship-stack", file: ".agents/skills/ship-stack/SKILL.md", enabled: true },
+        { name: "design-critique", file: ".agents/skills/design-critique/SKILL.md", enabled: true },
+      ]);
+      return;
+    }
+    if (req.method === "GET" && path === "/api/files/list") {
+      const folder = url.searchParams.get("path") ?? "";
+      const entries = folder === "workspaces"
+        ? [
+            { name: "matrix-os", type: "directory", children: 18, modified: NOW },
+            { name: "t3code", type: "directory", children: 12, modified: "2026-07-30T17:00:00.000Z" },
+            { name: "README.md", type: "file", size: 4_862, modified: NOW },
+          ]
+        : [
+            { name: "workspaces", type: "directory", children: 3, modified: NOW },
+            { name: "apps", type: "directory", children: 7, modified: "2026-07-31T16:00:00.000Z" },
+            { name: "system", type: "directory", children: 9, modified: "2026-07-29T12:00:00.000Z" },
+            { name: "SOUL.md", type: "file", size: 2_741, modified: NOW },
+          ];
+      json(res, 200, { entries });
+      return;
+    }
     if (path === "/api/projects/matrix-os/tasks" && req.method === "GET") {
       json(res, 200, { tasks, nextCursor: null });
+      return;
+    }
+    if (path === "/api/projects/matrix-os/commits" && req.method === "GET") {
+      const shellSha = "a".repeat(40);
+      const historySha = "b".repeat(40);
+      const baseSha = "c".repeat(40);
+      json(res, 200, {
+        commits: [
+          {
+            sha: shellSha,
+            parents: [historySha],
+            author: "Hamed",
+            timestamp: NOW,
+            subject: "feat(desktop): add project-centric shell",
+            refs: ["main"],
+            tags: [],
+            head: true,
+          },
+          {
+            sha: historySha,
+            parents: [baseSha],
+            author: "Matrix",
+            timestamp: "2026-07-07T23:45:00.000Z",
+            subject: "fix(gateway): bound commit history",
+            refs: ["origin/main"],
+            tags: ["desktop-v1"],
+            head: false,
+          },
+          {
+            sha: baseSha,
+            parents: [],
+            author: "Matrix",
+            timestamp: "2026-07-07T23:30:00.000Z",
+            subject: "chore: initialize remote workspace",
+            refs: [],
+            tags: [],
+            head: false,
+          },
+        ],
+        nextCursor: null,
+      });
       return;
     }
     if (path.startsWith("/api/projects/matrix-os/tasks/") && req.method === "PATCH") {
@@ -633,6 +787,43 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
     if (req.method === "GET" && path === "/api/coding-agents/threads/thread_operator_1") {
       json(res, 200, codingAgentSnapshot());
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/threads/thread_task_auth_1") {
+      json(res, 200, codingAgentTaskSnapshot(
+        "thread_task_auth_1",
+        "task_auth",
+        "Investigate auth callback",
+        "running",
+      ));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/threads/thread_task_auth_2") {
+      json(res, 200, codingAgentTaskSnapshot(
+        "thread_task_auth_2",
+        "task_auth",
+        "Verify token refresh",
+        "completed",
+      ));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/integrations/available") {
+      json(res, 200, [
+        { id: "gmail", name: "Gmail", category: "Google Workspace" },
+        { id: "github", name: "GitHub", category: "Developer tools" },
+        { id: "slack", name: "Slack", category: "Communication" },
+      ]);
+      return;
+    }
+    if (req.method === "GET" && path === "/api/integrations") {
+      json(res, 200, [{
+        id: "7d3f6f1e-2b3c-4a5d-8e9f-0a1b2c3d4e5f",
+        service: "gmail",
+        account_label: "Matrix OS Team",
+        account_email: "team@matrix-os.com",
+        status: "active",
+        connected_at: "2026-07-08T00:00:00.000Z",
+      }]);
       return;
     }
     if (path === "/api/sessions") {

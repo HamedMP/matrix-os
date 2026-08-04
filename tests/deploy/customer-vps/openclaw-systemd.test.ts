@@ -1,5 +1,7 @@
-import { access, readFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
@@ -23,9 +25,64 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(installer).toContain("--connect-timeout 10 --max-time 180");
     expect(installer).toContain("sha512sum -c");
     expect(installer).toContain("timeout 300");
-    expect(installer).toContain('[ "$node_major" -eq 24 ] && [ "$node_minor" -lt 15 ]');
+    expect(installer).toContain('NODE_RUNTIME_VERSION="${NODE_RUNTIME_VERSION:-24.18.0}"');
+    expect(installer).toContain(
+      'NODE_RUNTIME_SHA256="${NODE_RUNTIME_SHA256:-783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8}"',
+    );
+    expect(installer).toContain("upgrade_bundled_node_runtime");
     expect(installer).toContain("npm-shrinkwrap.json");
     expect(installer).not.toContain("@latest");
+  });
+
+  it.each([
+    ["22.22.3", true],
+    ["22.23.0", true],
+    ["23.11.1", false],
+    ["24.14.1", false],
+    ["24.15.0", true],
+    ["25.8.9", false],
+    ["25.9.0", true],
+    ["26.0.0", true],
+  ])("matches OpenClaw 2026.7.1's Node engine for %s", async (version, compatible) => {
+    const invocation = `source "${installerPath}"; openclaw_node_is_compatible "$1"`;
+    const result = execFileAsync("bash", ["-c", invocation, "openclaw-node-check", version]);
+    if (compatible) {
+      await expect(result).resolves.toMatchObject({ stderr: "" });
+    } else {
+      await expect(result).rejects.toMatchObject({ code: 1 });
+    }
+  });
+
+  it("repairs a retained incompatible Node runtime before downloading OpenClaw", async () => {
+    const installer = await readFile(installerPath, "utf8");
+    const main = installer.slice(installer.indexOf("main()"));
+
+    expect(main.indexOf("check_admission")).toBeLessThan(main.indexOf("ensure_compatible_node_runtime"));
+    expect(main.indexOf("ensure_compatible_node_runtime")).toBeLessThan(main.indexOf('"$OPENCLAW_TARBALL_URL"'));
+    expect(installer).toContain('mv -f "$replacement" "$MATRIX_NODE_PREFIX/bin/node"');
+    expect(installer).toContain('openclaw_node_is_compatible "$installed_version"');
+  });
+
+  it("rechecks compatibility after repairing a retained Node runtime", async () => {
+    const prefix = await mkdtemp(join(tmpdir(), "matrix-openclaw-node-test-"));
+    try {
+      await mkdir(join(prefix, "bin"));
+      await writeFile(join(prefix, "version"), "24.14.1\n");
+      await writeFile(join(prefix, "bin/node"), `#!/usr/bin/env bash\ncat "${join(prefix, "version")}"\n`);
+      await chmod(join(prefix, "bin/node"), 0o755);
+      const invocation = [
+        `source "${installerPath}"`,
+        "MATRIX_NODE_PREFIX=\"$1\"",
+        "upgrade_bundled_node_runtime() { printf '24.18.0\\n' >\"$MATRIX_NODE_PREFIX/version\"; }",
+        "ensure_compatible_node_runtime",
+      ].join("; ");
+
+      await expect(execFileAsync("bash", ["-c", invocation, "node-repair", prefix]))
+        .resolves.toMatchObject({ stderr: "" });
+      expect(await readFile(join(prefix, "version"), "utf8")).toBe("24.18.0\n");
+    } finally {
+      await rm(prefix, { recursive: true, force: true });
+    }
   });
 
   it("fails admission before downloading on constrained hosts", async () => {

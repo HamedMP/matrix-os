@@ -1,12 +1,12 @@
-import { GitBranch, Laptop, MessageSquarePlus, Sparkles, SquareTerminal } from "lucide-react";
+import { FolderOpen, GitBranch, Laptop, Mail, MessageSquare, MessageSquarePlus, Sparkles, SquareTerminal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { StatusDot } from "../../design/primitives";
 import { groupMessages } from "../../lib/chat";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+import { openCodingAgentThread } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
-import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import {
   listUnifiedThreads,
@@ -14,7 +14,8 @@ import {
   type UnifiedThreadItem,
 } from "../../stores/unified-threads";
 import ThreadView from "../threads/ThreadView";
-import { Conversation, ConversationContent } from "./elements/conversation";
+import { Bubble, BubbleContent } from "./elements/bubble";
+import { Conversation, ConversationContent, ConversationItem } from "./elements/conversation";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
 import { Reasoning } from "./elements/reasoning";
@@ -33,14 +34,19 @@ function Pill({ icon, label }: { icon: React.ReactNode; label: string }) {
   );
 }
 
-function ConnectCard({ title, body, done }: { title: string; body: string; done?: boolean }) {
+function ConnectCard({ title, body, icon, done }: { title: string; body: string; icon: React.ReactNode; done?: boolean }) {
   return (
     <div
       className="flex flex-col gap-1.5 rounded-xl border p-4 text-left"
       style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)", opacity: done ? 0.55 : 1 }}
     >
       <div className="flex items-center justify-between">
-        <div className="h-6 w-6 rounded" style={{ background: "var(--bg-sunken)" }} />
+        <div
+          className="flex h-6 w-6 items-center justify-center rounded"
+          style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)" }}
+        >
+          {icon}
+        </div>
         {done ? <span className="text-xs" style={{ color: "var(--success)" }}>✓</span> : null}
       </div>
       <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{title}</span>
@@ -66,8 +72,6 @@ function HermesPane() {
   const projectName = projects[0]?.name ?? projects[0]?.slug ?? "Matrix OS";
   const groups = groupMessages(messages);
   const empty = messages.length === 0;
-  const lastMessage = messages.at(-1);
-  const scrollKey = lastMessage ? `${lastMessage.id}:${lastMessage.content.length}:${status}` : status;
 
   const submit = () => {
     if (!canSubmitChatDraft(draft, status)) return;
@@ -92,9 +96,9 @@ function HermesPane() {
           </h1>
           <PromptInput value={draft} onChange={setDraft} onSubmit={submit} onAbort={abort} busy={status !== "idle"} autoFocus footer={composerFooter} />
           <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <ConnectCard title="Connect messaging" body="Get context from recent team discussions" />
-            <ConnectCard title="Connect email" body="Summarize stakeholder asks from email" />
-            <ConnectCard title="Connect files" body="Review results, research, and plans" />
+            <ConnectCard title="Connect messaging" body="Get context from recent team discussions" icon={<MessageSquare size={13} aria-hidden />} />
+            <ConnectCard title="Connect email" body="Summarize stakeholder asks from email" icon={<Mail size={13} aria-hidden />} />
+            <ConnectCard title="Connect files" body="Review results, research, and plans" icon={<FolderOpen size={13} aria-hidden />} />
           </div>
         </div>
       </div>
@@ -103,31 +107,49 @@ function HermesPane() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Conversation scrollKey={scrollKey}>
+      <Conversation>
         <ConversationContent>
           {groups.map((group) =>
             group.type === "tool_group" ? (
-              <div key={group.messages[0]?.id ?? "tools"} className="flex flex-col gap-1.5">
-                {group.messages.map((m) => (
-                  <Tool key={m.id} name={m.content} detail={m.toolInput ? JSON.stringify(m.toolInput, null, 2) : undefined} />
-                ))}
-              </div>
+              <ConversationItem key={group.messages[0]?.id ?? "tools"} messageId={group.messages[0]?.id}>
+                <div className="flex flex-col gap-1.5">
+                  {group.messages.map((m) => (
+                    <Tool key={m.id} name={m.content} detail={m.toolInput ? JSON.stringify(m.toolInput, null, 2) : undefined} />
+                  ))}
+                </div>
+              </ConversationItem>
             ) : group.message.role === "user" ? (
-              <Message key={group.message.id} from="user">
-                <MessageContent from="user">{group.message.content}</MessageContent>
-              </Message>
+              <ConversationItem key={group.message.id} messageId={`user:${group.message.id}`} scrollAnchor>
+                <Message align="end">
+                  <MessageContent>
+                    <Bubble variant="secondary" align="end">
+                      <BubbleContent className="whitespace-pre-wrap" data-selectable>
+                        {group.message.content}
+                      </BubbleContent>
+                    </Bubble>
+                  </MessageContent>
+                </Message>
+              </ConversationItem>
             ) : (
-              <Message key={group.message.id} from="assistant">
-                <MessageContent from="assistant">
-                  <MessageResponse>{group.message.content}</MessageResponse>
-                </MessageContent>
-              </Message>
+              <ConversationItem key={group.message.id} messageId={`assistant:${group.message.id}`}>
+                <Message>
+                  <MessageContent>
+                    <Bubble variant="ghost">
+                      <BubbleContent className="overflow-visible">
+                        <MessageResponse>{group.message.content}</MessageResponse>
+                      </BubbleContent>
+                    </Bubble>
+                  </MessageContent>
+                </Message>
+              </ConversationItem>
             ),
           )}
           {status === "thinking" ? (
-            <Reasoning streaming>
-              <span className="status-pulse">Working on it…</span>
-            </Reasoning>
+            <ConversationItem messageId="hermes:working">
+              <Reasoning streaming>
+                <span className="shimmer">Working on it…</span>
+              </Reasoning>
+            </ConversationItem>
           ) : null}
         </ConversationContent>
       </Conversation>
@@ -140,7 +162,7 @@ function HermesPane() {
 
 // Unified chat: a Codex-style rail listing Hermes + every agent thread on the
 // left, the selected conversation on the right. Kernel runs open in-pane;
-// coding-agent threads route to their canonical Agents workspace surface.
+// coding-agent threads route into their project tab's Chats view.
 export default function ChatTab() {
   const threads = useThreads((s) => s.threads);
   const activeThreadId = useThreads((s) => s.activeThreadId);
@@ -148,8 +170,6 @@ export default function ChatTab() {
   // Short-circuit inside the selector so a disabled workspace never re-renders
   // the rail on coding-agent store updates.
   const summary = useCodingAgentWorkspace((s) => (CODING_AGENTS_DESKTOP_WORKSPACE ? s.summary : null));
-  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
-  const openTab = useTabs((s) => s.openTab);
 
   const railThreads = useMemo(
     () => listUnifiedThreads(threads, summary),
@@ -161,13 +181,7 @@ export default function ChatTab() {
       setActiveThread(item.id);
       return;
     }
-    loadThreadSnapshot(item.id).catch((err: unknown) => {
-      console.warn(
-        "[chat] coding-agent thread open failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
-    openTab(AGENTS_WORKSPACE_TAB_SPEC);
+    void openCodingAgentThread(item.id);
   };
 
   // activeThreadId is the single source of truth: null → Hermes, otherwise the

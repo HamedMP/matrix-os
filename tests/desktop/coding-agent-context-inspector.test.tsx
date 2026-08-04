@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   AgentConversationInspector,
@@ -9,6 +9,7 @@ import {
 } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationInspector";
 
 afterEach(cleanup);
+afterEach(() => vi.unstubAllGlobals());
 
 function renderInspector(defaultTab: AgentConversationInspectorTab = "changes") {
   return render(
@@ -218,5 +219,53 @@ describe("AgentConversationInspector", () => {
     fireEvent.keyDown(terminal, { key: "End" });
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Activity 4" }));
     expect(screen.getByText("Workspace activity")).toBeTruthy();
+  });
+
+  it("stays icon-first below the label width threshold, with full names on the tabs", () => {
+    // jsdom has no ResizeObserver, so the tablist never crosses the label
+    // threshold and keeps its compact icon + badge anatomy.
+    renderInspector();
+
+    const tablist = screen.getByRole("tablist", { name: "Conversation tools" });
+    // No visible label text and no truncation styling anywhere in the bar —
+    // tabs never ellipsis; the accessible name carries the full label.
+    for (const label of ["Changes", "Terminal", "Preview", "Activity"]) {
+      expect(within(tablist).queryByText(label)).toBeNull();
+    }
+    expect(tablist.querySelector(".truncate")).toBeNull();
+    const changes = screen.getByRole("tab", { name: "Changes 2" });
+    expect(changes.querySelector("svg")).not.toBeNull();
+    // Count badges keep their existing pill anatomy.
+    expect(within(changes).getByText("2")).toBeTruthy();
+  });
+
+  it("shows full labels only once the tablist is wide enough", () => {
+    let observerCallback: ResizeObserverCallback | null = null;
+    class CapturingResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        observerCallback = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", CapturingResizeObserver);
+    renderInspector();
+
+    const tablist = screen.getByRole("tablist", { name: "Conversation tools" });
+    expect(within(tablist).queryByText("Terminal")).toBeNull();
+
+    // Four tabs × 96px = 384px threshold; a wide inspector earns labels.
+    act(() => {
+      observerCallback?.([{ contentRect: { width: 600 } } as ResizeObserverEntry], {} as ResizeObserver);
+    });
+    expect(within(tablist).getByText("Terminal")).toBeTruthy();
+    expect(within(tablist).getByText("Changes")).toBeTruthy();
+
+    // Shrinking back below the threshold hides them again.
+    act(() => {
+      observerCallback?.([{ contentRect: { width: 200 } } as ResizeObserverEntry], {} as ResizeObserver);
+    });
+    expect(within(tablist).queryByText("Terminal")).toBeNull();
   });
 });

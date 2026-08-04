@@ -976,6 +976,57 @@ describe("coding agent contracts", () => {
     });
   });
 
+  it("defaults Pi composer launches to its enforceable read-only sandbox", () => {
+    const summary = RuntimeSummarySchema.parse({
+      runtime: { id: "rt_primary", label: "Primary Matrix computer", status: "available" },
+      capabilities: [
+        { id: "codingAgentsRuntimeSummary", enabled: true },
+        { id: "codingAgentsThreadCreate", enabled: true },
+      ],
+      providers: [{
+        id: "pi",
+        displayName: "Pi",
+        kind: "pi",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default"],
+        defaultMode: "default",
+        setupActions: [],
+        lastCheckedAt: now,
+      }],
+      projects: { items: [], hasMore: false, limit: 20 },
+      activeThreads: { items: [], hasMore: false, limit: 20 },
+      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      recentActivity: { items: [], hasMore: false, limit: 30 },
+      limits: {
+        maxPromptBytes: 24000,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 65536,
+        maxListItems: 50,
+      },
+      serverTime: now,
+    });
+
+    expect(defaultAgentThreadComposerDraft(summary).sandboxMode).toBe("read_only");
+    const result = buildCreateAgentThreadRequestFromComposer({
+      draft: {
+        providerId: "pi",
+        prompt: "Inspect this project",
+        // A stale draft can survive a provider switch. The request builder is
+        // the final guard that must normalize it to Pi's runnable boundary.
+        sandboxMode: "workspace_write",
+      },
+      summary,
+      clientRequestId: "req_create_pi_from_composer",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      request: { providerId: "pi", sandboxMode: "read_only" },
+    });
+  });
+
   it("returns safe composer issues for unavailable or invalid create inputs", () => {
     const summary = RuntimeSummarySchema.parse({
       runtime: {

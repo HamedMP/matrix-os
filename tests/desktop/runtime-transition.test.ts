@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/stores/runtime-transition";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
-import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
+import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
+import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useEditorTabs } from "../../desktop/src/renderer/src/features/editor/editor-tabs-store";
 import { useGit } from "../../desktop/src/renderer/src/stores/git";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
@@ -14,6 +16,7 @@ import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 
 describe("desktop runtime transition", () => {
   beforeEach(() => {
+    clearDraftChats();
     useBoard.setState({
       projects: [{ slug: "old-project", name: "Old project" }],
       activeProjectSlug: "old-project",
@@ -33,7 +36,20 @@ describe("desktop runtime transition", () => {
     useEditorTabs.setState({ tabsByTask: { task_old: ["README.md"] }, activePathByTask: { task_old: "README.md" }, dirtyPathsByTask: {} });
     useThreads.setState({ threads: [], activeThreadId: "thread_old" });
     useCodingAgentWorkspace.setState({ activeThreadId: "thread_old", selectedReviewId: "review_old" });
-    useCodingAgentProjectWorkspace.setState({ selectedProjectId: "proj_old", selectedTaskId: "task_old", selectedThreadId: "thread_old" });
+    useProjectWorkspaces.setState({
+      entries: {
+        proj_old: {
+          status: "ready",
+          workspace: null,
+          error: null,
+          fetchedAt: 1,
+        },
+      },
+    });
+    useProjectView.setState({
+      entries: { proj_old: { view: "chats", selectedThreadId: "thread_old", touchedAt: 1 } },
+      runtimeScope: "old",
+    });
   });
 
   it("atomically removes identifiers and attachments owned by the previous computer", () => {
@@ -51,11 +67,20 @@ describe("desktop runtime transition", () => {
     expect(useEditorTabs.getState().tabsByTask).toEqual({});
     expect(useThreads.getState()).toMatchObject({ threads: [], activeThreadId: null });
     expect(useCodingAgentWorkspace.getState()).toMatchObject({ activeThreadId: null, selectedReviewId: null });
-    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
-      selectedProjectId: null,
-      selectedTaskId: null,
-      selectedThreadId: null,
+    expect(useProjectWorkspaces.getState().entries).toEqual({});
+    expect(useProjectView.getState().entries).toEqual({});
+  });
+
+  it("clears unsent chat drafts owned by the previous identity", () => {
+    useDraftChat.getState().setDraft("proj_old", {
+      providerId: "codex",
+      prompt: "private draft from the old identity",
+      mode: "default",
     });
+
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+
+    expect(useDraftChat.getState().entries).toEqual({});
   });
 
   it("reopens the Home tab so the desktop is never left blank after a switch", () => {

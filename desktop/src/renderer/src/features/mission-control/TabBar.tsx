@@ -1,10 +1,10 @@
 import {
+  Blocks,
   FileCode2,
+  FolderKanban,
   FolderTree,
   Home,
-  Kanban,
   LayoutGrid,
-  MessageSquare,
   Sparkles,
   Settings,
   SquareTerminal,
@@ -17,15 +17,14 @@ import { useTabs, type Tab, type TabKind } from "../../stores/tabs";
 const TAB_ICON: Record<TabKind, LucideIcon> = {
   home: Home,
   chat: Sparkles,
-  board: Kanban,
+  project: FolderKanban,
   task: FileCode2,
   terminal: SquareTerminal,
   terminals: SquareTerminal,
-  agents: MessageSquare,
   files: FolderTree,
-  thread: MessageSquare,
   apps: LayoutGrid,
   app: LayoutGrid,
+  plugins: Blocks,
   settings: Settings,
 };
 

@@ -58,6 +58,11 @@ interface CodingAgentWorkspaceState {
   summary: RuntimeSummary | null;
   summaryRevision: number;
   error: string | null;
+  // The connection scope (handle|platformHost|runtimeSlot) the loaded summary
+  // belongs to. Views call ensureRuntimeScope on mount/scope change; a change
+  // clears the previous scope's data before anything new loads, so a prior
+  // account's summary is never shown under a new one.
+  runtimeScope: string | null;
   notificationPreferencesStatus: NotificationPreferencesStatus;
   notificationPreferences: CodingAgentNotificationPreferences | null;
   notificationPreferencesError: string | null;
@@ -105,6 +110,7 @@ interface CodingAgentWorkspaceState {
   inputActionErrors: Record<string, string>;
   activeThreadId: string | null;
   createdThreadHandles: AgentThreadSummary[];
+  ensureRuntimeScope: (scope: string) => void;
   refresh: () => Promise<void>;
   loadNotificationPreferences: () => Promise<void>;
   updateNotificationPreferences: (request: { attentionPush: Partial<AttentionPushPreferences> }) => Promise<void>;
@@ -346,6 +352,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   summary: null,
   summaryRevision: 0,
   error: null,
+  runtimeScope: null,
   notificationPreferencesStatus: "idle",
   notificationPreferences: null,
   notificationPreferencesError: null,
@@ -393,6 +400,14 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   inputActionErrors: {},
   activeThreadId: null,
   createdThreadHandles: [],
+
+  ensureRuntimeScope: (scope) => {
+    if (useCodingAgentWorkspace.getState().runtimeScope === scope) return;
+    // Clear first (invalidates in-flight loads for the previous scope), then
+    // claim the new scope so a second mounted view does not re-clear.
+    clearCodingAgentRuntimeSelection();
+    set({ runtimeScope: scope });
+  },
 
   refresh: async () => {
     const seq = ++refreshSeq;

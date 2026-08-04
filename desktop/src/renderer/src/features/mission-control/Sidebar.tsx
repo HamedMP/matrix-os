@@ -1,5 +1,5 @@
 import {
-  Bot,
+  Blocks,
   ChevronRight,
   Home,
   FolderTree,
@@ -15,14 +15,13 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { IconButton } from "../../design/primitives";
-import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { invoke } from "../../lib/operator";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
-import { AGENTS_WORKSPACE_TAB_SPEC, FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
+import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
-import { codingAgentAttentionCount, kernelThreadAttentionCount } from "../../stores/unified-threads";
+import { kernelThreadAttentionCount } from "../../stores/unified-threads";
 import { useUi } from "../../stores/ui";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
 
@@ -101,7 +100,7 @@ export default function Sidebar() {
   const imageUrl = useConnection((s) => s.imageUrl);
   const platformHost = useConnection((s) => s.platformHost);
   const chatAttention = useThreads((s) => kernelThreadAttentionCount(s.threads));
-  const agentsAttention = useCodingAgentWorkspace((s) => codingAgentAttentionCount(s.summary));
+  const summaryProjects = useCodingAgentWorkspace((s) => s.summary?.projects.items);
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
@@ -151,12 +150,10 @@ export default function Sidebar() {
         <nav className="flex flex-col gap-0.5">
           <NavRow icon={<Home size={15} />} label="Home" collapsed={collapsed} active={activeTab?.kind === "home"} onClick={() => openTab({ kind: "home", title: "Home", closable: false })} />
           <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} badge={chatAttention} onClick={() => { useThreads.getState().setActiveThread(null); openTab({ kind: "chat", title: "Hermes", closable: false }); }} />
-          {CODING_AGENTS_DESKTOP_WORKSPACE ? (
-            <NavRow icon={<Bot size={15} />} label="Agents" collapsed={collapsed} active={activeTab?.kind === "agents"} badge={agentsAttention} onClick={() => openTab(AGENTS_WORKSPACE_TAB_SPEC)} />
-          ) : null}
           <NavRow icon={<SquareTerminal size={15} />} label="Terminal" collapsed={collapsed} active={activeTab?.kind === "terminals"} onClick={() => openTab({ kind: "terminals", title: "Terminal" })} />
           <NavRow icon={<FolderTree size={15} />} label="Files" collapsed={collapsed} active={activeTab?.kind === "files"} onClick={() => openTab(FILES_WORKSPACE_TAB_SPEC)} />
           <NavRow icon={<LayoutGrid size={15} />} label="Apps" collapsed={collapsed} active={activeTab?.kind === "apps" || activeTab?.kind === "app"} onClick={() => openTab({ kind: "apps", title: "Apps" })} />
+          <NavRow icon={<Blocks size={15} />} label="Plugins" collapsed={collapsed} active={activeTab?.kind === "plugins"} onClick={() => openTab({ kind: "plugins", title: "Plugins" })} />
         </nav>
 
         {!collapsed ? (
@@ -168,8 +165,8 @@ export default function Sidebar() {
               </button>
               <button
                 type="button"
-                aria-label="New project"
-                title="New project"
+                aria-label="Add project"
+                title="Add project"
                 className="flex h-5 w-5 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--bg-hover)] group-hover/projects:opacity-100"
                 style={{ color: "var(--text-tertiary)" }}
                 onClick={() => setCreateProjectOpen(true)}
@@ -179,7 +176,8 @@ export default function Sidebar() {
             </div>
             {projectsOpen
               ? projects.map((project) => {
-                  const isActive = activeTab?.kind === "board" && activeTab.projectSlug === project.slug;
+                  const isActive = activeTab?.kind === "project" && activeTab.projectSlug === project.slug;
+                  const attention = summaryProjects?.find((candidate) => candidate.id === project.slug)?.attentionCount ?? 0;
                   return (
                     <NavRow
                       key={project.slug}
@@ -187,7 +185,8 @@ export default function Sidebar() {
                       label={project.name || project.slug}
                       collapsed={false}
                       active={isActive}
-                      onClick={() => openTab({ kind: "board", projectSlug: project.slug, title: project.name || project.slug })}
+                      badge={attention > 0 ? attention : undefined}
+                      onClick={() => openTab({ kind: "project", projectSlug: project.slug, title: project.name || project.slug })}
                     />
                   );
                 })

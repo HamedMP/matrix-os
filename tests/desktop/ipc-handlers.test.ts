@@ -60,10 +60,10 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
 
   return {
     ctx,
-    invoke(channel: string, payload: unknown = {}) {
+    invoke(channel: string, payload: unknown = {}, event: unknown = {}) {
       const listener = listeners.get(channel);
       if (!listener) throw new Error(`missing listener: ${channel}`);
-      return listener({}, payload);
+      return listener(event, payload);
     },
   };
 }
@@ -918,5 +918,45 @@ describe("registerIpcHandlers", () => {
       ...request,
       providerToken: "secret",
     })).rejects.toThrow("invalid request");
+  });
+
+  it("applies app:set-zoom to the sender webContents and echoes the factor", async () => {
+    const harness = makeHarness();
+    const sender = { getZoomFactor: vi.fn(() => 1), setZoomFactor: vi.fn() };
+
+    await expect(harness.invoke("app:set-zoom", { factor: 1.3 }, { sender })).resolves.toEqual({
+      factor: 1.3,
+    });
+    expect(sender.setZoomFactor).toHaveBeenCalledWith(1.3);
+  });
+
+  it("rejects out-of-range app:set-zoom factors before touching webContents", async () => {
+    const harness = makeHarness();
+    const sender = { getZoomFactor: vi.fn(() => 1), setZoomFactor: vi.fn() };
+
+    await expect(harness.invoke("app:set-zoom", { factor: 2.5 }, { sender })).rejects.toThrow(
+      "invalid request",
+    );
+    await expect(harness.invoke("app:set-zoom", { factor: 0.2 }, { sender })).rejects.toThrow(
+      "invalid request",
+    );
+    expect(sender.setZoomFactor).not.toHaveBeenCalled();
+  });
+
+  it("returns the clamped current factor from app:get-zoom", async () => {
+    const harness = makeHarness();
+    const sender = { getZoomFactor: vi.fn(() => 1.4), setZoomFactor: vi.fn() };
+
+    await expect(harness.invoke("app:get-zoom", {}, { sender })).resolves.toEqual({ factor: 1.4 });
+
+    sender.getZoomFactor.mockReturnValue(5);
+    await expect(harness.invoke("app:get-zoom", {}, { sender })).resolves.toEqual({ factor: 2 });
+  });
+
+  it("degrades zoom channels to the default when the event has no usable sender", async () => {
+    const harness = makeHarness();
+
+    await expect(harness.invoke("app:get-zoom", {})).resolves.toEqual({ factor: 1 });
+    await expect(harness.invoke("app:set-zoom", { factor: 0.8 })).resolves.toEqual({ factor: 0.8 });
   });
 });

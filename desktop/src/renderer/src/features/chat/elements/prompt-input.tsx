@@ -1,8 +1,9 @@
-import { ArrowUp, ChevronDown, CircleStop, Mic, Plus, Settings2 } from "lucide-react";
+import { ArrowUp, CircleStop } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 
-// AI-Elements-style PromptInput: a card with a growing textarea, a left action
-// row (add context, model/effort selectors) and a submit/stop control.
+// AI-Elements-style PromptInput: a card with a growing textarea and a
+// submit/stop control. Decorative action buttons were removed — every
+// rendered control must have a working handler.
 export function PromptInput({
   value,
   onChange,
@@ -15,6 +16,8 @@ export function PromptInput({
   placeholder = "Do anything",
   ariaLabel,
   footer,
+  controls,
+  focusRequestId,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -27,8 +30,18 @@ export function PromptInput({
   placeholder?: string;
   ariaLabel?: string;
   footer?: ReactNode;
+  // Left side of the bottom row: compact pickers (provider, mode) rendered
+  // Codex-style next to the send/stop control. Purely presentational slot.
+  controls?: ReactNode;
+  // Bumping this id focuses the textarea (type-to-start, ⌘J, chip seeds).
+  focusRequestId?: number;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!focusRequestId || focusRequestId <= 0) return;
+    ref.current?.focus();
+  }, [focusRequestId]);
 
   useEffect(() => {
     const el = ref.current;
@@ -39,7 +52,7 @@ export function PromptInput({
 
   return (
     <div
-      className="prompt-card flex flex-col overflow-hidden rounded-2xl border"
+      className="prompt-card flex flex-col overflow-hidden rounded-[var(--radius-xl)] border"
       style={{ background: "var(--bg-surface)" }}
     >
       <textarea
@@ -62,20 +75,10 @@ export function PromptInput({
         }}
       />
       <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-        <div className="flex items-center gap-1">
-          <button type="button" aria-label="Add context" className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}>
-            <Plus size={16} />
-          </button>
-          <button type="button" className="flex h-7 items-center gap-1.5 rounded-md px-2 text-sm hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-secondary)" }}>
-            <Settings2 size={13} />
-            Custom
-            <ChevronDown size={12} style={{ color: "var(--text-tertiary)" }} />
-          </button>
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          {controls}
         </div>
-        <div className="flex items-center gap-1.5">
-          <button type="button" aria-label="Voice input" className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}>
-            <Mic size={15} />
-          </button>
+        <div className="flex shrink-0 items-center gap-1.5">
           {busy && onAbort ? (
             <button
               type="button"
