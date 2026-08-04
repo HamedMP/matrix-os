@@ -375,8 +375,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
       workflow.indexOf("- name: Install bounded acceptance assets through the authenticated runtime"),
     );
     expect(recoveryStep).toContain("classify_recovery_phase");
-    expect(recoveryStep).toContain("prepare|download|verify|extract)");
-    expect(recoveryStep).toContain("terminal-runtime|app-install|host-bin|health)");
+    expect(recoveryStep).toContain("prepare|download|verify|extract|terminal-runtime)");
+    expect(recoveryStep).toContain("app-install|host-bin|health|invalid)");
+    expect(recoveryStep).toContain('if [ "$recovery_phase" = terminal-runtime ]; then');
+    expect(recoveryStep).toContain('"/usr/bin/timeout","--signal=KILL","30","/usr/bin/systemctl","--user","daemon-reload"');
     expect(recoveryStep).toContain(
       'body=\'{"command":["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]}\'',
     );
