@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-runtime_id="${MATRIX_TERMINAL_RUNTIME_ID:-}"
-[[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]] || exit 22
+read -r cgroup_line </proc/self/cgroup || exit 22
+[[ "$cgroup_line" == 0::* ]] || exit 22
+cgroup_path="${cgroup_line#0::}"
+[[ "$cgroup_path" =~ /matrix-terminal-spike@([0-9a-f]{32})[.]service$ ]] || exit 22
+runtime_id="${BASH_REMATCH[1]}"
 session_name="matrix-t-$runtime_id"
 release_file="/run/matrix-terminal-runtime-spikes/${runtime_id:1}/pane-release/$session_name"
 for _ in $(seq 1 100); do

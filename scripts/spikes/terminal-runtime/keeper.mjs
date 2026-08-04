@@ -66,7 +66,6 @@ function zellijEnvironment() {
   return {
     HOME: '/home/matrix/home',
     MATRIX_HOME: '/home/matrix/home',
-    MATRIX_TERMINAL_RUNTIME_ID: runtimeId,
     PATH: '/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin',
     LANG: 'C.UTF-8',
     TERM: 'xterm-256color',

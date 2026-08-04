@@ -302,6 +302,28 @@ describe('terminal runtime spike evidence', () => {
     );
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
   });
+  it('derives pane runtime identity from the terminal unit cgroup', async () => {
+    const [keeper, paneProbe] = await Promise.all([
+      readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
+      readRepo('scripts/spikes/terminal-runtime/pane-probe.sh'),
+    ]);
+    expect(paneProbe).toContain('read -r cgroup_line </proc/self/cgroup || exit 22');
+    expect(paneProbe).toContain(
+      '[[ "$cgroup_path" =~ /matrix-terminal-spike@([0-9a-f]{32})[.]service$ ]] || exit 22',
+    );
+    expect(paneProbe).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
+    expect(keeper).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
+
+    const validCgroup = '/matrix-terminal-spike.slice/matrix-terminal-spike@1234567890abcdef1234567890abcdef.service';
+    const pattern = '/matrix-terminal-spike@([0-9a-f]{32})[.]service$';
+    const parsed = spawnSync(
+      '/usr/bin/bash',
+      ['-c', '[[ "$1" =~ $2 ]] && printf "%s" "${BASH_REMATCH[1]}"', 'bash', validCgroup, pattern],
+      { encoding: 'utf8' },
+    );
+    expect(parsed.status).toBe(0);
+    expect(parsed.stdout).toBe('1234567890abcdef1234567890abcdef');
+  });
   it('can remove only its immutable disposable preview before a clean proof', async () => {
     const workflow = await readFile(
       join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'),
@@ -525,11 +547,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       '/usr/bin/bash "$support_root/pane-probe.sh"',
     ]);
     expect(paneProbe).not.toContain('ZELLIJ_SESSION_NAME');
-    expect(keeper).toContain('MATRIX_TERMINAL_RUNTIME_ID: runtimeId');
+    expect(keeper).not.toContain('MATRIX_TERMINAL_RUNTIME_ID: runtimeId');
+    expect(paneProbe).toContain('read -r cgroup_line </proc/self/cgroup || exit 22');
     expect(paneProbe).toContain(
-      'runtime_id="${MATRIX_TERMINAL_RUNTIME_ID:-}"',
+      '[[ "$cgroup_path" =~ /matrix-terminal-spike@([0-9a-f]{32})[.]service$ ]] || exit 22',
     );
-    expect(paneProbe).toContain('[[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]] || exit 22');
     expect(paneProbe).toContain('session_name="matrix-t-$runtime_id"');
     expect(runner).not.toContain('/usr/bin/chown -R root:root "$support_root.next"');
     expect(runner).not.toContain(
