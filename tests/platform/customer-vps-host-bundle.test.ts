@@ -710,8 +710,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
 
     expect(workflow).toContain('name: Recover the exact-head disposable preview updater');
-    expect(workflow).toContain('preview-bundle-${PR}');
-    expect(workflow).toContain("jq -er '.version'");
+    expect(workflow).toContain('gh run view "$preview_run_id" --repo "$GITHUB_REPOSITORY" --log');
+    expect(workflow).toContain('Preview version: v[0-9]{4}');
+    expect(workflow).not.toContain('gh run download "$preview_run_id"');
     expect(workflow).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR}-[0-9a-f]{7}$');
     expect(workflow).toContain('select(.handle == $handle and .runtimeSlot == $handle');
     expect(workflow).toContain('x-matrix-acceptance-signature');
