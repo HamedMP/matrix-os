@@ -5,28 +5,46 @@ activation_file="/opt/matrix/app/terminal-runtime-activation"
 node_path="/opt/matrix/runtime/node"
 node_modules="$node_path/lib/node_modules"
 node_bin="$node_path/bin"
+runtime_root="/opt/matrix/runtime"
+prepared_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"
+mode="${1:-}"
 
-if [ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]; then
-  exit 0
-fi
-if [ ! -f "$activation_file" ] ||
-  [ -L "$activation_file" ] ||
-  ! cmp -s "$activation_file" <(printf 'supervised-v1\n'); then
-  echo "matrix-prepare-gateway-runtime: invalid_activation" >&2
-  exit 1
-fi
+case "$mode" in
+  "")
+    if [ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]; then
+      exit 0
+    fi
+    if [ ! -f "$activation_file" ] ||
+      [ -L "$activation_file" ] ||
+      ! cmp -s "$activation_file" <(printf 'supervised-v1\n'); then
+      echo "matrix-prepare-gateway-runtime: invalid_activation" >&2
+      exit 1
+    fi
+    if [ ! -f "$prepared_stamp" ] ||
+      [ -L "$prepared_stamp" ] ||
+      [ "$(stat -c '%U:%G:%a' "$prepared_stamp")" != "root:matrix:644" ] ||
+      ! cmp -s "$prepared_stamp" <(printf 'supervised-v1\n'); then
+      echo "matrix-prepare-gateway-runtime: runtime_not_prepared" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  "--prepare-supervised-v1") ;;
+  *)
+    echo "matrix-prepare-gateway-runtime: invalid_mode" >&2
+    exit 1
+    ;;
+esac
 
-for required in "$node_path" "$node_modules" "$node_bin"; do
+for required in "$runtime_root" "$node_path" "$node_modules" "$node_bin"; do
   [ -d "$required" ] && [ ! -L "$required" ] || {
     echo "matrix-prepare-gateway-runtime: invalid_node_runtime" >&2
     exit 1
   }
 done
-
-if find -P "$node_path" -xdev \
-  \( -path "$node_modules/*" -o -path "$node_bin/*" \) \
-  -type f ! -links 1 -print -quit | grep -q .; then
-  echo "matrix-prepare-gateway-runtime: linked_node_runtime_file" >&2
+if [ "$(stat -c %U "$runtime_root")" != "root" ] ||
+  find -P "$runtime_root" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+  echo "matrix-prepare-gateway-runtime: invalid_runtime_root" >&2
   exit 1
 fi
 
@@ -41,11 +59,11 @@ done < <(
        -path "$node_bin" -o -path "$node_bin/*" \) \
     -type d -print0
 )
-while IFS= read -r -d '' file; do
-  chown root:matrix "$file"
-  chmod g+rw "$file"
-done < <(
-  find -P "$node_path" -xdev \
-    \( -path "$node_modules/*" -o -path "$node_bin/*" \) \
-    -type f -print0
-)
+
+temporary="$(mktemp --tmpdir="$runtime_root" .gateway-runtime-supervised-v1.XXXXXXXXXX)"
+trap 'rm -f -- "$temporary"' EXIT
+printf 'supervised-v1\n' >"$temporary"
+chown root:matrix "$temporary"
+chmod 0644 "$temporary"
+mv -f -- "$temporary" "$prepared_stamp"
+trap - EXIT

@@ -68,13 +68,13 @@
 
 - [ ] T034 [P] [US2] Add failing empty-body/auth/rate-limit/idempotency/generic-error recovery route tests in `tests/gateway/terminal-recovery-route.test.ts`
 - [ ] T035 [P] [US2] Add failing valid/corrupt/missing/incompatible Zellij cache recovery tests in `tests/terminal-runtime/recovery.test.ts`
-- [ ] T036 [P] [US2] Add failing interrupted-state and no-silent-recreation client/store tests in `shell/src/components/terminal/__tests__/TerminalApp.test.tsx`
+- [X] T036 [P] [US2] Add failing interrupted-state and no-silent-recreation client/store tests in `shell/src/components/terminal/__tests__/TerminalApp.test.tsx`
 - [ ] T037 [US2] Add `POST /api/terminal/sessions/:name/recover` with shared limiter and strict empty body in `packages/gateway/src/shell/routes.ts` and `packages/gateway/src/server.ts`
 - [ ] T038 [US2] Implement explicit serialized/fresh-shell recovery and bounded reasons in `packages/terminal-runtime/src/reconciliation.ts` and `packages/terminal-runtime/src/keeper.ts`
 - [ ] T039 [US2] Configure the production Zellij serialization/cache options without force-run in `packages/gateway/src/shell/zellij-config.ts` and `packages/terminal-runtime/src/zellij.ts`
-- [ ] T040 [US2] Render Interrupted/Recoverable state and explicit Recover action Canvas-first in `shell/src/components/terminal/TerminalApp.tsx` and shared terminal stores
-- [ ] T041 [US2] Add terminal-history privacy disclosure and safe bounded client error allowlisting in `shell/src/components/terminal/` and `docs/platform/user/terminal.md`
-- [ ] T042 [US2] Run `npx react-doctor@latest shell` and capture Canvas/Desktop recovery screenshot evidence in the PR body
+- [X] T040 [US2] Render Interrupted/Recoverable state and explicit Recover action Canvas-first in `shell/src/components/terminal/TerminalApp.tsx` and shared terminal stores
+- [X] T041 [US2] Add terminal-history privacy disclosure and safe bounded client error allowlisting in `shell/src/components/terminal/` and `docs/platform/user/terminal.md`
+- [X] T042 [US2] Run `npx react-doctor@latest shell` and capture Canvas/Desktop recovery screenshot evidence in the PR body
 
 **Independent test**: reboot starts no terminal/command/agent; explicit recovery restores valid bounded state with commands gated or starts a fresh safe shell with a generic reason.
 
@@ -83,10 +83,10 @@
 ## Phase 5: User Story 3 — Immutable Rename and Multi-Device Identity (P1)
 
 - [ ] T043 [P] [US3] Add failing Rename/Rename, Rename/Recover, Recover/Recover, and alias-expiry tests in `tests/terminal-runtime/concurrency.test.ts`
-- [ ] T044 [P] [US3] Add failing runtime-ID layout migration tests in `shell/src/stores/__tests__/terminal-layout.test.ts`
+- [X] T044 [P] [US3] Add failing runtime-ID layout migration tests in `shell/src/stores/__tests__/terminal-layout.test.ts`
 - [ ] T045 [US3] Change rename to metadata/name-index only under ordered locks in `packages/terminal-runtime/src/operation-handler.ts` and `packages/gateway/src/shell/registry.ts`
 - [ ] T046 [US3] Add additive runtime/lifecycle projection fields to list contracts in `packages/gateway/src/shell/routes.ts` and shared shell types
-- [ ] T047 [US3] Store runtime ID plus display metadata and resolve bounded aliases in shared Canvas/Desktop terminal layout state
+- [X] T047 [US3] Store runtime ID plus display metadata and resolve bounded aliases in shared Canvas/Desktop terminal layout state
 - [ ] T048 [US3] Ensure multi-device attach resolves existing runtime only and never calls Create/Recover in `packages/gateway/src/shell/terminal-websocket.ts`
 
 **Independent test**: two devices and all rename/recover races preserve one runtime ID, unit, Zellij session, and process tree.

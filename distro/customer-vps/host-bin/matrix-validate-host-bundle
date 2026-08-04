@@ -107,7 +107,16 @@ def main() -> int:
         return 2
     try:
         validate_archive(sys.argv[1])
-    except (OSError, tarfile.TarError, UnsafeArchive):
+    except UnsafeArchive as error:
+        if os.environ.get("MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS") == "1":
+            print(
+                f"matrix-validate-host-bundle: invalid_archive: {error}",
+                file=sys.stderr,
+            )
+        else:
+            print("matrix-validate-host-bundle: invalid_archive", file=sys.stderr)
+        return 1
+    except (OSError, tarfile.TarError):
         print("matrix-validate-host-bundle: invalid_archive", file=sys.stderr)
         return 1
     return 0

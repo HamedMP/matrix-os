@@ -118,11 +118,54 @@ except module["ProtocolError"]:
     );
   });
 
+  it("does not start the root worker until the legacy updater is idle and stopped", () => {
+    const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
+    const regression = String.raw`
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1])
+runtime_globals = module["_advance_legacy_handoff"].__globals__
+events = []
+states = iter(["idle", "idle", "idle"])
+retirable = iter([False, True])
+runtime_globals["_read_state"] = lambda: next(states)
+runtime_globals["_legacy_bridge_retirable"] = lambda: next(retirable)
+runtime_globals["_stop_legacy_bridge"] = lambda: events.append("stop") or True
+worker = object()
+runtime_globals["_spawn_worker"] = lambda: events.append("spawn") or worker
+runtime_globals["_resume_pending_request"] = lambda value: events.append("resume")
+runtime_globals["_write_state"] = lambda state: events.append(f"state:{state}")
+
+assert module["_advance_legacy_handoff"](None) is None
+assert events == []
+assert module["_advance_legacy_handoff"](None) is worker
+assert events == ["stop", "state:idle", "spawn", "resume"]
+`;
+    expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      '["systemctl", "stop", "matrix-sync-agent.service"]',
+    );
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      '"is-enabled", "matrix-sync-agent.service"',
+    );
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      'LEGACY_HANDOFF_GRACE_SECONDS = 30',
+    );
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      'HTTPConnection("127.0.0.1", 4000, timeout=2)',
+    );
+    expect(read("distro/customer-vps/host-bin/matrix-update-service")).toContain(
+      'connection.request("GET", "/health")',
+    );
+  });
+
   it("validates checksums and archive paths before extraction", () => {
     const validator = read("distro/customer-vps/host-bin/matrix-validate-host-bundle");
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const build = read("scripts/build-host-bundle.sh");
 
-    expect(validator).toContain("MAX_ARCHIVE_MEMBERS");
+    expect(validator).toContain("MAX_ARCHIVE_MEMBERS = 200_000");
     expect(validator).toContain("MAX_ARCHIVE_BYTES");
     expect(validator).not.toContain("getmembers()");
     expect(validator).toContain("member_count > MAX_ARCHIVE_MEMBERS");
@@ -137,6 +180,18 @@ except module["ProtocolError"]:
     expect(updater).toContain('actual_bundle_size="$(stat -c %s "$bundle_file")"');
     expect(updater).toContain('if [ "$actual_bundle_size" != "$expected_bundle_size" ]');
     expect(updater).not.toContain("WARNING: no SHA-256 available");
+    expect(build).toContain(
+      'MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS=1 \\\n  "$STAGE_DIR/bin/matrix-validate-host-bundle" "$DIST_DIR/$BUNDLE_NAME"',
+    );
+    expect(build.lastIndexOf('tar -C "$STAGE_DIR"')).toBeLessThan(
+      build.lastIndexOf('"$STAGE_DIR/bin/matrix-validate-host-bundle"'),
+    );
+    expect(build.lastIndexOf('"$STAGE_DIR/bin/matrix-validate-host-bundle"')).toBeLessThan(
+      build.indexOf('write-manifest'),
+    );
+    expect(build).not.toContain(
+      'find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +',
+    );
   });
 
   it("keeps supervised activation dormant unless the bundle carries the fixed marker", () => {
@@ -187,6 +242,132 @@ except module["ProtocolError"]:
     expect(updater).not.toContain("--force-run-commands");
   });
 
+  it("installs the dormant host layer before gateway downtime and keeps rollback bounded", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const prepare = updater.indexOf('"preparing"');
+    const installGeneration = updater.indexOf(
+      "if ! install_terminal_runtime_generation; then",
+    );
+    const stopServices = updater.indexOf('log "Stopping services..."');
+    const commitApp = updater.indexOf('mv "$extract_dir/app" "$APP_DIR"');
+    const rollback = updater.slice(
+      updater.indexOf("do_rollback() {"),
+      updater.indexOf("# Claims one root-published protocol request"),
+    );
+
+    expect(prepare).toBeGreaterThan(-1);
+    expect(installGeneration).toBeGreaterThan(prepare);
+    expect(stopServices).toBeGreaterThan(installGeneration);
+    expect(commitApp).toBeGreaterThan(stopServices);
+    expect(rollback).not.toContain('chown -R matrix:matrix "$APP_DIR"');
+  });
+
+  it("rolls back a failed gateway activation start instead of exiting under set -e", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const helper = read(
+      "distro/customer-vps/host-bin/matrix-prepare-gateway-runtime",
+    );
+    const stopServices = updater.indexOf('log "Stopping services..."');
+    const prepareBeforeDowntime = updater.indexOf(
+      "--prepare-supervised-v1",
+    );
+    const candidateGatewayProbe = updater.indexOf(
+      "terminal_runtime_gateway_probe_timeout",
+    );
+    const candidateProbeBlock = updater.slice(
+      updater.indexOf('log "Terminal runtime supervisor ready"'),
+      stopServices,
+    );
+    const startBlock = updater.slice(
+      updater.indexOf('log "Starting services..."'),
+      updater.indexOf("set_operation_phase health_check"),
+    );
+    const rollbackBlock = updater.slice(
+      updater.indexOf("do_rollback() {"),
+      updater.indexOf("# Claims one root-published protocol request"),
+    );
+    const service = read("distro/customer-vps/host-bin/matrix-update-service");
+    const cli = read("distro/customer-vps/host-bin/matrix-update");
+
+    expect(prepareBeforeDowntime).toBeGreaterThan(-1);
+    expect(prepareBeforeDowntime).toBeLessThan(stopServices);
+    expect(candidateGatewayProbe).toBeGreaterThan(prepareBeforeDowntime);
+    expect(candidateGatewayProbe).toBeLessThan(stopServices);
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      'packages/gateway/dist/shell/runtime-client.js',
+    );
+    expect(candidateProbeBlock).toContain(
+      'candidate_gateway_mount="$UPDATE_RUNTIME_DIR/candidate-gateway-app"',
+    );
+    expect(candidateProbeBlock).toContain(
+      "/usr/bin/unshare --mount --fork --kill-child",
+    );
+    expect(candidateProbeBlock).toContain("/usr/bin/mount --make-rprivate /");
+    expect(candidateProbeBlock).toContain(
+      '/usr/bin/mount -o remount,bind,ro,nosuid,nodev "$target_path"',
+    );
+    expect(candidateProbeBlock).toContain("/usr/bin/env -i");
+    expect(candidateProbeBlock).toContain("MATRIX_HOME=/home/matrix/home");
+    expect(candidateProbeBlock).not.toContain('cd "$extract_dir/app"');
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      "terminate_new_terminal_runtime_supervisor_after_failed_start",
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain("124) ;;");
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      "terminal_runtime_gateway_probe_preserved_host_layer",
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      'cause?.name === "ZodError"',
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      '42) gateway_failure_code="terminal_runtime_gateway_projection_failed"',
+    );
+    expect(updater.slice(candidateGatewayProbe, stopServices)).toContain(
+      '43) gateway_failure_code="terminal_runtime_gateway_request_failed"',
+    );
+    expect(service).toContain('"terminal_runtime_gateway_projection_failed"');
+    expect(cli).toContain('"terminal_runtime_gateway_projection_failed"');
+    expect(updater.slice(prepareBeforeDowntime - 160, stopServices)).toContain(
+      '"gateway_runtime_preparation_timeout"',
+    );
+    expect(startBlock).toContain(
+      "if ! /opt/matrix/bin/matrix-prepare-gateway-runtime; then",
+    );
+    expect(startBlock).toContain(
+      'write_update_failure_code "gateway_runtime_preparation_failed"',
+    );
+    expect(startBlock).toContain(
+      "if ! systemctl start matrix-gateway matrix-shell; then",
+    );
+    expect(startBlock).toContain(
+      'write_update_failure_code "gateway_start_failed"',
+    );
+    expect(startBlock).toContain("do_rollback failed-update");
+    expect(rollbackBlock).toContain(
+      "if ! systemctl start matrix-gateway matrix-shell; then",
+    );
+    expect(rollbackBlock).toContain(
+      'log "ERROR: rollback_service_start_failed"',
+    );
+    expect(service).toContain('"gateway_runtime_preparation_failed"');
+    expect(cli).toContain('"gateway_runtime_preparation_failed"');
+    expect(service).toContain('"gateway_runtime_preparation_timeout"');
+    expect(cli).toContain('"gateway_runtime_preparation_timeout"');
+    expect(service).toContain('"gateway_start_failed"');
+    expect(cli).toContain('"gateway_start_failed"');
+    expect(service).toContain('"terminal_runtime_gateway_probe_failed"');
+    expect(cli).toContain('"terminal_runtime_gateway_probe_failed"');
+    expect(helper).toContain(
+      'prepared_stamp="/opt/matrix/runtime/.gateway-runtime-supervised-v1"',
+    );
+    expect(helper).toContain('"--prepare-supervised-v1"');
+    expect(helper).toContain(
+      'matrix-prepare-gateway-runtime: runtime_not_prepared',
+    );
+    expect(helper).not.toContain("-type f ! -links 1");
+    expect(helper).not.toContain("-type f -print0");
+  });
+
   it("installs and rolls back the optional preview proof helper with the host layer", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
 
@@ -199,6 +380,27 @@ except module["ProtocolError"]:
     );
     expect(updater).toContain(
       'matrix-terminal-runtime-op \\\n    matrix-terminal-spike-control; do',
+    );
+  });
+
+  it("packages only the production VPS dependency closure within the archive member cap", () => {
+    const build = read("scripts/build-host-bundle.sh");
+
+    expect(build).not.toContain(
+      'cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"',
+    );
+    expect(build).toContain(
+      "pnpm --dir \"$STAGE_DIR/app\" --config.enable-global-virtual-store=false --filter '@matrix-os/gateway...' --filter 'shell...' install --prod --frozen-lockfile",
+    );
+    expect(build).toContain(
+      'find "$STAGE_DIR/app" -name node_modules -prune -exec rm -rf -- {} +',
+    );
+    expect(build).toContain(
+      'pnpm --dir "$STAGE_DIR/app" rebuild node-pty better-sqlite3',
+    );
+    expect(build).toContain("terminal_runtime_package_manifest_invalid");
+    expect(build).toContain(
+      'await import("@matrix-os/terminal-runtime")',
     );
   });
 
@@ -571,6 +773,22 @@ with tarfile.open(output, "w:gz") as archive:
         expect(create.status).toBe(0);
         const result = spawnSync(validator, [archive], { encoding: "utf8" });
         expect(result.status).toBe(kind === "valid" ? 0 : 1);
+        if (kind === "traversal") {
+          expect(result.stderr).toBe(
+            "matrix-validate-host-bundle: invalid_archive\n",
+          );
+          const diagnostic = spawnSync(validator, [archive], {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS: "1",
+            },
+          });
+          expect(diagnostic.status).toBe(1);
+          expect(diagnostic.stderr).toBe(
+            "matrix-validate-host-bundle: invalid_archive: link target escapes archive\n",
+          );
+        }
       }
     } finally {
       rmSync(directory, { recursive: true, force: true });

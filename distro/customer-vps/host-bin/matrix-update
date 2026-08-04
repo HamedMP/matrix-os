@@ -56,8 +56,16 @@ FAILURE_CODES = {
     "terminal_runtime_supervisor_enable_failed",
     "terminal_runtime_supervisor_start_failed",
     "terminal_runtime_supervisor_cleanup_failed",
+    "terminal_runtime_gateway_probe_timeout",
+    "terminal_runtime_gateway_import_failed",
+    "terminal_runtime_gateway_projection_failed",
+    "terminal_runtime_gateway_request_failed",
+    "terminal_runtime_gateway_probe_failed",
     "update_runtime_enable_failed",
     "legacy_update_bridge_disable_failed",
+    "gateway_runtime_preparation_timeout",
+    "gateway_runtime_preparation_failed",
+    "gateway_start_failed",
     "health_check_failed",
 }
 VERSION_RE = re.compile(r"^(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}$")

@@ -688,6 +688,9 @@ export function ShellSessionGroup({
   onToggle,
   onRename,
   onDelete,
+  onRecover,
+  recoveringShellNames = [],
+  recoveryErrors = {},
   draggingShellName,
   dragOverShellName,
   onDragStart,
@@ -707,6 +710,9 @@ export function ShellSessionGroup({
   onToggle: (shell: ShellSessionSummary) => void;
   onRename: (shell: ShellSessionSummary, nextName: string) => Promise<boolean>;
   onDelete: (shell: ShellSessionSummary, anchorElement: HTMLElement, returnFocusElement: HTMLButtonElement) => void;
+  onRecover?: (shell: ShellSessionSummary) => void;
+  recoveringShellNames?: string[];
+  recoveryErrors?: Record<string, string>;
   draggingShellName: string | null;
   dragOverShellName: string | null;
   onDragStart: (shell: ShellSessionSummary) => void;
@@ -716,6 +722,8 @@ export function ShellSessionGroup({
 }) {
   const collapsible = label === "Background";
   const contentId = `terminal-session-group-${label.toLowerCase()}-content`;
+  const deletingShellNameSet = new Set(deletingShellNames);
+  const recoveringShellNameSet = new Set(recoveringShellNames);
   return (
     <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
@@ -772,12 +780,15 @@ export function ShellSessionGroup({
                 key={`${label}-${shell.name}`}
                 shell={shell}
                 foreground={foreground}
-                deleting={deletingShellNames.includes(shell.name)}
+                deleting={deletingShellNameSet.has(shell.name)}
                 selected={shell.name === selectedShellName}
                 onOpen={() => onOpen(shell)}
                 onToggle={() => onToggle(shell)}
                 onRename={(nextName) => onRename(shell, nextName)}
                 onDelete={(anchorElement, returnFocusElement) => onDelete(shell, anchorElement, returnFocusElement)}
+                onRecover={() => onRecover?.(shell)}
+                recovering={recoveringShellNameSet.has(shell.name)}
+                recoveryError={recoveryErrors[shell.name]}
                 dragging={shell.name === draggingShellName}
                 dropTarget={shell.name === dragOverShellName}
                 onDragStart={() => onDragStart(shell)}
@@ -864,6 +875,9 @@ function ShellCard({
   onToggle,
   onRename,
   onDelete,
+  onRecover,
+  recovering = false,
+  recoveryError,
   dragging,
   dropTarget,
   onDragStart,
@@ -879,6 +893,9 @@ function ShellCard({
   onToggle: () => void;
   onRename: (nextName: string) => Promise<boolean>;
   onDelete: (anchorElement: HTMLElement, returnFocusElement: HTMLButtonElement) => void;
+  onRecover?: () => void;
+  recovering?: boolean;
+  recoveryError?: string;
   dragging: boolean;
   dropTarget: boolean;
   onDragStart: () => void;
@@ -912,6 +929,29 @@ function ShellCard({
   const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : null;
   const hasSubtitle = Boolean(shell.subtitle?.trim());
   const liveState = getShellVisualStatus(shell);
+  const lifecycleLabel = shell.lifecycleState === "interrupted"
+    ? "Interrupted"
+    : shell.lifecycleState === "recoverable"
+      ? "Recoverable"
+      : shell.lifecycleState === "recovering"
+        ? "Recovering"
+        : shell.lifecycleState === "starting"
+          ? "Starting"
+          : shell.lifecycleState === "deleting"
+            ? "Deleting"
+            : shell.lifecycleState === "failed"
+              ? "Failed"
+              : shell.lifecycleState === "exited"
+                ? "Exited"
+                : null;
+  const runtimeLive =
+    shell.lifecycleState === undefined || shell.lifecycleState === "live";
+  const recoveryDetail = recoveryError ??
+    (shell.recoveryReason === "history_unavailable"
+      ? "History unavailable; recovery starts a fresh shell."
+      : shell.recoveryReason === "cwd_unavailable"
+        ? "Saved folder unavailable; recovery starts from home."
+        : null);
   const hoverSuppressed = contextMenuOpen || renaming || dragging || Boolean(deleting);
   const scheduleHoverCardOpen = () => {
     if (hoverCardOpen || mouseHoverTimerRef.current !== null) return;
@@ -1081,7 +1121,7 @@ function ShellCard({
   }, [finishRename, renaming]);
 
   const handleCardClick = () => {
-    if (renaming || renameSaving || deleting) return;
+    if (renaming || renameSaving || deleting || !runtimeLive) return;
     onOpen();
   };
 
@@ -1142,12 +1182,16 @@ function ShellCard({
         boxShadow: dragging
           ? "0 18px 34px var(--terminal-drawer-card-shadow)"
           : foreground ? "0 9px 22px var(--terminal-drawer-card-shadow)" : "none",
-        cursor: renaming || deleting ? "default" : "pointer",
+        cursor: renaming || deleting || !runtimeLive ? "default" : "pointer",
         alignItems: "center",
         display: "grid",
         gap: 10,
         gridTemplateColumns: "minmax(0, 1fr)",
-        height: shell.agent ? (hasSubtitle ? 78 : 60) : 52,
+        height: lifecycleLabel
+          ? 92
+          : shell.agent
+            ? (hasSubtitle ? 78 : 60)
+            : 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
         position: "relative",
@@ -1172,7 +1216,7 @@ function ShellCard({
           }}
         />
       )}
-      {!renaming && !deleting && (
+      {!renaming && !deleting && runtimeLive && (
         <button
           type="button"
           data-testid={`terminal-session-row-${shell.name}`}
@@ -1198,7 +1242,7 @@ function ShellCard({
         <button
           type="button"
           aria-label={`Drag ${displayName} session`}
-          draggable={!renaming && !deleting}
+          draggable={!renaming && !deleting && runtimeLive}
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
@@ -1215,8 +1259,8 @@ function ShellCard({
           className="flex items-center justify-center"
           style={{
             ...SHELL_ROW_DRAG_HANDLE_STYLE,
-            cursor: showDragHandle ? "grab" : "default",
-            opacity: showDragHandle ? 1 : 0,
+            cursor: showDragHandle && runtimeLive ? "grab" : "default",
+            opacity: showDragHandle && runtimeLive ? 1 : 0,
           }}
         >
           <GripVerticalIcon size={12} strokeWidth={2.1} />
@@ -1239,7 +1283,11 @@ function ShellCard({
             display: "grid",
             gap: shell.agent ? 2 : 0,
             gridTemplateColumns: "minmax(0, 1fr)",
-            gridTemplateRows: shell.agent ? (hasSubtitle ? "18px 16px 16px" : "18px 16px") : "24px",
+            gridTemplateRows: lifecycleLabel
+              ? "20px minmax(30px, auto)"
+              : shell.agent
+                ? (hasSubtitle ? "18px 16px 16px" : "18px 16px")
+                : "24px",
             paddingRight: 34,
           }}
         >
@@ -1278,6 +1326,7 @@ function ShellCard({
                   data-testid={`terminal-session-name-${shell.name}`}
                   aria-label={`Open ${displayName}`}
                   className="min-w-0 truncate"
+                  disabled={!runtimeLive}
                   onClick={(event) => {
                     event.stopPropagation();
                     onOpen();
@@ -1285,6 +1334,7 @@ function ShellCard({
                   style={{
                     ...SESSION_NAME_BUTTON_BASE_STYLE,
                     color: selected ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
+                    cursor: runtimeLive ? "pointer" : "default",
                     flex: "0 1 auto",
                     maxWidth: "calc(100% - 27px)",
                   }}
@@ -1317,6 +1367,64 @@ function ShellCard({
               </>
             )}
           </div>
+          {lifecycleLabel ? (
+            <div
+              data-testid={`terminal-session-recovery-${shell.name}`}
+              style={{
+                alignItems: "center",
+                display: "flex",
+                gap: 8,
+                minWidth: 0,
+                pointerEvents: "auto",
+              }}
+            >
+              <span
+                style={{
+                  color: "var(--terminal-drawer-warning-fg)",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                {lifecycleLabel}
+              </span>
+              {recoveryDetail ? (
+                <span
+                  className="truncate"
+                  style={{
+                    color: "var(--terminal-drawer-muted)",
+                    fontSize: 11,
+                    minWidth: 0,
+                  }}
+                >
+                  {recoveryDetail}
+                </span>
+              ) : null}
+              {shell.recoverable ? (
+                <button
+                  type="button"
+                  aria-label={`Recover ${displayName}`}
+                  disabled={recovering}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRecover?.();
+                  }}
+                  style={{
+                    background: "var(--terminal-drawer-warning-bg)",
+                    border: "1px solid var(--terminal-drawer-warning-fg)",
+                    borderRadius: 7,
+                    color: "var(--terminal-drawer-warning-fg)",
+                    cursor: recovering ? "wait" : "pointer",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    marginLeft: "auto",
+                    padding: "4px 8px",
+                  }}
+                >
+                  {recovering ? "Recovering…" : "Recover"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {shell.agent && hasSubtitle ? (
             <span
               data-testid={`terminal-session-subtitle-${shell.name}`}

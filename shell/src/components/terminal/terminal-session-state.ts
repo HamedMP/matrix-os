@@ -1,5 +1,11 @@
 export interface ShellSessionSummary {
   name: string;
+  runtimeId?: string;
+  lifecycleState?: "starting" | "live" | "interrupted" | "recoverable" | "recovering" | "deleting" | "exited" | "failed";
+  recoverable?: boolean;
+  recoveryReason?: "cwd_unavailable" | "history_unavailable" | "unsupported_state" | "metadata_corrupt" | "runtime_lost" | "startup_failed" | null;
+  metadataRevision?: number;
+  aliases?: Array<{ name: string; target?: string; source?: string }>;
   status?: "active" | "exited" | "degraded";
   placement?: "active" | "background";
   updatedAt?: string;
@@ -48,6 +54,11 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
     if (!next) return false;
     if (
       session.name !== next.name ||
+      session.runtimeId !== next.runtimeId ||
+      session.lifecycleState !== next.lifecycleState ||
+      session.recoverable !== next.recoverable ||
+      session.recoveryReason !== next.recoveryReason ||
+      session.metadataRevision !== next.metadataRevision ||
       session.status !== next.status ||
       session.placement !== next.placement ||
       session.updatedAt !== next.updatedAt ||
@@ -69,6 +80,9 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
       session.pullRequest?.url !== next.pullRequest?.url ||
       session.attachCommand !== next.attachCommand
     ) {
+      return false;
+    }
+    if (JSON.stringify(session.aliases ?? []) !== JSON.stringify(next.aliases ?? [])) {
       return false;
     }
     const tabs = session.tabs ?? [];

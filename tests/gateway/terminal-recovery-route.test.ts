@@ -36,6 +36,21 @@ function createApp(
 }
 
 describe("terminal recovery route", () => {
+  it("marks an empty supervised list as lifecycle-aware", async () => {
+    const app = new Hono();
+    app.route("/api/terminal", createShellRoutes({
+      registry: createRegistry(),
+      runtimeLifecycle: "supervised",
+    }));
+
+    const response = await app.request("/api/terminal/sessions");
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      sessions: [],
+      runtimeLifecycle: "supervised",
+    });
+  });
+
   it("accepts no body or exactly an empty object and reports readiness honestly", async () => {
     const registry = createRegistry();
     const app = createApp(registry);

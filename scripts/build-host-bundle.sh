@@ -95,7 +95,6 @@ INSTALLER_NO_MODIFY_PATH=1 UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin" sh "$DIS
 # Customer VPS terminals run as the matrix user. Keep the runtime prefix
 # group-writable so selectable boot-time tool packs can install in place.
 chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
-find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 terminal_generation_build="$STAGE_DIR/libexec/terminal-runtime/v1/payload"
 install -d -m 0755 \
@@ -177,14 +176,14 @@ cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 # the systemd units execute these wrappers as the matrix user.
 chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update-service" "$STAGE_DIR/bin/matrix-validate-host-bundle" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-tool-pack-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-prepare-gateway-runtime" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-terminal-supervisor" "$STAGE_DIR/bin/matrix-terminal-keeper" "$STAGE_DIR/bin/matrix-terminal-pane" "$STAGE_DIR/bin/matrix-terminal-runtime-op" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
-cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
-install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+node --input-type=module -e 'import { readFile, writeFile } from "node:fs/promises"; const path = process.argv[1]; const manifest = JSON.parse(await readFile(path, "utf8")); if (manifest.exports?.["."] !== "./src/index.ts" || manifest.main !== "src/index.ts" || manifest.types !== "src/index.ts") throw new Error("terminal_runtime_package_manifest_invalid"); manifest.exports["."] = "./dist/index.js"; manifest.main = "dist/index.js"; manifest.types = "dist/index.d.ts"; await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);' "$STAGE_DIR/app/packages/terminal-runtime/package.json"
 mkdir -p "$STAGE_DIR/app/packages/symphony-elixir/release"
 cp -a "$DIST_DIR/symphony-release/." "$STAGE_DIR/app/packages/symphony-elixir/release/"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"
+cp -a "$ROOT_DIR/scripts/fix-node-pty-perms.mjs" "$STAGE_DIR/app/scripts/fix-node-pty-perms.mjs"
 cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-default-apps.mjs"
 cp -a "$ROOT_DIR/scripts/reset-shipped-icons.mjs" "$STAGE_DIR/app/scripts/reset-shipped-icons.mjs"
 cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/scripts/install-hermes-matrix-skills.sh"
@@ -206,8 +205,13 @@ fi
 # Keep the host bundle runtime-only. These directories are generated or
 # build-time dependency stores; carrying them to every VPS bloats R2 artifacts
 # and slows upgrades without changing runtime behavior.
-rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"
-find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +
+find "$STAGE_DIR/app" -name node_modules -prune -exec rm -rf -- {} +
+rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e"
+pnpm --dir "$STAGE_DIR/app" --config.enable-global-virtual-store=false --filter '@matrix-os/gateway...' --filter 'shell...' install --prod --frozen-lockfile
+pnpm --dir "$STAGE_DIR/app" rebuild node-pty better-sqlite3
+(cd "$STAGE_DIR/app" && "$STAGE_DIR/runtime/node/bin/node" --input-type=module -e 'await import("@matrix-os/terminal-runtime")')
+install -d -m 0755 "$STAGE_DIR/app/node_modules/.bin"
+install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.
@@ -231,6 +235,8 @@ if [ -e "$activation_source" ] || [ -L "$activation_source" ]; then
   bundle_members+=(terminal-runtime-activation)
 fi
 tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" "${bundle_members[@]}"
+MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS=1 \
+  "$STAGE_DIR/bin/matrix-validate-host-bundle" "$DIST_DIR/$BUNDLE_NAME"
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

@@ -81,8 +81,12 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway"');
     expect(script).toContain('scripts/terminal-runtime/zellij/verify-build.sh');
     expect(script).toContain('install -m 0755 "$zellij_snapshot_dir/zellij" "$STAGE_DIR/bin/zellij"');
-    expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
-    expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
+    expect(script).toContain(
+      'find "$STAGE_DIR/app" -name node_modules -prune -exec rm -rf -- {} +',
+    );
+    expect(script).toContain(
+      'rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e"',
+    );
     expect(script).toContain('matrix-update');
     expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
     expect(script).toContain('matrix-messaging-health');
@@ -1210,7 +1214,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('rm -rf "$APP_DIR.rollback"');
     expect(syncAgent).toContain('mv "$APP_DIR" "$APP_DIR.rollback"');
     expect(syncAgent).toContain('mv "$extract_dir/app" "$APP_DIR"');
-    expect(syncAgent).toContain('chown -R matrix:matrix "$APP_DIR"');
+    expect(syncAgent).toContain('chown -R matrix:matrix "$extract_dir/app"');
     expect(syncAgent).toContain('printf \'%s\\n\' "$version" >"$extract_dir/app/BUNDLE_VERSION"');
     expect(syncAgent).toContain('rm -f -- "$LEGACY_UPDATE_TRIGGER"');
     expect(syncAgent).toContain('prepare_triggered_update');

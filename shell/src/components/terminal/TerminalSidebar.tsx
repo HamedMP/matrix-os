@@ -60,6 +60,8 @@ const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
 };
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
+const MAX_CONCURRENT_SHELL_RECOVERIES = 128;
+const recoveringShells = new Set<string>();
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
 export const DEFAULT_TERMINAL_SIDEBAR_WIDTH = 392;
 const MIN_TERMINAL_SIDEBAR_WIDTH = 280;
@@ -266,6 +268,8 @@ export function LocalTerminalSidebar() {
   const deletingShellsRef = useRef<Set<string> | null>(null);
   if (deletingShellsRef.current === null) deletingShellsRef.current = new Set();
   const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
+  const [recoveringShellNames, setRecoveringShellNames] = useState<string[]>([]);
+  const [recoveryErrors, setRecoveryErrors] = useState<Record<string, string>>({});
   const [closeConfirmationRequest, setCloseConfirmationRequest] = useState<CloseConfirmationRequest | null>(null);
   const pendingDeleteFocusRef = useRef<{ deletedName: string; targetName: string | null } | null>(null);
   const refreshSessionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -524,6 +528,66 @@ export function LocalTerminalSidebar() {
       deletingShellsRef.current!.delete(name);
       setDeletingShellNames(Array.from(deletingShellsRef.current!));
     }
+  };
+
+  const recoverManagedShell = async (shell: ShellSessionSummary) => {
+    if (
+      !shell.recoverable ||
+      recoveringShells.has(shell.name) ||
+      recoveringShells.size >= MAX_CONCURRENT_SHELL_RECOVERIES
+    ) {
+      return;
+    }
+    recoveringShells.add(shell.name);
+    setRecoveringShellNames((names) => [...names, shell.name]);
+    setRecoveryErrors((errors) => {
+      const next = { ...errors };
+      delete next[shell.name];
+      return next;
+    });
+    try {
+      const res = await fetch(
+        `${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(shell.name)}/recover`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (!res.ok) {
+        setRecoveryErrors((errors) => ({
+          ...errors,
+          [shell.name]: "Recovery failed",
+        }));
+      } else {
+        const data = (await res.json()) as {
+          session?: ShellSessionSummary;
+        };
+        if (data.session?.name) {
+          setShells((current) => current.map((item) =>
+            item.runtimeId &&
+            item.runtimeId === data.session?.runtimeId
+              ? data.session!
+              : item.name === shell.name
+                ? data.session!
+                : item));
+        }
+        await fetchShells({ silent: true });
+      }
+    } catch (err: unknown) {
+      console.warn(
+        "Failed to recover terminal session:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      setRecoveryErrors((errors) => ({
+        ...errors,
+        [shell.name]: "Recovery failed",
+      }));
+    }
+    recoveringShells.delete(shell.name);
+    setRecoveringShellNames((names) =>
+      names.filter((name) => name !== shell.name));
   };
 
   const renameManagedShell = async (shell: ShellSessionSummary, nextNameRaw: string): Promise<boolean> => {
@@ -787,12 +851,26 @@ export function LocalTerminalSidebar() {
     ctx.setSidebarWidth((width) => clampTerminalSidebarWidth(width + delta));
   };
   const openActiveShell = (shell: ShellSessionSummary, options: { markSeen?: boolean } = {}) => {
+    if (
+      shell.lifecycleState !== undefined &&
+      shell.lifecycleState !== "live"
+    ) {
+      return;
+    }
     const markSeen = options.markSeen !== false;
     const existingTab = ctx.tabs.find((tab) => getSessionIds(tab.paneTree).includes(shell.name));
     if (existingTab) {
       ctx.setActiveTab(existingTab.id);
     } else {
-      ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name);
+      ctx.addSessionTab(
+        formatShellDisplayName(shell.name),
+        shell.name,
+        DEFAULT_CWD,
+        {
+          ...(shell.runtimeId ? { runtimeId: shell.runtimeId } : {}),
+          displayName: shell.name,
+        },
+      );
     }
     if (markSeen && shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq) {
       void patchShellUiState(shell.name, { lastSeenSeq: shell.latestSeq });
@@ -808,6 +886,12 @@ export function LocalTerminalSidebar() {
   };
 
   const makeShellActive = (shell: ShellSessionSummary) => {
+    if (
+      shell.lifecycleState !== undefined &&
+      shell.lifecycleState !== "live"
+    ) {
+      return;
+    }
     void patchShellUiState(shell.name, {
       placement: "active",
       ...(shell.latestSeq !== undefined && shell.latestSeq !== null ? { lastSeenSeq: shell.latestSeq } : {}),
@@ -1214,6 +1298,9 @@ export function LocalTerminalSidebar() {
             onToggle={moveShellToBackground}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell, anchorElement, returnFocusElement) => setCloseConfirmationRequest({ shell, anchorElement, returnFocusElement })}
+            onRecover={(shell) => void recoverManagedShell(shell)}
+            recoveringShellNames={recoveringShellNames}
+            recoveryErrors={recoveryErrors}
             draggingShellName={draggingShellName}
             dragOverShellName={dragOverShellName}
             onDragStart={beginShellDrag}
@@ -1235,6 +1322,9 @@ export function LocalTerminalSidebar() {
             onToggle={makeShellActive}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell, anchorElement, returnFocusElement) => setCloseConfirmationRequest({ shell, anchorElement, returnFocusElement })}
+            onRecover={(shell) => void recoverManagedShell(shell)}
+            recoveringShellNames={recoveringShellNames}
+            recoveryErrors={recoveryErrors}
             draggingShellName={draggingShellName}
             dragOverShellName={dragOverShellName}
             onDragStart={beginShellDrag}
@@ -1252,10 +1342,25 @@ export function LocalTerminalSidebar() {
           background: "var(--terminal-drawer-bg)",
           borderTop: "1px solid var(--terminal-drawer-border)",
           display: "flex",
+          gap: 12,
           justifyContent: "flex-start",
           padding: ctx.mobile ? "13px 20px calc(13px + env(safe-area-inset-bottom))" : "12px 18px",
         }}
       >
+        <p
+          data-testid="terminal-history-privacy"
+          style={{
+            color: "var(--terminal-drawer-subtle)",
+            flex: 1,
+            fontSize: 11,
+            lineHeight: "15px",
+            margin: 0,
+          }}
+        >
+          Serialized terminal history may retain commands, output, paths, and
+          printed secrets in owner-controlled storage. Deleting the session
+          erases its stored histories.
+        </p>
         <ThemePickerButton mobile={ctx.mobile} menuPlacement="above-start" />
       </div>
       {!ctx.mobile ? (

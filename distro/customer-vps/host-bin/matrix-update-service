@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import grp
+import http.client
 import json
 import os
 import pwd
@@ -15,6 +16,7 @@ import stat
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,9 @@ STATE_PATH = RUNTIME_DIR / "operation-state"
 PHASE_PATH = RUNTIME_DIR / "operation-phase"
 FAILURE_CODE_PATH = RUNTIME_DIR / "last-failure-code"
 WORKER_PATH = "/opt/matrix/bin/matrix-sync-agent"
+LEGACY_HANDOFF_GRACE_SECONDS = 30
 SO_PEERCRED = getattr(socket, "SO_PEERCRED", 17)
+_legacy_gateway_healthy_since: float | None = None
 ALLOWED_PHASES = {
     "idle",
     "admitted",
@@ -73,8 +77,16 @@ ALLOWED_FAILURE_CODES = {
     "terminal_runtime_supervisor_enable_failed",
     "terminal_runtime_supervisor_start_failed",
     "terminal_runtime_supervisor_cleanup_failed",
+    "terminal_runtime_gateway_probe_timeout",
+    "terminal_runtime_gateway_import_failed",
+    "terminal_runtime_gateway_projection_failed",
+    "terminal_runtime_gateway_request_failed",
+    "terminal_runtime_gateway_probe_failed",
     "update_runtime_enable_failed",
     "legacy_update_bridge_disable_failed",
+    "gateway_runtime_preparation_timeout",
+    "gateway_runtime_preparation_failed",
+    "gateway_start_failed",
     "health_check_failed",
 }
 
@@ -375,10 +387,128 @@ def _peer_uid(connection: socket.socket) -> int:
     return uid
 
 
+def _legacy_bridge_active() -> bool:
+    try:
+        result = subprocess.run(
+            [
+                "systemctl",
+                "show",
+                "--property=ActiveState",
+                "--value",
+                "matrix-sync-agent.service",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("legacy update bridge state unavailable")
+    state = result.stdout.strip()
+    if result.returncode != 0 or state not in {
+        "active",
+        "activating",
+        "deactivating",
+        "failed",
+        "inactive",
+        "reloading",
+    }:
+        raise RuntimeError("legacy update bridge state invalid")
+    return state not in {"failed", "inactive"}
+
+
+def _stop_legacy_bridge() -> bool:
+    try:
+        result = subprocess.run(
+            ["systemctl", "stop", "matrix-sync-agent.service"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and not _legacy_bridge_active()
+
+
+def _legacy_bridge_enabled() -> bool:
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-enabled", "matrix-sync-agent.service"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("legacy update bridge enablement unavailable")
+    state = result.stdout.strip()
+    if (result.returncode, state) == (0, "enabled"):
+        return True
+    if (result.returncode, state) == (1, "disabled"):
+        return False
+    raise RuntimeError("legacy update bridge enablement invalid")
+
+
+def _legacy_gateway_healthy() -> bool:
+    connection = http.client.HTTPConnection("127.0.0.1", 4000, timeout=2)
+    try:
+        connection.request("GET", "/health")
+        return connection.getresponse().status == 200
+    except (OSError, TimeoutError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
+
+
+def _legacy_bridge_retirable() -> bool:
+    global _legacy_gateway_healthy_since
+    if not _legacy_bridge_enabled():
+        _legacy_gateway_healthy_since = None
+        return True
+    if not _legacy_gateway_healthy():
+        _legacy_gateway_healthy_since = None
+        return False
+    current = time.monotonic()
+    if _legacy_gateway_healthy_since is None:
+        _legacy_gateway_healthy_since = current
+        return False
+    return current - _legacy_gateway_healthy_since >= LEGACY_HANDOFF_GRACE_SECONDS
+
+
+def _spawn_worker() -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        [WORKER_PATH, "--worker"],
+        stdin=subprocess.DEVNULL,
+        close_fds=True,
+    )
+
+
+def _advance_legacy_handoff(
+    worker: subprocess.Popen[bytes] | None,
+) -> subprocess.Popen[bytes] | None:
+    if worker is not None or _read_state() == "running":
+        return worker
+    if not _legacy_bridge_retirable():
+        return worker
+    if not _stop_legacy_bridge():
+        raise RuntimeError("legacy update bridge handoff failed")
+    if _read_state() != "failed":
+        _write_state("idle")
+    worker = _spawn_worker()
+    _resume_pending_request(worker)
+    return worker
+
+
 def _serve_connection(
     connection: socket.socket,
     matrix_uid: int,
-    worker: subprocess.Popen[bytes],
+    worker: subprocess.Popen[bytes] | None,
 ) -> None:
     connection.settimeout(10)
     if _peer_uid(connection) not in {0, matrix_uid}:
@@ -390,7 +520,7 @@ def _serve_connection(
         connection.sendall(_error("invalid_request", "Update request rejected"))
         return
     if request["operation"] == "Status":
-        status = "running" if REQUEST_PATH.exists() else _read_state()
+        status = "running" if worker is None or REQUEST_PATH.exists() else _read_state()
         response: dict[str, Any] = {
             "schemaVersion": 1,
             "ok": True,
@@ -402,7 +532,7 @@ def _serve_connection(
             response["failureCode"] = failure_code
         connection.sendall(_response(response))
         return
-    if worker.poll() is not None:
+    if worker is None or worker.poll() is not None:
         connection.sendall(_error("unavailable", "Update service unavailable"))
         return
     if REQUEST_PATH.exists() or _read_state() == "running":
@@ -436,20 +566,17 @@ def run_service() -> int:
     matrix_group = grp.getgrnam("matrix")
     _prepare_runtime_directory(matrix_group.gr_gid)
     interrupted = _recover_interrupted_operation()
-    if not interrupted and _read_state() != "failed":
+    legacy_handoff = _legacy_bridge_active()
+    if not interrupted and not legacy_handoff and _read_state() != "failed":
         _write_state("idle")
-    worker = subprocess.Popen(
-        [WORKER_PATH, "--worker"],
-        stdin=subprocess.DEVNULL,
-        close_fds=True,
-    )
+    worker = None if legacy_handoff else _spawn_worker()
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(str(SOCKET_PATH))
     os.chown(SOCKET_PATH, 0, matrix_group.gr_gid)
     os.chmod(SOCKET_PATH, 0o660)
     listener.listen(16)
     listener.settimeout(1)
-    if not interrupted:
+    if worker is not None and not interrupted:
         _resume_pending_request(worker)
 
     stopping = False
@@ -462,7 +589,9 @@ def run_service() -> int:
     signal.signal(signal.SIGINT, stop_service)
     try:
         while not stopping:
-            if worker.poll() is not None:
+            if worker is None:
+                worker = _advance_legacy_handoff(worker)
+            elif worker.poll() is not None:
                 return 1
             try:
                 connection, _ = listener.accept()
@@ -483,7 +612,7 @@ def run_service() -> int:
             SOCKET_PATH.unlink()
         except FileNotFoundError:
             pass
-        if worker.poll() is None:
+        if worker is not None and worker.poll() is None:
             worker.terminate()
             try:
                 worker.wait(timeout=20)
