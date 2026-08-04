@@ -41,6 +41,7 @@ let confirmationState = 'waiting';
 const heldPaneCount = 0;
 let workloadPaneLaunched = false;
 let workloadPaneState = 'not_launched';
+let workloadPaneExitStatus = null;
 let startupFailureStarted = false;
 let startupStageRevision = 0;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
@@ -202,6 +203,7 @@ async function launchCreateWorkloadPane(sessionName, env) {
   await recordStartupStage();
 }
 async function inspectWorkloadPane(sessionName, env) {
+  workloadPaneExitStatus = null;
   try {
     const { stdout } = await execFileAsync(
       zellij,
@@ -224,6 +226,7 @@ async function inspectWorkloadPane(sessionName, env) {
       && (!Number.isInteger(pane.exit_status) || pane.exit_status < 0 || pane.exit_status > 255)) {
       return 'ambiguous';
     }
+    workloadPaneExitStatus = pane.exit_status;
     if (pane.is_held || pane.exited) {
       if (pane.exit_status === 0) return 'held_success';
       if (Number.isInteger(pane.exit_status)) return 'held_failure';
@@ -283,6 +286,10 @@ function startupSnapshot() {
   const boundedWorkloadPaneState = WORKLOAD_PANE_STATES.has(workloadPaneState)
     ? workloadPaneState
     : 'ambiguous';
+  const boundedWorkloadPaneExitStatus = workloadPaneExitStatus === null ||
+    Number.isInteger(workloadPaneExitStatus) && workloadPaneExitStatus >= 0 && workloadPaneExitStatus <= 255
+    ? workloadPaneExitStatus
+    : null;
   return {
     stage: startupStage,
     gateRecorded,
@@ -291,6 +298,7 @@ function startupSnapshot() {
     heldPaneCount,
     confirmationSent,
     workloadPaneState: boundedWorkloadPaneState,
+    workloadPaneExitStatus: boundedWorkloadPaneExitStatus,
     ...roleSnapshot,
   };
 }

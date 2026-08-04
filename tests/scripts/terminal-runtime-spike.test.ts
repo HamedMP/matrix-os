@@ -393,13 +393,20 @@ describe('terminal runtime spike evidence', () => {
       'pane.terminal_command === WORKLOAD_PANE',
       "pane.pane_command?.startsWith('matrix-agent-probe ')",
       'workloadPaneState',
+      'workloadPaneExitStatus',
+      'pane.exit_status',
     ]);
     expectAll(packer, [
       'keeper_workload',
+      'keeper_workload_exit',
       'failure_workload',
+      'failure_workload_exit',
       'w${keeper_workload}',
+      'e${keeper_workload_exit}',
       'w${failure_workload}',
+      'e${failure_workload_exit}',
       '/^(not_launched|missing|running|held_success|held_failure|other|ambiguous)$/.test(v.workloadPaneState)',
+      '(v.workloadPaneExitStatus!==null&&(!Number.isInteger(v.workloadPaneExitStatus)||v.workloadPaneExitStatus<0||v.workloadPaneExitStatus>255))',
     ]);
   });
   it('can remove only its immutable disposable preview before a clean proof', async () => {
