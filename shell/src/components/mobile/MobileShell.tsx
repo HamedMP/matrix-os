@@ -311,6 +311,7 @@ export function MobileShell({ launchAppPath, terminalLaunchAction, onOpenCommand
   const openAgentSetupTerminal = useCallback((
     action: TerminalLaunchAction,
     consumeLocation = false,
+    scopeLaunch = true,
   ) => {
     const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
     if (!terminal) return;
@@ -325,7 +326,7 @@ export function MobileShell({ launchAppPath, terminalLaunchAction, onOpenCommand
     setSettingsOpen(false);
     setView("app");
     requestAnimationFrame(() => {
-      if (enqueueTerminalLaunchAction(action, id) && consumeLocation) {
+      if (enqueueTerminalLaunchAction(action, scopeLaunch ? id : undefined) && consumeLocation) {
         consumeTerminalLaunchActionFromLocation();
       }
     });
@@ -341,7 +342,7 @@ export function MobileShell({ launchAppPath, terminalLaunchAction, onOpenCommand
     launchPathConsumedRef.current = launchKey;
     if (launchAppPath === "__terminal__" && terminalLaunchAction) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- imperative one-shot launch: the external URL requests a new canonical Terminal instance and queues its fixed action. The dedupe ref prevents repeated launches.
-      openAgentSetupTerminal(terminalLaunchAction, true);
+      openAgentSetupTerminal(terminalLaunchAction, true, false);
       return;
     }
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state, react-doctor/no-adjust-state-on-prop-change -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.

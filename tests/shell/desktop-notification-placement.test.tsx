@@ -174,7 +174,7 @@ describe("Desktop shell notifications", () => {
     window.sessionStorage.clear();
   });
 
-  it("opens and targets the canonical Canvas Terminal for the T3 handoff", async () => {
+  it("keeps the T3 URL handoff drainable after Terminal window hydration", async () => {
     act(() => {
       useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });
     });
@@ -192,7 +192,9 @@ describe("Desktop shell notifications", () => {
       ).toBe(true);
     });
     await waitFor(() => {
-      expect(drainTerminalLaunchQueue().map((launch) => launch.action)).toEqual(["t3-connect"]);
+      expect(
+        drainTerminalLaunchQueue("hydrated-terminal-window").map((launch) => launch.action),
+      ).toEqual(["t3-connect"]);
     });
     expect(window.location.search).toBe("");
   });

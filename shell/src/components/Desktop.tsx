@@ -544,8 +544,11 @@ export function Desktop({ launchAppPath, terminalLaunchAction, onOpenCommandPale
     if (!match) return;
     launchPathConsumedRef.current = launchKey;
     if (launchAppPath === TERMINAL_SETUP_WINDOW_PATH && terminalLaunchAction) {
-      openTerminalWithAction((targetId) => {
-        if (enqueueTerminalLaunchAction(terminalLaunchAction, targetId)) {
+      openTerminalWithAction(() => {
+        // URL handoffs can run while persisted windows are still hydrating.
+        // Keep this launch unscoped so the canonical Terminal that survives
+        // hydration can drain it instead of orphaning it on a transient ID.
+        if (enqueueTerminalLaunchAction(terminalLaunchAction)) {
           consumeTerminalLaunchActionFromLocation();
         }
       });
