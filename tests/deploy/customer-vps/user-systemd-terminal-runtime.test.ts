@@ -372,7 +372,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(workflow).toContain("$op,$sha,$nonce,$version");
     const recoveryStep = workflow.slice(
       workflow.indexOf("- name: Recover the exact-head disposable preview updater"),
-      workflow.indexOf("- name: Resolve exact-head disposable preview"),
+      workflow.indexOf("- name: Install bounded acceptance assets through the authenticated runtime"),
     );
     expect(recoveryStep.indexOf('deploy_body="$(jq -cn')).toBeGreaterThanOrEqual(0);
     expect(recoveryStep.indexOf('deploy_body="$(jq -cn')).toBeLessThan(
@@ -380,6 +380,16 @@ describe("customer VPS user-systemd terminal runtime", () => {
         'body=\'{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}\'',
       ),
     );
+    expect(recoveryStep).toContain("deadline=$((SECONDS + 1200))");
+    expect(recoveryStep).toContain(
+      '"/usr/bin/systemctl","show","matrix-sync-agent.service","--property=ActiveState"',
+    );
+    expect(recoveryStep).toContain("inactive_samples");
+    expect(recoveryStep).toContain("probe_failures");
+    expect(recoveryStep).toContain("if ! curl --fail --silent --show-error");
+    expect(recoveryStep).toContain("return 1");
+    expect(recoveryStep).toContain('echo "address=$address" >>"$GITHUB_OUTPUT"');
+    expect(workflow).not.toContain("deadline=$((SECONDS + 3600))");
   });
 
   it("rejects permissive descriptor parsers and pins the keeper helper to the descriptor generation", () => {

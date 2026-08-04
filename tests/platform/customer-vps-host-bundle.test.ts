@@ -816,8 +816,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]');
     expect(workflow).toContain("'{version: $version, handle: $handle}'");
     expect(workflow).toContain('--data-binary "$deploy_body"');
+    expect(workflow).not.toContain('name: Resolve exact-head disposable preview');
     expect(workflow.indexOf('name: Recover the exact-head disposable preview updater'))
-      .toBeLessThan(workflow.indexOf('name: Resolve exact-head disposable preview'));
+      .toBeLessThan(workflow.indexOf('name: Install bounded acceptance assets through the authenticated runtime'));
   });
 
   it('unrelated PR labels cannot cancel an active preview deployment', () => {
