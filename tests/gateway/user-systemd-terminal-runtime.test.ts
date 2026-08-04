@@ -326,6 +326,40 @@ describe("user-systemd terminal runtime", () => {
     )).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("retains cleanup metadata when a referenced launch snapshot cannot be removed", async () => {
+    const environmentPath = join(homePath, "system", "terminal-runtimes", "env", `${RUNTIME_ID}-0123456789abcdef.json`);
+    await mkdir(join(homePath, "system", "terminal-runtimes", "env"), { recursive: true });
+    await writeFile(environmentPath, "{}\n", { mode: 0o600 });
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({ stdout: "", stderr: "" }));
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe: vi.fn(async () => true),
+      now: () => "2026-07-31T12:00:00.000Z",
+      removePath: vi.fn(async (path: string) => {
+        if (path === environmentPath) throw new Error("simulated cleanup failure");
+        await rm(path, { force: true });
+      }),
+    });
+    await runtime.create({
+      runtimeId: RUNTIME_ID,
+      scope: "terminal",
+      kind: "shell",
+      displayName: "Main",
+      cwd,
+      layoutPath,
+      environmentPath,
+    });
+
+    await expect(runtime.delete(RUNTIME_ID)).rejects.toThrow("Terminal runtime unavailable");
+    await expect(readFile(
+      join(homePath, "system", "terminal-runtimes", `${RUNTIME_ID}.json`),
+      "utf8",
+    )).resolves.toContain(environmentPath);
+  });
+
   it("retains the descriptor when stop fails and never leaks raw systemctl errors", async () => {
     const runCommand = vi.fn<UserSystemdCommandRunner>()
       .mockResolvedValueOnce({ stdout: "", stderr: "" })

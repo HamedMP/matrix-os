@@ -693,6 +693,7 @@ jobs:
               "hostileDescriptorFieldsFailClosed",
               "independentRuntimeCgroups",
               "invalidRuntimeIdsFailClosed",
+              "metadataRenamePreservesRuntime",
               "newRuntimesUseCurrentGeneration",
               "ordinaryShellRuntime",
               "postRollbackRuntimeUsesCompatibleGeneration",

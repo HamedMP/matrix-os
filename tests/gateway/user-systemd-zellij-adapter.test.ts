@@ -173,7 +173,7 @@ describe("user-systemd zellij adapter", () => {
     expect(controller.delete).not.toHaveBeenCalled();
   });
 
-  it("reconciles an existing inactive descriptor instead of allocating a replacement identity", async () => {
+  it("leaves an existing inactive descriptor interrupted instead of restarting its workload", async () => {
     const existing = descriptor({ cwd: homePath });
     controller.findByDisplayName.mockResolvedValue(existing);
     const adapter = createUserSystemdZellijAdapter({
@@ -185,9 +185,12 @@ describe("user-systemd zellij adapter", () => {
       runtimeIdGenerator: () => "rt_ffffffffffffffffffffffffffffffff",
     });
 
-    await adapter.createSession({ name: "Main", cwd: homePath });
+    await expect(adapter.createSession({ name: "Main", cwd: homePath })).rejects.toMatchObject({
+      code: "session_interrupted",
+      status: 409,
+    });
 
-    expect(controller.start).toHaveBeenCalledWith(RUNTIME_ID);
+    expect(controller.start).not.toHaveBeenCalled();
     expect(controller.create).not.toHaveBeenCalled();
   });
 });

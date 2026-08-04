@@ -199,6 +199,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(rebootVerification).toContain('return 1');
     expect(acceptance).toContain("gatewayRestartPreservesRuntimes");
     expect(acceptance).toContain("gatewaySigkillPreservesRuntimes");
+    expect(acceptance).toContain("metadataRenamePreservesRuntime");
+    expect(acceptance).toContain('rename_session "$shell_name" "$renamed_shell_name"');
+    expect(acceptance).toContain('roles_match "$renamed_shell_name" shell "$shell_baseline"');
+    expect(workflow).toContain('"metadataRenamePreservesRuntime"');
     expect(acceptance).toContain("bundleOnePreservesRuntimes");
     expect(acceptance).toContain("bundleTwoPreservesRuntimes");
     expect(acceptance).toContain("rollbackPreservesRuntimes");
@@ -249,7 +253,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("cleanup_stale_acceptance_runtimes");
     expect(acceptance).toContain("list_stale_acceptance_runtimes");
     expect(acceptance).toContain('os.open(entry.path, os.O_RDONLY | os.O_NOFOLLOW)');
-    expect(acceptance).toContain('re.fullmatch(r"u-[sadlpc]-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}", display_name)');
+    expect(acceptance).toContain('re.fullmatch(r"u-[sradlpc]-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}", display_name)');
     expect(prepareWorker).toContain("cleanup_stale_acceptance_runtimes");
     expect(acceptance).toContain('owner_systemctl stop "matrix-zellij@${runtime_id}.service"');
     expect(acceptance).toContain('rm -f -- "${descriptor_root}/${runtime_id}.json"');
