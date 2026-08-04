@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "../../desktop/src/shared/app-error";
 import GitPanel from "../../desktop/src/renderer/src/features/git/GitPanel";
 import { GitGraph } from "../../desktop/src/renderer/src/features/git/GitGraph";
-import { diffLineKind } from "../../desktop/src/renderer/src/features/git/GitCommitDetail";
+import { DiffLines, diffLineKind } from "../../desktop/src/renderer/src/features/git/GitCommitDetail";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useGit } from "../../desktop/src/renderer/src/stores/git";
@@ -134,7 +134,7 @@ describe("GitPanel graph tab", () => {
   });
 
   it("opens commit detail on click and expands per-file diffs with +/- lines", async () => {
-    renderPanel(makeApi(HEALTHY_ROUTES));
+    const { container } = renderPanel(makeApi(HEALTHY_ROUTES));
 
     await waitFor(() => expect(screen.getByText("Wire the graph")).toBeTruthy());
     fireEvent.click(screen.getByText("Wire the graph"));
@@ -144,13 +144,13 @@ describe("GitPanel graph tab", () => {
     expect(screen.getByText("binary")).toBeTruthy();
 
     fireEvent.click(screen.getByText("src/a.ts"));
-    await waitFor(() => expect(screen.getByText("+new")).toBeTruthy());
-    expect(screen.getByText("-old")).toBeTruthy();
+    const addLine = await waitFor(() => container.querySelector('[data-diff-kind="add"]'));
+    const delLine = container.querySelector('[data-diff-kind="del"]');
+    expect(addLine?.textContent).toBe("+new");
+    expect(delLine?.textContent).toBe("-old");
     expect(screen.getByText("@@ -1,2 +1,3 @@")).toBeTruthy();
 
-    const addLine = screen.getByText("+new").closest("[data-diff-kind]");
     expect(addLine?.getAttribute("data-diff-kind")).toBe("add");
-    const delLine = screen.getByText("-old").closest("[data-diff-kind]");
     expect(delLine?.getAttribute("data-diff-kind")).toBe("del");
 
     fireEvent.click(screen.getByLabelText("Close commit detail"));
@@ -332,5 +332,12 @@ describe("diffLineKind", () => {
     expect(diffLineKind("\\ No newline at end of file")).toBe("meta");
     expect(diffLineKind(" context")).toBe("context");
     expect(diffLineKind("")).toBe("context");
+  });
+
+  it("renders add and delete markers exactly once", () => {
+    const { container } = render(<DiffLines patch={"-old\n+new"} />);
+
+    expect(container.querySelector('[data-diff-kind="del"]')?.textContent).toBe("-old");
+    expect(container.querySelector('[data-diff-kind="add"]')?.textContent).toBe("+new");
   });
 });

@@ -45,6 +45,7 @@ export function DiffLines({ patch }: { patch: string }) {
       {visible.map((line, index) => {
         const kind = diffLineKind(line);
         const style = DIFF_LINE_STYLE[kind];
+        const content = kind === "add" || kind === "del" ? line.slice(1) : line;
         return (
           <div
             key={index}
@@ -55,7 +56,7 @@ export function DiffLines({ patch }: { patch: string }) {
             <span className="w-4 shrink-0 text-center select-none">
               {kind === "add" ? "+" : kind === "del" ? "-" : " "}
             </span>
-            <span className="pr-2 break-all whitespace-pre-wrap">{line}</span>
+            <span className="pr-2 break-all whitespace-pre-wrap">{content}</span>
           </div>
         );
       })}

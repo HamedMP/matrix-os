@@ -448,7 +448,8 @@ ${bigHunk.join("\n")}
       await seedProject(homePath, "repo", repoPath);
       const maxBufferErr = Object.assign(new Error("stdout maxBuffer length exceeded"), { code: "ERR_OUT_OF_RANGE" });
       const nameStatus = `M\0src/a.ts\0R100\0name1.txt\0name2.txt\0`;
-      const gitLog = makeService(probeAwareRunCommand({ show: maxBufferErr, nameStatus: { stdout: nameStatus } }));
+      const runCommand = probeAwareRunCommand({ show: maxBufferErr, nameStatus: { stdout: nameStatus } });
+      const gitLog = makeService(runCommand);
 
       const result = await gitLog.getCommitDiff("repo", SHA_A, { maxFiles: 200, maxLines: 400 });
 
@@ -459,6 +460,10 @@ ${bigHunk.join("\n")}
         { path: "src/a.ts", oldPath: null, status: "M", additions: null, deletions: null, binary: false, patch: null, truncated: true },
         { path: "name2.txt", oldPath: "name1.txt", status: "R", additions: null, deletions: null, binary: false, patch: null, truncated: true },
       ]);
+      const fallbackCall = (runCommand as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) => call[1][0] === "show" && call[1].includes("--name-status"),
+      );
+      expect(fallbackCall?.[1]).toContain("--no-color");
     });
 
     it("maps an unknown commit to a 404", async () => {

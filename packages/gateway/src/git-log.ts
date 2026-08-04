@@ -603,7 +603,7 @@ export function createGitLog(options: {
       try {
         const fallback = await runCommand(
           "git",
-          ["show", "--format=", "--name-status", "-z", "-M", "--first-parent", sha],
+          ["show", "--format=", "--name-status", "--no-color", "-z", "-M", "--first-parent", sha],
           { cwd: repo.repoPath, timeout: DEFAULT_TIMEOUT_MS },
         );
         const parsed = parseNameStatus(fallback.stdout, opts.maxFiles);
