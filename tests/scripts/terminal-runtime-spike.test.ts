@@ -310,7 +310,7 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
     expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath)');
     expect(keeper).toContain(
-      "if (paneReleased && descriptor.intent === 'create' && gateRecorded && !confirmationSent)",
+      "if (paneReleased && descriptor.intent === 'create' && !confirmationSent)",
     );
     expect(keeper).toContain("pty.write('\\r')");
     expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
@@ -878,9 +878,9 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain('startupWatchdog = setTimeout');
     expect(keeper).toContain("void failStartup('readiness_timeout')");
     expect(keeper).toContain(
-      "paneReleased && descriptor.intent === 'create' && gateRecorded && !confirmationSent",
+      "paneReleased && descriptor.intent === 'create' && !confirmationSent",
     );
-    expect(keeper).not.toContain("descriptor.intent === 'recover' && gateRecorded && !confirmationSent");
+    expect(keeper).not.toContain("descriptor.intent === 'recover' && !confirmationSent");
     expect(keeper).not.toContain('--force-run-commands');
     expect(keeper).toContain('await recordStartupStage();\n    if (paneReleased && responsive && detected');
     expect(keeper).toContain('{ stage: startupStage, ...roleSnapshot }');
