@@ -2,6 +2,7 @@
 import { execFile, spawn as spawnProcess } from 'node:child_process';
 import { lstat, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify, stripVTControlCharacters } from 'node:util';
 const execFileAsync = promisify(execFile);
@@ -14,7 +15,7 @@ const runtimeRoot = `/run/matrix-terminal-runtime-spikes/${runNamespace}`;
 const stateRoot = `/home/matrix/home/system/terminal-runtime-spikes/${runNamespace}`;
 const zellij = '/opt/matrix/bin/zellij';
 const NODE = '/opt/matrix/runtime/node/bin/node';
-const WORKLOAD_PANE = '/opt/matrix/bin/matrix-terminal-spike-pane';
+const WORKLOAD_PANE = join(dirname(keeperExecutable), 'workload-pane.mjs');
 const WORKLOAD_PANE_NAME = 'matrix-runtime-workload-probe';
 const WORKLOAD_PANE_STATES = new Set([
   'not_launched',
@@ -490,8 +491,9 @@ async function main() {
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
     const paneReleased = await regularFileExists(paneReleasePath);
+    const startupAuthorized = descriptor.intent === 'recover' || paneReleased;
     paneReleasedRecorded = paneReleased;
-    const responsive = paneReleased && await exactSessionResponds();
+    const responsive = startupAuthorized && await exactSessionResponds();
     roleSnapshot.responsive = responsive;
     if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched) {
       await launchCreateWorkloadPane(sessionName, env);
@@ -499,11 +501,11 @@ async function main() {
     if (descriptor.intent === 'create' && workloadPaneLaunched) {
       workloadPaneState = await inspectWorkloadPane(sessionName, env);
     }
-    const detected = paneReleased && (descriptor.intent === 'recover' || workloadPaneLaunched)
+    const detected = startupAuthorized && (descriptor.intent === 'recover' || workloadPaneLaunched)
       ? await cgroupRoles(cgroup.path, descriptor.intent === 'create')
       : null;
     await recordStartupStage();
-    if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
+    if (startupAuthorized && responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
       roles = detected;
       break;
     }

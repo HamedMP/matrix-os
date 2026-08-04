@@ -124,6 +124,28 @@ summary_status="$(/opt/matrix/runtime/node/bin/node -e '
   process.stdout.write(`${v.s1.status}_${v.s2.status}\n`);
 ' "$evidence_root/summary.json" 2>/dev/null || printf invalid)"
 if [ "$summary_status" != pass_pass ]; then
+  gate_failures="$(/opt/matrix/runtime/node/bin/node -e '
+    const fs=require("fs"),v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+    const allowed={s1:new Set([
+      "keeperMainPid","runtimeCgroupMembers","gatewayOutsideCgroup","attachOutsideCgroup",
+      "detachPreservesPids","gatewayRestartPreservesPids","gatewayCrashPreservesPids",
+      "shellRestartPreservesPids","stopEmptiesCgroup","keeperLossDeterministic",
+      "serverLossDeterministic","readinessGated","layeredMemoryHigh",
+    ]),s2:new Set([
+      "exactOptionSyntax","cacheMappedByRuntime","layoutRestored","viewportRestored",
+      "scrollbackBounded","lossWindowBounded","commandsConfirmationGated","forceRunAbsent",
+      "corruptionFallback","deletionComplete","diskAccountingBounded","liveSerializationDisableSafe",
+    ])};
+    const missing={s1:[],s2:[]};
+    for(const gate of ["s1","s2"]){
+      if(!v[gate]||typeof v[gate].checks!=="object"||v[gate].checks===null)process.exit(1);
+      const entries=Object.entries(v[gate].checks);
+      if(entries.length!==allowed[gate].size||entries.some(([name,value])=>!allowed[gate].has(name)||typeof value!=="boolean"))process.exit(1);
+      for(const [name,value] of entries)if(!value)missing[gate].push(name.toLowerCase());
+      missing[gate].sort();
+    }
+    process.stdout.write(`s1${missing.s1.join("_")||"none"}_s2${missing.s2.join("_")||"none"}`);
+  ' "$evidence_root/summary.json" 2>/dev/null || printf 's1none_s2none')"
   read -r failure_stage failure_code failure_responsive failure_zellij failure_shell failure_agent failure_gate failure_release failure_confirmation failure_held failure_helper failure_helper_exit failure_workload failure_workload_exit failure_sent < <(/opt/matrix/runtime/node/bin/node -e '
     const fs=require("fs"),v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
     if(!/^(descriptor|launch|cgroup|readiness|notify)$/.test(v.stage)||!/^[a-z0-9_]{1,32}$/.test(v.code)||
@@ -158,7 +180,7 @@ if [ "$summary_status" != pass_pass ]; then
   [[ "$failure_base_substate" =~ ^[a-z0-9_]{1,24}$ ]] || failure_base_substate=unknown
   failure_base_status="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p ExecMainStatus --value 2>/dev/null || true)"
   [[ "$failure_base_status" =~ ^[0-9]{1,3}$ ]] || failure_base_status=999
-  echo "spike_pack_evidence_failed_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}_g${failure_gate}_p${failure_release}_c${failure_confirmation}_h${failure_held}_q${failure_helper}_j${failure_helper_exit}_w${failure_workload}_e${failure_workload_exit}_x${failure_sent}_d${failure_progress}_u${failure_runner_status}_b${failure_base_state}_${failure_base_substate}_${failure_base_status}"
+  echo "spike_pack_evidence_failed_${gate_failures}_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}_g${failure_gate}_p${failure_release}_c${failure_confirmation}_h${failure_held}_q${failure_helper}_j${failure_helper_exit}_w${failure_workload}_e${failure_workload_exit}_x${failure_sent}_d${failure_progress}_u${failure_runner_status}_b${failure_base_state}_${failure_base_substate}_${failure_base_status}"
   exit 0
 fi
 /opt/matrix/runtime/node/bin/node \
