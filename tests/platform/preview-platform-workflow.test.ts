@@ -6,6 +6,47 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("preview platform workflow", () => {
+  it("resolves the requested PR head for manual preview deployments", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("Resolve PR source");
+    expect(workflow).toContain('gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"');
+    expect(workflow).toContain("head_sha=$head_sha");
+    expect(workflow).toContain("ref: ${{ steps.source.outputs.head_sha }}");
+    expect(workflow).toContain('head_sha="${{ steps.source.outputs.head_sha }}"');
+    expect(workflow).not.toContain("ref: ${{ github.event.pull_request.head.sha || github.sha }}");
+  });
+
+  it("bakes the Clerk publishable key into the preview shell image", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}",
+    );
+    expect(workflow).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required");
+    expect(workflow).toContain(
+      "_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}",
+    );
+    expect(workflow).toContain("_NEXT_PUBLIC_MATRIX_APP_URL=https://preview.matrix-os.com");
+  });
+
+  it("configures the public preview origin for the runtime auth shell", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      "NEXT_PUBLIC_MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}",
+    );
+  });
+
   it("sources the deployed control-plane origin from the selected environment", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/platform-cloud-run.yml"),
@@ -39,5 +80,50 @@ describe("preview platform workflow", () => {
     expect(bootstrap).toBeGreaterThan(-1);
     expect(deriveOrigin).toBeGreaterThan(bootstrap);
     expect(finalDeploy).toBeGreaterThan(deriveOrigin);
+  });
+
+  it("recognizes the isolated Cloud Run service host behind the preview domain", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain('local session_hosts="$2"');
+    expect(workflow).toContain(
+      'PREVIEW_SERVICE_DOMAIN="${service_base_url#https://}"',
+    );
+    expect(workflow).toContain(
+      'PREVIEW_SESSION_HOSTS="${PREVIEW_SERVICE_DOMAIN}"',
+    );
+    expect(workflow).toContain(
+      "MATRIX_APP_DOMAIN_HOSTS=${session_hosts}",
+    );
+    expect(workflow).toContain(
+      'deploy_preview "$PREVIEW_API_ORIGIN" "$PREVIEW_SESSION_HOSTS"',
+    );
+  });
+
+  it("passes only the selected disposable VPS route into the isolated preview", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      "PRODUCTION_PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}",
+    );
+    expect(workflow).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h');
+    expect(workflow).not.toContain('and .provisioningClass == "preview"');
+    expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_MACHINE_ID=${preview_machine_id}");
+    expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_HANDLE=${preview_handle}");
+    expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_IPV4=${preview_ipv4}");
+    expect(workflow).toContain("preview_owner_clerk_user_id=\"$(jq -r '.clerkUserId' <<< \"$preview_machine\")\"");
+    expect(workflow).toContain("preview_access_clerk_user_ids=\"$(jq -r '(.accessClerkUserIds // []) | join(\":\")' <<< \"$preview_machine\")\"");
+    expect(workflow).toContain("(.accessClerkUserIds // []) | type == \"array\"");
+    expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_OWNER_CLERK_USER_ID=${preview_owner_clerk_user_id}");
+    expect(workflow).toContain("PLATFORM_PREVIEW_ROUTE_ACCESS_CLERK_USER_IDS=${preview_access_clerk_user_ids}");
+    expect(workflow).toContain("CUSTOMER_VPS_TLS_VERIFY=false");
+    expect(workflow).not.toContain("PLATFORM_DATABASE_URL=platform-database-url:latest");
   });
 });

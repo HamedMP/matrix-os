@@ -1,5 +1,5 @@
 import type { UserMachineRecord } from './db.js';
-import { normalizeDeviceReturnPath } from './request-routing.js';
+import { buildBillingSetupPath, normalizeDeviceReturnPath } from './request-routing.js';
 
 export const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS = 10_000;
@@ -19,6 +19,14 @@ export function buildBillingSetupTarget(appShellOrigin: string, redirectTarget: 
   url.searchParams.set('billing', 'setup');
   const deviceReturnTarget = deviceReturnTargetFromRedirectPath(redirectTarget);
   if (deviceReturnTarget) url.searchParams.set('device_return', deviceReturnTarget);
+  const setupPath = new URL(buildBillingSetupPath(redirectTarget), appShellOrigin);
+  if (
+    setupPath.searchParams.get('launch') === '__terminal__' &&
+    setupPath.searchParams.get('terminal_action') === 't3-connect'
+  ) {
+    url.searchParams.set('launch', '__terminal__');
+    url.searchParams.set('terminal_action', 't3-connect');
+  }
   return url.toString();
 }
 

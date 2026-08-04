@@ -16,6 +16,7 @@ export function buildAllowedOrigins(options: {
       "http://localhost:4001",
       "http://localhost:4766",
       "http://127.0.0.1:4766",
+      "https://app.t3.codes",
       ...symphonyPorts.flatMap((port) => [
         `http://localhost:${port}`,
         `http://127.0.0.1:${port}`,

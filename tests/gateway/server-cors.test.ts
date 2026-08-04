@@ -15,6 +15,7 @@ describe("gateway CORS origins", () => {
       "http://localhost:4001",
       "http://localhost:4766",
       "http://127.0.0.1:4766",
+      "https://app.t3.codes",
       "http://localhost:4088",
       "http://127.0.0.1:4088",
     ]);

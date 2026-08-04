@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode } from "../../shell/src/stores/terminal-store.js";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "../../shell/src/components/terminal/terminal-input-event.js";
+import { enqueueTerminalLaunchAction } from "../../shell/src/lib/terminal-launch.js";
 
 vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
   PaneGrid: ({ paneTree }: { paneTree: PaneNode }) => {
@@ -141,6 +142,27 @@ describe("TerminalApp mobile actions", () => {
     });
 
     expect(screen.queryByText("Mobile Shell")).toBeNull();
+  });
+
+  it("runs queued T3 setup inside a canonical shell session", async () => {
+    const fetchMock = vi.mocked(fetch);
+    enqueueTerminalLaunchAction("t3-connect");
+
+    render(<TerminalApp mobile />);
+
+    await waitFor(() => {
+      const createCalls = fetchMock.mock.calls.filter(([input, init]) => (
+        String(input).endsWith("/api/terminal/sessions") && init?.method === "POST"
+      ));
+      expect(createCalls).toHaveLength(1);
+      const body = JSON.parse(String(createCalls[0]?.[1]?.body ?? "{}")) as { cmd?: string };
+      expect(body.cmd).toContain("bash -lc");
+      expect(body.cmd).toContain('npx --yes "$MATRIX_T3_PACKAGE" pair');
+      expect(body.cmd).toContain(
+        'npx --yes "$MATRIX_T3_PACKAGE" serve --host 127.0.0.1 --port 3773',
+      );
+      expect(body.cmd).toContain('--pairing-base-url "$MATRIX_T3_PUBLIC_BASE_URL"');
+    });
   });
 
   it("dispatches paste and search actions to the focused pane", async () => {

@@ -8,6 +8,7 @@ import { MobileAppSurface } from "../../shell/src/components/mobile/MobileAppSur
 import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher.js";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
+import { drainTerminalLaunchQueue } from "../../shell/src/lib/terminal-launch.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
 let fileChangeHandler: ((path: string, event: "add" | "change" | "unlink") => void) | null = null;
@@ -116,6 +117,10 @@ describe("mobile shell", () => {
     const storage = createMemoryStorage();
     Object.defineProperty(window, "localStorage", {
       value: storage,
+      configurable: true,
+    });
+    Object.defineProperty(window, "sessionStorage", {
+      value: createMemoryStorage(),
       configurable: true,
     });
     setDesktopViewport();
@@ -261,6 +266,21 @@ describe("mobile shell", () => {
     render(<MobileShell launchAppPath="__terminal__" />);
 
     await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
+  });
+
+  it("queues the Matrix handoff action for the canonical mobile Terminal", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell launchAppPath="__terminal__" terminalLaunchAction="t3-connect" />);
+
+    await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
+    await waitFor(() => {
+      expect(drainTerminalLaunchQueue().map((launch) => launch.action)).toEqual(["t3-connect"]);
+    });
   });
 
   it("opens a visible terminal for agent setup from mobile Settings", async () => {

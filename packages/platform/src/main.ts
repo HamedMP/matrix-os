@@ -124,7 +124,7 @@ import {
 } from './platform-startup-env.js';
 import type { PlatformApp } from './platform-app-types.js';
 export { escapeInlineScriptJson } from './auth-pages.js';
-export { buildPostAuthRedirectPath } from './request-routing.js';
+export { buildBillingSetupPath, buildPostAuthRedirectPath } from './request-routing.js';
 export type { PlatformApp } from './platform-app-types.js';
 export {
   checkHomeMirrorS3Env,

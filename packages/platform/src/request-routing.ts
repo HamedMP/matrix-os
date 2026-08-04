@@ -1,6 +1,23 @@
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
 export const PLATFORM_SHELL_ASSET_PREFIX = '/__platform-shell';
+const T3_CONNECT_LAUNCH_PATH = '__terminal__';
+const T3_CONNECT_ACTION = 't3-connect';
+
+function hasExactT3ConnectHandoff(params: URLSearchParams): boolean {
+  return (
+    params.getAll('launch').length === 1 &&
+    params.get('launch') === T3_CONNECT_LAUNCH_PATH &&
+    params.getAll('terminal_action').length === 1 &&
+    params.get('terminal_action') === T3_CONNECT_ACTION
+  );
+}
+
+function appendT3ConnectHandoff(source: URLSearchParams, target: URLSearchParams): void {
+  if (!hasExactT3ConnectHandoff(source)) return;
+  target.set('launch', T3_CONNECT_LAUNCH_PATH);
+  target.set('terminal_action', T3_CONNECT_ACTION);
+}
 
 const PLATFORM_SHELL_PUBLIC_ASSET_PATHS = [
   '/icon-192.png',
@@ -125,6 +142,7 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
     }
     const deviceReturn = normalizeDeviceReturnPath(url.searchParams.get('device_return'));
     if (deviceReturn) params.set('device_return', deviceReturn);
+    appendT3ConnectHandoff(url.searchParams, params);
     const query = params.toString();
     return query ? `${path}?${query}` : path;
   } catch (err: unknown) {
@@ -199,6 +217,7 @@ export function buildBillingSetupPath(rawUrl: string): string {
     const target = new URL('/', url.origin);
     target.searchParams.set('billing', 'setup');
     if (deviceReturn) target.searchParams.set('device_return', deviceReturn);
+    appendT3ConnectHandoff(url.searchParams, target.searchParams);
     return `${target.pathname}${target.search}`;
   } catch (err: unknown) {
     console.warn('[platform] Failed to build billing setup URL:', err instanceof Error ? err.message : String(err));

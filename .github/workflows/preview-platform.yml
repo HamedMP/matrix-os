@@ -70,6 +70,8 @@ jobs:
       CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+      PRODUCTION_PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
     steps:
       - name: Check preview configuration
         id: config
@@ -84,12 +86,51 @@ jobs:
             echo "CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT must be set in the Preview environment; refusing to fall back to another SA." >&2
             exit 1
           fi
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ]; then
+            echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required for the preview shell build." >&2
+            exit 1
+          fi
+          if [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "Refusing to build a preview shell with the example Clerk key." >&2
+            exit 1
+          fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve PR source
+        id: source
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "Invalid PR number." >&2
+            exit 1
+          fi
+          head_sha="$EVENT_HEAD_SHA"
+          head_repo="$EVENT_HEAD_REPO"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            head_sha="$(jq -r '.head.sha' <<< "$pr_json")"
+            head_repo="$(jq -r '.head.repo.full_name' <<< "$pr_json")"
+          fi
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "Fork PRs never receive platform preview credentials." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid PR head SHA." >&2
+            exit 1
+          fi
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
         if: steps.config.outputs.configured == 'true'
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.source.outputs.head_sha }}
 
       - name: Authenticate to Google Cloud
         if: steps.config.outputs.configured == 'true'
@@ -102,12 +143,12 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          head_sha="${{ steps.source.outputs.head_sha }}"
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
             --config cloudbuild.platform.yaml \
-            --substitutions "_IMAGE=$image" \
+            --substitutions "_IMAGE=$image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY},_NEXT_PUBLIC_MATRIX_APP_URL=https://preview.matrix-os.com" \
             --quiet
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
@@ -123,8 +164,41 @@ jobs:
           PREVIEW_DOMAIN="${PREVIEW_PUBLIC_URL#http://}"
           PREVIEW_DOMAIN="${PREVIEW_DOMAIN#https://}"
           PREVIEW_DOMAIN="${PREVIEW_DOMAIN%%/*}"
+          if [ -z "${PRODUCTION_PLATFORM_SECRET:-}" ]; then
+            echo "PLATFORM_SECRET is required to resolve the disposable preview VPS route." >&2
+            exit 1
+          fi
+          preview_machine="$(curl --fail --silent --show-error --max-time 10 \
+            -H "Authorization: Bearer ${PRODUCTION_PLATFORM_SECRET}" \
+            https://api.matrix-os.com/vps/fleet | jq -ce --arg h "pr-${PR_NUMBER}" \
+            '[.machines[]
+              | select(.handle == $h and .runtimeSlot == $h
+                and .status == "running")]
+             | if length == 1 then .[0] else error("preview route is not uniquely running") end')"
+          preview_machine_id="$(jq -r '.machineId' <<< "$preview_machine")"
+          preview_handle="$(jq -r '.handle' <<< "$preview_machine")"
+          preview_ipv4="$(jq -r '.publicIPv4' <<< "$preview_machine")"
+          preview_image_version="$(jq -r '.imageVersion // "unknown"' <<< "$preview_machine")"
+          preview_owner_clerk_user_id="$(jq -r '.clerkUserId' <<< "$preview_machine")"
+          preview_access_clerk_user_ids="$(jq -r '(.accessClerkUserIds // []) | join(":")' <<< "$preview_machine")"
+          if ! jq -e '
+            (.machineId | test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+            and (.handle | test("^pr-[1-9][0-9]{0,9}$"))
+            and (.publicIPv4 | type == "string" and length >= 7 and length <= 15)
+            and (.imageVersion | type == "string" and length >= 1 and length <= 128)
+            and (.clerkUserId | type == "string" and test("^[A-Za-z0-9_-]{3,256}$"))
+            and ((.accessClerkUserIds // []) | type == "array" and length <= 8)
+            and ((.accessClerkUserIds // []) | all(type == "string" and test("^[A-Za-z0-9_-]{3,256}$")))
+            and (((.accessClerkUserIds // []) | unique | length) == ((.accessClerkUserIds // []) | length))
+            and (.clerkUserId as $owner | ((.accessClerkUserIds // []) | index($owner) | not))
+          ' <<< "$preview_machine" > /dev/null; then
+            echo "Preview fleet returned an invalid route." >&2
+            exit 1
+          fi
+          echo "::add-mask::${preview_ipv4}"
           deploy_preview() {
             local api_origin="$1"
+            local session_hosts="$2"
             gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION" \
@@ -133,7 +207,7 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_API_ORIGIN=${api_origin},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN}" \
+              --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,PLATFORM_PREVIEW_ROUTE_MACHINE_ID=${preview_machine_id},PLATFORM_PREVIEW_ROUTE_HANDLE=${preview_handle},PLATFORM_PREVIEW_ROUTE_IPV4=${preview_ipv4},PLATFORM_PREVIEW_ROUTE_IMAGE_VERSION=${preview_image_version},PLATFORM_PREVIEW_ROUTE_OWNER_CLERK_USER_ID=${preview_owner_clerk_user_id},PLATFORM_PREVIEW_ROUTE_ACCESS_CLERK_USER_IDS=${preview_access_clerk_user_ids},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_API_ORIGIN=${api_origin},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},NEXT_PUBLIC_MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=${session_hosts}" \
               --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
@@ -144,7 +218,7 @@ jobs:
             --format='value(status.url)' 2>/dev/null || true)"
           BOOTSTRAP_API_ORIGIN="https://preview-bootstrap.invalid"
           if [ -z "$service_base_url" ]; then
-            deploy_preview "$BOOTSTRAP_API_ORIGIN"
+            deploy_preview "$BOOTSTRAP_API_ORIGIN" "$PREVIEW_DOMAIN"
             service_base_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
               --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
               --format='value(status.url)')"
@@ -153,8 +227,15 @@ jobs:
             echo "Preview service URL is unavailable; refusing a shared control-plane fallback." >&2
             exit 1
           fi
+          # Cloud Run rewrites the request Host header to its service URL when
+          # preview.matrix-os.com reaches this isolated service through
+          # Cloudflare. Recognize that exact service host as an app domain so
+          # session routing still runs; no production service host is added.
+          PREVIEW_SERVICE_DOMAIN="${service_base_url#https://}"
+          PREVIEW_SERVICE_DOMAIN="${PREVIEW_SERVICE_DOMAIN%%/*}"
+          PREVIEW_SESSION_HOSTS="${PREVIEW_SERVICE_DOMAIN}"
           PREVIEW_API_ORIGIN="https://pr-${PR_NUMBER}---${service_base_url#https://}"
-          deploy_preview "$PREVIEW_API_ORIGIN"
+          deploy_preview "$PREVIEW_API_ORIGIN" "$PREVIEW_SESSION_HOSTS"
           url=""
           revision=""
           for _attempt in {1..10}; do

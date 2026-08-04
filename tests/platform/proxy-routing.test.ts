@@ -13,6 +13,7 @@ import {
   upsertBillingEntitlement,
 } from "../../packages/platform/src/db.js";
 import {
+  buildBillingSetupPath,
   buildPostAuthRedirectPath,
   createApp,
   escapeInlineScriptJson,
@@ -65,6 +66,20 @@ describe("platform proxy routing", () => {
     expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-up/verify-email-address?session=secret")).toBe("/");
     expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-in/sso-callback?runtime=staging&session=secret")).toBe(
       "/?runtime=staging",
+    );
+  });
+
+  it("preserves only the exact T3 Connect handoff through auth and billing", () => {
+    const handoff = "launch=__terminal__&terminal_action=t3-connect";
+
+    expect(buildPostAuthRedirectPath(`https://app.matrix-os.com/?${handoff}&session=secret`)).toBe(
+      `/?${handoff}`,
+    );
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/?launch=__terminal__")).toBe("/");
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/?terminal_action=t3-connect")).toBe("/");
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/?launch=__terminal__&terminal_action=other")).toBe("/");
+    expect(buildBillingSetupPath(`https://app.matrix-os.com/?${handoff}&session=secret`)).toBe(
+      `/?billing=setup&${handoff}`,
     );
   });
 
@@ -923,6 +938,30 @@ describe("platform proxy routing", () => {
     expect(html).toContain("window.location.replace(signOutTarget)");
     expect(html).toContain("[matrix] Clerk.signOut did not finish");
     expect(html).not.toContain("window.location.replace(redirectTarget)");
+  });
+
+  it("keeps the exact T3 Connect request in the signed-out Clerk handoff", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/?launch=__terminal__&terminal_action=t3-connect&session=secret",
+      { headers: { host: "app.matrix-os.com" } },
+    );
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      String.raw`var redirectTarget = "/?launch=__terminal__\u0026terminal_action=t3-connect";`,
+    );
+    expect(html).not.toContain("session=secret");
   });
 
   it("serves authenticated runtime management from the platform app shell", async () => {
@@ -2694,6 +2733,12 @@ describe("platform proxy routing", () => {
       "https://app.matrix-os.com",
       "/?device_return=https%3A%2F%2Fevil.example%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
     )).toBe("https://app.matrix-os.com/?billing=setup");
+    expect(buildBillingSetupTarget(
+      "https://app.matrix-os.com",
+      "/?launch=__terminal__&terminal_action=t3-connect&session=secret",
+    )).toBe(
+      "https://app.matrix-os.com/?billing=setup&launch=__terminal__&terminal_action=t3-connect",
+    );
   });
 
   it("sends code-domain billing setup handoffs back to the app shell origin", async () => {
@@ -3470,6 +3515,88 @@ describe("platform proxy routing", () => {
     expect(headers.get("authorization")).toBeNull();
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-platform-user-id")).toBeNull();
+  });
+
+  it("routes a T3 bearer request to the selected VM without Matrix or Clerk credentials", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff146",
+      clerkUserId: "user_alice",
+      handle: "alice-t3",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123490,
+      publicIPv4: "203.0.113.38",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-07-31T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ environmentId: "environment-t3" }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/vm/alice-t3/api/integrations/t3/api/auth/session",
+      {
+        method: "GET",
+        headers: {
+          host: "app.matrix-os.com",
+          authorization: "Bearer t3-environment-session",
+          origin: "https://app.t3.codes",
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "https://203.0.113.38:443/api/integrations/t3/api/auth/session",
+    );
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBe("Bearer t3-environment-session");
+    expect(headers.get("origin")).toBe("https://app.t3.codes");
+    expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("x-platform-user-id")).toBeNull();
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("routes the isolated platform preview to its selected disposable T3 VM", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ environmentId: "environment-preview-t3" }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-preview-secret-123",
+      env: {
+        PLATFORM_PREVIEW: "true",
+        PLATFORM_PREVIEW_ROUTE_MACHINE_ID: "610408b1-31d7-4e8b-b66b-309c3e622e47",
+        PLATFORM_PREVIEW_ROUTE_HANDLE: "pr-1126",
+        PLATFORM_PREVIEW_ROUTE_IPV4: "203.0.113.38",
+        PLATFORM_PREVIEW_ROUTE_IMAGE_VERSION: "v2026.08.03-pr1126-518dead",
+        PLATFORM_PREVIEW_ROUTE_OWNER_CLERK_USER_ID: "user_owner",
+        PLATFORM_PREVIEW_ROUTE_ACCESS_CLERK_USER_IDS: "user_hamed",
+      } as NodeJS.ProcessEnv,
+    });
+
+    const res = await app.request(
+      "/vm/pr-1126/api/integrations/t3/.well-known/t3/environment",
+      { headers: { host: "app.matrix-os.com" } },
+    );
+
+    expect(res.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "https://203.0.113.38:443/api/integrations/t3/.well-known/t3/environment",
+    );
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
   });
 
   it("rejects explicit VM native app stream assets without a capability token", async () => {

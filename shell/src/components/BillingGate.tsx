@@ -65,11 +65,32 @@ function hasRecentBillingCheckoutAttempt(): boolean {
   }
 }
 
-function getBillingCheckoutReturnPath(deviceReturnPath: string | null): string | undefined {
-  return deviceReturnPath ?? undefined;
+function getT3ConnectReturnPath(searchParams: URLSearchParams): string | undefined {
+  if (
+    searchParams.getAll("launch").length !== 1 ||
+    searchParams.get("launch") !== "__terminal__" ||
+    searchParams.getAll("terminal_action").length !== 1 ||
+    searchParams.get("terminal_action") !== "t3-connect"
+  ) {
+    return undefined;
+  }
+  return "/?launch=__terminal__&terminal_action=t3-connect";
 }
 
-function BillingRequired({ checkoutReturnPath }: { checkoutReturnPath?: string }) {
+function getBillingCheckoutReturnPath(
+  deviceReturnPath: string | null,
+  t3ConnectReturnPath: string | undefined,
+): string | undefined {
+  return deviceReturnPath ?? t3ConnectReturnPath;
+}
+
+function BillingRequired({
+  checkoutReturnPath,
+  deviceSetup,
+}: {
+  checkoutReturnPath?: string;
+  deviceSetup: boolean;
+}) {
   return (
     <Settings
       open
@@ -78,7 +99,7 @@ function BillingRequired({ checkoutReturnPath }: { checkoutReturnPath?: string }
       lockedSection="billing"
       billingActiveOverride={false}
       closeDisabled
-      billingMode={checkoutReturnPath ? "device-setup" : "provisioning"}
+      billingMode={deviceSetup ? "device-setup" : "provisioning"}
       onBillingCheckoutIntent={rememberBillingCheckoutAttempt}
       billingCheckoutReturnPath={checkoutReturnPath}
     />
@@ -276,8 +297,12 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   const searchParams = useSearchParams();
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const deviceReturnPath = normalizeDeviceReturnPath(searchParams.get("device_return"));
+  const t3ConnectReturnPath = getT3ConnectReturnPath(searchParams);
   const requestedRuntime = searchParams.get("runtime");
-  const billingCheckoutReturnPath = getBillingCheckoutReturnPath(deviceReturnPath);
+  const billingCheckoutReturnPath = getBillingCheckoutReturnPath(
+    deviceReturnPath,
+    t3ConnectReturnPath,
+  );
   const hasBillingAccess = billingActive === true;
   const billingChecking = billingAccessChecking;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
@@ -307,9 +332,9 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         source: "billing_gate",
       });
       // react-doctor-disable-next-line react-doctor/nextjs-no-client-side-redirect -- legit post-action client redirect: once billing access is confirmed for a returning Stripe checkout, this strips the `?checkout=success` query so a reload does not re-trigger the confirmation flow. It must run client-side after the async billing-access check resolves (a server redirect() cannot observe client billing state), and it is gated on hasBillingAccess && checkoutReturnRequested so it fires once, not on every render.
-      router.replace("/");
+      router.replace(t3ConnectReturnPath ?? "/");
     }
-  }, [checkoutReturnRequested, deviceReturnPath, hasBillingAccess, router]);
+  }, [checkoutReturnRequested, deviceReturnPath, hasBillingAccess, router, t3ConnectReturnPath]);
 
   async function deviceAuthHeaders(): Promise<HeadersInit> {
     const token = await getToken();
@@ -426,7 +451,10 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
           {children}
         </div>
-        <BillingRequired checkoutReturnPath={billingCheckoutReturnPath} />
+        <BillingRequired
+          checkoutReturnPath={billingCheckoutReturnPath}
+          deviceSetup={Boolean(deviceReturnPath)}
+        />
       </>
     );
   }
