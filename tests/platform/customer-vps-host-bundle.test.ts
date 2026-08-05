@@ -1235,6 +1235,36 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(idempotentLog).toBeLessThan(syncAgent.indexOf('write_update_phase prepare'));
   });
 
+  it('reapplies an exact-version bundle when its immutable terminal generation is incomplete', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const readinessGuard = syncAgent.indexOf('installed_terminal_runtime_is_ready()');
+    const markerGuard = syncAgent.indexOf('[ -f "$marker" ] && [ ! -L "$marker" ]', readinessGuard);
+    const generationGuard = syncAgent.indexOf('[ -d "$generation_dir" ] && [ ! -L "$generation_dir" ]', markerGuard);
+    const assetLoop = syncAgent.indexOf(
+      'for asset in matrix-terminal-user-keeper.mjs matrix-terminal-attach.mjs',
+      generationGuard,
+    );
+    const assetGuard = syncAgent.indexOf(
+      '[ -f "$generation_dir/$asset" ] && [ ! -L "$generation_dir/$asset" ]',
+      assetLoop,
+    );
+    const zellijGuard = syncAgent.indexOf('[ -x "$generation_dir/zellij" ]', assetGuard);
+    const digestGuard = syncAgent.indexOf('[ "$actual_generation" = "$generation" ]', zellijGuard);
+    const sameVersionGuard = syncAgent.indexOf('requested_update_is_already_current()');
+    const readinessCall = syncAgent.indexOf('installed_terminal_runtime_is_ready || return 1', sameVersionGuard);
+
+    expect(readinessGuard).toBeGreaterThan(-1);
+    expect(markerGuard).toBeGreaterThan(readinessGuard);
+    expect(generationGuard).toBeGreaterThan(markerGuard);
+    expect(assetLoop).toBeGreaterThan(generationGuard);
+    expect(assetGuard).toBeGreaterThan(assetLoop);
+    expect(zellijGuard).toBeGreaterThan(assetGuard);
+    expect(digestGuard).toBeGreaterThan(zellijGuard);
+    expect(readinessCall).toBeGreaterThan(sameVersionGuard);
+  });
+
   it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
