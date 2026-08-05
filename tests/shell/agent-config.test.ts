@@ -180,6 +180,19 @@ describe("shell agent settings wire client", () => {
     expect(timeout).toHaveBeenNthCalledWith(3, 10_000);
   });
 
+  it("allows runtime switches to outlive the controller deadline without extending ordinary mutations", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const fetcher = vi.fn(async () => Response.json(currentAgentSettingsView()));
+
+    await expect(updateAgentSettings({ effort: "low" }, { fetcher }))
+      .resolves.toMatchObject({ kind: "current" });
+    await expect(updateAgentSettings({ runtime: "openclaw", revision: 4 }, { fetcher }))
+      .resolves.toMatchObject({ kind: "current" });
+
+    expect(timeout).toHaveBeenNthCalledWith(1, 15_000);
+    expect(timeout).toHaveBeenNthCalledWith(2, 90_000);
+  });
+
   it("submits a BYOK value only to the existing write-only route", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
