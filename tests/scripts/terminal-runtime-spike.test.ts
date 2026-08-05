@@ -596,6 +596,15 @@ describe('terminal runtime spike evidence', () => {
       'write_phase rollback_two',
       'write_phase final_checks',
     ]);
+    expectAll(runner, [
+      'write_phase creating_runtime',
+      'write_phase waiting_runtime',
+      'write_phase seeding_output',
+      'write_phase starting_agent',
+      'write_phase waiting_roles',
+      'owner_probe() { /usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser -u matrix --',
+      'zellij() { /usr/bin/timeout --signal=TERM --kill-after=5s 30s runuser -u matrix --',
+    ]);
     expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
     expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']);
@@ -624,6 +633,8 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       '/usr/bin/timeout --signal=TERM --kill-after=5s 40s /usr/bin/systemctl',
       '/usr/bin/timeout --signal=TERM --kill-after=3s 20s /usr/bin/systemctl',
       'trap - ERR TERM INT HUP',
+      'local exit_status=$?',
+      'failure_code=command_timeout',
     ]);
     const failPhase = runner.slice(
       runner.indexOf('fail_phase() {'),
@@ -658,6 +669,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       );
     });
     expect(unboundedSystemctl).toEqual([]);
+    const unboundedOwnerProbe = runner.split('\n').filter((line) =>
+      line.includes('runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe"') &&
+      !line.includes('/usr/bin/timeout'),
+    );
+    expect(unboundedOwnerProbe).toEqual([]);
   });
   it('fails closed on incomplete, stale, or extended production evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-production-evidence-'));

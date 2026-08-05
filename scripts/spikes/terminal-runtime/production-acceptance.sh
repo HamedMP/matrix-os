@@ -29,7 +29,8 @@ readonly -a zellij_env=(
 write_state() { install -d -o root -g root -m 0700 "$state_root"; local next="${state_file}.next"; printf '%s\n' "$1" >"$next"; chmod 0600 "$next"; mv -f -- "$next" "$state_file"; }
 write_phase() {
   case "$1" in
-    runtime_created|bundle_one|bundle_two|forced_failure|reapply_one|rollback_two|final_checks) ;;
+    creating_runtime|waiting_runtime|seeding_output|starting_agent|waiting_roles|\
+      runtime_created|bundle_one|bundle_two|forced_failure|reapply_one|rollback_two|final_checks) ;;
     *) return 1 ;;
   esac
   current_phase="$1"
@@ -38,7 +39,8 @@ write_phase() {
 systemctl_read() { /usr/bin/timeout --signal=TERM --kill-after=2s 8s /usr/bin/systemctl "$@"; }
 systemctl_change() { /usr/bin/timeout --signal=TERM --kill-after=5s 40s /usr/bin/systemctl "$@"; }
 systemctl_cancel() { /usr/bin/timeout --signal=TERM --kill-after=3s 20s /usr/bin/systemctl "$@"; }
-mark() { install -m 0600 /dev/null "$checks_root/$1"; }; probe_owner() { runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" "$@"; }
+mark() { install -m 0600 /dev/null "$checks_root/$1"; }
+owner_probe() { /usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" "$@"; }
 json_field() { /opt/matrix/runtime/node/bin/node -e '
     let raw=""; process.stdin.on("data",d=>raw+=d); process.stdin.on("end",()=>{
       const value=JSON.parse(raw),keys=process.argv[1].split(".");let current=value;for(const key of keys)current=current?.[key];
@@ -46,9 +48,9 @@ json_field() { /opt/matrix/runtime/node/bin/node -e '
   ' "$1"; }
 wait_active() { local unit="$1"; for _ in $(seq 1 180); do [ "$(systemctl_read is-active "$unit" 2>/dev/null || true)" = active ] && return 0; sleep 1; done; return 1; }
 wait_absent() { local unit="$1"; for _ in $(seq 1 60); do local state; state="$(systemctl_read is-active "$unit" 2>/dev/null || true)"; [ "$state" != active ] && [ "$state" != activating ] && return 0; sleep 1; done; return 1; }
-roles() { /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }
+roles() { owner_probe roles "$1"; }
 roles_match() { local current; current="$(roles "$1")"; [ "$current" = "$(cat "$state_root/roles.json")" ]; }
-request_update() { runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
+request_update() { /usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
 wait_update() {
   local expected="$1"; for _ in $(seq 1 "$update_wait_seconds"); do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
@@ -58,12 +60,18 @@ wait_update() {
     sleep 1
   done; return 1; }
 wait_failed_update() { for _ in $(seq 1 "$update_wait_seconds"); do [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] && return 0; sleep 1; done; return 1; }
-zellij() { runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
+zellij() { /usr/bin/timeout --signal=TERM --kill-after=5s 30s runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
 fail_phase() {
+  local exit_status=$?
   local failure_code
   trap - ERR TERM INT HUP
-  failure_code="$(cat /run/matrix-update-runtime/last-failure-code 2>/dev/null || true)"
-  [[ "$failure_code" =~ ^[a-z0-9_]{1,64}$ ]] || failure_code=operation_failed
+  if [ "$exit_status" -eq 124 ] || [ "$exit_status" -eq 137 ] ||
+    [ "$exit_status" -eq 143 ]; then
+    failure_code=command_timeout
+  else
+    failure_code="$(cat /run/matrix-update-runtime/last-failure-code 2>/dev/null || true)"
+    [[ "$failure_code" =~ ^[a-z0-9_]{1,64}$ ]] || failure_code=operation_failed
+  fi
   write_state "failed_${current_phase}_${failure_code}"
   rm -f -- /etc/systemd/system/matrix-gateway.service.d/zz-terminal-acceptance.conf
   systemctl_change daemon-reload >/dev/null 2>&1 || true
@@ -78,16 +86,21 @@ phase1() {
   install -d -o root -g root -m 0700 "$checks_root"
   write_state phase1-running
   local created runtime_id unit session_name
-  created="$(probe_owner create "$head_sha")"; runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
+  write_phase creating_runtime
+  created="$(owner_probe create "$head_sha")"; runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
   [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]
   printf '%s\n' "$runtime_id" >"$state_root/runtime-id"; chmod 0600 "$state_root/runtime-id"
   unit="${unit_prefix}${runtime_id}.service"; session_name="matrix-t-${runtime_id}"
+  write_phase waiting_runtime
   wait_active "$unit"; mark runtimeLive
+  write_phase seeding_output
   zellij --session "$session_name" action write-chars -- \
     "exec bash -lc 'while true; do printf \"MATRIX_ACCEPT_LOOP\\n\"; sleep 1; done'"
   zellij --session "$session_name" action send-keys Enter
+  write_phase starting_agent
   [ -x "$codex" ]
   zellij --session "$session_name" action new-pane -- "$codex"
+  write_phase waiting_roles
   for _ in $(seq 1 30); do
     local baseline shell_pid agent_pid
     baseline="$(roles "$runtime_id" 2>/dev/null || true)"
@@ -122,7 +135,7 @@ phase1() {
   wait "$attach_parent_one" "$attach_parent_two" 2>/dev/null || true
   rm -f -- "$attach_one" "$attach_two"
   roles_match "$runtime_id"; mark detachPreservesRuntime
-  local renamed; renamed="$(probe_owner rename "$runtime_id" "renamed-${head_sha:0:12}")"
+  local renamed; renamed="$(owner_probe rename "$runtime_id" "renamed-${head_sha:0:12}")"
   [ "$(printf '%s' "$renamed" | json_field runtimeId)" = "$runtime_id" ]
   roles_match "$runtime_id"; mark renamePreservesIdentity
   local supervisor_pid; supervisor_pid="$(systemctl_read show matrix-terminal-runtime.service -p MainPID --value)"
@@ -176,12 +189,12 @@ phase2() {
   wait_absent "$unit"
   if ! systemctl_read list-units "${unit_prefix}*.service" --state=active --no-legend |
     grep -q .; then mark rebootStartsNoRuntime; fi
-  inspected="$(probe_owner inspect "$runtime_id")"
+  inspected="$(owner_probe inspect "$runtime_id")"
   case "$(printf '%s' "$inspected" | json_field lifecycleState)" in
     interrupted|recoverable) mark rebootShowsInterrupted ;;
     *) return 1 ;;
   esac
-  recovered="$(probe_owner concurrent-recover "$runtime_id")"
+  recovered="$(owner_probe concurrent-recover "$runtime_id")"
   wait_active "$unit"
   [ "$(systemctl_read list-units "$unit" --state=active --no-legend | wc -l)" -eq 1 ]
   recovery_mode="$(printf '%s' "$recovered" |
@@ -200,19 +213,19 @@ phase2() {
   [ "$corrupt_target" = \
     "$cache_root/zellij/contract_version_1/session_info/matrix-t-${runtime_id}/session-layout.kdl" ]
   printf 'layout {\n  pane {\n' >"$corrupt_target"
-  recovered="$(probe_owner recover "$runtime_id")"
+  recovered="$(owner_probe recover "$runtime_id")"
   [ "$(printf '%s' "$recovered" | json_field recoveryMode)" = fresh-shell ]
   [ "$(printf '%s' "$recovered" | json_field recoveryReason)" = history_unavailable ]
   wait_active "$unit"; mark corruptionFallsBackFresh
   local race_created race_id race_unit
-  race_created="$(probe_owner create-race "$head_sha")"
+  race_created="$(owner_probe create-race "$head_sha")"
   race_id="$(printf '%s' "$race_created" | json_field runtimeId)"
   race_unit="${unit_prefix}${race_id}.service"
   wait_active "$race_unit"
   systemctl_change stop "$race_unit"
   wait_absent "$race_unit"
-  probe_owner recover-delete "$race_id" >/dev/null || true
-  probe_owner delete "$race_id" >/dev/null || true
+  owner_probe recover-delete "$race_id" >/dev/null || true
+  owner_probe delete "$race_id" >/dev/null || true
   wait_absent "$race_unit"
   [ ! -e "$home/system/terminal-runtime/receipts/${race_id}.json" ]
   sleep 2
@@ -221,7 +234,7 @@ phase2() {
   control_group="$(systemctl_read show "$unit" -p ControlGroup --value)"
   cgroup_path="/sys/fs/cgroup${control_group}"
   exec {events_fd}<"$cgroup_path/cgroup.events"
-  probe_owner delete "$runtime_id" >/dev/null
+  owner_probe delete "$runtime_id" >/dev/null
   for _ in $(seq 1 60); do
     if [ ! -e "$cgroup_path/cgroup.events" ] ||
       grep -q '^populated 0$' "/proc/self/fd/${events_fd}"; then break; fi
