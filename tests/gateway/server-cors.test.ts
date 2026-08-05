@@ -16,12 +16,21 @@ describe("gateway CORS origins", () => {
       "http://localhost:4766",
       "http://127.0.0.1:4766",
       "https://app.t3.codes",
+      "t3code://app",
+      "t3code-dev://app",
       "http://localhost:4088",
       "http://127.0.0.1:4088",
     ]);
 
     expect(buildAllowedOrigins({ symphonyPort: 4766 }).filter((origin) => origin === "http://localhost:4766")).toHaveLength(1);
     expect(buildAllowedOrigins({ symphonyPort: 4766 }).filter((origin) => origin === "http://127.0.0.1:4766")).toHaveLength(1);
+  });
+
+  it("allows T3 desktop renderers to preflight the direct pairing proxy", () => {
+    const controller = createAllowedOriginController({});
+
+    expect(controller.resolve("t3code://app")).toBe("t3code://app");
+    expect(controller.resolve("t3code-dev://app")).toBe("t3code-dev://app");
   });
 
   it("updates the Symphony dashboard origin when the runner port changes", () => {
