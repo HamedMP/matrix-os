@@ -197,6 +197,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
       'if ! send_signed_command "$body" "$response"; then',
     );
     expect(rebootVerification).toContain('return 1');
+    expect(rebootVerification).toContain('grep -q \'^reboot-ready$\' <<<"$state"');
     expect(acceptance).toContain("gatewayRestartPreservesRuntimes");
     expect(acceptance).toContain("gatewaySigkillPreservesRuntimes");
     expect(acceptance).toContain("metadataRenamePreservesRuntime");
@@ -249,6 +250,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('cat /proc/sys/kernel/random/boot_id');
     expect(acceptance).toContain('write_progress reboot-boot-changed');
     expect(acceptance).toContain('[ "$boot_id_after" != "$boot_id_before" ]');
+    expect(acceptance).toContain('boot_has_changed');
+    expect(acceptance).toContain('echo reboot-ready');
     expect(acceptance).toContain('current_failure="main-pid-${main_pid_state}-exec-start-${exec_start_state}-active-enter-${active_enter_state}"');
     expect(acceptance).toContain('[ "$size_before" -ge "$recorded_size" ]');
     expect(acceptance).toContain('[ "$size_after" = "$size_before" ]');

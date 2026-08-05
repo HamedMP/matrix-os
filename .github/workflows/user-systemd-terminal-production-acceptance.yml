@@ -869,10 +869,21 @@ jobs:
           }
           sleep 20
           deadline=$((SECONDS + 900))
-          until call_helper status >/dev/null 2>&1; do
-            [ "$SECONDS" -lt "$deadline" ] || exit 1
+          state=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if state="$(call_helper status 2>/dev/null)" && grep -q '^reboot-ready$' <<<"$state"; then
+              break
+            fi
+            if [[ "${state:-}" == failed:* ]] || [ "${state:-}" = failed ]; then
+              echo "Acceptance failed before reboot resume at ${state}" >&2
+              exit 1
+            fi
             sleep 15
           done
+          if ! grep -q '^reboot-ready$' <<<"${state:-}"; then
+            echo "Acceptance reboot did not complete before resume" >&2
+            exit 1
+          fi
           call_helper resume
           deadline=$((SECONDS + 900))
           last_state=""
