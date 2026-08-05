@@ -111,7 +111,19 @@ cgroup_tree_state() {
     return
   fi
   if ! events_data="$(
-    /usr/bin/timeout --kill-after=1s 5s /usr/bin/head -c 1024 -- "$events" 2>/dev/null
+    /usr/bin/timeout --kill-after=1s 5s /usr/bin/python3 - "$events" 2>/dev/null <<'PY'
+import os
+import sys
+
+events_fd = os.open(sys.argv[1], os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+try:
+    data = os.read(events_fd, 1024)
+finally:
+    os.close(events_fd)
+if len(data) >= 1024:
+    raise SystemExit(1)
+sys.stdout.buffer.write(data)
+PY
   )"; then
     if [ ! -e "$root" ]; then echo absent; else echo invalid-events; fi
     return
@@ -1612,10 +1624,7 @@ phase2() {
     write_progress "reboot-${role}-cgroup-empty"
     cgroup_state="$(cgroup_tree_state "$old_cgroup")"
     current_failure="cgroup-${cgroup_state}"
-    case "$cgroup_state" in
-      absent|empty) ;;
-      *) return 1 ;;
-    esac
+    [[ "$cgroup_state" =~ ^(absent|empty)$ ]]
     write_progress "reboot-${role}-descriptor-retained"
     [ -f "${descriptor_root}/$(json_field "$baseline" runtimeId).json" ]
     write_progress "reboot-${role}-old-pids-detached"

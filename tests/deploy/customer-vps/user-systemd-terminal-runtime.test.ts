@@ -244,10 +244,14 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('[ "$active_enter_state" = zero ]');
     expect(acceptance).toContain('cgroup_state="$(cgroup_tree_state "$old_cgroup")"');
     expect(acceptance).toContain('events="${root}/cgroup.events"');
-    expect(acceptance).toContain('/usr/bin/timeout --kill-after=1s 5s /usr/bin/head -c 1024 -- "$events"');
+    expect(acceptance).toContain('/usr/bin/timeout --kill-after=1s 5s /usr/bin/python3 - "$events"');
+    expect(acceptance).toContain('os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW');
+    expect(acceptance).toContain('data = os.read(events_fd, 1024)');
     expect(acceptance).toContain('done <<<"$events_data"');
     expect(acceptance).toContain('[ "${#events_data}" -lt 1024 ]');
     expect(acceptance).toContain('current_failure="cgroup-${cgroup_state}"');
+    expect(acceptance).toContain('[[ "$cgroup_state" =~ ^(absent|empty)$ ]]');
+    expect(acceptance).not.toContain('case "$cgroup_state" in');
     expect(acceptance).toContain('absent|empty)');
     expect(acceptance).toContain('echo populated');
     expect(acceptance).toContain('echo invalid-events');
