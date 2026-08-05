@@ -244,10 +244,17 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('[ "$active_enter_state" = zero ]');
     expect(acceptance).toContain('cgroup_state="$(cgroup_tree_state "$old_cgroup")"');
     expect(acceptance).toContain('events="${root}/cgroup.events"');
+    expect(acceptance).toContain('/usr/bin/timeout --kill-after=1s 5s /usr/bin/head -c 1024 -- "$events"');
+    expect(acceptance).toContain('done <<<"$events_data"');
+    expect(acceptance).toContain('[ "${#events_data}" -lt 1024 ]');
     expect(acceptance).toContain('current_failure="cgroup-${cgroup_state}"');
     expect(acceptance).toContain('absent|empty)');
     expect(acceptance).toContain('echo populated');
     expect(acceptance).toContain('echo invalid-events');
+    expect(acceptance).not.toContain('done <"$events"');
+    expect(acceptance).toContain('readonly phase2_unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-phase2.service"');
+    expect(acceptance).toContain('[[ "$state" == phase2-running:* ]] && ! systemctl is-active --quiet "$phase2_unit"');
+    expect(acceptance).toContain('--property=RuntimeMaxSec=120');
     expect(acceptance).not.toContain('find "$root" -xdev -name cgroup.procs');
     expect(acceptance).toContain('matrix-terminal\\.slice/matrix-zellij@rt_[0-9a-f]{32}\\.service$');
     expect(acceptance).toContain('reboot_output_size_file="${state_root}/reboot-output-size"');
