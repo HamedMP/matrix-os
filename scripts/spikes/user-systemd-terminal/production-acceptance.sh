@@ -93,7 +93,7 @@ owner_systemctl() {
 cgroup_tree_state() {
   local cgroup="$1" root="/sys/fs/cgroup${1}" events events_data key value extra
   local populated_state=missing
-  if [[ ! "$cgroup" =~ ^/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/matrix-terminal\.slice/matrix-zellij@rt_[0-9a-f]{32}\.service$ ]]; then
+  if [[ ! "$cgroup" =~ ^/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/matrix\.slice/matrix-terminal\.slice/matrix-zellij@rt_[0-9a-f]{32}\.service$ ]]; then
     echo invalid-path
     return
   fi

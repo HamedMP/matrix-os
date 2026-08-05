@@ -260,7 +260,9 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('[[ "$state" == phase2-running:* ]] && ! systemctl is-active --quiet "$phase2_unit"');
     expect(acceptance).toContain('--property=RuntimeMaxSec=120');
     expect(acceptance).not.toContain('find "$root" -xdev -name cgroup.procs');
-    expect(acceptance).toContain('matrix-terminal\\.slice/matrix-zellij@rt_[0-9a-f]{32}\\.service$');
+    expect(acceptance).toContain(
+      'matrix\\.slice/matrix-terminal\\.slice/matrix-zellij@rt_[0-9a-f]{32}\\.service$',
+    );
     expect(acceptance).toContain('reboot_output_size_file="${state_root}/reboot-output-size"');
     expect(acceptance).toContain('reboot_boot_id_file="${state_root}/reboot-boot-id"');
     expect(acceptance).toContain('"$helper_path" reboot-now "$head_sha" "$run_nonce" "$preview_version"');
