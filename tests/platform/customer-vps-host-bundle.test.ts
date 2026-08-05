@@ -1345,6 +1345,29 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(preparedMarker).toBeGreaterThan(durableError);
   });
 
+  it('treats a clean explicit request for the installed immutable version as idempotent', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const sameVersionGuard = syncAgent.indexOf('requested_update_is_already_current()');
+    const interruptedPhaseGuard = syncAgent.indexOf('[ ! -e "$UPDATE_PHASE_MARKER" ]', sameVersionGuard);
+    const durableErrorGuard = syncAgent.indexOf('[ ! -e "$UPDATE_ERROR_MARKER" ]', interruptedPhaseGuard);
+    const idempotentLog = syncAgent.indexOf(
+      'Exact requested version is already installed; consuming idempotent request',
+      durableErrorGuard,
+    );
+    const targetCleanup = syncAgent.indexOf('rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"', idempotentLog);
+    const triggerCleanup = syncAgent.indexOf('consume_update_trigger', idempotentLog);
+
+    expect(sameVersionGuard).toBeGreaterThan(-1);
+    expect(interruptedPhaseGuard).toBeGreaterThan(sameVersionGuard);
+    expect(durableErrorGuard).toBeGreaterThan(interruptedPhaseGuard);
+    expect(idempotentLog).toBeGreaterThan(durableErrorGuard);
+    expect(targetCleanup).toBeGreaterThan(idempotentLog);
+    expect(triggerCleanup).toBeGreaterThan(targetCleanup);
+    expect(idempotentLog).toBeLessThan(syncAgent.indexOf('write_update_phase prepare'));
+  });
+
   it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');

@@ -407,8 +407,25 @@ download_bundle() {
   return 1
 }
 
+prepare_triggered_update_action=apply
+
+requested_update_is_already_current() {
+  local remote_version="$1"
+  [ -f "$UPDATE_VERSION_FILE" ] && [ ! -L "$UPDATE_VERSION_FILE" ] || return 1
+  [ "$remote_version" = "$(current_version)" ] || return 1
+  [ ! -e "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 1
+  [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 1
+}
+
+consume_idempotent_update_request() {
+  log "Exact requested version is already installed; consuming idempotent request"
+  rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+  consume_update_trigger || log "WARN: failed to consume idempotent update trigger"
+}
+
 prepare_triggered_update() {
   local url="" target="" requested_version=""
+  prepare_triggered_update_action=apply
   if [ -f "$UPDATE_VERSION_FILE" ]; then
     target="$(cat "$UPDATE_VERSION_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update version file is empty"; return 1; }
@@ -444,6 +461,10 @@ prepare_triggered_update() {
     write_update_error "update_target_mismatch" \
       "The fetched release metadata did not match the requested version." "$requested_version"
     return 1
+  fi
+  if requested_update_is_already_current "$remote_version"; then
+    prepare_triggered_update_action=already-current
+    return 0
   fi
   if [ ! -f "$UPDATE_VERSION_FILE" ] && [ ! -f "$UPDATE_CHANNEL_FILE" ] && [ "$remote_version" = "$(current_version)" ]; then
     log "No update available on ${target} — nothing to apply"
@@ -904,7 +925,9 @@ while true; do
   if [ -f "$UPDATE_TRIGGER" ]; then
     rm -f "$AUTO_APPLY_FAILED_MARKER"
     if prepare_triggered_update; then
-      if run_apply_update explicit; then
+      if [ "$prepare_triggered_update_action" = already-current ]; then
+        consume_idempotent_update_request
+      elif run_apply_update explicit; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update failed — will retry on next trigger"
@@ -923,7 +946,9 @@ while true; do
     sudo rm -f "$UPDATE_REPAIR_TRIGGER"
     perform_update_repair
     if prepare_triggered_update; then
-      if run_apply_update; then
+      if [ "$prepare_triggered_update_action" = already-current ]; then
+        consume_idempotent_update_request
+      elif run_apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update repair retry failed — will retry on next trigger"
@@ -936,7 +961,9 @@ while true; do
   if [ "$update_requested" = true ]; then
     update_requested=false
     if prepare_triggered_update; then
-      if run_apply_update; then
+      if [ "$prepare_triggered_update_action" = already-current ]; then
+        consume_idempotent_update_request
+      elif run_apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update (via SIGUSR1) failed — will retry on next trigger"
