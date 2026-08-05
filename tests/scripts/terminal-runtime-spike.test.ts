@@ -554,12 +554,27 @@ describe('terminal runtime spike evidence', () => {
       readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-control'), readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh'),
       readRepo('scripts/spikes/terminal-runtime/verify-production-evidence.mjs'),
     ]);
-    expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 18000))',
+    expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 14400))',
       'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
-      'call_helper acceptance-pack', 'Validate the complete production matrix']);
-    expect(runner).toContain('for _ in $(seq 1 4500)');
+      'call_helper acceptance-pack', 'call_helper acceptance-cancel',
+      'production_acceptance_state=${state}', 'Validate the complete production matrix']);
+    expectAll(runner, [
+      'readonly update_wait_seconds=1800',
+      'for _ in $(seq 1 "$update_wait_seconds")',
+      '--property=RuntimeMaxSec=10800',
+      '--property=RuntimeMaxSec=600',
+      'for phase in phase1 phase2; do',
+      'write_phase runtime_created',
+      'write_phase bundle_one',
+      'write_phase bundle_two',
+      'write_phase forced_failure',
+      'write_phase reapply_one',
+      'write_phase rollback_two',
+      'write_phase final_checks',
+    ]);
+    expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
-    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack', 'exec /usr/bin/bash "$target"']);
+    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']);
     expect(helper).not.toContain('[ ! -x "$target" ]');
     for (const check of `bundleOnePreservesRuntime bundleTwoPreservesRuntime failedUpdatePreservesRuntime explicitRollbackPreservesRuntime rebootStartsNoRuntime
 explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotResurrect corruptionFallsBackFresh deleteWaitsForEmptyCgroup`.split(/\s+/)) {
