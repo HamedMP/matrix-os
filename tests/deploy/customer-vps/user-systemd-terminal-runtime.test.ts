@@ -384,11 +384,19 @@ describe("customer VPS user-systemd terminal runtime", () => {
     );
     expect(recoveryStep).toContain("classify_recovery_phase");
     expect(recoveryStep).toContain("probe_runtime_readiness");
+    expect(recoveryStep).toContain("pending:update-trigger");
+    expect(recoveryStep).toContain("pending:update-phase");
+    expect(recoveryStep).toContain("pending:update-error");
+    expect(recoveryStep).toContain("pending:generation-assets");
+    expect(recoveryStep).toContain("pending:generation-digest");
+    expect(recoveryStep).toContain("pending:zellij-exec");
+    expect(recoveryStep).toContain("invalid:generation-digest");
     expect(recoveryStep).toContain('host_readiness="$(probe_runtime_readiness)"');
     expect(recoveryStep).toContain(
       'if [ "$current_version" != "$target_version" ] || [ "$host_readiness" != ready ]; then',
     );
-    expect(recoveryStep).toContain('if [ "$host_readiness" = invalid ]; then');
+    expect(recoveryStep).toContain('case "$host_readiness" in\n' +
+      '              invalid:*)');
     expect(recoveryStep).toContain('host_readiness="$(probe_runtime_readiness 2>/dev/null || true)"');
     expect(recoveryStep).toContain(
       'if [ "$version" = "$target_version" ] && [ "$fleet_address" = "$address" ] &&\n' +
@@ -413,6 +421,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
     );
     expect(recoveryStep).toContain("inactive_samples");
     expect(recoveryStep).toContain("probe_failures");
+    expect(recoveryStep).toContain("last_host_readiness");
+    expect(recoveryStep).toContain(
+      'Exact-head preview was unavailable after a bounded wait: readiness=${last_host_readiness}.',
+    );
     expect(recoveryStep).toContain("if ! curl --fail --silent --show-error");
     expect(recoveryStep).toContain("return 1");
     expect(recoveryStep).toContain('echo "address=$address" >>"$GITHUB_OUTPUT"');

@@ -279,76 +279,94 @@ jobs:
 
           bundle_state="$(path_state /opt/matrix/app/BUNDLE_VERSION)"
           case "$bundle_state" in
-            invalid) printf 'invalid\n'; exit 0 ;;
-            missing) printf 'pending\n'; exit 0 ;;
+            invalid) printf 'invalid:bundle-path\n'; exit 0 ;;
+            missing) printf 'pending:bundle-missing\n'; exit 0 ;;
           esac
           IFS= read -r installed_version </opt/matrix/app/BUNDLE_VERSION || installed_version=
           if [ "$installed_version" != "$target" ]; then
-            printf 'pending\n'
+            printf 'pending:bundle-version\n'
             exit 0
           fi
 
-          for marker in /opt/matrix/app/.update-now /opt/matrix/staging/update-phase /opt/matrix/app/.update-error.json; do
+          for marker_spec in \
+            /opt/matrix/app/.update-now:update-trigger \
+            /opt/matrix/staging/update-phase:update-phase \
+            /opt/matrix/app/.update-error.json:update-error; do
+            marker="${marker_spec%%:*}"
+            case "$marker" in
+              /opt/matrix/app/.update-now)
+                pending_code=pending:update-trigger
+                invalid_code=invalid:update-trigger-path
+                ;;
+              /opt/matrix/staging/update-phase)
+                pending_code=pending:update-phase
+                invalid_code=invalid:update-phase-path
+                ;;
+              /opt/matrix/app/.update-error.json)
+                pending_code=pending:update-error
+                invalid_code=invalid:update-error-path
+                ;;
+            esac
             marker_state="$(path_state "$marker")"
             case "$marker_state" in
-              invalid) printf 'invalid\n'; exit 0 ;;
-              present) printf 'pending\n'; exit 0 ;;
+              invalid) printf '%s\n' "$invalid_code"; exit 0 ;;
+              present) printf '%s\n' "$pending_code"; exit 0 ;;
             esac
           done
 
           runtime_marker=/opt/matrix/app/TERMINAL_RUNTIME_GENERATION
           runtime_state="$(path_state "$runtime_marker")"
           case "$runtime_state" in
-            invalid) printf 'invalid\n'; exit 0 ;;
-            missing) printf 'pending\n'; exit 0 ;;
+            invalid) printf 'invalid:generation-marker-path\n'; exit 0 ;;
+            missing) printf 'pending:generation-marker\n'; exit 0 ;;
           esac
           IFS= read -r generation <"$runtime_marker" || generation=
           if ! printf '%s' "$generation" | grep -Eq '^gen_[0-9a-f]{64}$'; then
-            printf 'invalid\n'
+            printf 'invalid:generation-marker\n'
             exit 0
           fi
           generation_dir="/opt/matrix/terminal-runtime/generations/${generation}"
           if [ -L "$generation_dir" ] || { [ -e "$generation_dir" ] && [ ! -d "$generation_dir" ]; }; then
-            printf 'invalid\n'
+            printf 'invalid:generation-dir-path\n'
             exit 0
           fi
           if [ ! -d "$generation_dir" ]; then
-            printf 'pending\n'
+            printf 'pending:generation-dir\n'
             exit 0
           fi
           for asset in zellij matrix-terminal-user-keeper.mjs matrix-terminal-attach.mjs; do
             asset_path="${generation_dir}/${asset}"
             if [ -L "$asset_path" ] || { [ -e "$asset_path" ] && [ ! -f "$asset_path" ]; }; then
-              printf 'invalid\n'
+              printf 'invalid:generation-assets-path\n'
               exit 0
             fi
             if [ ! -f "$asset_path" ]; then
-              printf 'pending\n'
+              printf 'pending:generation-assets\n'
               exit 0
             fi
           done
           generation_helper=/opt/matrix/bin/matrix-terminal-generation-id
           if [ -L "$generation_helper" ] || { [ -e "$generation_helper" ] && [ ! -f "$generation_helper" ]; }; then
-            printf 'invalid\n'
+            printf 'invalid:generation-helper-path\n'
             exit 0
           fi
           if [ ! -x "$generation_helper" ]; then
-            printf 'pending\n'
+            printf 'pending:generation-helper\n'
             exit 0
           fi
           actual_generation="$("$generation_helper" \
             "$generation_dir/zellij" \
             "$generation_dir/matrix-terminal-user-keeper.mjs" \
             "$generation_dir/matrix-terminal-attach.mjs" 2>/dev/null)" || {
-            printf 'pending\n'
+            printf 'pending:generation-digest\n'
             exit 0
           }
           if [ "$actual_generation" != "$generation" ]; then
-            printf 'invalid\n'
+            printf 'invalid:generation-digest\n'
             exit 0
           fi
           if ! runuser -u matrix -- "$generation_dir/zellij" --version >/dev/null 2>&1; then
-            printf 'pending\n'
+            printf 'pending:zellij-exec\n'
             exit 0
           fi
           printf 'ready\n'
@@ -356,7 +374,7 @@ jobs:
             body="$(jq -cn --arg script "$readiness_script" --arg target "$target_version" \
               '{command:["/usr/bin/sudo","/bin/bash","-c",$script,"matrix-runtime-readiness",$target],timeoutMs:45000}')"
             send_signed_command "$body" "$response"
-            jq -er '.stdout | select(test("^(ready|pending|invalid)\\n$")) | rtrimstr("\n")' \
+            jq -er '.stdout | select(test("^(ready|(pending|invalid):[a-z0-9-]{1,64})\\n$")) | rtrimstr("\n")' \
               "$response"
           }
           classify_recovery_phase() {
@@ -368,10 +386,12 @@ jobs:
           }
           response="$RUNNER_TEMP/user-systemd-recovery.json"
           host_readiness="$(probe_runtime_readiness)"
-          if [ "$host_readiness" = invalid ]; then
-            echo "Refusing exact-head recovery from invalid runtime state." >&2
-            exit 1
-          fi
+          case "$host_readiness" in
+            invalid:*)
+              echo "Refusing exact-head recovery from ${host_readiness}." >&2
+              exit 1
+              ;;
+          esac
           if [ "$current_version" != "$target_version" ] || [ "$host_readiness" != ready ]; then
             recovery_phase="$(classify_recovery_phase)"
             case "$recovery_phase" in
@@ -439,6 +459,7 @@ jobs:
           deadline=$((SECONDS + 1200))
           inactive_samples=0
           probe_failures=0
+          last_host_readiness="$host_readiness"
           while [ "$SECONDS" -lt "$deadline" ]; do
             if ! fleet="$(curl --fail --silent --show-error --max-time 30 \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
@@ -456,10 +477,17 @@ jobs:
             if [ "$fleet_address" = "$address" ]; then
               host_readiness="$(probe_runtime_readiness 2>/dev/null || true)"
             fi
-            if [ "$host_readiness" = invalid ]; then
-              echo "Exact-head runtime entered invalid state during recovery." >&2
-              exit 1
+            if [ -n "$host_readiness" ]; then
+              last_host_readiness="$host_readiness"
+            else
+              last_host_readiness=probe-unavailable
             fi
+            case "$host_readiness" in
+              invalid:*)
+                echo "Exact-head runtime entered ${host_readiness} during recovery." >&2
+                exit 1
+                ;;
+            esac
             if [ "$version" = "$target_version" ] && [ "$fleet_address" = "$address" ] &&
               [ "$host_readiness" = ready ]; then
               echo "address=$address" >>"$GITHUB_OUTPUT"
@@ -508,7 +536,7 @@ jobs:
             fi
             sleep 15
           done
-          echo "Exact-head preview was unavailable after a bounded wait." >&2
+          echo "Exact-head preview was unavailable after a bounded wait: readiness=${last_host_readiness}." >&2
           exit 1
       - name: Install bounded acceptance assets through the authenticated runtime
         env:
