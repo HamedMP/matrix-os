@@ -423,7 +423,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(recoveryStep).toContain("probe_failures");
     expect(recoveryStep).toContain("last_host_readiness");
     expect(recoveryStep).toContain(
-      'Exact-head preview was unavailable after a bounded wait: readiness=${last_host_readiness}.',
+      'Exact-head preview was unavailable after a bounded wait: readiness=${last_host_readiness}; ${recovery_diagnostic}.',
     );
     expect(recoveryStep).toContain("if ! curl --fail --silent --show-error");
     expect(recoveryStep).toContain("return 1");
