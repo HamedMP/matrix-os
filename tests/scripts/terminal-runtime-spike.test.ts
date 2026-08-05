@@ -554,7 +554,7 @@ describe('terminal runtime spike evidence', () => {
       readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-control'), readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh'),
       readRepo('scripts/spikes/terminal-runtime/verify-production-evidence.mjs'),
     ]);
-    expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 14400))',
+    expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 11400))',
       'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
       'call_helper acceptance-pack', 'call_helper acceptance-cancel',
       'production_acceptance_state=${state}', 'Validate the complete production matrix']);
@@ -563,7 +563,8 @@ describe('terminal runtime spike evidence', () => {
       'for _ in $(seq 1 "$update_wait_seconds")',
       '--property=RuntimeMaxSec=10800',
       '--property=RuntimeMaxSec=600',
-      'for phase in phase1 phase2; do',
+      '--property=TimeoutStopSec=45',
+      'systemctl_cancel stop',
       'write_phase runtime_created',
       'write_phase bundle_one',
       'write_phase bundle_two',
@@ -587,6 +588,53 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).toContain('[ -x "$codex" ]');
     expect(runner).not.toContain("sh -c 'command -v codex'");
     expect(workflow).not.toContain('VPS_SSH_KEY');
+  });
+  it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
+    const runner = await readRepo(
+      'scripts/spikes/terminal-runtime/production-acceptance.sh',
+    );
+    expectAll(runner, [
+      'systemctl_read()',
+      'systemctl_change()',
+      'systemctl_cancel()',
+      '/usr/bin/timeout --signal=TERM --kill-after=2s 8s /usr/bin/systemctl',
+      '/usr/bin/timeout --signal=TERM --kill-after=5s 40s /usr/bin/systemctl',
+      '/usr/bin/timeout --signal=TERM --kill-after=3s 20s /usr/bin/systemctl',
+      'trap - ERR TERM INT HUP',
+    ]);
+    const failPhase = runner.slice(
+      runner.indexOf('fail_phase() {'),
+      runner.indexOf('\nphase1() {'),
+    );
+    expect(
+      failPhase.indexOf(
+        'write_state "failed_${current_phase}_${failure_code}"',
+      ),
+    ).toBeGreaterThan(-1);
+    expect(
+      failPhase.indexOf(
+        'write_state "failed_${current_phase}_${failure_code}"',
+      ),
+    ).toBeLessThan(
+      failPhase.indexOf('systemctl_change daemon-reload'),
+    );
+    const cancelCase = runner.slice(
+      runner.indexOf('  cancel)'),
+      runner.indexOf('  phase1) phase1'),
+    );
+    expect(
+      cancelCase.indexOf('write_state failed_cancelled_operation_failed'),
+    ).toBeLessThan(
+      cancelCase.indexOf('systemctl_cancel stop'),
+    );
+    const unboundedSystemctl = runner.split('\n').filter((line) => {
+      if (!/(^|[^A-Za-z_])systemctl(?: |$)/.test(line)) return false;
+      return (
+        !line.includes('/usr/bin/systemctl "$@"') &&
+        !line.includes('-- /usr/bin/systemctl reboot')
+      );
+    });
+    expect(unboundedSystemctl).toEqual([]);
   });
   it('fails closed on incomplete, stale, or extended production evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-production-evidence-'));
