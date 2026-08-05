@@ -79,9 +79,13 @@ mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
 
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
+if [ -L "$STAGE_DIR/bin/zellij" ] || [ ! -f "$STAGE_DIR/bin/zellij" ]; then
+  echo "extracted Zellij binary must be a regular file" >&2
+  exit 1
+fi
+printf '%s  %s\n' "$ZELLIJ_BINARY_SHA256" "$STAGE_DIR/bin/zellij" | sha256sum -c -
 chmod 0755 "$STAGE_DIR/bin/zellij"
 test -x "$STAGE_DIR/bin/zellij"
-printf '%s  %s\n' "$ZELLIJ_BINARY_SHA256" "$STAGE_DIR/bin/zellij" | sha256sum -c -
 ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
 [ "$ZELLIJ_ACTUAL_VERSION" = "zellij $ZELLIJ_VERSION" ] || {
   echo "staged Zellij version mismatch: expected zellij $ZELLIJ_VERSION" >&2

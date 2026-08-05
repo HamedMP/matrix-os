@@ -104,6 +104,7 @@ describe('customer VPS host bundle', () => {
     );
     expect(script).toContain('HOST_BUNDLE_ZELLIJ_VERSION and HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be set together');
     expect(script).toContain('[[ ! "$ZELLIJ_BINARY_SHA256" =~ ^[0-9a-f]{64}$ ]]');
+    expect(script).toContain('if [ -L "$STAGE_DIR/bin/zellij" ] || [ ! -f "$STAGE_DIR/bin/zellij" ]; then');
     expect(script).toContain("printf '%s  %s\\n' \"$ZELLIJ_BINARY_SHA256\" \"$STAGE_DIR/bin/zellij\" | sha256sum -c -");
     expect(script).toContain('ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"');
     expect(script).toContain('[ "$ZELLIJ_ACTUAL_VERSION" = "zellij $ZELLIJ_VERSION" ]');
@@ -120,6 +121,13 @@ describe('customer VPS host bundle', () => {
     expect(smoke).toContain('mkdtemp(join(tmpdir(), "mzq-"))');
     expect(smoke).toContain('XDG_CACHE_HOME: cacheDir');
     expect(smoke).toContain('await rm(testRoot, { recursive: true, force: true })');
+
+    const regularFileCheck = script.indexOf('if [ -L "$STAGE_DIR/bin/zellij" ] || [ ! -f "$STAGE_DIR/bin/zellij" ]; then');
+    const digestCheck = script.indexOf("printf '%s  %s\\n' \"$ZELLIJ_BINARY_SHA256\" \"$STAGE_DIR/bin/zellij\" | sha256sum -c -");
+    const permissionChange = script.indexOf('chmod 0755 "$STAGE_DIR/bin/zellij"');
+    expect(regularFileCheck).toBeGreaterThan(-1);
+    expect(digestCheck).toBeGreaterThan(regularFileCheck);
+    expect(permissionChange).toBeGreaterThan(digestCheck);
   });
 
   it('fails closed before building when Zellij overrides are unpaired or malformed', () => {
