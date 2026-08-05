@@ -12,6 +12,47 @@ import sys
 GENERATION_RE = re.compile(r"^gen_[0-9a-f]{64}$")
 
 
+def ensure_descriptor_root(descriptor_root: str) -> None:
+    """Create only the final owner metadata directory without following symlinks."""
+    normalized = os.path.abspath(descriptor_root)
+    parent = os.path.dirname(normalized)
+    name = os.path.basename(normalized)
+    if not name or name in {".", ".."}:
+        raise OSError("unsafe descriptor root")
+
+    parent_stats = os.lstat(parent)
+    if stat.S_ISLNK(parent_stats.st_mode) or not stat.S_ISDIR(parent_stats.st_mode):
+        raise OSError("unsafe descriptor parent")
+    parent_descriptor = os.open(
+        parent,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+    )
+    created = False
+    try:
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent_descriptor)
+            created = True
+        except FileExistsError:
+            pass
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            dir_fd=parent_descriptor,
+        )
+        try:
+            root_stats = os.fstat(descriptor)
+            if not stat.S_ISDIR(root_stats.st_mode):
+                raise OSError("unsafe descriptor root")
+            if created:
+                if os.geteuid() == 0:
+                    os.fchown(descriptor, parent_stats.st_uid, parent_stats.st_gid)
+                os.fchmod(descriptor, 0o700)
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent_descriptor)
+
+
 def acquire_generation_lock(descriptor_root: str) -> int:
     root_stats = os.lstat(descriptor_root)
     if stat.S_ISLNK(root_stats.st_mode) or not stat.S_ISDIR(root_stats.st_mode):
@@ -151,6 +192,7 @@ def main() -> int:
     descriptor: int | None = None
     try:
         if delete:
+            ensure_descriptor_root(descriptor_root)
             descriptor = acquire_generation_lock(descriptor_root)
         candidates = collect_candidates(root, descriptor_root, app_dir, rollback_dir, max_raw)
         if delete:

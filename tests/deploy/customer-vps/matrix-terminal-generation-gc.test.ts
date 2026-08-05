@@ -118,6 +118,49 @@ describe("terminal runtime generation GC candidates", () => {
     await expect(execFileAsync("test", ["-d", join(runtimeRoot, "generations", names[1])])).rejects.toBeDefined();
   });
 
+  it("creates a missing descriptor root before first-install garbage collection", async () => {
+    const names = [generation("1"), generation("2"), generation("3")];
+    for (let index = 0; index < names.length; index += 1) {
+      const path = join(runtimeRoot, "generations", names[index]!);
+      await mkdir(path);
+      await utimes(path, index + 1, index + 1);
+    }
+    await rm(descriptorRoot, { recursive: true });
+
+    const { stdout } = await execFileAsync("python3", [
+      script,
+      "--delete",
+      runtimeRoot,
+      descriptorRoot,
+      appDir,
+      rollbackDir,
+      "2",
+    ]);
+
+    expect(stdout.trim()).toBe(names[0]);
+    await expect(execFileAsync("test", ["-d", descriptorRoot])).resolves.toBeDefined();
+    await expect(execFileAsync("test", ["-f", join(descriptorRoot, ".generation-gc.lock")])).resolves.toBeDefined();
+  });
+
+  it("does not create a descriptor root through a symlinked parent", async () => {
+    const outside = join(fixtureRoot, "outside");
+    const linkedParent = join(fixtureRoot, "linked-parent");
+    const linkedDescriptorRoot = join(linkedParent, "descriptors");
+    await mkdir(outside);
+    await symlink(outside, linkedParent);
+
+    await expect(execFileAsync("python3", [
+      script,
+      "--delete",
+      runtimeRoot,
+      linkedDescriptorRoot,
+      appDir,
+      rollbackDir,
+      "2",
+    ])).rejects.toBeDefined();
+    await expect(execFileAsync("test", ["-e", join(outside, "descriptors")])).rejects.toBeDefined();
+  });
+
   it("fails closed when the shared lock entry is a symlink", async () => {
     const first = generation("a");
     const second = generation("b");
