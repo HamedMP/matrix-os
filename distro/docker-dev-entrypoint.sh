@@ -328,7 +328,7 @@ CODE_PROXY_EOF
     CODE_PROXY_PID=
   fi
 
-  pnpm --filter shell exec next dev -p 3000 &
+  pnpm --filter shell exec next dev -p "${SHELL_PORT:-3000}" &
   SHELL_PID=$!
 
   node --import=tsx --watch packages/gateway/src/main.ts &

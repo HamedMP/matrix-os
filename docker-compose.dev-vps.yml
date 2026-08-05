@@ -54,7 +54,6 @@ services:
     restart: "no"
 
   dev:
-    container_name: matrixos-dev-vps
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,11 +97,12 @@ services:
       MATRIX_HOME: /home/matrixos/home
       MATRIX_HANDLE: ${DEV_VPS_HANDLE:-dev}
       MATRIX_DISPLAY_NAME: ${DEV_VPS_DISPLAY_NAME:-Matrix Dev}
-      PORT: "4000"
+      SHELL_PORT: ${MATRIX_DEV_SHELL_INTERNAL_PORT:-3000}
+      PORT: ${MATRIX_DEV_GATEWAY_INTERNAL_PORT:-4000}
       HOSTNAME: 0.0.0.0
-      NEXT_PUBLIC_GATEWAY_WS: wss://dev.matrix-os.com/ws
-      NEXT_PUBLIC_GATEWAY_URL: https://dev.matrix-os.com
-      GATEWAY_URL: http://localhost:4000
+      NEXT_PUBLIC_GATEWAY_WS: ${MATRIX_DEV_GATEWAY_WS:-ws://127.0.0.1:4000/ws}
+      NEXT_PUBLIC_GATEWAY_URL: ${MATRIX_DEV_GATEWAY_URL:-http://127.0.0.1:4000}
+      GATEWAY_URL: http://localhost:${MATRIX_DEV_GATEWAY_INTERNAL_PORT:-4000}
       POSTHOG_TOKEN: ${POSTHOG_TOKEN:-}
       POSTHOG_HOST: ${POSTHOG_HOST:-}
       NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
@@ -121,14 +121,18 @@ services:
       MATRIX_HOME_MIRROR: ${DEV_VPS_MATRIX_HOME_MIRROR:-false}
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "127.0.0.1:${MATRIX_DEV_SHELL_PORT:-3000}:${MATRIX_DEV_SHELL_INTERNAL_PORT:-3000}"
+      - "127.0.0.1:${MATRIX_DEV_GATEWAY_PORT:-4000}:${MATRIX_DEV_GATEWAY_INTERNAL_PORT:-4000}"
     healthcheck:
-      test: wget -qO- http://localhost:4000/health || exit 1
+      test: wget -qO- http://localhost:${MATRIX_DEV_GATEWAY_INTERNAL_PORT:-4000}/health || exit 1
       interval: 10s
       timeout: 3s
       start_period: 60s
     restart: unless-stopped
 
   cloudflared:
+    profiles: ["public-preview"]
     image: cloudflare/cloudflared:latest
     user: "0:0"
     command: tunnel --config /etc/cloudflared/config.yml run
