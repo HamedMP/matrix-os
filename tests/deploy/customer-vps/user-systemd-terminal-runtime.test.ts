@@ -242,7 +242,13 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('--property=ActiveEnterTimestampMonotonic');
     expect(acceptance).toContain('[ "$exec_start_state" = zero ]');
     expect(acceptance).toContain('[ "$active_enter_state" = zero ]');
-    expect(acceptance).toContain('cgroup_tree_is_empty "$old_cgroup"');
+    expect(acceptance).toContain('cgroup_state="$(cgroup_tree_state "$old_cgroup")"');
+    expect(acceptance).toContain('events="${root}/cgroup.events"');
+    expect(acceptance).toContain('current_failure="cgroup-${cgroup_state}"');
+    expect(acceptance).toContain('absent|empty)');
+    expect(acceptance).toContain('echo populated');
+    expect(acceptance).toContain('echo invalid-events');
+    expect(acceptance).not.toContain('find "$root" -xdev -name cgroup.procs');
     expect(acceptance).toContain('matrix-terminal\\.slice/matrix-zellij@rt_[0-9a-f]{32}\\.service$');
     expect(acceptance).toContain('reboot_output_size_file="${state_root}/reboot-output-size"');
     expect(acceptance).toContain('reboot_boot_id_file="${state_root}/reboot-boot-id"');

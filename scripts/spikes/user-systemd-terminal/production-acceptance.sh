@@ -89,16 +89,42 @@ owner_systemctl() {
     systemctl --user "$@"
 }
 
-cgroup_tree_is_empty() {
-  local cgroup="$1" root="/sys/fs/cgroup${1}" procs
-  [[ "$cgroup" =~ ^/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/matrix-terminal\.slice/matrix-zellij@rt_[0-9a-f]{32}\.service$ ]]
-  [ ! -e "$root" ] && return 0
-  [ -d "$root" ] && [ ! -L "$root" ] || return 1
-  while IFS= read -r -d '' procs; do
-    if grep -Eq '^[1-9][0-9]*$' "$procs"; then
-      return 1
+cgroup_tree_state() {
+  local cgroup="$1" root="/sys/fs/cgroup${1}" events key value extra
+  local populated_state=missing
+  if [[ ! "$cgroup" =~ ^/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/matrix-terminal\.slice/matrix-zellij@rt_[0-9a-f]{32}\.service$ ]]; then
+    echo invalid-path
+    return
+  fi
+  if [ ! -e "$root" ]; then
+    echo absent
+    return
+  fi
+  if [ ! -d "$root" ] || [ -L "$root" ]; then
+    if [ ! -e "$root" ]; then echo absent; else echo invalid-node; fi
+    return
+  fi
+  events="${root}/cgroup.events"
+  if [ ! -f "$events" ] || [ -L "$events" ]; then
+    if [ ! -e "$root" ]; then echo absent; else echo invalid-events; fi
+    return
+  fi
+  while read -r key value extra; do
+    if [ "$key" = populated ]; then
+      if [ "$populated_state" != missing ] || [ -n "${extra:-}" ] || [[ ! "$value" =~ ^[01]$ ]]; then
+        echo invalid-events
+        return
+      fi
+      populated_state="$value"
     fi
-  done < <(find "$root" -xdev -name cgroup.procs -print0)
+  done <"$events"
+  case "$populated_state" in
+    0) echo empty ;;
+    1) echo populated ;;
+    *)
+      if [ ! -e "$root" ]; then echo absent; else echo invalid-events; fi
+      ;;
+  esac
 }
 
 boot_has_changed() {
@@ -1540,7 +1566,7 @@ phase2() {
   [ "$boot_id_after" != "$boot_id_before" ]
   write_progress reboot-user-bus-ready
   owner_systemctl show-environment >/dev/null
-  local role baseline unit pid old_cgroup unit_state
+  local role baseline unit pid old_cgroup unit_state cgroup_state
   local main_pid exec_start active_enter main_pid_state exec_start_state active_enter_state
   for role in shell agent; do
     baseline="${state_root}/${role}-baseline.json"
@@ -1573,7 +1599,12 @@ phase2() {
     [ "$exec_start_state" = zero ]
     [ "$active_enter_state" = zero ]
     write_progress "reboot-${role}-cgroup-empty"
-    cgroup_tree_is_empty "$old_cgroup"
+    cgroup_state="$(cgroup_tree_state "$old_cgroup")"
+    current_failure="cgroup-${cgroup_state}"
+    case "$cgroup_state" in
+      absent|empty) ;;
+      *) return 1 ;;
+    esac
     write_progress "reboot-${role}-descriptor-retained"
     [ -f "${descriptor_root}/$(json_field "$baseline" runtimeId).json" ]
     write_progress "reboot-${role}-old-pids-detached"
