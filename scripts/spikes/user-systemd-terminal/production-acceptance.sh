@@ -1305,6 +1305,9 @@ diagnose_runtime_failure() {
   case "$current_progress" in
     runtime-shell-create) target_name="$shell_name" ;;
     runtime-agent-create) target_name="$agent_name" ;;
+    new-generation) target_name="$current_generation_name" ;;
+    post-rollback-runtime) target_name="$post_rollback_name" ;;
+    resource-limit-breach) target_name="$limit_name" ;;
     *) return 0 ;;
   esac
   if [ -f /opt/matrix/app/TERMINAL_RUNTIME_GENERATION ] &&

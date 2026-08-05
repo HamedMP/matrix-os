@@ -287,6 +287,9 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('progress("hostile-controller-inactive-identity")');
     expect(acceptance).toContain('progress("hostile-controller-inactive-restop")');
     expect(acceptance).toContain("diagnose_controller_failure");
+    expect(acceptance).toContain('post-rollback-runtime) target_name="$post_rollback_name"');
+    expect(acceptance).toContain('new-generation) target_name="$current_generation_name"');
+    expect(acceptance).toContain('resource-limit-breach) target_name="$limit_name"');
     expect(acceptance).toContain("journalctl --user -u \"$unit\" --no-pager -n 20 -o cat 2>/dev/null || true");
     expect(acceptance).toContain('current_failure="${controller_status}-descriptor-${descriptor_state}-unit-${unit_result}-exit-${exec_status}-keeper-${keeper_code}"');
     expect(acceptance).toContain('current_failure="${controller_status:-hostile-controller-runtime-unavailable}"');
