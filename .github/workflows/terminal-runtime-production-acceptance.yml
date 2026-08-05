@@ -254,7 +254,7 @@ jobs:
               .truncated==false and .signal==null) | .stdout' "$response"
           }
           call_helper acceptance-launch
-          deadline=$((SECONDS + 14400))
+          deadline=$((SECONDS + 11400))
           last_state=""
           while [ "$SECONDS" -lt "$deadline" ]; do
             if state="$(call_helper acceptance-status 2>/dev/null)"; then
@@ -265,7 +265,10 @@ jobs:
                 last_state="$state"
               fi
               [ "$state" != phase1-ready ] || break
-              if [[ "$state" =~ ^failed(_|$) ]]; then exit 1; fi
+              if [[ "$state" =~ ^failed(_|$) ]]; then
+                call_helper acceptance-cancel >/dev/null 2>&1 || true
+                exit 1
+              fi
             fi
             sleep 15
           done
