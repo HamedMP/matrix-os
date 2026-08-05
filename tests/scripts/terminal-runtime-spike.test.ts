@@ -558,6 +558,20 @@ describe('terminal runtime spike evidence', () => {
       'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
       'call_helper acceptance-pack', 'call_helper acceptance-cancel',
       'production_acceptance_state=${state}', 'Validate the complete production matrix']);
+    expect(workflow).toContain(
+      "group: terminal-runtime-production-${{ github.event.label.name == 'terminal-production-acceptance' && github.event.pull_request.number || github.run_id }}",
+    );
+    expect(workflow).not.toContain(
+      'group: terminal-runtime-production-${{ github.event.pull_request.number }}\n',
+    );
+    const cancellationCleanup = workflow.slice(
+      workflow.indexOf('- name: Cancel incomplete production acceptance'),
+    );
+    expectAll(cancellationCleanup, [
+      "if: ${{ (cancelled() || failure()) && steps.recover.outcome != 'success' }}",
+      'acceptance-cancel',
+      '--max-time 45',
+    ]);
     expectAll(runner, [
       'readonly update_wait_seconds=1800',
       'for _ in $(seq 1 "$update_wait_seconds")',
