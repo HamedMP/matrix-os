@@ -10,7 +10,20 @@ NODE_DIST="node-v${NODE_VERSION}-linux-x64"
 NODE_ARCHIVE="${NODE_DIST}.tar.xz"
 NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
 NODE_URL="${NODE_BASE_URL}/${NODE_ARCHIVE}"
-ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.1}"
+if [[ ${HOST_BUNDLE_ZELLIJ_VERSION+x} != ${HOST_BUNDLE_ZELLIJ_BINARY_SHA256+x} ]]; then
+  echo "HOST_BUNDLE_ZELLIJ_VERSION and HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be set together" >&2
+  exit 1
+fi
+ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.3}"
+ZELLIJ_BINARY_SHA256="${HOST_BUNDLE_ZELLIJ_BINARY_SHA256:-397481870c4fc3bae646cd7613cde3a1cebdc204558a6cb9a7c603d4c852fc90}"
+if [[ ! "$ZELLIJ_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "HOST_BUNDLE_ZELLIJ_VERSION must be a semantic version" >&2
+  exit 1
+fi
+if [[ ! "$ZELLIJ_BINARY_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be a lowercase 64-character SHA-256" >&2
+  exit 1
+fi
 ZELLIJ_ARCHIVE="zellij-x86_64-unknown-linux-musl.tar.gz"
 ZELLIJ_URL="https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/${ZELLIJ_ARCHIVE}"
 GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"
@@ -68,6 +81,13 @@ curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIV
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
 chmod 0755 "$STAGE_DIR/bin/zellij"
 test -x "$STAGE_DIR/bin/zellij"
+printf '%s  %s\n' "$ZELLIJ_BINARY_SHA256" "$STAGE_DIR/bin/zellij" | sha256sum -c -
+ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
+[ "$ZELLIJ_ACTUAL_VERSION" = "zellij $ZELLIJ_VERSION" ] || {
+  echo "staged Zellij version mismatch: expected zellij $ZELLIJ_VERSION" >&2
+  exit 1
+}
+timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
 tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"
