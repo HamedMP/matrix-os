@@ -548,6 +548,15 @@ describe('terminal runtime spike evidence', () => {
       control.indexOf('exec /usr/bin/bash "$target"'),
     );
   });
+  it('gives CI change detection observed checkout time plus margin', async () => {
+    const workflow = await readRepo('.github/workflows/ci.yml');
+    const changesJob = workflow.slice(
+      workflow.indexOf('  changes:'),
+      workflow.indexOf('\n  # ── Gate 1:'),
+    );
+    expect(changesJob).toContain('timeout-minutes: 5');
+    expect(changesJob).not.toContain('timeout-minutes: 2');
+  });
   it('requires an exact-head production acceptance matrix beyond S1 and S2', async () => {
     const [workflow, helper, runner, verifier] = await Promise.all([
       readRepo('.github/workflows/terminal-runtime-production-acceptance.yml'),
