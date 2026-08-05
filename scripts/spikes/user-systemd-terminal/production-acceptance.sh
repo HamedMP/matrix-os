@@ -101,6 +101,16 @@ cgroup_tree_is_empty() {
   done < <(find "$root" -xdev -name cgroup.procs -print0)
 }
 
+boot_has_changed() {
+  local boot_id_before boot_id_after
+  [ -f "$reboot_boot_id_file" ] && [ ! -L "$reboot_boot_id_file" ] || return 1
+  IFS= read -r boot_id_before <"$reboot_boot_id_file"
+  boot_id_after="$(cat /proc/sys/kernel/random/boot_id)"
+  [[ "$boot_id_before" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+  [[ "$boot_id_after" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+  [ "$boot_id_after" != "$boot_id_before" ]
+}
+
 cleanup_controller_runtime() {
   local runtime_id
   for runtime_id in "$conflict_id" "$legacy_conflict_id"; do
@@ -1631,6 +1641,8 @@ case "$operation" in
       echo "failed:prepare-worker-exited:${state#preparing:}"
     elif [[ "$state" == phase1-running:* ]] && ! systemctl is-active --quiet "$phase1_unit"; then
       echo "failed:phase-worker-exited:${state#phase1-running:}"
+    elif [ "$state" = reboot-scheduled ] && boot_has_changed; then
+      echo reboot-ready
     else
       printf '%s\n' "$state"
     fi
@@ -1660,6 +1672,7 @@ case "$operation" in
     ;;
   resume)
     [ "$(cat "$state_file")" = reboot-scheduled ]
+    boot_has_changed
     systemd-run --unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-phase2" \
       --collect --no-block --property=Type=exec --property=KillMode=control-group \
       --property=StandardOutput=null --property=StandardError=null \
