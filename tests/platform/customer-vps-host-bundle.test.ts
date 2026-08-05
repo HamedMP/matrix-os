@@ -726,9 +726,12 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('classify_recovery_phase');
     expect(workflow).toContain('diagnose_recovery_state');
     expect(workflow).toContain('phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)');
-    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
+    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
     expect(workflow).toContain('recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
-    expect(workflow).toContain('if [[ "$recovery_diagnostic" != *" error=none" ]]; then');
+    expect(workflow).toContain('initial_recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
+    expect(workflow).toContain('retry_progress_observed=false');
+    expect(workflow).toContain('{ [ "$diagnostic_error" = none ] || [ "$diagnostic_phase" != "$recovery_phase" ]; }; then');
+    expect(workflow).toContain('if [ "$retry_progress_observed" = true ] && [ "$diagnostic_error" != none ]; then');
     expect(workflow).toContain('Exact-head updater reported a bounded failure: ${recovery_diagnostic}.');
     expect(workflow).toContain('readiness=${last_host_readiness}; ${recovery_diagnostic}.');
     expect(workflow).toContain('idle|prepare|download|verify|extract|terminal-runtime)');
@@ -1158,6 +1161,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
     expect(syncAgent).toContain('write_update_error "apply_failed"');
     expect(syncAgent).toContain('write_update_error "apply_interrupted"');
+    expect(syncAgent).toContain('temp="$(mktemp "$APP_DIR/.update-error.json.XXXXXX")" || return 1');
+    expect(syncAgent).toContain('python3 - "$temp" "$code" "$message" "$version" "$available_kb" "$required_kb"');
+    expect(syncAgent).toContain('if ! mv -fT "$temp" "$UPDATE_ERROR_MARKER"; then');
     expect(syncAgent).toContain('readonly UPDATE_PHASE_MARKER="$STAGING_DIR/update-phase"');
     expect(syncAgent).toContain('write_update_phase download');
     expect(syncAgent).toContain('write_update_phase verify');
