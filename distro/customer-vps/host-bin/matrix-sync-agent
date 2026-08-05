@@ -409,12 +409,36 @@ download_bundle() {
 
 prepare_triggered_update_action=apply
 
+installed_terminal_runtime_is_ready() {
+  local marker="$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE" generation generation_dir asset actual_generation
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  IFS= read -r generation <"$marker" || return 1
+  [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || return 1
+
+  generation_dir="$TERMINAL_RUNTIME_ROOT/generations/$generation"
+  [ -d "$generation_dir" ] && [ ! -L "$generation_dir" ] || return 1
+  for asset in matrix-terminal-user-keeper.mjs matrix-terminal-attach.mjs; do
+    [ -f "$generation_dir/$asset" ] && [ ! -L "$generation_dir/$asset" ] || return 1
+  done
+  [ -f "$generation_dir/zellij" ] && [ ! -L "$generation_dir/zellij" ] &&
+    [ -x "$generation_dir/zellij" ] || return 1
+  [ -f "$BIN_DIR/matrix-terminal-generation-id" ] &&
+    [ ! -L "$BIN_DIR/matrix-terminal-generation-id" ] &&
+    [ -x "$BIN_DIR/matrix-terminal-generation-id" ] || return 1
+  actual_generation="$("$BIN_DIR/matrix-terminal-generation-id" \
+    "$generation_dir/zellij" \
+    "$generation_dir/matrix-terminal-user-keeper.mjs" \
+    "$generation_dir/matrix-terminal-attach.mjs" 2>/dev/null)" || return 1
+  [ "$actual_generation" = "$generation" ]
+}
+
 requested_update_is_already_current() {
   local remote_version="$1"
   [ -f "$UPDATE_VERSION_FILE" ] && [ ! -L "$UPDATE_VERSION_FILE" ] || return 1
   [ "$remote_version" = "$(current_version)" ] || return 1
   [ ! -e "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 1
   [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 1
+  installed_terminal_runtime_is_ready || return 1
 }
 
 consume_idempotent_update_request() {
