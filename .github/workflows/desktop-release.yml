@@ -110,9 +110,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           pattern: ${{ needs.prepare.outputs.artifact_prefix }}-*
           path: desktop-release
@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload dry-run bundle
         if: ${{ needs.prepare.outputs.mode == 'dry-run' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-release-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.channel }}
           path: desktop-release/**
