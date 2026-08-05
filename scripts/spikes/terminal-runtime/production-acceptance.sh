@@ -7,7 +7,7 @@ if [ "$(id -u)" -ne 0 ] || [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]] ||
   exit 2
 fi
 case "$operation" in
-  launch|status|reboot|resume|pack|phase1|phase2) ;;
+  launch|status|reboot|resume|pack|cancel|phase1|phase2) ;;
   *) echo "production_acceptance_invalid_request" >&2; exit 2 ;;
 esac
 readonly root_parent=/var/lib/matrix-terminal-acceptance; readonly state_root="${root_parent}/${head_sha}-${run_nonce}"
@@ -17,6 +17,8 @@ readonly verifier=/opt/matrix/libexec/terminal-runtime/current/spikes/verify-pro
 readonly version_b="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-b"; readonly unit_prefix=matrix-terminal-session@
 readonly home=/home/matrix/home; readonly cache_root="${home}/system/terminal-runtime/zellij-cache"; readonly uid="$(id -u matrix)"
 readonly codex=/opt/matrix/runtime/node/bin/codex
+readonly update_wait_seconds=1800
+current_phase=initializing
 readonly -a zellij_env=(
   env HOME="$home" MATRIX_HOME="$home" LANG=C.UTF-8 TERM=xterm-256color
   PATH="$home/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin"
@@ -25,6 +27,14 @@ readonly -a zellij_env=(
   ZELLIJ_CONFIG_DIR=/opt/matrix/libexec/terminal-runtime/current ZELLIJ_CONFIG_FILE=/opt/matrix/libexec/terminal-runtime/current/config.kdl
 )
 write_state() { install -d -o root -g root -m 0700 "$state_root"; local next="${state_file}.next"; printf '%s\n' "$1" >"$next"; chmod 0600 "$next"; mv -f -- "$next" "$state_file"; }
+write_phase() {
+  case "$1" in
+    runtime_created|bundle_one|bundle_two|forced_failure|reapply_one|rollback_two|final_checks) ;;
+    *) return 1 ;;
+  esac
+  current_phase="$1"
+  write_state "phase1-running_${current_phase}"
+}
 mark() { install -m 0600 /dev/null "$checks_root/$1"; }; probe_owner() { runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" "$@"; }
 json_field() { /opt/matrix/runtime/node/bin/node -e '
     let raw=""; process.stdin.on("data",d=>raw+=d); process.stdin.on("end",()=>{
@@ -37,21 +47,25 @@ roles() { /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }
 roles_match() { local current; current="$(roles "$1")"; [ "$current" = "$(cat "$state_root/roles.json")" ]; }
 request_update() { runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
 wait_update() {
-  local expected="$1"; for _ in $(seq 1 4500); do
+  local expected="$1"; for _ in $(seq 1 "$update_wait_seconds"); do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
       [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = idle ] &&
       systemctl is-active --quiet matrix-gateway.service; then return 0; fi
+    [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" != failed ] || return 1
     sleep 1
   done; return 1; }
-wait_failed_update() { for _ in $(seq 1 4500); do [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] && return 0; sleep 1; done; return 1; }
+wait_failed_update() { for _ in $(seq 1 "$update_wait_seconds"); do [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] && return 0; sleep 1; done; return 1; }
 zellij() { runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
 fail_phase() {
+  local failure_code
+  failure_code="$(cat /run/matrix-update-runtime/last-failure-code 2>/dev/null || true)"
+  [[ "$failure_code" =~ ^[a-z0-9_]{1,64}$ ]] || failure_code=operation_failed
   rm -f -- /etc/systemd/system/matrix-gateway.service.d/zz-terminal-acceptance.conf; systemctl daemon-reload >/dev/null 2>&1 || true
   systemctl start matrix-gateway.service matrix-shell.service >/dev/null 2>&1 || true
-  write_state failed; exit 1
+  write_state "failed_${current_phase}_${failure_code}"; exit 1
 }
 phase1() {
-  trap fail_phase ERR
+  trap fail_phase ERR TERM INT HUP
   install -d -o root -g root -m 0700 "$root_parent"
   find "$root_parent" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf -- {} +
   rm -rf -- "$state_root"
@@ -80,6 +94,7 @@ phase1() {
   done
   roles_match "$runtime_id"
   mark continuousOutput; mark codingAgentPreserved
+  write_phase runtime_created
   local runtime_cgroup; runtime_cgroup="$(systemctl show "$unit" -p ControlGroup --value)"
   local attach_one=/run/matrix-terminal-accept-"${head_sha}"-1.json attach_two=/run/matrix-terminal-accept-"${head_sha}"-2.json
   rm -f -- "$attach_one" "$attach_two"
@@ -106,7 +121,9 @@ phase1() {
   roles_match "$runtime_id"; mark renamePreservesIdentity
   local supervisor_pid; supervisor_pid="$(systemctl show matrix-terminal-runtime.service -p MainPID --value)"
   printf '%s\n' "$supervisor_pid" >"$state_root/supervisor-pid"
+  write_phase bundle_one
   request_update "$version_a"; wait_update "$version_a"; roles_match "$runtime_id"; mark bundleOnePreservesRuntime
+  write_phase bundle_two
   request_update "$version_b"; wait_update "$version_b"; roles_match "$runtime_id"; mark bundleTwoPreservesRuntime
   [ "$(systemctl show matrix-terminal-runtime.service -p MainPID --value)" = "$supervisor_pid" ]
   mark supervisorPreserved
@@ -117,6 +134,7 @@ ExecStart=
 ExecStart=/bin/false
 EOF
   systemctl daemon-reload
+  write_phase forced_failure
   request_update "$version_a"
   wait_failed_update
   rm -f -- /etc/systemd/system/matrix-gateway.service.d/zz-terminal-acceptance.conf
@@ -124,9 +142,12 @@ EOF
   systemctl start matrix-gateway.service matrix-shell.service
   [ "$(cat /opt/matrix/app/BUNDLE_VERSION)" = "$version_b" ]
   roles_match "$runtime_id"; mark failedUpdatePreservesRuntime
+  write_phase reapply_one
   request_update "$version_a"; wait_update "$version_a"
+  write_phase rollback_two
   request_update rollback; wait_update "$version_b"
   roles_match "$runtime_id"; mark explicitRollbackPreservesRuntime
+  write_phase final_checks
   systemctl daemon-reload; roles_match "$runtime_id"; mark daemonReloadPreservesRuntime
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null; then
     mark forceRunAbsent
@@ -138,7 +159,8 @@ EOF
   write_state phase1-ready
 }
 phase2() {
-  trap fail_phase ERR
+  current_phase=phase2
+  trap fail_phase ERR TERM INT HUP
   [ "$(cat "$state_file")" = reboot-scheduled ]
   write_state phase2-running
   local runtime_id unit inspected recovered recovery_mode
@@ -216,6 +238,7 @@ case "$operation" in
     install -d -o root -g root -m 0700 "$root_parent"
     systemd-run --unit="matrix-terminal-production-${head_sha}-${run_nonce}-phase1" \
       --collect --no-block --property=Type=exec --property=KillMode=control-group \
+      --property=RuntimeMaxSec=10800 \
       --property=StandardOutput=null --property=StandardError=null \
       -- "$0" phase1 "$head_sha" "$run_nonce" >/dev/null
     echo production_acceptance_started
@@ -234,6 +257,7 @@ case "$operation" in
     [ "$(cat "$state_file")" = reboot-scheduled ]
     systemd-run --unit="matrix-terminal-production-${head_sha}-${run_nonce}-phase2" \
       --collect --no-block --property=Type=exec --property=KillMode=control-group \
+      --property=RuntimeMaxSec=600 \
       --property=StandardOutput=null --property=StandardError=null \
       -- "$0" phase2 "$head_sha" "$run_nonce" >/dev/null
     echo production_acceptance_resumed
@@ -244,6 +268,14 @@ case "$operation" in
       --pack "$evidence_root" "$head_sha")"
     rm -rf -- "$state_root"
     printf '%s' "$payload" | base64 --wrap=0
+    ;;
+  cancel)
+    for phase in phase1 phase2; do
+      unit="matrix-terminal-production-${head_sha}-${run_nonce}-${phase}.service"
+      /usr/bin/timeout --signal=TERM --kill-after=5s 35s /usr/bin/systemctl stop "$unit" >/dev/null 2>&1 || true
+    done
+    write_state failed_cancelled_operation_failed
+    echo production_acceptance_cancelled
     ;;
   phase1) phase1 ;;
   phase2) phase2 ;;
