@@ -1398,6 +1398,42 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(readinessCall).toBeGreaterThan(sameVersionGuard);
   });
 
+  it('bootstraps an incomplete terminal runtime from the immutable bundle helpers', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const installRuntime = syncAgent.indexOf('install_terminal_runtime_payload()');
+    const bundledGenerationHelper = syncAgent.indexOf(
+      'generation_helper="$extract_dir/bin/matrix-terminal-generation-id"',
+      installRuntime,
+    );
+    const bundledGcHelper = syncAgent.indexOf(
+      'generation_gc_helper="$extract_dir/bin/matrix-terminal-generation-gc.py"',
+      bundledGenerationHelper,
+    );
+    const sourceVerification = syncAgent.indexOf(
+      'terminal_runtime_generation_for_dir "$source_dir" "$generation_helper"',
+      bundledGcHelper,
+    );
+    const activation = syncAgent.indexOf(
+      'activate_terminal_runtime_generation "$generation" "$generation_helper"',
+      sourceVerification,
+    );
+    const cleanup = syncAgent.indexOf(
+      'cleanup_terminal_runtime_generations "$generation_gc_helper"',
+      activation,
+    );
+    const hostBinInstall = syncAgent.indexOf('install_host_bin_payload "$extract_dir/bin"');
+
+    expect(installRuntime).toBeGreaterThan(-1);
+    expect(bundledGenerationHelper).toBeGreaterThan(installRuntime);
+    expect(bundledGcHelper).toBeGreaterThan(bundledGenerationHelper);
+    expect(sourceVerification).toBeGreaterThan(bundledGcHelper);
+    expect(activation).toBeGreaterThan(sourceVerification);
+    expect(cleanup).toBeGreaterThan(activation);
+    expect(hostBinInstall).toBeGreaterThan(cleanup);
+  });
+
   it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
