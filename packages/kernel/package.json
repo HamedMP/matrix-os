@@ -40,7 +40,7 @@
     "@types/turndown": "^5.0.6",
     "drizzle-kit": "^0.31.9",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.74",
