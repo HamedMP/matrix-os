@@ -11,7 +11,7 @@ if [ "$(id -u)" -ne 0 ] || [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]] ||
   exit 2
 fi
 case "$operation" in
-  prepare|prepare-worker|launch|status|reboot|resume|pack|phase1|phase2) ;;
+  prepare|prepare-worker|launch|status|reboot|reboot-now|resume|pack|phase1|phase2) ;;
   *) echo "user_systemd_acceptance_invalid_request" >&2; exit 2 ;;
 esac
 if [[ "$operation" == prepare* ]] &&
@@ -46,6 +46,7 @@ readonly owner_uid="$(id -u matrix)"
 readonly loop_root="${home}/system/terminal-acceptance/${head_sha:0:7}-${run_nonce}"
 readonly loop_script="${loop_root}/production-loop.mjs"
 readonly output_file="${loop_root}/output"
+readonly reboot_output_size_file="${state_root}/reboot-output-size"
 readonly corrupt_id=rt_cccccccccccccccccccccccccccccccc
 readonly symlink_id=rt_dddddddddddddddddddddddddddddddd
 readonly generation_symlink="${runtime_root}/generations/gen_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -85,6 +86,18 @@ owner_systemctl() {
     XDG_RUNTIME_DIR="/run/user/${owner_uid}" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${owner_uid}/bus" \
     systemctl --user "$@"
+}
+
+cgroup_tree_is_empty() {
+  local cgroup="$1" root="/sys/fs/cgroup${1}" procs
+  [[ "$cgroup" =~ ^/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/matrix-terminal\.slice/matrix-zellij@rt_[0-9a-f]{32}\.service$ ]]
+  [ ! -e "$root" ] && return 0
+  [ -d "$root" ] && [ ! -L "$root" ] || return 1
+  while IFS= read -r -d '' procs; do
+    if grep -Eq '^[1-9][0-9]*$' "$procs"; then
+      return 1
+    fi
+  done < <(find "$root" -xdev -name cgroup.procs -print0)
 }
 
 cleanup_controller_runtime() {
@@ -1506,15 +1519,23 @@ phase2() {
   current_state_prefix=phase2-running
   write_progress reboot-user-bus-ready
   owner_systemctl show-environment >/dev/null
-  local role baseline unit pid old_cgroup
+  local role baseline unit pid old_cgroup unit_state
   for role in shell agent; do
     baseline="${state_root}/${role}-baseline.json"
     unit="$(json_field "$baseline" unit)"
     old_cgroup="$(json_field "$baseline" cgroup)"
     write_progress "reboot-${role}-unit-inactive"
     ! owner_systemctl is-active --quiet "$unit"
-    write_progress "reboot-${role}-cgroup-removed"
-    [ ! -e "/sys/fs/cgroup${old_cgroup}/cgroup.procs" ]
+    write_progress "reboot-${role}-unit-never-started"
+    unit_state="$(owner_systemctl show "$unit" \
+      --property=MainPID \
+      --property=ExecMainStartTimestampMonotonic \
+      --property=ActiveEnterTimestampMonotonic)"
+    grep -qxF 'MainPID=0' <<<"$unit_state"
+    grep -qxF 'ExecMainStartTimestampMonotonic=0' <<<"$unit_state"
+    grep -qxF 'ActiveEnterTimestampMonotonic=0' <<<"$unit_state"
+    write_progress "reboot-${role}-cgroup-empty"
+    cgroup_tree_is_empty "$old_cgroup"
     write_progress "reboot-${role}-descriptor-retained"
     [ -f "${descriptor_root}/$(json_field "$baseline" runtimeId).json" ]
     write_progress "reboot-${role}-old-pids-detached"
@@ -1536,8 +1557,11 @@ phase2() {
   mark rebootCreatesNoReplacementPids
 
   write_progress reboot-no-output
-  local size_before size_after
+  local recorded_size size_before size_after
+  IFS= read -r recorded_size <"$reboot_output_size_file"
+  [[ "$recorded_size" =~ ^[0-9]+$ ]]
   size_before="$(stat -c %s "$output_file")"
+  [ "$size_before" -ge "$recorded_size" ]
   sleep 3
   size_after="$(stat -c %s "$output_file")"
   [ "$size_after" = "$size_before" ]
@@ -1590,8 +1614,19 @@ case "$operation" in
     [ "$(cat "$state_file")" = phase1-ready ]
     write_state reboot-scheduled
     systemd-run --unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-reboot" \
-      --collect --on-active=5 -- /usr/bin/systemctl reboot >/dev/null
+      --collect --on-active=5 \
+      -- "$helper_path" reboot-now "$head_sha" "$run_nonce" "$preview_version" >/dev/null
     echo user_systemd_acceptance_reboot_scheduled
+    ;;
+  reboot-now)
+    [ "$(cat "$state_file")" = reboot-scheduled ]
+    size_before="$(stat -c %s "$output_file")"
+    [[ "$size_before" =~ ^[0-9]+$ ]]
+    printf '%s\n' "$size_before" >"${reboot_output_size_file}.next"
+    chmod 0600 "${reboot_output_size_file}.next"
+    mv -f -- "${reboot_output_size_file}.next" "$reboot_output_size_file"
+    /usr/bin/sync -f "$state_root"
+    /usr/bin/systemctl reboot
     ;;
   resume)
     [ "$(cat "$state_file")" = reboot-scheduled ]

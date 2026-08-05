@@ -230,12 +230,22 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain("for role in shell agent; do");
     for (const rebootStage of [
       "unit-inactive",
-      "cgroup-removed",
+      "unit-never-started",
+      "cgroup-empty",
       "descriptor-retained",
       "old-pids-detached",
     ]) {
       expect(acceptance).toContain(`write_progress "reboot-\${role}-${rebootStage}"`);
     }
+    expect(acceptance).toContain('ExecMainStartTimestampMonotonic=0');
+    expect(acceptance).toContain('ActiveEnterTimestampMonotonic=0');
+    expect(acceptance).toContain('cgroup_tree_is_empty "$old_cgroup"');
+    expect(acceptance).toContain('matrix-terminal\\.slice/matrix-zellij@rt_[0-9a-f]{32}\\.service$');
+    expect(acceptance).toContain('reboot_output_size_file="${state_root}/reboot-output-size"');
+    expect(acceptance).toContain('"$helper_path" reboot-now "$head_sha" "$run_nonce" "$preview_version"');
+    expect(acceptance).toContain('[ "$size_before" -ge "$recorded_size" ]');
+    expect(acceptance).toContain('[ "$size_after" = "$size_before" ]');
+    expect(acceptance).not.toContain('write_progress "reboot-${role}-cgroup-removed"');
     for (const rebootStage of ["no-active-units", "no-replacement-pids", "no-output"]) {
       expect(acceptance).toContain(`write_progress reboot-${rebootStage}`);
     }
