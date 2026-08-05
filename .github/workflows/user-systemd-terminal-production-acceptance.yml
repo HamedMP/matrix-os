@@ -384,6 +384,41 @@ jobs:
             jq -er '.stdout | select(test("^(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)\\n$")) | rtrimstr("\n")' \
               "$response"
           }
+          diagnose_recovery_state() {
+            local response="$RUNNER_TEMP/user-systemd-recovery-diagnostic.json" body diagnostic_script
+            read -r -d '' diagnostic_script <<'BASH' || true
+          set -u
+          phase=idle
+          phase_path=/opt/matrix/staging/update-phase
+          if [ -L "$phase_path" ] || { [ -e "$phase_path" ] && [ ! -f "$phase_path" ]; }; then
+            phase=invalid
+          elif [ -f "$phase_path" ]; then
+            IFS= read -r phase <"$phase_path" || phase=invalid
+            case "$phase" in
+              prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
+              *) phase=invalid ;;
+            esac
+          fi
+
+          error=none
+          error_path=/opt/matrix/app/.update-error.json
+          if [ -L "$error_path" ] || { [ -e "$error_path" ] && [ ! -f "$error_path" ]; }; then
+            error=invalid
+          elif [ -f "$error_path" ]; then
+            error="$(/usr/bin/jq -r '.code // ""' "$error_path" 2>/dev/null || true)"
+            case "$error" in
+              apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch) ;;
+              *) error=invalid ;;
+            esac
+          fi
+          printf 'phase=%s error=%s\n' "$phase" "$error"
+          BASH
+            body="$(jq -cn --arg script "$diagnostic_script" \
+              '{command:["/usr/bin/sudo","/bin/bash","-c",$script],timeoutMs:45000}')"
+            send_signed_command "$body" "$response"
+            jq -er '.stdout | select(test("^phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid) error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)\\n$")) | rtrimstr("\n")' \
+              "$response"
+          }
           response="$RUNNER_TEMP/user-systemd-recovery.json"
           host_readiness="$(probe_runtime_readiness)"
           case "$host_readiness" in
@@ -482,6 +517,12 @@ jobs:
             else
               last_host_readiness=probe-unavailable
             fi
+            if recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null)"; then
+              if [[ "$recovery_diagnostic" != *" error=none" ]]; then
+                echo "Exact-head updater reported a bounded failure: ${recovery_diagnostic}." >&2
+                exit 1
+              fi
+            fi
             case "$host_readiness" in
               invalid:*)
                 echo "Exact-head runtime entered ${host_readiness} during recovery." >&2
@@ -536,7 +577,8 @@ jobs:
             fi
             sleep 15
           done
-          echo "Exact-head preview was unavailable after a bounded wait: readiness=${last_host_readiness}." >&2
+          recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf 'phase=invalid error=invalid\n')"
+          echo "Exact-head preview was unavailable after a bounded wait: readiness=${last_host_readiness}; ${recovery_diagnostic}." >&2
           exit 1
       - name: Install bounded acceptance assets through the authenticated runtime
         env:
