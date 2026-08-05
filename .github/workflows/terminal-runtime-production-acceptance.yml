@@ -7,7 +7,7 @@ permissions:
   contents: read
   pull-requests: write
 concurrency:
-  group: terminal-runtime-production-${{ github.event.pull_request.number }}
+  group: terminal-runtime-production-${{ github.event.label.name == 'terminal-production-acceptance' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 jobs:
   gate:
@@ -357,3 +357,23 @@ jobs:
           - Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
           The bounded artifact contains lifecycle check names only; terminal contents, credentials, paths, names, PIDs, and host addresses are excluded."
           gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" >/dev/null
+      - name: Cancel incomplete production acceptance
+        if: ${{ (cancelled() || failure()) && steps.recover.outcome != 'success' }}
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+        run: |
+          set -euo pipefail
+          [ -n "$ADDRESS" ] || exit 0
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          body="$(jq -cn --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
+            command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","acceptance-cancel",$sha,$nonce],
+            timeoutMs:30000}')"
+          curl --fail --silent --show-error --max-time 45 --insecure \
+            --resolve "app.matrix-os.com:443:${ADDRESS}" \
+            -o /dev/null -X POST 'https://app.matrix-os.com/api/terminal/run' \
+            -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
+            --data-binary "$body" || true
