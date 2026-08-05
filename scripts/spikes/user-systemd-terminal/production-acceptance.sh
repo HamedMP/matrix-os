@@ -55,6 +55,7 @@ readonly generation_sentinel="${state_root}/generation-sentinel"
 readonly controller_environment_path="${descriptor_root}/hostile-environment-${conflict_id}.json"
 readonly legacy_controller_environment_path="${descriptor_root}/hostile-environment.json"
 readonly phase1_unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-phase1.service"
+readonly phase2_unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-phase2.service"
 readonly prepare_unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-prepare.service"
 current_progress=initializing
 current_state_prefix=phase1-running
@@ -90,7 +91,7 @@ owner_systemctl() {
 }
 
 cgroup_tree_state() {
-  local cgroup="$1" root="/sys/fs/cgroup${1}" events key value extra
+  local cgroup="$1" root="/sys/fs/cgroup${1}" events events_data key value extra
   local populated_state=missing
   if [[ ! "$cgroup" =~ ^/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/matrix-terminal\.slice/matrix-zellij@rt_[0-9a-f]{32}\.service$ ]]; then
     echo invalid-path
@@ -109,6 +110,16 @@ cgroup_tree_state() {
     if [ ! -e "$root" ]; then echo absent; else echo invalid-events; fi
     return
   fi
+  if ! events_data="$(
+    /usr/bin/timeout --kill-after=1s 5s /usr/bin/head -c 1024 -- "$events" 2>/dev/null
+  )"; then
+    if [ ! -e "$root" ]; then echo absent; else echo invalid-events; fi
+    return
+  fi
+  if ! [ "${#events_data}" -lt 1024 ]; then
+    echo invalid-events
+    return
+  fi
   while read -r key value extra; do
     if [ "$key" = populated ]; then
       if [ "$populated_state" != missing ] || [ -n "${extra:-}" ] || [[ ! "$value" =~ ^[01]$ ]]; then
@@ -117,7 +128,7 @@ cgroup_tree_state() {
       fi
       populated_state="$value"
     fi
-  done <"$events"
+  done <<<"$events_data"
   case "$populated_state" in
     0) echo empty ;;
     1) echo populated ;;
@@ -1675,6 +1686,8 @@ case "$operation" in
       echo "failed:prepare-worker-exited:${state#preparing:}"
     elif [[ "$state" == phase1-running:* ]] && ! systemctl is-active --quiet "$phase1_unit"; then
       echo "failed:phase-worker-exited:${state#phase1-running:}"
+    elif [[ "$state" == phase2-running:* ]] && ! systemctl is-active --quiet "$phase2_unit"; then
+      echo "failed:phase2-worker-exited:${state#phase2-running:}"
     elif [ "$state" = reboot-scheduled ] && boot_has_changed; then
       echo reboot-ready
     else
@@ -1707,8 +1720,9 @@ case "$operation" in
   resume)
     [ "$(cat "$state_file")" = reboot-scheduled ]
     boot_has_changed
-    systemd-run --unit="matrix-user-systemd-accept-${head_sha:0:7}-${run_nonce}-phase2" \
+    systemd-run --unit="${phase2_unit%.service}" \
       --collect --no-block --property=Type=exec --property=KillMode=control-group \
+      --property=RuntimeMaxSec=120 \
       --property=StandardOutput=null --property=StandardError=null \
       -- "$helper_path" phase2 "$head_sha" "$run_nonce" >/dev/null
     echo user_systemd_acceptance_resumed
