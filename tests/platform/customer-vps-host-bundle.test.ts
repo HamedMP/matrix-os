@@ -729,6 +729,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
     expect(workflow).toContain('recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
     expect(workflow).toContain('initial_recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
+    expect(workflow).toContain('/usr/bin/python3 - "$error_path"');
+    expect(workflow).toContain('os.O_RDONLY | os.O_NOFOLLOW');
+    expect(workflow).not.toContain('/usr/bin/jq -r \'.code // ""\' "$error_path"');
     expect(workflow).toContain('retry_progress_observed=false');
     expect(workflow).toContain('{ [ "$diagnostic_error" = none ] || [ "$diagnostic_phase" != "$recovery_phase" ]; }; then');
     expect(workflow).toContain('if [ "$retry_progress_observed" = true ] && [ "$diagnostic_error" != none ]; then');
