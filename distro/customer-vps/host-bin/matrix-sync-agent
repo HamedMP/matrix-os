@@ -300,8 +300,13 @@ install_terminal_runtime_payload() {
 }
 
 write_update_error() {
-  local code="$1" message="$2" version="${3:-}" available_kb="${4:-}" required_kb="${5:-}"
-  python3 - "$UPDATE_ERROR_MARKER" "$code" "$message" "$version" "$available_kb" "$required_kb" <<'PY'
+  local code="$1" message="$2" version="${3:-}" available_kb="${4:-}" required_kb="${5:-}" temp
+  if [ -L "$UPDATE_ERROR_MARKER" ] || { [ -e "$UPDATE_ERROR_MARKER" ] && [ ! -f "$UPDATE_ERROR_MARKER" ]; }; then
+    log "ERROR: update error marker has an invalid file type"
+    return 1
+  fi
+  temp="$(mktemp "$APP_DIR/.update-error.json.XXXXXX")" || return 1
+  if ! python3 - "$temp" "$code" "$message" "$version" "$available_kb" "$required_kb" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -324,6 +329,14 @@ with open(path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, separators=(",", ":"))
     handle.write("\n")
 PY
+  then
+    rm -f -- "$temp"
+    return 1
+  fi
+  if ! mv -fT "$temp" "$UPDATE_ERROR_MARKER"; then
+    rm -f -- "$temp"
+    return 1
+  fi
 }
 
 write_update_phase() {
