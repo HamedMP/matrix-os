@@ -56,6 +56,7 @@ export interface UserSystemdRuntimeResult extends UserSystemdTerminalDescriptor 
 const SYSTEMCTL_TIMEOUT_MS = 10_000;
 const READINESS_TIMEOUT_MS = 10_000;
 const READINESS_INTERVAL_MS = 100;
+const INACTIVE_RECOVERY_RETRY_DELAY_MS = 250;
 const MAX_RUNTIME_DESCRIPTORS = 256;
 export async function loadInstalledTerminalRuntimeGeneration(appDir = "/opt/matrix/app"): Promise<string> {
   const markerPath = join(resolve(appDir), "TERMINAL_RUNTIME_GENERATION");
@@ -463,6 +464,21 @@ export function createUserSystemdTerminalRuntime(options: {
     }
   }
 
+  async function startInterruptedRuntime(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
+    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
+    try {
+      await waitUntilReady(descriptor);
+      return;
+    } catch (err: unknown) {
+      if (!(err instanceof TerminalRuntimeUnavailableError) || await isRunning(descriptor.runtimeId)) {
+        throw err;
+      }
+    }
+    await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
+    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
+    await waitUntilReady(descriptor);
+  }
+
   return {
     async create(input: CreateUserSystemdRuntimeInput): Promise<UserSystemdRuntimeResult> {
       const parsed = z.object({
@@ -523,8 +539,7 @@ export function createUserSystemdTerminalRuntime(options: {
     async start(runtimeId: string): Promise<UserSystemdRuntimeResult> {
       const descriptor = await readDescriptor(runtimeId);
       if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
-      await runSystemctl(["start", unitName(descriptor.runtimeId)]);
-      await waitUntilReady(descriptor);
+      await startInterruptedRuntime(descriptor);
       return { ...descriptor, lifecycle: "running" };
     },
 

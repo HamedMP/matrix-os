@@ -276,6 +276,81 @@ describe("user-systemd terminal runtime", () => {
     );
   });
 
+  it("retries explicit recovery once when the first unit exits before becoming ready", async () => {
+    let recovery = false;
+    let readinessChecks = 0;
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => {
+      if (recovery && args[1] === "is-active") {
+        throw Object.assign(new Error("inactive"), { code: 3 });
+      }
+      return { stdout: "", stderr: "" };
+    });
+    const readinessProbe = vi.fn(async () => {
+      if (!recovery) return true;
+      readinessChecks += 1;
+      return readinessChecks > 1;
+    });
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe,
+      readinessTimeoutMs: 0,
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+    await runtime.create({
+      runtimeId: RUNTIME_ID,
+      scope: "terminal",
+      kind: "shell",
+      displayName: "Main",
+      cwd,
+      layoutPath,
+    });
+    runCommand.mockClear();
+    recovery = true;
+
+    await expect(runtime.start(RUNTIME_ID)).resolves.toMatchObject({ lifecycle: "running" });
+    expect(runCommand.mock.calls.map(([, args]) => args.slice(1))).toEqual([
+      ["start", `matrix-zellij@${RUNTIME_ID}.service`],
+      ["is-active", `matrix-zellij@${RUNTIME_ID}.service`],
+      ["start", `matrix-zellij@${RUNTIME_ID}.service`],
+    ]);
+  });
+
+  it("does not retry explicit recovery while the original unit remains active", async () => {
+    let recovery = false;
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => ({
+      stdout: recovery && args[1] === "is-active" ? "active\n" : "",
+      stderr: "",
+    }));
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe: vi.fn(async () => !recovery),
+      readinessTimeoutMs: 0,
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+    await runtime.create({
+      runtimeId: RUNTIME_ID,
+      scope: "terminal",
+      kind: "shell",
+      displayName: "Main",
+      cwd,
+      layoutPath,
+    });
+    runCommand.mockClear();
+    recovery = true;
+
+    await expect(runtime.start(RUNTIME_ID)).rejects.toThrow("Terminal runtime unavailable");
+    expect(runCommand.mock.calls.map(([, args]) => args.slice(1))).toEqual([
+      ["start", `matrix-zellij@${RUNTIME_ID}.service`],
+      ["is-active", `matrix-zellij@${RUNTIME_ID}.service`],
+    ]);
+  });
+
   it("keeps the durable descriptor when start fails so a retry can reconcile it", async () => {
     const runCommand = vi.fn<UserSystemdCommandRunner>(async () => {
       throw new Error("dbus secret /run/user/1001/bus");
