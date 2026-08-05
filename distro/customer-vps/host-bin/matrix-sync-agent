@@ -110,6 +110,28 @@ install_host_bin_payload() {
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
 }
 
+install_terminal_runtime_bootstrap_helpers() {
+  local source_dir="$1" name source incoming destination
+  [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
+  sudo install -d -o root -g root -m 0755 "$BIN_DIR" || return 1
+  for name in matrix-terminal-generation-id matrix-terminal-generation-gc.py; do
+    source="$source_dir/$name"
+    incoming="$BIN_DIR/.${name}.incoming.$$"
+    destination="$BIN_DIR/$name"
+    [ -f "$source" ] && [ ! -L "$source" ] || return 1
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid installed terminal helper destination for $name"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0755 "$source" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+  done
+}
+
 default_update_channel() {
   local channel="${MATRIX_UPDATE_CHANNEL:-}"
   case "$channel" in
@@ -159,27 +181,27 @@ PY
 }
 
 terminal_runtime_generation_for_dir() {
-  local generation_dir="$1" generation_helper="${2:-$BIN_DIR/matrix-terminal-generation-id}"
+  local generation_dir="$1"
   [ -d "$generation_dir" ] && [ ! -L "$generation_dir" ] || return 1
-  [ -f "$generation_helper" ] && [ ! -L "$generation_helper" ] &&
-    [ -x "$generation_helper" ] || return 1
+  [ -f "$BIN_DIR/matrix-terminal-generation-id" ] &&
+    [ ! -L "$BIN_DIR/matrix-terminal-generation-id" ] &&
+    [ -x "$BIN_DIR/matrix-terminal-generation-id" ] || return 1
   [ -f "$generation_dir/zellij" ] && [ ! -L "$generation_dir/zellij" ] || return 1
   [ -f "$generation_dir/matrix-terminal-user-keeper.mjs" ] && [ ! -L "$generation_dir/matrix-terminal-user-keeper.mjs" ] || return 1
   [ -f "$generation_dir/matrix-terminal-attach.mjs" ] && [ ! -L "$generation_dir/matrix-terminal-attach.mjs" ] || return 1
-  "$generation_helper" \
+  "$BIN_DIR/matrix-terminal-generation-id" \
     "$generation_dir/zellij" \
     "$generation_dir/matrix-terminal-user-keeper.mjs" \
     "$generation_dir/matrix-terminal-attach.mjs"
 }
 
 activate_terminal_runtime_generation() {
-  local generation="$1" generation_helper="${2:-$BIN_DIR/matrix-terminal-generation-id}"
-  local generation_dir="$TERMINAL_RUNTIME_ROOT/generations/$1" link_tmp
+  local generation="$1" generation_dir="$TERMINAL_RUNTIME_ROOT/generations/$1" link_tmp
   [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || {
     log "ERROR: invalid terminal runtime generation marker"
     return 1
   }
-  [ "$(terminal_runtime_generation_for_dir "$generation_dir" "$generation_helper")" = "$generation" ] || {
+  [ "$(terminal_runtime_generation_for_dir "$generation_dir")" = "$generation" ] || {
     log "ERROR: terminal runtime generation verification failed"
     return 1
   }
@@ -203,13 +225,13 @@ reload_terminal_user_manager() {
 }
 
 cleanup_terminal_runtime_generations() {
-  local generation_gc_helper="${1:-$BIN_DIR/matrix-terminal-generation-gc.py}"
   local max_generations="$TERMINAL_RUNTIME_MAX_GENERATIONS" candidate installed_count removed
-  [ -f "$generation_gc_helper" ] && [ ! -L "$generation_gc_helper" ] || return 1
+  [ -f "$BIN_DIR/matrix-terminal-generation-gc.py" ] &&
+    [ ! -L "$BIN_DIR/matrix-terminal-generation-gc.py" ] || return 1
   if [[ ! "$max_generations" =~ ^[0-9]+$ ]] || [ "$max_generations" -lt 2 ] || [ "$max_generations" -gt 32 ]; then
     max_generations=8
   fi
-  if ! removed="$(sudo python3 "$generation_gc_helper" --delete \
+  if ! removed="$(sudo python3 "$BIN_DIR/matrix-terminal-generation-gc.py" --delete \
     "$TERMINAL_RUNTIME_ROOT" \
     "/home/matrix/home/system/terminal-runtimes" \
     "$APP_DIR" \
@@ -232,20 +254,14 @@ cleanup_terminal_runtime_generations() {
 
 install_terminal_runtime_payload() {
   local extract_dir="$1" generation source_dir destination_dir incoming_dir
-  local generation_helper generation_gc_helper
   [ -f "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE" ] || return 0
-  generation_helper="$extract_dir/bin/matrix-terminal-generation-id"
-  generation_gc_helper="$extract_dir/bin/matrix-terminal-generation-gc.py"
-  [ -f "$generation_helper" ] && [ ! -L "$generation_helper" ] &&
-    [ -x "$generation_helper" ] || return 1
-  [ -f "$generation_gc_helper" ] && [ ! -L "$generation_gc_helper" ] || return 1
   generation="$(cat "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE")" || return 1
   [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || {
     log "ERROR: invalid terminal runtime generation in bundle"
     return 1
   }
   source_dir="$extract_dir/terminal-runtime/generations/$generation"
-  [ "$(terminal_runtime_generation_for_dir "$source_dir" "$generation_helper")" = "$generation" ] || {
+  [ "$(terminal_runtime_generation_for_dir "$source_dir")" = "$generation" ] || {
     log "ERROR: bundled terminal runtime generation verification failed"
     return 1
   }
@@ -253,8 +269,7 @@ install_terminal_runtime_payload() {
   sudo install -d -o root -g root -m 0755 "$TERMINAL_RUNTIME_ROOT/generations" || return 1
   destination_dir="$TERMINAL_RUNTIME_ROOT/generations/$generation"
   if [ -e "$destination_dir" ]; then
-    [ ! -L "$destination_dir" ] &&
-      [ "$(terminal_runtime_generation_for_dir "$destination_dir" "$generation_helper")" = "$generation" ] || {
+    [ ! -L "$destination_dir" ] && [ "$(terminal_runtime_generation_for_dir "$destination_dir")" = "$generation" ] || {
       log "ERROR: installed terminal runtime generation is inconsistent"
       return 1
     }
@@ -279,8 +294,8 @@ install_terminal_runtime_payload() {
       -exec install -o root -g root -m 0644 {} /etc/systemd/user/ \; || return 1
     reload_terminal_user_manager || return 1
   fi
-  activate_terminal_runtime_generation "$generation" "$generation_helper" || return 1
-  cleanup_terminal_runtime_generations "$generation_gc_helper" || return 1
+  activate_terminal_runtime_generation "$generation" || return 1
+  cleanup_terminal_runtime_generations || return 1
   log "Installed terminal runtime generation $generation"
 }
 
@@ -633,6 +648,12 @@ apply_update() {
     log "ERROR: extracted bundle missing 'app' directory"
     write_update_error "bundle_layout_invalid" "The release bundle layout was invalid." "$version"
     rm -rf "$extract_dir" "$bundle_file"; return 1
+  fi
+  if ! install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"; then
+    log "ERROR: Terminal runtime helper bootstrap failed; aborting before app replacement"
+    write_update_error "terminal_runtime_helper_install_failed" "The terminal runtime verification helpers could not be installed." "$version"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
   fi
   write_update_phase terminal-runtime || return 1
   if ! install_terminal_runtime_payload "$extract_dir"; then

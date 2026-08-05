@@ -1398,40 +1398,41 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(readinessCall).toBeGreaterThan(sameVersionGuard);
   });
 
-  it('bootstraps an incomplete terminal runtime from the immutable bundle helpers', () => {
+  it('securely bootstraps an incomplete terminal runtime before privileged helper use', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
-    const installRuntime = syncAgent.indexOf('install_terminal_runtime_payload()');
-    const bundledGenerationHelper = syncAgent.indexOf(
-      'generation_helper="$extract_dir/bin/matrix-terminal-generation-id"',
-      installRuntime,
+    const bootstrap = syncAgent.indexOf('install_terminal_runtime_bootstrap_helpers()');
+    const boundedNames = syncAgent.indexOf(
+      'for name in matrix-terminal-generation-id matrix-terminal-generation-gc.py',
+      bootstrap,
     );
-    const bundledGcHelper = syncAgent.indexOf(
-      'generation_gc_helper="$extract_dir/bin/matrix-terminal-generation-gc.py"',
-      bundledGenerationHelper,
+    const sourceGuard = syncAgent.indexOf(
+      '[ -f "$source" ] && [ ! -L "$source" ] || return 1',
+      boundedNames,
     );
-    const sourceVerification = syncAgent.indexOf(
-      'terminal_runtime_generation_for_dir "$source_dir" "$generation_helper"',
-      bundledGcHelper,
+    const rootOwnedInstall = syncAgent.indexOf(
+      'sudo install -o root -g root -m 0755 "$source" "$incoming"',
+      sourceGuard,
     );
-    const activation = syncAgent.indexOf(
-      'activate_terminal_runtime_generation "$generation" "$generation_helper"',
-      sourceVerification,
+    const atomicMove = syncAgent.indexOf('sudo mv -Tf "$incoming" "$destination"', rootOwnedInstall);
+    const bootstrapCall = syncAgent.indexOf(
+      'install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"',
+      atomicMove,
     );
-    const cleanup = syncAgent.indexOf(
-      'cleanup_terminal_runtime_generations "$generation_gc_helper"',
-      activation,
-    );
+    const runtimePhase = syncAgent.indexOf('write_update_phase terminal-runtime', bootstrapCall);
+    const installRuntime = syncAgent.indexOf('install_terminal_runtime_payload "$extract_dir"', runtimePhase);
     const hostBinInstall = syncAgent.indexOf('install_host_bin_payload "$extract_dir/bin"');
 
-    expect(installRuntime).toBeGreaterThan(-1);
-    expect(bundledGenerationHelper).toBeGreaterThan(installRuntime);
-    expect(bundledGcHelper).toBeGreaterThan(bundledGenerationHelper);
-    expect(sourceVerification).toBeGreaterThan(bundledGcHelper);
-    expect(activation).toBeGreaterThan(sourceVerification);
-    expect(cleanup).toBeGreaterThan(activation);
-    expect(hostBinInstall).toBeGreaterThan(cleanup);
+    expect(bootstrap).toBeGreaterThan(-1);
+    expect(boundedNames).toBeGreaterThan(bootstrap);
+    expect(sourceGuard).toBeGreaterThan(boundedNames);
+    expect(rootOwnedInstall).toBeGreaterThan(sourceGuard);
+    expect(atomicMove).toBeGreaterThan(rootOwnedInstall);
+    expect(bootstrapCall).toBeGreaterThan(atomicMove);
+    expect(runtimePhase).toBeGreaterThan(bootstrapCall);
+    expect(installRuntime).toBeGreaterThan(runtimePhase);
+    expect(hostBinInstall).toBeGreaterThan(installRuntime);
   });
 
   it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
