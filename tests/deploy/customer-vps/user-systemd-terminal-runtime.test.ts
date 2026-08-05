@@ -237,12 +237,19 @@ describe("customer VPS user-systemd terminal runtime", () => {
     ]) {
       expect(acceptance).toContain(`write_progress "reboot-\${role}-${rebootStage}"`);
     }
-    expect(acceptance).toContain('ExecMainStartTimestampMonotonic=0');
-    expect(acceptance).toContain('ActiveEnterTimestampMonotonic=0');
+    expect(acceptance).toContain('--property=ExecMainStartTimestampMonotonic');
+    expect(acceptance).toContain('--property=ActiveEnterTimestampMonotonic');
+    expect(acceptance).toContain('[ "$exec_start_state" = zero ]');
+    expect(acceptance).toContain('[ "$active_enter_state" = zero ]');
     expect(acceptance).toContain('cgroup_tree_is_empty "$old_cgroup"');
     expect(acceptance).toContain('matrix-terminal\\.slice/matrix-zellij@rt_[0-9a-f]{32}\\.service$');
     expect(acceptance).toContain('reboot_output_size_file="${state_root}/reboot-output-size"');
+    expect(acceptance).toContain('reboot_boot_id_file="${state_root}/reboot-boot-id"');
     expect(acceptance).toContain('"$helper_path" reboot-now "$head_sha" "$run_nonce" "$preview_version"');
+    expect(acceptance).toContain('cat /proc/sys/kernel/random/boot_id');
+    expect(acceptance).toContain('write_progress reboot-boot-changed');
+    expect(acceptance).toContain('[ "$boot_id_after" != "$boot_id_before" ]');
+    expect(acceptance).toContain('current_failure="main-pid-${main_pid_state}-exec-start-${exec_start_state}-active-enter-${active_enter_state}"');
     expect(acceptance).toContain('[ "$size_before" -ge "$recorded_size" ]');
     expect(acceptance).toContain('[ "$size_after" = "$size_before" ]');
     expect(acceptance).not.toContain('write_progress "reboot-${role}-cgroup-removed"');
