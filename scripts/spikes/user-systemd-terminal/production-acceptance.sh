@@ -47,6 +47,7 @@ readonly loop_root="${home}/system/terminal-acceptance/${head_sha:0:7}-${run_non
 readonly loop_script="${loop_root}/production-loop.mjs"
 readonly output_file="${loop_root}/output"
 readonly reboot_output_size_file="${state_root}/reboot-output-size"
+readonly reboot_boot_id_file="${state_root}/reboot-boot-id"
 readonly corrupt_id=rt_cccccccccccccccccccccccccccccccc
 readonly symlink_id=rt_dddddddddddddddddddddddddddddddd
 readonly generation_symlink="${runtime_root}/generations/gen_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -1517,9 +1518,17 @@ phase2() {
   trap fail_phase ERR
   [ "$(cat "$state_file")" = reboot-scheduled ]
   current_state_prefix=phase2-running
+  write_progress reboot-boot-changed
+  local boot_id_before boot_id_after
+  IFS= read -r boot_id_before <"$reboot_boot_id_file"
+  boot_id_after="$(cat /proc/sys/kernel/random/boot_id)"
+  [[ "$boot_id_before" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+  [[ "$boot_id_after" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+  [ "$boot_id_after" != "$boot_id_before" ]
   write_progress reboot-user-bus-ready
   owner_systemctl show-environment >/dev/null
   local role baseline unit pid old_cgroup unit_state
+  local main_pid exec_start active_enter main_pid_state exec_start_state active_enter_state
   for role in shell agent; do
     baseline="${state_root}/${role}-baseline.json"
     unit="$(json_field "$baseline" unit)"
@@ -1531,9 +1540,25 @@ phase2() {
       --property=MainPID \
       --property=ExecMainStartTimestampMonotonic \
       --property=ActiveEnterTimestampMonotonic)"
-    grep -qxF 'MainPID=0' <<<"$unit_state"
-    grep -qxF 'ExecMainStartTimestampMonotonic=0' <<<"$unit_state"
-    grep -qxF 'ActiveEnterTimestampMonotonic=0' <<<"$unit_state"
+    main_pid="$(sed -n 's/^MainPID=//p' <<<"$unit_state")"
+    exec_start="$(sed -n 's/^ExecMainStartTimestampMonotonic=//p' <<<"$unit_state")"
+    active_enter="$(sed -n 's/^ActiveEnterTimestampMonotonic=//p' <<<"$unit_state")"
+    main_pid_state=invalid
+    exec_start_state=invalid
+    active_enter_state=invalid
+    if [[ "$main_pid" =~ ^[0-9]+$ ]]; then
+      if [ "$main_pid" = 0 ]; then main_pid_state=zero; else main_pid_state=nonzero; fi
+    fi
+    if [[ "$exec_start" =~ ^[0-9]+$ ]]; then
+      if [ "$exec_start" = 0 ]; then exec_start_state=zero; else exec_start_state=nonzero; fi
+    fi
+    if [[ "$active_enter" =~ ^[0-9]+$ ]]; then
+      if [ "$active_enter" = 0 ]; then active_enter_state=zero; else active_enter_state=nonzero; fi
+    fi
+    current_failure="main-pid-${main_pid_state}-exec-start-${exec_start_state}-active-enter-${active_enter_state}"
+    [ "$main_pid_state" = zero ]
+    [ "$exec_start_state" = zero ]
+    [ "$active_enter_state" = zero ]
     write_progress "reboot-${role}-cgroup-empty"
     cgroup_tree_is_empty "$old_cgroup"
     write_progress "reboot-${role}-descriptor-retained"
@@ -1621,10 +1646,15 @@ case "$operation" in
   reboot-now)
     [ "$(cat "$state_file")" = reboot-scheduled ]
     size_before="$(stat -c %s "$output_file")"
+    boot_id_before="$(cat /proc/sys/kernel/random/boot_id)"
     [[ "$size_before" =~ ^[0-9]+$ ]]
+    [[ "$boot_id_before" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
     printf '%s\n' "$size_before" >"${reboot_output_size_file}.next"
     chmod 0600 "${reboot_output_size_file}.next"
     mv -f -- "${reboot_output_size_file}.next" "$reboot_output_size_file"
+    printf '%s\n' "$boot_id_before" >"${reboot_boot_id_file}.next"
+    chmod 0600 "${reboot_boot_id_file}.next"
+    mv -f -- "${reboot_boot_id_file}.next" "$reboot_boot_id_file"
     /usr/bin/sync -f "$state_root"
     /usr/bin/systemctl reboot
     ;;
