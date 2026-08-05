@@ -405,7 +405,29 @@ jobs:
           if [ -L "$error_path" ] || { [ -e "$error_path" ] && [ ! -f "$error_path" ]; }; then
             error=invalid
           elif [ -f "$error_path" ]; then
-            error="$(/usr/bin/jq -r '.code // ""' "$error_path" 2>/dev/null || true)"
+            error="$(
+              /usr/bin/python3 - "$error_path" 2>/dev/null <<'PYTHON' || true
+          import json
+          import os
+          import stat
+          import sys
+
+          fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+          try:
+              metadata = os.fstat(fd)
+              if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
+                  raise ValueError("invalid bounded update error marker")
+              payload = os.read(fd, 4097)
+              if len(payload) > 4096:
+                  raise ValueError("invalid bounded update error marker")
+              value = json.loads(payload).get("code", "")
+              if not isinstance(value, str):
+                  raise ValueError("invalid update error code")
+              print(value)
+          finally:
+              os.close(fd)
+          PYTHON
+            )"
             case "$error" in
               apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch) ;;
               *) error=invalid ;;
