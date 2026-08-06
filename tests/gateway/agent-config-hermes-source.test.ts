@@ -56,6 +56,109 @@ describe("Hermes agent settings source", () => {
     });
   });
 
+  it("requires action when the selected MoA preset has an unauthenticated dependency", () => {
+    const snapshot = normalizeHermesRuntimeSnapshot({
+      status: { gateway_running: true },
+      options: {
+        provider: "moa",
+        model: "default",
+        providers: [
+          {
+            slug: "moa",
+            name: "Mixture of Agents",
+            authenticated: true,
+            auth_type: "virtual",
+            models: ["default"],
+          },
+          {
+            slug: "anthropic",
+            authenticated: true,
+            auth_type: "api_key",
+            models: ["claude-sonnet-4-5"],
+          },
+          {
+            slug: "openrouter",
+            authenticated: false,
+            auth_type: "api_key",
+            models: [],
+          },
+        ],
+      },
+      config: {
+        moa: {
+          presets: {
+            default: {
+              reference_models: [
+                { provider: "anthropic", model: "claude-sonnet-4-5", enabled: true },
+              ],
+              aggregator: { provider: "openrouter", model: "anthropic/claude-opus-4.6" },
+            },
+          },
+        },
+      },
+    });
+
+    expect(snapshot.providers.find((provider) => provider.id === "moa")?.authStatus)
+      .toEqual({
+        state: "action_required",
+        authenticated: false,
+        action: "open_login_terminal",
+      });
+    expect(snapshot.messaging).toEqual({
+      runtime: "hermes",
+      provider: "moa",
+      model: "default",
+      configured: true,
+    });
+  });
+
+  it("reports the selected MoA preset ready when every dependency is authenticated", () => {
+    const snapshot = normalizeHermesRuntimeSnapshot({
+      status: { gateway_running: true },
+      options: {
+        provider: "moa",
+        model: "team",
+        providers: [
+          {
+            slug: "moa",
+            name: "Mixture of Agents",
+            authenticated: true,
+            auth_type: "virtual",
+            models: ["default", "team"],
+          },
+          {
+            slug: "anthropic",
+            authenticated: true,
+            auth_type: "api_key",
+            models: ["claude-sonnet-4-5", "claude-opus-4-6"],
+          },
+          {
+            slug: "openrouter",
+            authenticated: false,
+            auth_type: "api_key",
+            models: [],
+          },
+        ],
+      },
+      config: {
+        moa: {
+          presets: {
+            team: {
+              reference_models: [
+                { provider: "anthropic", model: "claude-sonnet-4-5" },
+                { provider: "openrouter", model: "ignored", enabled: false },
+              ],
+              aggregator: { provider: "anthropic", model: "claude-opus-4-6" },
+            },
+          },
+        },
+      },
+    });
+
+    expect(snapshot.providers.find((provider) => provider.id === "moa")?.authStatus)
+      .toEqual({ state: "ready", authenticated: true, action: "none" });
+  });
+
   it("loads status and curated model options with the caller's abort signal", async () => {
     const readJson = vi.fn(async (path: string, _signal: AbortSignal) => {
       if (path === "/api/status") {
@@ -80,6 +183,7 @@ describe("Hermes agent settings source", () => {
     expect(snapshot.messaging.configured).toBe(true);
     expect(readJson).toHaveBeenNthCalledWith(1, "/api/status", signal);
     expect(readJson).toHaveBeenNthCalledWith(2, "/api/model/options", signal);
+    expect(readJson).toHaveBeenNthCalledWith(3, "/api/config", signal);
   });
 
   it("keeps dashboard reachability when provider inventory requires authentication", async () => {
@@ -169,11 +273,11 @@ describe("Hermes agent settings source", () => {
 
     await Promise.all([source(signal), source(signal), source(signal)]);
     await source(signal);
-    expect(readJson).toHaveBeenCalledTimes(2);
+    expect(readJson).toHaveBeenCalledTimes(3);
 
     now += 5_001;
     await source(signal);
-    expect(readJson).toHaveBeenCalledTimes(4);
+    expect(readJson).toHaveBeenCalledTimes(6);
   });
 
   it("invalidates a cached inventory after a successful configuration mutation", async () => {
@@ -185,12 +289,12 @@ describe("Hermes agent settings source", () => {
 
     await source(signal);
     await source(signal);
-    expect(readJson).toHaveBeenCalledTimes(2);
+    expect(readJson).toHaveBeenCalledTimes(3);
 
     source.invalidate();
     await source(signal);
 
-    expect(readJson).toHaveBeenCalledTimes(4);
+    expect(readJson).toHaveBeenCalledTimes(6);
   });
 
   it("negative-caches an unreachable runtime without logging raw errors", async () => {
@@ -211,7 +315,7 @@ describe("Hermes agent settings source", () => {
 
     expect(snapshots.map((snapshot) => snapshot.runtime.options[0]?.health))
       .toEqual(["unreachable", "unreachable", "unreachable"]);
-    expect(readJson).toHaveBeenCalledTimes(2);
+    expect(readJson).toHaveBeenCalledTimes(3);
     expect(logWarning).toHaveBeenCalledOnce();
     expect(logWarning).toHaveBeenCalledWith("Error");
     expect(JSON.stringify(logWarning.mock.calls)).not.toContain(canary);

@@ -33,6 +33,11 @@ describe("terminal launch paths", () => {
       action: "openclaw-model-auth",
       command: "openclaw models auth add",
     });
+    expect(terminalLaunchConfig("hermes-moa-configure")).toMatchObject({
+      action: "hermes-moa-configure",
+      label: "Configure Mixture of Agents",
+      command: "hermes moa configure",
+    });
   });
 
   it("maps runtime installs to the validated host control without sudo", () => {

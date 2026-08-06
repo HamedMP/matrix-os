@@ -306,7 +306,16 @@ function MessagingProviders({
   const [hermesConfigOpen, setHermesConfigOpen] = useState(false);
   const hermesVersion = view.runtime.options.find((runtime) => runtime.id === "hermes")?.version;
   const terminalAction = "openclaw-model-auth";
-  const configureAction = isHermes ? (
+  const configureAction = isHermes && provider?.id === "moa" && onOpenTerminal ? (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => onOpenTerminal("hermes-moa-configure")}
+      aria-label="Configure MoA provider"
+    >
+      <TerminalIcon className="size-3.5" /> Configure MoA
+    </Button>
+  ) : isHermes ? (
     <Button
       size="sm"
       variant="outline"

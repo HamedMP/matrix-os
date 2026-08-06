@@ -200,6 +200,47 @@ describe("Canvas Agent runtime settings", () => {
     expect(onOpenTerminal).not.toHaveBeenCalledWith(expect.stringContaining("hermes"));
   });
 
+  it("offers a dedicated MoA setup terminal when preset dependencies need action", async () => {
+    const view = makeView();
+    view.providers.push({
+      id: "moa",
+      displayName: "Mixture of Agents",
+      runtime: "hermes",
+      scopes: ["messaging"],
+      authKind: "oauth_login",
+      supportedAuthKinds: ["oauth_login"],
+      models: [{
+        id: "default",
+        displayName: "default",
+        capabilities: ["tools"],
+        efforts: [],
+        available: true,
+      }],
+      authStatus: {
+        state: "action_required",
+        authenticated: false,
+        action: "open_login_terminal",
+      },
+    });
+    view.currentSelection.messaging = {
+      runtime: "hermes",
+      provider: "moa",
+      model: "default",
+      configured: true,
+    };
+    const onOpenTerminal = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => response(view)));
+
+    render(<AgentRuntimePanel onOpenTerminal={onOpenTerminal} />);
+
+    const configure = await screen.findByRole("button", { name: "Configure MoA provider" });
+    expect(within(screen.getByRole("button", { name: "Choose Mixture of Agents" }))
+      .getByText("Action Required")).toBeVisible();
+    fireEvent.click(configure);
+    expect(onOpenTerminal).toHaveBeenCalledWith("hermes-moa-configure");
+    expect(screen.queryByRole("heading", { name: "Configure Hermes" })).toBeNull();
+  });
+
   it("switches only to an installed runtime with the current revision", async () => {
     const initial = makeView();
     initial.runtime.options[1] = {

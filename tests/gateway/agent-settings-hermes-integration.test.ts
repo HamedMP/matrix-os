@@ -31,6 +31,7 @@ describe("unified agent settings Hermes integration", () => {
       if (path === "/api/status") {
         return Response.json({ version: "1.0.0", gateway_running: true });
       }
+      if (path === "/api/config") return Response.json({});
       return Response.json({
         provider: "nous",
         model: "hermes-4-405b",
@@ -73,6 +74,7 @@ describe("unified agent settings Hermes integration", () => {
       model: "hermes-4-405b",
       configured: true,
     });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.map(([url]) => new URL(String(url)).pathname))
+      .toEqual(["/api/status", "/api/model/options", "/api/config"]);
   });
 });

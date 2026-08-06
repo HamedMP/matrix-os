@@ -17,6 +17,8 @@ export type HermesJsonReader = (
 const MAX_HERMES_PROVIDERS = 31;
 const MAX_HERMES_MODELS = 253;
 const MAX_MODELS_PER_PROVIDER = 128;
+const MAX_MOA_PRESETS = 64;
+const MAX_MOA_REFERENCES = 32;
 
 const ProviderIdSchema = z.string()
   .trim()
@@ -45,6 +47,21 @@ const HermesProviderSchema = z.object({
   auth_type: z.string().max(64).optional(),
   is_user_defined: z.boolean().optional(),
   models: z.array(z.unknown()).max(512).optional(),
+}).passthrough();
+
+const HermesConfigSchema = z.object({
+  moa: z.unknown().optional(),
+}).passthrough();
+
+const MoASlotSchema = z.object({
+  provider: ProviderIdSchema,
+  model: ModelIdSchema,
+  enabled: z.boolean().optional(),
+}).passthrough();
+
+const MoAPresetSchema = z.object({
+  reference_models: z.array(z.unknown()).max(MAX_MOA_REFERENCES),
+  aggregator: z.unknown(),
 }).passthrough();
 
 function authKindForProvider(
@@ -82,17 +99,80 @@ function parseModelIds(rawModels: unknown[] | undefined, currentModel: string | 
   return [currentModel, ...models].slice(0, MAX_MODELS_PER_PROVIDER);
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function selectedMoAPreset(
+  config: unknown,
+  currentProvider: string | null,
+  currentModel: string | null,
+): unknown {
+  const parsedConfig = HermesConfigSchema.safeParse(config);
+  if (!parsedConfig.success || !isPlainRecord(parsedConfig.data.moa)) return null;
+  const moa = parsedConfig.data.moa;
+  const presets = moa.presets;
+  if (isPlainRecord(presets)) {
+    const entries = Object.entries(presets);
+    if (entries.length === 0 || entries.length > MAX_MOA_PRESETS) return null;
+    const defaultPreset = ModelIdSchema.safeParse(moa.default_preset);
+    const presetName = currentProvider === "moa" && currentModel !== null
+      ? currentModel
+      : defaultPreset.success
+        ? defaultPreset.data
+        : entries[0]?.[0];
+    return presetName === undefined ? null : presets[presetName];
+  }
+  return currentProvider === "moa" && currentModel !== "default" ? null : moa;
+}
+
+function moaDependenciesAuthenticated(input: {
+  config: unknown;
+  providers: unknown[];
+  currentProvider: string | null;
+  currentModel: string | null;
+}): boolean {
+  const preset = MoAPresetSchema.safeParse(selectedMoAPreset(
+    input.config,
+    input.currentProvider,
+    input.currentModel,
+  ));
+  if (!preset.success) return false;
+
+  const dependencies = preset.data.reference_models.flatMap((slot) => {
+    const parsed = MoASlotSchema.safeParse(slot);
+    return parsed.success && parsed.data.enabled !== false
+      ? [parsed.data.provider]
+      : [];
+  });
+  const aggregator = MoASlotSchema.safeParse(preset.data.aggregator);
+  if (dependencies.length === 0 || !aggregator.success) return false;
+  dependencies.push(aggregator.data.provider);
+
+  const authenticatedProviders = new Set<string>();
+  for (const rawProvider of input.providers) {
+    const provider = HermesProviderSchema.safeParse(rawProvider);
+    if (!provider.success || provider.data.authenticated !== true) continue;
+    const id = ProviderIdSchema.safeParse(provider.data.slug);
+    if (id.success && id.data !== "moa") authenticatedProviders.add(id.data);
+  }
+  return dependencies.every((provider) => authenticatedProviders.has(provider));
+}
+
 function normalizeProvider(
   raw: unknown,
   currentProvider: string | null,
   currentModel: string | null,
+  moaAuthenticated: boolean,
 ): AgentProviderDescriptor | null {
   const parsed = HermesProviderSchema.safeParse(raw);
   if (!parsed.success) return null;
   const id = ProviderIdSchema.safeParse(parsed.data.slug);
   if (!id.success) return null;
   const name = DisplayNameSchema.safeParse(parsed.data.name);
-  const authenticated = parsed.data.authenticated === true;
+  const authenticated = id.data === "moa"
+    ? moaAuthenticated
+    : parsed.data.authenticated === true;
   const authKind = authKindForProvider(
     parsed.data.auth_type,
     parsed.data.is_user_defined === true,
@@ -130,6 +210,7 @@ function normalizeProvider(
 export function normalizeHermesRuntimeSnapshot(input: {
   status: unknown;
   options: unknown;
+  config?: unknown;
 }): AgentRuntimeSettingsSnapshot {
   const status = HermesStatusSchema.parse(input.status);
   const options = HermesOptionsSchema.parse(input.options);
@@ -139,9 +220,20 @@ export function normalizeHermesRuntimeSnapshot(input: {
     ? currentProviderResult.data
     : null;
   const currentModel = currentModelResult.success ? currentModelResult.data : null;
+  const moaAuthenticated = moaDependenciesAuthenticated({
+    config: input.config,
+    providers: options.providers,
+    currentProvider,
+    currentModel,
+  });
   const normalizedProviders: AgentProviderDescriptor[] = [];
   for (const rawProvider of options.providers) {
-    const provider = normalizeProvider(rawProvider, currentProvider, currentModel);
+    const provider = normalizeProvider(
+      rawProvider,
+      currentProvider,
+      currentModel,
+      moaAuthenticated,
+    );
     if (!provider) continue;
     const duplicateIndex = normalizedProviders.findIndex(
       (entry) => entry.id === provider.id,
@@ -258,22 +350,30 @@ export function createHermesRuntimeSource(
       const promise = Promise.allSettled([
         readJson("/api/status", signal),
         readJson("/api/model/options", signal),
-      ]).then(([statusResult, modelOptionsResult]) => {
+        readJson("/api/config", signal),
+      ]).then(([statusResult, modelOptionsResult, configResult]) => {
         signal.throwIfAborted();
         if (statusResult.status === "rejected") throw statusResult.reason;
         let modelOptions: unknown = { providers: [] };
+        let config: unknown;
+        let partialFailure: unknown;
         if (modelOptionsResult.status === "fulfilled") {
           modelOptions = modelOptionsResult.value;
         } else {
-          logWarning(
-            modelOptionsResult.reason instanceof Error
-              ? modelOptionsResult.reason.name
-              : "UnknownError",
-          );
+          partialFailure = modelOptionsResult.reason;
+        }
+        if (configResult.status === "fulfilled") {
+          config = configResult.value;
+        } else {
+          partialFailure ??= configResult.reason;
+        }
+        if (partialFailure !== undefined) {
+          logWarning(partialFailure instanceof Error ? partialFailure.name : "UnknownError");
         }
         return normalizeHermesRuntimeSnapshot({
           status: statusResult.value,
           options: modelOptions,
+          config,
         });
       }).catch((err: unknown) => {
         logWarning(err instanceof Error ? err.name : "UnknownError");
