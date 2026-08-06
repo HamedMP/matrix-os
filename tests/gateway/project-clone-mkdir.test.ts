@@ -441,6 +441,36 @@ describe("project clone and mkdir routes", () => {
       await expect(retry.json()).resolves.toEqual({ path: "code/side-project" });
     });
 
+    it("does not let an expired mkdir receipt conflict with a new payload", async () => {
+      await mkdir(join(homePath, "code"), { recursive: true });
+      const manager = createProjectFolders({ homePath });
+      const clientRequestId = "req_desktop_folder_expired";
+      const ownerScope = { type: "user" as const, id: "user_123" };
+
+      const first = await manager.createFolder({
+        name: "old-project",
+        parent: "code",
+        clientRequestId,
+        ownerScope,
+      });
+      expect(first.ok).toBe(true);
+
+      const receiptPath = join(homePath, "system", "project-folder-requests", `${clientRequestId}.json`);
+      const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+      await writeFile(receiptPath, JSON.stringify({ ...receipt, createdAt: "2020-01-01T00:00:00.000Z" }));
+
+      const next = await manager.createFolder({
+        name: "new-project",
+        parent: "code",
+        clientRequestId,
+        ownerScope,
+      });
+
+      expect(next).toMatchObject({ ok: true, status: 201, path: "code/new-project" });
+      const created = await stat(join(homePath, "code", "new-project"));
+      expect(created.isDirectory()).toBe(true);
+    });
+
     it("reconciles overlapping idempotent mkdir requests", async () => {
       await mkdir(join(homePath, "code"), { recursive: true });
       const firstManager = createProjectFolders({ homePath });

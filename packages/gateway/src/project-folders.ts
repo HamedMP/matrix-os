@@ -96,13 +96,19 @@ export function createProjectFolders(options: { homePath: string }) {
   async function readReceipt(clientRequestId: string): Promise<FolderRequestReceipt | null> {
     try {
       const receipt = await readJsonFile<FolderRequestReceipt>(receiptPath(clientRequestId));
-      return typeof receipt.fingerprint === "string"
+      const valid = typeof receipt.fingerprint === "string"
         && typeof receipt.path === "string"
         && typeof receipt.createdAt === "string"
         && (receipt.ownerScope?.type === "user" || receipt.ownerScope?.type === "org")
-        && typeof receipt.ownerScope.id === "string"
-        ? receipt
-        : null;
+        && typeof receipt.ownerScope.id === "string";
+      if (!valid) return null;
+
+      const createdAtMs = Date.parse(receipt.createdAt);
+      if (!Number.isFinite(createdAtMs) || createdAtMs <= Date.now() - FOLDER_REQUEST_RECEIPT_TTL_MS) {
+        await rm(receiptPath(clientRequestId), { force: true });
+        return null;
+      }
+      return receipt;
     } catch (err: unknown) {
       if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") return null;
       if (err instanceof SyntaxError) return null;
