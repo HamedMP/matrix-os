@@ -1122,7 +1122,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/terminal-runtime-spikes.yml'), 'utf8');
 
     expect(workflow).toContain(
-      '.handle == $handle and .status != "deleted" and\n' +
+      '.handle == $handle and .deletedAt == null and .status != "deleted" and\n' +
       '              (.runtimeSlot == $handle or .status == "failed")',
     );
     expect(workflow).toContain(
@@ -1139,6 +1139,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
     expect(workflow).toContain(
       '(.machineId as $machine_id | $ids | index($machine_id)) != null',
+    );
+    expect(workflow).toContain(
+      '.deletedAt == null and\n                .status != "deleted"',
     );
   });
 

@@ -520,7 +520,9 @@ describe('terminal runtime spike evidence', () => {
     );
     expectAll(workflow, ["github.event.label.name == 'terminal-preview-reprovision'", 'any(.name == "terminal-preview-reprovision")',
       'type == "array" and length >= 1 and length <= 8',
+      '.deletedAt == null and .status != "deleted"',
       '(.runtimeSlot == $handle or .status == "failed")',
+      '.deletedAt == null and\n                .status != "deleted"',
       'while IFS= read -r machine_id; do',
       '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"']);
   });
