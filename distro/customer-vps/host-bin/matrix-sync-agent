@@ -124,6 +124,54 @@ secure_staging_directory() {
   chmod 0700 "$ROLLBACK_STATE_DIR"
 }
 
+normalize_terminal_runtime_generation_permissions() {
+  local generation_dir="$1" executable
+  [ -d "$generation_dir" ] && [ ! -L "$generation_dir" ] || return 1
+  find "$generation_dir" -type d -exec chmod 0755 {} + || return 1
+  find "$generation_dir" -type f -exec chmod 0644 {} + || return 1
+  chmod 0755 "$generation_dir/supervisor-acceptor" || return 1
+  if [ -d "$generation_dir/spikes" ]; then
+    for executable in \
+      launch-remote.sh \
+      pack-evidence.sh \
+      pane-probe.sh \
+      run-remote.sh \
+      production-acceptance.sh; do
+      chmod 0755 "$generation_dir/spikes/$executable" || return 1
+    done
+  fi
+}
+
+verify_terminal_runtime_generation_permissions() {
+  local generation_dir="$1" executable
+  if find "$generation_dir" -type d ! -perm 0755 -print -quit | grep -q .; then
+    return 1
+  fi
+  [ "$(stat -c %a "$generation_dir/supervisor-acceptor")" = "755" ] ||
+    return 1
+  if [ -d "$generation_dir/spikes" ]; then
+    for executable in \
+      launch-remote.sh \
+      pack-evidence.sh \
+      pane-probe.sh \
+      run-remote.sh \
+      production-acceptance.sh; do
+      [ "$(stat -c %a "$generation_dir/spikes/$executable")" = "755" ] ||
+        return 1
+    done
+  fi
+  if find "$generation_dir" -type f \
+    ! -path "$generation_dir/supervisor-acceptor" \
+    ! -path "$generation_dir/spikes/launch-remote.sh" \
+    ! -path "$generation_dir/spikes/pack-evidence.sh" \
+    ! -path "$generation_dir/spikes/pane-probe.sh" \
+    ! -path "$generation_dir/spikes/run-remote.sh" \
+    ! -path "$generation_dir/spikes/production-acceptance.sh" \
+    ! -perm 0644 -print -quit | grep -q .; then
+    return 1
+  fi
+}
+
 verify_terminal_runtime_generation() {
   local generation_dir="$1" expected_id="$2"
   local manifest="$generation_dir/runtime-manifest.sha256"
@@ -232,17 +280,30 @@ install_terminal_runtime_generation() {
     install -d -o root -g root -m 0755 "$generation_next"
     cp -a -- "$terminal_runtime_candidate/." "$generation_next/"
     chown -R root:root "$generation_next"
+    if ! normalize_terminal_runtime_generation_permissions "$generation_next"; then
+      rm -rf -- "$generation_next"
+      return 1
+    fi
     if ! verify_terminal_runtime_generation \
       "$generation_next" \
-      "$terminal_runtime_generation_id"; then
+      "$terminal_runtime_generation_id" ||
+      ! verify_terminal_runtime_generation_permissions "$generation_next"; then
       rm -rf -- "$generation_next"
       return 1
     fi
     mv -- "$generation_next" "$generation_dir"
-  elif ! verify_terminal_runtime_generation \
-    "$generation_dir" \
-    "$terminal_runtime_generation_id"; then
-    return 1
+  else
+    verify_terminal_runtime_generation \
+      "$generation_dir" \
+      "$terminal_runtime_generation_id" || return 1
+    verify_terminal_runtime_generation_permissions "$generation_dir" ||
+      normalize_terminal_runtime_generation_permissions "$generation_dir" ||
+      return 1
+    verify_terminal_runtime_generation \
+      "$generation_dir" \
+      "$terminal_runtime_generation_id" &&
+      verify_terminal_runtime_generation_permissions "$generation_dir" ||
+      return 1
   fi
   rm -f -- "$current_next"
   ln -s "v1/$terminal_runtime_generation_id" "$current_next"
@@ -287,6 +348,14 @@ install_update_runtime_bins() {
     mv -f -- "$next" "$BIN_DIR/$name"
   else
     rm -f -- "$BIN_DIR/matrix-terminal-spike-control"
+  fi
+  name="matrix-terminal-spike-pane"
+  if [ -f "$source_dir/$name" ] && [ ! -L "$source_dir/$name" ]; then
+    next="$BIN_DIR/.${name}.next"
+    install -o root -g root -m 0755 "$source_dir/$name" "$next"
+    mv -f -- "$next" "$BIN_DIR/$name"
+  else
+    rm -f -- "$BIN_DIR/matrix-terminal-spike-pane"
   fi
 }
 
@@ -382,7 +451,8 @@ backup_terminal_runtime_for_failed_update() {
     "$BIN_DIR/matrix-terminal-keeper" \
     "$BIN_DIR/matrix-terminal-pane" \
     "$BIN_DIR/matrix-terminal-runtime-op" \
-    "$BIN_DIR/matrix-terminal-spike-control"; do
+    "$BIN_DIR/matrix-terminal-spike-control" \
+    "$BIN_DIR/matrix-terminal-spike-pane"; do
     name="$(basename "$artifact")"
     if [ -e "$artifact" ] || [ -L "$artifact" ]; then
       [ -f "$artifact" ] && [ ! -L "$artifact" ] || return 1
@@ -452,7 +522,8 @@ restore_terminal_runtime_after_failed_update() {
     matrix-terminal-keeper \
     matrix-terminal-pane \
     matrix-terminal-runtime-op \
-    matrix-terminal-spike-control; do
+    matrix-terminal-spike-control \
+    matrix-terminal-spike-pane; do
     artifact="$snapshot/bin/$name"
     if [ -f "$artifact" ] && [ ! -L "$artifact" ]; then
       restore_next="$BIN_DIR/.${name}.rollback-next"

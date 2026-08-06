@@ -24,7 +24,10 @@ describe("cloud workspace runtime gates", () => {
       expect(dockerfile).toContain(agentCli);
     }
     expect(dockerfile).toContain("npm install -g --ignore-scripts");
-    expect(dockerfile).toContain("hermes-agent/main/scripts/install.sh");
+    expect(dockerfile).toMatch(
+      /hermes-agent\/841a5a744ad115b001a2720bf1eeb6bec3dfcc7d\/scripts\/install\.sh[\s\S]*--commit 841a5a744ad115b001a2720bf1eeb6bec3dfcc7d/,
+    );
+    expect(dockerfile).not.toContain("hermes-agent/main/scripts/install.sh");
   });
 
   it("lets the non-root Matrix user run sudo-based project installers", () => {

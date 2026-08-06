@@ -16,6 +16,18 @@ GH_DIST="gh_${GH_VERSION}_linux_amd64"
 GH_ARCHIVE="${GH_DIST}.tar.gz"
 GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"
 UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.sh}"
+terminal_runtime_dormant="${MATRIX_TERMINAL_RUNTIME_DORMANT:-0}"
+
+if [ "$terminal_runtime_dormant" != "0" ] &&
+  [ "$terminal_runtime_dormant" != "1" ]; then
+  echo "terminal_runtime_dormant_invalid" >&2
+  exit 1
+fi
+if [ "$terminal_runtime_dormant" = "1" ] &&
+  [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" != "1" ]; then
+  echo "terminal_runtime_dormant_requires_spike" >&2
+  exit 1
+fi
 
 rm -rf "$DIST_DIR"
 mkdir -p \
@@ -139,7 +151,12 @@ cp -aL --no-preserve=links \
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
   install -d -m 0755 "$terminal_generation_build/spikes"
   cp -a --no-preserve=links "$ROOT_DIR/scripts/spikes/terminal-runtime/." "$terminal_generation_build/spikes/"
-  chmod 0755 "$terminal_generation_build/spikes/"{launch-remote,pack-evidence,run-remote,production-acceptance}.sh
+  if ! [[ "${MATRIX_BUILD_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "terminal_runtime_spike_build_sha_invalid" >&2
+    exit 1
+  fi
+  printf '%s\n' "$MATRIX_BUILD_SHA" >"$terminal_generation_build/spikes/build-head-sha"
+  chmod 0755 "$terminal_generation_build/spikes/"{launch-remote,pack-evidence,pane-probe,run-remote,production-acceptance}.sh
   install -m 0644 "$ROOT_DIR/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json" "$terminal_generation_build/spikes/v0.44.3-matrix.1.build.json"
 fi
 if find "$terminal_generation_build" -type l -print -quit | grep -q .; then
@@ -150,6 +167,12 @@ if find "$terminal_generation_build" -type f -links +1 -print -quit |
   grep -q .; then
   echo "terminal_runtime_generation_contains_hardlink" >&2
   exit 1
+fi
+find "$terminal_generation_build" -type d -exec chmod 0755 {} +
+find "$terminal_generation_build" -type f -exec chmod 0644 {} +
+chmod 0755 "$terminal_generation_build/supervisor-acceptor"
+if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
+  chmod 0755 "$terminal_generation_build/spikes/"{launch-remote,pack-evidence,pane-probe,run-remote,production-acceptance}.sh
 fi
 (
   cd "$terminal_generation_build"
@@ -163,6 +186,7 @@ fi
       sha256sum "$runtime_file"
     done >runtime-manifest.sha256
 )
+chmod 0644 "$terminal_generation_build/runtime-manifest.sha256"
 terminal_generation_id="$(
   sha256sum "$terminal_generation_build/runtime-manifest.sha256" |
     awk '{print $1}'
@@ -177,10 +201,14 @@ ln -s \
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
-  chmod 0755 "$STAGE_DIR/bin/matrix-terminal-spike-control"
+  chmod 0755 \
+    "$STAGE_DIR/bin/matrix-terminal-spike-control" \
+    "$STAGE_DIR/bin/matrix-terminal-spike-pane"
   install -m 0644 "$ROOT_DIR/scripts/spikes/terminal-runtime/matrix-terminal-spike.slice" "$STAGE_DIR/systemd/matrix-terminal-spike.slice"; install -m 0644 "$ROOT_DIR/scripts/spikes/terminal-runtime/matrix-terminal-spike-template.service" "$STAGE_DIR/systemd/matrix-terminal-spike@.service"
 else
-  rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-control"
+  rm -f -- \
+    "$STAGE_DIR/bin/matrix-terminal-spike-control" \
+    "$STAGE_DIR/bin/matrix-terminal-spike-pane"
 fi
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
@@ -214,7 +242,9 @@ pnpm --dir "$STAGE_DIR/app" rebuild node-pty better-sqlite3
 (cd "$STAGE_DIR/app" && "$STAGE_DIR/runtime/node/bin/node" --input-type=module -e 'await import("@matrix-os/terminal-runtime")')
 install -d -m 0755 "$STAGE_DIR/app/node_modules/.bin"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
-install -m 0644 "$ROOT_DIR/distro/customer-vps/terminal-runtime-activation" "$STAGE_DIR/app/terminal-runtime-activation"
+if [ "$terminal_runtime_dormant" != "1" ]; then
+  install -m 0644 "$ROOT_DIR/distro/customer-vps/terminal-runtime-activation" "$STAGE_DIR/app/terminal-runtime-activation"
+fi
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
@@ -223,18 +253,20 @@ HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREF
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
 bundle_members=(bin app runtime systemd libexec release.json incremental-manifest.json)
 activation_source="$ROOT_DIR/distro/customer-vps/terminal-runtime-activation"
-if [ -e "$activation_source" ] || [ -L "$activation_source" ]; then
-  [ -f "$activation_source" ] && [ ! -L "$activation_source" ] || {
-    echo "terminal_runtime_activation_invalid" >&2
-    exit 1
-  }
-  [ "$(stat -c %s "$activation_source")" -eq 14 ] &&
-    [ "$(cat "$activation_source")" = "supervised-v1" ] || {
-    echo "terminal_runtime_activation_invalid" >&2
-    exit 1
-  }
-  install -m 0644 "$activation_source" "$STAGE_DIR/terminal-runtime-activation"
-  bundle_members+=(terminal-runtime-activation)
+if [ "$terminal_runtime_dormant" != "1" ]; then
+  if [ -e "$activation_source" ] || [ -L "$activation_source" ]; then
+    [ -f "$activation_source" ] && [ ! -L "$activation_source" ] || {
+      echo "terminal_runtime_activation_invalid" >&2
+      exit 1
+    }
+    [ "$(stat -c %s "$activation_source")" -eq 14 ] &&
+      [ "$(cat "$activation_source")" = "supervised-v1" ] || {
+      echo "terminal_runtime_activation_invalid" >&2
+      exit 1
+    }
+    install -m 0644 "$activation_source" "$STAGE_DIR/terminal-runtime-activation"
+    bundle_members+=(terminal-runtime-activation)
+  fi
 fi
 tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" "${bundle_members[@]}"
 MATRIX_HOST_BUNDLE_VALIDATION_DIAGNOSTICS=1 \

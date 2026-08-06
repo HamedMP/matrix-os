@@ -184,6 +184,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Resolve same-repository PR head
         id: resolve
@@ -349,12 +350,13 @@ jobs:
             echo "update_status=${update_status}" >&2
             exit 1
           fi
-          run_body="$(jq -cn --arg sha "$HEAD_SHA" '{
+          run_body="$(jq -cn --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
             command: [
               "/usr/bin/sudo",
               "/opt/matrix/bin/matrix-terminal-spike-control",
               "launch",
-              $sha
+              $sha,
+              $nonce
             ],
             timeoutMs: 30000
           }')"
@@ -428,12 +430,13 @@ jobs:
             process.stdout.write(createHmac("sha256", process.argv[2]).update(process.argv[1]).digest("hex"));
           ' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$gateway_token"
-          pack_body="$(jq -cn --arg sha "$HEAD_SHA" '{
+          pack_body="$(jq -cn --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
             command: [
               "/usr/bin/sudo",
               "/opt/matrix/bin/matrix-terminal-spike-control",
               "pack",
-              $sha
+              $sha,
+              $nonce
             ],
             timeoutMs: 30000
           }')"
@@ -441,6 +444,9 @@ jobs:
           evidence_deadline=$((SECONDS + 2100))
           pack_ready=false
           diagnostic=unavailable
+          base_wait_started=0
+          last_pack_success=$SECONDS
+          last_semantic_pack_success=$SECONDS
           http_code="000"
           while [ "$SECONDS" -lt "$evidence_deadline" ]; do
             if http_code="$(curl --silent --max-time 45 --connect-timeout 15 \
@@ -451,28 +457,63 @@ jobs:
               -H "authorization: Bearer ${gateway_token}" \
               -H 'content-type: application/json' \
               --data-binary "$pack_body")" && [ "$http_code" = 200 ]; then
+              last_pack_success=$SECONDS
               next_diagnostic="$(jq -r 'if .exitCode == 0 and .timedOut == false and
                 .truncated == false and .signal == null and
-                (.stdout | test("^spike_pack_evidence_incomplete_[a-z0-9_]+\\n?$"))
+                (.stdout | test("^spike_pack_evidence_(?:incomplete|failed)_[a-z0-9_]+\\n?$"))
                 then (.stdout | rtrimstr("\n"))
                 elif .timedOut == true then "spike_pack_command_timeout" elif .truncated == true then "spike_pack_command_truncated"
                 elif ((.stderr // "") | test("^(?:spike|evidence)_[a-z0-9_]+\\n?$"))
                 then ((.stderr // "") | rtrimstr("\n"))
                 elif .exitCode != 0 then "spike_pack_command_failed" else "unavailable" end' "$pack_response" 2>/dev/null || printf unavailable)"
               if [ "$next_diagnostic" != unavailable ]; then
+                last_semantic_pack_success=$SECONDS
                 if [ "$next_diagnostic" != "$diagnostic" ]; then
                   diagnostic="$next_diagnostic"
                   echo "evidence_stage=${diagnostic}"
                 fi
-                if [[ "$diagnostic" =~ ^spike_pack_evidence_incomplete_[a-z0-9_]+_(descriptor|launch|cgroup|readiness|notify)_[a-z0-9_]+$ ]]; then echo "evidence_diagnostic=${diagnostic}" >&2; exit 1; fi
+                if [[ "$diagnostic" =~ ^spike_pack_evidence_incomplete_[a-z0-9_]+_stalled_base_[a-z0-9_]+$ ]]; then
+                  echo "evidence_diagnostic=${diagnostic}" >&2
+                  exit 1
+                fi
+                if [[ "$diagnostic" =~ ^spike_pack_evidence_failed_[a-z0-9_]+$ ]]; then
+                  echo "evidence_diagnostic=${diagnostic}" >&2
+                  exit 1
+                fi
+                if [ "$diagnostic" = spike_pack_command_failed ]; then
+                  echo "evidence_diagnostic=${diagnostic}" >&2
+                  exit 1
+                fi
+                if [[ "$diagnostic" =~ _base_wait_ready_ ]]; then
+                  if [ "$base_wait_started" -eq 0 ]; then
+                    base_wait_started=$SECONDS
+                  elif [ $((SECONDS - base_wait_started)) -ge 90 ]; then
+                    echo "evidence_diagnostic=${diagnostic}" >&2
+                    exit 1
+                  fi
+                else
+                  base_wait_started=0
+                fi
               elif jq -e '
                 type == "object" and .exitCode == 0 and .timedOut == false and
                 .truncated == false and .signal == null and
                 (.stdout | type == "string" and length > 0 and length <= 700000)
               ' "$pack_response" >/dev/null; then
+                last_semantic_pack_success=$SECONDS
                 pack_ready=true
                 break
               fi
+            fi
+            [[ "$http_code" =~ ^[0-9]{3}$ ]] || http_code=000
+            if [ $((SECONDS - last_pack_success)) -ge 120 ]; then
+              diagnostic="evidence_gateway_unavailable_${http_code}"
+              echo "evidence_diagnostic=${diagnostic}" >&2
+              exit 1
+            fi
+            if [ $((SECONDS - last_semantic_pack_success)) -ge 120 ]; then
+              diagnostic="evidence_gateway_response_invalid_${http_code}"
+              echo "evidence_diagnostic=${diagnostic}" >&2
+              exit 1
             fi
             echo "Waiting for detached spike evidence."
             sleep 15

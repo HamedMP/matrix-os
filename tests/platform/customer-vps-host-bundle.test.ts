@@ -858,19 +858,48 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
-    expect(workflow).toContain('bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${BASE_SHA:0:7}');
+    expect(workflow).toContain('bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${bootstrap_sha:0:7}');
+    expect(workflow).toContain(
+      'activation_commits < <(git log --format=%H --reverse -S "$activation_line" "$merge_base..$HEAD_SHA"',
+    );
+    expect(workflow).toContain(
+      'bootstrap_sha="$(git rev-parse "${activation_commits[0]}^")"',
+    );
+    expect(workflow).toContain('echo "bootstrap_sha=$bootstrap_sha"');
+    expect(workflow).toContain(
+      'MATRIX_BUILD_SHA: ${{ steps.version.outputs.bootstrap_sha }}',
+    );
+    expect(workflow).toContain(
+      'git checkout --detach "${{ steps.version.outputs.bootstrap_sha }}"',
+    );
     expect(workflow).not.toContain('dist/activation/**');
     expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
     expect(workflow).toContain('cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"');
     expect(workflow).toContain('cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/');
+    expect(workflow).toContain(
+      'cp scripts/build-host-bundle.sh "$RUNNER_TEMP/build-host-bundle.sh"',
+    );
+    expect(workflow).toContain(
+      'cp -a scripts/spikes/terminal-runtime "$RUNNER_TEMP/terminal-runtime-spikes"',
+    );
+    expect(workflow).toContain(
+      'install -m 0755 "$RUNNER_TEMP/build-host-bundle.sh" scripts/build-host-bundle.sh',
+    );
+    expect(workflow).toContain(
+      'cp -a "$RUNNER_TEMP/terminal-runtime-spikes" scripts/spikes/terminal-runtime',
+    );
+    expect(workflow).toContain(
+      'MATRIX_TERMINAL_RUNTIME_DORMANT=1 ./scripts/build-host-bundle.sh',
+    );
     expect(workflow).toContain('rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control');
     expect(workflow).not.toContain('activation_watch');
-    expect(workflow).toContain('BASE_SHA: ${{ needs.gate.outputs.base_sha }}');
+    expect(workflow).toContain('BOOTSTRAP_SHA: ${{ needs.build.outputs.bootstrap_sha }}');
     expect(workflow).toContain(
       'if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then',
     );
     expect(workflow).toContain('Reusing the exact dormant parent already installed on the preview.');
+    expect(workflow).toContain('[[ "$deployed" == *"-${BOOTSTRAP_SHA:0:7}" ]]');
     expect(workflow).not.toContain(
       '[[ "$deployed" =~ ^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-([0-9]+-[0-9]+-)?[0-9a-f]{7}$ ]]',
     );
@@ -903,6 +932,16 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain(
       'updater_diagnostic_result="$(updater_diagnostic "$address")"',
     );
+    expect(
+      deployLoop.indexOf(
+        'updater_diagnostic_result="$(updater_diagnostic "$address")"',
+      ),
+    ).toBeLessThan(
+      deployLoop.indexOf('if [ "$deployed" = "$target_version" ]; then'),
+    );
+    expect(deployLoop).toContain(
+      'if [ "$updater_diagnostic_result" = "Update service: idle phase=idle failure=none" ] &&',
+    );
     expect(deployLoop).toContain(
       '"Update service: failed phase=failed failure="*',
     );
@@ -912,10 +951,89 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(deployLoop).toContain('Preview updater state: ${updater_diagnostic_result}');
     expect(deployLoop).toContain('Preview updater state at timeout: ${final_diagnostic}');
     expect(deployLoop).toContain('version_seen=true');
-    expect(deployLoop).toContain('Waiting for the preview updater to become idle.');
+    expect(deployLoop).toContain('Waiting for the installed preview release and terminal generation.');
     expect(deployLoop).toContain('deploy_converged=true');
     expect(deployLoop).toContain('Deployment of ${target_version} did not converge.');
     expect(workflow).not.toContain('${stderr}');
+  });
+
+  it('preview VPS workflow verifies the installed release and runtime generation before advancing', () => {
+    const workflow = readFileSync(
+      join(process.cwd(), '.github/workflows/preview-vps.yml'),
+      'utf8',
+    );
+    const deployLoop = workflow.slice(
+      workflow.indexOf('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"'),
+      workflow.indexOf('      - name: Comment preview URL on PR'),
+    );
+
+    expect(workflow).toContain('activation_generation_target: ${{ steps.activation_bundle.outputs.terminal_generation_target }}');
+    expect(workflow).toContain('bootstrap_generation_target: ${{ steps.bootstrap_bundle.outputs.terminal_generation_target }}');
+    expect(workflow).toContain('readlink dist/host-bundle/stage/libexec/terminal-runtime/current');
+    expect(workflow).toContain('preview_install_matches()');
+    expect(workflow).toContain('command:["/usr/bin/cat","/opt/matrix/release.json"]');
+    expect(workflow).toContain('command:["/usr/bin/readlink","/opt/matrix/libexec/terminal-runtime/current"]');
+    expect(workflow).toContain('command:["/usr/bin/cat","/opt/matrix/libexec/terminal-runtime/current/spikes/build-head-sha"]');
+    expect(workflow).toContain('.version == $version and .gitCommit == $sha');
+    expect(deployLoop).toContain(
+      'preview_install_matches "$address" "$target_version" "$target_sha" "$target_generation"',
+    );
+    expect(deployLoop.indexOf('preview_install_matches')).toBeLessThan(
+      deployLoop.indexOf('deploy_converged=true'),
+    );
+  });
+
+  it('host bundle permits dormant terminal activation only for an explicit spike bootstrap', () => {
+    const root = process.cwd();
+    const scriptPath = join(root, 'scripts/build-host-bundle.sh');
+    const buildScript = readFileSync(
+      scriptPath,
+      'utf8',
+    );
+
+    expect(buildScript).toContain(
+      'MATRIX_TERMINAL_RUNTIME_DORMANT:-0',
+    );
+    expect(buildScript).toContain(
+      'terminal_runtime_dormant_requires_spike',
+    );
+    expect(buildScript).toContain(
+      'if [ "$terminal_runtime_dormant" != "1" ]; then',
+    );
+    expect(buildScript).toContain(
+      'install -m 0644 "$ROOT_DIR/distro/customer-vps/terminal-runtime-activation" "$STAGE_DIR/app/terminal-runtime-activation"',
+    );
+    expect(buildScript).toContain(
+      'bundle_members+=(terminal-runtime-activation)',
+    );
+
+    const productionAttempt = spawnSync('bash', [scriptPath], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        MATRIX_TERMINAL_RUNTIME_DORMANT: '1',
+        MATRIX_TERMINAL_RUNTIME_SPIKE: '0',
+      },
+    });
+    expect(productionAttempt.status).toBe(1);
+    expect(productionAttempt.stderr).toContain(
+      'terminal_runtime_dormant_requires_spike',
+    );
+
+    const invalidAttempt = spawnSync('bash', [scriptPath], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        MATRIX_TERMINAL_RUNTIME_DORMANT: 'yes',
+        MATRIX_TERMINAL_RUNTIME_SPIKE: '1',
+      },
+    });
+    expect(invalidAttempt.status).toBe(1);
+    expect(invalidAttempt.stderr).toContain(
+      'terminal_runtime_dormant_invalid',
+    );
   });
 
   it('preview VPS workflow uses the durable preview provision contract', () => {

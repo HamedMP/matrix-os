@@ -154,9 +154,9 @@ RUN npm install -g \
 RUN npm install -g --ignore-scripts \
     "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
 
-RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/841a5a744ad115b001a2720bf1eeb6bec3dfcc7d/scripts/install.sh \
     -o /tmp/hermes-agent-install.sh && \
-    bash /tmp/hermes-agent-install.sh --skip-setup && \
+    bash /tmp/hermes-agent-install.sh --skip-setup --commit 841a5a744ad115b001a2720bf1eeb6bec3dfcc7d && \
     rm -f /tmp/hermes-agent-install.sh
 
 # Browser IDE served only on the private Docker network and exposed publicly

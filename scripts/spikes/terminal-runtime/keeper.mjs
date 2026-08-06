@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 import { execFile, spawn as spawnProcess } from 'node:child_process';
-import { open, readFile, unlink, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { promisify, stripVTControlCharacters } from 'node:util';
 const execFileAsync = promisify(execFile);
-const require = createRequire('/opt/matrix/libexec/terminal-runtime/current/package.json');
-const runtimeId = process.argv[2] ?? '';
-const runtimeRoot = '/run/matrix-terminal-runtime-spike';
+const keeperExecutable = await realpath(fileURLToPath(import.meta.url));
+const require = createRequire(keeperExecutable);
+const sessionQueryWorkerMode = process.argv[2] === '--session-query-worker';
+const runtimeId = process.argv[sessionQueryWorkerMode ? 3 : 2] ?? '';
+const runNamespace = runtimeId.slice(1);
+const runtimeRoot = `/run/matrix-terminal-runtime-spikes/${runNamespace}`;
+const stateRoot = `/home/matrix/home/system/terminal-runtime-spikes/${runNamespace}`;
 const zellij = '/opt/matrix/bin/zellij';
 let stopping = false;
 let monitor;
+let startupWatchdog;
 let pty;
 let spawnPty;
 let startupStage = 'descriptor';
@@ -18,7 +24,12 @@ let clientExitEvent = null;
 let ready = false;
 let confirmationSent = false;
 let renderWindow = '';
-let gateRecorded = false, sessionQuery = 0;
+let gateRecorded = false;
+let paneReleasedRecorded = false;
+let confirmationState = 'waiting';
+let heldPaneCount = 0;
+let startupFailureStarted = false;
+let startupStageRevision = 0;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
 const STARTUP_FAILURE_CODES = new Set([
   'runtime_id',
@@ -31,10 +42,14 @@ const STARTUP_FAILURE_CODES = new Set([
   'client_exit',
   'cgroup_unified',
   'cgroup_unit',
+  'confirmation_inventory',
+  'confirmation_target',
+  'confirmation_write',
   'readiness_timeout',
 ]);
 function exit(code) {
   if (monitor) clearInterval(monitor);
+  if (startupWatchdog) clearTimeout(startupWatchdog);
   if (pty) {
     try {
       pty.kill();
@@ -60,33 +75,88 @@ function zellijEnvironment() {
     PATH: '/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin',
     LANG: 'C.UTF-8',
     TERM: 'xterm-256color',
-    XDG_CACHE_HOME: '/home/matrix/home/system/terminal-runtime-spike/cache',
-    XDG_CONFIG_HOME: '/home/matrix/home/system/terminal-runtime-spike/config-home',
-    XDG_DATA_HOME: '/home/matrix/home/system/terminal-runtime-spike/data',
+    XDG_CACHE_HOME: `${stateRoot}/cache`,
+    XDG_CONFIG_HOME: `${stateRoot}/config-home`,
+    XDG_DATA_HOME: `${stateRoot}/data`,
     XDG_RUNTIME_DIR: `/run/user/${process.getuid()}`,
-    ZELLIJ_CONFIG_DIR: '/home/matrix/home/system/terminal-runtime-spike/config',
-    ZELLIJ_CONFIG_FILE: '/home/matrix/home/system/terminal-runtime-spike/config/config.kdl',
+    ZELLIJ_CONFIG_DIR: `${stateRoot}/config`,
+    ZELLIJ_CONFIG_FILE: `${stateRoot}/config/config.kdl`,
   };
 }
-async function exactSessionResponds(sessionName, env) {
-  const probePath = `${runtimeRoot}/session-query-${runtimeId}-${sessionQuery++}`; const handle = await open(probePath, 'wx', 0o600); await unlink(probePath);
+function terminateProcessGroup(pid) {
+  if (!Number.isInteger(pid) || pid < 1) return;
   try {
-    const succeeded = await new Promise((resolve) => {
-      let settled = false;
-      const child = spawnProcess(zellij, ['list-sessions', '--no-formatting'], { env, detached: true, stdio: ['ignore', handle.fd, 'ignore'] });
-      const finish = (result) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
-      const timer = setTimeout(() => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch (error) {
-          const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-          if (code !== 'ESRCH') roleSnapshot.responsive = false;
-        } finish(false);
-      }, 2000);
-      child.on('error', () => finish(false));
-      child.on('exit', (code) => finish(code === 0));
+    process.kill(-pid, 'SIGKILL');
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code !== 'ESRCH') roleSnapshot.responsive = false;
+  }
+}
+async function runSessionQueryWorker() {
+  if (!/^[0-9a-f]{32}$/.test(runtimeId) || typeof process.send !== 'function') {
+    process.exitCode = 2;
+    return;
+  }
+  const sessionName = `matrix-t-${runtimeId}`;
+  const child = spawnProcess(zellij, ['list-sessions', '--no-formatting'], {
+    env: zellijEnvironment(),
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const chunks = [];
+  let bytes = 0;
+  let overflow = false;
+  child.stdout?.on('data', (chunk) => {
+    bytes += chunk.length;
+    if (bytes > 64 * 1024) {
+      overflow = true;
+      child.kill('SIGKILL');
+      return;
+    }
+    chunks.push(chunk);
+  });
+  const responsive = await new Promise((resolve) => {
+    child.once('error', () => resolve(false));
+    child.once('close', (code, signal) => {
+      if (code !== 0 || signal || overflow) {
+        resolve(false);
+        return;
+      }
+      const output = Buffer.concat(chunks).toString('utf8');
+      resolve(output.split(/\r?\n/).some(
+        (line) => line.trim().split(/\s+/)[0] === sessionName,
+      ));
     });
-    if (!succeeded) return false; const output = Buffer.alloc(64 * 1024 + 1); const { bytesRead } = await handle.read(output, 0, output.length, 0);
-    if (bytesRead > 64 * 1024) return false;
-    return output.subarray(0, bytesRead).toString('utf8').split(/\r?\n/).some((line) => line.trim().split(/\s+/)[0] === sessionName);
-  } finally { await handle.close(); }
+  });
+  await new Promise((resolve, reject) => {
+    process.send({ responsive }, (error) => error ? reject(error) : resolve());
+  });
+  process.disconnect();
+}
+async function exactSessionResponds() {
+  return await new Promise((resolve) => {
+    let settled = false;
+    const child = spawnProcess(process.execPath, [keeperExecutable, '--session-query-worker', runtimeId], {
+      detached: true,
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    const finish = (result, terminate = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeAllListeners();
+      if (terminate && child.pid) terminateProcessGroup(child.pid);
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish(false, true), 2000);
+    child.once('message', (message) => {
+      const valid = message !== null && typeof message === 'object' && !Array.isArray(message)
+        && Object.keys(message).join(',') === 'responsive'
+        && typeof message.responsive === 'boolean';
+      finish(valid && message.responsive, !valid);
+    });
+    child.once('error', () => finish(false, true));
+    child.once('exit', () => finish(false));
+  });
 }
 async function ownCgroup() {
   const membership = await readFile('/proc/self/cgroup', 'utf8');
@@ -95,6 +165,66 @@ async function ownCgroup() {
   const relative = unified.slice(3);
   if (!relative.includes('matrix-terminal-spike')) throw new Error('cgroup_unit');
   return { relative, path: `/sys/fs/cgroup${relative}` };
+}
+async function regularFileExists(path) {
+  try {
+    return (await lstat(path)).isFile();
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code === 'ENOENT') return false;
+    throw error;
+  }
+}
+async function confirmHeldCreatePane(sessionName, env) {
+  const options = { env, timeout: 2000, maxBuffer: 64 * 1024 };
+  confirmationState = 'inventory';
+  await recordStartupStage();
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(
+      zellij,
+      ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
+      options,
+    ));
+  } catch (error) {
+    throw new Error('confirmation_inventory', { cause: error });
+  }
+  let listed;
+  try {
+    listed = JSON.parse(stdout);
+  } catch (error) {
+    throw new Error('confirmation_inventory', { cause: error });
+  }
+  if (!Array.isArray(listed) || listed.length > 16) {
+    throw new Error('confirmation_inventory');
+  }
+  const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
+  heldPaneCount = panes.length;
+  if (panes.length === 0) {
+    confirmationState = 'waiting';
+    await recordStartupStage();
+    return;
+  }
+  confirmationState = 'target';
+  await recordStartupStage();
+  if (panes.length !== 1 || !Number.isInteger(panes[0].id) || panes[0].id < 0) {
+    throw new Error('confirmation_target');
+  }
+  const [pane] = panes;
+  confirmationState = 'write';
+  await recordStartupStage();
+  try {
+    await execFileAsync(
+      zellij,
+      ['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)],
+      options,
+    );
+  } catch (error) {
+    throw new Error('confirmation_write', { cause: error });
+  }
+  confirmationState = 'sent';
+  confirmationSent = true;
+  await recordStartupStage();
 }
 async function processInfo(pid) {
   try {
@@ -136,6 +266,31 @@ async function writeReadiness(value) {
     mode: 0o600,
   });
 }
+function startupSnapshot() {
+  return {
+    stage: startupStage,
+    gateRecorded,
+    paneReleased: paneReleasedRecorded,
+    confirmationState,
+    heldPaneCount,
+    confirmationSent,
+    ...roleSnapshot,
+  };
+}
+async function recordStartupStage() {
+  const temporaryPath = `${runtimeRoot}/startup-stages/.${runtimeId}.${process.pid}.${startupStageRevision++}.tmp`;
+  const targetPath = `${runtimeRoot}/startup-stages/${runtimeId}.json`;
+  await writeFile(temporaryPath, `${JSON.stringify(startupSnapshot())}\n`, {
+    encoding: 'utf8',
+    flag: 'wx',
+    mode: 0o600,
+  });
+  await rename(temporaryPath, targetPath);
+}
+async function setStartupStage(stage) {
+  startupStage = stage;
+  await recordStartupStage();
+}
 async function notifyReady() {
   await execFileAsync('/usr/bin/systemd-notify', ['--ready', `--pid=${process.pid}`, '--status=terminal-runtime-spike-ready'], {
     env: process.env,
@@ -147,7 +302,7 @@ async function recordStartupFailure(error) {
   const code = error instanceof Error && STARTUP_FAILURE_CODES.has(error.message)
     ? error.message
     : 'startup_failed';
-  const receipt = { stage: startupStage, code, confirmationSent, ...roleSnapshot };
+  const receipt = { code, ...startupSnapshot() };
   if (code === 'client_exit' && clientExitEvent) {
     receipt.exitCode = clientExitEvent.exitCode;
     receipt.signal = clientExitEvent.signal;
@@ -165,8 +320,18 @@ async function recordStartupFailure(error) {
     if (writeCode !== 'EEXIST') process.exitCode = 1;
   }
 }
+async function failStartup(code) {
+  if (startupFailureStarted) return;
+  startupFailureStarted = true;
+  await recordStartupFailure(new Error(code));
+  exit(16);
+}
 async function main() {
   if (!/^[0-9a-f]{32}$/.test(runtimeId)) throw new Error('runtime_id');
+  startupWatchdog = setTimeout(() => {
+    void failStartup('readiness_timeout');
+  }, 25_000);
+  await recordStartupStage();
   let nativePty; try { nativePty = require('node-pty'); } catch (error) { throw new Error('native_binding', { cause: error }); }
   if (typeof nativePty.spawn !== 'function') throw new Error('native_binding');
   spawnPty = nativePty.spawn;
@@ -175,12 +340,13 @@ async function main() {
   if (Buffer.byteLength(descriptorRaw) > 4096) throw new Error('descriptor_size');
   const descriptor = parseDescriptor(JSON.parse(descriptorRaw));
   await unlink(descriptorPath);
-  startupStage = 'launch';
+  await setStartupStage('launch');
   const env = zellijEnvironment();
   const sessionName = `matrix-t-${runtimeId}`;
+  const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`;
   const args = descriptor.intent === 'recover'
     ? ['attach', sessionName]
-    : ['--session', sessionName, '--new-session-with-layout', '/opt/matrix/libexec/terminal-runtime-spike/layout.kdl'];
+    : ['--session', sessionName, '--new-session-with-layout', '/opt/matrix/libexec/terminal-runtime/current/spikes/layout.kdl'];
   pty = spawnPty(zellij, args, {
     name: 'xterm-256color',
     cols: 120,
@@ -212,34 +378,44 @@ async function main() {
     };
     if (!stopping && ready) exit(17);
   });
-  startupStage = 'cgroup';
+  await setStartupStage('cgroup');
   const cgroup = await ownCgroup();
-  startupStage = 'readiness';
+  await setStartupStage('readiness');
   const deadline = Date.now() + 25_000;
   let roles = null;
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
-    const detected = await cgroupRoles(cgroup.path, descriptor.intent === 'create');
-    const responsive = Boolean(detected && await exactSessionResponds(sessionName, env));
+    const paneReleased = await regularFileExists(paneReleasePath);
+    paneReleasedRecorded = paneReleased;
+    if (paneReleased && descriptor.intent === 'create' && !confirmationSent) {
+      await confirmHeldCreatePane(sessionName, env);
+    }
+    const detected = paneReleased
+      ? await cgroupRoles(cgroup.path, descriptor.intent === 'create')
+      : null;
+    const responsive = Boolean(detected && await exactSessionResponds());
     roleSnapshot.responsive = responsive;
-    if (responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
+    await recordStartupStage();
+    if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
       roles = detected;
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!roles) throw new Error('readiness_timeout');
-  startupStage = 'notify';
+  await setStartupStage('notify');
   await notifyReady();
   await writeReadiness({ runtimeId, sessionName, cgroup: cgroup.relative, roles });
   if (clientExited) throw new Error('client_exit');
+  clearTimeout(startupWatchdog);
+  startupWatchdog = undefined;
   ready = true;
   let checking = false;
   monitor = setInterval(async () => {
     if (stopping || checking) return;
     checking = true;
     try {
-      if (clientExited || !await exactSessionResponds(sessionName, env)) exit(18);
+      if (clientExited || !await exactSessionResponds()) exit(18);
     } finally {
       checking = false;
     }
@@ -253,9 +429,19 @@ process.on('SIGINT', () => {
   stopping = true;
   exit(0);
 });
-try {
-  await main();
-} catch (error) {
-  await recordStartupFailure(error);
-  exit(16);
+if (sessionQueryWorkerMode) {
+  try {
+    await runSessionQueryWorker();
+  } catch (error) {
+    process.exitCode = 1;
+  }
+} else {
+  try {
+    await main();
+  } catch (error) {
+    const code = error instanceof Error && STARTUP_FAILURE_CODES.has(error.message)
+      ? error.message
+      : 'startup_failed';
+    await failStartup(code);
+  }
 }
