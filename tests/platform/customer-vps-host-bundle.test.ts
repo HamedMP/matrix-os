@@ -1104,6 +1104,19 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('sort_by(._preview_rank, (if .runtimeSlot == $h then 0 else 1 end), .provisionedAt)');
   });
 
+  it('preview VPS workflow reports only allowlisted provisioning failure codes', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('sanitize_failure_code()');
+    expect(workflow).toContain("failure_code=\"$(jq -r '.failureCode // \"none\"' <<< \"$fleet_machine\" | sanitize_failure_code)\"");
+    expect(workflow).toContain('Fleet failure code for ${HANDLE}: ${failure_code}');
+    expect(workflow).toContain('Provisioning failed for ${HANDLE} (${failure_code})');
+    expect(workflow).toContain('quota_exceeded|provider_unavailable|provider_timeout|user_data_too_large|r2_unavailable');
+    expect(workflow).toContain('registration_rejected|registration_timeout|retry_exhausted|unknown|none');
+    expect(workflow).not.toContain('echo "$fleet_machine"');
+  });
+
   it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
