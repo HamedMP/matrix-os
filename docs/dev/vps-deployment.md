@@ -619,29 +619,20 @@ sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 
 Publish with `./scripts/publish-release.sh <version> --channel <channel>` or let `.github/workflows/host-bundle-release.yml` do it on `main`. The publish step uploads immutable R2 objects and registers the release in platform Postgres; platform Postgres is the source of truth for release metadata and channel pointers.
 
-Existing VPS deployments are explicit. Normal `main` pushes publish and promote
-`dev` without updating any VPS. Target each reviewed customer handle rather than
-using an unqualified fleet deploy:
+Existing VPSes update through platform fan-out:
 
 ```bash
 curl --fail --silent --show-error \
   -X POST https://app.matrix-os.com/vps/deploy \
   -H "Authorization: Bearer $PLATFORM_SECRET" \
   -H "Content-Type: application/json" \
-  -d '{"handle":"<reviewed-handle>","version":"v2026.05.12-43"}'
+  -d '{"version":"v2026.05.12-43"}'
 ```
 
 Do not SSH-copy bundles except for break-glass recovery. The sync agent downloads the registered bundle through platform, verifies the SHA-256, stages extraction, keeps `/opt/matrix/app.rollback`, swaps `/opt/matrix/app`, writes `/opt/matrix/release.json`, and restarts services.
 
 Operational rules:
 
-- Keep release provenance and update subscription separate. `/opt/matrix/release.json`
-  describes the installed immutable artifact and may retain its build channel.
-  `/opt/matrix/env/host.env` `MATRIX_UPDATE_CHANNEL` is the persistent channel
-  followed by the sync agent and exposed as `updateChannel` by `/api/system/info`.
-- Passive sync polling must not treat an older channel pointer as an available
-  update. Explicit `matrix-update <channel-or-version>` remains the operator/user
-  path for an intentional downgrade.
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is build-time, not runtime. If the browser tries to load `https://clerk.example.com/...`, the served shell bundle was built with the placeholder Clerk key and must be rebuilt with the real key.
 - `DATABASE_URL` must exist in `/opt/matrix/env/host.env` or be assembled by `/opt/matrix/bin/matrix-gateway` from `/opt/matrix/env/postgres.env`. Without it, gateway state can drift away from owner-controlled Postgres.
 - Do not use `owner: root:matrix` in cloud-init `write_files` before the `matrix` group exists. Prefer `root:root` for env files unless the file must be group-readable.

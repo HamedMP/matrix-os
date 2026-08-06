@@ -460,30 +460,18 @@ describe('CI workflows', () => {
     expect(workflow).toContain('${cache_image}');
   });
 
-  it('publishes main dev host bundles without deploying the fleet', () => {
+  it('temporarily disables host-bundle push releases while the containment fix is reverted', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
-    const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
-    const deployJob = workflow.slice(workflow.indexOf('\n  deploy:'));
 
-    expect(workflow).toContain('deploy_after_publish:');
+    expect(workflow).toContain('TEMPORARY REVERT INTERLOCK');
+    expect(workflow).not.toContain('branches: [main]');
+    expect(workflow).toContain('tags:');
+    expect(workflow).toContain('- "v*"');
     expect(workflow).toMatch(/deploy_after_publish:[\s\S]*?default: false/);
+    expect(workflow).toContain('if: ${{ false }} # TEMPORARY REVERT INTERLOCK');
     expect(workflow).toContain('Deploy published host bundle');
-    expect(deployJob).toContain("github.event_name == 'workflow_dispatch' && inputs.deploy_after_publish");
-    expect(deployJob).toContain("(github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag'");
-    expect(deployJob).not.toContain("github.event_name == 'push'");
-    expect(workflow).not.toContain("|| inputs.severity == 'security'");
     expect(workflow).toContain('PUBLISH_VERSION: ${{ needs.build.outputs.version }}');
     expect(workflow).toContain('VERSION="$PUBLISH_VERSION"');
-    expect(workflow).not.toContain('VERSION="${{ needs.build.outputs.version }}"');
-    expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \\');
-    expect(workflow).toContain('failed="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.failed // 0\')"');
-    expect(workflow).toContain('triggered="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.triggered // 0\')"');
-    expect(workflow).toContain('if [ "$failed" -gt 0 ] || [ "$triggered" -eq 0 ]; then');
-    expect(workflow).toContain('-d "{\\"version\\":\\"$VERSION\\"}"');
-    expect(workflow).not.toContain('Auto-deploy on security severity');
-    expect(releaseDocs).toContain('`deploy_after_publish=true`');
-    expect(releaseDocs).toContain('Security severity does not override this opt-in deployment gate.');
-    expect(releaseDocs).not.toContain('which auto-deploys the built version after publish');
   });
 });

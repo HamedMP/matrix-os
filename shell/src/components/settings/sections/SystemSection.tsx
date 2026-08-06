@@ -15,7 +15,6 @@ const UPDATE_INSTALL_TIMEOUT_MS = 5 * 60_000;
 interface SystemInfo {
   version?: string;
   image?: string;
-  updateChannel?: string;
   release?: {
     version?: string;
     channel?: string;
@@ -185,7 +184,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
       .then((r) => r.ok ? r.json() : {})
       .then((data: SystemInfo) => {
         setInfo(data);
-        const channel = coerceReleaseChannel(data.updateChannel ?? data.release?.channel);
+        const channel = coerceReleaseChannel(data.release?.channel);
         setSelectedChannel(channel);
         void refreshReleaseData(channel);
       })
@@ -214,7 +213,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const currentVersion = resolvedUpdate.currentVersion;
   const latestVersion = resolvedUpdate.latestVersion;
   const updateAvailable = resolvedUpdate.updateAvailable;
-  const installedChannel = coerceReleaseChannel(info.updateChannel ?? info.release?.channel);
+  const installedChannel = coerceReleaseChannel(info.release?.channel);
   const releaseRows = releaseList?.releases ?? [];
   const canInstallSelectedChannel = Boolean(latestVersion && (updateAvailable || selectedChannel !== installedChannel));
   const systemUpdatesLocked = !billingActive;

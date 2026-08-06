@@ -28,12 +28,12 @@ that image.
 - `main` is the source of truth. A push to `main` runs `.github/workflows/host-bundle-release.yml`.
 - The workflow builds `dist/host-bundle/matrix-host-bundle.tar.gz`, uploads it to R2, registers it in platform Postgres through `POST /system-bundles/releases`, and promotes the `dev` channel.
 - R2 JSON manifests are not authoritative. The platform DB release row and channel row are authoritative; R2 only holds the tarball and `.sha256` bytes.
-- Existing VPS deployments are explicit and opt-in. Normal `main` pushes publish and promote `dev` without deploying any VPS.
+- Existing VPSes are updated by platform deploy fan-out: `POST /vps/deploy {"version":"<version>"}` or `{"channel":"dev"}`.
 - A customer VPS sync agent fetches DB-backed release metadata, verifies SHA-256, extracts to staging, moves the old app to `/opt/matrix/app.rollback`, moves the new app into `/opt/matrix/app`, writes `/opt/matrix/release.json`, and restarts Matrix services.
 - Host-bundle updates must never overwrite owner data. Do not delete or replace `/home/matrix/home`, `/opt/matrix/env`, or the local Postgres data directory during deploys or rollbacks.
 - `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` and CI/release paths use `pnpm install --frozen-lockfile`; do not bypass either during releases.
 - Host bundle release validation is blocking. If typecheck, tests, public build-env validation, build, publish, or registration fails, do not publish or deploy the bundle.
-- Eligible main/tag releases request a golden snapshot build after publication. This request is an optional acceleration path: enqueue/build failure does not block publication or a separately authorized deployment. See [Golden VPS Snapshots](golden-vps-snapshots.md).
+- Eligible main/tag releases request a golden snapshot build after publication. This request is an optional acceleration path: enqueue/build failure does not block publication or the unchanged existing-fleet deploy job. See [Golden VPS Snapshots](golden-vps-snapshots.md).
 - CLI releases are manual through `.github/workflows/release.yml`; bump `packages/sync-client/package.json`, run the sync-client checks, and dispatch the workflow with the same semver.
 - Fleet upgrade operations, blocked-machine handling, and the durable control-plane setup are documented in [Fleet Upgrade Operations](fleet-upgrade-operations.md).
 - Staging platform containers and disposable feature VPSes are temporary test
@@ -93,19 +93,23 @@ Release metadata also records:
    | `PLATFORM_PUBLIC_URL` | var | publish/deploy; defaults to `https://app.matrix-os.com` |
    | `PLATFORM_SECRET` | secret | release registration and deploy fan-out |
 
-3. Deploy to existing VPSes only when explicitly authorized.
+3. Deploy to existing VPSes.
 
-   Normal `main` pushes publish `dev` but do not automatically fan out to the fleet. The workflow-dispatch input `deploy_after_publish` defaults to `false`. Setting `deploy_after_publish=true` intentionally deploys the newly published exact version to the full running fleet, so use it only for a reviewed fleet-wide rollout. Security severity does not override this opt-in deployment gate.
+   During the temporary revert window, `host-bundle-release.yml` has no push
+   trigger and its deploy job is hard-disabled. Do not remove this interlock
+   until the deployment opt-in change is reapplied by the next stacked PR.
 
-   For a scoped rollout, target each reviewed handle explicitly after the workflow is green:
+   Normal `main` pushes publish `dev` but do not automatically fan out to the fleet. Trigger deploy after the workflow is green:
 
    ```bash
    curl --fail --silent --show-error \
      -X POST https://app.matrix-os.com/vps/deploy \
      -H "Authorization: Bearer $PLATFORM_SECRET" \
      -H "Content-Type: application/json" \
-     -d '{"handle":"<reviewed-handle>","version":"v2026.05.12-43"}'
+     -d '{"version":"v2026.05.12-43"}'
    ```
+
+   Security releases can use the workflow `severity=security` path, which auto-deploys the built version after publish.
 
 4. Verify every VPS.
 

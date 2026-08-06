@@ -1,7 +1,8 @@
 # Host Bundle Release
 #
 # Builds, publishes, and registers the Matrix OS host bundle.
-# Main publishes the dev channel. Tags publish immutable release versions.
+# TEMPORARY REVERT INTERLOCK: push releases are disabled until the deployment
+# containment change is reapplied in the next stacked PR.
 #
 # Version format: v{YYYY.MM.DD}-{run_number} (date-based, monotonically increasing)
 #
@@ -9,13 +10,12 @@
 #   1. ci-gate — wait for same-SHA CI and verify all CI jobs succeeded
 #   2. build — compile gateway, shell, kernel into host bundle tarball
 #   3. publish — upload immutable R2 artifacts and register metadata in platform DB
-#   4. (optional) deploy — explicit dispatches may trigger exact-version VPS deployment
+#   4. deploy — hard-disabled during the temporary revert window
 
 name: Host Bundle Release
 
 on:
   push:
-    branches: [main]
     tags:
       - "v*"
   workflow_dispatch:
@@ -412,7 +412,7 @@ jobs:
   deploy:
     name: Deploy published host bundle
     needs: [dev-bundle-gate, build, publish]
-    if: ${{ needs.dev-bundle-gate.outputs.should_build == 'true' && github.event_name == 'workflow_dispatch' && inputs.deploy_after_publish && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag') }}
+    if: ${{ false }} # TEMPORARY REVERT INTERLOCK
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
