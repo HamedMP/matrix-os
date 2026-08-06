@@ -150,4 +150,37 @@ describe("Desktop Hermes configuration dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open setup terminal" }));
     expect(onOpenSetupTerminal).toHaveBeenCalled();
   });
+
+  it("confirms before refresh or close would discard unsaved settings", async () => {
+    const { onClose } = renderDialog();
+    const model = await screen.findByLabelText("Default model") as HTMLInputElement;
+    fireEvent.change(model, { target: { value: "openai/gpt-5" } });
+    await screen.findByText("1 unsaved change");
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.getByRole("alertdialog").textContent).toContain("Discard unsaved changes and refresh?");
+    expect(window.operator.invoke).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Discard and refresh" }));
+    await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledTimes(4));
+
+    fireEvent.change(screen.getByLabelText("Default model"), { target: { value: "openai/gpt-5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close Hermes configuration" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog").textContent).toContain("Discard unsaved changes and close?");
+    fireEvent.click(screen.getByRole("button", { name: "Discard and close" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("preserves the last good draft when refresh fails", async () => {
+    renderDialog();
+    const model = await screen.findByLabelText("Default model") as HTMLInputElement;
+    vi.mocked(window.operator.invoke).mockRejectedValueOnce(new Error("private upstream detail"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Hermes configuration is unavailable.");
+    expect((screen.getByLabelText("Default model") as HTMLInputElement).value)
+      .toBe("anthropic/claude-sonnet-4.6");
+    expect(screen.queryByText(/private upstream detail/)).toBeNull();
+  });
 });

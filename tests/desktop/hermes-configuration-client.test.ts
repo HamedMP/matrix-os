@@ -49,6 +49,7 @@ describe("Desktop Hermes configuration client", () => {
       "https://runtime.test/api/hermes/configuration?runtime=preview",
       expect.objectContaining({
         method: "GET",
+        redirect: "error",
         headers: {
           Authorization: "Bearer desktop-token",
           Accept: "application/json",
@@ -127,6 +128,7 @@ describe("Desktop Hermes configuration client", () => {
       `https://runtime.test${path}`,
       expect.objectContaining({
         method,
+        redirect: "error",
         headers: {
           Authorization: "Bearer desktop-token",
           Accept: "application/json",

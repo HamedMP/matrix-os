@@ -145,6 +145,9 @@ describe("AgentSection", () => {
     });
     window.operator = {
       invoke: vi.fn((channel: string) => {
+        if (channel === "runtime:get-hermes-configuration" || channel === "runtime:get-hermes-environment") {
+          return Promise.reject(new Error("structured setup unavailable"));
+        }
         if (channel === "runtime:get-summary") {
           return Promise.resolve({
             runtime: { id: "rt_primary", label: "Primary", status: "available" },
@@ -332,6 +335,13 @@ describe("AgentSection", () => {
     ));
 
     fireEvent.click(screen.getByRole("button", { name: "Configure Hermes provider" }));
+    expect(await screen.findByRole("heading", { name: "Configure Hermes" })).toBeTruthy();
+    expect(api.post).not.toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),
+    );
+    expect(await screen.findByRole("button", { name: "Open setup terminal" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open setup terminal" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       "/api/terminal/sessions",
       expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),

@@ -50,6 +50,7 @@ export function HermesConfigurationDialog({
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [credentialBusy, setCredentialBusy] = useState(false);
+  const [confirmation, setConfirmation] = useState<"refresh" | "close" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const requestRevision = useRef(0);
 
@@ -116,6 +117,16 @@ export function HermesConfigurationDialog({
     });
   }, [configuration, draft]);
 
+  const requestRefresh = () => {
+    if (changes.length > 0) setConfirmation("refresh");
+    else void load(true);
+  };
+
+  const requestClose = () => {
+    if (changes.length > 0) setConfirmation("close");
+    else onClose();
+  };
+
   const save = async () => {
     if (!configuration || changes.length === 0 || invalidPaths.size > 0) return;
     setSaving(true);
@@ -173,8 +184,8 @@ export function HermesConfigurationDialog({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} width={980}>
-      <div className="flex h-[min(720px,82vh)] flex-col overflow-hidden">
+    <Dialog open={open} onClose={requestClose} width={980}>
+      <div className="relative flex h-[min(720px,82vh)] flex-col overflow-hidden">
         <header className="flex items-start justify-between border-b px-5 py-4" style={{ borderColor: "var(--border-subtle)" }}>
           <div className="flex items-start gap-3">
             <div className="rounded-lg p-2" style={{ background: "var(--accent-muted)", color: "var(--accent)" }}>
@@ -189,7 +200,7 @@ export function HermesConfigurationDialog({
           </div>
           <div className="flex items-center gap-2">
             {version ? <span className="rounded-full border px-2 py-1 text-xs" style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>Version {version}</span> : null}
-            <Button variant="ghost" disabled={loading || refreshing} onClick={() => void load(true)}>
+            <Button variant="ghost" disabled={loading || refreshing} onClick={requestRefresh}>
               <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
               {refreshing ? "Refreshing…" : "Refresh"}
             </Button>
@@ -197,7 +208,7 @@ export function HermesConfigurationDialog({
               variant="ghost"
               className="h-7 w-7 px-0"
               aria-label="Close Hermes configuration"
-              onClick={onClose}
+              onClick={requestClose}
             >
               <X size={16} />
             </Button>
@@ -340,6 +351,41 @@ export function HermesConfigurationDialog({
             </footer>
           </>
         )}
+        {confirmation ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center p-6" style={{ background: "var(--overlay-dim)" }}>
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-label={confirmation === "refresh" ? "Confirm refresh" : "Confirm close"}
+              className="w-full max-w-sm rounded-xl border p-5"
+              style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-3)" }}
+            >
+              <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+                {confirmation === "refresh"
+                  ? "Discard unsaved changes and refresh?"
+                  : "Discard unsaved changes and close?"}
+              </h3>
+              <p className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+                Your unsaved Hermes setting changes will be lost.
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setConfirmation(null)}>Cancel</Button>
+                <Button
+                  variant="danger"
+                  aria-label={confirmation === "refresh" ? "Discard and refresh" : "Discard and close"}
+                  onClick={() => {
+                    const action = confirmation;
+                    setConfirmation(null);
+                    if (action === "refresh") void load(true);
+                    else onClose();
+                  }}
+                >
+                  {confirmation === "refresh" ? "Discard and refresh" : "Discard and close"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </Dialog>
   );

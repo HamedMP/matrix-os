@@ -58,6 +58,7 @@ async function request(
   try {
     response = await fetchFn(runtimeUrl(auth, path), {
       ...init,
+      redirect: "error",
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",

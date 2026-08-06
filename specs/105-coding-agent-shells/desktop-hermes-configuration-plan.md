@@ -327,7 +327,7 @@ git commit -m "feat(desktop): add Hermes configuration modal"
 - Consumes: Task 3 dialog and the existing `openProviderSetupTerminal()` helper.
 - Produces: matching explicit Refresh semantics in Shell and Desktop, plus the graphical Desktop Configure entry.
 
-- [ ] **Step 1: Add failing Desktop refresh and integration tests**
+- [x] **Step 1: Add failing Desktop refresh and integration tests**
 
 Cover immediate clean refresh, confirmation before dirty refresh, failed refresh preserving last-good data and draft, duplicate-refresh suppression, close confirmation, runtime-scope unmount clearing state, `Configure Hermes` opening the modal, and fallback opening the canonical setup terminal.
 
@@ -339,31 +339,31 @@ fireEvent.click(screen.getByRole("button", { name: "Discard and refresh" }));
 await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("runtime:get-hermes-configuration", {}));
 ```
 
-- [ ] **Step 2: Run Desktop refresh tests and verify red**
+- [x] **Step 2: Run Desktop refresh tests and verify red**
 
 Run: `flox activate -- bun run test -- tests/desktop/hermes-configuration-dialog.test.tsx tests/desktop/agent-section.test.tsx`
 
 Expected: FAIL because refresh confirmation and the graphical entry are not wired.
 
-- [ ] **Step 3: Implement Desktop refresh and integration**
+- [x] **Step 3: Implement Desktop refresh and integration**
 
 Use a bounded monotonically increasing request revision so older refreshes cannot overwrite newer state. On refresh failure, keep current configuration, credentials, and drafts. In `AgentRuntimeSettingsCard`, open the graphical modal only for Hermes; retain OpenClaw and graphical-fallback terminal actions. Call the existing `load()` after successful settings or credential mutations.
 
-- [ ] **Step 4: Add failing Shell refresh tests**
+- [x] **Step 4: Add failing Shell refresh tests**
 
 Assert Shell exposes `Refresh Hermes configuration`, asks before discarding dirty settings, preserves last-good state and drafts when refresh fails, and ignores stale older responses.
 
-- [ ] **Step 5: Implement the matching Shell refresh flow**
+- [x] **Step 5: Implement the matching Shell refresh flow**
 
 Extract the existing load effect body into a stable `loadConfiguration({ discardDrafts: boolean })` operation. Add a Refresh button beside the version, an accessible discard confirmation, request revision protection, and non-destructive failure handling. Do not change Shell styling or share Desktop state.
 
-- [ ] **Step 6: Run integration regression tests and verify green**
+- [x] **Step 6: Run integration regression tests and verify green**
 
 Run: `flox activate -- bun run test -- tests/desktop/hermes-configuration-dialog.test.tsx tests/desktop/agent-section.test.tsx tests/desktop/providers-section.test.tsx tests/shell/hermes-configuration.test.tsx tests/shell/agent-settings.test.tsx`
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 7: Commit refresh and integration**
+- [x] **Step 7: Commit refresh and integration**
 
 ```bash
 git add desktop/src/renderer/src/features/settings/hermes/HermesConfigurationDialog.tsx desktop/src/renderer/src/features/settings/sections/AgentRuntimeSettingsCard.tsx shell/src/components/settings/sections/HermesConfigurationDialog.tsx tests/desktop/hermes-configuration-dialog.test.tsx tests/desktop/agent-section.test.tsx tests/shell/hermes-configuration.test.tsx
