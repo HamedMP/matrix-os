@@ -1117,6 +1117,23 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).not.toContain('echo "$fleet_machine"');
   });
 
+  it('preview cleanup can remove one legacy failed same-handle machine without adopting a live mismatched slot', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/terminal-runtime-spikes.yml'), 'utf8');
+
+    expect(workflow).toContain(
+      '.handle == $handle and .status != "deleted" and\n' +
+      '              (.runtimeSlot == $handle or .status == "failed")',
+    );
+    expect(workflow).toContain(
+      '.handle == $handle and .machineId == $id and .status != "deleted"',
+    );
+    expect(workflow).not.toContain(
+      '.handle == $handle and .runtimeSlot == $handle and\n' +
+      '              .machineId == $id and .status != "deleted"',
+    );
+  });
+
   it('preview VPS workflow installs the exact dormant bootstrap before registration', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
