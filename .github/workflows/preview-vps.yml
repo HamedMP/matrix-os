@@ -418,6 +418,56 @@ jobs:
             esac
           }
 
+          retire_failed_preview() {
+            local failed_machine="$1"
+            local failed_machine_id delete_code retirement_deadline retirement_state
+            if ! failed_machine_id="$(jq -er \
+              --arg owner "$PREVIEW_CLERK_USER_ID" \
+              --arg handle "$HANDLE" '
+                if (
+                  type == "object"
+                  and .clerkUserId == $owner
+                  and .handle == $handle
+                  and .runtimeSlot == $handle
+                  and .status == "failed"
+                  and .deletedAt == null
+                  and (.machineId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+                ) then .machineId else error("invalid failed preview") end
+              ' <<< "$failed_machine" 2>/dev/null)"; then
+              echo "Failed preview does not match the exact disposable preview identity." >&2
+              exit 1
+            fi
+
+            delete_code="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' \
+              -X DELETE "${PLATFORM_PUBLIC_URL}/vps/${failed_machine_id}" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}")"
+            if [ "$delete_code" != "200" ] && [ "$delete_code" != "404" ]; then
+              echo "Failed preview retirement was rejected (HTTP ${delete_code})." >&2
+              exit 1
+            fi
+
+            retirement_deadline=$((SECONDS + 120))
+            while true; do
+              retirement_state="$(curl -fsS --max-time 30 \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                "${PLATFORM_PUBLIC_URL}/vps/fleet" |
+                jq -r --arg id "$failed_machine_id" '
+                  [.machines[]
+                    | select(.machineId == $id and .deletedAt == null and .status != "deleted")]
+                  | if length == 0 then "retired" else "active" end
+                ')"
+              if [ "$retirement_state" = "retired" ]; then
+                echo "Retired the exact failed disposable preview before reprovisioning."
+                break
+              fi
+              if [ "$SECONDS" -ge "$retirement_deadline" ]; then
+                echo "Failed preview retirement did not converge." >&2
+                exit 1
+              fi
+              sleep 5
+            done
+          }
+
           fleet_machine="$(curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
@@ -456,6 +506,10 @@ jobs:
               exit 1
               ;;
           esac
+
+          if [ "$status" = "failed" ]; then
+            retire_failed_preview "$fleet_machine"
+          fi
 
           # The idempotent provision call also reconciles the complete access
           # allowlist on already-running previews.
