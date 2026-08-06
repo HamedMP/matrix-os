@@ -602,8 +602,8 @@ describe('terminal runtime spike evidence', () => {
       'write_phase seeding_output',
       'write_phase starting_agent',
       'write_phase waiting_roles',
-      'owner_probe() { /usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser -u matrix --',
-      'zellij() { /usr/bin/timeout --signal=TERM --kill-after=5s 30s runuser -u matrix --',
+      'owner_probe() { command_bounded 70 runuser -u matrix --',
+      'zellij() { command_bounded 30 runuser -u matrix --',
     ]);
     expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
@@ -629,9 +629,9 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       'systemctl_read()',
       'systemctl_change()',
       'systemctl_cancel()',
-      '/usr/bin/timeout --signal=TERM --kill-after=2s 8s /usr/bin/systemctl',
-      '/usr/bin/timeout --signal=TERM --kill-after=5s 40s /usr/bin/systemctl',
-      '/usr/bin/timeout --signal=TERM --kill-after=3s 20s /usr/bin/systemctl',
+      'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }',
+      'systemctl_change() { command_bounded 40 /usr/bin/systemctl "$@"; }',
+      'systemctl_cancel() { command_bounded 20 /usr/bin/systemctl "$@"; }',
       'trap - ERR TERM INT HUP',
       'local exit_status=$?',
       'failure_code=command_timeout',
@@ -671,9 +671,60 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(unboundedSystemctl).toEqual([]);
     const unboundedOwnerProbe = runner.split('\n').filter((line) =>
       line.includes('runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe"') &&
-      !line.includes('/usr/bin/timeout'),
+      !line.includes('command_bounded'),
     );
     expect(unboundedOwnerProbe).toEqual([]);
+  });
+  it('process-group-bounds production acceptance probes and reports missing roles', async () => {
+    const runner = await readRepo(
+      'scripts/spikes/terminal-runtime/production-acceptance.sh',
+    );
+    expectAll(runner, [
+      'command_bounded() {',
+      '/usr/bin/setsid "$@" </dev/null &',
+      'kill -TERM -- "-$operation_pid"',
+      'kill -KILL -- "-$operation_pid"',
+      'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }',
+      'owner_probe() { command_bounded 70 runuser -u matrix --',
+      'roles() { command_bounded 8 runuser -u matrix --',
+      'request_update() { command_bounded 70 runuser -u matrix --',
+      'zellij() { command_bounded 30 runuser -u matrix --',
+      '/usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \\',
+      'stop_process_group "$attach_parent_one"',
+      'stop_process_group "$attach_parent_two"',
+      'role_failure=agent_unavailable',
+      'role_failure=shell_unavailable',
+      'role_failure=roles_unavailable',
+      'role_failure=roles_unstable',
+      'failure_hint="$role_failure"',
+    ]);
+    expect(runner).not.toContain(
+      '/usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser',
+    );
+    const boundedFunction = runner.match(
+      /command_bounded\(\) \{[\s\S]*?\n\}/,
+    )?.[0];
+    expect(boundedFunction).toBeDefined();
+    const completed = spawnSync(
+      '/bin/bash',
+      [
+        '-c',
+        `${boundedFunction}\ncommand_bounded 1 /bin/bash -c '(trap "" HUP TERM; sleep 30) & exit 0'`,
+      ],
+      { encoding: 'utf8', timeout: 2_500 },
+    );
+    expect(completed.error).toBeUndefined();
+    expect(completed.status).toBe(0);
+    const timedOut = spawnSync(
+      '/bin/bash',
+      [
+        '-c',
+        `${boundedFunction}\ncommand_bounded 1 /bin/bash -c 'trap "" HUP TERM; sleep 30'`,
+      ],
+      { encoding: 'utf8', timeout: 2_500 },
+    );
+    expect(timedOut.error).toBeUndefined();
+    expect(timedOut.status).toBe(124);
   });
   it('fails closed on incomplete, stale, or extended production evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-production-evidence-'));

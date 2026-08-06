@@ -19,6 +19,7 @@ readonly home=/home/matrix/home; readonly cache_root="${home}/system/terminal-ru
 readonly codex=/opt/matrix/runtime/node/bin/codex
 readonly update_wait_seconds=1800
 current_phase=initializing
+failure_hint=""
 readonly -a zellij_env=(
   env HOME="$home" MATRIX_HOME="$home" LANG=C.UTF-8 TERM=xterm-256color
   PATH="$home/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin"
@@ -36,11 +37,47 @@ write_phase() {
   current_phase="$1"
   write_state "phase1-running_${current_phase}"
 }
-systemctl_read() { /usr/bin/timeout --signal=TERM --kill-after=2s 8s /usr/bin/systemctl "$@"; }
-systemctl_change() { /usr/bin/timeout --signal=TERM --kill-after=5s 40s /usr/bin/systemctl "$@"; }
-systemctl_cancel() { /usr/bin/timeout --signal=TERM --kill-after=3s 20s /usr/bin/systemctl "$@"; }
+command_bounded() {
+  local timeout_seconds="$1" operation_pid deadline_pid completed_pid completed_status
+  shift
+  [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,2}$ ]] || return 2
+  /usr/bin/setsid "$@" </dev/null &
+  operation_pid=$!
+  /usr/bin/sleep "$timeout_seconds" &
+  deadline_pid=$!
+  completed_pid=""
+  if wait -n -p completed_pid "$operation_pid" "$deadline_pid"; then
+    completed_status=0
+  else
+    completed_status=$?
+  fi
+  if [ "$completed_pid" = "$operation_pid" ]; then
+    kill "$deadline_pid" 2>/dev/null || true
+    wait "$deadline_pid" 2>/dev/null || true
+    kill -TERM -- "-$operation_pid" 2>/dev/null || true
+    /usr/bin/sleep 0.05
+    kill -KILL -- "-$operation_pid" 2>/dev/null || true
+    wait "$operation_pid" 2>/dev/null || true
+    return "$completed_status"
+  fi
+  kill -TERM -- "-$operation_pid" 2>/dev/null || true
+  /usr/bin/sleep 0.2
+  kill -KILL -- "-$operation_pid" 2>/dev/null || true
+  wait "$operation_pid" 2>/dev/null || true
+  return 124
+}
+stop_process_group() {
+  local operation_pid="$1"
+  kill -TERM -- "-$operation_pid" 2>/dev/null || true
+  /usr/bin/sleep 0.2
+  kill -KILL -- "-$operation_pid" 2>/dev/null || true
+  wait "$operation_pid" 2>/dev/null || true
+}
+systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }
+systemctl_change() { command_bounded 40 /usr/bin/systemctl "$@"; }
+systemctl_cancel() { command_bounded 20 /usr/bin/systemctl "$@"; }
 mark() { install -m 0600 /dev/null "$checks_root/$1"; }
-owner_probe() { /usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" "$@"; }
+owner_probe() { command_bounded 70 runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" "$@"; }
 json_field() { /opt/matrix/runtime/node/bin/node -e '
     let raw=""; process.stdin.on("data",d=>raw+=d); process.stdin.on("end",()=>{
       const value=JSON.parse(raw),keys=process.argv[1].split(".");let current=value;for(const key of keys)current=current?.[key];
@@ -48,9 +85,9 @@ json_field() { /opt/matrix/runtime/node/bin/node -e '
   ' "$1"; }
 wait_active() { local unit="$1"; for _ in $(seq 1 180); do [ "$(systemctl_read is-active "$unit" 2>/dev/null || true)" = active ] && return 0; sleep 1; done; return 1; }
 wait_absent() { local unit="$1"; for _ in $(seq 1 60); do local state; state="$(systemctl_read is-active "$unit" 2>/dev/null || true)"; [ "$state" != active ] && [ "$state" != activating ] && return 0; sleep 1; done; return 1; }
-roles() { owner_probe roles "$1"; }
+roles() { command_bounded 8 runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }
 roles_match() { local current; current="$(roles "$1")"; [ "$current" = "$(cat "$state_root/roles.json")" ]; }
-request_update() { /usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
+request_update() { command_bounded 70 runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
 wait_update() {
   local expected="$1"; for _ in $(seq 1 "$update_wait_seconds"); do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
@@ -60,7 +97,7 @@ wait_update() {
     sleep 1
   done; return 1; }
 wait_failed_update() { for _ in $(seq 1 "$update_wait_seconds"); do [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] && return 0; sleep 1; done; return 1; }
-zellij() { /usr/bin/timeout --signal=TERM --kill-after=5s 30s runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
+zellij() { command_bounded 30 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
 fail_phase() {
   local exit_status=$?
   local failure_code
@@ -68,6 +105,8 @@ fail_phase() {
   if [ "$exit_status" -eq 124 ] || [ "$exit_status" -eq 137 ] ||
     [ "$exit_status" -eq 143 ]; then
     failure_code=command_timeout
+  elif [[ "$failure_hint" =~ ^[a-z0-9_]{1,64}$ ]]; then
+    failure_code="$failure_hint"
   else
     failure_code="$(cat /run/matrix-update-runtime/last-failure-code 2>/dev/null || true)"
     [[ "$failure_code" =~ ^[a-z0-9_]{1,64}$ ]] || failure_code=operation_failed
@@ -101,27 +140,36 @@ phase1() {
   [ -x "$codex" ]
   zellij --session "$session_name" action new-pane -- "$codex"
   write_phase waiting_roles
-  for _ in $(seq 1 30); do
-    local baseline shell_pid agent_pid
+  local baseline="" shell_pid="" agent_pid="" role_failure=roles_unavailable
+  for _ in $(seq 1 12); do
     baseline="$(roles "$runtime_id" 2>/dev/null || true)"
     shell_pid="$(printf '%s' "$baseline" | json_field shell 2>/dev/null || true)"; agent_pid="$(printf '%s' "$baseline" | json_field agent 2>/dev/null || true)"
     if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]] && [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]]; then
       printf '%s\n' "$baseline" >"$state_root/roles.json"; chmod 0600 "$state_root/roles.json"
+      role_failure=roles_unstable
       break
+    fi
+    role_failure=roles_unavailable
+    if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]]; then
+      role_failure=agent_unavailable
+    elif [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]]; then
+      role_failure=shell_unavailable
     fi
     sleep 1
   done
+  failure_hint="$role_failure"
   roles_match "$runtime_id"
+  failure_hint=""
   mark continuousOutput; mark codingAgentPreserved
   write_phase runtime_created
   local runtime_cgroup; runtime_cgroup="$(systemctl_read show "$unit" -p ControlGroup --value)"
   local attach_one=/run/matrix-terminal-accept-"${head_sha}"-1.json attach_two=/run/matrix-terminal-accept-"${head_sha}"-2.json
   rm -f -- "$attach_one" "$attach_two"
-  runuser -u matrix -- /opt/matrix/runtime/node/bin/node \
+  /usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \
     /opt/matrix/libexec/terminal-runtime/current/spikes/production-attach.mjs \
     "$runtime_id" "$attach_one" &
   local attach_parent_one=$!
-  runuser -u matrix -- /opt/matrix/runtime/node/bin/node \
+  /usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \
     /opt/matrix/libexec/terminal-runtime/current/spikes/production-attach.mjs \
     "$runtime_id" "$attach_two" &
   local attach_parent_two=$!
@@ -131,8 +179,8 @@ phase1() {
   [ "$attach_cgroup_one" != "$runtime_cgroup" ]
   [ "$attach_cgroup_two" != "$runtime_cgroup" ]
   roles_match "$runtime_id"; mark twoDevicesOneRuntime
-  kill "$attach_parent_one" "$attach_parent_two" 2>/dev/null || true
-  wait "$attach_parent_one" "$attach_parent_two" 2>/dev/null || true
+  stop_process_group "$attach_parent_one"
+  stop_process_group "$attach_parent_two"
   rm -f -- "$attach_one" "$attach_two"
   roles_match "$runtime_id"; mark detachPreservesRuntime
   local renamed; renamed="$(owner_probe rename "$runtime_id" "renamed-${head_sha:0:12}")"
