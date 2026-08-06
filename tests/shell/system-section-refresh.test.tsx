@@ -34,6 +34,51 @@ describe("SystemSection release refresh", () => {
     vi.restoreAllMocks();
   });
 
+  it("uses the persistent update channel instead of the bundle provenance channel", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/system/info")) {
+        return Promise.resolve(jsonResponse({
+          version: "v2026.08.05-912",
+          updateChannel: "stable",
+          release: {
+            version: "v2026.08.05-912",
+            channel: "dev",
+          },
+        }));
+      }
+      if (url.endsWith("/health")) {
+        return Promise.resolve(jsonResponse({ status: "ok", cronJobs: 0, channels: {} }));
+      }
+      if (url.endsWith("/api/system/update?channel=stable")) {
+        return Promise.resolve(jsonResponse({
+          channel: "stable",
+          latest: { version: "v2026.08.05-912" },
+          updateAvailable: false,
+        }));
+      }
+      if (url.endsWith("/api/system/releases?channel=stable")) {
+        return Promise.resolve(jsonResponse({ channel: "stable", releases: [] }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SystemSection />);
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Release channel") as HTMLSelectElement).value).toBe("stable");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://gateway.test/api/system/update?channel=stable",
+        expect.any(Object),
+      );
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "http://gateway.test/api/system/update?channel=dev",
+      expect.anything(),
+    );
+  });
+
   it("ignores stale release metadata when the selected channel changes", async () => {
     const stableUpdate = deferred<Response>();
     const stableReleases = deferred<Response>();

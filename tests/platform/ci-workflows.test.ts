@@ -460,14 +460,18 @@ describe('CI workflows', () => {
     expect(workflow).toContain('${cache_image}');
   });
 
-  it('deploys published dev host bundles by exact version on main by default', () => {
+  it('publishes main dev host bundles without deploying the fleet', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+    const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
+    const deployJob = workflow.slice(workflow.indexOf('\n  deploy:'));
 
     expect(workflow).toContain('deploy_after_publish:');
+    expect(workflow).toMatch(/deploy_after_publish:[\s\S]*?default: false/);
     expect(workflow).toContain('Deploy published host bundle');
-    expect(workflow).toContain("github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name == 'main'");
-    expect(workflow).toContain('|| inputs.deploy_after_publish');
+    expect(deployJob).toContain("github.event_name == 'workflow_dispatch' && inputs.deploy_after_publish");
+    expect(deployJob).toContain("(github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag'");
+    expect(deployJob).not.toContain("github.event_name == 'push'");
     expect(workflow).not.toContain("|| inputs.severity == 'security'");
     expect(workflow).toContain('PUBLISH_VERSION: ${{ needs.build.outputs.version }}');
     expect(workflow).toContain('VERSION="$PUBLISH_VERSION"');
@@ -478,5 +482,8 @@ describe('CI workflows', () => {
     expect(workflow).toContain('if [ "$failed" -gt 0 ] || [ "$triggered" -eq 0 ]; then');
     expect(workflow).toContain('-d "{\\"version\\":\\"$VERSION\\"}"');
     expect(workflow).not.toContain('Auto-deploy on security severity');
+    expect(releaseDocs).toContain('`deploy_after_publish=true`');
+    expect(releaseDocs).toContain('Security severity does not override this opt-in deployment gate.');
+    expect(releaseDocs).not.toContain('which auto-deploys the built version after publish');
   });
 });
