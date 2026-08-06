@@ -7,6 +7,29 @@ import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-rout
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { createProjectFolders } from "../../packages/gateway/src/project-folders.js";
 
+const receiptRemovalRace = vi.hoisted(() => ({
+  enabled: false,
+  active: 0,
+  maxActive: 0,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: async (...args: unknown[]) => {
+      const path = String(args[0]);
+      if (receiptRemovalRace.enabled && path.endsWith("req_desktop_folder_expired_overlap.json")) {
+        receiptRemovalRace.active += 1;
+        receiptRemovalRace.maxActive = Math.max(receiptRemovalRace.maxActive, receiptRemovalRace.active);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        receiptRemovalRace.active -= 1;
+      }
+      return (actual.rm as (...rmArgs: unknown[]) => Promise<void>)(...args);
+    },
+  };
+});
+
 function jsonRequest(path: string, body: unknown): Request {
   const requestBody = path === "/api/projects/clone"
     && typeof body === "object"
@@ -469,6 +492,43 @@ describe("project clone and mkdir routes", () => {
       expect(next).toMatchObject({ ok: true, status: 201, path: "code/new-project" });
       const created = await stat(join(homePath, "code", "new-project"));
       expect(created.isDirectory()).toBe(true);
+    });
+
+    it("preserves the replacement receipt when expired mkdir retries overlap", async () => {
+      await mkdir(join(homePath, "code"), { recursive: true });
+      const clientRequestId = "req_desktop_folder_expired_overlap";
+      const ownerScope = { type: "user" as const, id: "user_123" };
+      const seedManager = createProjectFolders({ homePath });
+      await seedManager.createFolder({
+        name: "old-project",
+        parent: "code",
+        clientRequestId,
+        ownerScope,
+      });
+
+      const receiptPath = join(homePath, "system", "project-folder-requests", `${clientRequestId}.json`);
+      const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+      await writeFile(receiptPath, JSON.stringify({ ...receipt, createdAt: "2020-01-01T00:00:00.000Z" }));
+      const request = {
+        name: "new-project",
+        parent: "code",
+        clientRequestId,
+        ownerScope,
+      };
+
+      receiptRemovalRace.enabled = true;
+      receiptRemovalRace.active = 0;
+      receiptRemovalRace.maxActive = 0;
+      const overlapping = await Promise.all([
+        createProjectFolders({ homePath }).createFolder(request),
+        createProjectFolders({ homePath }).createFolder(request),
+      ]);
+      receiptRemovalRace.enabled = false;
+      expect(receiptRemovalRace.maxActive).toBe(1);
+      expect(overlapping.every((result) => result.ok)).toBe(true);
+
+      const retry = await createProjectFolders({ homePath }).createFolder(request);
+      expect(retry).toMatchObject({ ok: true, status: 200, path: "code/new-project" });
     });
 
     it("reconciles overlapping idempotent mkdir requests", async () => {

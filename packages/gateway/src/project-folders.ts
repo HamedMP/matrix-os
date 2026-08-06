@@ -20,7 +20,7 @@ import {
   isProtectedHomeSubpath,
   resolveWithinHome,
 } from "./path-security.js";
-import { atomicCreateJson, readJsonFile, type OwnerScope } from "./state-ops.js";
+import { atomicCreateJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
 
 type Result<T> = { ok: true; status?: number } & T;
 type Failure = { ok: false; status: number; error: { code: string; message: string } };
@@ -34,6 +34,13 @@ interface FolderRequestReceipt {
   path: string;
   ownerScope: OwnerScope;
   createdAt: string;
+}
+
+interface CreateFolderInput {
+  name: string;
+  parent?: string;
+  clientRequestId?: string;
+  ownerScope?: OwnerScope;
 }
 
 const MAX_FOLDER_REQUEST_RECEIPTS = 256;
@@ -226,66 +233,74 @@ export function createProjectFolders(options: { homePath: string }) {
     return { ok: true, status: 201, path: toHomeRelative(realHome, target) };
   }
 
-  return {
-    async createFolder(input: {
-      name: string;
-      parent?: string;
-      clientRequestId?: string;
-      ownerScope?: OwnerScope;
-    }): Promise<Result<{ path: string }> | Failure> {
-      if (!FolderNameSchema.safeParse(input.name).success) {
-        return failure(400, "invalid_folder_name", "Folder name is invalid");
-      }
-      const parent = input.parent?.trim().replace(/\/+$/, "");
-      if (input.clientRequestId && !ClientRequestIdSchema.safeParse(input.clientRequestId).success) {
-        return failure(400, "invalid_request", "Folder request is invalid");
-      }
-      const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
-      const fingerprint = createHash("sha256")
-        .update(JSON.stringify({ name: input.name, parent: parent || "projects", ownerScope }))
-        .digest("hex");
-      if (input.clientRequestId) {
-        const receipt = await readReceipt(input.clientRequestId);
-        if (receipt) {
-          if (receipt.fingerprint !== fingerprint) {
-            return failure(409, "request_conflict", "Folder request conflicts with an earlier request");
-          }
-          if (await receiptTargetExists(receipt.path)) {
-            return { ok: true, status: 200, path: receipt.path };
-          }
-          await rm(receiptPath(input.clientRequestId), { force: true });
-        }
-        // Preserve an existing replay receipt even when the store is at its
-        // cap; reserve room only for a genuinely new receipt.
-        await pruneReceipts();
-      }
-
-      const result = !parent || parent === "projects"
-        ? await createRegistryFolder(input.name)
-        : await createNestedFolder(input.name, parent);
-      if (!result.ok) {
-        if (input.clientRequestId && result.error.code === "folder_conflict") {
-          const reconciled = await reconcileReceipt(input.clientRequestId, fingerprint);
-          if (reconciled) return reconciled;
-        }
-        return result;
-      }
-      if (!input.clientRequestId) return result;
-
-      const published = await atomicCreateJson(receiptPath(input.clientRequestId), {
-        fingerprint,
-        path: result.path,
-        ownerScope,
-        createdAt: new Date().toISOString(),
-      } satisfies FolderRequestReceipt);
-      if (published) return result;
+  async function createFolderUnlocked(input: CreateFolderInput): Promise<Result<{ path: string }> | Failure> {
+    if (!FolderNameSchema.safeParse(input.name).success) {
+      return failure(400, "invalid_folder_name", "Folder name is invalid");
+    }
+    const parent = input.parent?.trim().replace(/\/+$/, "");
+    if (input.clientRequestId && !ClientRequestIdSchema.safeParse(input.clientRequestId).success) {
+      return failure(400, "invalid_request", "Folder request is invalid");
+    }
+    const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ name: input.name, parent: parent || "projects", ownerScope }))
+      .digest("hex");
+    if (input.clientRequestId) {
       const receipt = await readReceipt(input.clientRequestId);
-      if (receipt?.fingerprint === fingerprint && receipt.path === result.path) {
-        return { ok: true, status: 200, path: receipt.path };
+      if (receipt) {
+        if (receipt.fingerprint !== fingerprint) {
+          return failure(409, "request_conflict", "Folder request conflicts with an earlier request");
+        }
+        if (await receiptTargetExists(receipt.path)) {
+          return { ok: true, status: 200, path: receipt.path };
+        }
+        await rm(receiptPath(input.clientRequestId), { force: true });
       }
-      const createdTarget = resolveWithinHome(homePath, result.path);
-      if (createdTarget) await rm(createdTarget, { recursive: true, force: true });
-      return failure(409, "request_conflict", "Folder request conflicts with an earlier request");
+      // Preserve an existing replay receipt even when the store is at its
+      // cap; reserve room only for a genuinely new receipt.
+      await pruneReceipts();
+    }
+
+    const result = !parent || parent === "projects"
+      ? await createRegistryFolder(input.name)
+      : await createNestedFolder(input.name, parent);
+    if (!result.ok) {
+      if (input.clientRequestId && result.error.code === "folder_conflict") {
+        const reconciled = await reconcileReceipt(input.clientRequestId, fingerprint);
+        if (reconciled) return reconciled;
+      }
+      return result;
+    }
+    if (!input.clientRequestId) return result;
+
+    const published = await atomicCreateJson(receiptPath(input.clientRequestId), {
+      fingerprint,
+      path: result.path,
+      ownerScope,
+      createdAt: new Date().toISOString(),
+    } satisfies FolderRequestReceipt);
+    if (published) return result;
+    const receipt = await readReceipt(input.clientRequestId);
+    if (receipt?.fingerprint === fingerprint && receipt.path === result.path) {
+      return { ok: true, status: 200, path: receipt.path };
+    }
+    const createdTarget = resolveWithinHome(homePath, result.path);
+    if (createdTarget) await rm(createdTarget, { recursive: true, force: true });
+    return failure(409, "request_conflict", "Folder request conflicts with an earlier request");
+  }
+
+  return {
+    async createFolder(input: CreateFolderInput): Promise<Result<{ path: string }> | Failure> {
+      if (!input.clientRequestId || !ClientRequestIdSchema.safeParse(input.clientRequestId).success) {
+        return createFolderUnlocked(input);
+      }
+      // Receipt expiry is a read/remove/replace sequence. Serialize it by
+      // request ID so a delayed cleanup cannot unlink a newer receipt written
+      // by an overlapping retry in this gateway process.
+      return withProjectLock(
+        `folder-request:${homePath}:${input.clientRequestId}`,
+        () => createFolderUnlocked(input),
+      );
     },
   };
 }
