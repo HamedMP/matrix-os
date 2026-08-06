@@ -79,7 +79,7 @@ jobs:
               -o "$delete_response" -w '%{http_code}' \
               -X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}" \
               -H "authorization: Bearer ${PLATFORM_SECRET}")"
-            if [ "$delete_code" != 200 ]; then
+            if [ "$delete_code" != 200 ] && [ "$delete_code" != 404 ]; then
               echo "Disposable preview disposal failed." >&2
               exit 1
             fi
