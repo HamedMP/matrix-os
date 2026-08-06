@@ -91,6 +91,8 @@ write_progress() {
   local progress_stage="$1"
   local progress_tmp="$evidence_root/.progress-stage.$$"
   local progress_uptime_tmp="$evidence_root/.progress-uptime.$$"
+  local last_work_tmp="$evidence_root/.last-work-stage.$$"
+  local last_work_uptime_tmp="$evidence_root/.last-work-uptime.$$"
   case "$progress_stage" in
     startup_cleanup|runtime_setup|runtime_dirs|unit_check|binary_check|binary_version|binary_manifest|binary_digest|binary_metadata|config_dump|config_check|cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach|base_start|base_start_requested|base_release|base_wait_ready|base_ready|base_attach|base_detached|base_gateway_restart|base_gateway_crash|base_shell_restart|base_stop|base_stopped|keeper_loss|server_loss|memory_pressure|recovery_restore|s2_cache_saved|s2_initial_stopped|s2_recover_started|s2_recover_ready|s2_viewport_checked|s2_cache_frozen|s2_restored_stopped|corruption_fallback|s2_delete|summary_build) ;;
     *) return 2 ;;
@@ -101,6 +103,18 @@ write_progress() {
   chmod 0600 "$progress_uptime_tmp"
   mv -f -- "$progress_tmp" "$evidence_root/progress-stage.txt"
   mv -f -- "$progress_uptime_tmp" "$evidence_root/progress-uptime.txt"
+  case "$progress_stage" in
+    cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach) ;;
+    summary_build) ;;
+    *)
+      printf '%s\n' "$progress_stage" >"$last_work_tmp"
+      /usr/bin/awk '{ print $1 }' /proc/uptime >"$last_work_uptime_tmp"
+      chmod 0600 "$last_work_tmp"
+      chmod 0600 "$last_work_uptime_tmp"
+      mv -f -- "$last_work_tmp" "$evidence_root/last-work-stage.txt"
+      mv -f -- "$last_work_uptime_tmp" "$evidence_root/last-work-uptime.txt"
+      ;;
+  esac
 }
 systemctl_bounded() {
   command_bounded 35 /usr/bin/systemctl "$@"

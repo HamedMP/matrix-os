@@ -22,8 +22,41 @@ run_namespace="${pr_head_sha:0:5}${run_id_padded}${run_attempt_padded}"
 evidence_name="matrix-terminal-spike-evidence-${pr_head_sha}-${run_nonce}"
 evidence_root="/tmp/${evidence_name}"
 base_id="1${run_namespace}"
+keeper_id="2${run_namespace}"
+server_id="3${run_namespace}"
+memory_ids=("4${run_namespace}" "5${run_namespace}" "6${run_namespace}")
+recovery_id="7${run_namespace}"
+runtime_ids=("$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id")
 runner_unit="matrix-terminal-runtime-spike-${run_namespace}.service"
 base_unit="matrix-terminal-spike@${base_id}.service"
+startup_failure_rollup() {
+  local index runtime_id failure_path stage code unit unit_state exec_status rollup=""
+  for index in "${!runtime_ids[@]}"; do
+    runtime_id="${runtime_ids[$index]}"
+    failure_path="/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-failures/${runtime_id}.json"
+    stage=none
+    code=none
+    if [ -f "$failure_path" ] && [ ! -L "$failure_path" ]; then
+      read -r stage code < <(/opt/matrix/runtime/node/bin/node -e '
+        const fs=require("fs"),path=process.argv[1],stat=fs.lstatSync(path);
+        if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>65536)process.exit(1);
+        const value=JSON.parse(fs.readFileSync(path,"utf8"));
+        if(!/^(descriptor|launch|cgroup|readiness|notify)$/.test(value.stage)||
+          !/^[a-z0-9_]{1,32}$/.test(value.code))process.exit(1);
+        process.stdout.write(`${value.stage} ${value.code}\n`);
+      ' "$failure_path" 2>/dev/null || printf 'invalid invalid\n')
+    fi
+    unit="matrix-terminal-spike@${runtime_id}.service"
+    unit_state="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$unit" -p ActiveState --value 2>/dev/null || true)"
+    [[ "$unit_state" =~ ^(active|activating|failed|inactive)$ ]] || unit_state=unknown
+    exec_status="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$unit" -p ExecMainStatus --value 2>/dev/null || true)"
+    [[ "$exec_status" =~ ^[0-9]{1,3}$ ]] || exec_status=999
+    rollup="${rollup}i${index}_${stage}_${code}_${unit_state}_${exec_status}_"
+  done
+  rollup="${rollup%_}"
+  [[ "$rollup" =~ ^[a-z0-9_]{1,1024}$ ]] || rollup=invalid
+  printf '%s\n' "$rollup"
+}
 if [ ! -d "$evidence_root" ] || [ -L "$evidence_root" ]; then
   state="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl is-active "$runner_unit" 2>/dev/null || true)"; [[ "$state" =~ ^(active|activating|failed|inactive)$ ]] || state=unknown
   echo "spike_pack_evidence_incomplete_no_root_${state}"; exit 0
@@ -74,7 +107,12 @@ if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" 
     runner_wait="${runner_wait,,}"
   fi
   progress_stage=unknown
-  progress_path="$evidence_root/progress-stage.txt"
+  progress_path="$evidence_root/last-work-stage.txt"
+  progress_uptime_path="$evidence_root/last-work-uptime.txt"
+  if [ ! -f "$progress_path" ] || [ -L "$progress_path" ]; then
+    progress_path="$evidence_root/progress-stage.txt"
+    progress_uptime_path="$evidence_root/progress-uptime.txt"
+  fi
   if [ -f "$progress_path" ] && [ ! -L "$progress_path" ]; then
     progress_size="$(/usr/bin/stat -c %s "$progress_path" 2>/dev/null || true)"
     if [[ "$progress_size" =~ ^[0-9]{1,2}$ ]] && [ "$progress_size" -le 33 ]; then
@@ -86,7 +124,7 @@ if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" 
   fi
   if [[ "$progress_stage" =~ ^base_[a-z0-9_]{1,24}$ ]]; then
     progress_stalled=false
-    progress_started="$(/usr/bin/awk 'NR == 1 && $1 ~ /^[0-9]+([.][0-9]+)?$/ { print int($1) }' "$evidence_root/progress-uptime.txt" 2>/dev/null || true)"
+    progress_started="$(/usr/bin/awk 'NR == 1 && $1 ~ /^[0-9]+([.][0-9]+)?$/ { print int($1) }' "$progress_uptime_path" 2>/dev/null || true)"
     progress_now="$(/usr/bin/awk 'NR == 1 && $1 ~ /^[0-9]+([.][0-9]+)?$/ { print int($1) }' /proc/uptime 2>/dev/null || true)"
     runner_started_usec="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$runner_unit" -p ActiveEnterTimestampMonotonic --value 2>/dev/null || true)"
     if [[ "$runner_started_usec" =~ ^[1-9][0-9]{0,17}$ ]]; then
@@ -114,7 +152,9 @@ if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" 
       progress_stage="${progress_stage}_r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}_q${keeper_helper}_j${keeper_helper_exit}_w${keeper_workload}_e${keeper_workload_exit}"
     fi
   fi
-  echo "spike_pack_evidence_incomplete_${state}_${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}_r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}_q${keeper_helper}_j${keeper_helper_exit}_w${keeper_workload}_e${keeper_workload_exit}"
+  startup_rollup="$(startup_failure_rollup)"
+  [[ "$startup_rollup" =~ ^[a-z0-9_]{1,1024}$ ]] || startup_rollup=invalid
+  echo "spike_pack_evidence_incomplete_${state}_${base_state}_${base_substate}_${exec_status}_${failure_stage}_${failure_code}_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}_f${startup_rollup}_r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}_q${keeper_helper}_j${keeper_helper_exit}_w${keeper_workload}_e${keeper_workload_exit}"
   exit 0
 fi
 summary_status="$(/opt/matrix/runtime/node/bin/node -e '
@@ -161,7 +201,10 @@ if [ "$summary_status" != pass_pass ]; then
     process.stdout.write(`${v.stage} ${v.code} ${v.responsive?1:0} ${v.zellij} ${v.shell?1:0} ${v.agent?1:0} ${v.gateRecorded?1:0} ${v.paneReleased?1:0} ${v.confirmationState} ${v.heldPaneCount} ${v.workloadHelperState} ${v.workloadHelperExitStatus===null?"none":v.workloadHelperExitStatus} ${v.workloadPaneState} ${v.workloadPaneExitStatus===null?"none":v.workloadPaneExitStatus} ${v.confirmationSent?1:0}\n`);
   ' "/run/matrix-terminal-runtime-spikes/${run_namespace}/startup-failures/${base_id}.json" 2>/dev/null || printf 'unknown unknown 0 0 0 0 0 0 waiting 0 not_checked none not_launched none 0\n')
   failure_progress=unknown
-  failure_progress_path="$evidence_root/progress-stage.txt"
+  failure_progress_path="$evidence_root/last-work-stage.txt"
+  if [ ! -f "$failure_progress_path" ] || [ -L "$failure_progress_path" ]; then
+    failure_progress_path="$evidence_root/progress-stage.txt"
+  fi
   if [ -f "$failure_progress_path" ] && [ ! -L "$failure_progress_path" ]; then
     failure_progress_size="$(/usr/bin/stat -c %s "$failure_progress_path" 2>/dev/null || true)"
     if [[ "$failure_progress_size" =~ ^[0-9]{1,2}$ ]] &&
@@ -180,7 +223,9 @@ if [ "$summary_status" != pass_pass ]; then
   [[ "$failure_base_substate" =~ ^[a-z0-9_]{1,24}$ ]] || failure_base_substate=unknown
   failure_base_status="$(/usr/bin/timeout --signal=TERM --kill-after=1s 2s systemctl show "$base_unit" -p ExecMainStatus --value 2>/dev/null || true)"
   [[ "$failure_base_status" =~ ^[0-9]{1,3}$ ]] || failure_base_status=999
-  echo "spike_pack_evidence_failed_${gate_failures}_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}_g${failure_gate}_p${failure_release}_c${failure_confirmation}_h${failure_held}_q${failure_helper}_j${failure_helper_exit}_w${failure_workload}_e${failure_workload_exit}_x${failure_sent}_d${failure_progress}_u${failure_runner_status}_b${failure_base_state}_${failure_base_substate}_${failure_base_status}"
+  startup_rollup="$(startup_failure_rollup)"
+  [[ "$startup_rollup" =~ ^[a-z0-9_]{1,1024}$ ]] || startup_rollup=invalid
+  echo "spike_pack_evidence_failed_${gate_failures}_${failure_stage}_${failure_code}_f${startup_rollup}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}_g${failure_gate}_p${failure_release}_c${failure_confirmation}_h${failure_held}_q${failure_helper}_j${failure_helper_exit}_w${failure_workload}_e${failure_workload_exit}_x${failure_sent}_d${failure_progress}_u${failure_runner_status}_b${failure_base_state}_${failure_base_substate}_${failure_base_status}"
   exit 0
 fi
 /opt/matrix/runtime/node/bin/node \

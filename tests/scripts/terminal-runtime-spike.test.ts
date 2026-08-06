@@ -821,7 +821,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expectAll(packer, [
       'keeper_responsive keeper_zellij keeper_shell keeper_agent',
       'r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}',
-      'spike_pack_evidence_failed_${gate_failures}_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}',
+      'spike_pack_evidence_failed_${gate_failures}_${failure_stage}_${failure_code}_f${startup_rollup}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}',
       'const allowed={s1:new Set(',
       's1none_s2none',
       's1${missing.s1.join("_")||"none"}_s2${missing.s2.join("_")||"none"}',
@@ -1311,9 +1311,10 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(packer).toContain('/proc/${base_pid}/comm');
     expect(packer).toContain('TimeoutStartUSec');
     expect(packer).toContain('NRestarts');
-    expect(packer).toContain(
-      'base_id="1${run_namespace}"\nrunner_unit="matrix-terminal-runtime-spike-${run_namespace}.service"',
-    );
+    expectAll(packer, [
+      'base_id="1${run_namespace}"',
+      'runner_unit="matrix-terminal-runtime-spike-${run_namespace}.service"',
+    ]);
     expect(packer).toContain('startup-stages/${base_id}.json');
     expect(packer).toContain('keeper_gate keeper_release keeper_confirmation keeper_held');
     expect(packer).toContain('_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}');
@@ -1322,6 +1323,32 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(packer).toContain('/usr/bin/date +%s');
     expect(packer).toContain('${base_role}_${base_wait}_${base_cgroup_count}');
     expect(packer).toContain('${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}');
+  });
+  it('preserves the last work stage and reports every attempt-scoped startup failure', async () => {
+    const [packer, runner] = await Promise.all([
+      readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'),
+      readRepo('scripts/spikes/terminal-runtime/run-remote.sh'),
+    ]);
+    expectAll(runner, [
+      'last-work-stage.txt',
+      'last-work-uptime.txt',
+      'case "$progress_stage" in',
+      'cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach) ;;',
+    ]);
+    expectAll(packer, [
+      'runtime_ids=("$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id")',
+      'startup_failure_rollup() {',
+      'startup-failures/${runtime_id}.json',
+      'last-work-stage.txt',
+      'startup_rollup="$(startup_failure_rollup)"',
+      '_f${startup_rollup}_',
+    ]);
+    expect(packer).toContain('[[ "$startup_rollup" =~ ^[a-z0-9_]{1,1024}$ ]]');
+    expect(
+      packer.indexOf('failure_progress_path="$evidence_root/last-work-stage.txt"'),
+    ).toBeLessThan(
+      packer.indexOf('failure_progress_path="$evidence_root/progress-stage.txt"'),
+    );
   });
   it('activates the aggregate slice before starting the first template instance', async () => {
     const runner = await readRepo('scripts/spikes/terminal-runtime/run-remote.sh');
