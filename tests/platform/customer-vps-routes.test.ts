@@ -86,6 +86,7 @@ describe('platform/customer-vps-routes', () => {
       { clerkUserId: 'user_123', handle: 'preview-897', runtimeSlot: 'preview-897' },
       { clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-896' },
       { clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897', serverType: 'cpx52' },
+      { clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897', bootstrapVersion: '../stable' },
     ]) {
       const invalid = await app.request('/vps/preview/provision', {
         method: 'POST',
@@ -104,6 +105,7 @@ describe('platform/customer-vps-routes', () => {
         handle: 'pr-897',
         runtimeSlot: 'pr-897',
         accessClerkUserIds: ['user_456'],
+        bootstrapVersion: 'v2026.08.06-pr897-bootstrap-123-1-abcdef0',
       }),
     });
 
@@ -114,6 +116,7 @@ describe('platform/customer-vps-routes', () => {
       handle: 'pr-897',
       runtimeSlot: 'pr-897',
       accessClerkUserIds: ['user_456'],
+      bootstrapVersion: 'v2026.08.06-pr897-bootstrap-123-1-abcdef0',
     });
     expect(provision).not.toHaveBeenCalled();
 
