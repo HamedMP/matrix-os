@@ -447,6 +447,39 @@ describe("project clone and mkdir routes", () => {
       expect(created.isDirectory()).toBe(true);
     });
 
+    it("connects a custom-parent folder returned by mkdir as a project", async () => {
+      await mkdir(join(homePath, "apps"), { recursive: true });
+      // A legacy/unmanaged directory may already occupy the registry slug.
+      // Folder binding should publish config.json into that slot instead of
+      // reporting a false slug conflict after mkdir has already succeeded.
+      await mkdir(join(homePath, "projects", "matrix-os", "symphony-workspaces"), { recursive: true });
+      const app = createWorkspaceRoutes({ homePath });
+
+      const mkdirResponse = await app.request(jsonRequest("/api/projects/mkdir", {
+        name: "matrix-os",
+        parent: "apps",
+        clientRequestId: "req_desktop_folder_connect",
+      }));
+      expect(mkdirResponse.status).toBe(201);
+      const folder = await mkdirResponse.json() as { path: string };
+
+      const connectResponse = await app.request(jsonRequest("/api/projects", {
+        name: "matrix-os",
+        mode: "folder",
+        path: folder.path,
+        clientRequestId: "req_desktop_project_connect",
+      }));
+
+      expect(connectResponse.status).toBe(201);
+      await expect(connectResponse.json()).resolves.toMatchObject({
+        project: {
+          name: "matrix-os",
+          localPath: expect.stringMatching(/[/\\]apps[/\\]matrix-os$/),
+        },
+      });
+      await expect(stat(join(homePath, "projects", "matrix-os", "config.json"))).resolves.toBeTruthy();
+    });
+
     it("returns the same custom folder for an idempotent mkdir retry", async () => {
       await mkdir(join(homePath, "code"), { recursive: true });
       const app = createWorkspaceRoutes({ homePath });
