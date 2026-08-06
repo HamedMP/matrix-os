@@ -630,6 +630,48 @@ describe("Upstream error mapping", () => {
     const text = await res.text();
     expect(text).not.toContain("sk-ant-api-key");
   });
+
+  it("projects environment reads to credential metadata without stored values", async () => {
+    const app = authenticatedApp({
+      client: {
+        fetch: async () => upstreamJson({
+          ANTHROPIC_API_KEY: {
+            is_set: true,
+            redacted_value: "sk-ant-...last4",
+            description: "Anthropic API key",
+            category: "model",
+            is_password: true,
+            tools: ["hermes"],
+            advanced: false,
+            channel_managed: false,
+            provider: "anthropic",
+            provider_label: "Anthropic",
+            value: "secret-from-upstream",
+          },
+        }),
+        readJson: vi.fn(),
+        requestJson: vi.fn(),
+      },
+    });
+
+    const res = await app.request("/api/hermes/env");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ANTHROPIC_API_KEY: {
+        is_set: true,
+        redacted_value: "sk-ant-...last4",
+        description: "Anthropic API key",
+        category: "model",
+        is_password: true,
+        tools: ["hermes"],
+        advanced: false,
+        channel_managed: false,
+        provider: "anthropic",
+        provider_label: "Anthropic",
+      },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

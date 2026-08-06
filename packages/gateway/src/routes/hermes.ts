@@ -16,6 +16,15 @@
 
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import {
+  HermesConfigurationChangeRequestSchema,
+  HermesCredentialRemoveRequestSchema,
+  HermesCredentialSetRequestSchema,
+  HermesEnvironmentEntrySchema,
+  HermesEnvironmentSchema,
+  type HermesConfigField,
+  type HermesEnvironment,
+} from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
   requireRequestPrincipal,
@@ -97,41 +106,11 @@ const ModelSetSchema = z.object({
   base_url: z.string().url().optional(),
 });
 
-const EnvSetSchema = z.object({
-  key: z.string().regex(ENV_KEY),
-  value: z.string().max(4096),
-}).strict();
-
-const EnvDeleteSchema = z.object({
-  key: z.string().regex(ENV_KEY),
-}).strict();
-
 const ConfigListItemSchema = z.union([
   z.string().max(4096),
   z.number().finite(),
   z.boolean(),
 ]);
-
-const ConfigChangeSchema = z.object({
-  path: z.string().min(1).max(160).regex(CONFIG_PATH),
-  value: z.union([
-    z.string().max(8192),
-    z.number().finite(),
-    z.boolean(),
-    z.array(ConfigListItemSchema).max(128),
-  ]),
-}).strict();
-
-const ConfigChangesSchema = z.object({
-  changes: z.array(ConfigChangeSchema).min(1).max(64),
-}).strict();
-
-type ConfigField = {
-  type: "boolean" | "number" | "string" | "select" | "list";
-  description: string;
-  category: string;
-  options?: string[];
-};
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -153,11 +132,11 @@ function sanitizeConfig(value: unknown, path = ""): unknown {
   return sanitized;
 }
 
-function parseConfigSchema(value: unknown): { fields: Record<string, ConfigField>; categoryOrder: string[] } | null {
+function parseConfigSchema(value: unknown): { fields: Record<string, HermesConfigField>; categoryOrder: string[] } | null {
   if (!isPlainRecord(value) || !isPlainRecord(value.fields) || !Array.isArray(value.category_order)) return null;
   const entries = Object.entries(value.fields);
   if (entries.length > MAX_CONFIG_FIELDS) return null;
-  const fields: Record<string, ConfigField> = {};
+  const fields: Record<string, HermesConfigField> = {};
   for (const [path, rawField] of entries) {
     if (!CONFIG_PATH.test(path) || isSensitiveConfigPath(path) || !isPlainRecord(rawField)) continue;
     const type = rawField.type;
@@ -177,7 +156,7 @@ function parseConfigSchema(value: unknown): { fields: Record<string, ConfigField
       }
       options = rawField.options as string[];
     }
-    fields[path] = { type: type as ConfigField["type"], description, category, ...(options ? { options } : {}) };
+    fields[path] = { type: type as HermesConfigField["type"], description, category, ...(options ? { options } : {}) };
   }
   const categoryOrder = value.category_order.filter(
     (category): category is string => typeof category === "string" && category.length <= 64,
@@ -185,7 +164,7 @@ function parseConfigSchema(value: unknown): { fields: Record<string, ConfigField
   return { fields, categoryOrder };
 }
 
-function fieldAcceptsValue(field: ConfigField, value: unknown): boolean {
+function fieldAcceptsValue(field: HermesConfigField, value: unknown): boolean {
   switch (field.type) {
     case "boolean": return typeof value === "boolean";
     case "number": return typeof value === "number" && Number.isFinite(value);
@@ -193,6 +172,32 @@ function fieldAcceptsValue(field: ConfigField, value: unknown): boolean {
     case "select": return typeof value === "string" && Boolean(field.options?.includes(value));
     case "list": return ConfigListItemSchema.array().max(128).safeParse(value).success;
   }
+}
+
+function sanitizeEnvironment(value: unknown): HermesEnvironment | null {
+  if (!isPlainRecord(value) || Object.keys(value).length > 1_024) return null;
+  const environment: Record<string, unknown> = {};
+  for (const [key, rawEntry] of Object.entries(value)) {
+    if (!ENV_KEY.test(key) || !isPlainRecord(rawEntry)) return null;
+    const projected = {
+      is_set: rawEntry.is_set,
+      redacted_value: rawEntry.redacted_value,
+      description: rawEntry.description,
+      url: rawEntry.url,
+      category: rawEntry.category,
+      is_password: rawEntry.is_password,
+      tools: rawEntry.tools,
+      advanced: rawEntry.advanced,
+      channel_managed: rawEntry.channel_managed,
+      provider: rawEntry.provider,
+      provider_label: rawEntry.provider_label,
+    };
+    const parsedEntry = HermesEnvironmentEntrySchema.safeParse(projected);
+    if (!parsedEntry.success) return null;
+    environment[key] = parsedEntry.data;
+  }
+  const parsed = HermesEnvironmentSchema.safeParse(environment);
+  return parsed.success ? parsed.data : null;
 }
 
 function setConfigPath(config: Record<string, unknown>, path: string, value: unknown): void {
@@ -373,7 +378,7 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
       logIgnoredHermesError("PUT /configuration invalid JSON", err);
       return c.json({ error: "Invalid JSON" }, 400);
     }
-    const parsed = ConfigChangesSchema.safeParse(raw);
+    const parsed = HermesConfigurationChangeRequestSchema.safeParse(raw);
     if (!parsed.success) return c.json({ error: "Invalid request body" }, 400);
 
     try {
@@ -402,7 +407,7 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
           body: JSON.stringify({ config: updated }),
         });
         if (!saveRes.ok) return upstreamError(c);
-        return c.json({ ok: true, config: sanitizeConfig(updated) });
+        return c.json({ ok: true });
       });
     } catch (err) {
       if (err instanceof HermesUnavailableError) return unavailable(c);
@@ -492,7 +497,8 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
     try {
       const res = await hermesFetch("/api/env");
       if (!res.ok) return upstreamError(c);
-      return c.json(await res.json());
+      const environment = sanitizeEnvironment(await res.json());
+      return environment ? c.json(environment) : upstreamError(c);
     } catch (err) {
       if (err instanceof HermesUnavailableError) return unavailable(c);
       console.error("[hermes-proxy] GET /env error:", err);
@@ -515,7 +521,7 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
-    const parsed = EnvSetSchema.safeParse(raw);
+    const parsed = HermesCredentialSetRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return c.json({ error: "Invalid request body" }, 400);
     }
@@ -527,7 +533,7 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
         body: JSON.stringify(parsed.data),
       });
       if (!res.ok) return upstreamError(c);
-      return c.json(await res.json());
+      return c.json({ ok: true });
     } catch (err) {
       if (err instanceof HermesUnavailableError) return unavailable(c);
       console.error("[hermes-proxy] PUT /env error:", err);
@@ -549,7 +555,7 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
       logIgnoredHermesError("DELETE /env invalid JSON", err);
       return c.json({ error: "Invalid JSON" }, 400);
     }
-    const parsed = EnvDeleteSchema.safeParse(raw);
+    const parsed = HermesCredentialRemoveRequestSchema.safeParse(raw);
     if (!parsed.success) return c.json({ error: "Invalid request body" }, 400);
 
     try {
@@ -559,7 +565,7 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
         body: JSON.stringify(parsed.data),
       });
       if (!res.ok) return upstreamError(c);
-      return c.json(await res.json());
+      return c.json({ ok: true });
     } catch (err) {
       if (err instanceof HermesUnavailableError) return unavailable(c);
       console.error("[hermes-proxy] DELETE /env error:", err);

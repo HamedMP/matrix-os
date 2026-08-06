@@ -41,7 +41,7 @@
 - Produces: `HermesConfigurationSchema`, `HermesEnvironmentSchema`, `HermesConfigurationChangeRequestSchema`, `HermesCredentialSetRequestSchema`, `HermesCredentialRemoveRequestSchema`, `HermesMutationResponseSchema` and their inferred types.
 - Consumes: Zod 4 only.
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Add tests that prove valid dynamic configuration parses, more than 1,024 fields is rejected, more than 64 changes is rejected, unsupported nested values are rejected, environment entries expose metadata only, and a response containing a `value` secret is rejected.
 
@@ -78,13 +78,13 @@ it("caps a configuration mutation at 64 changes", () => {
 });
 ```
 
-- [ ] **Step 2: Run the new contract tests and verify red**
+- [x] **Step 2: Run the new contract tests and verify red**
 
 Run: `flox activate -- bun run test -- tests/contracts/hermes-configuration.test.ts`
 
 Expected: FAIL because the Hermes schemas are not exported.
 
-- [ ] **Step 3: Implement the bounded shared schemas**
+- [x] **Step 3: Implement the bounded shared schemas**
 
 Create a focused contract module with strict objects and these types:
 
@@ -106,13 +106,13 @@ export const HermesConfigurationSchema = z.object({
 
 Use a package-local import alias in `packages/contracts/package.json`, export the module from `index.ts`, replace the duplicate Shell response schemas, and reuse the shared request schemas at Gateway route boundaries. Keep Gateway-sensitive-path filtering and schema-aware value checks in the Gateway.
 
-- [ ] **Step 4: Run contract, Gateway, and Shell tests and verify green**
+- [x] **Step 4: Run contract, Gateway, and Shell tests and verify green**
 
 Run: `flox activate -- bun run test -- tests/contracts/hermes-configuration.test.ts tests/gateway/hermes-proxy.test.ts tests/shell/hermes-configuration.test.tsx`
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 5: Commit the contract slice**
+- [x] **Step 5: Commit the contract slice**
 
 ```bash
 git add packages/contracts packages/gateway/src/routes/hermes.ts shell/src/lib/hermes-configuration.ts tests/contracts/hermes-configuration.test.ts tests/gateway/hermes-proxy.test.ts tests/shell/hermes-configuration.test.tsx
