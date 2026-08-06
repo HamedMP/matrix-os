@@ -57,9 +57,11 @@ jobs:
             --connect-timeout 10 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+          # Failed rows retain their status for audit after retirement; deletedAt
+          # is the platform's authoritative active-slot release evidence.
           machine_ids="$(jq -cer --arg handle "$handle" '
             [.machines[] | select(
-              .handle == $handle and .status != "deleted" and
+              .handle == $handle and .deletedAt == null and .status != "deleted" and
               (.runtimeSlot == $handle or .status == "failed")
             ) | .machineId]
           ' <<<"$fleet")"
@@ -94,6 +96,7 @@ jobs:
               [.machines[] | select(
                 .handle == $handle and
                 ((.machineId as $machine_id | $ids | index($machine_id)) != null) and
+                .deletedAt == null and
                 .status != "deleted"
               )] | length
             ' <<<"$fleet")"
