@@ -42,16 +42,15 @@ export function setConfigValue(
 }
 
 export function configurationCategories(configuration: HermesConfiguration) {
-  const counts = new Map<string, number>();
+  const counts: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const field of Object.values(configuration.fields)) {
-    counts.set(field.category, (counts.get(field.category) ?? 0) + 1);
+    counts[field.category] = (counts[field.category] ?? 0) + 1;
   }
-  const orderedCategories = new Set(configuration.categoryOrder);
   const ordered = [
-    ...configuration.categoryOrder.filter((category) => counts.has(category)),
-    ...[...counts.keys()].filter((category) => !orderedCategories.has(category)).sort(),
+    ...configuration.categoryOrder.filter((category) => counts[category] !== undefined),
+    ...Object.keys(counts).filter((category) => !configuration.categoryOrder.includes(category)).sort(),
   ];
-  return ordered.map((id) => ({ id, label: titleCase(id), count: counts.get(id) ?? 0 }));
+  return ordered.map((id) => ({ id, label: titleCase(id), count: counts[id] ?? 0 }));
 }
 
 export function matchingConfigurationFields(

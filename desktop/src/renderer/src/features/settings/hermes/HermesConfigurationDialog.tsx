@@ -30,6 +30,9 @@ interface HermesConfigurationDialogProps {
 const LOAD_ERROR = "Hermes configuration is unavailable.";
 const SAVE_ERROR = "Hermes configuration could not be saved.";
 const CREDENTIAL_ERROR = "Hermes credential could not be updated.";
+// Matches the shared HermesConfigurationSchema field limit. Invalid paths can
+// only originate from rendered, schema-validated fields.
+const MAX_INVALID_PATHS = 1_024;
 
 export function HermesConfigurationDialog({
   open,
@@ -45,7 +48,7 @@ export function HermesConfigurationDialog({
   const [category, setCategory] = useState("");
   const [settingsSearch, setSettingsSearch] = useState("");
   const [credentialSearch, setCredentialSearch] = useState("");
-  const [invalidPaths, setInvalidPaths] = useState<Set<string>>(() => new Set());
+  const [invalidPaths, setInvalidPaths] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -68,7 +71,7 @@ export function HermesConfigurationDialog({
       setConfiguration(nextConfiguration);
       setEnvironment(nextEnvironment);
       setDraft(structuredClone(nextConfiguration.config));
-      setInvalidPaths(new Set());
+      setInvalidPaths([]);
       setCategory(configurationCategories(nextConfiguration)[0]?.id ?? "");
     } catch (loadError) {
       if (isCurrentRequestRevision(requestRevision.current, revision)) {
@@ -116,19 +119,24 @@ export function HermesConfigurationDialog({
       return parsed.success ? [{ path, value: parsed.data }] : [];
     });
   }, [configuration, draft]);
+  const dirtyPathCount = changes.reduce(
+    (count, change) => count + (invalidPaths.includes(change.path) ? 0 : 1),
+    invalidPaths.length,
+  );
+  const isDirty = dirtyPathCount > 0;
 
   const requestRefresh = () => {
-    if (changes.length > 0) setConfirmation("refresh");
+    if (isDirty) setConfirmation("refresh");
     else void load(true);
   };
 
   const requestClose = () => {
-    if (changes.length > 0) setConfirmation("close");
+    if (isDirty) setConfirmation("close");
     else onClose();
   };
 
   const save = async () => {
-    if (!configuration || changes.length === 0 || invalidPaths.size > 0) return;
+    if (!configuration || changes.length === 0 || invalidPaths.length > 0) return;
     setSaving(true);
     setError(null);
     try {
@@ -294,10 +302,10 @@ export function HermesConfigurationDialog({
                         defaultValue={configValueAt(configuration.defaults, path)}
                         onChange={(value) => setDraft((current) => setConfigValue(current, path, value))}
                         onValidityChange={(valid) => setInvalidPaths((current) => {
-                          const next = new Set(current);
-                          if (valid) next.delete(path);
-                          else next.add(path);
-                          return next;
+                          if (valid) return current.filter((item) => item !== path);
+                          if (current.includes(path)) return current;
+                          if (current.length >= MAX_INVALID_PATHS) return current;
+                          return [...current, path];
                         })}
                       />
                     ))}
@@ -323,7 +331,7 @@ export function HermesConfigurationDialog({
               <div>
                 {error ? <span role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : (
                   <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                    {changes.length} unsaved {changes.length === 1 ? "change" : "changes"}
+                    {dirtyPathCount} unsaved {dirtyPathCount === 1 ? "change" : "changes"}
                   </span>
                 )}
               </div>
@@ -331,10 +339,10 @@ export function HermesConfigurationDialog({
                 <Button
                   variant="ghost"
                   aria-label="Discard Hermes changes"
-                  disabled={changes.length === 0 || saving}
+                  disabled={!isDirty || saving}
                   onClick={() => {
                     setDraft(structuredClone(configuration.config));
-                    setInvalidPaths(new Set());
+                    setInvalidPaths([]);
                   }}
                 >
                   Discard
@@ -342,7 +350,7 @@ export function HermesConfigurationDialog({
                 <Button
                   variant="primary"
                   aria-label="Save Hermes settings"
-                  disabled={changes.length === 0 || invalidPaths.size > 0 || saving}
+                  disabled={changes.length === 0 || invalidPaths.length > 0 || saving}
                   onClick={() => void save()}
                 >
                   {saving ? "Saving…" : "Save changes"}

@@ -171,6 +171,26 @@ describe("Desktop Hermes configuration dialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("confirms before discarding visible invalid input", async () => {
+    const { onClose } = renderDialog();
+    await screen.findByLabelText("Default model");
+    fireEvent.click(screen.getByRole("button", { name: "Delegation" }));
+    fireEvent.change(screen.getByLabelText("Delegation tools"), {
+      target: { value: '[{"not":"allowed"}]' },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.getByRole("alertdialog").textContent)
+      .toContain("Discard unsaved changes and refresh?");
+    expect(window.operator.invoke).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Hermes configuration" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog").textContent)
+      .toContain("Discard unsaved changes and close?");
+  });
+
   it("preserves the last good draft when refresh fails", async () => {
     renderDialog();
     const model = await screen.findByLabelText("Default model") as HTMLInputElement;

@@ -129,14 +129,13 @@ async function readHermesConfigurationData() {
 function configurationCategories(configuration: HermesConfiguration | null) {
   if (!configuration) return [];
   // Bounded by the gateway's 1,024-field schema cap.
-  const counts = new Map<string, number>();
+  const counts: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const field of Object.values(configuration.fields)) {
-    counts.set(field.category, (counts.get(field.category) ?? 0) + 1);
+    counts[field.category] = (counts[field.category] ?? 0) + 1;
   }
-  const ordered = configuration.categoryOrder.filter((entry) => counts.has(entry));
-  const orderedSet = new Set(ordered);
-  const remaining = [...counts.keys()].filter((entry) => !orderedSet.has(entry)).sort();
-  return [...ordered, ...remaining].map((id) => ({ id, count: counts.get(id) ?? 0 }));
+  const ordered = configuration.categoryOrder.filter((entry) => counts[entry] !== undefined);
+  const remaining = Object.keys(counts).filter((entry) => !ordered.includes(entry)).sort();
+  return [...ordered, ...remaining].map((id) => ({ id, count: counts[id] ?? 0 }));
 }
 
 function matchingConfigurationFields(configuration: HermesConfiguration | null, search: string, category: string) {
