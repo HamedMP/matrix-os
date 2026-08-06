@@ -1119,6 +1119,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
+    expect(workflow).toContain('select(.handle == $h and .status != "deleted" and .deletedAt == null)');
     expect(workflow).toContain('if .status == "running" then 0');
     expect(workflow).toContain('elif .status == "provisioning" then 1');
     expect(workflow).toContain('elif .status == "failed" then 2');

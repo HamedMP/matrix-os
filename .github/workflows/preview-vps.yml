@@ -475,7 +475,7 @@ jobs:
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -c --arg h "$HANDLE" \
               '[.machines[]
-                | select(.handle == $h and .status != "deleted")
+                | select(.handle == $h and .status != "deleted" and .deletedAt == null)
                 | . + { _preview_rank:
                     (if .status == "running" then 0
                      elif .status == "provisioning" then 1
