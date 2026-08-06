@@ -11,6 +11,7 @@ export interface CustomerHostConfig {
   updateChannel: string;
   hostBundleUrl: string;
   platformRegisterUrl: string;
+  platformBootstrapProgressUrl: string;
   platformInternalUrl: string;
   platformVerificationToken: string;
   registrationToken: string;
@@ -35,7 +36,7 @@ const SECRET_KEYS = [
   'r2AccessKeyId',
   'r2SecretAccessKey',
 ] as const;
-const REQUIRED_KEYS = ['hostBundleUrl', ...SECRET_KEYS] as const;
+const REQUIRED_KEYS = ['hostBundleUrl', 'platformBootstrapProgressUrl', ...SECRET_KEYS] as const;
 
 function assertRenderable(input: CustomerHostConfig): void {
   for (const key of REQUIRED_KEYS) {

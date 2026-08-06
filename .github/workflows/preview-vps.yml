@@ -388,8 +388,6 @@ jobs:
           done
 
       - name: Provision or resume preview VPS
-        env:
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${PREVIEW_CLERK_USER_ID:-}" ]; then
@@ -418,20 +416,6 @@ jobs:
                 printf '%s\n' unknown
                 ;;
             esac
-          }
-
-          is_public_ipv4() {
-            node -e '
-              const parts = process.argv[1].split(".").map(Number);
-              const valid = parts.length === 4 && parts.every((part) =>
-                Number.isInteger(part) && part >= 0 && part <= 255);
-              const blocked = !valid || parts[0] === 0 || parts[0] === 10 ||
-                parts[0] === 127 || parts[0] >= 224 ||
-                (parts[0] === 169 && parts[1] === 254) ||
-                (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-                (parts[0] === 192 && parts[1] === 168);
-              process.exit(blocked ? 1 : 0);
-            ' "$1"
           }
 
           fleet_machine="$(curl -fsS --max-time 30 \
@@ -532,19 +516,7 @@ jobs:
             # Stay below the platform's 15-minute registration-token boundary
             # while cloud-init installs the already-pinned dormant bootstrap.
             deadline=$((SECONDS + 840))
-            boot_diagnostic_captured=false
-            next_boot_diagnostic=$((SECONDS + 90))
-            diagnostic_key="$RUNNER_TEMP/preview-bootstrap-diagnostic-key"
-            diagnostic_known_hosts="$RUNNER_TEMP/preview-bootstrap-known-hosts"
-            trap 'rm -f -- "$diagnostic_key" "$diagnostic_known_hosts"' EXIT
-            if [ "$USE_PLATFORM_CANDIDATE" = "true" ] && [ -n "${VPS_SSH_KEY:-}" ]; then
-              install -m 0600 /dev/null "$diagnostic_key"
-              printf '%s\n' "$VPS_SSH_KEY" >"$diagnostic_key"
-              if ! ssh-keygen -y -f "$diagnostic_key" >/dev/null; then
-                echo "The candidate bootstrap diagnostic SSH key is invalid." >&2
-                exit 1
-              fi
-            fi
+            last_bootstrap_stage=pending
             while true; do
               sleep 15
               polled_machine="$(curl -fsS --max-time 30 \
@@ -555,27 +527,20 @@ jobs:
                    | (.[0] // {status: "absent", failureCode: null})')"
               status="$(jq -r '.status' <<< "$polled_machine")"
               [ "$status" = "running" ] && break
-              if [ "$USE_PLATFORM_CANDIDATE" = "true" ] && [ "$boot_diagnostic_captured" != true ]; then
-                candidate_address="$(jq -r '.publicIPv4 // ""' <<<"$polled_machine")"
-                if [ -s "$diagnostic_key" ] && is_public_ipv4 "$candidate_address" &&
-                  [ "$SECONDS" -ge "$next_boot_diagnostic" ]; then
-                  echo "::add-mask::$candidate_address"
-                  if timeout 35 ssh -i "$diagnostic_key" \
-                    -o BatchMode=yes -o ConnectTimeout=10 \
-                    -o StrictHostKeyChecking=accept-new \
-                    -o UserKnownHostsFile="$diagnostic_known_hosts" \
-                    root@${candidate_address} '
-                      set +e
-                      echo "matrix-preview-bootstrap-diagnostic-v1"
-                      cloud-init status --long
-                      systemctl is-active cloud-final.service nginx.service matrix-gateway.service
-                      journalctl -u cloud-final.service --no-pager -n 160
-                    '; then
-                    boot_diagnostic_captured=true
-                  else
-                    next_boot_diagnostic=$((SECONDS + 60))
-                  fi
+              progress_machine="$polled_machine"
+              if [ "$USE_PLATFORM_CANDIDATE" = "true" ]; then
+                if candidate_fleet="$(curl -fsS --max-time 30 \
+                  -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                  "${PROVISION_PLATFORM_URL}/vps/fleet" 2>/dev/null)"; then
+                  progress_machine="$(jq -c --arg h "$HANDLE" \
+                    '.machines | map(select(.handle == $h and .runtimeSlot == $h and .deletedAt == null)) | .[0] // {}' \
+                    <<< "$candidate_fleet")"
                 fi
+              fi
+              bootstrap_stage="$(jq -r '.bootstrapStage // "pending"' <<< "$progress_machine")"
+              if [ "$bootstrap_stage" != "$last_bootstrap_stage" ]; then
+                echo "Bootstrap stage for ${HANDLE}: ${bootstrap_stage}"
+                last_bootstrap_stage="$bootstrap_stage"
               fi
               if [ "$status" = "failed" ]; then
                 failure_code="$(jq -r '.failureCode // "none"' <<< "$polled_machine" | sanitize_failure_code)"

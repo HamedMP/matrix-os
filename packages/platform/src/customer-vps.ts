@@ -5,6 +5,7 @@ import type {
   UserMachineRecord,
 } from './db.js';
 import {
+  advanceUserMachineBootstrapStage,
   claimUserMachineDelete,
   claimUserMachineRecovery,
   completeUserMachineRegistration,
@@ -50,6 +51,7 @@ import {
   type CustomerHostConfig,
 } from './customer-vps-cloud-init.js';
 import {
+  type BootstrapProgressRequest,
   PreviewProvisionRequestSchema,
   PublicIPv4Schema,
   type CustomerVpsStatus,
@@ -60,6 +62,7 @@ import {
   type RecoverRequest,
   type ResizeMachineRequest,
 } from './customer-vps-schema.js';
+import type { CustomerVpsBootstrapStage } from './customer-vps-bootstrap.js';
 import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
 import {
@@ -97,6 +100,11 @@ export interface RegisterResponse {
   warnings?: string[];
 }
 
+export interface BootstrapProgressResponse {
+  accepted: true;
+  stage: CustomerVpsBootstrapStage;
+}
+
 export interface DeleteResponse {
   deleted: true;
   machineId: string;
@@ -131,6 +139,8 @@ export interface StatusResponse {
   deletedAt: string | null;
   failureCode: string | null;
   failureAt: string | null;
+  bootstrapStage: CustomerVpsBootstrapStage | null;
+  bootstrapStageAt: string | null;
 }
 
 export interface DeployResult {
@@ -148,6 +158,7 @@ export interface DeployTarget {
 export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
   provisionPreview(input: PreviewProvisionInput): Promise<ProvisionResponse>;
+  reportBootstrapProgress(token: string | undefined, input: BootstrapProgressRequest): Promise<BootstrapProgressResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   resize(input: ResizeMachineRequest & { machineId: string }): Promise<ResizeResponse>;
@@ -189,6 +200,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
   '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
+  '      MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL={{platformBootstrapProgressUrl}}',
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
@@ -274,6 +286,8 @@ function statusResponse(row: UserMachineRecord): StatusResponse {
     deletedAt: row.deletedAt,
     failureCode: row.failureCode,
     failureAt: row.failureAt,
+    bootstrapStage: row.bootstrapStage,
+    bootstrapStageAt: row.bootstrapStageAt,
   };
 }
 
@@ -283,12 +297,18 @@ function toFailureCode(err: unknown): CustomerVpsFailureCode {
 
 function buildHostConfig(
   config: CustomerVpsConfig,
-  input: ProvisionRequest,
+  input: ProvisionRequest | PreviewProvisionRequest,
   machineId: string,
   registrationToken: string,
   postgresPassword: string,
   bundleRef: HostBundleRef,
+  candidateBootstrapProgress = false,
 ): CustomerHostConfig {
+  const registerUrl = new URL(config.platformRegisterUrl);
+  const bootstrapProgressUrl = new URL('/vps/bootstrap-progress', registerUrl.origin);
+  if (candidateBootstrapProgress && registerUrl.protocol === 'https:') {
+    bootstrapProgressUrl.hostname = `candidate---${registerUrl.hostname}`;
+  }
   return {
     machineId,
     clerkUserId: input.clerkUserId,
@@ -299,6 +319,7 @@ function buildHostConfig(
     updateChannel: config.imageVersion,
     hostBundleUrl: bundleRef.hostBundleUrl,
     platformRegisterUrl: config.platformRegisterUrl,
+    platformBootstrapProgressUrl: bootstrapProgressUrl.toString(),
     platformInternalUrl: new URL(config.platformRegisterUrl).origin,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
     registrationToken,
@@ -747,6 +768,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           imageVersion,
           hostBundleUrl: hostBundleUrlForImageVersion(deps.config, imageVersion),
         },
+        row.candidateBootstrapProgress,
       );
       const userData = renderCloudInitTemplate(
         deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
@@ -1030,6 +1052,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         developerTools: request.developerTools,
         registrationTokenHash: registration.hash,
         registrationTokenExpiresAt: registration.expiresAt,
+        candidateBootstrapProgress: provisioningClass === 'preview' && Boolean(bootstrapVersion),
         provisionedAt: currentTime.toISOString(),
         attempt,
       });
@@ -1113,6 +1136,59 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       );
     },
 
+    async reportBootstrapProgress(token, input) {
+      const row = await getUserMachine(deps.db, input.machineId);
+      if (!row) {
+        throw new CustomerVpsError(404, 'not_found', 'Machine not found');
+      }
+      if (row.status !== 'provisioning' && row.status !== 'recovering') {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot report progress');
+      }
+      const progressTime = now();
+      const progressAt = progressTime.toISOString();
+      const registrationExpiresAt = row.registrationTokenExpiresAt
+        ? Date.parse(row.registrationTokenExpiresAt)
+        : Number.NaN;
+      if (
+        !Number.isFinite(registrationExpiresAt) ||
+        registrationExpiresAt < progressTime.getTime()
+      ) {
+        throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
+      }
+      const expectedRegistrationTokenHash = row.registrationTokenHash;
+      if (!expectedRegistrationTokenHash || !registrationTokenMatches(token, expectedRegistrationTokenHash)) {
+        throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
+      }
+
+      const updated = await advanceUserMachineBootstrapStage(
+        deps.db,
+        input.machineId,
+        expectedRegistrationTokenHash,
+        progressAt,
+        input.stage,
+        progressAt,
+      );
+      if (updated) {
+        return { accepted: true, stage: updated.bootstrapStage! };
+      }
+
+      const current = await getUserMachine(deps.db, input.machineId);
+      const currentRegistrationExpiresAt = current?.registrationTokenExpiresAt
+        ? Date.parse(current.registrationTokenExpiresAt)
+        : Number.NaN;
+      if (
+        !current ||
+        (current.status !== 'provisioning' && current.status !== 'recovering') ||
+        current.registrationTokenHash !== expectedRegistrationTokenHash ||
+        !Number.isFinite(currentRegistrationExpiresAt) ||
+        currentRegistrationExpiresAt < progressTime.getTime() ||
+        !current.bootstrapStage
+      ) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot report progress');
+      }
+      return { accepted: true, stage: current.bootstrapStage };
+    },
+
     async register(token, input) {
       const publicIPv4 = PublicIPv4Schema.safeParse(input.publicIPv4);
       if (!publicIPv4.success) {
@@ -1153,6 +1229,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           registrationTokenExpiresAt: null,
           failureCode: null,
           failureAt: null,
+          bootstrapStage: 'registered',
+          bootstrapStageAt: lastSeenAt,
         },
       );
       if (!updated) {
@@ -1261,6 +1339,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             deletedAt: null,
             failureCode: null,
             failureAt: null,
+            bootstrapStage: null,
+            bootstrapStageAt: null,
+            candidateBootstrapProgress: false,
           });
         });
       } catch (err: unknown) {
