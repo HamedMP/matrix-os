@@ -57,38 +57,44 @@ jobs:
             --connect-timeout 10 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
-          machine_id="$(jq -er --arg handle "$handle" '
+          machine_ids="$(jq -cer --arg handle "$handle" '
             [.machines[] | select(
               .handle == $handle and .status != "deleted" and
               (.runtimeSlot == $handle or .status == "failed")
-            )]
-            | if length == 1 then .[0].machineId else error("preview_unavailable") end
+            ) | .machineId]
           ' <<<"$fleet")"
-          if ! jq -en --arg id "$machine_id" \
-            '$id | test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")' \
+          if ! jq -e '
+            type == "array" and length >= 1 and length <= 8 and
+            all(.[]; type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")) and
+            (unique | length) == length
+          ' <<<"$machine_ids" \
             >/dev/null; then
-            echo "Disposable preview identity is invalid." >&2
+            echo "Disposable preview identities are invalid." >&2
             exit 1
           fi
           delete_response="$RUNNER_TEMP/terminal-preview-delete.json"
-          delete_code="$(curl --silent --show-error --max-time 60 \
-            --connect-timeout 10 \
-            -o "$delete_response" -w '%{http_code}' \
-            -X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}" \
-            -H "authorization: Bearer ${PLATFORM_SECRET}")"
-          if [ "$delete_code" != 200 ]; then
-            echo "Disposable preview disposal failed." >&2
-            exit 1
-          fi
+          while IFS= read -r machine_id; do
+            delete_code="$(curl --silent --show-error --max-time 60 \
+              --connect-timeout 10 \
+              -o "$delete_response" -w '%{http_code}' \
+              -X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}")"
+            if [ "$delete_code" != 200 ]; then
+              echo "Disposable preview disposal failed." >&2
+              exit 1
+            fi
+          done < <(jq -r '.[]' <<<"$machine_ids")
           deadline=$((SECONDS + 300))
           while [ "$SECONDS" -lt "$deadline" ]; do
             fleet="$(curl --fail --silent --show-error --max-time 30 \
               --connect-timeout 10 \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
               "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
-            remaining="$(jq -r --arg handle "$handle" --arg id "$machine_id" '
+            remaining="$(jq -r --arg handle "$handle" --argjson ids "$machine_ids" '
               [.machines[] | select(
-                .handle == $handle and .machineId == $id and .status != "deleted"
+                .handle == $handle and
+                ((.machineId as $machine_id | $ids | index($machine_id)) != null) and
+                .status != "deleted"
               )] | length
             ' <<<"$fleet")"
             if [ "$remaining" = 0 ]; then
