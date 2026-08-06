@@ -383,7 +383,7 @@ git commit -m "feat(desktop): align Hermes setup flow"
 - Consumes: all previous tasks.
 - Produces: release-ready validation evidence and one focused Matrix OS PR.
 
-- [ ] **Step 1: Run focused tests**
+- [x] **Step 1: Run focused tests**
 
 Run:
 
@@ -404,7 +404,7 @@ flox activate -- bun run test -- \
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 2: Run repository quality gates**
+- [x] **Step 2: Run repository quality gates**
 
 Run:
 

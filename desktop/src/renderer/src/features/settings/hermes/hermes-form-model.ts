@@ -46,9 +46,10 @@ export function configurationCategories(configuration: HermesConfiguration) {
   for (const field of Object.values(configuration.fields)) {
     counts.set(field.category, (counts.get(field.category) ?? 0) + 1);
   }
+  const orderedCategories = new Set(configuration.categoryOrder);
   const ordered = [
     ...configuration.categoryOrder.filter((category) => counts.has(category)),
-    ...[...counts.keys()].filter((category) => !configuration.categoryOrder.includes(category)).sort(),
+    ...[...counts.keys()].filter((category) => !orderedCategories.has(category)).sort(),
   ];
   return ordered.map((id) => ({ id, label: titleCase(id), count: counts.get(id) ?? 0 }));
 }

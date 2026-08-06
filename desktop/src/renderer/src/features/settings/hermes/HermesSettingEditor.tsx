@@ -136,7 +136,7 @@ export function HermesSettingEditor({
     <article className="rounded-lg border p-4" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <label className="block text-sm font-medium" style={{ color: "var(--text-primary)" }}>{label}</label>
+          <span className="block text-sm font-medium" style={{ color: "var(--text-primary)" }}>{label}</span>
           <code className="text-xs" style={{ color: "var(--text-tertiary)" }}>{path}</code>
         </div>
         <Button

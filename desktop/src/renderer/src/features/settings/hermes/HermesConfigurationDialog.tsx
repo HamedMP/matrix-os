@@ -351,15 +351,15 @@ export function HermesConfigurationDialog({
             </footer>
           </>
         )}
-        {confirmation ? (
-          <div className="absolute inset-0 z-10 flex items-center justify-center p-6" style={{ background: "var(--overlay-dim)" }}>
-            <div
-              role="alertdialog"
-              aria-modal="true"
-              aria-label={confirmation === "refresh" ? "Confirm refresh" : "Confirm close"}
-              className="w-full max-w-sm rounded-xl border p-5"
-              style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-3)" }}
-            >
+        <Dialog
+          open={confirmation !== null}
+          onClose={() => setConfirmation(null)}
+          width={400}
+          role="alertdialog"
+          title={confirmation === "refresh" ? "Confirm refresh" : "Confirm close"}
+        >
+          {confirmation ? (
+            <div className="p-5">
               <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
                 {confirmation === "refresh"
                   ? "Discard unsaved changes and refresh?"
@@ -384,8 +384,8 @@ export function HermesConfigurationDialog({
                 </Button>
               </div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </Dialog>
       </div>
     </Dialog>
   );

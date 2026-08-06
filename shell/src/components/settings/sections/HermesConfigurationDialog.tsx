@@ -114,6 +114,18 @@ async function attemptCredentialMutation(operation: () => Promise<void>, action:
   }
 }
 
+async function readHermesConfigurationData() {
+  try {
+    const [configuration, environment] = await Promise.all([
+      loadHermesConfiguration(),
+      loadHermesEnvironment(),
+    ]);
+    return { ok: true as const, configuration, environment };
+  } catch (error) {
+    return { ok: false as const, error };
+  }
+}
+
 function configurationCategories(configuration: HermesConfiguration | null) {
   if (!configuration) return [];
   // Bounded by the gateway's 1,024-field schema cap.
@@ -479,36 +491,33 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
     else setRefreshing(true);
     setError(null);
     const environmentReadRevision = environmentRevision.current;
-    try {
-      const [nextConfig, nextEnv] = await Promise.all([loadHermesConfiguration(), loadHermesEnvironment()]);
-      if (revision !== configurationRevision.current) return;
-      setConfiguration(nextConfig);
-      if (environmentReadRevision === environmentRevision.current) setEnvironment(nextEnv);
+    const result = await readHermesConfigurationData();
+    if (revision !== configurationRevision.current) return;
+    if (result.ok) {
+      setConfiguration(result.configuration);
+      if (environmentReadRevision === environmentRevision.current) setEnvironment(result.environment);
       setDrafts((current) => discardDrafts ? {} : Object.fromEntries(
-        Object.entries(current).filter(([path]) => Object.hasOwn(nextConfig.fields, path)),
+        Object.entries(current).filter(([path]) => Object.hasOwn(result.configuration.fields, path)),
       ));
       setInvalidFields((current) => discardDrafts ? {} : Object.fromEntries(
-        Object.entries(current).filter(([path]) => Object.hasOwn(nextConfig.fields, path)),
+        Object.entries(current).filter(([path]) => Object.hasOwn(result.configuration.fields, path)),
       ));
       setFieldTexts((current) => discardDrafts ? {} : Object.fromEntries(
-        Object.entries(current).filter(([path]) => Object.hasOwn(nextConfig.fields, path)),
+        Object.entries(current).filter(([path]) => Object.hasOwn(result.configuration.fields, path)),
       ));
       setNotice(null);
       if (!hasLoadedConfiguration.current) {
         hasLoadedConfiguration.current = true;
-        setCategory(nextConfig.categoryOrder[0] ?? Object.values(nextConfig.fields)[0]?.category ?? "general");
+        setCategory(result.configuration.categoryOrder[0]
+          ?? Object.values(result.configuration.fields)[0]?.category
+          ?? "general");
       }
-    } catch (loadError) {
-      if (revision === configurationRevision.current) {
-        console.warn("Hermes configuration refresh failed", loadError instanceof Error ? loadError.name : "UnknownError");
-        setError(loadError instanceof HermesConfigurationError ? loadError.message : "Hermes configuration is unavailable.");
-      }
-    } finally {
-      if (revision === configurationRevision.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+    } else {
+      console.warn("Hermes configuration refresh failed", result.error instanceof Error ? result.error.name : "UnknownError");
+      setError(result.error instanceof HermesConfigurationError ? result.error.message : "Hermes configuration is unavailable.");
     }
+    setLoading(false);
+    setRefreshing(false);
   };
 
   useEffect(() => {
@@ -830,20 +839,25 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
             </TabsContent>
           </Tabs>
         ) : null}
-        {confirmation && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-6">
-            <div
+        <Dialog open={confirmation !== null} onOpenChange={(nextOpen) => {
+          if (!nextOpen) setConfirmation(null);
+        }}>
+          {confirmation && (
+            <DialogContent
               role="alertdialog"
-              aria-modal="true"
-              aria-label={confirmation === "refresh" ? "Confirm refresh" : "Confirm close"}
-              className="w-full max-w-sm rounded-xl border bg-background p-5 shadow-xl"
+              showCloseButton={false}
+              className="max-w-sm gap-0 p-5"
+              style={{ zIndex: SHELL_Z_INDEX.popover }}
+              overlayStyle={{ zIndex: SHELL_Z_INDEX.popover }}
             >
-              <h3 className="text-sm font-semibold">
+              <DialogTitle className="text-sm">
                 {confirmation === "refresh"
                   ? "Discard unsaved changes and refresh?"
                   : "Discard unsaved changes and close?"}
-              </h3>
-              <p className="mt-2 text-xs text-muted-foreground">Your unsaved Hermes setting changes will be lost.</p>
+              </DialogTitle>
+              <DialogDescription className="mt-2 text-xs">
+                Your unsaved Hermes setting changes will be lost.
+              </DialogDescription>
               <div className="mt-4 flex justify-end gap-2">
                 <Button size="sm" variant="outline" onClick={() => setConfirmation(null)}>Cancel</Button>
                 <Button
@@ -865,9 +879,9 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
                   {confirmation === "refresh" ? "Discard and refresh" : "Discard and close"}
                 </Button>
               </div>
-            </div>
-          </div>
-        )}
+            </DialogContent>
+          )}
+        </Dialog>
       </DialogContent>
     </Dialog>
   );
