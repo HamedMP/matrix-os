@@ -136,7 +136,7 @@ git commit -m "feat(contracts): share Hermes configuration schemas"
 - Consumes: shared Hermes schemas from Task 1 and `AuthService`.
 - Produces: five typed IPC channels named in the approved design and main-client functions with matching request/response types.
 
-- [ ] **Step 1: Write failing main-client tests**
+- [x] **Step 1: Write failing main-client tests**
 
 Cover bearer authentication, selected runtime query routing, 10/15 second abort signals, strict response validation, generic errors, bounded request validation, and DELETE bodies.
 
@@ -160,13 +160,13 @@ it("never exposes an upstream body when a write fails", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the client test and verify red**
+- [x] **Step 2: Run the client test and verify red**
 
 Run: `flox activate -- bun run test -- tests/desktop/hermes-configuration-client.test.ts`
 
 Expected: FAIL because `desktop/src/main/hermes/configuration-client.ts` does not exist.
 
-- [ ] **Step 3: Implement the trusted main client**
+- [x] **Step 3: Implement the trusted main client**
 
 Export these functions:
 
@@ -180,7 +180,7 @@ export function removeHermesCredential(auth: AuthService, request: HermesCredent
 
 Build URLs from `auth.getGatewayOrigin()` and `auth.getStatus().runtimeSlot`, require `auth.getToken()`, parse all bodies with shared schemas, and throw only `Hermes configuration is unavailable.` or `Hermes configuration could not be saved.`.
 
-- [ ] **Step 4: Write failing IPC contract and handler tests**
+- [x] **Step 4: Write failing IPC contract and handler tests**
 
 Assert malformed paths, keys, and oversized credential values are rejected in preload/main contracts; valid calls reach the injected handler dependency; returned secrets or malformed responses are rejected.
 
@@ -191,7 +191,7 @@ expect(INVOKE_CHANNELS["runtime:set-hermes-credential"].request.safeParse({
 }).success).toBe(false);
 ```
 
-- [ ] **Step 5: Add the typed IPC channels and registration-time dependencies**
+- [x] **Step 5: Add the typed IPC channels and registration-time dependencies**
 
 Extend `INVOKE_CHANNELS` with:
 
@@ -205,13 +205,13 @@ Extend `INVOKE_CHANNELS` with:
 
 Add five required functions to `HandlerContext`, register them directly, and inject the Task 2 main-client functions from `desktop/src/main/index.ts`.
 
-- [ ] **Step 6: Run Desktop client and IPC tests and verify green**
+- [x] **Step 6: Run Desktop client and IPC tests and verify green**
 
 Run: `flox activate -- bun run test -- tests/desktop/hermes-configuration-client.test.ts tests/desktop/ipc-contract.test.ts tests/desktop/ipc-handlers.test.ts`
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 7: Commit the trusted transport slice**
+- [x] **Step 7: Commit the trusted transport slice**
 
 ```bash
 git add desktop/src/main/hermes/configuration-client.ts desktop/src/shared/ipc-contract.ts desktop/src/main/ipc/handlers.ts desktop/src/main/index.ts tests/desktop/hermes-configuration-client.test.ts tests/desktop/ipc-contract.test.ts tests/desktop/ipc-handlers.test.ts
