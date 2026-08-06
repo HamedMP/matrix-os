@@ -628,9 +628,12 @@ describe("Hermes agent runtime services", () => {
       }),
       stop: vi.fn(async () => {}),
     };
-    const readJson = vi.fn(async (path: string) => path === "/api/status"
-      ? { gateway_running: active === "hermes" }
-      : {
+    const readJson = vi.fn(async (path: string) => {
+      if (path === "/api/status") {
+        return { gateway_running: active === "hermes" };
+      }
+      if (path === "/api/model/options") {
+        return {
           provider: "nous",
           model: "hermes-4-405b",
           providers: [{
@@ -640,7 +643,11 @@ describe("Hermes agent runtime services", () => {
             auth_type: "oauth",
             models: ["hermes-4-405b"],
           }],
-        });
+        };
+      }
+      if (path === "/api/config") return {};
+      throw new Error(`Unexpected Hermes path: ${path}`);
+    });
     const openClawRpc = {
       call: vi.fn(async (method: string) => {
         if (method === "health") return { ok: true, ts: 1_789_000_000_000 };
@@ -685,11 +692,19 @@ describe("Hermes agent runtime services", () => {
     });
 
     await services.source(new AbortController().signal);
-    expect(readJson).toHaveBeenCalledTimes(2);
+    expect(readJson.mock.calls.map(([path]) => path)).toEqual([
+      "/api/status",
+      "/api/model/options",
+      "/api/config",
+    ]);
     await services.controller.update({ runtime: "openclaw", revision: 0 });
     await services.controller.update({ runtime: "hermes", revision: 1 });
 
-    expect(readJson).toHaveBeenCalledTimes(6);
+    expect(readJson).toHaveBeenCalledTimes(9);
+    for (const path of ["/api/status", "/api/model/options", "/api/config"]) {
+      expect(readJson.mock.calls.filter(([calledPath]) => calledPath === path))
+        .toHaveLength(3);
+    }
     expect(hostControl.stop).not.toHaveBeenCalled();
     await services.controller.close();
   });
