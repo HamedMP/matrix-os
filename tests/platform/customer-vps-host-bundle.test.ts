@@ -1117,7 +1117,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).not.toContain('echo "$fleet_machine"');
   });
 
-  it('preview cleanup can remove one legacy failed same-handle machine without adopting a live mismatched slot', () => {
+  it('preview cleanup removes bounded legacy failed same-handle machines without adopting a live mismatched slot', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/terminal-runtime-spikes.yml'), 'utf8');
 
@@ -1126,11 +1126,16 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       '              (.runtimeSlot == $handle or .status == "failed")',
     );
     expect(workflow).toContain(
-      '.handle == $handle and .machineId == $id and .status != "deleted"',
+      'type == "array" and length >= 1 and length <= 8',
     );
-    expect(workflow).not.toContain(
-      '.handle == $handle and .runtimeSlot == $handle and\n' +
-      '              .machineId == $id and .status != "deleted"',
+    expect(workflow).toContain(
+      '(unique | length) == length',
+    );
+    expect(workflow).toContain(
+      'while IFS= read -r machine_id; do',
+    );
+    expect(workflow).toContain(
+      '(.machineId as $machine_id | $ids | index($machine_id)) != null',
     );
   });
 
