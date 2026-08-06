@@ -5,7 +5,7 @@ import { access, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/pro
 import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
+import { atomicCreateJson, atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
 import { containsDeniedFileApiPath, resolveExistingFileApiPath } from "./path-security.js";
 
 export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -340,18 +340,6 @@ export function createProjectManager(options: {
         const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
         const fingerprint = createRequestFingerprint({ mode, slug, name, localPath: realLocalPath, ownerScope });
         return withProjectLock(slug, async () => {
-          if (await pathExists(metadataPath)) {
-            const existing = await readProjectConfig(homePath, slug);
-            const idempotentProject = isIdempotentProjectRetry({
-              existing,
-              clientRequestId: input.clientRequestId,
-              fingerprint,
-            });
-            if (idempotentProject) {
-              return { ok: true, status: 200, project: idempotentProject };
-            }
-            return genericError(409, "slug_conflict", "Project slug already exists");
-          }
           await mkdir(metadataPath, { recursive: true });
           const timestamp = nowIso(options.now);
           const project: ProjectConfig = {
@@ -369,7 +357,19 @@ export function createProjectManager(options: {
             createRequestId: input.clientRequestId,
             createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           };
-          await atomicWriteJson(join(metadataPath, "config.json"), project);
+          const created = await atomicCreateJson(join(metadataPath, "config.json"), project);
+          if (!created) {
+            const existing = await readProjectConfig(homePath, slug);
+            const idempotentProject = isIdempotentProjectRetry({
+              existing,
+              clientRequestId: input.clientRequestId,
+              fingerprint,
+            });
+            if (idempotentProject) {
+              return { ok: true, status: 200, project: idempotentProject };
+            }
+            return genericError(409, "slug_conflict", "Project slug already exists");
+          }
           return { ok: true, status: 201, project };
         });
       }

@@ -75,7 +75,7 @@ export async function submitClone(
 
 export async function submitNewFolder(
   ctx: AddProjectSubmitContext,
-  input: { name: string; parentPath: string },
+  input: { name: string; parentPath: string; clientRequestId: string },
 ): Promise<void> {
   const parentPath = input.parentPath.trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
   // Selecting the visible Projects directory is semantically identical to the
@@ -96,10 +96,26 @@ export async function submitNewFolder(
   // behind; the user can connect it with "Existing folder".
   let createdPath: string;
   try {
-    const created = await ctx.api.post<{ path?: unknown }>("/api/projects/mkdir", {
+    const body = {
       name: slugifyProjectName(input.name),
       parent: parentPath,
-    });
+      clientRequestId: input.clientRequestId,
+    };
+    let created: { path?: unknown };
+    try {
+      created = await ctx.api.post<{ path?: unknown }>(
+        "/api/projects/mkdir",
+        body,
+        { timeoutMs: 30_000 },
+      );
+    } catch (err: unknown) {
+      if (!(err instanceof AppError) || err.category !== "timeout") throw err;
+      created = await ctx.api.post<{ path?: unknown }>(
+        "/api/projects/mkdir",
+        body,
+        { timeoutMs: 310_000 },
+      );
+    }
     if (typeof created.path !== "string" || created.path.length === 0) {
       if (ctx.isCurrent()) ctx.setError("Couldn't create the folder. Try again.");
       return;

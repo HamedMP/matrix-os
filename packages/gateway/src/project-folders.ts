@@ -9,7 +9,8 @@
 //   - custom parent: <parent>/<name> anywhere else non-protected in the
 //     home. The projects registry itself is manager-owned metadata and is
 //     rejected as a custom parent.
-import { lstat, mkdir, realpath, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, readdir, realpath, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX } from "./project-manager.js";
@@ -19,12 +20,24 @@ import {
   isProtectedHomeSubpath,
   resolveWithinHome,
 } from "./path-security.js";
+import { atomicCreateJson, readJsonFile, type OwnerScope } from "./state-ops.js";
 
 type Result<T> = { ok: true; status?: number } & T;
 type Failure = { ok: false; status: number; error: { code: string; message: string } };
 
 const FolderNameSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
 const ParentSchema = z.string().trim().min(1).max(1024);
+const ClientRequestIdSchema = z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/);
+
+interface FolderRequestReceipt {
+  fingerprint: string;
+  path: string;
+  ownerScope: OwnerScope;
+  createdAt: string;
+}
+
+const MAX_FOLDER_REQUEST_RECEIPTS = 256;
+const FOLDER_REQUEST_RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
 
 function failure(status: number, code: string, message: string): Failure {
   return { ok: false, status, error: { code, message } };
@@ -44,6 +57,83 @@ function overlapsRoot(root: string, path: string): boolean {
 
 export function createProjectFolders(options: { homePath: string }) {
   const homePath = resolve(options.homePath);
+
+  function receiptPath(clientRequestId: string): string {
+    return join(homePath, "system", "project-folder-requests", `${clientRequestId}.json`);
+  }
+
+  async function pruneReceipts(): Promise<void> {
+    const root = join(homePath, "system", "project-folder-requests");
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
+    }
+    const files: Array<{ path: string; mtimeMs: number }> = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const path = join(root, entry.name);
+      let stats;
+      try {
+        stats = await lstat(path);
+      } catch (err: unknown) {
+        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw err;
+      }
+      if (stats.isSymbolicLink() || !stats.isFile()) continue;
+      files.push({ path, mtimeMs: stats.mtimeMs });
+    }
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    const expiredBefore = Date.now() - FOLDER_REQUEST_RECEIPT_TTL_MS;
+    const overflow = Math.max(0, files.length - MAX_FOLDER_REQUEST_RECEIPTS + 1);
+    await Promise.all(files.map(async (file, index) => {
+      if (file.mtimeMs < expiredBefore || index < overflow) await rm(file.path, { force: true });
+    }));
+  }
+
+  async function readReceipt(clientRequestId: string): Promise<FolderRequestReceipt | null> {
+    try {
+      const receipt = await readJsonFile<FolderRequestReceipt>(receiptPath(clientRequestId));
+      return typeof receipt.fingerprint === "string"
+        && typeof receipt.path === "string"
+        && typeof receipt.createdAt === "string"
+        && (receipt.ownerScope?.type === "user" || receipt.ownerScope?.type === "org")
+        && typeof receipt.ownerScope.id === "string"
+        ? receipt
+        : null;
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      if (err instanceof SyntaxError) return null;
+      throw err;
+    }
+  }
+
+  async function receiptTargetExists(path: string): Promise<boolean> {
+    const target = resolveWithinHome(homePath, path);
+    if (!target) return false;
+    try {
+      return (await lstat(target)).isDirectory();
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
+    }
+  }
+
+  async function reconcileReceipt(
+    clientRequestId: string,
+    fingerprint: string,
+  ): Promise<Result<{ path: string }> | null> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const receipt = await readReceipt(clientRequestId);
+      if (receipt?.fingerprint === fingerprint && await receiptTargetExists(receipt.path)) {
+        return { ok: true, status: 200, path: receipt.path };
+      }
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 25));
+    }
+    return null;
+  }
 
   // Creates projects/<name>/repo atomically: mkdir without recursive fails
   // with EEXIST when the slug slot is taken, so a conflict can never
@@ -131,15 +221,65 @@ export function createProjectFolders(options: { homePath: string }) {
   }
 
   return {
-    async createFolder(input: { name: string; parent?: string }): Promise<Result<{ path: string }> | Failure> {
+    async createFolder(input: {
+      name: string;
+      parent?: string;
+      clientRequestId?: string;
+      ownerScope?: OwnerScope;
+    }): Promise<Result<{ path: string }> | Failure> {
       if (!FolderNameSchema.safeParse(input.name).success) {
         return failure(400, "invalid_folder_name", "Folder name is invalid");
       }
       const parent = input.parent?.trim().replace(/\/+$/, "");
-      if (!parent || parent === "projects") {
-        return createRegistryFolder(input.name);
+      if (input.clientRequestId && !ClientRequestIdSchema.safeParse(input.clientRequestId).success) {
+        return failure(400, "invalid_request", "Folder request is invalid");
       }
-      return createNestedFolder(input.name, parent);
+      const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+      const fingerprint = createHash("sha256")
+        .update(JSON.stringify({ name: input.name, parent: parent || "projects", ownerScope }))
+        .digest("hex");
+      if (input.clientRequestId) {
+        const receipt = await readReceipt(input.clientRequestId);
+        if (receipt) {
+          if (receipt.fingerprint !== fingerprint) {
+            return failure(409, "request_conflict", "Folder request conflicts with an earlier request");
+          }
+          if (await receiptTargetExists(receipt.path)) {
+            return { ok: true, status: 200, path: receipt.path };
+          }
+          await rm(receiptPath(input.clientRequestId), { force: true });
+        }
+        // Preserve an existing replay receipt even when the store is at its
+        // cap; reserve room only for a genuinely new receipt.
+        await pruneReceipts();
+      }
+
+      const result = !parent || parent === "projects"
+        ? await createRegistryFolder(input.name)
+        : await createNestedFolder(input.name, parent);
+      if (!result.ok) {
+        if (input.clientRequestId && result.error.code === "folder_conflict") {
+          const reconciled = await reconcileReceipt(input.clientRequestId, fingerprint);
+          if (reconciled) return reconciled;
+        }
+        return result;
+      }
+      if (!input.clientRequestId) return result;
+
+      const published = await atomicCreateJson(receiptPath(input.clientRequestId), {
+        fingerprint,
+        path: result.path,
+        ownerScope,
+        createdAt: new Date().toISOString(),
+      } satisfies FolderRequestReceipt);
+      if (published) return result;
+      const receipt = await readReceipt(input.clientRequestId);
+      if (receipt?.fingerprint === fingerprint && receipt.path === result.path) {
+        return { ok: true, status: 200, path: receipt.path };
+      }
+      const createdTarget = resolveWithinHome(homePath, result.path);
+      if (createdTarget) await rm(createdTarget, { recursive: true, force: true });
+      return failure(409, "request_conflict", "Folder request conflicts with an earlier request");
     },
   };
 }

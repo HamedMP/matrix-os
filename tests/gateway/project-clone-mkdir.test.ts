@@ -249,6 +249,25 @@ describe("project clone and mkdir routes", () => {
       }));
     });
 
+    it("preserves the manager status for an idempotent replay", async () => {
+      const projectManager = makeProjectManager({
+        createProject: vi.fn(async () => ({
+          ok: true as const,
+          status: 200,
+          project: { id: "proj_1", name: "My App", slug: "my-app", localPath: "/x", addedAt: "", updatedAt: "" },
+        })),
+      });
+      const app = createWorkspaceRoutes({ homePath, projectManager });
+
+      const res = await app.request(jsonRequest("/api/projects", {
+        mode: "scratch",
+        name: "My App",
+        clientRequestId: "req_desktop_project_123",
+      }));
+
+      expect(res.status).toBe(200);
+    });
+
     it("passes an optional branch to the project manager", async () => {
       const projectManager = makeProjectManager();
       const app = createWorkspaceRoutes({ homePath, projectManager });
@@ -403,6 +422,46 @@ describe("project clone and mkdir routes", () => {
       await expect(res.json()).resolves.toEqual({ path: "code/side-project" });
       const created = await stat(join(homePath, "code", "side-project"));
       expect(created.isDirectory()).toBe(true);
+    });
+
+    it("returns the same custom folder for an idempotent mkdir retry", async () => {
+      await mkdir(join(homePath, "code"), { recursive: true });
+      const app = createWorkspaceRoutes({ homePath });
+      const request = {
+        name: "side-project",
+        parent: "code",
+        clientRequestId: "req_desktop_folder_123",
+      };
+
+      const first = await app.request(jsonRequest("/api/projects/mkdir", request));
+      const retry = await app.request(jsonRequest("/api/projects/mkdir", request));
+
+      expect(first.status).toBe(201);
+      expect(retry.status).toBe(200);
+      await expect(retry.json()).resolves.toEqual({ path: "code/side-project" });
+    });
+
+    it("reconciles overlapping idempotent mkdir requests", async () => {
+      await mkdir(join(homePath, "code"), { recursive: true });
+      const firstManager = createProjectFolders({ homePath });
+      const secondManager = createProjectFolders({ homePath });
+      const request = {
+        name: "side-project",
+        parent: "code",
+        clientRequestId: "req_desktop_folder_overlap",
+        ownerScope: { type: "user" as const, id: "user_123" },
+      };
+
+      const [first, second] = await Promise.all([
+        firstManager.createFolder(request),
+        secondManager.createFolder(request),
+      ]);
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) throw new Error("expected idempotent folder creation");
+      expect(first.path).toBe("code/side-project");
+      expect(second.path).toBe(first.path);
     });
 
     it("allows a safe child beside a denied subtree", async () => {

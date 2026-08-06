@@ -94,6 +94,7 @@ const CloneProjectSchema = z.object({
 const MkdirFolderSchema = z.object({
   name: z.string().trim().regex(PROJECT_SLUG_REGEX),
   parent: z.string().trim().min(1).max(1024).optional(),
+  clientRequestId: z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/).optional(),
 });
 
 const CreateWorktreeSchema = z.object({
@@ -338,7 +339,7 @@ export function createWorkspaceRoutes(options: {
       ownerScope,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ project: result.project }, 201);
+    return c.json({ project: result.project }, status(result.status ?? 201));
   });
 
   // Purpose-specific add-project endpoints used by the desktop dialog. Both
@@ -368,17 +369,20 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/projects/mkdir", limited, async (c) => {
     const body = await parseJson(c, MkdirFolderSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
     try {
-      getOwnerScope(c);
+      ownerScope = getOwnerScope(c);
     } catch (err: unknown) {
       return principalError(c, err);
     }
     const result = await projectFolders.createFolder({
       name: body.value.name,
       parent: body.value.parent,
+      clientRequestId: body.value.clientRequestId,
+      ownerScope,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ path: result.path }, 201);
+    return c.json({ path: result.path }, status(result.status ?? 201));
   });
 
   app.get("/api/workspace/projects", async (c) => {

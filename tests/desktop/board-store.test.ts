@@ -147,6 +147,8 @@ describe("createProject", () => {
       clientRequestId: expect.stringMatching(/^req_[A-Za-z0-9_-]+$/),
     });
     expect(retryBody).toEqual(firstBody);
+    expect(post.mock.calls[0]?.[2]).toEqual({ timeoutMs: 30_000 });
+    expect(post.mock.calls[1]?.[2]).toEqual({ timeoutMs: 310_000 });
     expect(useBoard.getState().error).toBeNull();
   });
 
