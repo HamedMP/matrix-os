@@ -58,6 +58,16 @@ export function clearProjectWorkspaces(): void {
   useProjectWorkspaces.setState({ entries: {}, runtimeScope: null });
 }
 
+export function clearProjectWorkspace(projectId: string): void {
+  nextGeneration(projectId);
+  useProjectWorkspaces.setState((state) => {
+    if (!(projectId in state.entries)) return state;
+    const entries = { ...state.entries };
+    delete entries[projectId];
+    return { entries };
+  });
+}
+
 function capEntries(
   entries: Record<string, ProjectWorkspaceEntry>,
   keepProjectId: string,

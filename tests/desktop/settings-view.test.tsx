@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsView from "../../desktop/src/renderer/src/features/settings/SettingsView";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { useProjectLifecycle } from "../../desktop/src/renderer/src/stores/project-lifecycle";
+import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
 describe("SettingsView", () => {
   beforeEach(() => {
@@ -28,6 +30,7 @@ describe("SettingsView", () => {
       runtimeSlot: "primary",
       api: null,
     });
+    useProjectLifecycle.setState(useProjectLifecycle.getInitialState(), true);
   });
 
   afterEach(() => {
@@ -74,5 +77,37 @@ describe("SettingsView", () => {
 
     await waitFor(() => expect(useUi.getState().requestedSettingsSection).toBeNull());
     expect(screen.getByRole("heading", { name: "Account" })).not.toBeNull();
+  });
+
+  it("manages archived projects from the Machine settings group", async () => {
+    const post = vi.fn(async () => ({ ok: true, action: "restore" }));
+    const api = {
+      baseUrl: "https://x.test",
+      get: vi.fn(async (path: string) => path.includes("visibility=archived")
+        ? { projects: [{
+            slug: "customer-app",
+            name: "Customer app",
+            kind: "folder",
+            archivedAt: "2026-08-06T13:00:00.000Z",
+          }] }
+        : { projects: [] }),
+      post,
+      patch: vi.fn(),
+      put: vi.fn(),
+      delete: vi.fn(),
+      getText: vi.fn(),
+      getBlob: vi.fn(),
+      putText: vi.fn(),
+    } as ApiClient;
+    useConnection.setState({ api });
+
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Archived projects" })).not.toBeNull());
+    expect(screen.getByText("Customer app")).not.toBeNull();
+    expect(screen.getByText(/Connected folder/)).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Restore Customer app" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/projects/customer-app/actions", { type: "restore" }));
   });
 });

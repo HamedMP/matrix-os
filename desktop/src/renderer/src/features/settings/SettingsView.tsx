@@ -6,6 +6,7 @@ import {
   Cpu,
   MonitorCog,
   Palette,
+  FolderArchive,
   Server,
   Sparkles,
   UserRound,
@@ -21,6 +22,7 @@ import { IntegrationsSettingsSection } from "../integrations/IntegrationsSetting
 import CronSection from "./sections/CronSection";
 import ProvidersSection from "./sections/ProvidersSection";
 import SystemSection from "./sections/SystemSection";
+import ProjectsSection from "./sections/ProjectsSection";
 import { useUi } from "../../stores/ui";
 
 type SectionId =
@@ -28,6 +30,7 @@ type SectionId =
   | "appearance"
   | "billing"
   | "runtime"
+  | "projects"
   | "agent"
   | "providers"
   | "channels"
@@ -42,6 +45,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: st
   { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
   { id: "providers", label: "Providers", icon: <Bot size={15} />, group: "Machine" },
   { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
+  { id: "projects", label: "Projects", icon: <FolderArchive size={15} />, group: "Machine" },
   { id: "channels", label: "Channels", icon: <MonitorCog size={15} />, group: "Machine" },
   { id: "integrations", label: "Integrations", icon: <Blocks size={15} />, group: "Machine" },
   { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },
@@ -109,6 +113,7 @@ export default function SettingsView() {
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
+          {section === "projects" ? <ProjectsSection /> : null}
           {section === "agent" ? <AgentSection /> : null}
           {section === "providers" ? <ProvidersSection /> : null}
           {section === "channels" ? <ChannelsSection /> : null}

@@ -4,7 +4,7 @@
 **Linear Issue**: `MAT-267`
 **Spec Directory**: `specs/110-desktop-project-lifecycle/`
 **Created**: 2026-08-06
-**Status**: Draft — product design approved; written spec review pending
+**Status**: Approved — product design and written specification approved
 **Input**: Add discoverable archive, restore, and permanent-delete controls for
 projects shown in the Electron desktop sidebar. Archived projects are managed in
 Settings. Permanent deletion removes Matrix-owned project data while preserving

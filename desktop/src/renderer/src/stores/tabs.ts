@@ -56,6 +56,7 @@ interface TabsState {
   activeTabId: string | null;
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
   closeTab(id: string): void;
+  closeProjectTabs(projectSlug: string): void;
   focusTab(id: string): void;
   renameTab(id: string, title: string): void;
   renameTerminalSession(fromName: string, toName: string): void;
@@ -102,6 +103,14 @@ export const useTabs = create<TabsState>()((set, get) => ({
         activeTabId = next?.id ?? null;
       }
       return { tabs, activeTabId };
+    }),
+
+  closeProjectTabs: (projectSlug) =>
+    set((state) => {
+      const tabs = state.tabs.filter((tab) => tab.projectSlug !== projectSlug);
+      if (tabs.length === state.tabs.length) return state;
+      const home = tabs.find((tab) => tab.kind === "home");
+      return { tabs, activeTabId: home?.id ?? tabs[0]?.id ?? null };
     }),
 
   focusTab: (id) => set((state) => (state.tabs.some((t) => t.id === id) ? { activeTabId: id } : state)),

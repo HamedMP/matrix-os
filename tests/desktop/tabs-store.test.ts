@@ -74,6 +74,18 @@ describe("tabs store", () => {
     expect(useTabs.getState().activeTabId).toBeNull();
   });
 
+  it("closes every tab for one project and focuses Home when a project lifecycle action succeeds", () => {
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    useTabs.getState().openTab({ kind: "project", projectSlug: "repo", title: "Repo" });
+    useTabs.getState().openTab({ kind: "task", projectSlug: "repo", taskId: "task_1", title: "Task" });
+    useTabs.getState().openTab({ kind: "project", projectSlug: "other", title: "Other" });
+
+    useTabs.getState().closeProjectTabs("repo");
+
+    expect(useTabs.getState().tabs.map((tab) => tab.projectSlug)).toEqual([undefined, "other"]);
+    expect(useTabs.getState().activeTabId).toBe(home);
+  });
+
   it("focusTab ignores unknown ids", () => {
     const id = useTabs.getState().openTab({ kind: "home", title: "Home" });
     useTabs.getState().focusTab("nope");

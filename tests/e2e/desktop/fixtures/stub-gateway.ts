@@ -443,6 +443,7 @@ export function codingAgentSummary(): RuntimeSummary {
 
 export async function startStubGateway(): Promise<StubGateway> {
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
+  let projectLifecycle: "active" | "archived" | "deleted" = "active";
   const state: StubGateway["state"] = {
     deviceCodeRequests: 0,
     tokenRequests: 0,
@@ -570,8 +571,33 @@ export async function startStubGateway(): Promise<StubGateway> {
       return;
     }
 
-    if (path === "/api/workspace/projects") {
-      json(res, 200, { projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
+    if (req.method === "GET" && path === "/api/workspace/projects") {
+      const visibility = url.searchParams.get("visibility") ?? "active";
+      const visible = projectLifecycle !== "deleted" && (
+        visibility === "all" ||
+        (visibility === "active" && projectLifecycle === "active") ||
+        (visibility === "archived" && projectLifecycle === "archived")
+      );
+      json(res, 200, {
+        projects: visible ? [{
+          slug: "matrix-os",
+          name: "Matrix OS",
+          kind: "github",
+          ...(projectLifecycle === "archived" ? { archivedAt: NOW } : {}),
+        }] : [],
+      });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/projects/matrix-os/actions") {
+      const body = await readBody(req);
+      if (body.type === "archive") projectLifecycle = "archived";
+      else if (body.type === "restore") projectLifecycle = "active";
+      else if (body.type === "delete" && body.confirmation === "Matrix OS") projectLifecycle = "deleted";
+      else {
+        json(res, 400, { error: "Project action is invalid", code: "invalid_request" });
+        return;
+      }
+      json(res, 200, { ok: true, action: body.type, projectSlug: "matrix-os" });
       return;
     }
     if (req.method === "GET" && path === "/api/settings/skills") {

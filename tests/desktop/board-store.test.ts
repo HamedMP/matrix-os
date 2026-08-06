@@ -98,8 +98,8 @@ describe("createProject", () => {
     const api = makeApi({
       get: vi.fn().mockResolvedValue({
         projects: [
-          { slug: "folder", name: "Folder", localPath: "/home/matrix/home/workspaces/folder" },
-          { slug: "repo", name: "Repo", localPath: "/home/matrix/home/projects/repo/repo", github: { owner: "o", repo: "r" } },
+          { slug: "folder", name: "Folder", kind: "folder", localPath: "/home/matrix/home/workspaces/folder" },
+          { slug: "repo", name: "Repo", kind: "github", localPath: "/home/matrix/home/projects/repo/repo", github: { owner: "o", repo: "r" } },
         ],
       }),
     });
@@ -107,8 +107,8 @@ describe("createProject", () => {
     await useBoard.getState().loadProjects(api);
 
     expect(useBoard.getState().projects).toEqual([
-      { slug: "folder", name: "Folder", localPath: "/home/matrix/home/workspaces/folder", githubBacked: false },
-      { slug: "repo", name: "Repo", localPath: "/home/matrix/home/projects/repo/repo", githubBacked: true },
+      { slug: "folder", name: "Folder", kind: "folder", localPath: "/home/matrix/home/workspaces/folder", githubBacked: false },
+      { slug: "repo", name: "Repo", kind: "github", localPath: "/home/matrix/home/projects/repo/repo", githubBacked: true },
     ]);
   });
 
@@ -119,8 +119,8 @@ describe("createProject", () => {
 
     const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
     expect(post).toHaveBeenCalledWith("/api/projects", { name: "My App", mode: "scratch" });
-    expect(project).toEqual({ slug: "my-app", name: "My App" });
-    expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App" }]);
+    expect(project).toEqual({ slug: "my-app", name: "My App", kind: "scratch" });
+    expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App", kind: "scratch" }]);
   });
 
   it("sends the url for a github project", async () => {
@@ -157,7 +157,7 @@ describe("createProject", () => {
 
     const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
 
-    expect(project).toEqual({ slug: "my-app", name: "My App" });
+    expect(project).toEqual({ slug: "my-app", name: "My App", kind: "scratch" });
     expect(useBoard.getState().error).toBe("offline");
   });
 
@@ -171,7 +171,7 @@ describe("createProject", () => {
 
     expect(project).toBeNull();
     expect(api.get).toHaveBeenCalledWith("/api/workspace/projects");
-    expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App" }]);
+    expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App", kind: "scratch" }]);
     expect(useBoard.getState().error).toBe("server");
   });
 
@@ -245,6 +245,7 @@ describe("loadProjects", () => {
     expect(useBoard.getState().projects).toEqual([{
       slug: "proj",
       name: "Proj",
+      kind: "scratch",
       localPath: "/x",
       githubBacked: false,
     }]);

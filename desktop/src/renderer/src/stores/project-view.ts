@@ -32,9 +32,11 @@ interface ProjectViewState {
 function persistEntries(entries: Record<string, ProjectViewEntry>, runtimeScope: string | null): void {
   if (!runtimeScope) return;
   const value: ProjectViewsState = { runtimeScope, views: entries };
-  void invoke("state:set", { key: "projectViews", value }).catch(() => {
-    console.warn("[project-view] view state could not be saved");
-  });
+  void Promise.resolve()
+    .then(() => invoke("state:set", { key: "projectViews", value }))
+    .catch(() => {
+      console.warn("[project-view] view state could not be saved");
+    });
 }
 
 function upsertEntry(
@@ -67,6 +69,15 @@ function upsertEntry(
 
 export function clearProjectViewRuntime(): void {
   useProjectView.setState({ entries: {}, runtimeScope: null });
+}
+
+export function clearProjectView(projectId: string): void {
+  const state = useProjectView.getState();
+  if (!(projectId in state.entries)) return;
+  const entries = { ...state.entries };
+  delete entries[projectId];
+  useProjectView.setState({ entries });
+  persistEntries(entries, state.runtimeScope);
 }
 
 export const useProjectView = create<ProjectViewState>()((set, get) => ({
