@@ -115,6 +115,18 @@ describe('platform/customer-vps', () => {
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
   });
 
+  it('accepts only a trusted tagged Cloud Run origin for candidate bootstrap progress', () => {
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBe('https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app');
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://candidate---api.matrix-os.com',
+    }).platformCandidateUrl).toBeUndefined();
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'http://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBeUndefined();
+  });
+
   it('does not use the private PostHog ingest host as the public browser host', () => {
     const config = loadCustomerVpsConfig({
       POSTHOG_HOST: 'https://eu.i.posthog.com',
@@ -1097,6 +1109,7 @@ describe('platform/customer-vps', () => {
     const { service, hetzner } = createService({
       config: createTestConfig({
         platformRegisterUrl: 'https://app.matrix-os.com/vps/register',
+        platformCandidateUrl: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
       }),
     });
 
@@ -1114,8 +1127,42 @@ describe('platform/customer-vps', () => {
     );
     expect(createInput?.userData).toContain(`MATRIX_IMAGE_VERSION=${bootstrapVersion}`);
     expect(createInput?.userData).toContain(
-      'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://candidate---app.matrix-os.com/vps/bootstrap-progress',
+      'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app/vps/bootstrap-progress',
     );
+  });
+
+  it('fails preview bootstrap closed without a trusted candidate callback origin', async () => {
+    const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-124-1-abcdef0';
+    await upsertHostBundleRelease(db, {
+      version: bootstrapVersion,
+      gitCommit: 'abcdef0123456789abcdef0123456789abcdef01',
+      gitRef: 'bootstrap',
+      buildTime: '2026-08-06T08:00:00.000Z',
+      bundleKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
+      checksumKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz.sha256`,
+      sha256: 'b'.repeat(64),
+      size: 1_257_725_742,
+      severity: 'normal',
+      updateType: 'manual',
+      changelog: 'Dormant preview bootstrap',
+      createdAt: '2026-08-06T08:01:00.000Z',
+    });
+    const { service, hetzner } = createService({
+      config: createTestConfig({ platformCandidateUrl: undefined }),
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion,
+    })).rejects.toMatchObject({
+      status: 503,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning failed',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    expect(await getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff112')).toBeUndefined();
   });
 
   it('fails preview provisioning closed when the requested bootstrap release is not registered', async () => {

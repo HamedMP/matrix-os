@@ -8,6 +8,7 @@ export interface CustomerVpsConfig {
   hostBundleUrl: string;
   hostBundleUrlOverride?: boolean;
   platformRegisterUrl: string;
+  platformCandidateUrl?: string;
   platformSecret: string;
   r2AccessKeyId: string;
   r2SecretAccessKey: string;
@@ -31,6 +32,29 @@ export interface CustomerVpsConfig {
 const DEFAULT_POSTHOG_PUBLIC_HOST = 'https://eu.posthog.com';
 const DEFAULT_PREVIEW_PROVISIONING_LIMIT = 8;
 const MAX_PREVIEW_PROVISIONING_LIMIT = 16;
+
+function taggedCloudRunOrigin(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== 'https:'
+      || url.username !== ''
+      || url.password !== ''
+      || url.port !== ''
+      || url.pathname !== '/'
+      || url.search !== ''
+      || url.hash !== ''
+      || !/^candidate---[a-z0-9-]+-[a-z0-9]{10}-[a-z]{2}\.a\.run\.app$/.test(url.hostname)
+    ) {
+      return undefined;
+    }
+    return url.origin;
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return undefined;
+    throw err;
+  }
+}
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
   if (value === undefined || value === '') return fallback;
@@ -60,6 +84,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
       `${bundleBaseUrl}/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`,
     hostBundleUrlOverride: Boolean(env.MATRIX_HOST_BUNDLE_URL),
     platformRegisterUrl: `${platformUrl.replace(/\/$/, '')}/vps/register`,
+    platformCandidateUrl: taggedCloudRunOrigin(env.PLATFORM_CANDIDATE_URL),
     platformSecret: env.PLATFORM_SECRET ?? '',
     r2AccessKeyId: env.S3_ACCESS_KEY_ID ?? env.R2_ACCESS_KEY_ID ?? '',
     r2SecretAccessKey: env.S3_SECRET_ACCESS_KEY ?? env.R2_SECRET_ACCESS_KEY ?? '',
