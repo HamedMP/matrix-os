@@ -48,6 +48,7 @@ export const BOARD_COLUMNS: readonly CardStatus[] = [
 ];
 
 const CardStatusSchema = z.enum(["todo", "running", "waiting", "blocked", "complete", "archived"]);
+const PROJECT_CREATE_TIMEOUT_MS = 30_000;
 
 const WireTaskSchema = z.object({
   id: z.string().min(1),
@@ -334,12 +335,24 @@ export const useBoard = create<BoardState>()((set, get) => {
       // new computer's board with the previous runtime's projects.
       const runtimeGeneration = captureRuntimeGeneration();
       try {
+        const clientRequestId = `req_desktop_project_${crypto.randomUUID()}`;
         const body = input.mode === "github"
-          ? { name: input.name, mode: "github" as const, url: input.url }
+          ? { name: input.name, mode: "github" as const, url: input.url, clientRequestId }
           : input.mode === "folder"
-            ? { name: input.name, mode: "folder" as const, path: input.path }
-            : { name: input.name, mode: "scratch" as const };
-        const res = await api.post<{ project: unknown }>("/api/projects", body);
+            ? { name: input.name, mode: "folder" as const, path: input.path, clientRequestId }
+            : { name: input.name, mode: "scratch" as const, clientRequestId };
+        const sendCreate = () => api.post<{ project: unknown }>(
+          "/api/projects",
+          body,
+          { timeoutMs: PROJECT_CREATE_TIMEOUT_MS },
+        );
+        let res: { project: unknown };
+        try {
+          res = await sendCreate();
+        } catch (err: unknown) {
+          if (!(err instanceof AppError) || err.category !== "timeout") throw err;
+          res = await sendCreate();
+        }
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const project = toProject(res.project);
         if (!project) {

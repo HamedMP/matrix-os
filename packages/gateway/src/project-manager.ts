@@ -102,6 +102,7 @@ function createRequestFingerprint(input: {
   mode: CreateProjectMode;
   slug: string;
   name?: string;
+  localPath?: string;
   repositoryUrl?: string;
   branch?: string;
   ownerScope: OwnerScope;
@@ -336,8 +337,19 @@ export function createProjectManager(options: {
           }
         }
         const metadataPath = projectPath(homePath, slug);
+        const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+        const fingerprint = createRequestFingerprint({ mode, slug, name, localPath: realLocalPath, ownerScope });
         return withProjectLock(slug, async () => {
           if (await pathExists(metadataPath)) {
+            const existing = await readProjectConfig(homePath, slug);
+            const idempotentProject = isIdempotentProjectRetry({
+              existing,
+              clientRequestId: input.clientRequestId,
+              fingerprint,
+            });
+            if (idempotentProject) {
+              return { ok: true, status: 200, project: idempotentProject };
+            }
             return genericError(409, "slug_conflict", "Project slug already exists");
           }
           await mkdir(metadataPath, { recursive: true });
@@ -353,7 +365,9 @@ export function createProjectManager(options: {
             localPath: realLocalPath,
             addedAt: timestamp,
             updatedAt: timestamp,
-            ownerScope: input.ownerScope ?? { type: "user", id: "local" },
+            ownerScope,
+            createRequestId: input.clientRequestId,
+            createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           };
           await atomicWriteJson(join(metadataPath, "config.json"), project);
           return { ok: true, status: 201, project };

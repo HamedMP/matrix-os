@@ -47,6 +47,7 @@ const CreateProjectSchema = z.object({
   name: z.string().trim().min(1).max(128).optional(),
   path: z.string().min(1).max(4096).optional(),
   branch: GitBranchSchema.optional(),
+  clientRequestId: z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/).optional(),
   mode: z.enum(["scratch", "github", "folder"]).optional(),
   ownerScope: z.object({
     type: z.enum(["user", "org"]),
@@ -332,6 +333,7 @@ export function createWorkspaceRoutes(options: {
       name: body.value.name,
       path: body.value.path,
       branch: body.value.branch,
+      clientRequestId: body.value.clientRequestId,
       mode: body.value.mode ?? (body.value.url ? "github" : "scratch"),
       ownerScope,
     });

@@ -233,6 +233,22 @@ describe("project clone and mkdir routes", () => {
   });
 
   describe("POST /api/projects branch passthrough", () => {
+    it("passes the idempotency key to the project manager", async () => {
+      const projectManager = makeProjectManager();
+      const app = createWorkspaceRoutes({ homePath, projectManager });
+
+      const res = await app.request(jsonRequest("/api/projects", {
+        mode: "scratch",
+        name: "My App",
+        clientRequestId: "req_desktop_project_123",
+      }));
+
+      expect(res.status).toBe(201);
+      expect(projectManager.createProject).toHaveBeenCalledWith(expect.objectContaining({
+        clientRequestId: "req_desktop_project_123",
+      }));
+    });
+
     it("passes an optional branch to the project manager", async () => {
       const projectManager = makeProjectManager();
       const app = createWorkspaceRoutes({ homePath, projectManager });
@@ -324,6 +340,30 @@ describe("project clone and mkdir routes", () => {
         error: { code: "invalid_branch", message: "Branch name is invalid" },
       });
       expect(runCommand).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("folder project idempotency", () => {
+    it("returns the original project when the same create request is retried", async () => {
+      await mkdir(join(homePath, "workspaces", "my-app"), { recursive: true });
+      const manager = createProjectManager({ homePath });
+      const input = {
+        mode: "folder" as const,
+        name: "My App",
+        path: "workspaces/my-app",
+        clientRequestId: "req_desktop_project_123",
+      };
+
+      const first = await manager.createProject(input);
+      const retry = await manager.createProject(input);
+
+      expect(first.ok).toBe(true);
+      expect(retry.ok).toBe(true);
+      if (!first.ok || !retry.ok) throw new Error("expected idempotent project creation");
+      expect(first.status).toBe(201);
+      expect(retry.status).toBe(200);
+      expect(retry.project.id).toBe(first.project.id);
+      expect(retry.project.slug).toBe("my-app");
     });
   });
 

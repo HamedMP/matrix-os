@@ -118,16 +118,48 @@ describe("createProject", () => {
     const api = makeApi({ post, get });
 
     const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
-    expect(post).toHaveBeenCalledWith("/api/projects", { name: "My App", mode: "scratch" });
+    expect(post).toHaveBeenCalledWith("/api/projects", {
+      name: "My App",
+      mode: "scratch",
+      clientRequestId: expect.stringMatching(/^req_[A-Za-z0-9_-]+$/),
+    }, { timeoutMs: 30_000 });
     expect(project).toEqual({ slug: "my-app", name: "My App" });
     expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App" }]);
+  });
+
+  it("recovers a timed-out project create with one idempotent retry", async () => {
+    const createdResponse = { project: { slug: "my-app", name: "My App" } };
+    const post = vi.fn()
+      .mockRejectedValueOnce(new AppError("timeout"))
+      .mockResolvedValueOnce(createdResponse);
+    const get = vi.fn().mockResolvedValue({ projects: [createdResponse.project] });
+    const api = makeApi({ post, get });
+
+    const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
+
+    expect(project).toEqual({ slug: "my-app", name: "My App" });
+    expect(post).toHaveBeenCalledTimes(2);
+    const firstBody = post.mock.calls[0]?.[1];
+    const retryBody = post.mock.calls[1]?.[1];
+    expect(firstBody).toMatchObject({
+      name: "My App",
+      mode: "scratch",
+      clientRequestId: expect.stringMatching(/^req_[A-Za-z0-9_-]+$/),
+    });
+    expect(retryBody).toEqual(firstBody);
+    expect(useBoard.getState().error).toBeNull();
   });
 
   it("sends the url for a github project", async () => {
     const post = vi.fn().mockResolvedValue({ project: { slug: "repo", name: "repo" } });
     const api = makeApi({ post, get: vi.fn().mockResolvedValue({ projects: [] }) });
     await useBoard.getState().createProject(api, { name: "repo", mode: "github", url: "https://github.com/o/repo" });
-    expect(post).toHaveBeenCalledWith("/api/projects", { name: "repo", mode: "github", url: "https://github.com/o/repo" });
+    expect(post).toHaveBeenCalledWith("/api/projects", {
+      name: "repo",
+      mode: "github",
+      url: "https://github.com/o/repo",
+      clientRequestId: expect.stringMatching(/^req_[A-Za-z0-9_-]+$/),
+    }, { timeoutMs: 30_000 });
   });
 
   it("connects a project to an existing computer folder", async () => {
@@ -146,7 +178,8 @@ describe("createProject", () => {
       name: "App",
       mode: "folder",
       path: "workspaces/app",
-    });
+      clientRequestId: expect.stringMatching(/^req_[A-Za-z0-9_-]+$/),
+    }, { timeoutMs: 30_000 });
   });
 
   it("preserves the refresh error when creation succeeds but the project list reload fails", async () => {
