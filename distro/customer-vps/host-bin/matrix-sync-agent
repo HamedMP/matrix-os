@@ -106,6 +106,31 @@ release_url_for_channel() { echo "$(platform_url)/system-bundles/channels/$1.jso
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
 
+compare_host_bundle_versions() {
+  local candidate="$1" current="$2"
+  python3 - "$candidate" "$current" <<'PY'
+import re
+import sys
+
+def parse(value):
+    match = re.fullmatch(r"v?(\d{4})\.(\d{2})\.(\d{2})[-.](\d+)", value)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+candidate = parse(sys.argv[1])
+current = parse(sys.argv[2])
+if candidate is None or current is None:
+    print("unknown")
+elif candidate > current:
+    print("newer")
+elif candidate < current:
+    print("older")
+else:
+    print("equal")
+PY
+}
+
 write_update_error() {
   local code="$1" message="$2" version="${3:-}" available_kb="${4:-}" required_kb="${5:-}"
   python3 - "$UPDATE_ERROR_MARKER" "$code" "$message" "$version" "$available_kb" "$required_kb" <<'PY'
@@ -193,7 +218,18 @@ check_for_update() {
     log "WARN: manifest missing 'version' field"; return 1
   fi
   cur="$(current_version)"
-  if [ "$remote_version" = "$cur" ]; then return 0; fi
+  if [ "$remote_version" = "$cur" ]; then
+    rm -f "$UPDATE_MARKER"
+    return 0
+  fi
+
+  local version_comparison
+  version_comparison="$(compare_host_bundle_versions "$remote_version" "$cur")"
+  if [ "$version_comparison" = "older" ]; then
+    log "Ignoring older channel release: $remote_version (current: $cur)"
+    rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
+    return 0
+  fi
 
   local severity update_type
   severity="$(json_field "$manifest" severity)"
