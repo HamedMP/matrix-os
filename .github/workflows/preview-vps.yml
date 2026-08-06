@@ -428,7 +428,9 @@ jobs:
                   type == "object"
                   and .clerkUserId == $owner
                   and .handle == $handle
-                  and .runtimeSlot == $handle
+                  # Preview rows created before per-PR slot isolation used the
+                  # fixed `preview` slot. Only failed rows reach this claim.
+                  and (.runtimeSlot == $handle or .runtimeSlot == "preview")
                   and .status == "failed"
                   and .deletedAt == null
                   and (.machineId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))

@@ -1095,7 +1095,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow.match(/\/vps\/preview\/provision/g)).toHaveLength(1);
   });
 
-  it('preview VPS workflow retires only the exact failed disposable preview before reprovisioning', () => {
+  it('preview VPS workflow retires only an exact or legacy-slot failed disposable preview before reprovisioning', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
@@ -1103,7 +1103,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('[ "$status" = "failed" ]');
     expect(workflow).toContain('.clerkUserId == $owner');
     expect(workflow).toContain('.handle == $handle');
-    expect(workflow).toContain('.runtimeSlot == $handle');
+    expect(workflow).toContain('(.runtimeSlot == $handle or .runtimeSlot == "preview")');
     expect(workflow).toContain('.status == "failed"');
     expect(workflow).toContain('.deletedAt == null');
     expect(workflow).toContain('test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")');
