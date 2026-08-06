@@ -305,10 +305,13 @@ function buildHostConfig(
   candidateBootstrapProgress = false,
 ): CustomerHostConfig {
   const registerUrl = new URL(config.platformRegisterUrl);
-  const bootstrapProgressUrl = new URL('/vps/bootstrap-progress', registerUrl.origin);
-  if (candidateBootstrapProgress && registerUrl.protocol === 'https:') {
-    bootstrapProgressUrl.hostname = `candidate---${registerUrl.hostname}`;
+  if (candidateBootstrapProgress && config.platformCandidateUrl === undefined) {
+    throw new CustomerVpsError(503, 'invalid_state', 'Provisioning failed');
   }
+  const bootstrapProgressUrl = new URL(
+    '/vps/bootstrap-progress',
+    candidateBootstrapProgress ? config.platformCandidateUrl : registerUrl.origin,
+  );
   return {
     machineId,
     clerkUserId: input.clerkUserId,
@@ -952,6 +955,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     const bundleRef = bootstrapVersion
       ? await resolvePreviewBootstrapRef(deps.db, deps.config, bootstrapVersion)
       : await resolveHostBundleRef(deps.db, deps.config);
+    if (bootstrapVersion && deps.config.platformCandidateUrl === undefined) {
+      throw new CustomerVpsError(503, 'invalid_state', 'Provisioning failed');
+    }
 
     let provisionRow: { existing: UserMachineRecord | null };
     try {

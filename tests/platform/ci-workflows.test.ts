@@ -272,6 +272,16 @@ describe('CI workflows', () => {
     expect(workflow).toContain('--min-instances "$min_instances"');
   });
 
+  it('injects the trusted tagged Cloud Run origin for preview bootstrap callbacks', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain("service_url=$(printf '%s\\n' \"$service_json\" | jq -r '.status.url // empty')");
+    expect(workflow).toContain('candidate_bootstrap_url="https://candidate---${service_url#https://}"');
+    expect(workflow).toContain('PLATFORM_CANDIDATE_URL=${candidate_bootstrap_url}');
+    expect(workflow).not.toContain('PLATFORM_CANDIDATE_URL=https://candidate---${PLATFORM_PUBLIC_URL#https://}');
+  });
+
   it('smokes the pre-VPS auth and onboarding shell surface before promotion', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
