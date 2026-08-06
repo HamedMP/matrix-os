@@ -13,6 +13,12 @@ describe("workspace startup recovery", () => {
           return { cleanedStaging: ["/home/matrixos/home/system/clone-staging/repo"] };
         }),
       },
+      projectLifecycleRecovery: {
+        recoverDeletingProjects: vi.fn(async () => {
+          calls.push("project-deletions");
+          return { recovered: 1, failed: 0 };
+        }),
+      },
       projectManager: {
         listManagedProjects: vi.fn(async () => {
           calls.push("projects");
@@ -80,6 +86,7 @@ describe("workspace startup recovery", () => {
 
     expect(calls).toEqual([
       "state-ops",
+      "project-deletions",
       "projects",
       "worktree-leases",
       "runtime-sessions",
@@ -95,6 +102,7 @@ describe("workspace startup recovery", () => {
     expect(result.status).toBe("ok");
     expect(result.steps).toEqual([
       expect.objectContaining({ name: "stateOps", status: "ok", cleanedStaging: 1 }),
+      expect.objectContaining({ name: "projectDeletions", status: "ok", recovered: 1 }),
       expect.objectContaining({ name: "projects", status: "ok", projects: 1 }),
       expect.objectContaining({ name: "worktreeLeases", status: "ok", worktrees: 1 }),
       expect.objectContaining({ name: "runtimeSessions", status: "ok", checked: 1 }),

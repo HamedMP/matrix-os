@@ -123,4 +123,35 @@ describe("review-store", () => {
     });
     await expect(stat(join(homePath, "system"))).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("deletes terminal project reviews but refuses to remove active review state", async () => {
+    const store = createReviewStore({ homePath });
+    await store.saveReview(record("rev_older"));
+    await store.saveReview({ ...record("rev_newer"), projectSlug: "other", status: "approved" });
+
+    await expect(store.deleteProjectReviews("repo"))
+      .resolves.toMatchObject({ ok: false, status: 409, error: { code: "project_active" } });
+    await store.saveReview({ ...record("rev_older"), status: "stopped" });
+    await expect(store.deleteProjectReviews("repo")).resolves.toEqual({ ok: true, deleted: 1 });
+
+    await expect(stat(join(homePath, "system", "reviews", "rev_older.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(homePath, "system", "reviews", "rev_newer.json"))).resolves.toBeTruthy();
+  });
+
+  it("inspects and deletes every project review without a pagination ceiling", async () => {
+    const store = createReviewStore({ homePath });
+    for (let index = 0; index < 101; index += 1) {
+      await store.saveReview({
+        ...record(`rev_bulk_${index}`),
+        status: index === 100 ? "queued" : "stopped",
+      });
+    }
+
+    await expect(store.getProjectLifecycleState("repo"))
+      .resolves.toEqual({ activeReviewCount: 1, reviewCount: 101 });
+    await expect(store.deleteProjectReviews("repo"))
+      .resolves.toMatchObject({ ok: false, status: 409 });
+    await store.saveReview({ ...record("rev_bulk_100"), status: "stopped" });
+    await expect(store.deleteProjectReviews("repo")).resolves.toEqual({ ok: true, deleted: 101 });
+  });
 });

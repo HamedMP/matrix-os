@@ -89,6 +89,30 @@ describe("worktree-manager", () => {
     expect(runCommand).toHaveBeenNthCalledWith(3, "git", ["worktree", "add", "-b", "symphony/mat-1", "--track", "--", expect.any(String), "origin/symphony/mat-1"], expect.any(Object));
   });
 
+  it("lists only live project worktree leases as lifecycle blockers", async () => {
+    const now = () => "2026-04-26T00:00:00.000Z";
+    const manager = createWorktreeManager({
+      homePath,
+      runCommand: vi.fn(async () => ({ stdout: "", stderr: "" })),
+      now,
+    });
+    const created = await manager.createWorktree({ projectSlug: "repo", branch: "feature/lifecycle" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    await expect(manager.listActiveLeases("repo")).resolves.toEqual({ ok: true, leases: [] });
+    await manager.acquireLease({
+      projectSlug: "repo",
+      worktreeId: created.worktree.id,
+      holderType: "session",
+      holderId: "sess_lifecycle",
+    });
+    await expect(manager.listActiveLeases("repo")).resolves.toMatchObject({
+      ok: true,
+      leases: [{ worktreeId: created.worktree.id, holderId: "sess_lifecycle" }],
+    });
+  });
+
   it("serializes concurrent creation for the same worktree", async () => {
     const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
     const manager = createWorktreeManager({ homePath, runCommand });

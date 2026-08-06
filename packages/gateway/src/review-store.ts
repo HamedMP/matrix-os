@@ -1,8 +1,8 @@
-import { readdir } from "node:fs/promises";
+import { readdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { ReviewIdSchema } from "@matrix-os/contracts";
-import type { WorkspaceError } from "./project-manager.js";
+import { PROJECT_SLUG_REGEX, type WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import type { ReviewLoopRecord } from "./review-loop.js";
 
@@ -40,6 +40,26 @@ async function readReview(homePath: string, reviewId: string): Promise<ReviewLoo
 export function createReviewStore(options: { homePath: string }) {
   const homePath = resolve(options.homePath);
   const reviewsDir = join(homePath, "system", "reviews");
+  const terminalStatuses = new Set(["converged", "stalled", "failed", "failed_parse", "stopped", "approved"]);
+
+  async function readAllReviews(): Promise<ReviewLoopRecord[]> {
+    let entries;
+    try {
+      entries = await readdir(reviewsDir, { withFileTypes: true });
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    const reviews: ReviewLoopRecord[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const reviewId = entry.name.slice(0, -".json".length);
+      if (!ReviewIdSchema.safeParse(reviewId).success) continue;
+      const review = await readReview(homePath, reviewId);
+      if (review) reviews.push(review);
+    }
+    return reviews;
+  }
 
   return {
     async saveReview(review: ReviewLoopRecord): Promise<{ ok: true } | Failure> {
@@ -66,24 +86,7 @@ export function createReviewStore(options: { homePath: string }) {
       if (!parsed.success) {
         return failure(400, "invalid_review_query", "Review query is invalid");
       }
-      let entries;
-      try {
-        entries = await readdir(reviewsDir, { withFileTypes: true });
-      } catch (err: unknown) {
-        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-          return { ok: true, reviews: [], nextCursor: null };
-        }
-        throw err;
-      }
-
-      const reviews: ReviewLoopRecord[] = [];
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-        const reviewId = entry.name.slice(0, -".json".length);
-        if (!ReviewIdSchema.safeParse(reviewId).success) continue;
-        const review = await readReview(homePath, reviewId);
-        if (review) reviews.push(review);
-      }
+      const reviews = await readAllReviews();
       const query = parsed.data;
       const sorted = reviews
         .filter((review) => !query.projectSlug || review.projectSlug === query.projectSlug)
@@ -102,6 +105,35 @@ export function createReviewStore(options: { homePath: string }) {
         reviews: visible,
         nextCursor: page.length > limit ? visible[visible.length - 1]?.id ?? null : null,
       };
+    },
+
+    async getProjectLifecycleState(projectSlug: string): Promise<
+      { activeReviewCount: number; reviewCount: number } | Failure
+    > {
+      if (!PROJECT_SLUG_REGEX.test(projectSlug)) {
+        return failure(400, "invalid_slug", "Project slug is invalid");
+      }
+      const reviews = (await readAllReviews()).filter((review) => review.projectSlug === projectSlug);
+      return {
+        activeReviewCount: reviews.filter((review) => !terminalStatuses.has(review.status)).length,
+        reviewCount: reviews.length,
+      };
+    },
+
+    async deleteProjectReviews(projectSlug: string): Promise<{ ok: true; deleted: number } | Failure> {
+      if (!PROJECT_SLUG_REGEX.test(projectSlug)) {
+        return failure(400, "invalid_slug", "Project slug is invalid");
+      }
+      const reviews = (await readAllReviews()).filter((review) => review.projectSlug === projectSlug);
+      if (reviews.some((review) => !terminalStatuses.has(review.status))) {
+        return failure(409, "project_active", "Stop active project work before continuing");
+      }
+      for (const review of reviews) {
+        await unlink(reviewPath(homePath, review.id)).catch((err: unknown) => {
+          if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) throw err;
+        });
+      }
+      return { ok: true, deleted: reviews.length };
     },
   };
 }

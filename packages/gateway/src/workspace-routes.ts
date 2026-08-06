@@ -24,6 +24,8 @@ import { isRequestPrincipalError, mapRequestPrincipalError, ownerScopeFromPrinci
 import { createWorkspaceEventPublisher, type WorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
 import { requestHasBody } from "./http-body.js";
+import { createProjectLifecycleService, ProjectLifecycleActionSchema } from "./project-lifecycle.js";
+import type { CodingAgentThreadStore } from "./coding-agents/thread-store.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type ProjectFolders = ReturnType<typeof createProjectFolders>;
@@ -38,6 +40,7 @@ type ReviewStore = ReturnType<typeof createReviewStore>;
 type TaskManager = ReturnType<typeof createTaskManager>;
 type PreviewManager = ReturnType<typeof createPreviewManager>;
 type WorkspaceEventStore = ReturnType<typeof createWorkspaceEventStore>;
+type ProjectLifecycleService = ReturnType<typeof createProjectLifecycleService>;
 
 const WORKSPACE_BODY_LIMIT = 64 * 1024;
 
@@ -142,6 +145,10 @@ const SendSessionInputSchema = z.object({
 });
 
 const EmptyObjectSchema = z.object({}).passthrough();
+const ProjectVisibilitySchema = z.enum(["active", "archived", "all"]);
+const ProjectDeleteCompatibilitySchema = z.object({
+  confirmation: z.string().min(1).max(128),
+}).strict();
 
 const CreateReviewSchema = z.object({
   projectSlug: z.string().min(1).max(63),
@@ -229,6 +236,8 @@ export function createWorkspaceRoutes(options: {
   eventStore?: WorkspaceEventStore;
   eventPublisher?: WorkspaceEventPublisher;
   sessionOrchestrator?: WorkspaceSessionOrchestrator;
+  projectLifecycleService?: ProjectLifecycleService;
+  codingAgentThreadStore?: Pick<CodingAgentThreadStore, "getProjectLifecycleState" | "deleteProjectThreads">;
   getOwnerScope?: (c: Context) => OwnerScope;
 }) {
   const app = new Hono();
@@ -274,6 +283,55 @@ export function createWorkspaceRoutes(options: {
   const getOwnerScope = options.getOwnerScope ?? ((c: Context) => ownerScopeFromPrincipal(requireRequestPrincipal(c, {
     requireAuthContextReady: false,
   })));
+  const projectLifecycleService = options.projectLifecycleService ?? createProjectLifecycleService({
+    projectManager,
+    findBlockers: async (project, principal) => {
+      const blockers: Array<{ type: "session" | "thread" | "review" | "preview" | "worktree"; label: string }> = [];
+      const sessions = await agentSessionManager.getProjectLifecycleState({
+        projectSlug: project.slug,
+        ownerId: principal.userId,
+      });
+      if ("ok" in sessions) throw new Error("session activity unavailable");
+      if (sessions.activeSessionCount > 0) {
+        blockers.push({ type: "session", label: "Active session" });
+      }
+      const reviews = await reviewStore.getProjectLifecycleState(project.slug);
+      if ("ok" in reviews) throw new Error("review activity unavailable");
+      if (reviews.activeReviewCount > 0) {
+        blockers.push({ type: "review", label: "Active review" });
+      }
+      const previews = await previewManager.listPreviews(project.slug, { limit: 100 });
+      if (!previews.ok) throw new Error("preview activity unavailable");
+      if (previews.previews.some((preview) => preview.lastStatus !== "failed")) {
+        blockers.push({ type: "preview", label: "Active preview" });
+      }
+      const leases = await worktreeManager.listActiveLeases(project.slug);
+      if (!leases.ok) throw new Error("worktree activity unavailable");
+      if (leases.leases.length > 0) blockers.push({ type: "worktree", label: "Leased worktree" });
+      if (options.codingAgentThreadStore) {
+        const threads = await options.codingAgentThreadStore.getProjectLifecycleState(principal, project.slug);
+        if (threads.activeThreadCount > 0) blockers.push({ type: "thread", label: "Active coding-agent thread" });
+      }
+      return blockers;
+    },
+    cleanupRelatedState: async (project, principal) => {
+      const sessions = await agentSessionManager.deleteProjectSessions({
+        projectSlug: project.slug,
+        ownerId: principal.userId,
+      });
+      if (!sessions.ok) throw new Error("session cleanup failed");
+      const reviews = await reviewStore.deleteProjectReviews(project.slug);
+      if (!reviews.ok) throw new Error("review cleanup failed");
+      if (options.codingAgentThreadStore) {
+        const threads = await options.codingAgentThreadStore.deleteProjectThreads(principal, project.slug);
+        if (!threads.ok) throw new Error("coding-agent cleanup blocked");
+      }
+    },
+  });
+
+  function lifecyclePrincipal(ownerScope: OwnerScope) {
+    return { userId: ownerScope.id, source: "configured-container" as const };
+  }
 
   function principalError(c: Context, err: unknown) {
     if (!isRequestPrincipalError(err)) throw err;
@@ -380,7 +438,15 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.get("/api/workspace/projects", async (c) => {
-    const result = await projectManager.listManagedProjects();
+    const visibility = ProjectVisibilitySchema.safeParse(c.req.query("visibility") ?? "active");
+    if (!visibility.success) return c.json(errorBody("invalid_query", "Invalid query parameters"), 400);
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const result = await projectManager.listManagedProjects({ visibility: visibility.data, ownerScope });
     return c.json(result);
   });
 
@@ -390,14 +456,40 @@ export function createWorkspaceRoutes(options: {
     return c.json({ project: result.project });
   });
 
-  app.delete("/api/projects/:slug", limited, async (c) => {
-    if (requestHasBody(c)) {
-      const body = await parseJson(c, EmptyObjectSchema);
-      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+  app.post("/api/projects/:slug/actions", limited, async (c) => {
+    const body = await parseJson(c, ProjectLifecycleActionSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
     }
-    const result = await projectManager.deleteProject(c.req.param("slug"));
+    const result = await projectLifecycleService.applyProjectLifecycleAction(
+      lifecyclePrincipal(ownerScope),
+      c.req.param("slug"),
+      body.value,
+    );
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ ok: true });
+    return c.json(result);
+  });
+
+  app.delete("/api/projects/:slug", limited, async (c) => {
+    const body = await parseJson(c, ProjectDeleteCompatibilitySchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const result = await projectLifecycleService.applyProjectLifecycleAction(
+      lifecyclePrincipal(ownerScope),
+      c.req.param("slug"),
+      { type: "delete", confirmation: body.value.confirmation },
+    );
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json(result);
   });
 
   app.get("/api/projects/:slug/prs", async (c) => {

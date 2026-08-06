@@ -9,9 +9,12 @@ import { createSessionTranscriptManager } from "./session-transcript.js";
 import { createStateOps } from "./state-ops.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
+import { createProjectLifecycleService } from "./project-lifecycle.js";
+import type { CodingAgentThreadStore } from "./coding-agents/thread-store.js";
 
 type StepName =
   | "stateOps"
+  | "projectDeletions"
   | "projects"
   | "worktreeLeases"
   | "runtimeSessions"
@@ -36,6 +39,8 @@ export type WorkspaceStartupStep = {
   retentionTruncated?: number;
   reviews?: number;
   previews?: number;
+  recovered?: number;
+  failed?: number;
   configured?: boolean;
   available?: boolean;
 };
@@ -53,6 +58,9 @@ type MaybeFailure = { ok: false; error: { code: string; message: string } };
 export interface WorkspaceStartupRecoveryDeps {
   stateOps: {
     recoverOperations: () => Promise<{ cleanedStaging: string[] }>;
+  };
+  projectLifecycleRecovery?: {
+    recoverDeletingProjects: () => Promise<{ recovered: number; failed: number }>;
   };
   projectManager: {
     listManagedProjects: () => Promise<ProjectListResult>;
@@ -122,6 +130,17 @@ export async function runWorkspaceStartupRecovery(
     const recovered = await deps.stateOps.recoverOperations();
     return { cleanedStaging: recovered.cleanedStaging.length };
   });
+
+  if (deps.projectLifecycleRecovery) {
+    await step(steps, "projectDeletions", logger, async () => {
+      const recovered = await deps.projectLifecycleRecovery!.recoverDeletingProjects();
+      return {
+        recovered: recovered.recovered,
+        failed: recovered.failed,
+        ...(recovered.failed > 0 ? { errorCode: "manager_error" as const } : {}),
+      };
+    });
+  }
 
   await step(steps, "projects", logger, async () => {
     const result = await deps.projectManager.listManagedProjects();
@@ -212,6 +231,7 @@ export async function runWorkspaceStartupRecovery(
 export function createWorkspaceStartupRecovery(options: {
   homePath: string;
   eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
+  codingAgentThreadStore?: Pick<CodingAgentThreadStore, "deleteProjectThreads">;
 }) {
   const homePath = resolve(options.homePath);
   const stateOps = createStateOps({ homePath });
@@ -225,16 +245,35 @@ export function createWorkspaceStartupRecovery(options: {
     agentLauncher,
     zellijRuntime,
   });
+  const reviewStore = createReviewStore({ homePath });
+  const projectLifecycleRecovery = createProjectLifecycleService({
+    projectManager,
+    findBlockers: async () => [],
+    cleanupRelatedState: async (project, principal) => {
+      const sessions = await agentSessionManager.deleteProjectSessions({
+        projectSlug: project.slug,
+        ownerId: principal.userId,
+      });
+      if (!sessions.ok) throw new Error("session cleanup failed");
+      const reviews = await reviewStore.deleteProjectReviews(project.slug);
+      if (!reviews.ok) throw new Error("review cleanup failed");
+      if (options.codingAgentThreadStore) {
+        const threads = await options.codingAgentThreadStore.deleteProjectThreads(principal, project.slug);
+        if (!threads.ok) throw new Error("coding-agent cleanup blocked");
+      }
+    },
+  });
 
   return {
     run: () => runWorkspaceStartupRecovery({
       stateOps,
+      projectLifecycleRecovery,
       projectManager,
       worktreeManager,
       agentSessionManager,
       eventPublisher: options.eventPublisher,
       transcriptManager: createSessionTranscriptManager({ homePath }),
-      reviewStore: createReviewStore({ homePath }),
+      reviewStore,
       agentSandbox: createAgentSandbox({ homePath }),
       browserIde: {
         status: async () => ({

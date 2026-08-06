@@ -319,7 +319,14 @@ export function buildWorkspaceRequest(args: ParsedArgs): WorkspaceRequest {
       case "rm":
       case "delete": {
         const slug = encodePathSegment(requirePositional(args, 0, "project slug"));
-        return { method: "DELETE", path: `/api/projects/${slug}` };
+        if (!args.confirm) {
+          throw new Error("--confirm required");
+        }
+        return {
+          method: "DELETE",
+          path: `/api/projects/${slug}`,
+          body: { confirmation: args.confirm },
+        };
       }
       default:
         throw new Error("Unknown project command");
@@ -768,7 +775,7 @@ Project commands:
   project ls
   project prs <slug>
   project branches <slug>
-  project rm <slug>
+  project rm <slug> --confirm "<project name>"
 
 Worktree commands:
   worktree create <slug> (--branch name | --pr number)

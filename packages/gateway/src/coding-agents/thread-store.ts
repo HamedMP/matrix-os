@@ -177,6 +177,14 @@ export interface CodingAgentThreadStore {
     threadCount: number;
     attentionCount: number;
   }>>;
+  getProjectLifecycleState(
+    principal: RequestPrincipal,
+    projectId: string,
+  ): Promise<{ activeThreadCount: number; threadCount: number }>;
+  deleteProjectThreads(
+    principal: RequestPrincipal,
+    projectId: string,
+  ): Promise<{ ok: true; deleted: number } | { ok: false; activeThreadCount: number }>;
   getProjectWorkspaceThreads(
     principal: RequestPrincipal,
     projectId: string,
@@ -1363,6 +1371,44 @@ export function createCodingAgentThreadStore(
         if (attentionThread(thread)) count.attentionCount += 1;
       }
       return counts;
+    },
+    async getProjectLifecycleState(principal, projectId) {
+      return inspect((state) => {
+        const projectThreads = state.threads.filter((thread) =>
+          thread.ownerId === principal.userId && thread.projectId === projectId
+        );
+        return {
+          activeThreadCount: projectThreads.filter(activeThread).length,
+          threadCount: projectThreads.length,
+        };
+      });
+    },
+    async deleteProjectThreads(principal, projectId) {
+      return mutate<{ ok: true; deleted: number } | { ok: false; activeThreadCount: number }>(async (state) => {
+        const projectThreads = state.threads.filter((thread) =>
+          thread.ownerId === principal.userId && thread.projectId === projectId
+        );
+        const activeThreadCount = projectThreads.filter(activeThread).length;
+        if (activeThreadCount > 0) {
+          return { state, result: { ok: false as const, activeThreadCount } };
+        }
+        const threadIds = new Set(projectThreads.map((thread) => thread.id));
+        const terminalSessionIds = new Set(
+          projectThreads.map((thread) => thread.terminalSessionId).filter((id): id is string => Boolean(id)),
+        );
+        return {
+          state: {
+            ...state,
+            threads: state.threads.filter((thread) => !threadIds.has(thread.id)),
+            events: state.events.filter((event) => !threadIds.has(event.threadId)),
+            turns: state.turns.filter((turn) => !threadIds.has(turn.threadId)),
+            pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
+              stop.ownerId !== principal.userId || !terminalSessionIds.has(stop.terminalSessionId)
+            ),
+          },
+          result: { ok: true as const, deleted: projectThreads.length },
+        };
+      });
     },
     async getProjectWorkspaceThreads(principal, projectId, query, validTaskIds) {
       const state = await readState(options.homePath);

@@ -96,7 +96,7 @@ describe("workspace API routes", () => {
     expect(projectManager.deleteProject).not.toHaveBeenCalled();
   });
 
-  it("allows bodyless project deletes even when clients send JSON headers", async () => {
+  it("rejects bodyless project deletes even when clients send JSON headers", async () => {
     const projectManager = {
       getGithubStatus: vi.fn(),
       createProject: vi.fn(),
@@ -109,25 +109,99 @@ describe("workspace API routes", () => {
     const app = createWorkspaceRoutes({ homePath, projectManager });
     const res = await app.request(bodylessJsonDeleteRequest("/api/projects/repo"));
 
-    expect(res.status).toBe(200);
-    expect(projectManager.deleteProject).toHaveBeenCalledWith("repo");
+    expect(res.status).toBe(400);
+    expect(projectManager.deleteProject).not.toHaveBeenCalled();
   });
 
-  it("allows empty project delete bodies with JSON headers", async () => {
+  it("routes explicit project actions through the owner-scoped lifecycle service", async () => {
+    const applyProjectLifecycleAction = vi.fn(async () => ({
+      ok: true as const,
+      action: "archive" as const,
+      project: { slug: "repo", name: "Repo", archivedAt: "2026-08-06T13:00:00.000Z" },
+    }));
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectLifecycleService: { applyProjectLifecycleAction },
+      getOwnerScope: () => ({ type: "user", id: "user_123" }),
+    });
+    const res = await app.request(jsonRequest("/api/projects/repo/actions", { type: "archive" }));
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ action: "archive", project: { slug: "repo" } });
+    expect(applyProjectLifecycleAction).toHaveBeenCalledWith(
+      { userId: "user_123", source: "configured-container" },
+      "repo",
+      { type: "archive" },
+    );
+  });
+
+  it("wires the real project lifecycle service from HTTP action to archived projection", async () => {
+    const app = createWorkspaceRoutes({
+      homePath,
+      getOwnerScope: () => ({ type: "user", id: "user_123" }),
+    });
+    const created = await app.request(jsonRequest("/api/projects", {
+      mode: "scratch",
+      name: "Repository",
+      slug: "repository",
+    }));
+    expect(created.status).toBe(201);
+
+    const archived = await app.request(jsonRequest("/api/projects/repository/actions", { type: "archive" }));
+    expect(archived.status).toBe(200);
+    await expect((await app.request("/api/workspace/projects")).json()).resolves.toMatchObject({ projects: [] });
+    await expect((await app.request("/api/workspace/projects?visibility=archived")).json()).resolves.toMatchObject({
+      projects: [{ slug: "repository", name: "Repository", kind: "scratch" }],
+    });
+  });
+
+  it("requires typed confirmation on the compatibility project delete route", async () => {
+    const applyProjectLifecycleAction = vi.fn(async () => ({
+      ok: true as const,
+      action: "delete" as const,
+      projectSlug: "repo",
+    }));
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectLifecycleService: { applyProjectLifecycleAction },
+      getOwnerScope: () => ({ type: "user", id: "user_123" }),
+    });
+    const res = await app.request(deleteJsonRequest("/api/projects/repo", { confirmation: "Repo" }));
+
+    expect(res.status).toBe(200);
+    expect(applyProjectLifecycleAction).toHaveBeenCalledWith(
+      { userId: "user_123", source: "configured-container" },
+      "repo",
+      { type: "delete", confirmation: "Repo" },
+    );
+  });
+
+  it("validates and forwards owner-scoped project visibility", async () => {
+    const listManagedProjects = vi.fn(async () => ({ projects: [], nextCursor: null }));
     const projectManager = {
       getGithubStatus: vi.fn(),
       createProject: vi.fn(),
-      listManagedProjects: vi.fn(),
+      listManagedProjects,
       getProject: vi.fn(),
-      deleteProject: vi.fn(async () => ({ ok: true as const })),
+      deleteProject: vi.fn(),
       listPullRequests: vi.fn(),
       listBranches: vi.fn(),
     };
-    const app = createWorkspaceRoutes({ homePath, projectManager });
-    const res = await app.request(emptyJsonDeleteRequest("/api/projects/repo"));
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      getOwnerScope: () => ({ type: "user", id: "user_123" }),
+    });
 
-    expect(res.status).toBe(200);
-    expect(projectManager.deleteProject).toHaveBeenCalledWith("repo");
+    const archived = await app.request("/api/workspace/projects?visibility=archived");
+    const invalid = await app.request("/api/workspace/projects?visibility=deleted");
+
+    expect(archived.status).toBe(200);
+    expect(listManagedProjects).toHaveBeenCalledWith({
+      visibility: "archived",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    expect(invalid.status).toBe(400);
   });
 
   it("allows bodyless worktree deletes even when clients send JSON headers", async () => {

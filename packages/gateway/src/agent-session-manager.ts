@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, readdir } from "node:fs/promises";
+import { access, readdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
@@ -431,6 +431,43 @@ export function createAgentSessionManager(options: {
         .slice(0, limit)
         .map((session) => decorateSession(session, options.zellijRuntime));
       return { ok: true, sessions, nextCursor: null };
+    },
+
+    async getProjectLifecycleState(input: {
+      projectSlug: string;
+      ownerId: string;
+    }): Promise<{ activeSessionCount: number; sessionCount: number } | Failure> {
+      if (!PROJECT_SLUG_REGEX.test(input.projectSlug) || input.ownerId.length < 1 || input.ownerId.length > 256) {
+        return failure(400, "invalid_session_query", "Session query is invalid");
+      }
+      const sessions = (await readAllSessions(homePath)).filter((session) =>
+        session.projectSlug === input.projectSlug && session.ownerId === input.ownerId
+      );
+      return {
+        activeSessionCount: sessions.filter(isActive).length,
+        sessionCount: sessions.length,
+      };
+    },
+
+    async deleteProjectSessions(input: {
+      projectSlug: string;
+      ownerId: string;
+    }): Promise<{ ok: true; deleted: number } | Failure> {
+      if (!PROJECT_SLUG_REGEX.test(input.projectSlug) || input.ownerId.length < 1 || input.ownerId.length > 256) {
+        return failure(400, "invalid_session_query", "Session query is invalid");
+      }
+      const sessions = (await readAllSessions(homePath)).filter((session) =>
+        session.projectSlug === input.projectSlug && session.ownerId === input.ownerId
+      );
+      if (sessions.some(isActive)) {
+        return failure(409, "project_active", "Stop active project work before continuing");
+      }
+      for (const session of sessions) {
+        await unlink(sessionPath(homePath, session.id)).catch((err: unknown) => {
+          if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) throw err;
+        });
+      }
+      return { ok: true, deleted: sessions.length };
     },
 
     async sendInput(

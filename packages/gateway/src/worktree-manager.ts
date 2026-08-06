@@ -268,6 +268,18 @@ export function createWorktreeManager(options: {
       return { ok: true, worktrees };
     },
 
+    async listActiveLeases(projectSlug: string): Promise<{ ok: true; leases: WorktreeLease[] } | Failure> {
+      const listed = await this.listWorktrees(projectSlug);
+      if (!listed.ok) return listed;
+      const leases: WorktreeLease[] = [];
+      const timestamp = nowIso(options.now);
+      for (const worktree of listed.worktrees) {
+        const lease = await readLease(join(worktree.path, ".matrix", "lease.json"));
+        if (lease && !isLeaseStale(lease, timestamp)) leases.push(lease);
+      }
+      return { ok: true, leases };
+    },
+
     async acquireLease(input: {
       projectSlug: string;
       worktreeId: string;

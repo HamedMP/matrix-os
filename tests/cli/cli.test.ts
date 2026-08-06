@@ -174,6 +174,11 @@ describe("workspace CLI helpers", () => {
       method: "GET",
       path: "/api/projects/repo/prs",
     });
+    expect(buildWorkspaceRequest(parseArgs(["project", "rm", "repo", "--confirm", "Repository"]))).toEqual({
+      method: "DELETE",
+      path: "/api/projects/repo",
+      body: { confirmation: "Repository" },
+    });
     expect(buildWorkspaceRequest(parseArgs(["worktree", "create", "repo", "--branch", "main"]))).toEqual({
       method: "POST",
       path: "/api/projects/repo/worktrees",
@@ -184,6 +189,10 @@ describe("workspace CLI helpers", () => {
       path: "/api/projects/repo/worktrees/wt_abc123",
       body: { confirmDirtyDelete: true },
     });
+  });
+
+  it("requires an exact-name confirmation value for project deletion", () => {
+    expect(() => buildWorkspaceRequest(parseArgs(["project", "rm", "repo"]))).toThrow("--confirm required");
   });
 
   it("builds API requests for session and agent commands", () => {

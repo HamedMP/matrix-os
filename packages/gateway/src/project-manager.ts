@@ -10,16 +10,22 @@ import { containsDeniedFileApiPath, resolveExistingFileApiPath } from "./path-se
 
 export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
+export type ProjectKind = "scratch" | "github" | "folder";
+export type ProjectVisibility = "active" | "archived" | "all";
+
 export interface ProjectConfig {
   id: string;
   name: string;
   slug: string;
+  kind: ProjectKind;
   remote?: string;
   localPath: string;
   defaultBranch?: string;
   addedAt: string;
   updatedAt: string;
   ownerScope: OwnerScope;
+  archivedAt?: string;
+  deletingAt?: string;
   createRequestId?: string;
   createRequestFingerprint?: string;
   github?: {
@@ -69,7 +75,7 @@ type CommandRunner = (
 
 type Result<T> = { ok: true; status?: number } & T;
 type Failure = { ok: false; status: number; error: WorkspaceError };
-type CreateProjectMode = "scratch" | "github" | "folder";
+type CreateProjectMode = ProjectKind;
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
@@ -219,9 +225,30 @@ function isProtectedFolderProjectPath(homePath: string, resolvedPath: string): b
   return PROTECTED_FOLDER_PROJECT_PREFIXES.includes(firstSegment);
 }
 
+function classifyLegacyProject(homePath: string, config: Omit<ProjectConfig, "kind">): ProjectKind {
+  if (config.github || config.remote) return "github";
+  const managedRoot = projectPath(homePath, config.slug);
+  const localPath = resolve(config.localPath);
+  return localPath === managedRoot || localPath.startsWith(`${managedRoot}${sep}`) ? "scratch" : "folder";
+}
+
+function normalizeProjectConfig(homePath: string, config: ProjectConfig | Omit<ProjectConfig, "kind">): ProjectConfig {
+  if ("kind" in config && (config.kind === "scratch" || config.kind === "github" || config.kind === "folder")) {
+    return config;
+  }
+  return { ...config, kind: classifyLegacyProject(homePath, config) };
+}
+
+function ownerScopeMatches(actual: OwnerScope, expected?: OwnerScope): boolean {
+  return !expected || (actual.type === expected.type && actual.id === expected.id);
+}
+
 async function readProjectConfig(homePath: string, slug: string): Promise<ProjectConfig | null> {
   try {
-    return await readJsonFile<ProjectConfig>(join(projectPath(homePath, slug), "config.json"));
+    const config = await readJsonFile<ProjectConfig | Omit<ProjectConfig, "kind">>(
+      join(projectPath(homePath, slug), "config.json"),
+    );
+    return normalizeProjectConfig(homePath, config);
   } catch (err: unknown) {
     if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
@@ -346,6 +373,7 @@ export function createProjectManager(options: {
             id: `proj_${randomUUID()}`,
             name,
             slug,
+            kind: "folder",
             // Persist the fully resolved path: session launches use the stored
             // localPath as cwd/sandbox root without rerunning these checks, so
             // a symlink ancestor repointed at a protected subtree later must
@@ -391,6 +419,7 @@ export function createProjectManager(options: {
             id: `proj_${randomUUID()}`,
             name,
             slug,
+            kind: "scratch",
             localPath: repoPath,
             addedAt: timestamp,
             updatedAt: timestamp,
@@ -481,6 +510,7 @@ export function createProjectManager(options: {
           id: `proj_${randomUUID()}`,
           name: github.repo,
           slug,
+          kind: "github",
           remote: input.url,
           localPath: repoPath,
           addedAt: timestamp,
@@ -500,7 +530,10 @@ export function createProjectManager(options: {
       });
     },
 
-    async listManagedProjects(): Promise<{ projects: ProjectConfig[]; nextCursor: null }> {
+    async listManagedProjects(input: {
+      visibility?: ProjectVisibility;
+      ownerScope?: OwnerScope;
+    } = {}): Promise<{ projects: ProjectConfig[]; nextCursor: null }> {
       let entries;
       try {
         entries = await readdir(join(homePath, "projects"), { withFileTypes: true });
@@ -512,12 +545,37 @@ export function createProjectManager(options: {
       }
 
       const projects: ProjectConfig[] = [];
+      const visibility = input.visibility ?? "active";
       for (const entry of entries) {
         if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
         const project = await readProjectConfig(homePath, entry.name);
-        if (project) projects.push(project);
+        if (!project || !ownerScopeMatches(project.ownerScope, input.ownerScope) || project.deletingAt) continue;
+        const archived = project.archivedAt !== undefined;
+        if (visibility === "active" && archived) continue;
+        if (visibility === "archived" && !archived) continue;
+        projects.push(project);
       }
       projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return { projects, nextCursor: null };
+    },
+
+    async listDeletingProjects(): Promise<{ projects: ProjectConfig[]; nextCursor: null }> {
+      let entries;
+      try {
+        entries = await readdir(join(homePath, "projects"), { withFileTypes: true });
+      } catch (err: unknown) {
+        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+          return { projects: [], nextCursor: null };
+        }
+        throw err;
+      }
+      const projects: ProjectConfig[] = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+        const project = await readProjectConfig(homePath, entry.name);
+        if (project?.deletingAt) projects.push(project);
+      }
+      projects.sort((a, b) => a.deletingAt!.localeCompare(b.deletingAt!));
       return { projects, nextCursor: null };
     },
 
@@ -526,15 +584,57 @@ export function createProjectManager(options: {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
       const project = await readProjectConfig(homePath, slug);
-      if (!project) return genericError(404, "not_found", "Project was not found");
+      if (!project || project.archivedAt || project.deletingAt) {
+        return genericError(404, "not_found", "Project was not found");
+      }
       return { ok: true, project };
     },
 
-    async deleteProject(slug: string): Promise<{ ok: true } | Failure> {
-      if (!SlugSchema.safeParse(slug).success) {
+    async getProjectForLifecycle(input: {
+      slug: string;
+      ownerScope: OwnerScope;
+    }): Promise<Result<{ project: ProjectConfig }> | Failure> {
+      if (!SlugSchema.safeParse(input.slug).success) {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
-      await rm(projectPath(homePath, slug), { recursive: true, force: true });
+      const project = await readProjectConfig(homePath, input.slug);
+      if (!project || !ownerScopeMatches(project.ownerScope, input.ownerScope)) {
+        return genericError(404, "not_found", "Project was not found");
+      }
+      return { ok: true, project };
+    },
+
+    async setProjectLifecycleState(input: {
+      slug: string;
+      ownerScope: OwnerScope;
+      archivedAt?: string | null;
+      deletingAt?: string | null;
+    }): Promise<Result<{ project: ProjectConfig }> | Failure> {
+      const current = await this.getProjectForLifecycle(input);
+      if (!current.ok) return current;
+      const updated: ProjectConfig = {
+        ...current.project,
+        updatedAt: nowIso(options.now),
+      };
+      if (input.archivedAt !== undefined) {
+        if (input.archivedAt === null) delete updated.archivedAt;
+        else updated.archivedAt = input.archivedAt;
+      }
+      if (input.deletingAt !== undefined) {
+        if (input.deletingAt === null) delete updated.deletingAt;
+        else updated.deletingAt = input.deletingAt;
+      }
+      await atomicWriteJson(join(projectPath(homePath, input.slug), "config.json"), updated);
+      return { ok: true, project: updated };
+    },
+
+    async removeManagedProject(input: {
+      slug: string;
+      ownerScope: OwnerScope;
+    }): Promise<{ ok: true } | Failure> {
+      const current = await this.getProjectForLifecycle(input);
+      if (!current.ok) return current;
+      await rm(projectPath(homePath, input.slug), { recursive: true, force: true });
       return { ok: true };
     },
 

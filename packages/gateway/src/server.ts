@@ -2870,6 +2870,7 @@ export async function createGateway(config: GatewayConfig) {
     eventStore: workspaceEventStore,
     eventPublisher: workspaceEventPublisher,
     reviewStore,
+    codingAgentThreadStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
   // Workspace sessions own /api/sessions. Keep the legacy shell mount after
@@ -2881,6 +2882,7 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({
     homePath,
     eventPublisher: workspaceEventPublisher,
+    codingAgentThreadStore,
   }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");

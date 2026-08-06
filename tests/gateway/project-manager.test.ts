@@ -57,6 +57,7 @@ describe("project-manager", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.project).toMatchObject({
+      kind: "github",
       name: "Repo",
       slug: "repo",
       remote: "https://github.com/Owner/Repo.git",
@@ -83,6 +84,7 @@ describe("project-manager", () => {
     if (!result.ok) return;
     expect(runCommand).not.toHaveBeenCalled();
     expect(result.project).toMatchObject({
+      kind: "scratch",
       name: "Empty Workspace",
       slug: "empty-workspace",
       ownerScope: { type: "user", id: "user_123" },
@@ -212,11 +214,169 @@ describe("project-manager", () => {
     // repoints cannot bypass the create-time validation.
     expect(created).toMatchObject({
       ok: true,
-      project: { localPath: await realpath(existing) },
+      project: { kind: "folder", localPath: await realpath(existing) },
     });
     if (created.ok) expect(created.project.github).toBeUndefined();
-    await expect(manager.deleteProject("customer-app")).resolves.toEqual({ ok: true });
+    await expect(manager.removeManagedProject({
+      slug: "customer-app",
+      ownerScope: { type: "user", id: "user_123" },
+    })).resolves.toEqual({ ok: true });
     await expect(readFile(join(existing, "README.md"), "utf-8")).resolves.toBe("owner data");
+  });
+
+  it("returns owner-scoped active and archived project projections without exposing deletion tombstones", async () => {
+    const projects = [
+      {
+        slug: "active-project",
+        name: "Active project",
+        ownerScope: { type: "user", id: "user_123" },
+      },
+      {
+        slug: "archived-project",
+        name: "Archived project",
+        ownerScope: { type: "user", id: "user_123" },
+        archivedAt: "2026-08-06T12:00:00.000Z",
+      },
+      {
+        slug: "deleting-project",
+        name: "Deleting project",
+        ownerScope: { type: "user", id: "user_123" },
+        deletingAt: "2026-08-06T12:01:00.000Z",
+      },
+      {
+        slug: "another-owner-project",
+        name: "Another owner project",
+        ownerScope: { type: "user", id: "user_456" },
+      },
+    ] as const;
+
+    for (const project of projects) {
+      const root = join(homePath, "projects", project.slug);
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, "config.json"), JSON.stringify({
+        id: `proj_${project.slug}`,
+        name: project.name,
+        slug: project.slug,
+        kind: "scratch",
+        localPath: join(root, "repo"),
+        addedAt: "2026-08-06T10:00:00.000Z",
+        updatedAt: "2026-08-06T10:00:00.000Z",
+        ownerScope: project.ownerScope,
+        ...(project.archivedAt ? { archivedAt: project.archivedAt } : {}),
+        ...(project.deletingAt ? { deletingAt: project.deletingAt } : {}),
+      }));
+    }
+
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const ownerScope = { type: "user" as const, id: "user_123" };
+
+    await expect(manager.listManagedProjects({ visibility: "active", ownerScope })).resolves.toMatchObject({
+      projects: [{ slug: "active-project" }],
+    });
+    await expect(manager.listManagedProjects({ visibility: "archived", ownerScope })).resolves.toMatchObject({
+      projects: [{ slug: "archived-project" }],
+    });
+    await expect(manager.listManagedProjects({ visibility: "all", ownerScope })).resolves.toMatchObject({
+      projects: expect.arrayContaining([
+        expect.objectContaining({ slug: "active-project" }),
+        expect.objectContaining({ slug: "archived-project" }),
+      ]),
+    });
+    const all = await manager.listManagedProjects({ visibility: "all", ownerScope });
+    expect(all.projects.map((project) => project.slug).sort()).toEqual(["active-project", "archived-project"]);
+    await expect(manager.listDeletingProjects()).resolves.toMatchObject({
+      projects: [{ slug: "deleting-project", deletingAt: "2026-08-06T12:01:00.000Z" }],
+    });
+  });
+
+  it("classifies legacy project records without making the renderer infer their kind", async () => {
+    const root = join(homePath, "projects", "legacy-scratch");
+    await mkdir(join(root, "repo"), { recursive: true });
+    await writeFile(join(root, "config.json"), JSON.stringify({
+      id: "proj_legacy",
+      name: "Legacy scratch",
+      slug: "legacy-scratch",
+      localPath: join(root, "repo"),
+      addedAt: "2026-08-06T10:00:00.000Z",
+      updatedAt: "2026-08-06T10:00:00.000Z",
+      ownerScope: { type: "user", id: "user_123" },
+    }));
+
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const result = await manager.listManagedProjects({
+      visibility: "active",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+
+    expect(result.projects).toMatchObject([{ slug: "legacy-scratch", kind: "scratch" }]);
+  });
+
+  it("updates lifecycle state only for the owning scope and persists legacy kind classification", async () => {
+    const root = join(homePath, "projects", "legacy-owned");
+    await mkdir(join(root, "repo"), { recursive: true });
+    await writeFile(join(root, "config.json"), JSON.stringify({
+      id: "proj_legacy_owned",
+      name: "Legacy owned",
+      slug: "legacy-owned",
+      localPath: join(root, "repo"),
+      addedAt: "2026-08-06T10:00:00.000Z",
+      updatedAt: "2026-08-06T10:00:00.000Z",
+      ownerScope: { type: "user", id: "user_123" },
+    }));
+    const manager = createProjectManager({
+      homePath,
+      runCommand: vi.fn(),
+      now: () => "2026-08-06T12:00:00.000Z",
+    });
+
+    await expect(manager.setProjectLifecycleState({
+      slug: "legacy-owned",
+      ownerScope: { type: "user", id: "user_456" },
+      archivedAt: "2026-08-06T12:00:00.000Z",
+    })).resolves.toMatchObject({ ok: false, status: 404 });
+    await expect(manager.setProjectLifecycleState({
+      slug: "legacy-owned",
+      ownerScope: { type: "user", id: "user_123" },
+      archivedAt: "2026-08-06T12:00:00.000Z",
+    })).resolves.toMatchObject({
+      ok: true,
+      project: {
+        slug: "legacy-owned",
+        kind: "scratch",
+        archivedAt: "2026-08-06T12:00:00.000Z",
+        updatedAt: "2026-08-06T12:00:00.000Z",
+      },
+    });
+
+    const persisted = JSON.parse(await readFile(join(root, "config.json"), "utf-8"));
+    expect(persisted).toMatchObject({ kind: "scratch", archivedAt: "2026-08-06T12:00:00.000Z" });
+  });
+
+  it("removes only the owned Matrix project registry and preserves a folder project's source directory", async () => {
+    const external = join(homePath, "workspaces", "external-project");
+    await mkdir(external, { recursive: true });
+    await writeFile(join(external, "sentinel.txt"), "owner-controlled");
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const created = await manager.createProject({
+      mode: "folder",
+      name: "External project",
+      slug: "external-project",
+      path: "workspaces/external-project",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    expect(created.ok).toBe(true);
+
+    await expect(manager.removeManagedProject({
+      slug: "external-project",
+      ownerScope: { type: "user", id: "user_456" },
+    })).resolves.toMatchObject({ ok: false, status: 404 });
+    await expect(manager.removeManagedProject({
+      slug: "external-project",
+      ownerScope: { type: "user", id: "user_123" },
+    })).resolves.toEqual({ ok: true });
+
+    await expect(stat(join(homePath, "projects", "external-project"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(external, "sentinel.txt"), "utf-8")).resolves.toBe("owner-controlled");
   });
 
   it("rejects project folders outside the Matrix home", async () => {

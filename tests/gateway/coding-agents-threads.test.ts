@@ -81,6 +81,38 @@ function workspaceSessionIdForThread(threadId: string): string {
 }
 
 describe("coding agent thread lifecycle", () => {
+  it("blocks project cleanup on active threads and deletes only the owner's terminal project history", async () => {
+    const { threads } = await createHarness();
+    const owner = await threads.createThread(ownerPrincipal, createBody);
+    await threads.createThread(otherPrincipal, {
+      ...createBody,
+      clientRequestId: "req_other_project_cleanup",
+    });
+
+    await expect(threads.getProjectLifecycleState(ownerPrincipal, "repo-main")).resolves.toEqual({
+      activeThreadCount: 1,
+      threadCount: 1,
+    });
+    await expect(threads.deleteProjectThreads(ownerPrincipal, "repo-main")).resolves.toEqual({
+      ok: false,
+      activeThreadCount: 1,
+    });
+
+    await threads.abortThread(ownerPrincipal, owner.snapshot.thread.id, "req_abort_project_cleanup");
+    await expect(threads.deleteProjectThreads(ownerPrincipal, "repo-main")).resolves.toEqual({
+      ok: true,
+      deleted: 1,
+    });
+    await expect(threads.getProjectLifecycleState(ownerPrincipal, "repo-main")).resolves.toEqual({
+      activeThreadCount: 0,
+      threadCount: 0,
+    });
+    await expect(threads.getProjectLifecycleState(otherPrincipal, "repo-main")).resolves.toEqual({
+      activeThreadCount: 1,
+      threadCount: 1,
+    });
+  });
+
   it("creates a thread idempotently and replays fake-provider events", async () => {
     const { app } = await createHarness();
 

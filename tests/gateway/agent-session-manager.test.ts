@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,6 +98,50 @@ describe("agent-session-manager", () => {
       })),
     };
   }
+
+  it("deletes only inactive project sessions owned by the requesting user", async () => {
+    const { manager } = createManager();
+    const baseSession = {
+      id: "sess_inactive",
+      kind: "agent" as const,
+      projectSlug: "repo",
+      runtime: { type: "zellij" as const, status: "exited" as const },
+      terminalSessionId: "term_inactive",
+      transcriptPath: join(homePath, "system", "session-output", "sess_inactive.jsonl"),
+      attachedClients: 0,
+      writeMode: "closed" as const,
+      ownerId: "user_a",
+      startedAt: "2026-04-26T00:00:00.000Z",
+      lastActivityAt: "2026-04-26T00:00:00.000Z",
+    };
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_inactive.json"), baseSession);
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_other_owner.json"), {
+      ...baseSession,
+      id: "sess_other_owner",
+      ownerId: "user_b",
+    });
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_active.json"), {
+      ...baseSession,
+      id: "sess_active",
+      runtime: { type: "zellij", status: "running" },
+      writeMode: "owner",
+    });
+
+    await expect(manager.getProjectLifecycleState({ projectSlug: "repo", ownerId: "user_a" }))
+      .resolves.toEqual({ activeSessionCount: 1, sessionCount: 2 });
+
+    await expect(manager.deleteProjectSessions({ projectSlug: "repo", ownerId: "user_a" }))
+      .resolves.toMatchObject({ ok: false, status: 409, error: { code: "project_active" } });
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_active.json"), {
+      ...baseSession,
+      id: "sess_active",
+    });
+    await expect(manager.deleteProjectSessions({ projectSlug: "repo", ownerId: "user_a" }))
+      .resolves.toEqual({ ok: true, deleted: 2 });
+
+    await expect(stat(join(homePath, "system", "sessions", "sess_inactive.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(homePath, "system", "sessions", "sess_other_owner.json"))).resolves.toBeTruthy();
+  });
 
   it("starts an agent session by acquiring the worktree lease and persisting runtime metadata", async () => {
     const { manager, zellijRuntime, agentLauncher } = createManager();
