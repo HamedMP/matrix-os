@@ -37,6 +37,11 @@ on:
         required: false
         default: false
         type: boolean
+      use_platform_candidate:
+        description: "Provision through the pinned zero-traffic platform candidate"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -62,6 +67,7 @@ jobs:
       base_sha: ${{ steps.decide.outputs.base_sha }}
       head_ref: ${{ steps.decide.outputs.head_ref }}
       requested_version: ${{ steps.decide.outputs.requested_version }}
+      use_platform_candidate: ${{ steps.decide.outputs.use_platform_candidate }}
     steps:
       - name: Decide action
         id: decide
@@ -77,10 +83,20 @@ jobs:
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
+          USE_PLATFORM_CANDIDATE: ${{ inputs.use_platform_candidate }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           action="skip"
+          use_platform_candidate="${USE_PLATFORM_CANDIDATE:-false}"
+          if [ "$use_platform_candidate" != "true" ] && [ "$use_platform_candidate" != "false" ]; then
+            echo "Invalid platform candidate selection" >&2
+            exit 1
+          fi
+          if [ "$use_platform_candidate" = "true" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "The platform candidate is available only to an explicit manual preview run." >&2
+            exit 1
+          fi
           if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
             echo "Invalid PR number" >&2
             exit 1
@@ -114,6 +130,10 @@ jobs:
           elif [ "$HAS_LABEL" = "true" ]; then
             action="deploy"
           fi
+          if [ "$use_platform_candidate" = "true" ] && [ "$action" != "deploy" ]; then
+            echo "The platform candidate requires a fresh exact-head preview build." >&2
+            exit 1
+          fi
           if [ "$action" != "skip" ] && ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "Invalid PR head SHA" >&2
             exit 1
@@ -138,6 +158,7 @@ jobs:
             echo "base_sha=$base_sha"
             echo "head_ref=$head_ref"
             echo "requested_version=$REQUESTED_VERSION"
+            echo "use_platform_candidate=$use_platform_candidate"
           } >> "$GITHUB_OUTPUT"
           echo "action=$action pr=$PR_NUMBER"
 
@@ -339,6 +360,7 @@ jobs:
       BOOTSTRAP_GENERATION_TARGET: ${{ needs.build.outputs.bootstrap_generation_target }}
       ACTIVATION_GENERATION_TARGET: ${{ needs.build.outputs.activation_generation_target }}
       HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+      USE_PLATFORM_CANDIDATE: ${{ needs.gate.outputs.use_platform_candidate }}
     steps:
       - uses: actions/checkout@v6
         if: needs.gate.outputs.action == 'deploy'
@@ -437,6 +459,19 @@ jobs:
 
           # The idempotent provision call also reconciles the complete access
           # allowlist on already-running previews.
+          PROVISION_PLATFORM_URL="$PLATFORM_PUBLIC_URL"
+          if [ "$USE_PLATFORM_CANDIDATE" = "true" ]; then
+            platform_origin="$(sed -n 's/^PLATFORM_ORIGIN = "\(https:\/\/[a-z0-9-]\+\.a\.run\.app\)"$/\1/p' \
+              packages/edge-router/wrangler.toml)"
+            if [ -z "$platform_origin" ] || [ "$(printf '%s\n' "$platform_origin" | wc -l)" -ne 1 ]; then
+              echo "The pinned production platform origin is unavailable." >&2
+              exit 1
+            fi
+            PROVISION_PLATFORM_URL="https://candidate---${platform_origin#https://}"
+            curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+              "${PROVISION_PLATFORM_URL}/health" >/dev/null
+            echo "Using the zero-traffic platform candidate for preview provisioning."
+          fi
           provision_body="$(jq -cn \
             --arg owner "$PREVIEW_CLERK_USER_ID" \
             --arg handle "$HANDLE" \
@@ -445,7 +480,7 @@ jobs:
             '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}
              + (if $bootstrap == "" then {} else {bootstrapVersion: $bootstrap} end)')"
           code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
-            -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision" \
+            -X POST "${PROVISION_PLATFORM_URL}/vps/preview/provision" \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             -H "content-type: application/json" \
             --data-binary "$provision_body")"

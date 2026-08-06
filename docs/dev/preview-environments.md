@@ -90,6 +90,14 @@ An optional `bootstrapVersion` is accepted only on this platform-authenticated
 preview route. It must be a bounded release identifier already present in the
 host-bundle registry, and its immutable bundle and checksum keys must match the
 version. The route never accepts a URL, path, channel promotion, or command.
+Before this contract reaches live platform traffic, an exact-head acceptance
+run may deploy the branch with `platform-cloud-run.yml` as the standard
+zero-traffic production `candidate` revision (`promote=false`) and manually
+dispatch `preview-vps.yml` with `use_platform_candidate=true`. The workflow
+derives that one candidate origin from the checked-in production Cloud Run
+origin and uses it only for `/vps/preview/provision`; it does not accept an
+origin input or move platform traffic. Registration and subsequent fleet
+operations continue through the live platform against the shared durable row.
 
 To walk the full onboarding/billing flow against branch platform code — a
 four-slice split (staging slot for the shell, an IAM-proxied `preview-platform`
