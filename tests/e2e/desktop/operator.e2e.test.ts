@@ -334,9 +334,11 @@ suite("operator desktop e2e", () => {
   }, 30_000);
 
   it("archives, restores, and permanently deletes a project through Desktop lifecycle controls", async () => {
+    await page.locator("aside button", { hasText: "Home" }).first().click();
+    await expect.poll(attachedNativeViewCount).toBe(1);
     await page.getByRole("button", { name: "Project actions for Matrix OS" }).click();
+    await expect.poll(attachedNativeViewCount).toBe(0);
     await page.getByText("Archive project", { exact: true }).click();
-    await page.getByRole("button", { name: "Archive project" }).click();
     await expect.poll(() => page.getByRole("button", { name: "Open Matrix OS" }).count()).toBe(0);
 
     await page.locator("aside button", { hasText: "Settings" }).first().click();

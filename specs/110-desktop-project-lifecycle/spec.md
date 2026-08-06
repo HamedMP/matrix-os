@@ -27,6 +27,8 @@ archived, or deleted.
 1. Each expanded sidebar project row exposes an overflow menu on hover and keyboard
    focus.
 2. The menu contains `Archive project` and a destructive `Delete project` action.
+   Archive executes immediately because it is reversible; delete retains strong typed
+   confirmation because it is permanent.
 3. Archived projects disappear from the normal sidebar and appear in
    `Settings > Projects`, where they can be restored or permanently deleted.
 4. Archive is reversible and never deletes repository, workspace, task, chat, or
@@ -64,6 +66,9 @@ files and project history remain intact, and it appears under Settings > Project
 4. **Given** active project-scoped work, **when** archive is requested, **then** the
    Gateway rejects it without changing project state and the Desktop explains that the
    work must be stopped first.
+5. **Given** Home's native hosted shell is active, **when** the overflow menu opens,
+   **then** Desktop detaches the native view until the menu closes so every action stays
+   visible and clickable.
 
 ### User Story 2 — Restore an Archived Project (Priority: P1)
 
@@ -130,11 +135,13 @@ removed, and the connected external folder is unchanged.
 
 ### Confirmation and Feedback
 
-- Archive uses a confirmation dialog that states data is retained.
+- Archive executes directly from the overflow menu without a confirmation dialog.
 - Delete requires the exact project name and mode-specific scope copy.
 - Disable repeated submission while a request is pending.
 - Cancel closes the dialog and changes nothing.
 - Failure keeps the dialog or project row recoverable and displays allowlisted copy.
+- A Desktop connected to a Gateway that predates lifecycle actions reports that the
+  selected Matrix computer needs an update instead of claiming the project is missing.
 - Success closes every tab associated with the project, clears its cached board and
   project-view state, selects Home if the deleted/archived project was active, refreshes
   active and archived project projections, and refreshes the coding-agent summary.

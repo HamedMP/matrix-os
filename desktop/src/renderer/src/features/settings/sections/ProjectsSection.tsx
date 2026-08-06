@@ -87,7 +87,6 @@ export default function ProjectsSection() {
       {deleteTarget ? (
         <ProjectLifecycleDialog
           open
-          mode="delete"
           project={deleteTarget}
           onClose={() => setDeleteTarget(null)}
         />

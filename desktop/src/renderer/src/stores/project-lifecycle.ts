@@ -22,6 +22,9 @@ const SAFE_ACTION_ERRORS: Record<string, string> = {
 
 function safeActionError(error: unknown): string {
   if (error instanceof AppError) {
+    if (error.category === "notFound" && !error.detail) {
+      return "Update this Matrix computer before managing projects.";
+    }
     return (error.detail && SAFE_ACTION_ERRORS[error.detail]) || categoryMessage(error.category);
   }
   return categoryMessage("server");
@@ -52,7 +55,7 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
       if (!isCurrentRuntimeGeneration(generation)) return false;
       const archivedProjects = (response.projects ?? [])
         .map(parseProject)
-        .filter((project): project is Project => project !== null);
+        .filter((project): project is Project => project?.archivedAt !== undefined);
       set({ archivedProjects, loading: false, error: null });
       return true;
     } catch (error: unknown) {

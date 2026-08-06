@@ -87,7 +87,8 @@ export default function TabContent() {
       s.composerOpen ||
       s.quickOpenOpen ||
       s.createTaskOpen ||
-      s.createProjectOpen,
+      s.createProjectOpen ||
+      s.rendererOverlayCount > 0,
   );
 
   if (tabs.length === 0) {

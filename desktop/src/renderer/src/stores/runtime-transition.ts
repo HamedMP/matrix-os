@@ -95,5 +95,6 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     composerOpen: false,
     paletteOpen: false,
     quickOpenOpen: false,
+    rendererOverlayCount: 0,
   });
 }

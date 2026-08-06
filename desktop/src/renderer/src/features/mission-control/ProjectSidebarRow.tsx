@@ -1,7 +1,11 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Archive, MoreHorizontal, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Button, Dialog } from "../../design/primitives";
 import type { Project } from "../../stores/board";
+import { useConnection } from "../../stores/connection";
+import { useProjectLifecycle } from "../../stores/project-lifecycle";
+import { useUi } from "../../stores/ui";
 import ProjectLifecycleDialog from "./ProjectLifecycleDialog";
 
 export default function ProjectSidebarRow({
@@ -15,7 +19,32 @@ export default function ProjectSidebarRow({
   attention: number;
   onOpen: () => void;
 }) {
-  const [dialogMode, setDialogMode] = useState<"archive" | "delete" | null>(null);
+  const api = useConnection((state) => state.api);
+  const pendingProjectSlug = useProjectLifecycle((state) => state.pendingProjectSlug);
+  const archiveProject = useProjectLifecycle((state) => state.archiveProject);
+  const acquireRendererOverlay = useUi((state) => state.acquireRendererOverlay);
+  const releaseRendererOverlay = useUi((state) => state.releaseRendererOverlay);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const pending = pendingProjectSlug === project.slug;
+  const rendererOverlayOpen = menuOpen || deleteOpen || pending || archiveError !== null;
+
+  useEffect(() => {
+    if (!rendererOverlayOpen) return;
+    acquireRendererOverlay();
+    return releaseRendererOverlay;
+  }, [acquireRendererOverlay, releaseRendererOverlay, rendererOverlayOpen]);
+
+  const archive = async () => {
+    if (!api || pending) return;
+    setArchiveError(null);
+    const succeeded = await archiveProject(api, project.slug);
+    if (!succeeded) {
+      const message = useProjectLifecycle.getState().error;
+      setArchiveError(message ?? "The project could not be archived. Try again.");
+    }
+  };
 
   return (
     <>
@@ -39,7 +68,7 @@ export default function ProjectSidebarRow({
           ) : null}
         </button>
 
-        <DropdownMenu.Root>
+        <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenu.Trigger asChild>
             <button
               type="button"
@@ -61,7 +90,8 @@ export default function ProjectSidebarRow({
               <DropdownMenu.Item
                 className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
                 style={{ color: "var(--text-primary)" }}
-                onSelect={() => setDialogMode("archive")}
+                disabled={!api || pending}
+                onSelect={() => void archive()}
               >
                 <Archive size={14} /> Archive project
               </DropdownMenu.Item>
@@ -69,7 +99,8 @@ export default function ProjectSidebarRow({
               <DropdownMenu.Item
                 className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--danger-muted)]"
                 style={{ color: "var(--danger)" }}
-                onSelect={() => setDialogMode("delete")}
+                disabled={pending}
+                onSelect={() => setDeleteOpen(true)}
               >
                 <Trash2 size={14} /> Delete project
               </DropdownMenu.Item>
@@ -78,13 +109,27 @@ export default function ProjectSidebarRow({
         </DropdownMenu.Root>
       </div>
 
-      {dialogMode ? (
+      {deleteOpen ? (
         <ProjectLifecycleDialog
           open
-          mode={dialogMode}
           project={project}
-          onClose={() => setDialogMode(null)}
+          onClose={() => setDeleteOpen(false)}
         />
+      ) : null}
+      {archiveError ? (
+        <Dialog open onClose={() => setArchiveError(null)} width={400}>
+          <div className="border-b px-5 py-4" style={{ borderColor: "var(--border-subtle)" }}>
+            <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
+              Project couldn't be archived
+            </h2>
+            <p role="alert" className="mt-2 text-sm" style={{ color: "var(--danger)" }}>
+              {archiveError}
+            </p>
+          </div>
+          <div className="flex justify-end px-5 py-3">
+            <Button variant="primary" onClick={() => setArchiveError(null)}>Close</Button>
+          </div>
+        </Dialog>
       ) : null}
     </>
   );

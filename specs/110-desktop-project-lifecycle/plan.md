@@ -6,6 +6,8 @@
 
 **Architecture:** A headless Gateway lifecycle service owns validation, owner scoping, active-work checks, durable project state, and cleanup. HTTP and CLI are thin adapters. Electron consumes active and archived projections through a focused lifecycle store, while sidebar and Settings components only render actions and confirmation state.
 
+**Validated UX correction:** Archive runs immediately from the sidebar because it is reversible. Permanent delete alone uses typed confirmation. Renderer menus/dialogs hold a transient overlay lease that detaches Home's native `WebContentsView`, and mixed-version 404s without a Gateway error code show an update-required message.
+
 **Tech Stack:** TypeScript 5.5+ strict ESM, Hono, Zod 4, Node `fs/promises`, React 19, Zustand, Radix UI, Vitest, Testing Library, Electron Vite.
 
 ---

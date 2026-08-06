@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -107,7 +107,8 @@ describe("Sidebar attention badges", () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByRole("button", { name: /Matrix OS\s*3$/ })).toBeTruthy();
+    const projectButton = screen.getByRole("button", { name: "Open Matrix OS" });
+    expect(within(projectButton).getByText("3")).toBeTruthy();
   });
 
   it("no longer offers the retired Agents workspace row", () => {
@@ -132,6 +133,7 @@ describe("Sidebar attention badges", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Matrix OS$/ })).toBeTruthy();
+    const projectButton = screen.getByRole("button", { name: "Open Matrix OS" });
+    expect(within(projectButton).queryByText("0")).toBeNull();
   });
 });

@@ -92,6 +92,16 @@ describe("project lifecycle store", () => {
     ]);
   });
 
+  it("does not treat active projects from an older gateway as archived", async () => {
+    const client = api({
+      get: vi.fn(async () => ({ projects: [project("repo")] })),
+    });
+
+    await useProjectLifecycle.getState().loadArchivedProjects(client);
+
+    expect(useProjectLifecycle.getState().archivedProjects).toEqual([]);
+  });
+
   it("keeps project UI state intact until archive succeeds", async () => {
     const pending = deferred<unknown>();
     const client = api({ post: vi.fn(() => pending.promise) });
@@ -121,6 +131,20 @@ describe("project lifecycle store", () => {
     expect(useBoard.getState().projects.map((item) => item.slug)).toContain("repo");
     expect(useTabs.getState().tabs.some((tab) => tab.projectSlug === "repo")).toBe(true);
     expect(useProjectLifecycle.getState().error).toBe("Stop active project work before continuing.");
+  });
+
+  it("explains when the selected computer predates project lifecycle routes", async () => {
+    const client = api({
+      post: vi.fn(async () => {
+        throw new AppError("notFound");
+      }),
+    });
+
+    await expect(useProjectLifecycle.getState().archiveProject(client, "repo")).resolves.toBe(false);
+
+    expect(useProjectLifecycle.getState().error).toBe(
+      "Update this Matrix computer before managing projects.",
+    );
   });
 
   it("sends exact typed confirmation when permanently deleting a project", async () => {
