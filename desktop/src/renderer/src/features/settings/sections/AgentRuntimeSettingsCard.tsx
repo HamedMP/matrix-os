@@ -7,7 +7,7 @@ import { KeyRound, Radio, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, StatusDot } from "../../../design/primitives";
 import { normalizeAgentConfig } from "../../../lib/agent-config";
-import { toUserMessage } from "../../../lib/errors";
+import { AppError, diagnosticErrorKind, toUserMessage } from "../../../lib/errors";
 import { useConnection } from "../../../stores/connection";
 import { useTabs } from "../../../stores/tabs";
 import {
@@ -21,6 +21,7 @@ const API_KEY_PATH = "/api/settings/api-key";
 const LOAD_ERROR = "Agent runtime settings are unavailable.";
 const UPDATE_ERROR = "Agent settings could not be updated.";
 const SETUP_ERROR = "Could not open setup terminal. Try again from Terminal.";
+const AGENT_RUNTIME_MUTATION_TIMEOUT_MS = 90_000;
 
 const RUNTIME_SETUP: Record<AgentRuntimeId, ProviderSetupCommand> = {
   hermes: {
@@ -360,13 +361,34 @@ export default function AgentRuntimeSettingsCard() {
 
   const mutate = async (body: Record<string, unknown>) => {
     if (!api) return;
+    const targetRuntime: AgentRuntimeId | null =
+      body.runtime === "hermes" || body.runtime === "openclaw" ? body.runtime : null;
     setBusy(true);
     setError(null);
     try {
       let raw: unknown;
       try {
-        raw = await api.put<unknown>(AGENT_PATH, body);
+        raw = targetRuntime
+          ? await api.put<unknown>(AGENT_PATH, body, {
+              timeoutMs: AGENT_RUNTIME_MUTATION_TIMEOUT_MS,
+            })
+          : await api.put<unknown>(AGENT_PATH, body);
       } catch (mutationError: unknown) {
+        if (targetRuntime && mutationError instanceof AppError && mutationError.category === "timeout") {
+          try {
+            const config = normalizeAgentConfig(await api.get<unknown>(AGENT_PATH));
+            if (config.extended?.runtime.selected === targetRuntime) {
+              setView(config.extended);
+              setLegacy(config.runtimeUpdateRequired);
+              return;
+            }
+          } catch (reconciliationError: unknown) {
+            console.warn(
+              "[settings] Failed to reconcile runtime after timeout:",
+              diagnosticErrorKind(reconciliationError),
+            );
+          }
+        }
         setError(toUserMessage(mutationError) || UPDATE_ERROR);
         return;
       }

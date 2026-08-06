@@ -131,6 +131,20 @@ describe("createApiClient", () => {
     expect(timeout).toHaveBeenCalledWith(310_000);
   });
 
+  it("honors a bounded timeout override for PUT mutations", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+
+    await client.put("/api/settings/agent", { runtime: "openclaw" }, { timeoutMs: 90_000 });
+
+    expect(timeout).toHaveBeenCalledWith(90_000);
+  });
+
   it("treats non-JSON success bodies as server errors", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response("<html>", { status: 200 }));
     const client = createApiClient({
