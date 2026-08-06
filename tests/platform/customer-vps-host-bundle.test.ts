@@ -1135,6 +1135,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       'while IFS= read -r machine_id; do',
     );
     expect(workflow).toContain(
+      'if [ "$delete_code" != 200 ] && [ "$delete_code" != 404 ]; then',
+    );
+    expect(workflow).toContain(
       '(.machineId as $machine_id | $ids | index($machine_id)) != null',
     );
   });
