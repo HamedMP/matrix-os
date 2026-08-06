@@ -13,6 +13,11 @@ import {
   serializeDeveloperTools,
   type DeveloperToolId,
 } from './developer-tools.js';
+import {
+  CustomerVpsBootstrapStageSchema,
+  customerVpsBootstrapStageRank,
+  type CustomerVpsBootstrapStage,
+} from './customer-vps-bootstrap.js';
 
 const DEFAULT_PLATFORM_DB_URL =
   process.env.PLATFORM_DATABASE_URL ??
@@ -69,6 +74,9 @@ interface UserMachinesTable {
   failure_at: string | null;
   resize_started_at: string | null;
   resize_target_server_type: string | null;
+  bootstrap_stage: string | null;
+  bootstrap_stage_at: string | null;
+  candidate_bootstrap_progress: boolean;
   attempt: number;
 }
 
@@ -414,6 +422,9 @@ export interface UserMachineRecord {
   failureAt: string | null;
   resizeStartedAt: string | null;
   resizeTargetServerType: string | null;
+  bootstrapStage: CustomerVpsBootstrapStage | null;
+  bootstrapStageAt: string | null;
+  candidateBootstrapProgress: boolean;
   attempt: number;
 }
 
@@ -608,6 +619,9 @@ export interface NewUserMachine {
   failureAt?: string | null;
   resizeStartedAt?: string | null;
   resizeTargetServerType?: string | null;
+  bootstrapStage?: CustomerVpsBootstrapStage | null;
+  bootstrapStageAt?: string | null;
+  candidateBootstrapProgress?: boolean;
   attempt?: number;
 }
 
@@ -705,6 +719,9 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       failure_at TEXT,
       resize_started_at TEXT,
       resize_target_server_type TEXT,
+      bootstrap_stage TEXT,
+      bootstrap_stage_at TEXT,
+      candidate_bootstrap_progress BOOLEAN NOT NULL DEFAULT false,
       attempt INTEGER NOT NULL DEFAULT 1
     )
   `.execute(db);
@@ -715,6 +732,9 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_target_server_type TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS bootstrap_stage TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS bootstrap_stage_at TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS candidate_bootstrap_progress BOOLEAN NOT NULL DEFAULT false`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
@@ -1231,6 +1251,9 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     failureAt: row.failure_at,
     resizeStartedAt: row.resize_started_at,
     resizeTargetServerType: row.resize_target_server_type,
+    bootstrapStage: CustomerVpsBootstrapStageSchema.nullable().parse(row.bootstrap_stage),
+    bootstrapStageAt: row.bootstrap_stage_at,
+    candidateBootstrapProgress: row.candidate_bootstrap_progress,
     attempt: row.attempt,
   };
 }
@@ -1259,6 +1282,9 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     failure_at: record.failureAt ?? null,
     resize_started_at: record.resizeStartedAt ?? null,
     resize_target_server_type: record.resizeTargetServerType ?? null,
+    bootstrap_stage: record.bootstrapStage ?? null,
+    bootstrap_stage_at: record.bootstrapStageAt ?? null,
+    candidate_bootstrap_progress: record.candidateBootstrapProgress ?? false,
     attempt: record.attempt ?? 1,
   };
 }
@@ -1287,6 +1313,9 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.failureAt !== undefined) update.failure_at = values.failureAt;
   if (values.resizeStartedAt !== undefined) update.resize_started_at = values.resizeStartedAt;
   if (values.resizeTargetServerType !== undefined) update.resize_target_server_type = values.resizeTargetServerType;
+  if (values.bootstrapStage !== undefined) update.bootstrap_stage = values.bootstrapStage;
+  if (values.bootstrapStageAt !== undefined) update.bootstrap_stage_at = values.bootstrapStageAt;
+  if (values.candidateBootstrapProgress !== undefined) update.candidate_bootstrap_progress = values.candidateBootstrapProgress;
   if (values.attempt !== undefined) update.attempt = values.attempt;
   return update;
 }
@@ -2202,6 +2231,44 @@ export async function completeUserMachineRegistration(
     .where('registration_token_expires_at', '>=', expiresAfterIso)
     .where('status', 'in', ['provisioning', 'recovering'])
     .where('deleted_at', 'is', null)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function advanceUserMachineBootstrapStage(
+  db: PlatformDB,
+  machineId: string,
+  expectedRegistrationTokenHash: string,
+  expiresAfterIso: string,
+  stage: CustomerVpsBootstrapStage,
+  stageAt: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const rank = customerVpsBootstrapStageRank(stage);
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set({
+      bootstrap_stage: stage,
+      bootstrap_stage_at: stageAt,
+    })
+    .where('machine_id', '=', machineId)
+    .where('registration_token_hash', '=', expectedRegistrationTokenHash)
+    .where('registration_token_expires_at', '>=', expiresAfterIso)
+    .where('status', 'in', ['provisioning', 'recovering'])
+    .where('deleted_at', 'is', null)
+    .where(sql<boolean>`
+      CASE bootstrap_stage
+        WHEN 'cloud_init_started' THEN 1
+        WHEN 'packages_ready' THEN 2
+        WHEN 'bundle_downloaded' THEN 3
+        WHEN 'bundle_installed' THEN 4
+        WHEN 'database_ready' THEN 5
+        WHEN 'gateway_starting' THEN 6
+        WHEN 'registered' THEN 7
+        ELSE 0
+      END < ${rank}
+    `)
     .returningAll()
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;

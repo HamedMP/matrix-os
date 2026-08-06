@@ -55,6 +55,7 @@ describe('platform/customer-vps-cloud-init', () => {
     updateChannel: 'stable',
     hostBundleUrl: 'https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
+    platformBootstrapProgressUrl: 'https://platform.example/vps/bootstrap-progress',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
     registrationToken: 'registration-secret',
@@ -71,6 +72,21 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogPublicHost: 'https://eu.posthog.com',
     posthogApiHost: '/relay',
   };
+
+  it('reports bounded bootstrap stages without placing the registration token in argv', async () => {
+    const template = await loadCustomerVpsCloudInitTemplate();
+    const rendered = renderCloudInitTemplate(template, input);
+
+    expect(rendered).toContain('MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://platform.example/vps/bootstrap-progress');
+    expect(rendered).toContain('report_bootstrap_stage cloud_init_started');
+    expect(rendered).toContain('report_bootstrap_stage packages_ready');
+    expect(rendered).toContain('report_bootstrap_stage bundle_downloaded');
+    expect(rendered).toContain('report_bootstrap_stage bundle_installed');
+    expect(rendered).toContain('report_bootstrap_stage database_ready');
+    expect(rendered).toContain('report_bootstrap_stage gateway_starting');
+    expect(rendered).toContain('curl --config -');
+    expect(rendered).not.toContain('-H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}"');
+  });
 
   function runMatrixctlExistsWithFakeAws(exitCode: number, stderr: string) {
     const root = process.cwd();

@@ -157,6 +157,9 @@ describe('platform/customer-vps', () => {
     expect(row?.developerTools).toEqual(['codex', 'pi']);
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS='codex pi'");
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=http://localhost:9000/vps/bootstrap-progress',
+    );
   });
 
   it('preserves an intentional empty developer tool selection', async () => {
@@ -1091,7 +1094,11 @@ describe('platform/customer-vps', () => {
       changelog: 'Dormant preview bootstrap',
       createdAt: '2026-08-06T08:01:00.000Z',
     });
-    const { service, hetzner } = createService();
+    const { service, hetzner } = createService({
+      config: createTestConfig({
+        platformRegisterUrl: 'https://app.matrix-os.com/vps/register',
+      }),
+    });
 
     const provisioned = await service.provisionPreview({
       clerkUserId: 'user_preview',
@@ -1106,6 +1113,9 @@ describe('platform/customer-vps', () => {
       `MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
     );
     expect(createInput?.userData).toContain(`MATRIX_IMAGE_VERSION=${bootstrapVersion}`);
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://candidate---app.matrix-os.com/vps/bootstrap-progress',
+    );
   });
 
   it('fails preview provisioning closed when the requested bootstrap release is not registered', async () => {
@@ -1287,6 +1297,44 @@ describe('platform/customer-vps', () => {
     expect(row?.registrationTokenHash).toBeNull();
     expect(row?.registrationTokenExpiresAt).toBeNull();
     expect(systemStore.writtenMeta).toHaveLength(1);
+  });
+
+  it('records authenticated bootstrap progress monotonically before registration', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'cloud_init_started',
+    })).resolves.toEqual({ accepted: true, stage: 'cloud_init_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'packages_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'packages_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'cloud_init_started',
+    })).resolves.toEqual({ accepted: true, stage: 'packages_ready' });
+
+    const row = await getUserMachine(db, provisioned.machineId);
+    expect(row?.bootstrapStage).toBe('packages_ready');
+    expect(row?.bootstrapStageAt).toBe('2026-04-26T12:00:00.000Z');
+    await expect(service.status(provisioned.machineId)).resolves.toMatchObject({
+      bootstrapStage: 'packages_ready',
+      bootstrapStageAt: '2026-04-26T12:00:00.000Z',
+    });
+  });
+
+  it('rejects bootstrap progress with an invalid token without changing state', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.reportBootstrapProgress('wrong-token', {
+      machineId: provisioned.machineId,
+      stage: 'cloud_init_started',
+    })).rejects.toMatchObject({ status: 401, code: 'registration_rejected' });
+
+    expect((await getUserMachine(db, provisioned.machineId))?.bootstrapStage).toBeNull();
   });
 
   it('returns a warning when registration metadata cannot be persisted', async () => {
@@ -1565,6 +1613,9 @@ describe('platform/customer-vps', () => {
       status: 'recovering',
       hetznerServerId: 789012,
       publicIPv4: '203.0.113.11',
+      bootstrapStage: null,
+      bootstrapStageAt: null,
+      candidateBootstrapProgress: false,
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });

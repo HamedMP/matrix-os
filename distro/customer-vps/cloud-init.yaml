@@ -409,6 +409,7 @@ write_files:
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
+      MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL={{platformBootstrapProgressUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
@@ -486,6 +487,23 @@ runcmd:
       printf 'vm.swappiness=10\n' > /etc/sysctl.d/99-matrix-swap.conf
       sysctl -p /etc/sysctl.d/99-matrix-swap.conf
     ) || echo "matrix-host: swap setup failed (non-fatal)" >&2
+    . /opt/matrix/env/host.env
+    . /opt/matrix/env/registration.env
+    report_bootstrap_stage() {
+      stage="$1"
+      case "${MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL:-}" in
+        https://*/vps/bootstrap-progress) ;;
+        *) echo "matrix-host: bootstrap progress endpoint unavailable" >&2; return 0 ;;
+      esac
+      payload="$(printf '{"machineId":"%s","stage":"%s"}' "$MATRIX_MACHINE_ID" "$stage")"
+      if ! printf 'header = "authorization: Bearer %s"\n' "$MATRIX_REGISTRATION_TOKEN" |
+        curl --config - --fail --silent --connect-timeout 5 --max-time 10 \
+          -X POST -H 'content-type: application/json' --data-binary "$payload" \
+          "$MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL" >/dev/null; then
+        echo "matrix-host: bootstrap progress callback unavailable" >&2
+      fi
+    }
+    report_bootstrap_stage cloud_init_started
     apt_get_update() {
       apt-get update \
         -o Acquire::Retries=5 \
@@ -520,6 +538,7 @@ runcmd:
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+    report_bootstrap_stage packages_ready
 
     install -d -o root -g matrix -m 0770 /opt/matrix
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
@@ -583,6 +602,7 @@ runcmd:
     expected="$(awk '{print $1}' /tmp/matrix-host.tgz.sha256)"
     actual="$(sha256sum /tmp/matrix-host.tgz | awk '{print $1}')"
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
+    report_bootstrap_stage bundle_downloaded
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
     chmod -R g+rwX /opt/matrix/runtime/node
@@ -629,6 +649,7 @@ runcmd:
     if [ -x /opt/matrix/bin/zellij ]; then
       ln -sf /opt/matrix/bin/zellij /usr/local/bin/zellij
     fi
+    report_bootstrap_stage bundle_installed
     openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=customer-vps.matrix-os.local" -keyout /opt/matrix/tls/key.pem -out /opt/matrix/tls/cert.pem
     chown root:matrix /opt/matrix/tls/key.pem /opt/matrix/tls/cert.pem
     chmod 0640 /opt/matrix/tls/key.pem
@@ -650,6 +671,16 @@ runcmd:
         -p 127.0.0.1:5432:5432 \
         postgres:16 >/dev/null
     fi
+    database_ready=false
+    for _ in $(seq 1 60); do
+      if docker exec matrix-postgres pg_isready -U matrix -d matrix >/dev/null 2>&1; then
+        database_ready=true
+        break
+      fi
+      sleep 1
+    done
+    [ "$database_ready" = true ] || { echo "matrix-host: postgres readiness timed out" >&2; exit 1; }
+    report_bootstrap_stage database_ready
 
     systemctl daemon-reload
     systemctl enable --now matrix-terminal-runtime.service
@@ -658,6 +689,7 @@ runcmd:
     systemctl enable matrix-update-runtime.service
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-update-runtime.service
+    report_bootstrap_stage gateway_starting
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2

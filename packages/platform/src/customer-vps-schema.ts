@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { DeveloperToolsSchema } from './developer-tools.js';
+import { CustomerVpsBootstrapStageSchema } from './customer-vps-bootstrap.js';
 
 export const CustomerVpsStatusSchema = z.enum([
   'provisioning',
@@ -67,6 +68,11 @@ export const RegisterRequestSchema = z.object({
   imageVersion: z.string().min(1).max(128),
 });
 
+export const BootstrapProgressRequestSchema = z.object({
+  machineId: z.uuid(),
+  stage: CustomerVpsBootstrapStageSchema.exclude(['registered']),
+}).strict();
+
 export const RecoverRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
@@ -93,6 +99,7 @@ export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export type PreviewProvisionInput = z.input<typeof PreviewProvisionRequestSchema>;
 export type PreviewProvisionRequest = z.output<typeof PreviewProvisionRequestSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
+export type BootstrapProgressRequest = z.infer<typeof BootstrapProgressRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
 export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;
 export type DeployRequest = z.infer<typeof DeployRequestSchema>;

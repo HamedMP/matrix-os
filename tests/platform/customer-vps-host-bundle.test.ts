@@ -1175,19 +1175,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).not.toContain('${{ inputs.provision_platform_url }}');
   });
 
-  it('bounds candidate-only clean-boot diagnostics to the exact disposable preview', () => {
+  it('reports durable clean-boot stages without requiring preview SSH access', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
-    expect(workflow).toContain('VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}');
-    expect(workflow).toContain('if [ "$USE_PLATFORM_CANDIDATE" = "true" ] && [ "$boot_diagnostic_captured" != true ]; then');
-    expect(workflow).toContain(`candidate_address="$(jq -r '.publicIPv4 // ""' <<<"$polled_machine")"`);
-    expect(workflow).toContain('ssh-keygen -y -f "$diagnostic_key"');
-    expect(workflow).toContain('StrictHostKeyChecking=accept-new');
-    expect(workflow).toContain('root@${candidate_address}');
-    expect(workflow).toContain('cloud-init status --long');
-    expect(workflow).toContain('journalctl -u cloud-final.service --no-pager -n 160');
-    expect(workflow).not.toContain('cat /opt/matrix/env');
+    expect(workflow).toContain(`bootstrap_stage="$(jq -r '.bootstrapStage // "pending"' <<< "$progress_machine")"`);
+    expect(workflow).toContain('Bootstrap stage for ${HANDLE}: ${bootstrap_stage}');
+    expect(workflow).not.toContain('VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}');
+    expect(workflow).not.toContain('root@${candidate_address}');
   });
 
   it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {
