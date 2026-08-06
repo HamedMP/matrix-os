@@ -1,72 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mockSend = vi.fn();
-const mockGetSignedUrl = vi.fn();
-const createdClientConfigs: unknown[] = [];
-
-vi.mock("@aws-sdk/client-s3", () => {
-  class MockS3Client {
-    constructor(config: unknown) {
-      createdClientConfigs.push(config);
-    }
-
-    send = mockSend;
-    destroy = vi.fn();
-  }
-
-  return {
-    S3Client: MockS3Client,
-    GetObjectCommand: class {
-      constructor(public params: unknown) {}
-    },
-    PutObjectCommand: class {
-      constructor(public params: unknown) {}
-    },
-    DeleteObjectCommand: class {
-      constructor(public params: unknown) {}
-    },
-    CreateMultipartUploadCommand: class {
-      constructor(public params: unknown) {}
-    },
-    UploadPartCommand: class {
-      constructor(public params: unknown) {}
-    },
-  };
-});
-
-vi.mock("@aws-sdk/s3-request-presigner", () => ({
-  getSignedUrl: (...args: unknown[]) => mockGetSignedUrl(...args),
-}));
+import { describe, expect, it } from "vitest";
 
 import { createR2Client } from "../../packages/platform/src/r2-client.js";
 
 describe("platform R2 client", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    createdClientConfigs.length = 0;
-  });
-
   it("trims object-store secrets and endpoints before creating the S3 client", async () => {
-    mockGetSignedUrl.mockResolvedValue("https://internal.example.com/bundle.tar.gz?sig=1");
     const client = await createR2Client({
       accountId: " account-id\n",
       accessKeyId: "bundle-key\n",
       secretAccessKey: " bundle-secret ",
       bucket: " matrixos-bundles\n",
-      publicEndpoint: " https://bundles.example.com\n",
     });
 
-    expect(createdClientConfigs.at(-1)).toMatchObject({
-      endpoint: "https://account-id.r2.cloudflarestorage.com",
-      credentials: {
-        accessKeyId: "bundle-key",
-        secretAccessKey: "bundle-secret",
-      },
-    });
-
-    await expect(client.getPresignedGetUrl("system-bundles/dev.tar.gz")).resolves.toBe(
-      "https://bundles.example.com/bundle.tar.gz?sig=1",
-    );
+    const url = new URL(await client.getPresignedGetUrl("system-bundles/dev.tar.gz"));
+    expect(url.hostname).toBe("matrixos-bundles.account-id.r2.cloudflarestorage.com");
+    expect(url.pathname).toContain("system-bundles/dev.tar.gz");
+    expect(url.searchParams.get("X-Amz-Credential")).toContain("bundle-key");
     client.destroy();
   });
 
@@ -79,5 +27,23 @@ describe("platform R2 client", () => {
         bucket: "matrixos-bundles",
       }),
     ).rejects.toThrow(/access key, secret key, and bucket/i);
+  });
+
+  it("signs public URLs with a separate public-endpoint client", async () => {
+    const client = await createR2Client({
+      endpoint: "http://127.0.0.1:9121",
+      publicEndpoint: " https://bundles.example.com\n",
+      accessKeyId: "bundle-key",
+      secretAccessKey: "bundle-secret",
+      bucket: "matrixos-bundles",
+      forcePathStyle: true,
+    });
+
+    const url = new URL(await client.getPresignedGetUrl("system-bundles/dev.tar.gz"));
+    expect(url.origin).toBe("https://bundles.example.com");
+    expect(url.port).toBe("");
+    expect(url.pathname).toBe("/matrixos-bundles/system-bundles/dev.tar.gz");
+    expect(url.searchParams.has("X-Amz-Signature")).toBe(true);
+    client.destroy();
   });
 });

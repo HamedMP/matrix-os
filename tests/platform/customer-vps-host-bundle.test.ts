@@ -37,6 +37,20 @@ function runDevBundleGate(env: Record<string, string>) {
   }
 }
 
+function runHostBundlePreflight(env: Record<string, string>) {
+  const root = process.cwd();
+  const childEnv = { ...process.env };
+  delete childEnv.HOST_BUNDLE_ZELLIJ_VERSION;
+  delete childEnv.HOST_BUNDLE_ZELLIJ_BINARY_SHA256;
+
+  return spawnSync('bash', [join(root, 'scripts/build-host-bundle.sh')], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...childEnv, ...env },
+    timeout: 2_000,
+  });
+}
+
 describe('customer VPS host bundle', () => {
   it('build script packages the systemd entrypoint binaries', () => {
     const root = process.cwd();
@@ -79,6 +93,72 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-messaging-health');
     expect(script).toContain('"$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('bin app runtime systemd user-systemd terminal-runtime release.json');
+  });
+
+  it('pins, verifies, smoke-tests, and packages the configured Zellij binary', () => {
+    const root = process.cwd();
+    const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const smoke = readFileSync(join(root, 'scripts/smoke-zellij-host-query.mjs'), 'utf8');
+
+    expect(script).toContain('ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.3}"');
+    expect(script).toContain(
+      'ZELLIJ_BINARY_SHA256="${HOST_BUNDLE_ZELLIJ_BINARY_SHA256:-397481870c4fc3bae646cd7613cde3a1cebdc204558a6cb9a7c603d4c852fc90}"',
+    );
+    expect(script).toContain('HOST_BUNDLE_ZELLIJ_VERSION and HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be set together');
+    expect(script).toContain('[[ ! "$ZELLIJ_BINARY_SHA256" =~ ^[0-9a-f]{64}$ ]]');
+    expect(script).toContain('if [ -L "$STAGE_DIR/bin/zellij" ] || [ ! -f "$STAGE_DIR/bin/zellij" ]; then');
+    expect(script).toContain("printf '%s  %s\\n' \"$ZELLIJ_BINARY_SHA256\" \"$STAGE_DIR/bin/zellij\" | sha256sum -c -");
+    expect(script).toContain('ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"');
+    expect(script).toContain('[ "$ZELLIJ_ACTUAL_VERSION" = "zellij $ZELLIJ_VERSION" ]');
+    expect(script).toContain(
+      'timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"',
+    );
+    expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/zellij"');
+    expect(script).toContain(
+      'tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json',
+    );
+    expect(smoke).toContain('import { spawn } from "node-pty"');
+    expect(smoke).toContain('const TEST_TIMEOUT_MS = 10_000');
+    expect(smoke).toContain('const OLD_HOST_QUERY_TIMEOUT_MS = 500');
+    expect(smoke).toContain('const HOST_REPLY_DELAY_MS = OLD_HOST_QUERY_TIMEOUT_MS + 250');
+    expect(smoke).toContain('const maxInputBytes = 64 * 1024');
+    expect(smoke).toContain('mkdtemp(join(tmpdir(), "mzq-"))');
+    expect(smoke).toContain('XDG_CACHE_HOME: cacheDir');
+    expect(smoke).toContain('await rm(testRoot, { recursive: true, force: true })');
+
+    const regularFileCheck = script.indexOf('if [ -L "$STAGE_DIR/bin/zellij" ] || [ ! -f "$STAGE_DIR/bin/zellij" ]; then');
+    const digestCheck = script.indexOf("printf '%s  %s\\n' \"$ZELLIJ_BINARY_SHA256\" \"$STAGE_DIR/bin/zellij\" | sha256sum -c -");
+    const permissionChange = script.indexOf('chmod 0755 "$STAGE_DIR/bin/zellij"');
+    expect(regularFileCheck).toBeGreaterThan(-1);
+    expect(digestCheck).toBeGreaterThan(regularFileCheck);
+    expect(permissionChange).toBeGreaterThan(digestCheck);
+  });
+
+  it('fails closed before building when Zellij overrides are unpaired or malformed', () => {
+    const versionOnly = runHostBundlePreflight({
+      HOST_BUNDLE_ZELLIJ_VERSION: '0.44.3',
+    });
+    expect(versionOnly.status).toBe(1);
+    expect(versionOnly.stderr).toContain(
+      'HOST_BUNDLE_ZELLIJ_VERSION and HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be set together',
+    );
+
+    const digestOnly = runHostBundlePreflight({
+      HOST_BUNDLE_ZELLIJ_BINARY_SHA256: 'a'.repeat(64),
+    });
+    expect(digestOnly.status).toBe(1);
+    expect(digestOnly.stderr).toContain(
+      'HOST_BUNDLE_ZELLIJ_VERSION and HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be set together',
+    );
+
+    const malformedDigest = runHostBundlePreflight({
+      HOST_BUNDLE_ZELLIJ_VERSION: '0.44.3',
+      HOST_BUNDLE_ZELLIJ_BINARY_SHA256: '../not-a-digest',
+    });
+    expect(malformedDigest.status).toBe(1);
+    expect(malformedDigest.stderr).toContain(
+      'HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be a lowercase 64-character SHA-256',
+    );
   });
 
   it('host bundle defers heavy optional tools to selectable boot-time packs', () => {
@@ -897,7 +977,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('Refusing to publish a host bundle with the example Clerk publishable key.');
     expect(workflow).not.toContain('HEAD_COMMIT_MESSAGE');
     expect(workflow).not.toContain('CHANGED_FILES="$changed_files"');
-    expect(workflow).not.toContain('continue-on-error: true');
+    expect(workflow.slice(workflow.indexOf('\n  publish:'), workflow.indexOf('\n  enqueue-golden-snapshot:')))
+      .not.toContain('continue-on-error: true');
   });
 
   it('host bundle release workflow waits for same-sha CI instead of duplicating the full suite', () => {

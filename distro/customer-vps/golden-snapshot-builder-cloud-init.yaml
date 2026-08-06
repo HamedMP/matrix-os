@@ -1,0 +1,150 @@
+#cloud-config
+# Synthetic builder only. Customer/owner identity and credentials are forbidden.
+packages:
+  - docker.io
+  - postgresql-client
+
+write_files:
+  - path: /etc/matrix/golden-snapshot-builder
+    owner: root:root
+    permissions: '0600'
+    content: '1'
+  - path: /run/matrix-golden-snapshot-callback-token
+    owner: root:root
+    permissions: '0600'
+    content: '{{callbackToken}}'
+
+runcmd:
+  - |
+    set -eu
+    failureStage='bundle_download'
+    failureArmed=1
+    reportFailure() {
+      failureStatus="$?"
+      [ "$failureArmed" = 1 ] || return 0
+      failureArmed=0
+      trap - EXIT
+      set +e
+      reportedStage="$failureStage"
+      if [ "$failureStage" = sanitization ]; then
+        case "$failureStatus" in
+          68) reportedStage='sanitization_callback_material' ;;
+          69) reportedStage='sanitization_root_device' ;;
+          70) reportedStage='sanitization_free_blocks' ;;
+          71) reportedStage='sanitization_residue' ;;
+          72) reportedStage='sanitization_scan_execution' ;;
+        esac
+      fi
+      if [ "$failureStage" = activation ] && [ -f /run/matrix-golden-activation-stage ] \
+        && [ ! -L /run/matrix-golden-activation-stage ]; then
+        activationStage="$(cat /run/matrix-golden-activation-stage)"
+        case "$activationStage" in
+          activation_docker_start|activation_postgres_pull|activation_postgres_start|activation_postgres_ready|activation_services_start|activation_services_ready|activation_runtime_setup) reportedStage="$activationStage" ;;
+        esac
+      fi
+      callbackToken="$(cat /run/matrix-golden-snapshot-callback-token 2>/dev/null)"
+      printf '{"eventId":"{{callbackEventId}}","phase":"failed","role":"builder","stage":"%s","bundleVersion":"{{bundleVersion}}","bundleSha256":"{{bundleSha256}}"}\n' "$reportedStage" >/run/matrix-golden-failure.json
+      printf 'header = "authorization: Bearer %s"\n' "$callbackToken" |
+        curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-failure.json '{{callbackUrl}}'
+      rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-failure.json /run/golden-snapshot-callback.json /run/matrix-golden-activation-stage
+      exit "$failureStatus"
+    }
+    trap reportFailure EXIT
+    install -d -m 0755 /opt/matrix
+    curl --fail --location --retry 3 --retry-all-errors --connect-timeout 10 --max-time 900 '{{bundleUrl}}' -o /tmp/matrix-host.tgz
+    failureStage='bundle_verify'
+    printf '%s  %s\n' '{{bundleSha256}}' /tmp/matrix-host.tgz | sha256sum -c -
+    failureStage='bundle_extract'
+    tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
+    printf '%s\n' '{{bundleVersion}}' >/opt/matrix/app/BUNDLE_VERSION
+    printf '%s\n' '{{bundleSha256}}' >/opt/matrix/app/BUNDLE_SHA256
+    test "$(tr -d '\r\n' < /opt/matrix/app/BUNDLE_VERSION)" = '{{bundleVersion}}'
+    chmod 0755 /opt/matrix/bin/matrix-golden-snapshot-activate /opt/matrix/bin/matrix-golden-snapshot-sanitize /opt/matrix/bin/matrix-golden-snapshot-validate
+    failureStage='activation'
+    timeout --kill-after=30 1200 /opt/matrix/bin/matrix-golden-snapshot-activate builder
+    builderMachineIdSha256="$(sha256sum /etc/machine-id | awk '{print $1}')"
+    builderSshHostKeySha256="$(sha256sum /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1}')"
+    failureStage='callback_delivery'
+    callbackToken="$(cat /run/matrix-golden-snapshot-callback-token)"
+    printf '{"eventId":"{{builderBootEventId}}","phase":"builder_booted","bundleVersion":"{{bundleVersion}}","bundleSha256":"{{bundleSha256}}","builderMachineIdSha256":"%s","builderSshHostKeySha256":"%s","healthy":true}\n' "$builderMachineIdSha256" "$builderSshHostKeySha256" >/run/matrix-golden-builder-booted.json
+    printf 'header = "authorization: Bearer %s"\n' "$callbackToken" |
+      curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-builder-booted.json '{{callbackUrl}}'
+    rm -f /run/matrix-golden-builder-booted.json
+    failureStage='sanitization'
+    # cloud-final records completion after runcmd returns. Sanitizing from this
+    # process races that write and can bake completed cloud-init state, causing
+    # clones to ignore their user-data. A transient timer runs the finalizer
+    # only after this command exits; /run is tmpfs and is never baked.
+    cat >/run/matrix-golden-finalize <<'MATRIX_GOLDEN_FINALIZER'
+    #!/usr/bin/env bash
+    set -eu
+    builderMachineIdSha256="$1"
+    builderSshHostKeySha256="$2"
+    failureStage='cloud_final_wait'
+    failureArmed=1
+    callbackToken="$(cat /run/matrix-golden-snapshot-callback-token)"
+    reportFailure() {
+      failureStatus="$?"
+      [ "$failureArmed" = 1 ] || return 0
+      failureArmed=0
+      trap - EXIT
+      set +e
+      reportedStage="$failureStage"
+      if [ "$failureStage" = sanitization ]; then
+        case "$failureStatus" in
+          68) reportedStage='sanitization_callback_material' ;;
+          69) reportedStage='sanitization_root_device' ;;
+          70) reportedStage='sanitization_free_blocks' ;;
+          71) reportedStage='sanitization_residue' ;;
+          72) reportedStage='sanitization_scan_execution' ;;
+        esac
+      fi
+      printf '{"eventId":"{{callbackEventId}}","phase":"failed","role":"builder","stage":"%s","bundleVersion":"{{bundleVersion}}","bundleSha256":"{{bundleSha256}}"}\n' "$reportedStage" >/run/matrix-golden-failure.json
+      printf 'header = "authorization: Bearer %s"\n' "$callbackToken" |
+        curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-failure.json '{{callbackUrl}}'
+      rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-failure.json /run/golden-snapshot-callback.json /run/matrix-golden-finalize
+      exit "$failureStatus"
+    }
+    trap reportFailure EXIT
+    trap 'failureStage=finalizer_timeout; exit 73' TERM
+    sleep 15
+    cloudFinalSubState=''
+    for _ in $(seq 1 120); do
+      cloudFinalSubState="$(systemctl show --property=SubState --value cloud-final.service 2>/dev/null || true)"
+      [ "$cloudFinalSubState" = exited ] && break
+      [ "$cloudFinalSubState" = failed ] && break
+      sleep 1
+    done
+    test "$cloudFinalSubState" = exited
+    failureStage='service_shutdown'
+    printf '{"eventId":"{{callbackEventId}}","phase":"sanitized","bundleVersion":"{{bundleVersion}}","bundleSha256":"{{bundleSha256}}","builderMachineIdSha256":"%s","builderSshHostKeySha256":"%s"}\n' "$builderMachineIdSha256" "$builderSshHostKeySha256" >/run/golden-snapshot-callback.json
+    systemctl stop matrix-sync-agent.service matrix-shell.service matrix-gateway.service matrix-restore.service
+    docker rm -f matrix-golden-postgres || true
+    systemctl stop docker.service containerd.service
+    systemctl disable docker.service containerd.service || true
+    failureStage='sanitization'
+    MATRIX_GOLDEN_SNAPSHOT_ROOT=/ /opt/matrix/bin/matrix-golden-snapshot-sanitize
+    failureStage='callback_delivery'
+    printf 'header = "authorization: Bearer %s"\n' "$callbackToken" |
+      curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/golden-snapshot-callback.json '{{callbackUrl}}'
+    failureArmed=0
+    trap - EXIT
+    rm -f /run/golden-snapshot-callback.json /run/matrix-golden-snapshot-callback-token /run/matrix-golden-finalize
+    shutdown -h now
+    MATRIX_GOLDEN_FINALIZER
+    chmod 0700 /run/matrix-golden-finalize
+    cat >/run/systemd/system/matrix-golden-finalize.service <<MATRIX_GOLDEN_FINALIZER_UNIT
+    [Unit]
+    Description=Finalize sanitized Matrix OS golden snapshot builder
+    After=cloud-final.service
+
+    [Service]
+    Type=oneshot
+    KillMode=control-group
+    TimeoutStartSec=2500
+    ExecStart=/usr/bin/timeout --kill-after=90 2400 /usr/bin/env bash /run/matrix-golden-finalize $builderMachineIdSha256 $builderSshHostKeySha256
+    MATRIX_GOLDEN_FINALIZER_UNIT
+    systemctl daemon-reload
+    systemctl start --no-block matrix-golden-finalize.service
+    failureArmed=0
+    trap - EXIT

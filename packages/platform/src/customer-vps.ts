@@ -1,4 +1,5 @@
 import { randomUUID, randomBytes } from 'node:crypto';
+import { sql } from 'kysely';
 import type {
   PlatformDB,
   UserMachineProvisioningClass,
@@ -9,6 +10,7 @@ import {
   claimUserMachineRecovery,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
+  getHostBundleRelease,
   getHostBundleReleaseByChannel,
   getUserMachine,
   insertUserMachine,
@@ -24,6 +26,7 @@ import {
   retireUserMachine,
   markProviderDeletionCompleted,
   markProviderDeletionFailed,
+  parseNullableProviderActionId,
   runInPlatformTransaction,
   claimRunningUserMachineResize,
   completeUserMachineResize,
@@ -82,7 +85,23 @@ import {
   openProvisioningPayload,
   sealProvisioningPayload,
   type NewProvisioningJob,
+  type ProvisioningPayload,
 } from './customer-vps-provisioning-jobs.js';
+import {
+  chooseProvisioningImage,
+  chooseRecoveryImage,
+  fallbackProvisioningImage,
+  resolveGoldenSnapshotRollout,
+  type ProvisioningImageDecision,
+} from './golden-snapshot-activation.js';
+import {
+  createGoldenSnapshotCreateIntent,
+  getGoldenSnapshot,
+  getGoldenSnapshotRecoveryRegistrationTarget,
+  markGoldenSnapshotCreateIntentAccepted,
+  releaseGoldenSnapshotLease,
+  releaseGoldenSnapshotLeaseInTransaction,
+} from './golden-snapshot-repository.js';
 
 export interface ProvisionResponse {
   machineId: string;
@@ -190,6 +209,9 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   "      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'",
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
   '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
+  '      MATRIX_IMAGE_SOURCE={{imageSource}}',
+  '      MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}',
+  '      MATRIX_SNAPSHOT_SOURCE_VERSION={{snapshotSourceVersion}}',
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
   '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
@@ -230,6 +252,8 @@ const PROVIDER_DELETION_RETRY_MAX_MS = 60 * 60_000;
 const RESIZE_STATUS_POLL_INTERVAL_MS = 1_000;
 const RESIZE_STATUS_POLL_TIMEOUT_MS = 90_000;
 const PROVISIONING_JOB_LEASE_MS = 5 * 60_000;
+const RECOVERY_CREATE_ACTION_POLL_ATTEMPTS = 6;
+const RECOVERY_CREATE_ACTION_POLL_INTERVAL_MS = 1_000;
 
 function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): ProvisionResponse {
   if (row.status !== 'provisioning' && row.status !== 'running') {
@@ -240,6 +264,12 @@ function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): Pr
     status: row.status,
     etaSeconds,
   };
+}
+
+function isAmbiguousProviderCreateError(err: unknown): boolean {
+  return !(err instanceof CustomerVpsError)
+    || err.code === 'provider_timeout'
+    || err.code === 'provider_unavailable';
 }
 
 async function findExistingProvisioningMachine(
@@ -327,6 +357,7 @@ const MAX_LOCAL_PROVISION_QUEUE_DEPTH = 20;
 interface HostBundleRef {
   imageVersion: string;
   hostBundleUrl: string;
+  sha256?: string | null;
 }
 
 function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: string): string {
@@ -344,7 +375,12 @@ function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: s
 
 async function resolveHostBundleRef(db: PlatformDB, config: CustomerVpsConfig): Promise<HostBundleRef> {
   if (config.hostBundleUrlOverride || !HOST_BUNDLE_CHANNELS.has(config.imageVersion)) {
-    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl };
+    const release = await getHostBundleRelease(db, config.imageVersion);
+    return {
+      imageVersion: config.imageVersion,
+      hostBundleUrl: config.hostBundleUrl,
+      sha256: release?.sha256 ?? null,
+    };
   }
 
   const release = await getHostBundleReleaseByChannel(db, config.imageVersion);
@@ -353,12 +389,13 @@ async function resolveHostBundleRef(db: PlatformDB, config: CustomerVpsConfig): 
       `host bundle channel missing release channel=${config.imageVersion}`,
       new Error('falling back to configured host bundle URL without immutable version pin'),
     );
-    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl };
+    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl, sha256: null };
   }
 
   return {
     imageVersion: release.version,
     hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
+    sha256: release.sha256,
   };
 }
 
@@ -468,6 +505,18 @@ async function assertBillingResizeAllowed(
   }
 }
 
+async function assertMachineProviderMutationAllowed(
+  deps: CustomerVpsServiceDeps,
+  machine: Pick<UserMachineRecord, 'clerkUserId' | 'runtimeSlot' | 'provisioningClass'>,
+  serverType: string,
+  now: Date,
+): Promise<void> {
+  // Preview authorization is platform/operator scoped and deliberately does
+  // not consume or depend on the owner's customer billing entitlement.
+  if (machine.provisioningClass === 'preview') return;
+  await assertBillingResizeAllowed(deps, machine.clerkUserId, machine.runtimeSlot, serverType, now);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -575,6 +624,379 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
+  async function waitForRecoveryCreateAction(actionId: number): Promise<'success' | 'error' | 'pending'> {
+    for (let attempt = 0; attempt < RECOVERY_CREATE_ACTION_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const action = await deps.hetzner.getAction(actionId);
+        if (action?.status === 'success') return 'success';
+        if (action?.status === 'error') return 'error';
+      } catch (err: unknown) {
+        logCustomerVpsError(`recovery create action refresh failed actionId=${actionId}`, err);
+      }
+      if (attempt + 1 < RECOVERY_CREATE_ACTION_POLL_ATTEMPTS) {
+        await sleep(RECOVERY_CREATE_ACTION_POLL_INTERVAL_MS);
+      }
+    }
+    return 'pending';
+  }
+
+  async function removeRejectedRecoveryServer(input: {
+    serverId: number;
+    machineId: string;
+    handle: string;
+  }): Promise<boolean> {
+    try {
+      await deps.hetzner.deleteServer(input.serverId);
+      if (await deps.hetzner.getServer(input.serverId)) {
+        const err = new Error('Recovery server deletion has not completed');
+        await queueProviderDeletion({
+          providerServerId: input.serverId,
+          reason: 'rejected_snapshot_recovery_clone',
+          machineId: input.machineId,
+          handle: input.handle,
+          err,
+        });
+        return false;
+      }
+      return true;
+    } catch (err: unknown) {
+      logCustomerVpsError('rejected snapshot recovery clone cleanup failed', err);
+      await queueProviderDeletion({
+        providerServerId: input.serverId,
+        reason: 'rejected_snapshot_recovery_clone',
+        machineId: input.machineId,
+        handle: input.handle,
+        err,
+      });
+      return false;
+    }
+  }
+
+  async function reconcilePendingRecoveryCreate(
+    row: UserMachineRecord,
+  ): Promise<'settled' | 'pending' | 'failed'> {
+    if (row.status !== 'recovering') return 'settled';
+    const restoreOldMachine = async (encryptedPayload: string): Promise<boolean> => {
+      let payload: ProvisioningPayload;
+      try {
+        payload = openProvisioningPayload(encryptedPayload, deps.config.platformSecret);
+      } catch (err: unknown) {
+        logCustomerVpsError(`recovery rollback intent decode failed machineId=${row.machineId}`, err);
+        return false;
+      }
+      if (!payload.recovery) return false;
+      const expected = payload.recovery;
+      const recoveryTarget = await getGoldenSnapshotRecoveryRegistrationTarget(deps.db, row.machineId);
+      return runInPlatformTransaction(deps.db, async (trx) => {
+        const current = await trx.executor.selectFrom('user_machines').select([
+          'status', 'deleted_at', 'hetzner_server_id', 'recovery_create_action_id',
+          'recovery_encrypted_payload',
+        ]).where('machine_id', '=', row.machineId).forUpdate().executeTakeFirst();
+        if (!current || current.status !== 'recovering' || current.deleted_at !== null
+          || current.hetzner_server_id !== row.hetznerServerId
+          || parseNullableProviderActionId(
+            current.recovery_create_action_id as number | string | null,
+          ) !== row.recoveryCreateActionId
+          || current.recovery_encrypted_payload !== encryptedPayload) {
+          return false;
+        }
+        await updateUserMachine(trx, row.machineId, {
+          machineId: expected.oldMachineId,
+          status: expected.oldStatus,
+          hetznerServerId: row.recoveryOldServerId,
+          publicIPv4: expected.oldPublicIPv4,
+          publicIPv6: expected.oldPublicIPv6,
+          imageVersion: expected.oldImageVersion,
+          sourceSnapshotId: expected.oldSourceSnapshotId,
+          sourceBaseGeneration: expected.oldSourceBaseGeneration,
+          targetBundleVersion: expected.oldTargetBundleVersion,
+          targetBundleSha256: expected.oldTargetBundleSha256,
+          serverType: expected.oldServerType,
+          recoveryCreateActionId: null,
+          recoveryEncryptedPayload: null,
+          recoveryOldServerId: null,
+          recoveryOldPublicIPv4: null,
+          registrationTokenHash: expected.oldRegistrationTokenHash,
+          registrationTokenExpiresAt: expected.oldRegistrationTokenExpiresAt,
+          provisionedAt: expected.oldProvisionedAt,
+          lastSeenAt: expected.oldLastSeenAt,
+          failureCode: expected.oldFailureCode,
+          failureAt: expected.oldFailureAt,
+        });
+        if (recoveryTarget) {
+          await releaseGoldenSnapshotLeaseInTransaction(trx, recoveryTarget.leaseId, now().toISOString());
+        }
+        return true;
+      });
+    };
+    const registrationExpired = row.registrationTokenExpiresAt !== null
+      && new Date(row.registrationTokenExpiresAt).getTime() < now().getTime();
+    if (registrationExpired && row.hetznerServerId !== null && row.recoveryEncryptedPayload !== null) {
+      try {
+        await deps.hetzner.deleteServer(row.hetznerServerId);
+        if (await deps.hetzner.getServer(row.hetznerServerId)) return 'pending';
+      } catch (err: unknown) {
+        logCustomerVpsError(`expired recovery replacement cleanup failed machineId=${row.machineId}`, err);
+        return 'pending';
+      }
+      return await restoreOldMachine(row.recoveryEncryptedPayload) ? 'settled' : 'pending';
+    }
+    if (row.recoveryCreateActionId === null) {
+      if (row.recoveryEncryptedPayload === null) return 'settled';
+      let payload: ProvisioningPayload;
+      try {
+        payload = openProvisioningPayload(row.recoveryEncryptedPayload, deps.config.platformSecret);
+      } catch (err: unknown) {
+        logCustomerVpsError(`recovery intent decode failed machineId=${row.machineId}`, err);
+        return 'pending';
+      }
+      if (!payload.recovery) return 'pending';
+      const expected = payload.recovery;
+      if (row.hetznerServerId !== null) {
+        return 'pending';
+      }
+      if (!deps.hetzner.listServersByLabel) return 'pending';
+      let candidates: Awaited<ReturnType<NonNullable<HetznerClient['listServersByLabel']>>>;
+      try {
+        candidates = await deps.hetzner.listServersByLabel(`machine_id=${row.machineId}`);
+      } catch (err: unknown) {
+        logCustomerVpsError(`recovery create label reconciliation failed machineId=${row.machineId}`, err);
+        return 'pending';
+      }
+      const matches = candidates.filter((candidate) => {
+        const labels = candidate.labels ?? {};
+        return labels.machine_id === row.machineId
+          && labels.clerk_user_id === row.clerkUserId
+          && labels.runtime_slot === row.runtimeSlot
+          && labels.image_source === expected.imageSource
+          && (expected.sourceSnapshotId === null
+            ? labels.snapshot_id === undefined
+            : labels.snapshot_id === expected.sourceSnapshotId);
+      });
+      if (matches.length === 0 && row.registrationTokenExpiresAt !== null
+        && new Date(row.registrationTokenExpiresAt).getTime() < now().getTime()) {
+        await restoreOldMachine(row.recoveryEncryptedPayload);
+        return 'settled';
+      }
+      if (matches.length !== 1) {
+        if (matches.length > 1) {
+          logCustomerVpsError(
+            `recovery create provenance ambiguous machineId=${row.machineId}`,
+            new Error('Multiple exact-labeled replacement servers'),
+          );
+        }
+        return 'pending';
+      }
+      const replacement = matches[0]!;
+      // A label-list response proves identity, not create-action success.
+      // Keep the old VPS until the replacement itself registers healthy.
+      await runInPlatformTransaction(deps.db, async (trx) => {
+        await updateUserMachine(trx, row.machineId, {
+          hetznerServerId: replacement.id,
+          imageVersion: expected.targetBundleVersion,
+          sourceSnapshotId: expected.sourceSnapshotId,
+          sourceBaseGeneration: expected.sourceBaseGeneration,
+          targetBundleVersion: expected.targetBundleVersion,
+          targetBundleSha256: expected.targetBundleSha256,
+          recoveryCreateActionId: replacement.createActionId ?? null,
+          recoveryEncryptedPayload: row.recoveryEncryptedPayload,
+          recoveryOldServerId: row.recoveryOldServerId,
+          provisionedAt: now().toISOString(),
+          lastSeenAt: null,
+        });
+      });
+      return 'pending';
+    }
+    let action;
+    try {
+      action = await deps.hetzner.getAction(row.recoveryCreateActionId);
+    } catch (err: unknown) {
+      logCustomerVpsError(
+        `recovery create action reconciliation failed actionId=${row.recoveryCreateActionId}`,
+        err,
+      );
+      return 'pending';
+    }
+    if (!action || action.status === 'running') return 'pending';
+    const at = now().toISOString();
+    if (action.status === 'success') {
+      await runInPlatformTransaction(deps.db, async (trx) => {
+        await updateUserMachine(trx, row.machineId, {
+          recoveryCreateActionId: null,
+          recoveryEncryptedPayload: row.recoveryEncryptedPayload,
+          recoveryOldServerId: row.recoveryOldServerId,
+        });
+      });
+      return 'pending';
+    }
+
+    if (row.hetznerServerId === null || !await removeRejectedRecoveryServer({
+      serverId: row.hetznerServerId,
+      machineId: row.machineId,
+      handle: row.handle,
+    })) {
+      return 'pending';
+    }
+
+    const recoveryTarget = await getGoldenSnapshotRecoveryRegistrationTarget(deps.db, row.machineId);
+    if (row.sourceSnapshotId !== null && row.recoveryEncryptedPayload !== null) {
+      try {
+        const payload = openProvisioningPayload(row.recoveryEncryptedPayload, deps.config.platformSecret);
+        if (!payload.recovery) throw new Error('Recovery intent is missing durable provenance');
+        const imageVersion = row.targetBundleVersion ?? row.imageVersion ?? deps.config.imageVersion;
+        const hostConfig = buildHostConfig(
+          deps.config,
+          {
+            clerkUserId: row.clerkUserId,
+            handle: row.handle,
+            runtimeSlot: row.runtimeSlot,
+            developerTools: row.developerTools,
+          },
+          row.machineId,
+          payload.registrationToken,
+          payload.postgresPassword,
+          {
+            imageVersion,
+            hostBundleUrl: hostBundleUrlForImageVersion(deps.config, imageVersion),
+          },
+        );
+        const cleanRecoveryPayload = sealProvisioningPayload({
+          registrationToken: payload.registrationToken,
+          postgresPassword: payload.postgresPassword,
+          recovery: {
+            ...payload.recovery,
+            imageSource: 'clean_image',
+            sourceSnapshotId: null,
+            sourceBaseGeneration: null,
+          },
+        }, deps.config.platformSecret);
+        const fallbackRegistrationExpiresAt = new Date(Math.max(
+          row.registrationTokenExpiresAt === null
+            ? 0
+            : new Date(row.registrationTokenExpiresAt).getTime(),
+          now().getTime() + deps.config.registrationTokenTtlMs,
+        )).toISOString();
+        const transitioned = await runInPlatformTransaction(deps.db, async (trx) => {
+          const claimed = await trx.executor.updateTable('user_machines').set({
+            hetzner_server_id: null,
+            public_ipv4: null,
+            public_ipv6: null,
+            source_snapshot_id: null,
+            source_base_generation: null,
+            recovery_create_action_id: null,
+            recovery_encrypted_payload: cleanRecoveryPayload,
+            registration_token_expires_at: fallbackRegistrationExpiresAt,
+          }).where('machine_id', '=', row.machineId)
+            .where('status', '=', 'recovering')
+            .where('deleted_at', 'is', null)
+            .where('hetzner_server_id', '=', row.hetznerServerId)
+            .where('source_snapshot_id', '=', row.sourceSnapshotId)
+            .where('recovery_create_action_id', '=', row.recoveryCreateActionId)
+            .where('recovery_encrypted_payload', '=', row.recoveryEncryptedPayload)
+            .returning('machine_id').executeTakeFirst();
+          if (!claimed) return false;
+          if (recoveryTarget) {
+            await releaseGoldenSnapshotLeaseInTransaction(trx, recoveryTarget.leaseId, at);
+          }
+          return true;
+        });
+        if (!transitioned) return 'pending';
+        let cleanServer;
+        try {
+          cleanServer = await deps.hetzner.createServer({
+            name: buildRecoveryServerName(row.handle, row.machineId),
+            serverType: row.serverType ?? deps.config.serverType,
+            location: row.location ?? deps.config.location,
+            userData: renderCloudInitTemplate(
+              deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
+              {
+                ...hostConfig,
+                imageSource: 'clean_image',
+                targetBundleSha256: row.targetBundleSha256 ?? '',
+                snapshotSourceVersion: '',
+              },
+            ),
+            labels: {
+              app: 'matrix-os', clerk_user_id: row.clerkUserId, runtime_slot: row.runtimeSlot,
+              machine_id: row.machineId, image_source: 'clean_image',
+            },
+          });
+        } catch (err: unknown) {
+          logCustomerVpsError(`recovery clean fallback create ambiguous machineId=${row.machineId}`, err);
+          return 'pending';
+        }
+        const persisted = await runInPlatformTransaction(deps.db, async (trx) => {
+          const updated = await trx.executor.updateTable('user_machines').set({
+            hetzner_server_id: cleanServer.id,
+            public_ipv4: cleanServer.publicIPv4,
+            public_ipv6: cleanServer.publicIPv6,
+            source_snapshot_id: null,
+            source_base_generation: null,
+            recovery_create_action_id: cleanServer.createActionId ?? null,
+            recovery_encrypted_payload: cleanRecoveryPayload,
+            recovery_old_server_id: row.recoveryOldServerId,
+          }).where('machine_id', '=', row.machineId)
+            .where('status', '=', 'recovering')
+            .where('deleted_at', 'is', null)
+            .where('hetzner_server_id', 'is', null)
+            .where('source_snapshot_id', 'is', null)
+            .where('recovery_create_action_id', 'is', null)
+            .where('recovery_encrypted_payload', '=', cleanRecoveryPayload)
+            .where('registration_token_expires_at', '=', fallbackRegistrationExpiresAt)
+            .returning('machine_id').executeTakeFirst();
+          return updated !== undefined;
+        });
+        if (!persisted) {
+          const current = await getUserMachine(deps.db, row.machineId);
+          if (current?.status === 'recovering' && current.hetznerServerId === cleanServer.id) {
+            return 'pending';
+          }
+          try {
+            await deps.hetzner.deleteServer(cleanServer.id);
+            if (await deps.hetzner.getServer(cleanServer.id)) {
+              throw new Error('Unclaimed recovery fallback server deletion has not completed');
+            }
+          } catch (cleanupErr: unknown) {
+            logCustomerVpsError('unclaimed recovery fallback cleanup failed', cleanupErr);
+            await queueProviderDeletion({
+              providerServerId: cleanServer.id,
+              reason: 'unclaimed_recovery_fallback',
+              machineId: row.machineId,
+              handle: row.handle,
+              err: cleanupErr,
+            });
+          }
+          return 'pending';
+        }
+        // Provider creation only proves that a replacement exists. Keep the
+        // predecessor endpoint and server until authenticated registration
+        // atomically activates the replacement and enqueues old-server cleanup.
+        return 'pending';
+      } catch (err: unknown) {
+        logCustomerVpsError(`recovery clean fallback failed machineId=${row.machineId}`, err);
+      }
+    }
+
+    if (row.recoveryEncryptedPayload !== null
+      && await restoreOldMachine(row.recoveryEncryptedPayload)) {
+      return 'settled';
+    }
+
+    await runInPlatformTransaction(deps.db, async (trx) => {
+      await updateUserMachine(trx, row.machineId, {
+        status: 'failed',
+        failureCode: 'provider_unavailable',
+        failureAt: at,
+        recoveryCreateActionId: null,
+        recoveryEncryptedPayload: null,
+      });
+      if (recoveryTarget) {
+        await releaseGoldenSnapshotLeaseInTransaction(trx, recoveryTarget.leaseId, at);
+      }
+    });
+    return 'failed';
+  }
+
   // Enqueues a provider-server deletion on the given transaction-or-db handle.
   // Unlike queueProviderDeletion, this propagates insert failures so a caller
   // can keep the status change and the deletion enqueue in one atomic unit —
@@ -589,10 +1011,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       handle?: string | null;
       detail: string;
     },
-  ): Promise<void> {
+  ): Promise<string> {
     const currentTime = now().toISOString();
+    const deletionId = randomUUID();
     await insertProviderDeletion(handle, {
-      id: randomUUID(),
+      id: deletionId,
       providerServerId: input.providerServerId,
       reason: input.reason,
       machineId: input.machineId ?? null,
@@ -601,6 +1024,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       createdAt: currentTime,
       lastError: input.detail,
     });
+    return deletionId;
   }
 
   async function retryProviderDeletions(): Promise<void> {
@@ -612,6 +1036,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     for (const deletion of pending) {
       try {
         await deps.hetzner.deleteServer(deletion.providerServerId);
+        if (deletion.reason === 'rejected_snapshot_recovery_clone'
+          && await deps.hetzner.getServer(deletion.providerServerId)) {
+          throw new Error('Provider server deletion has not completed');
+        }
         await markProviderDeletionCompleted(deps.db, deletion.id, now().toISOString());
       } catch (err: unknown) {
         const attempts = deletion.attempts + 1;
@@ -679,7 +1107,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   async function dispatchProvisioningJob(
     jobId: string,
     propagateFailure: boolean,
-  ): Promise<'completed' | 'failed' | 'skipped'> {
+  ): Promise<'completed' | 'failed' | 'skipped' | 'pending'> {
     const claimedAt = now();
     const pendingJob = await getProvisioningJob(deps.db, jobId);
     if (
@@ -736,6 +1164,72 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     try {
       const payload = openProvisioningPayload(job.encryptedPayload, deps.config.platformSecret);
       const imageVersion = row.imageVersion ?? deps.config.imageVersion;
+      let imageDecision: ProvisioningImageDecision;
+      let transitionedToFallback = false;
+      let effectiveProviderCreateActionId = job.providerCreateActionId;
+      if (job.imageSource === 'snapshot' && job.snapshotId && job.snapshotLeaseId) {
+        const rollout = await resolveGoldenSnapshotRollout(
+          deps.db,
+          deps.config.goldenSnapshots,
+          row.machineId,
+          claimedAt.toISOString(),
+        );
+        const persistedSnapshot = await getGoldenSnapshot(deps.db, job.snapshotId);
+        const freshnessCutoff = new Date(
+          claimedAt.getTime() - deps.config.goldenSnapshots.freshnessMaxAgeMs,
+        ).toISOString();
+        if (!rollout.included || !persistedSnapshot?.providerImageId || persistedSnapshot.state !== 'ready'
+          || !persistedSnapshot.readyAt || persistedSnapshot.readyAt <= freshnessCutoff) {
+          await fallbackProvisioningImage(deps.db, {
+            jobId: job.jobId,
+            reason: !rollout.included
+              ? 'snapshot_rollout_disabled'
+              : persistedSnapshot?.state === 'ready' ? 'snapshot_stale' : 'snapshot_unavailable',
+            now: claimedAt.toISOString(),
+          });
+          transitionedToFallback = true;
+          effectiveProviderCreateActionId = null;
+          imageDecision = {
+            imageSource: 'clean_image',
+            targetBundleVersion: imageVersion,
+            targetBundleSha256: job.targetBundleSha256 ?? '0'.repeat(64),
+          };
+        } else {
+          imageDecision = {
+            imageSource: 'snapshot',
+            targetBundleVersion: imageVersion,
+            targetBundleSha256: job.targetBundleSha256 ?? persistedSnapshot.bundleSha256,
+            snapshotId: persistedSnapshot.snapshotId,
+            snapshotLeaseId: job.snapshotLeaseId,
+            providerImageId: persistedSnapshot.providerImageId,
+            sourceBundleVersion: persistedSnapshot.bundleVersion,
+            sourceBaseGeneration: persistedSnapshot.compatibility.baseGeneration,
+            rolloutGeneration: rollout.generation,
+            exact: persistedSnapshot.bundleSha256 === job.targetBundleSha256,
+            requiresExactUpdate: persistedSnapshot.bundleSha256 !== job.targetBundleSha256,
+          };
+        }
+      } else if (job.imageSource === 'clean_image') {
+        imageDecision = {
+          imageSource: 'clean_image',
+          targetBundleVersion: imageVersion,
+          targetBundleSha256: job.targetBundleSha256 ?? '0'.repeat(64),
+        };
+      } else {
+        imageDecision = await chooseProvisioningImage(deps.db, deps.config.goldenSnapshots, {
+          jobId: job.jobId,
+          machineId: row.machineId,
+          targetBundleVersion: imageVersion,
+          serverType: row.serverType ?? deps.config.serverType,
+          purpose: 'provision',
+          leaseId: randomUUID(),
+          now: claimedAt.toISOString(),
+        });
+      }
+      if (deps.config.goldenSnapshots.enabled
+        && imageDecision.targetBundleSha256 === '0'.repeat(64)) {
+        throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+      }
       const hostConfig = buildHostConfig(
         deps.config,
         {
@@ -754,14 +1248,43 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       );
       const userData = renderCloudInitTemplate(
         deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
-        hostConfig,
+        {
+          ...hostConfig,
+          imageSource: imageDecision.imageSource,
+          targetBundleSha256: imageDecision.targetBundleSha256 === '0'.repeat(64) ? '' : imageDecision.targetBundleSha256,
+          snapshotSourceVersion: imageDecision.imageSource === 'snapshot' ? imageDecision.sourceBundleVersion : '',
+        },
       );
-      const existingServers = deps.hetzner.listServersByLabel
+      let existingServers = deps.hetzner.listServersByLabel
         ? (await deps.hetzner.listServersByLabel(`machine_id=${row.machineId}`))
           .toSorted((left, right) => left.id - right.id)
         : [];
-      const existingServer = existingServers[0];
-      const server = existingServer ?? await deps.hetzner.createServer({
+      if (imageDecision.imageSource === 'clean_image' && (job.fallbackReason || transitionedToFallback)) {
+        const staleSnapshotServers = existingServers.filter((candidate) => candidate.labels?.snapshot_id);
+        for (const stale of staleSnapshotServers) {
+          try {
+            await deps.hetzner.deleteServer(stale.id);
+            if (await deps.hetzner.getServer(stale.id)) return 'pending';
+          } catch (cleanupErr: unknown) {
+            logCustomerVpsError('snapshot fallback server cleanup failed', cleanupErr);
+            await queueProviderDeletion({
+              providerServerId: stale.id, reason: 'snapshot_fallback_server',
+              machineId: row.machineId, handle: row.handle, err: cleanupErr,
+            });
+            return 'pending';
+          }
+        }
+        existingServers = existingServers.filter((candidate) => !candidate.labels?.snapshot_id);
+      }
+      const selectedSnapshotId = imageDecision.imageSource === 'snapshot' ? imageDecision.snapshotId : undefined;
+      const matchingServers = selectedSnapshotId
+        ? existingServers.filter((server) => server.labels?.snapshot_id === selectedSnapshotId)
+        : existingServers.filter((server) => !server.labels?.snapshot_id);
+      if (existingServers.length > 0 && matchingServers.length === 0) {
+        throw new Error('Existing provider server image provenance is ambiguous');
+      }
+      const existingServer = matchingServers[0];
+      const createInput = {
           name: buildServerName(row.handle),
           serverType: row.serverType ?? deps.config.serverType,
           location: row.location ?? deps.config.location,
@@ -771,11 +1294,102 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             clerk_user_id: row.clerkUserId,
             runtime_slot: row.runtimeSlot,
             machine_id: row.machineId,
+            image_source: imageDecision.imageSource,
+            ...(imageDecision.imageSource === 'snapshot' ? { snapshot_id: imageDecision.snapshotId } : {}),
           },
-        });
+          ...(imageDecision.imageSource === 'snapshot' ? { image: imageDecision.providerImageId } : {}),
+        };
+      let server = existingServer;
+      if (!server) {
+        await assertMachineProviderMutationAllowed(deps, row, createInput.serverType, now());
+        try {
+          if (imageDecision.imageSource === 'snapshot') {
+            const selectableSnapshot = await getGoldenSnapshot(deps.db, imageDecision.snapshotId);
+            if (selectableSnapshot?.state !== 'ready'
+              || selectableSnapshot.providerImageId !== imageDecision.providerImageId) {
+              throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+            }
+            const intent = await createGoldenSnapshotCreateIntent(deps.db, {
+              intentId: randomUUID(), snapshotId: imageDecision.snapshotId,
+              leaseId: imageDecision.snapshotLeaseId, machineId: row.machineId,
+              purpose: 'provision', rolloutGeneration: imageDecision.rolloutGeneration,
+              now: now().toISOString(),
+            });
+            if (!intent || intent.state === 'denied') {
+              throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+            }
+          }
+          server = await deps.hetzner.createServer(createInput);
+          if (imageDecision.imageSource === 'snapshot') {
+            const accepted = await markGoldenSnapshotCreateIntentAccepted(
+              deps.db, imageDecision.snapshotLeaseId, server.createActionId ?? null, now().toISOString(),
+            );
+            if (!accepted || accepted.state === 'denied') {
+              try {
+                await deps.hetzner.deleteServer(server.id);
+              } catch (cleanupErr: unknown) {
+                await queueProviderDeletion({
+                  providerServerId: server.id, reason: 'denied_snapshot_create',
+                  machineId: row.machineId, handle: row.handle, err: cleanupErr,
+                });
+              }
+              throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+            }
+          }
+        } catch (createErr: unknown) {
+          if (isAmbiguousProviderCreateError(createErr)) {
+            logCustomerVpsError('provision create outcome is ambiguous; awaiting exact-label reconciliation', createErr);
+            return 'pending';
+          }
+          if (!(createErr instanceof CustomerVpsError)
+            || createErr.code !== 'snapshot_clone_rejected'
+            || imageDecision.imageSource !== 'snapshot') throw createErr;
+          await fallbackProvisioningImage(deps.db, {
+            jobId: job.jobId,
+            reason: 'clone_rejected',
+            now: now().toISOString(),
+          });
+          effectiveProviderCreateActionId = null;
+          imageDecision = {
+            imageSource: 'clean_image',
+            targetBundleVersion: imageDecision.targetBundleVersion,
+            targetBundleSha256: imageDecision.targetBundleSha256,
+          };
+          await assertMachineProviderMutationAllowed(deps, row, createInput.serverType, now());
+          try {
+            server = await deps.hetzner.createServer({
+              name: createInput.name,
+              serverType: createInput.serverType,
+              location: createInput.location,
+              userData: renderCloudInitTemplate(
+                deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
+                {
+                  ...hostConfig,
+                  imageSource: 'clean_image',
+                  targetBundleSha256: imageDecision.targetBundleSha256,
+                  snapshotSourceVersion: '',
+                },
+              ),
+              labels: {
+                app: 'matrix-os', clerk_user_id: row.clerkUserId, runtime_slot: row.runtimeSlot,
+                machine_id: row.machineId, image_source: 'clean_image',
+              },
+            });
+          } catch (fallbackCreateErr: unknown) {
+            if (isAmbiguousProviderCreateError(fallbackCreateErr)) {
+              logCustomerVpsError(
+                'clean fallback create outcome is ambiguous; awaiting exact-label reconciliation',
+                fallbackCreateErr,
+              );
+              return 'pending';
+            }
+            throw fallbackCreateErr;
+          }
+        }
+      }
       adoptedExistingServer = Boolean(existingServer);
       if (!adoptedExistingServer) serverIdForCompensation = server.id;
-      for (const duplicate of existingServers.slice(1)) {
+      for (const duplicate of matchingServers.slice(1)) {
         try {
           await deps.hetzner.deleteServer(duplicate.id);
         } catch (cleanupErr: unknown) {
@@ -789,6 +1403,65 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           });
         }
       }
+      const createActionId = effectiveProviderCreateActionId ?? server.createActionId ?? null;
+      if (adoptedExistingServer && createActionId === null && server.status !== 'running') {
+        const observedAt = now().toISOString();
+        await runInPlatformTransaction(deps.db, async (trx) => {
+          await updateUserMachine(trx, row.machineId, {
+            hetznerServerId: server!.id,
+            publicIPv4: server!.publicIPv4,
+            publicIPv6: server!.publicIPv6,
+          });
+          await trx.executor.updateTable('provisioning_jobs').set({
+            activation_step: 'creating', updated_at: observedAt,
+          }).where('job_id', '=', job.jobId).where('status', '=', 'running').executeTakeFirstOrThrow();
+        });
+        return 'pending';
+      }
+      if (createActionId !== null) {
+        if (effectiveProviderCreateActionId === null) {
+          const observedAt = now().toISOString();
+          await runInPlatformTransaction(deps.db, async (trx) => {
+            await updateUserMachine(trx, row.machineId, {
+              hetznerServerId: server!.id,
+              publicIPv4: server!.publicIPv4,
+              publicIPv6: server!.publicIPv6,
+            });
+            await trx.executor.updateTable('provisioning_jobs').set({
+              provider_create_action_id: createActionId,
+              activation_step: 'creating',
+              updated_at: observedAt,
+            }).where('job_id', '=', job.jobId).where('status', '=', 'running').executeTakeFirstOrThrow();
+          });
+        }
+        let action;
+        try {
+          action = await deps.hetzner.getAction(createActionId);
+        } catch (actionErr: unknown) {
+          logCustomerVpsError('provision create action refresh failed', actionErr);
+          return 'pending';
+        }
+        if (!action || action.status === 'running') return 'pending';
+        if (action.status === 'error') {
+          if (imageDecision.imageSource !== 'snapshot') {
+            throw new Error('Provider create action failed');
+          }
+          await fallbackProvisioningImage(deps.db, {
+            jobId: job.jobId, reason: 'clone_rejected', now: now().toISOString(),
+          });
+          try {
+            await deps.hetzner.deleteServer(server.id);
+            if (await deps.hetzner.getServer(server.id)) return 'pending';
+          } catch (cleanupErr: unknown) {
+            logCustomerVpsError('rejected snapshot clone cleanup failed', cleanupErr);
+            await queueProviderDeletion({
+              providerServerId: server.id, reason: 'rejected_snapshot_clone',
+              machineId: row.machineId, handle: row.handle, err: cleanupErr,
+            });
+          }
+          return 'pending';
+        }
+      }
       const completedAt = now().toISOString();
       await runInPlatformTransaction(deps.db, async (trx) => {
         await updateUserMachine(trx, row.machineId, {
@@ -796,9 +1469,16 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           publicIPv4: server.publicIPv4,
           publicIPv6: server.publicIPv6,
         });
+        await trx.executor.updateTable('provisioning_jobs').set({
+          provider_create_action_id: server.createActionId ?? null,
+          updated_at: completedAt,
+        }).where('job_id', '=', job.jobId).where('status', '=', 'running').execute();
         const completed = await completeProvisioningJob(trx, job.jobId, completedAt);
         if (!completed) {
-          throw new Error('Provisioning job completion lost its lease');
+          const settledJob = await getProvisioningJob(trx, job.jobId);
+          if (settledJob?.status !== 'completed') {
+            throw new Error('Provisioning job completion lost its lease');
+          }
         }
       });
       return 'completed';
@@ -829,6 +1509,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             failureCode: toFailureCode(err),
             failureAt: failedAt,
           });
+          const latestJob = await getProvisioningJob(trx, job.jobId);
+          if (latestJob?.snapshotLeaseId) {
+            await releaseGoldenSnapshotLeaseInTransaction(trx, latestJob.snapshotLeaseId, failedAt);
+          }
           await failProvisioningJob(trx, job.jobId, failedAt, toFailureCode(err));
         });
       } catch (statusErr: unknown) {
@@ -1139,29 +1823,160 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!expectedRegistrationTokenHash || !registrationTokenMatches(token, expectedRegistrationTokenHash)) {
         throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
       }
-
-      const lastSeenAt = now().toISOString();
-      const updated = await completeUserMachineRegistration(
-        deps.db,
-        input.machineId,
-        input.hetznerServerId,
-        expectedRegistrationTokenHash,
-        lastSeenAt,
-        {
-          status: 'running',
-          publicIPv4: input.publicIPv4,
-          publicIPv6: input.publicIPv6,
-          imageVersion: input.imageVersion,
-          lastSeenAt,
-          registrationTokenHash: null,
-          registrationTokenExpiresAt: null,
-          failureCode: null,
-          failureAt: null,
-        },
-      );
-      if (!updated) {
-        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
+      const provisioningJob = row.status === 'provisioning'
+        ? await getProvisioningJobByMachineId(deps.db, input.machineId)
+        : undefined;
+      const recoveryTarget = row.status === 'recovering'
+        ? await getGoldenSnapshotRecoveryRegistrationTarget(deps.db, input.machineId)
+        : undefined;
+      const persistedRecoveryTarget = row.status === 'recovering'
+        && row.sourceSnapshotId !== null
+        && row.sourceBaseGeneration !== null
+        && row.targetBundleVersion !== null
+        && row.targetBundleSha256 !== null
+        ? {
+            snapshotId: row.sourceSnapshotId,
+            baseGeneration: row.sourceBaseGeneration,
+            targetBundleVersion: row.targetBundleVersion,
+            targetBundleSha256: row.targetBundleSha256,
+          }
+        : undefined;
+      let sourceSnapshotId: string | null = persistedRecoveryTarget?.snapshotId ?? recoveryTarget?.snapshotId ?? null;
+      let sourceBaseGeneration: string | null = persistedRecoveryTarget?.baseGeneration ?? recoveryTarget?.baseGeneration ?? null;
+      let registrationTarget: { targetBundleVersion: string; targetBundleSha256: string } | undefined =
+        row.targetBundleVersion !== null && row.targetBundleSha256 !== null
+          ? {
+              targetBundleVersion: row.targetBundleVersion,
+              targetBundleSha256: row.targetBundleSha256,
+            }
+          : persistedRecoveryTarget ?? recoveryTarget;
+      if (!registrationTarget && provisioningJob?.imageSource === 'snapshot') {
+        if (provisioningJob.targetBundleVersion === null || provisioningJob.targetBundleSha256 === null) {
+          throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+        }
+        if (provisioningJob.snapshotId === null) {
+          throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+        }
+        const sourceSnapshot = await getGoldenSnapshot(deps.db, provisioningJob.snapshotId);
+        if (!sourceSnapshot || sourceSnapshot.state !== 'ready') {
+          throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+        }
+        sourceSnapshotId = sourceSnapshot.snapshotId;
+        sourceBaseGeneration = sourceSnapshot.compatibility.baseGeneration;
+        registrationTarget = {
+          targetBundleVersion: provisioningJob.targetBundleVersion,
+          targetBundleSha256: provisioningJob.targetBundleSha256,
+        };
       }
+      if (!registrationTarget
+        && provisioningJob?.targetBundleVersion !== null
+        && provisioningJob?.targetBundleVersion !== undefined
+        && provisioningJob.targetBundleSha256 !== null) {
+        registrationTarget = {
+          targetBundleVersion: provisioningJob.targetBundleVersion,
+          targetBundleSha256: provisioningJob.targetBundleSha256,
+        };
+      }
+      // Preserve the pre-feature clean-image contract while snapshots are disabled,
+      // but never let its unknown-digest sentinel authorize snapshot-era routing.
+      if (registrationTarget
+        && (deps.config.goldenSnapshots.enabled
+          || registrationTarget.targetBundleSha256 !== '0'.repeat(64))
+        && (registrationTarget.targetBundleSha256 === '0'.repeat(64)
+          || input.imageVersion !== registrationTarget.targetBundleVersion
+          || input.bundleSha256 !== registrationTarget.targetBundleSha256
+          || input.healthy !== true)) {
+        throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+      }
+      const lastSeenAt = now().toISOString();
+      const updated = await runInPlatformTransaction(deps.db, async (trx) => {
+        const snapshotLeaseId = provisioningJob?.snapshotLeaseId ?? recoveryTarget?.leaseId;
+        if (sourceSnapshotId !== null) {
+          if (sourceBaseGeneration === null) {
+            throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+          }
+          await sql`SELECT pg_advisory_xact_lock(hashtext(${sourceBaseGeneration}))`
+            .execute(trx.executor);
+          const readySource = await trx.executor.selectFrom('golden_snapshots').select('snapshot_id')
+            .where('snapshot_id', '=', sourceSnapshotId).where('state', '=', 'ready')
+            .forUpdate().executeTakeFirst();
+          if (!readySource) {
+            throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+          }
+        }
+        if (sourceSnapshotId !== null && snapshotLeaseId) {
+          const createIntent = await trx.executor.selectFrom('golden_snapshot_create_intents').selectAll()
+            .where('lease_id', '=', snapshotLeaseId).forUpdate().executeTakeFirst();
+          if (!createIntent || createIntent.state === 'denied') {
+            throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+          }
+          if (createIntent.state !== 'activated') {
+            const activation = await trx.executor.updateTable('golden_snapshot_create_intents').set({
+              state: 'activated', updated_at: lastSeenAt, completed_at: lastSeenAt,
+            }).where('intent_id', '=', createIntent.intent_id)
+              .where('state', 'in', ['pending', 'accepted'])
+              .returning('intent_id').executeTakeFirst();
+            if (!activation) {
+              throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+            }
+          }
+        }
+        const registered = await completeUserMachineRegistration(
+          trx,
+          input.machineId,
+          input.hetznerServerId,
+          expectedRegistrationTokenHash,
+          lastSeenAt,
+          {
+            status: 'running',
+            publicIPv4: input.publicIPv4,
+            publicIPv6: input.publicIPv6,
+            imageVersion: input.imageVersion,
+            sourceSnapshotId,
+            sourceBaseGeneration,
+            targetBundleVersion: registrationTarget?.targetBundleVersion
+              ?? provisioningJob?.targetBundleVersion
+              ?? input.imageVersion,
+            targetBundleSha256: registrationTarget?.targetBundleSha256
+              ?? provisioningJob?.targetBundleSha256
+              ?? input.bundleSha256
+              ?? null,
+            recoveryCreateActionId: null,
+            recoveryEncryptedPayload: null,
+            recoveryOldServerId: null,
+            recoveryOldPublicIPv4: null,
+            lastSeenAt,
+            registrationTokenHash: null,
+            registrationTokenExpiresAt: null,
+            failureCode: null,
+            failureAt: null,
+          },
+        );
+        if (!registered) throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
+        if (row.recoveryOldServerId !== null) {
+          await enqueueProviderDeletionTx(trx, {
+            providerServerId: row.recoveryOldServerId,
+            reason: 'recover_old_server',
+            machineId: row.machineId,
+            handle: row.handle,
+            detail: 'recovery replacement registered before create-action reconciliation',
+          });
+        }
+        if (recoveryTarget) {
+          await releaseGoldenSnapshotLeaseInTransaction(trx, recoveryTarget.leaseId, lastSeenAt);
+        }
+        if (provisioningJob?.snapshotLeaseId) {
+          await releaseGoldenSnapshotLeaseInTransaction(trx, provisioningJob.snapshotLeaseId, lastSeenAt);
+        }
+        if (provisioningJob?.status === 'running') {
+          const completed = await completeProvisioningJob(trx, provisioningJob.jobId, lastSeenAt);
+          if (!completed) throw new Error('Provisioning job registration completion lost its lease');
+        }
+        await trx.executor.updateTable('provisioning_jobs').set({
+          activation_step: 'registered', updated_at: lastSeenAt,
+        }).where('machine_id', '=', input.machineId).where('status', '=', 'completed').execute();
+        return registered;
+      });
 
       const warnings: string[] = [];
       try {
@@ -1208,6 +2023,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       // Resolve before claiming recovery so bundle lookup failures do not clear
       // the old provider server id and leave a billable VPS untracked.
       const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
+      let recoveryImage: ProvisioningImageDecision = {
+        imageSource: 'clean_image',
+        targetBundleVersion: bundleRef.imageVersion,
+        targetBundleSha256: bundleRef.sha256 ?? '0'.repeat(64),
+      };
       const hostConfig = buildHostConfig(
         deps.config,
         {
@@ -1221,26 +2041,112 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         postgresPassword,
         bundleRef,
       );
-      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId, input.runtimeSlot);
+      if (deps.config.goldenSnapshots.enabled) {
+        recoveryImage = await chooseRecoveryImage(deps.db, deps.config.goldenSnapshots, {
+          machineId,
+          targetBundleVersion: bundleRef.imageVersion,
+          serverType: billingContext?.serverType ?? active.serverType ?? deps.config.serverType,
+          purpose: 'recover',
+          leaseId: randomUUID(),
+          now: currentTime.toISOString(),
+        });
+      }
+      if (deps.config.goldenSnapshots.enabled
+        && recoveryImage.targetBundleSha256 === '0'.repeat(64)) {
+        throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+      }
+      const recoverySnapshotLeaseId = recoveryImage.imageSource === 'snapshot'
+        ? recoveryImage.snapshotLeaseId
+        : null;
+      const sealRecoveryIntent = (decision: ProvisioningImageDecision): string => sealProvisioningPayload({
+        registrationToken: registration.token,
+        postgresPassword,
+        recovery: {
+          oldMachineId: active.machineId,
+          oldStatus: active.status,
+          oldPublicIPv4: active.publicIPv4,
+          oldPublicIPv6: active.publicIPv6,
+          oldImageVersion: active.imageVersion,
+          oldSourceSnapshotId: active.sourceSnapshotId,
+          oldSourceBaseGeneration: active.sourceBaseGeneration,
+          oldTargetBundleVersion: active.targetBundleVersion,
+          oldTargetBundleSha256: active.targetBundleSha256,
+          oldServerType: active.serverType,
+          oldRegistrationTokenHash: active.registrationTokenHash,
+          oldRegistrationTokenExpiresAt: active.registrationTokenExpiresAt,
+          oldProvisionedAt: active.provisionedAt,
+          oldLastSeenAt: active.lastSeenAt,
+          oldFailureCode: active.failureCode,
+          oldFailureAt: active.failureAt,
+          imageSource: decision.imageSource,
+          targetBundleVersion: decision.targetBundleVersion,
+          targetBundleSha256: decision.targetBundleSha256,
+          sourceSnapshotId: decision.imageSource === 'snapshot' ? decision.snapshotId : null,
+          sourceBaseGeneration: decision.imageSource === 'snapshot' ? decision.sourceBaseGeneration : null,
+        },
+      }, deps.config.platformSecret);
+      let encryptedRecoveryPayload = sealRecoveryIntent(recoveryImage);
+      const intendedServerType = billingContext?.serverType ?? active.serverType ?? deps.config.serverType;
+      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId, active.runtimeSlot, {
+        machineId,
+        encryptedPayload: encryptedRecoveryPayload,
+        serverType: intendedServerType,
+        registrationTokenHash: registration.hash,
+        registrationTokenExpiresAt: registration.expiresAt,
+      });
       if (!existing) {
+        if (recoveryImage.imageSource === 'snapshot') {
+          await releaseGoldenSnapshotLease(deps.db, recoveryImage.snapshotLeaseId, currentTime.toISOString());
+        }
         const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId, input.runtimeSlot);
         if (latest?.status === 'recovering') {
           throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
         }
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
-      const oldMachineId = existing.machineId;
-      const oldServerId = active.hetznerServerId;
+      const oldMachineId = active.machineId;
+      const oldServerId = existing.recoveryOldServerId;
+      const transitionRecoveryToCleanFallback = async (
+        snapshotImage: Extract<ProvisioningImageDecision, { imageSource: 'snapshot' }>,
+      ): Promise<void> => {
+        const cleanImage: ProvisioningImageDecision = {
+          imageSource: 'clean_image',
+          targetBundleVersion: snapshotImage.targetBundleVersion,
+          targetBundleSha256: snapshotImage.targetBundleSha256,
+        };
+        const fallbackPayload = sealRecoveryIntent(cleanImage);
+        const transitionedAt = now().toISOString();
+        await runInPlatformTransaction(deps.db, async (trx) => {
+          const released = await releaseGoldenSnapshotLeaseInTransaction(
+            trx, snapshotImage.snapshotLeaseId, transitionedAt,
+          );
+          if (!released) throw new Error('Recovery snapshot lease transition lost');
+          const updated = await trx.executor.updateTable('user_machines').set({
+            recovery_encrypted_payload: fallbackPayload,
+          }).where('machine_id', '=', machineId).where('status', '=', 'recovering')
+            .returning('machine_id').executeTakeFirst();
+          if (!updated) throw new Error('Recovery fallback transition lost its machine claim');
+        });
+        recoveryImage = cleanImage;
+        encryptedRecoveryPayload = fallbackPayload;
+      };
 
       let newServerId: number | null = null;
+      let createPending = false;
+      let createOutcomeAmbiguous = false;
       try {
         const userData = renderCloudInitTemplate(
           deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
-          hostConfig,
+          {
+            ...hostConfig,
+            imageSource: recoveryImage.imageSource,
+            targetBundleSha256: recoveryImage.targetBundleSha256 === '0'.repeat(64) ? '' : recoveryImage.targetBundleSha256,
+            snapshotSourceVersion: recoveryImage.imageSource === 'snapshot' ? recoveryImage.sourceBundleVersion : '',
+          },
         );
-        const server = await deps.hetzner.createServer({
+        const recoveryCreateInput = {
           name: buildRecoveryServerName(existing.handle, machineId),
-          serverType: billingContext?.serverType ?? active.serverType ?? deps.config.serverType,
+          serverType: intendedServerType,
           location: active.location ?? deps.config.location,
           userData,
           labels: {
@@ -1248,19 +2154,142 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             clerk_user_id: existing.clerkUserId,
             runtime_slot: existing.runtimeSlot,
             machine_id: machineId,
+            image_source: recoveryImage.imageSource,
+            ...(recoveryImage.imageSource === 'snapshot' ? { snapshot_id: recoveryImage.snapshotId } : {}),
           },
-        });
+          ...(recoveryImage.imageSource === 'snapshot' ? { image: recoveryImage.providerImageId } : {}),
+        };
+        let server;
+        await assertMachineProviderMutationAllowed(deps, existing, recoveryCreateInput.serverType, now());
+        try {
+          if (recoveryImage.imageSource === 'snapshot') {
+            const selectableSnapshot = await getGoldenSnapshot(deps.db, recoveryImage.snapshotId);
+            if (selectableSnapshot?.state !== 'ready'
+              || selectableSnapshot.providerImageId !== recoveryImage.providerImageId) {
+              throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+            }
+            const intent = await createGoldenSnapshotCreateIntent(deps.db, {
+              intentId: randomUUID(), snapshotId: recoveryImage.snapshotId,
+              leaseId: recoveryImage.snapshotLeaseId, machineId,
+              purpose: 'recover', rolloutGeneration: recoveryImage.rolloutGeneration,
+              now: now().toISOString(),
+            });
+            if (!intent || intent.state === 'denied') {
+              throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+            }
+          }
+          server = await deps.hetzner.createServer(recoveryCreateInput);
+          if (recoveryImage.imageSource === 'snapshot') {
+            const accepted = await markGoldenSnapshotCreateIntentAccepted(
+              deps.db, recoveryImage.snapshotLeaseId, server.createActionId ?? null, now().toISOString(),
+            );
+            if (!accepted || accepted.state === 'denied') {
+              await removeRejectedRecoveryServer({ serverId: server.id, machineId, handle: existing.handle });
+              throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+            }
+          }
+        } catch (createErr: unknown) {
+          if (!(createErr instanceof CustomerVpsError)
+            || createErr.code !== 'snapshot_clone_rejected'
+            || recoveryImage.imageSource !== 'snapshot') {
+            createOutcomeAmbiguous = isAmbiguousProviderCreateError(createErr);
+            throw createErr;
+          }
+          await transitionRecoveryToCleanFallback(recoveryImage);
+          await assertMachineProviderMutationAllowed(deps, existing, recoveryCreateInput.serverType, now());
+          try {
+            server = await deps.hetzner.createServer({
+              name: recoveryCreateInput.name,
+              serverType: recoveryCreateInput.serverType,
+              location: recoveryCreateInput.location,
+              userData: renderCloudInitTemplate(
+                deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
+                {
+                  ...hostConfig,
+                  imageSource: 'clean_image',
+                  targetBundleSha256: recoveryImage.targetBundleSha256,
+                  snapshotSourceVersion: '',
+                },
+              ),
+              labels: {
+                app: 'matrix-os', clerk_user_id: existing.clerkUserId, runtime_slot: existing.runtimeSlot,
+                machine_id: machineId, image_source: 'clean_image',
+              },
+            });
+          } catch (fallbackCreateErr: unknown) {
+            createOutcomeAmbiguous = isAmbiguousProviderCreateError(fallbackCreateErr);
+            throw fallbackCreateErr;
+          }
+        }
         newServerId = server.id;
+        if (server.createActionId !== undefined) {
+          const createResult = await waitForRecoveryCreateAction(server.createActionId);
+          if (createResult === 'error') {
+            if (recoveryImage.imageSource !== 'snapshot') {
+              throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+            }
+            const removed = await removeRejectedRecoveryServer({
+              serverId: server.id,
+              machineId,
+              handle: existing.handle,
+            });
+            if (!removed) {
+              throw new CustomerVpsError(500, 'provider_timeout', 'Provisioning provider unavailable');
+            }
+            newServerId = null;
+            await transitionRecoveryToCleanFallback(recoveryImage);
+            await assertMachineProviderMutationAllowed(deps, existing, recoveryCreateInput.serverType, now());
+            try {
+              server = await deps.hetzner.createServer({
+                name: recoveryCreateInput.name,
+                serverType: recoveryCreateInput.serverType,
+                location: recoveryCreateInput.location,
+                userData: renderCloudInitTemplate(
+                  deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
+                  {
+                    ...hostConfig,
+                    imageSource: 'clean_image',
+                    targetBundleSha256: recoveryImage.targetBundleSha256,
+                    snapshotSourceVersion: '',
+                  },
+                ),
+                labels: {
+                  app: 'matrix-os', clerk_user_id: existing.clerkUserId, runtime_slot: existing.runtimeSlot,
+                  machine_id: machineId, image_source: 'clean_image',
+                },
+              });
+            } catch (fallbackCreateErr: unknown) {
+              createOutcomeAmbiguous = isAmbiguousProviderCreateError(fallbackCreateErr);
+              throw fallbackCreateErr;
+            }
+            newServerId = server.id;
+            if (server.createActionId !== undefined) {
+              const fallbackCreateResult = await waitForRecoveryCreateAction(server.createActionId);
+              if (fallbackCreateResult === 'error') {
+                throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+              }
+              createPending = fallbackCreateResult === 'pending';
+            }
+          } else {
+            createPending = createResult === 'pending';
+          }
+        }
         await runInPlatformTransaction(deps.db, async (trx) => {
-          await updateUserMachine(trx, oldMachineId, {
-            machineId,
+          await updateUserMachine(trx, machineId, {
             status: 'recovering',
             hetznerServerId: server.id,
-            publicIPv4: server.publicIPv4,
-            publicIPv6: server.publicIPv6,
             imageVersion: bundleRef.imageVersion,
-            serverType: billingContext?.serverType ?? active.serverType ?? deps.config.serverType,
-            location: active.location ?? deps.config.location,
+            sourceSnapshotId: recoveryImage.imageSource === 'snapshot' ? recoveryImage.snapshotId : null,
+            sourceBaseGeneration: recoveryImage.imageSource === 'snapshot'
+              ? recoveryImage.sourceBaseGeneration
+              : null,
+            targetBundleVersion: recoveryImage.targetBundleVersion,
+            targetBundleSha256: recoveryImage.targetBundleSha256,
+            recoveryCreateActionId: createPending ? server.createActionId ?? null : null,
+            recoveryEncryptedPayload: encryptedRecoveryPayload,
+            recoveryOldServerId: oldServerId,
+            serverType: recoveryCreateInput.serverType,
+            location: recoveryCreateInput.location,
             registrationTokenHash: registration.hash,
             registrationTokenExpiresAt: registration.expiresAt,
             provisionedAt: currentTime.toISOString(),
@@ -1272,6 +2301,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         });
       } catch (err: unknown) {
         const mapped = genericProviderError(err);
+        if (createOutcomeAmbiguous) {
+          throw mapped;
+        }
         if (newServerId !== null) {
           try {
             await deps.hetzner.deleteServer(newServerId);
@@ -1287,30 +2319,52 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           }
         }
         try {
-          await updateUserMachine(deps.db, oldMachineId, {
-            status: 'failed',
-            failureCode: toFailureCode(err),
-            failureAt: now().toISOString(),
+          await runInPlatformTransaction(deps.db, async (trx) => {
+            if (recoverySnapshotLeaseId !== null) {
+              // Idempotently account for the original snapshot lease even when
+              // the clean fallback transition already released it.
+              await releaseGoldenSnapshotLeaseInTransaction(
+                trx, recoverySnapshotLeaseId, now().toISOString(),
+              );
+            }
+            const recoveryRow = await trx.executor.selectFrom('user_machines')
+              .select(['machine_id', 'status'])
+              .where('clerk_user_id', '=', input.clerkUserId)
+              .where('runtime_slot', '=', active.runtimeSlot)
+              .where('deleted_at', 'is', null)
+              .forUpdate()
+              .executeTakeFirst();
+            if (!recoveryRow || recoveryRow.status !== 'recovering') {
+              throw new Error('Recovery rollback lost its machine claim');
+            }
+            await updateUserMachine(trx, recoveryRow.machine_id, {
+              machineId: oldMachineId,
+              status: active.status,
+              hetznerServerId: active.hetznerServerId,
+              publicIPv4: active.publicIPv4,
+              publicIPv6: active.publicIPv6,
+              imageVersion: active.imageVersion,
+              sourceSnapshotId: active.sourceSnapshotId,
+              sourceBaseGeneration: active.sourceBaseGeneration,
+              targetBundleVersion: active.targetBundleVersion,
+              targetBundleSha256: active.targetBundleSha256,
+              recoveryCreateActionId: active.recoveryCreateActionId,
+              recoveryEncryptedPayload: active.recoveryEncryptedPayload,
+              recoveryOldServerId: active.recoveryOldServerId,
+              recoveryOldPublicIPv4: active.recoveryOldPublicIPv4,
+              serverType: active.serverType,
+              registrationTokenHash: active.registrationTokenHash,
+              registrationTokenExpiresAt: active.registrationTokenExpiresAt,
+              provisionedAt: active.provisionedAt,
+              lastSeenAt: active.lastSeenAt,
+              failureCode: active.failureCode,
+              failureAt: active.failureAt,
+            });
           });
         } catch (statusErr: unknown) {
           logCustomerVpsError('recover failure status update failed', statusErr);
         }
         throw mapped;
-      }
-
-      if (oldServerId) {
-        try {
-          await deps.hetzner.deleteServer(oldServerId);
-        } catch (err: unknown) {
-          logCustomerVpsError('recover old server cleanup failed', err);
-          await queueProviderDeletion({
-            providerServerId: oldServerId,
-            reason: 'recover_old_server',
-            machineId: oldMachineId,
-            handle: existing.handle,
-            err,
-          });
-        }
       }
 
       return {
@@ -1338,7 +2392,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         };
       }
 
-      await assertBillingResizeAllowed(deps, row.clerkUserId, row.runtimeSlot, input.serverType, now());
+      await assertMachineProviderMutationAllowed(deps, row, input.serverType, now());
       const claimed = await claimRunningUserMachineResize(
         deps.db,
         row.machineId,
@@ -1584,7 +2638,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       );
       let failed = 0;
       let running = 0;
-      for (const row of rows) {
+      for (let row of rows) {
+        if (row.status === 'recovering') {
+          const recoveryCreate = await reconcilePendingRecoveryCreate(row);
+          if (recoveryCreate === 'pending') continue;
+          if (recoveryCreate === 'failed') {
+            failed += 1;
+            continue;
+          }
+          const refreshed = await getUserMachine(deps.db, row.machineId)
+            ?? await getActiveUserMachineByClerkId(deps.db, row.clerkUserId, row.runtimeSlot);
+          if (!refreshed) continue;
+          row = refreshed;
+        }
         if (!row.hetznerServerId) {
           await cleanupUntrackedServersForMachine(row);
           await updateUserMachine(deps.db, row.machineId, {

@@ -134,6 +134,86 @@ describe('platform/customer-vps', () => {
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
   });
 
+  it('keeps golden snapshots disabled by default and bounds every control-plane budget', () => {
+    expect(loadCustomerVpsConfig({}).goldenSnapshots).toMatchObject({
+      enabled: false,
+      buildsEnabled: false,
+      rolloutPercent: 0,
+      serverType: 'cx23',
+      maxBuildAttempts: 5,
+      maxConcurrentBuilds: 2,
+      callbackDeadlineMs: 60 * 60 * 1000,
+      retentionLimit: 20,
+      freshnessMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      testModeTtlMs: 24 * 60 * 60 * 1000,
+      auditRetentionMs: 90 * 24 * 60 * 60 * 1000,
+    });
+
+    expect(loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOTS_ENABLED: 'true',
+      GOLDEN_SNAPSHOT_BUILDS_ENABLED: 'true',
+      GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '25',
+      GOLDEN_SNAPSHOT_MAX_BUILD_ATTEMPTS: '3',
+      GOLDEN_SNAPSHOT_MAX_CONCURRENT_BUILDS: '4',
+      GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS: '2700000',
+      GOLDEN_SNAPSHOT_RETENTION_LIMIT: '12',
+      GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS: '120000',
+      GOLDEN_SNAPSHOT_TEST_MODE_TTL_MS: '180000',
+      GOLDEN_SNAPSHOT_AUDIT_RETENTION_MS: '86400000',
+      GOLDEN_SNAPSHOT_ARCHITECTURE: 'x86',
+      GOLDEN_SNAPSHOT_REGION: 'eu-central',
+    }).goldenSnapshots).toMatchObject({
+      enabled: true,
+      buildsEnabled: true,
+      rolloutPercent: 25,
+      maxBuildAttempts: 3,
+      maxConcurrentBuilds: 4,
+      callbackDeadlineMs: 45 * 60 * 1000,
+      retentionLimit: 12,
+      freshnessMaxAgeMs: 120000,
+      testModeTtlMs: 180000,
+      auditRetentionMs: 86400000,
+      compatibility: expect.objectContaining({ architecture: 'x86', region: 'eu-central' }),
+    });
+
+    expect(() => loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_ARCHITECTURE: 'arm',
+    })).toThrow(/x86/);
+    expect(loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_SERVER_TYPE: 'cpx11',
+    }).goldenSnapshots.serverType).toBe('cpx11');
+    expect(() => loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_SERVER_TYPE: 'INVALID!',
+    })).toThrow();
+
+    expect(loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '101',
+      GOLDEN_SNAPSHOT_MAX_BUILD_ATTEMPTS: '0',
+      GOLDEN_SNAPSHOT_MAX_CONCURRENT_BUILDS: '11',
+      GOLDEN_SNAPSHOT_CALLBACK_DEADLINE_MS: '3600001',
+      GOLDEN_SNAPSHOT_RETENTION_LIMIT: '31',
+      GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS: '999',
+      GOLDEN_SNAPSHOT_TEST_MODE_TTL_MS: '999',
+      GOLDEN_SNAPSHOT_AUDIT_RETENTION_MS: '999',
+      GOLDEN_SNAPSHOT_BUILD_LEASE_MS: '999',
+    }).goldenSnapshots).toMatchObject({
+      rolloutPercent: 0,
+      maxBuildAttempts: 5,
+      maxConcurrentBuilds: 2,
+      callbackDeadlineMs: 60 * 60 * 1000,
+      retentionLimit: 20,
+      freshnessMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      testModeTtlMs: 24 * 60 * 60 * 1000,
+      auditRetentionMs: 90 * 24 * 60 * 60 * 1000,
+      buildLeaseMs: 5 * 60 * 1000,
+    });
+
+    expect(loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_BASE_IMAGE: '',
+      HETZNER_IMAGE: 'ubuntu-24.04',
+    }).goldenSnapshots.compatibility.baseImage).toBe('ubuntu-24.04');
+  });
+
   it('classifies only server-marked dedicated and legacy preview runtime slots as previews', () => {
     expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'pr-897', provisioningClass: 'preview' })).toBe(true);
     expect(isPreviewMachine({ handle: 'pr-703', runtimeSlot: 'preview', provisioningClass: 'preview' })).toBe(true);
@@ -379,10 +459,32 @@ describe('platform/customer-vps', () => {
       name: 'matrix-pr-897',
       serverType: 'cpx22',
     });
-    expect(resolveBillingEntitlement).toHaveBeenCalledTimes(2);
+    // The customer primary is authorized at request, claim, and provider-mutation
+    // boundaries. Operator preview calls remain outside customer billing checks.
+    expect(resolveBillingEntitlement).toHaveBeenCalledTimes(3);
     await expect(getUserMachine(db, preview.machineId)).resolves.toMatchObject({
       provisioningClass: 'preview',
       accessClerkUserIds: ['user_789'],
+    });
+  });
+
+  it('keeps operator preview creation outside customer billing authorization', async () => {
+    const resolveBillingEntitlement = vi.fn().mockResolvedValue(null);
+    const { service, hetzner } = createService({
+      config: createTestConfig({ previewProvisioningLimit: 1 }),
+      resolveBillingEntitlement,
+    });
+
+    const preview = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-899',
+      runtimeSlot: 'pr-899',
+    });
+    expect(preview).toMatchObject({ status: 'provisioning' });
+    expect(hetzner.createServer).toHaveBeenCalledOnce();
+    expect(resolveBillingEntitlement).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, preview.machineId)).resolves.toMatchObject({
+      handle: 'pr-899', provisioningClass: 'preview',
     });
   });
 
@@ -612,14 +714,21 @@ describe('platform/customer-vps', () => {
 
   it('retires failed exact and legacy previews before retry capacity checks', async () => {
     let nextId = 0;
+    let nextProviderId = 123455;
     const ids = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
       '188d9ce1-395d-4d4c-a7b7-22754c3ab991',
     ];
+    const createServer = vi.fn(async () => ({
+      id: ++nextProviderId,
+      status: 'running',
+      publicIPv4: `203.0.113.${nextProviderId - 123400}`,
+    }));
     const { service, hetzner } = createService({
       config: createTestConfig({ previewProvisioningLimit: 1 }),
       machineIdFactory: () => ids[nextId++] ?? ids[2]!,
+      hetzner: createMockHetznerClient({ createServer }),
     });
 
     const failedExact = await service.provisionPreview({
@@ -1321,6 +1430,21 @@ describe('platform/customer-vps', () => {
     expect(systemStore.writtenMeta).toHaveLength(1);
   });
 
+  it('completes registration after an already-authorized create when entitlement later changes', async () => {
+    const resolveBillingEntitlement = vi.fn().mockResolvedValue(activeEntitlement());
+    const { service } = createService({ resolveBillingEntitlement });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    resolveBillingEntitlement.mockResolvedValue(null);
+
+    await expect(service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+      healthy: true,
+    })).resolves.toMatchObject({ registered: true, status: 'running' });
+  });
+
   it('returns a warning when registration metadata cannot be persisted', async () => {
     const { service } = createService({
       systemStore: createMockCustomerVpsSystemStore({
@@ -1538,7 +1662,7 @@ describe('platform/customer-vps', () => {
     expect(hetzner.deleteServer).not.toHaveBeenCalled();
   });
 
-  it('creates a replacement machine in recovering state from R2 preflight', async () => {
+  it('keeps the old server until the replacement from R2 preflight registers healthy', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
@@ -1583,6 +1707,17 @@ describe('platform/customer-vps', () => {
       runtimeSlot: 'primary',
       status: 'recovering',
     });
+    expect(hetzner.deleteServer).not.toHaveBeenCalledWith(123456);
+    await service.register('registration-token', {
+      machineId: recovered.machineId,
+      hetznerServerId: 789012,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'stable',
+      bundleSha256: '0'.repeat(64),
+      healthy: true,
+    });
+    expect(hetzner.deleteServer).not.toHaveBeenCalledWith(123456);
+    await service.reconcileProvisioning();
     expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
     expect(
       vi.mocked(hetzner.createServer).mock.invocationCallOrder[1],
@@ -1597,12 +1732,37 @@ describe('platform/customer-vps', () => {
     expect(row).toMatchObject({
       clerkUserId: 'user_123',
       handle: 'alice',
-      status: 'recovering',
+      status: 'running',
       hetznerServerId: 789012,
       publicIPv4: '203.0.113.11',
       location: 'hil',
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
+  });
+
+  it('does not create a recovery replacement when snapshot mode cannot prove the target digest', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId, hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10', imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    const enabled = loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
+      GOLDEN_SNAPSHOT_REGION: 'eu-central', PLATFORM_SECRET: 'platform-secret',
+    }).goldenSnapshots;
+    const { service: recoveryService, hetzner } = createService({
+      config: createTestConfig({ goldenSnapshots: enabled }),
+      machineIdFactory: () => 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: vi.fn().mockResolvedValue(true) }),
+    });
+
+    await expect(recoveryService.recover({ clerkUserId: 'user_123' })).rejects.toMatchObject({
+      status: 503,
+      code: 'provider_unavailable',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({ status: 'running' });
   });
 
   it('recovers a legacy machine with no stored server type using the first allowed billing type', async () => {
@@ -1694,6 +1854,7 @@ describe('platform/customer-vps', () => {
   });
 
   it('queues failed old-server cleanup after recovery and retries it during reconciliation', async () => {
+    let currentNow = new Date('2026-04-26T12:00:00.000Z');
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
@@ -1721,6 +1882,7 @@ describe('platform/customer-vps', () => {
         hasDbLatest: vi.fn().mockResolvedValue(true),
       }),
       machineIdFactory: () => machineIds.shift()!,
+      now: () => currentNow,
     });
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
     await service.register('registration-token', {
@@ -1730,21 +1892,31 @@ describe('platform/customer-vps', () => {
       imageVersion: 'matrix-os-host-2026.04.26-1',
     });
 
-    await service.recover({ clerkUserId: 'user_123' });
+    const recovered = await service.recover({ clerkUserId: 'user_123' });
+    await service.register('registration-token', {
+      machineId: recovered.machineId,
+      hetznerServerId: 789012,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'stable',
+      bundleSha256: '0'.repeat(64),
+      healthy: true,
+    });
 
     const queued = await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10);
     expect(queued).toHaveLength(1);
     expect(queued[0]).toMatchObject({
       providerServerId: 123456,
       reason: 'recover_old_server',
-      machineId: provisioned.machineId,
+      machineId: recovered.machineId,
       handle: 'alice',
     });
 
     await service.reconcileProvisioning();
+    currentNow = new Date('2026-04-26T12:15:00.000Z');
+    await service.reconcileProvisioning();
 
     expect(deleteServer).toHaveBeenCalledTimes(2);
-    expect(await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10)).toHaveLength(0);
+    expect(await listPendingProviderDeletions(db, currentNow.toISOString(), 10)).toHaveLength(0);
   });
 
   it('rejects concurrent recover calls before creating a second replacement server', async () => {

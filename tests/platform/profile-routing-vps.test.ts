@@ -71,6 +71,22 @@ describe('platform/profile-routing-vps', () => {
     }, '/api/ping', '?x=1')).toBe('https://203.0.113.10:443/api/ping?x=1');
   });
 
+  it('keeps recovery traffic on the predecessor until replacement registration', () => {
+    const recoveringMachine = {
+      status: 'recovering',
+      publicIPv4: '203.0.113.11',
+      recoveryOldServerId: 123456,
+      recoveryOldPublicIPv4: '203.0.113.10',
+    };
+
+    expect(buildCustomerVpsProxyUrl(recoveringMachine, '/api/ping'))
+      .toBe('https://203.0.113.10:443/api/ping');
+    expect(buildCustomerVpsProxyUrl({
+      ...recoveringMachine,
+      recoveryOldPublicIPv4: null,
+    }, '/api/ping')).toBeNull();
+  });
+
   it('routes /proxy/:handle requests to a running VPS before legacy containers', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',

@@ -1,5 +1,10 @@
 import type { CustomerVpsConfig } from './customer-vps-config.js';
-import { CustomerVpsError, logCustomerVpsError } from './customer-vps-errors.js';
+import {
+  CustomerVpsError,
+  DefinitiveProviderRejectionError,
+  logCustomerVpsError,
+} from './customer-vps-errors.js';
+import { z } from 'zod/v4';
 
 const HETZNER_USER_DATA_LIMIT_BYTES = 32 * 1024;
 
@@ -24,6 +29,8 @@ export interface CreateHetznerServerInput {
   labels: Record<string, string>;
   serverType?: string;
   location?: string;
+  image?: number | string;
+  sshKeys?: string[];
 }
 
 export interface ResizeHetznerServerInput {
@@ -38,6 +45,29 @@ export interface HetznerServer {
   publicIPv4?: string;
   publicIPv6?: string;
   labels?: Record<string, string>;
+  createActionId?: number;
+}
+
+export interface HetznerImage {
+  id: number;
+  status: 'creating' | 'available' | 'deleting';
+  type: 'snapshot';
+  architecture: 'x86' | 'arm';
+  diskGb: number;
+  labels: Record<string, string>;
+  deleteProtected: boolean;
+}
+
+export interface HetznerAction {
+  id: number;
+  status: 'running' | 'success' | 'error';
+  command: string;
+  errorCode?: string;
+}
+
+export interface CreateHetznerSnapshotInput {
+  description: string;
+  labels: Record<string, string>;
 }
 
 export interface HetznerClient {
@@ -49,6 +79,102 @@ export interface HetznerClient {
   resizeServer(serverId: number, input: ResizeHetznerServerInput): Promise<void>;
   deleteServer(serverId: number): Promise<void>;
   listServersByLabel?(labelSelector: string): Promise<HetznerServer[]>;
+  createSnapshot(serverId: number, input: CreateHetznerSnapshotInput): Promise<{ image: HetznerImage; action: HetznerAction }>;
+  getImage(imageId: number): Promise<HetznerImage | null>;
+  listImagesByLabel(labelSelector: string): Promise<HetznerImage[]>;
+  deleteImage(imageId: number): Promise<void>;
+  getAction(actionId: number): Promise<HetznerAction | null>;
+}
+
+const ProviderIdSchema = z.number().int().positive();
+const ProviderSshKeysSchema = z.array(z.string().min(1).max(255)).max(20).optional();
+const ProviderLabelsSchema = z.record(
+  z.string().min(1).max(63),
+  z.string().max(63),
+).refine((labels) => Object.keys(labels).length <= 64, 'Too many provider labels');
+const ProviderActionSchema = z.object({
+  id: ProviderIdSchema,
+  status: z.enum(['running', 'success', 'error']),
+  command: z.string().min(1).max(128),
+  error: z.object({ code: z.string().min(1).max(128) }).nullable().optional(),
+}).passthrough();
+const ProviderImageSchema = z.object({
+  id: ProviderIdSchema,
+  status: z.enum(['creating', 'available', 'deleting']),
+  type: z.literal('snapshot'),
+  architecture: z.enum(['x86', 'arm']),
+  disk_size: z.number().int().min(1).max(2_048),
+  labels: ProviderLabelsSchema.default({}),
+  protection: z.object({ delete: z.boolean() }),
+}).passthrough();
+const ProviderErrorSchema = z.object({
+  error: z.object({
+    code: z.string().min(1).max(128),
+    details: z.object({
+      fields: z.array(z.object({
+        name: z.string().min(1).max(128),
+      }).passthrough()).max(32).optional(),
+    }).passthrough().optional(),
+  }).passthrough(),
+}).passthrough();
+
+async function isSnapshotImageRejection(res: Response): Promise<boolean> {
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) {
+      logCustomerVpsError('hetzner createServer rejection classification', err);
+    }
+    return false;
+  }
+  const parsed = ProviderErrorSchema.safeParse(body);
+  if (!parsed.success) return false;
+  return parsed.data.error.details?.fields?.some((field) => field.name === 'image') ?? false;
+}
+
+async function isDefinitiveCapacityRejection(res: Response): Promise<boolean> {
+  if (res.status !== 412) return false;
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) {
+      logCustomerVpsError('hetzner createServer capacity classification', err);
+    }
+    return false;
+  }
+  const parsed = ProviderErrorSchema.safeParse(body);
+  return parsed.success && parsed.data.error.code === 'resource_unavailable';
+}
+
+function providerUnavailable(): CustomerVpsError {
+  return new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+}
+
+function parseProviderAction(input: unknown): HetznerAction {
+  const parsed = ProviderActionSchema.safeParse(input);
+  if (!parsed.success) throw providerUnavailable();
+  return {
+    id: parsed.data.id,
+    status: parsed.data.status,
+    command: parsed.data.command,
+    ...(parsed.data.error?.code ? { errorCode: parsed.data.error.code } : {}),
+  };
+}
+
+function parseProviderImage(input: unknown): HetznerImage {
+  const parsed = ProviderImageSchema.safeParse(input);
+  if (!parsed.success) throw providerUnavailable();
+  return {
+    id: parsed.data.id,
+    status: parsed.data.status,
+    type: parsed.data.type,
+    architecture: parsed.data.architecture,
+    diskGb: parsed.data.disk_size,
+    labels: parsed.data.labels,
+    deleteProtected: parsed.data.protection.delete,
+  };
 }
 
 function requireToken(config: CustomerVpsConfig): string {
@@ -84,11 +210,15 @@ function mapServer(server: {
 }
 
 function parseServer(body: unknown): HetznerServer {
-  const server = (body as { server?: Parameters<typeof mapServer>[0] }).server;
+  const response = body as { server?: Parameters<typeof mapServer>[0]; action?: unknown };
+  const server = response.server;
   if (!server) {
     throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
   }
-  return mapServer(server);
+  const mapped = mapServer(server);
+  return response.action === undefined
+    ? mapped
+    : { ...mapped, createActionId: parseProviderAction(response.action).id };
 }
 
 function parseServers(body: unknown): HetznerServer[] {
@@ -138,25 +268,52 @@ export function createHetznerClient(
           'hetzner createServer preflight',
           new Error(`user_data is ${userDataBytes} bytes (limit ${HETZNER_USER_DATA_LIMIT_BYTES})`),
         );
-        throw new CustomerVpsError(500, 'user_data_too_large', 'Provisioning provider unavailable');
+        throw new DefinitiveProviderRejectionError(
+          500, 'user_data_too_large', 'Provisioning provider unavailable',
+        );
       }
+      const sshKeys = ProviderSshKeysSchema.safeParse(
+        input.sshKeys !== undefined
+          ? input.sshKeys
+          : (config.sshKeyName ? [config.sshKeyName] : undefined),
+      );
+      if (!sshKeys.success) throw providerUnavailable();
       const res = await request('/servers', {
         method: 'POST',
         body: JSON.stringify({
           name: input.name,
           server_type: input.serverType ?? config.serverType,
-          image: config.image,
+          image: input.image ?? config.image,
           location: input.location ?? config.location,
-          ssh_keys: config.sshKeyName ? [config.sshKeyName] : undefined,
+          ssh_keys: sshKeys.data,
           user_data: input.userData,
           labels: input.labels,
         }),
       });
       if (res.status === 429) {
-        throw new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable');
+        throw new DefinitiveProviderRejectionError(
+          429, 'quota_exceeded', 'Provisioning capacity unavailable',
+        );
       }
       if (!res.ok) {
+        const snapshotImageRejected = input.image !== undefined && await isSnapshotImageRejection(res);
+        const capacityRejected = await isDefinitiveCapacityRejection(res);
         await logProviderRejection('createServer', res);
+        if (snapshotImageRejected) {
+          throw new DefinitiveProviderRejectionError(
+            500, 'snapshot_clone_rejected', 'Provisioning provider unavailable',
+          );
+        }
+        if (capacityRejected) {
+          throw new DefinitiveProviderRejectionError(
+            503, 'quota_exceeded', 'Provisioning capacity unavailable',
+          );
+        }
+        if (res.status >= 400 && res.status < 500 && res.status !== 408) {
+          throw new DefinitiveProviderRejectionError(
+            500, 'provider_unavailable', 'Provisioning provider unavailable',
+          );
+        }
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       return parseServer(await parseJson(res));
@@ -235,6 +392,62 @@ export function createHetznerClient(
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       return parseServers(await parseJson(res));
+    },
+
+    async createSnapshot(serverId, input) {
+      ProviderIdSchema.parse(serverId);
+      const parsedInput = z.object({
+        description: z.string().min(1).max(255),
+        labels: ProviderLabelsSchema,
+      }).strict().parse(input);
+      const res = await request(`/servers/${serverId}/actions/create_image`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'snapshot', description: parsedInput.description, labels: parsedInput.labels }),
+      });
+      if (res.status === 429) throw new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable');
+      if (!res.ok) {
+        await logProviderRejection('createSnapshot', res);
+        throw providerUnavailable();
+      }
+      const body = await parseJson(res) as { image?: unknown; action?: unknown };
+      return { image: parseProviderImage(body.image), action: parseProviderAction(body.action) };
+    },
+
+    async getImage(imageId) {
+      ProviderIdSchema.parse(imageId);
+      const res = await request(`/images/${imageId}`);
+      if (res.status === 404) return null;
+      if (!res.ok) throw providerUnavailable();
+      const image = (await parseJson(res) as { image?: unknown }).image;
+      if (image === null) return null;
+      return parseProviderImage(image);
+    },
+
+    async listImagesByLabel(labelSelector) {
+      const selector = z.string().min(1).max(512).regex(/^[a-zA-Z0-9._=,!-]+$/).parse(labelSelector);
+      const res = await request(`/images?type=snapshot&label_selector=${encodeURIComponent(selector)}`);
+      if (!res.ok) throw providerUnavailable();
+      const images = (await parseJson(res) as { images?: unknown }).images;
+      if (!Array.isArray(images) || images.length > 100) throw providerUnavailable();
+      return images.map(parseProviderImage);
+    },
+
+    async deleteImage(imageId) {
+      ProviderIdSchema.parse(imageId);
+      const res = await request(`/images/${imageId}`, { method: 'DELETE' });
+      if (res.status === 404) return;
+      if (!res.ok) {
+        await logProviderRejection('deleteImage', res);
+        throw providerUnavailable();
+      }
+    },
+
+    async getAction(actionId) {
+      ProviderIdSchema.parse(actionId);
+      const res = await request(`/actions/${actionId}`);
+      if (res.status === 404) return null;
+      if (!res.ok) throw providerUnavailable();
+      return parseProviderAction((await parseJson(res) as { action?: unknown }).action);
     },
   };
 }

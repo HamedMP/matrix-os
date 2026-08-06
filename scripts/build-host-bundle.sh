@@ -10,7 +10,20 @@ NODE_DIST="node-v${NODE_VERSION}-linux-x64"
 NODE_ARCHIVE="${NODE_DIST}.tar.xz"
 NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
 NODE_URL="${NODE_BASE_URL}/${NODE_ARCHIVE}"
-ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.1}"
+if [[ ${HOST_BUNDLE_ZELLIJ_VERSION+x} != ${HOST_BUNDLE_ZELLIJ_BINARY_SHA256+x} ]]; then
+  echo "HOST_BUNDLE_ZELLIJ_VERSION and HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be set together" >&2
+  exit 1
+fi
+ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.3}"
+ZELLIJ_BINARY_SHA256="${HOST_BUNDLE_ZELLIJ_BINARY_SHA256:-397481870c4fc3bae646cd7613cde3a1cebdc204558a6cb9a7c603d4c852fc90}"
+if [[ ! "$ZELLIJ_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "HOST_BUNDLE_ZELLIJ_VERSION must be a semantic version" >&2
+  exit 1
+fi
+if [[ ! "$ZELLIJ_BINARY_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "HOST_BUNDLE_ZELLIJ_BINARY_SHA256 must be a lowercase 64-character SHA-256" >&2
+  exit 1
+fi
 ZELLIJ_ARCHIVE="zellij-x86_64-unknown-linux-musl.tar.gz"
 ZELLIJ_URL="https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/${ZELLIJ_ARCHIVE}"
 GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"
@@ -66,8 +79,19 @@ mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
 
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
+if [ -L "$STAGE_DIR/bin/zellij" ] || [ ! -f "$STAGE_DIR/bin/zellij" ]; then
+  echo "extracted Zellij binary must be a regular file" >&2
+  exit 1
+fi
+printf '%s  %s\n' "$ZELLIJ_BINARY_SHA256" "$STAGE_DIR/bin/zellij" | sha256sum -c -
 chmod 0755 "$STAGE_DIR/bin/zellij"
 test -x "$STAGE_DIR/bin/zellij"
+ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
+[ "$ZELLIJ_ACTUAL_VERSION" = "zellij $ZELLIJ_VERSION" ] || {
+  echo "staged Zellij version mismatch: expected zellij $ZELLIJ_VERSION" >&2
+  exit 1
+}
+timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
 TERMINAL_RUNTIME_GENERATION="$(
   "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
     "$STAGE_DIR/bin/zellij" \
@@ -100,7 +124,7 @@ cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-openclaw" "$STAGE_DIR/bin/matrix-openclaw-gateway" "$STAGE_DIR/bin/matrix-agent-runtime-control" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
+chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-openclaw" "$STAGE_DIR/bin/matrix-openclaw-gateway" "$STAGE_DIR/bin/matrix-agent-runtime-control" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-golden-snapshot-activate" "$STAGE_DIR/bin/matrix-golden-snapshot-sanitize" "$STAGE_DIR/bin/matrix-golden-snapshot-validate" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"

@@ -55,6 +55,8 @@ system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
 
 The per-user Docker image path is legacy/local-development only. It is not used for production customer VPSes.
 
+New customer and recovery creation may optionally use a validated golden VPS snapshot as a fail-closed acceleration layer. It never replaces the immutable host-bundle source of truth, owner backup flow, or clean Ubuntu fallback. See [Golden VPS Snapshots](golden-vps-snapshots.md) for lifecycle, sanitation, rollout gates, and disablement.
+
 ### Archived Legacy Shared-Container Mode
 
 This section is historical context for old deployments only. Do not use it for new production work.
@@ -229,6 +231,7 @@ Root `matrix-os.com` stays pointed at Vercel. The `app` and `code` subdomains ha
 cat > /root/matrix-os/.env << 'EOF'
 ANTHROPIC_API_KEY=sk-ant-...
 PLATFORM_SECRET=your-random-secret
+GOLDEN_SNAPSHOT_OPERATOR_SECRET=your-separate-random-secret
 CLERK_SECRET_KEY=sk_live_...
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
 GEMINI_API_KEY=your-gemini-api-key
@@ -240,6 +243,7 @@ EOF
 |----------|-----------|---------------|-------------|
 | `ANTHROPIC_API_KEY` | platform/proxy | runtime | Shared Anthropic API key for routed AI calls |
 | `PLATFORM_SECRET` | platform | runtime | Bearer token for admin API auth |
+| `GOLDEN_SNAPSHOT_OPERATOR_SECRET` | platform | runtime | Required when `CUSTOMER_VPS_ENABLED=true`; distinct bearer token for snapshot status, retry, revocation, inventory, and cleanup controls |
 | `CLERK_SECRET_KEY` | platform | runtime | Server-side Clerk JWT verification |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | host bundle | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
 | `GEMINI_API_KEY` | platform/gateway when configured | runtime | Google Gemini API key for image/icon generation |
@@ -250,6 +254,16 @@ EOF
 | `S3_BUCKET` / `R2_BUCKET` | customer VPS gateway/sync | runtime | R2 bucket name, default `matrixos-sync` |
 | `MATRIX_HOME_MIRROR` | customer VPS gateway/sync | runtime | `true` enables three-way sync (VPS home ↔ R2 ↔ peer) |
 | `PLATFORM_INTERNAL_URL` | customer VPS gateway | runtime | Base URL for platform-owned internal APIs; customer VPSes use it with their per-host token for sync and integrations |
+
+Generate the two platform bearer credentials independently and store both in the
+deployment secret manager. Never reuse one value for the other; customer-VPS platform
+startup rejects a missing, short, or shared snapshot operator credential even while
+snapshot builds and selection are disabled.
+
+```bash
+PLATFORM_SECRET=$(openssl rand -hex 32)
+GOLDEN_SNAPSHOT_OPERATOR_SECRET=$(openssl rand -hex 32)
+```
 
 **Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available when building the customer host bundle. Runtime vars for customer VPSes live in `/opt/matrix/env/host.env`, `/opt/matrix/env/r2.env`, and host systemd environment files.
 

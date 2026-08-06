@@ -73,6 +73,9 @@ import {
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
+import { createGoldenSnapshotRoutes } from './golden-snapshot-routes.js';
+import type { GoldenSnapshotService } from './golden-snapshot-service.js';
+import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import { createLegacyContainerRoutes } from './legacy-container-routes.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
@@ -316,6 +319,8 @@ export function createApp(deps: {
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
+  goldenSnapshotService?: GoldenSnapshotService;
+  goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
   hostBundleObjectStore?: CustomerVpsObjectStore;
   env?: NodeJS.ProcessEnv;
@@ -325,6 +330,13 @@ export function createApp(deps: {
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !deps.customerVpsService;
   const platformSecret = deps.platformSecret ?? appEnv.PLATFORM_SECRET ?? '';
+  const goldenSnapshotOperatorSecret = appEnv.GOLDEN_SNAPSHOT_OPERATOR_SECRET ?? '';
+  if (deps.goldenSnapshotService && deps.goldenSnapshotConfig
+    && (goldenSnapshotOperatorSecret.length < 16
+      || platformSecret.length < 16
+      || goldenSnapshotOperatorSecret === platformSecret)) {
+    throw new Error('Golden snapshot control-plane credentials are misconfigured');
+  }
   const allowHostBundleSyncStoreFallback = appEnv.CUSTOMER_VPS_ENABLED !== 'true';
   const app = new Hono<{
     Variables: {
@@ -442,6 +454,15 @@ export function createApp(deps: {
 
   app.route('/', platformMetricsRoutes.routes);
 
+  if (deps.goldenSnapshotService && deps.goldenSnapshotConfig) {
+    app.route('/system-bundles', createGoldenSnapshotRoutes({
+      db,
+      service: deps.goldenSnapshotService,
+      config: deps.goldenSnapshotConfig,
+      platformSecret,
+      operatorSecret: goldenSnapshotOperatorSecret,
+    }));
+  }
   app.route('/system-bundles', createHostBundleRoutes({
     db,
     platformSecret,
@@ -449,6 +470,8 @@ export function createApp(deps: {
     getHostBundleObjectStore: () => deps.hostBundleObjectStore ?? (allowHostBundleSyncStoreFallback ? deps.customerVpsObjectStore : undefined),
     capturePlatformEvent,
     logRouteError: logPlatformRouteError,
+    goldenSnapshotCompatibility: deps.goldenSnapshotConfig?.compatibility,
+    goldenSnapshotFreshnessMaxAgeMs: deps.goldenSnapshotConfig?.freshnessMaxAgeMs,
   }));
 
   // OAuth 2.0 Device Flow (RFC 8628) -- mounted before any host-based routing

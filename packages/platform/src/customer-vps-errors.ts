@@ -1,7 +1,9 @@
 export type CustomerVpsFailureCode =
   | 'quota_exceeded'
+  | 'snapshot_quota_exceeded'
   | 'provider_unavailable'
   | 'provider_timeout'
+  | 'snapshot_clone_rejected'
   | 'user_data_too_large'
   | 'r2_unavailable'
   | 'invalid_state'
@@ -22,6 +24,22 @@ export class CustomerVpsError extends Error {
     this.status = status;
     this.code = code;
     this.publicMessage = publicMessage;
+  }
+}
+
+/**
+ * The provider returned a bounded HTTP rejection, proving that create did not
+ * have an ambiguous transport outcome. Callers may retry or fail without an
+ * orphan-discovery delay; the raw provider response remains server-side only.
+ */
+export class DefinitiveProviderRejectionError extends CustomerVpsError {
+  constructor(
+    status: number,
+    code: CustomerVpsFailureCode,
+    publicMessage: string,
+  ) {
+    super(status, code, publicMessage);
+    this.name = 'DefinitiveProviderRejectionError';
   }
 }
 

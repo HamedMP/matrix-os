@@ -94,7 +94,7 @@ describe('platform/customer-vps reliability', () => {
         hash: hashRegistrationToken('reg-token'),
         expiresAt: new Date(nowDate.getTime() + ttlMs).toISOString(),
       }),
-      machineIdFactory: () => `machine-${++machineSeq}`,
+      machineIdFactory: () => `30000000-0000-4000-8000-${String(++machineSeq).padStart(12, '0')}`,
       postgresPasswordFactory: () => 'postgres-secret',
       now: () => clock,
       ...(opts.entitled === false

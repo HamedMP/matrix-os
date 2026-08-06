@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Kysely, PostgresDialect, sql, type InsertObject, type Transaction } from 'kysely';
+import { Kysely, PostgresDialect, sql, type Generated, type InsertObject, type Transaction } from 'kysely';
 import pg from 'pg';
 import { z } from 'zod/v4';
 import type {
@@ -18,6 +18,8 @@ import {
 const DEFAULT_PLATFORM_DB_URL =
   process.env.PLATFORM_DATABASE_URL ??
   (process.env.POSTGRES_URL ? `${process.env.POSTGRES_URL}/matrixos_platform` : undefined);
+const HostBundleTimestampSchema = z.string().datetime({ offset: true })
+  .transform((value) => new Date(value).toISOString());
 
 type Executor = Kysely<PlatformDatabase> | Transaction<PlatformDatabase>;
 
@@ -60,6 +62,14 @@ interface UserMachinesTable {
   public_ipv6: string | null;
   status: string;
   image_version: string | null;
+  source_snapshot_id: string | null;
+  source_base_generation: string | null;
+  target_bundle_version: string | null;
+  target_bundle_sha256: string | null;
+  recovery_create_action_id: number | null;
+  recovery_encrypted_payload: string | null;
+  recovery_old_server_id: number | null;
+  recovery_old_public_ipv4: string | null;
   server_type: string | null;
   location: string | null;
   registration_token_hash: string | null;
@@ -87,6 +97,15 @@ export interface ProvisioningJobsTable {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  target_bundle_version: string | null;
+  target_bundle_sha256: string | null;
+  image_source: string;
+  snapshot_id: string | null;
+  snapshot_lease_id: string | null;
+  snapshot_create_intent_id: Generated<string | null>;
+  activation_step: string;
+  provider_create_action_id: number | null;
+  fallback_reason: string | null;
 }
 
 interface HostBundleReleasesTable {
@@ -94,6 +113,8 @@ interface HostBundleReleasesTable {
   channel: string | null;
   git_commit: string;
   git_ref: string | null;
+  snapshot_eligible: boolean;
+  snapshot_eligibility_source: string;
   build_time: string;
   bundle_key: string;
   checksum_key: string | null;
@@ -117,6 +138,152 @@ interface HostBundleReleaseChannelsTable {
   channel: string;
   version: string;
   promoted_at: string;
+}
+
+export interface GoldenSnapshotsTable {
+  snapshot_id: string;
+  bundle_version: string;
+  bundle_sha256: string;
+  source_git_commit: string;
+  compatibility_key: string;
+  provider: string;
+  architecture: string;
+  region: string;
+  base_image: string;
+  base_generation: string;
+  boot_mode: string;
+  activation_abi: string;
+  minimum_disk_gb: number;
+  test_mode: boolean;
+  image_generation: number;
+  state: string;
+  provider_image_id: number | null;
+  provider_image_status: string | null;
+  image_disk_gb: number | null;
+  image_architecture: string | null;
+  validation_summary: unknown | null;
+  failure_code: string | null;
+  ready_at: string | null;
+  quarantined_at: string | null;
+  retiring_at: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+}
+
+export interface GoldenSnapshotBuildsTable {
+  build_id: string;
+  snapshot_id: string;
+  phase: string;
+  status: string;
+  attempts: number;
+  available_at: string;
+  claimed_at: string | null;
+  lease_expires_at: string | null;
+  callback_phase: string | null;
+  callback_token_hash: string | null;
+  callback_expires_at: string | null;
+  callback_event_id: string | null;
+  callback_payload_sha256: string | null;
+  callback_outcome: unknown | null;
+  builder_machine_id_sha256: string | null;
+  builder_ssh_host_key_sha256: string | null;
+  validation_clone_ordinal: number;
+  first_validation_machine_id_sha256: string | null;
+  first_validation_ssh_host_key_sha256: string | null;
+  provider_builder_id: number | null;
+  provider_builder_action_id: number | null;
+  provider_snapshot_action_id: number | null;
+  provider_validation_id: number | null;
+  provider_validation_action_id: number | null;
+  pending_operation: string | null;
+  last_error_code: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface GoldenSnapshotLeasesTable {
+  lease_id: string;
+  snapshot_id: string;
+  machine_id: string;
+  purpose: string;
+  target_bundle_version: string;
+  created_at: string;
+  expires_at: string;
+  released_at: string | null;
+}
+
+export interface GoldenSnapshotCallbackReceiptsTable {
+  build_id: string;
+  event_id: string;
+  callback_phase: string;
+  token_sha256: string | null;
+  payload_sha256: string;
+  outcome: unknown;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface GoldenSnapshotCreateIntentsTable {
+  intent_id: string;
+  snapshot_id: string;
+  lease_id: string;
+  machine_id: string;
+  purpose: string;
+  rollout_generation: number;
+  state: string;
+  provider_create_action_id: number | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface GoldenSnapshotRolloutControlsTable {
+  compatibility_key: string;
+  enabled: boolean;
+  percentage: number;
+  generation: number;
+  updated_at: string;
+}
+
+export interface GoldenSnapshotRevokedBaseGenerationsTable {
+  base_generation: string;
+  reason: string;
+  revoked_at: string;
+  updated_at: string;
+}
+
+export interface GoldenSnapshotCleanupTable {
+  cleanup_id: string;
+  snapshot_id: string | null;
+  build_id: string | null;
+  resource_type: string;
+  provider_resource_id: number;
+  provenance_key: string;
+  reason: string;
+  status: string;
+  attempts: number;
+  next_attempt_at: string;
+  lease_expires_at: string | null;
+  last_error_code: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface GoldenSnapshotAuditEventsTable {
+  event_id: string;
+  snapshot_id: string | null;
+  build_id: string | null;
+  cleanup_id: string | null;
+  event_type: string;
+  actor_type: string;
+  actor_id_hash: string | null;
+  from_state: string | null;
+  to_state: string | null;
+  reason: string | null;
+  created_at: string;
 }
 
 interface ProviderDeletionQueueTable {
@@ -336,6 +503,15 @@ export interface PlatformDatabase {
   host_bundle_releases: HostBundleReleasesTable;
   host_bundle_channels: HostBundleChannelsTable;
   host_bundle_release_channels: HostBundleReleaseChannelsTable;
+  golden_snapshots: GoldenSnapshotsTable;
+  golden_snapshot_builds: GoldenSnapshotBuildsTable;
+  golden_snapshot_callback_receipts: GoldenSnapshotCallbackReceiptsTable;
+  golden_snapshot_create_intents: GoldenSnapshotCreateIntentsTable;
+  golden_snapshot_rollout_controls: GoldenSnapshotRolloutControlsTable;
+  golden_snapshot_leases: GoldenSnapshotLeasesTable;
+  golden_snapshot_revoked_base_generations: GoldenSnapshotRevokedBaseGenerationsTable;
+  golden_snapshot_cleanup: GoldenSnapshotCleanupTable;
+  golden_snapshot_audit_events: GoldenSnapshotAuditEventsTable;
   provider_deletion_queue: ProviderDeletionQueueTable;
   billing_customers: BillingCustomersTable;
   billing_subscriptions: BillingSubscriptionsTable;
@@ -429,6 +605,14 @@ export interface UserMachineRecord {
   publicIPv6: string | null;
   status: string;
   imageVersion: string | null;
+  sourceSnapshotId: string | null;
+  sourceBaseGeneration: string | null;
+  targetBundleVersion: string | null;
+  targetBundleSha256: string | null;
+  recoveryCreateActionId: number | null;
+  recoveryEncryptedPayload: string | null;
+  recoveryOldServerId: number | null;
+  recoveryOldPublicIPv4: string | null;
   serverType: string | null;
   location: string | null;
   registrationTokenHash: string | null;
@@ -493,6 +677,7 @@ export interface HostBundleReleaseRecord {
   channel: string | null;
   gitCommit: string;
   gitRef: string | null;
+  snapshotEligible: boolean;
   buildTime: string;
   bundleKey: string;
   checksumKey: string | null;
@@ -511,6 +696,7 @@ export interface NewHostBundleRelease {
   channel?: string | null;
   gitCommit: string;
   gitRef?: string | null;
+  snapshotEligible?: boolean;
   buildTime: string;
   bundleKey: string;
   checksumKey?: string | null;
@@ -652,6 +838,14 @@ export interface NewUserMachine {
   publicIPv6?: string | null;
   status: string;
   imageVersion?: string | null;
+  sourceSnapshotId?: string | null;
+  sourceBaseGeneration?: string | null;
+  targetBundleVersion?: string | null;
+  targetBundleSha256?: string | null;
+  recoveryCreateActionId?: number | null;
+  recoveryEncryptedPayload?: string | null;
+  recoveryOldServerId?: number | null;
+  recoveryOldPublicIPv4?: string | null;
   serverType?: string | null;
   location?: string | null;
   registrationTokenHash?: string | null;
@@ -668,6 +862,12 @@ export interface NewUserMachine {
 
 export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview']);
 export type UserMachineProvisioningClass = z.infer<typeof UserMachineProvisioningClassSchema>;
+const NullableProviderActionIdSchema = z.coerce.number().int().positive()
+  .max(Number.MAX_SAFE_INTEGER).nullable();
+
+export function parseNullableProviderActionId(value: number | string | null): number | null {
+  return NullableProviderActionIdSchema.parse(value);
+}
 
 export interface NewProviderDeletionQueueRecord {
   id: string;
@@ -750,6 +950,14 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       public_ipv6 TEXT,
       status TEXT NOT NULL DEFAULT 'provisioning',
       image_version TEXT,
+      source_snapshot_id TEXT,
+      source_base_generation TEXT,
+      target_bundle_version TEXT,
+      target_bundle_sha256 TEXT,
+      recovery_create_action_id BIGINT,
+      recovery_encrypted_payload TEXT,
+      recovery_old_server_id BIGINT,
+      recovery_old_public_ipv4 TEXT,
       server_type TEXT,
       location TEXT,
       registration_token_hash TEXT,
@@ -768,6 +976,14 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS provisioning_class TEXT NOT NULL DEFAULT 'customer'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS access_clerk_user_ids TEXT[] NOT NULL DEFAULT '{}'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS source_snapshot_id TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS source_base_generation TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS target_bundle_version TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS target_bundle_sha256 TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_create_action_id BIGINT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_encrypted_payload TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_old_server_id BIGINT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS recovery_old_public_ipv4 TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS location TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
@@ -815,6 +1031,15 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       completed_at TEXT
     )
   `.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS target_bundle_version TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS target_bundle_sha256 TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS image_source TEXT NOT NULL DEFAULT 'unresolved'`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS snapshot_id TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS snapshot_lease_id TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS snapshot_create_intent_id TEXT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS activation_step TEXT NOT NULL DEFAULT 'selecting'`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS provider_create_action_id BIGINT`.execute(db);
+  await sql`ALTER TABLE provisioning_jobs ADD COLUMN IF NOT EXISTS fallback_reason TEXT`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_dispatch
     ON provisioning_jobs(status, available_at, lease_expires_at)
@@ -1065,13 +1290,16 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       channel TEXT,
       git_commit TEXT NOT NULL,
       git_ref TEXT,
+      snapshot_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+      snapshot_eligibility_source TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (snapshot_eligibility_source IN ('legacy', 'explicit')),
       build_time TEXT NOT NULL,
       bundle_key TEXT NOT NULL,
       checksum_key TEXT,
       incremental_manifest_key TEXT,
       incremental_manifest_sha256 TEXT,
       sha256 TEXT NOT NULL,
-      size INTEGER NOT NULL,
+      size BIGINT NOT NULL,
       severity TEXT NOT NULL DEFAULT 'normal',
       update_type TEXT NOT NULL DEFAULT 'manual',
       changelog TEXT,
@@ -1079,8 +1307,25 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS channel TEXT`.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS snapshot_eligible BOOLEAN NOT NULL DEFAULT FALSE`.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS snapshot_eligibility_source TEXT NOT NULL DEFAULT 'legacy'`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'host_bundle_releases'::regclass
+          AND conname = 'host_bundle_releases_snapshot_eligibility_source_check'
+      ) THEN
+        ALTER TABLE host_bundle_releases
+          ADD CONSTRAINT host_bundle_releases_snapshot_eligibility_source_check
+          CHECK (snapshot_eligibility_source IN ('legacy', 'explicit'));
+      END IF;
+    END $$
+  `.execute(db);
   await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS incremental_manifest_key TEXT`.execute(db);
   await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS incremental_manifest_sha256 TEXT`.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ALTER COLUMN size TYPE BIGINT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_channel ON host_bundle_releases(channel)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_created_at ON host_bundle_releases(created_at)`.execute(db);
 
@@ -1110,10 +1355,336 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     ON CONFLICT (channel, version) DO NOTHING
   `.execute(db);
   await sql`
+    UPDATE host_bundle_releases AS release
+    SET snapshot_eligible = TRUE
+    WHERE release.snapshot_eligible = FALSE
+      AND release.snapshot_eligibility_source = 'legacy'
+      AND EXISTS (
+        SELECT 1 FROM host_bundle_channels AS channel
+        WHERE channel.version = release.version
+          AND channel.channel IN ('dev', 'canary', 'beta', 'stable')
+      )
+  `.execute(db);
+  await sql`
     INSERT INTO host_bundle_release_channels(channel, version, promoted_at)
     SELECT channel, version, updated_at
     FROM host_bundle_channels
     ON CONFLICT (channel, version) DO UPDATE SET promoted_at = EXCLUDED.promoted_at
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      bundle_version TEXT NOT NULL REFERENCES host_bundle_releases(version),
+      bundle_sha256 TEXT NOT NULL CHECK (bundle_sha256 ~ '^[a-f0-9]{64}$'),
+      source_git_commit TEXT NOT NULL,
+      compatibility_key TEXT NOT NULL CHECK (compatibility_key ~ '^[a-f0-9]{64}$'),
+      provider TEXT NOT NULL,
+      architecture TEXT NOT NULL,
+      region TEXT NOT NULL,
+      base_image TEXT NOT NULL,
+      base_generation TEXT NOT NULL,
+      boot_mode TEXT NOT NULL,
+      activation_abi TEXT NOT NULL,
+      minimum_disk_gb INTEGER NOT NULL CHECK (minimum_disk_gb > 0),
+      test_mode BOOLEAN NOT NULL DEFAULT FALSE,
+      image_generation INTEGER NOT NULL DEFAULT 1 CHECK (image_generation > 0),
+      state TEXT NOT NULL CHECK (state IN ('candidate', 'building', 'sanitizing', 'validating', 'ready', 'failed', 'quarantined', 'retiring', 'deleted')),
+      provider_image_id BIGINT,
+      provider_image_status TEXT,
+      image_disk_gb INTEGER CHECK (image_disk_gb IS NULL OR image_disk_gb > 0),
+      image_architecture TEXT,
+      validation_summary JSONB,
+      failure_code TEXT,
+      ready_at TEXT,
+      quarantined_at TEXT,
+      retiring_at TEXT,
+      deleted_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+      UNIQUE (bundle_sha256, compatibility_key, test_mode, image_generation),
+      UNIQUE (provider_image_id)
+    )
+  `.execute(db);
+  await sql`ALTER TABLE golden_snapshots ADD COLUMN IF NOT EXISTS test_mode BOOLEAN NOT NULL DEFAULT FALSE`.execute(db);
+  await sql`ALTER TABLE golden_snapshots ADD COLUMN IF NOT EXISTS image_generation INTEGER NOT NULL DEFAULT 1 CHECK (image_generation > 0)`.execute(db);
+  await sql`ALTER TABLE golden_snapshots DROP CONSTRAINT IF EXISTS golden_snapshots_bundle_sha256_compatibility_key_key`.execute(db);
+  await sql`ALTER TABLE golden_snapshots DROP CONSTRAINT IF EXISTS golden_snapshots_bundle_sha256_compatibility_key_test_mode_key`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_golden_snapshots_identity`.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_golden_snapshots_identity
+    ON golden_snapshots(bundle_sha256, compatibility_key, test_mode, image_generation)
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_golden_snapshots_selectable
+    ON golden_snapshots(compatibility_key, ready_at DESC)
+    WHERE state = 'ready'
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_golden_snapshots_bundle
+    ON golden_snapshots(bundle_version, compatibility_key)
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshot_revoked_base_generations (
+      base_generation TEXT PRIMARY KEY,
+      reason TEXT NOT NULL,
+      revoked_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshot_builds (
+      build_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL UNIQUE REFERENCES golden_snapshots(snapshot_id) ON DELETE CASCADE,
+      phase TEXT NOT NULL CHECK (phase IN ('requested', 'builder_create', 'builder_boot', 'sanitizing', 'snapshot_create', 'snapshot_wait', 'validation_create', 'validation_boot', 'cleanup', 'completed', 'failed', 'reconciling')),
+      status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      available_at TEXT NOT NULL,
+      claimed_at TEXT,
+      lease_expires_at TEXT,
+      callback_phase TEXT,
+      callback_token_hash TEXT,
+      callback_expires_at TEXT,
+      callback_event_id TEXT,
+      callback_payload_sha256 TEXT CHECK (callback_payload_sha256 IS NULL OR callback_payload_sha256 ~ '^[a-f0-9]{64}$'),
+      callback_outcome JSONB,
+      builder_machine_id_sha256 TEXT CHECK (builder_machine_id_sha256 IS NULL OR builder_machine_id_sha256 ~ '^[a-f0-9]{64}$'),
+      builder_ssh_host_key_sha256 TEXT CHECK (builder_ssh_host_key_sha256 IS NULL OR builder_ssh_host_key_sha256 ~ '^[a-f0-9]{64}$'),
+      validation_clone_ordinal INTEGER NOT NULL DEFAULT 1 CHECK (validation_clone_ordinal IN (1, 2)),
+      first_validation_machine_id_sha256 TEXT CHECK (first_validation_machine_id_sha256 IS NULL OR first_validation_machine_id_sha256 ~ '^[a-f0-9]{64}$'),
+      first_validation_ssh_host_key_sha256 TEXT CHECK (first_validation_ssh_host_key_sha256 IS NULL OR first_validation_ssh_host_key_sha256 ~ '^[a-f0-9]{64}$'),
+      provider_builder_id BIGINT,
+      provider_builder_action_id BIGINT,
+      provider_snapshot_action_id BIGINT,
+      provider_validation_id BIGINT,
+      provider_validation_action_id BIGINT,
+      pending_operation TEXT,
+      last_error_code TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT
+    )
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS builder_machine_id_sha256 TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS builder_ssh_host_key_sha256 TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS provider_builder_action_id BIGINT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS callback_event_id TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS callback_payload_sha256 TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS callback_outcome JSONB
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS validation_clone_ordinal INTEGER NOT NULL DEFAULT 1
+    CHECK (validation_clone_ordinal IN (1, 2))
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS first_validation_machine_id_sha256 TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS first_validation_ssh_host_key_sha256 TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    DROP CONSTRAINT IF EXISTS golden_snapshot_builds_first_validation_machine_id_sha256_check
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD CONSTRAINT golden_snapshot_builds_first_validation_machine_id_sha256_check
+    CHECK (first_validation_machine_id_sha256 IS NULL OR first_validation_machine_id_sha256 ~ '^[a-f0-9]{64}$')
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    DROP CONSTRAINT IF EXISTS golden_snapshot_builds_first_validation_ssh_host_key_sha256_check
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD CONSTRAINT golden_snapshot_builds_first_validation_ssh_host_key_sha256_check
+    CHECK (first_validation_ssh_host_key_sha256 IS NULL OR first_validation_ssh_host_key_sha256 ~ '^[a-f0-9]{64}$')
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_golden_snapshot_builds_dispatch
+    ON golden_snapshot_builds(status, available_at, lease_expires_at)
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshot_callback_receipts (
+      build_id TEXT NOT NULL REFERENCES golden_snapshot_builds(build_id) ON DELETE CASCADE,
+      event_id TEXT NOT NULL,
+      callback_phase TEXT NOT NULL CHECK (length(callback_phase) BETWEEN 1 AND 64),
+      token_sha256 TEXT CHECK (token_sha256 ~ '^[a-f0-9]{64}$'),
+      payload_sha256 TEXT NOT NULL CHECK (payload_sha256 ~ '^[a-f0-9]{64}$'),
+      outcome JSONB NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      PRIMARY KEY (build_id, event_id)
+    )
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_callback_receipts
+    ADD COLUMN IF NOT EXISTS token_sha256 TEXT
+      CHECK (token_sha256 ~ '^[a-f0-9]{64}$')
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_golden_snapshot_callback_receipts_expiry
+    ON golden_snapshot_callback_receipts(expires_at, build_id, event_id)
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshot_leases (
+      lease_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL REFERENCES golden_snapshots(snapshot_id),
+      machine_id TEXT NOT NULL,
+      purpose TEXT NOT NULL CHECK (purpose IN ('provision', 'recover')),
+      target_bundle_version TEXT NOT NULL REFERENCES host_bundle_releases(version),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      released_at TEXT
+    )
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_golden_snapshot_leases_machine_active
+    ON golden_snapshot_leases(machine_id)
+    WHERE released_at IS NULL
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_golden_snapshot_leases_protection
+    ON golden_snapshot_leases(snapshot_id, expires_at)
+    WHERE released_at IS NULL
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshot_rollout_controls (
+      compatibility_key TEXT PRIMARY KEY CHECK (compatibility_key ~ '^[a-f0-9]{64}$'),
+      enabled BOOLEAN NOT NULL DEFAULT false,
+      percentage INTEGER NOT NULL DEFAULT 0 CHECK (percentage BETWEEN 0 AND 100),
+      generation BIGINT NOT NULL DEFAULT 1 CHECK (generation > 0),
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshot_create_intents (
+      intent_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL REFERENCES golden_snapshots(snapshot_id),
+      lease_id TEXT NOT NULL REFERENCES golden_snapshot_leases(lease_id),
+      machine_id TEXT NOT NULL,
+      purpose TEXT NOT NULL CHECK (purpose IN ('provision', 'recover')),
+      rollout_generation BIGINT NOT NULL CHECK (rollout_generation >= 0),
+      state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'denied', 'activated', 'cleaned')),
+      provider_create_action_id BIGINT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      UNIQUE (lease_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_golden_snapshot_create_intents_open
+    ON golden_snapshot_create_intents(snapshot_id, state)
+    WHERE completed_at IS NULL
+  `.execute(db);
+  await sql`
+    ALTER TABLE provisioning_jobs
+    DROP CONSTRAINT IF EXISTS provisioning_jobs_snapshot_create_intent_id_fkey
+  `.execute(db);
+  await sql`
+    ALTER TABLE provisioning_jobs
+    ADD CONSTRAINT provisioning_jobs_snapshot_create_intent_id_fkey
+    FOREIGN KEY (snapshot_create_intent_id)
+    REFERENCES golden_snapshot_create_intents(intent_id)
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_provisioning_jobs_snapshot_create_intent
+    ON provisioning_jobs(snapshot_create_intent_id)
+    WHERE snapshot_create_intent_id IS NOT NULL
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshot_cleanup (
+      cleanup_id TEXT PRIMARY KEY,
+      snapshot_id TEXT REFERENCES golden_snapshots(snapshot_id),
+      build_id TEXT REFERENCES golden_snapshot_builds(build_id),
+      resource_type TEXT NOT NULL CHECK (resource_type IN ('builder_server', 'validation_server', 'snapshot_image')),
+      provider_resource_id BIGINT NOT NULL CHECK (provider_resource_id > 0),
+      provenance_key TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'quarantined')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      next_attempt_at TEXT NOT NULL,
+      lease_expires_at TEXT,
+      last_error_code TEXT,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS golden_snapshot_audit_events (
+      event_id TEXT PRIMARY KEY,
+      snapshot_id TEXT REFERENCES golden_snapshots(snapshot_id) ON DELETE SET NULL,
+      build_id TEXT REFERENCES golden_snapshot_builds(build_id) ON DELETE SET NULL,
+      cleanup_id TEXT REFERENCES golden_snapshot_cleanup(cleanup_id) ON DELETE SET NULL,
+      event_type TEXT NOT NULL CHECK (length(event_type) BETWEEN 1 AND 64),
+      actor_type TEXT NOT NULL CHECK (actor_type IN ('release', 'worker', 'operator')),
+      actor_id_hash TEXT CHECK (actor_id_hash IS NULL OR actor_id_hash ~ '^[a-f0-9]{64}$'),
+      from_state TEXT,
+      to_state TEXT,
+      reason TEXT,
+      created_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_golden_snapshot_audit_events_retention
+    ON golden_snapshot_audit_events(created_at, event_id)
+  `.execute(db);
+  await sql`
+    DO $$
+    DECLARE
+      current_definition TEXT;
+    BEGIN
+      SELECT pg_get_constraintdef(oid) INTO current_definition
+      FROM pg_constraint
+      WHERE conrelid = 'golden_snapshot_cleanup'::regclass
+        AND conname = 'golden_snapshot_cleanup_status_check';
+      IF current_definition IS NULL OR current_definition NOT LIKE '%quarantined%' THEN
+        ALTER TABLE golden_snapshot_cleanup
+          DROP CONSTRAINT IF EXISTS golden_snapshot_cleanup_status_check;
+        ALTER TABLE golden_snapshot_cleanup
+          ADD CONSTRAINT golden_snapshot_cleanup_status_check
+          CHECK (status IN ('queued', 'running', 'completed', 'failed', 'quarantined'));
+      END IF;
+    END $$
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_golden_snapshot_cleanup_resource_active
+    ON golden_snapshot_cleanup(resource_type, provider_resource_id)
+    WHERE completed_at IS NULL
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_golden_snapshot_cleanup_dispatch
+    ON golden_snapshot_cleanup(status, next_attempt_at, lease_expires_at)
+    WHERE completed_at IS NULL
   `.execute(db);
 
   await sql`
@@ -1133,6 +1704,24 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`
     CREATE INDEX IF NOT EXISTS idx_provider_deletion_queue_pending
     ON provider_deletion_queue(next_attempt_at)
+    WHERE completed_at IS NULL
+  `.execute(db);
+  await sql`
+    WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY provider_server_id ORDER BY created_at, id
+      ) AS ordinal
+      FROM provider_deletion_queue
+      WHERE completed_at IS NULL
+    )
+    UPDATE provider_deletion_queue
+    SET completed_at = created_at,
+        last_error = COALESCE(last_error, 'deduplicated provider deletion')
+    WHERE id IN (SELECT id FROM ranked WHERE ordinal > 1)
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_deletion_queue_server_active
+    ON provider_deletion_queue(provider_server_id)
     WHERE completed_at IS NULL
   `.execute(db);
 
@@ -1417,6 +2006,16 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     publicIPv6: row.public_ipv6,
     status: row.status,
     imageVersion: row.image_version,
+    sourceSnapshotId: row.source_snapshot_id,
+    sourceBaseGeneration: row.source_base_generation,
+    targetBundleVersion: row.target_bundle_version,
+    targetBundleSha256: row.target_bundle_sha256,
+    recoveryCreateActionId: parseNullableProviderActionId(
+      row.recovery_create_action_id as number | string | null,
+    ),
+    recoveryEncryptedPayload: row.recovery_encrypted_payload,
+    recoveryOldServerId: row.recovery_old_server_id,
+    recoveryOldPublicIPv4: row.recovery_old_public_ipv4,
     serverType: row.server_type,
     location: row.location,
     registrationTokenHash: row.registration_token_hash,
@@ -1446,6 +2045,14 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     public_ipv6: record.publicIPv6 ?? null,
     status: record.status,
     image_version: record.imageVersion ?? null,
+    source_snapshot_id: record.sourceSnapshotId ?? null,
+    source_base_generation: record.sourceBaseGeneration ?? null,
+    target_bundle_version: record.targetBundleVersion ?? null,
+    target_bundle_sha256: record.targetBundleSha256 ?? null,
+    recovery_create_action_id: record.recoveryCreateActionId ?? null,
+    recovery_encrypted_payload: record.recoveryEncryptedPayload ?? null,
+    recovery_old_server_id: record.recoveryOldServerId ?? null,
+    recovery_old_public_ipv4: record.recoveryOldPublicIPv4 ?? null,
     server_type: record.serverType ?? null,
     location: record.location ?? null,
     registration_token_hash: record.registrationTokenHash ?? null,
@@ -1475,6 +2082,14 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.publicIPv6 !== undefined) update.public_ipv6 = values.publicIPv6;
   if (values.status !== undefined) update.status = values.status;
   if (values.imageVersion !== undefined) update.image_version = values.imageVersion;
+  if (values.sourceSnapshotId !== undefined) update.source_snapshot_id = values.sourceSnapshotId;
+  if (values.sourceBaseGeneration !== undefined) update.source_base_generation = values.sourceBaseGeneration;
+  if (values.targetBundleVersion !== undefined) update.target_bundle_version = values.targetBundleVersion;
+  if (values.targetBundleSha256 !== undefined) update.target_bundle_sha256 = values.targetBundleSha256;
+  if (values.recoveryCreateActionId !== undefined) update.recovery_create_action_id = values.recoveryCreateActionId;
+  if (values.recoveryEncryptedPayload !== undefined) update.recovery_encrypted_payload = values.recoveryEncryptedPayload;
+  if (values.recoveryOldServerId !== undefined) update.recovery_old_server_id = values.recoveryOldServerId;
+  if (values.recoveryOldPublicIPv4 !== undefined) update.recovery_old_public_ipv4 = values.recoveryOldPublicIPv4;
   if (values.serverType !== undefined) update.server_type = values.serverType;
   if (values.location !== undefined) update.location = values.location;
   if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
@@ -1496,13 +2111,14 @@ function mapHostBundleRelease(row: HostBundleReleasesTable): HostBundleReleaseRe
     channel: row.channel,
     gitCommit: row.git_commit,
     gitRef: row.git_ref,
+    snapshotEligible: row.snapshot_eligible,
     buildTime: row.build_time,
     bundleKey: row.bundle_key,
     checksumKey: row.checksum_key,
     incrementalManifestKey: row.incremental_manifest_key,
     incrementalManifestSha256: row.incremental_manifest_sha256,
     sha256: row.sha256,
-    size: row.size,
+    size: Number(row.size),
     severity: row.severity,
     updateType: row.update_type,
     changelog: row.changelog,
@@ -1517,7 +2133,9 @@ function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleRelease
     channel: record.channel ?? null,
     git_commit: record.gitCommit,
     git_ref: record.gitRef ?? null,
-    build_time: record.buildTime,
+    snapshot_eligible: record.snapshotEligible ?? false,
+    snapshot_eligibility_source: record.snapshotEligible === undefined ? 'legacy' : 'explicit',
+    build_time: HostBundleTimestampSchema.parse(record.buildTime),
     bundle_key: record.bundleKey,
     checksum_key: record.checksumKey ?? null,
     incremental_manifest_key: record.incrementalManifestKey ?? null,
@@ -1527,7 +2145,9 @@ function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleRelease
     severity: record.severity ?? 'normal',
     update_type: record.updateType ?? 'manual',
     changelog: record.changelog ?? null,
-    created_at: record.createdAt ?? now,
+    created_at: record.createdAt === undefined
+      ? now
+      : HostBundleTimestampSchema.parse(record.createdAt),
   };
 }
 
@@ -2523,15 +3143,36 @@ export async function claimUserMachineRecovery(
   db: PlatformDB,
   clerkUserId: string,
   runtimeSlot = 'primary',
+  intent?: {
+    machineId: string;
+    encryptedPayload: string;
+    serverType: string;
+    registrationTokenHash: string;
+    registrationTokenExpiresAt: string;
+  },
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
   const row = await db.executor
     .updateTable('user_machines')
-    .set({
+    .set(intent ? {
+      machine_id: intent.machineId,
+      recovery_encrypted_payload: intent.encryptedPayload,
+      recovery_old_server_id: sql<number | null>`hetzner_server_id`,
+      recovery_old_public_ipv4: sql<string | null>`public_ipv4`,
+      server_type: intent.serverType,
+      registration_token_hash: intent.registrationTokenHash,
+      registration_token_expires_at: intent.registrationTokenExpiresAt,
+      status: 'recovering',
+      hetzner_server_id: null,
+      recovery_create_action_id: null,
+      failure_code: null,
+      failure_at: null,
+    } : {
       status: 'recovering',
       hetzner_server_id: null,
       public_ipv4: null,
       public_ipv6: null,
+      recovery_old_public_ipv4: null,
       failure_code: null,
       failure_at: null,
     })
@@ -2597,6 +3238,8 @@ export async function insertProviderDeletion(
   await db.executor
     .insertInto('provider_deletion_queue')
     .values(toProviderDeletionRow(record))
+    .onConflict((oc) => oc.column('provider_server_id')
+      .where('completed_at', 'is', null).doNothing())
     .execute();
 }
 
@@ -2665,22 +3308,26 @@ export async function upsertHostBundleRelease(
 ): Promise<HostBundleReleaseRecord> {
   await db.ready;
   const row = toHostBundleReleaseRow(record);
-  return db.executor.transaction().execute(async (trx) => {
-    const saved = await trx
+  const saved = await db.executor
       .insertInto('host_bundle_releases')
       .values(row)
       .onConflict((oc) =>
         oc.column('version').doUpdateSet({
-          git_commit: row.git_commit,
-          git_ref: row.git_ref,
-          build_time: row.build_time,
           severity: row.severity,
           update_type: row.update_type,
           changelog: row.changelog,
           incremental_manifest_key: row.incremental_manifest_key,
           incremental_manifest_sha256: row.incremental_manifest_sha256,
+          snapshot_eligible: sql<boolean>`host_bundle_releases.snapshot_eligible OR ${row.snapshot_eligible}`,
+          snapshot_eligibility_source: sql<string>`CASE
+            WHEN ${row.snapshot_eligibility_source} = 'explicit' THEN 'explicit'
+            ELSE host_bundle_releases.snapshot_eligibility_source
+          END`,
         })
           .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
+          .where(sql<boolean>`host_bundle_releases.git_commit = ${row.git_commit}`)
+          .where(sql<boolean>`host_bundle_releases.git_ref IS NOT DISTINCT FROM ${row.git_ref}`)
+          .where(sql<boolean>`host_bundle_releases.build_time::timestamptz = ${row.build_time}::timestamptz`)
           .where(sql<boolean>`host_bundle_releases.checksum_key IS NOT DISTINCT FROM ${row.checksum_key}`)
           .where(sql<boolean>`host_bundle_releases.incremental_manifest_key IS NOT DISTINCT FROM ${row.incremental_manifest_key}`)
           .where(sql<boolean>`host_bundle_releases.incremental_manifest_sha256 IS NOT DISTINCT FROM ${row.incremental_manifest_sha256}`)
@@ -2689,11 +3336,10 @@ export async function upsertHostBundleRelease(
       )
       .returningAll()
       .executeTakeFirst();
-    if (!saved) {
-      throw new HostBundleReleaseConflictError(row.version);
-    }
-    return mapHostBundleRelease(saved);
-  });
+  if (!saved) {
+    throw new HostBundleReleaseConflictError(row.version);
+  }
+  return mapHostBundleRelease(saved);
 }
 
 export async function getHostBundleRelease(
@@ -2742,16 +3388,25 @@ export async function promoteHostBundleChannel(
   updatedAt = new Date().toISOString(),
 ): Promise<HostBundleChannelRecord> {
   await db.ready;
-  return db.executor.transaction().execute(async (trx) => {
-    const release = await trx
+  return db.transaction((trx) => promoteHostBundleChannelInTransaction(trx, channel, version, updatedAt));
+}
+
+async function promoteHostBundleChannelInTransaction(
+  db: PlatformDB,
+  channel: string,
+  version: string,
+  updatedAt: string,
+): Promise<HostBundleChannelRecord> {
+    const release = await db.executor
       .selectFrom('host_bundle_releases')
       .selectAll()
       .where('version', '=', version)
+      .forUpdate()
       .executeTakeFirst();
     if (!release) {
       throw new Error('Cannot promote unknown host bundle release');
     }
-    const row = await trx
+    const row = await db.executor
       .insertInto('host_bundle_channels')
       .values({ channel, version, updated_at: updatedAt })
       .onConflict((oc) =>
@@ -2762,7 +3417,7 @@ export async function promoteHostBundleChannel(
       )
       .returningAll()
       .executeTakeFirstOrThrow();
-    await trx
+    await db.executor
       .insertInto('host_bundle_release_channels')
       .values({ channel, version, promoted_at: updatedAt })
       .onConflict((oc) => oc.columns(['channel', 'version']).doUpdateSet({
@@ -2770,6 +3425,23 @@ export async function promoteHostBundleChannel(
       }))
       .executeTakeFirst();
     return mapHostBundleChannel(row);
+}
+
+export async function registerHostBundleRelease(
+  db: PlatformDB,
+  record: NewHostBundleRelease,
+  channel?: string,
+): Promise<{ release: HostBundleReleaseRecord; channel?: HostBundleChannelRecord }> {
+  await db.ready;
+  return db.transaction(async (trx) => {
+    const release = await upsertHostBundleRelease(trx, record);
+    if (!channel) return { release };
+    return {
+      release,
+      channel: await promoteHostBundleChannelInTransaction(
+        trx, channel, release.version, new Date().toISOString(),
+      ),
+    };
   });
 }
 

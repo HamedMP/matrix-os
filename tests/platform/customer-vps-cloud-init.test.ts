@@ -270,6 +270,7 @@ exit 99
     expect(cloudInit).toContain('primary_group: matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
     expect(cloudInit).toContain('chown root:matrix /opt/matrix/postgres-compose.yml');
+    expect(cloudInit).toContain('/opt/matrix/env/symphony.env /opt/matrix/env/r2.env /opt/matrix/env/postgres.env');
   });
 
   it('uses cloud-init user schema fields accepted by Ubuntu 24.04', () => {
@@ -411,6 +412,17 @@ exit 99
 
     expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 900 "$MATRIX_HOST_BUNDLE_URL"');
     expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256"');
+  });
+
+  it('removes the baked release trees before activating a different bundle from a snapshot', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const cleanup = 'rm -rf /opt/matrix/app /opt/matrix/bin /opt/matrix/runtime /opt/matrix/systemd';
+
+    expect(cloudInit).toContain('MATRIX_IMAGE_SOURCE:-clean_image');
+    expect(cloudInit).toContain('MATRIX_SNAPSHOT_SOURCE_VERSION');
+    expect(cloudInit).toContain(cleanup);
+    expect(cloudInit.indexOf(cleanup)).toBeLessThan(cloudInit.indexOf('tar -xzf /tmp/matrix-host.tgz -C /opt/matrix'));
   });
 
   it('exposes selectable coding agent CLIs on customer hosts', () => {
