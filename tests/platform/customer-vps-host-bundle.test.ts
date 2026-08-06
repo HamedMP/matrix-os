@@ -1126,8 +1126,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       '              (.runtimeSlot == $handle or .status == "failed")',
     );
     expect(workflow).toContain(
-      'type == "array" and length >= 1 and length <= 8',
+      'type == "array" and length <= 8',
     );
+    expect(workflow).not.toContain('type == "array" and length >= 1 and length <= 8');
     expect(workflow).toContain(
       '(unique | length) == length',
     );

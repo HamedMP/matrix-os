@@ -519,12 +519,13 @@ describe('terminal runtime spike evidence', () => {
       'utf8',
     );
     expectAll(workflow, ["github.event.label.name == 'terminal-preview-reprovision'", 'any(.name == "terminal-preview-reprovision")',
-      'type == "array" and length >= 1 and length <= 8',
+      'type == "array" and length <= 8',
       '.deletedAt == null and .status != "deleted"',
       '(.runtimeSlot == $handle or .status == "failed")',
       '.deletedAt == null and\n                .status != "deleted"',
       'while IFS= read -r machine_id; do',
       '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"']);
+    expect(workflow).not.toContain('type == "array" and length >= 1 and length <= 8');
   });
   it('packages the harness only for explicitly marked preview bundles', async () => {
     const [buildScript, previewWorkflow] = await Promise.all([
