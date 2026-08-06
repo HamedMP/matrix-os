@@ -8,6 +8,7 @@ import { ShellNotificationCard } from "./ShellNotificationCard";
 const ATTENTION_RELEASE_CHANNELS = new Set(["dev", "canary", "beta"]);
 
 interface RuntimeInfo {
+  updateChannel?: string | null;
   runtime?: {
     handle?: string | null;
     machineId?: string | null;
@@ -92,7 +93,9 @@ export function RuntimeIdentityBanner() {
     const slot = runtime?.runtime?.runtimeSlot ?? "primary";
     const machineId = runtime?.runtime?.machineId ?? null;
     const isStaging = slot !== "primary";
-    const channel = runtime?.release?.channel?.toLowerCase() ?? null;
+    const channel = runtime?.updateChannel?.toLowerCase()
+      ?? runtime?.release?.channel?.toLowerCase()
+      ?? null;
     const shouldShow = isStaging || (channel ? ATTENTION_RELEASE_CHANNELS.has(channel) : false);
     return {
       handle,
