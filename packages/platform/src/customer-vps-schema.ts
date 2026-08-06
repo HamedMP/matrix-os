@@ -37,6 +37,7 @@ export const ProvisionRequestSchema = z.object({
 
 export const PREVIEW_RUNTIME_SLOT_PATTERN = /^pr-[1-9][0-9]{0,9}$/;
 export const PreviewRuntimeSlotSchema = z.string().regex(PREVIEW_RUNTIME_SLOT_PATTERN);
+export const HostBundleVersionSchema = z.string().regex(/^[A-Za-z0-9._-]{1,128}$/);
 
 export const PreviewProvisionRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
@@ -44,6 +45,7 @@ export const PreviewProvisionRequestSchema = z.object({
   runtimeSlot: PreviewRuntimeSlotSchema,
   accessClerkUserIds: z.array(ClerkUserIdSchema).max(8).default([]),
   developerTools: DeveloperToolsSchema.optional(),
+  bootstrapVersion: HostBundleVersionSchema.optional(),
 }).strict()
   .refine((request) => request.handle === request.runtimeSlot, {
     message: 'Preview handle and runtime slot must match',

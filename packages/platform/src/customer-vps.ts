@@ -9,6 +9,7 @@ import {
   claimUserMachineRecovery,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
+  getHostBundleRelease,
   getHostBundleReleaseByChannel,
   getUserMachine,
   insertUserMachine,
@@ -352,6 +353,27 @@ async function resolveHostBundleRef(db: PlatformDB, config: CustomerVpsConfig): 
     return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl };
   }
 
+  return {
+    imageVersion: release.version,
+    hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
+  };
+}
+
+async function resolvePreviewBootstrapRef(
+  db: PlatformDB,
+  config: CustomerVpsConfig,
+  version: string,
+): Promise<HostBundleRef> {
+  const release = await getHostBundleRelease(db, version);
+  const expectedBundleKey = `system-bundles/${version}/matrix-host-bundle.tar.gz`;
+  const expectedChecksumKey = `${expectedBundleKey}.sha256`;
+  if (
+    !release
+    || release.bundleKey !== expectedBundleKey
+    || release.checksumKey !== expectedChecksumKey
+  ) {
+    throw new CustomerVpsError(409, 'invalid_state', 'Provisioning failed');
+  }
   return {
     imageVersion: release.version,
     hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
@@ -902,7 +924,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
 
-    const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
+    const bootstrapVersion = provisioningClass === 'preview' && 'bootstrapVersion' in request
+      ? request.bootstrapVersion
+      : undefined;
+    const bundleRef = bootstrapVersion
+      ? await resolvePreviewBootstrapRef(deps.db, deps.config, bootstrapVersion)
+      : await resolveHostBundleRef(deps.db, deps.config);
 
     let provisionRow: { existing: UserMachineRecord | null };
     try {

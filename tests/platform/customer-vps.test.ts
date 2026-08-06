@@ -1075,6 +1075,55 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
   });
 
+  it('pins preview first boot to an explicitly registered immutable bootstrap release', async () => {
+    const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-123-1-abcdef0';
+    await upsertHostBundleRelease(db, {
+      version: bootstrapVersion,
+      gitCommit: 'abcdef0123456789abcdef0123456789abcdef01',
+      gitRef: 'bootstrap',
+      buildTime: '2026-08-06T08:00:00.000Z',
+      bundleKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
+      checksumKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz.sha256`,
+      sha256: 'b'.repeat(64),
+      size: 1_257_725_742,
+      severity: 'normal',
+      updateType: 'manual',
+      changelog: 'Dormant preview bootstrap',
+      createdAt: '2026-08-06T08:01:00.000Z',
+    });
+    const { service, hetzner } = createService();
+
+    const provisioned = await service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion,
+    });
+
+    expect((await getUserMachine(db, provisioned.machineId))?.imageVersion).toBe(bootstrapVersion);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain(
+      `MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
+    );
+    expect(createInput?.userData).toContain(`MATRIX_IMAGE_VERSION=${bootstrapVersion}`);
+  });
+
+  it('fails preview provisioning closed when the requested bootstrap release is not registered', async () => {
+    const { service, hetzner } = createService();
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion: 'v2026.08.06-pr1136-bootstrap-123-1-abcdef0',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning failed',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
   it('can provision an isolated staging runtime for the same Clerk user', async () => {
     let nextId = 0;
     const ids = [

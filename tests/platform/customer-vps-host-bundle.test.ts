@@ -1050,6 +1050,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision"');
     expect(workflow).toContain('{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}');
+    expect(workflow).toContain('(if $bootstrap == "" then {} else {bootstrapVersion: $bootstrap} end)');
     expect(workflow).not.toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/provision"');
     expect(workflow).not.toContain('"runtimeSlot":"preview"');
     expect(workflow).toContain('PREVIEW_CLERK_ACCESS_USER_IDS');
@@ -1150,15 +1151,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
-    expect(workflow).toContain('bootstrap_provisioning_host()');
-    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update",$version]');
-    expect(workflow).toContain('Pre-registration bootstrap accepted for ${HANDLE}.');
-    expect(workflow).toContain('echo "::add-mask::$candidate_address"');
-    expect(workflow).toContain('bootstrap_requested=false');
+    expect(workflow).toContain('bootstrapVersion: $bootstrap');
+    expect(workflow).toContain('--arg bootstrap "$BOOTSTRAP_VERSION"');
+    expect(workflow).not.toContain('bootstrap_provisioning_host()');
+    expect(workflow).not.toContain('command:["/opt/matrix/bin/matrix-update",$version]');
+    expect(workflow).not.toContain('Pre-registration bootstrap accepted for ${HANDLE}.');
+    expect(workflow).not.toContain('bootstrap_requested=false');
     expect(workflow).toContain('deadline=$((SECONDS + 840))');
-    expect(workflow).toContain('if [ "$bootstrap_requested" != true ] && [ -n "$BOOTSTRAP_VERSION" ]; then');
-    expect(workflow).toContain('bootstrap_provisioning_host "$candidate_address" "$BOOTSTRAP_VERSION"');
-    expect(workflow).not.toContain('echo "$candidate_address"');
+    expect(workflow).not.toContain('bootstrap_provisioning_host "$candidate_address" "$BOOTSTRAP_VERSION"');
   });
 
   it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {

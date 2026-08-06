@@ -52,7 +52,11 @@ Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
    the label is present).
 2. Publishes it **register-only** (`publish-release.sh --channel none`): the
    release exists in R2 + platform DB but no channel pointer can ever select
-   it, so it cannot reach real users.
+   it, so it cannot reach real users. When a terminal-activation boundary is
+   present, the exact dormant parent is registered the same way and supplied
+   as the preview-only `bootstrapVersion`; cloud-init downloads that immutable
+   release directly before registration instead of relying on a gateway that
+   cannot exist until cloud-init finishes.
 3. Provisions VPS `pr-<N>` (runtime slot `pr-<N>`, owned by the
    `PREVIEW_CLERK_USER_ID` Clerk user and shared only with the bounded
    `PREVIEW_CLERK_ACCESS_USER_IDS` allowlist) if absent, then deploys exactly
@@ -82,6 +86,10 @@ machine ID is immediately visible as `provisioning` or `running` in `/vps/fleet`
 Rerunning the workflow resumes that exact machine; an absent or failed preview is
 retried through the same idempotent route. The platform persists the machine and a
 durable provisioning job atomically before provider dispatch.
+An optional `bootstrapVersion` is accepted only on this platform-authenticated
+preview route. It must be a bounded release identifier already present in the
+host-bundle registry, and its immutable bundle and checksum keys must match the
+version. The route never accepts a URL, path, channel promotion, or command.
 
 To walk the full onboarding/billing flow against branch platform code — a
 four-slice split (staging slot for the shell, an IAM-proxied `preview-platform`
