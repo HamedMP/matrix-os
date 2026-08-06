@@ -1095,6 +1095,26 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow.match(/\/vps\/preview\/provision/g)).toHaveLength(1);
   });
 
+  it('preview VPS workflow retires only the exact failed disposable preview before reprovisioning', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('retire_failed_preview()');
+    expect(workflow).toContain('[ "$status" = "failed" ]');
+    expect(workflow).toContain('.clerkUserId == $owner');
+    expect(workflow).toContain('.handle == $handle');
+    expect(workflow).toContain('.runtimeSlot == $handle');
+    expect(workflow).toContain('.status == "failed"');
+    expect(workflow).toContain('.deletedAt == null');
+    expect(workflow).toContain('test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")');
+    expect(workflow).toContain('-X DELETE "${PLATFORM_PUBLIC_URL}/vps/${failed_machine_id}"');
+    expect(workflow).toContain('if [ "$delete_code" != "200" ] && [ "$delete_code" != "404" ]; then');
+    expect(workflow).toContain('Failed preview retirement did not converge.');
+    expect(workflow.indexOf('retire_failed_preview "$fleet_machine"')).toBeLessThan(
+      workflow.indexOf('-X POST "${PROVISION_PLATFORM_URL}/vps/preview/provision"'),
+    );
+  });
+
   it('preview VPS workflow prefers active same-handle rows over failed history', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
