@@ -305,12 +305,17 @@ function buildHostConfig(
   candidateBootstrapProgress = false,
 ): CustomerHostConfig {
   const registerUrl = new URL(config.platformRegisterUrl);
-  if (candidateBootstrapProgress && config.platformCandidateUrl === undefined) {
-    throw new CustomerVpsError(503, 'invalid_state', 'Provisioning failed');
+  let bootstrapCallbackOrigin = registerUrl.origin;
+  if (candidateBootstrapProgress) {
+    if (config.platformCandidateUrl === undefined) {
+      throw new CustomerVpsError(503, 'invalid_state', 'Provisioning failed');
+    }
+    bootstrapCallbackOrigin = config.platformCandidateUrl;
   }
+  const platformRegisterUrl = new URL('/vps/register', bootstrapCallbackOrigin);
   const bootstrapProgressUrl = new URL(
     '/vps/bootstrap-progress',
-    candidateBootstrapProgress ? config.platformCandidateUrl : registerUrl.origin,
+    bootstrapCallbackOrigin,
   );
   return {
     machineId,
@@ -321,7 +326,7 @@ function buildHostConfig(
     imageVersion: bundleRef.imageVersion,
     updateChannel: config.imageVersion,
     hostBundleUrl: bundleRef.hostBundleUrl,
-    platformRegisterUrl: config.platformRegisterUrl,
+    platformRegisterUrl: platformRegisterUrl.toString(),
     platformBootstrapProgressUrl: bootstrapProgressUrl.toString(),
     platformInternalUrl: new URL(config.platformRegisterUrl).origin,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),

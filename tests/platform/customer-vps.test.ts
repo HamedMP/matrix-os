@@ -1129,6 +1129,12 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain(
       'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app/vps/bootstrap-progress',
     );
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_REGISTER_URL=https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app/vps/register',
+    );
+    expect(createInput?.userData).toContain(
+      'PLATFORM_INTERNAL_URL=https://app.matrix-os.com',
+    );
   });
 
   it('fails preview bootstrap closed without a trusted candidate callback origin', async () => {
