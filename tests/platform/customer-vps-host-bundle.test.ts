@@ -1077,7 +1077,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('select(.handle == $h and .machineId == $id and .runtimeSlot == $h)');
     expect(workflow).toContain('if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then');
     expect(workflow.indexOf('Immediate fleet visibility for ${HANDLE}: ${status}'))
-      .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + 600))'));
+      .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + 840))'));
   });
 
   it('preview VPS workflow safely resumes an existing active preview', () => {
@@ -1115,6 +1115,21 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('quota_exceeded|provider_unavailable|provider_timeout|user_data_too_large|r2_unavailable');
     expect(workflow).toContain('registration_rejected|registration_timeout|retry_exhausted|unknown|none');
     expect(workflow).not.toContain('echo "$fleet_machine"');
+  });
+
+  it('preview VPS workflow installs the exact dormant bootstrap before registration', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('bootstrap_provisioning_host()');
+    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update",$version]');
+    expect(workflow).toContain('Pre-registration bootstrap accepted for ${HANDLE}.');
+    expect(workflow).toContain('echo "::add-mask::$candidate_address"');
+    expect(workflow).toContain('bootstrap_requested=false');
+    expect(workflow).toContain('deadline=$((SECONDS + 840))');
+    expect(workflow).toContain('if [ "$bootstrap_requested" != true ] && [ -n "$BOOTSTRAP_VERSION" ]; then');
+    expect(workflow).toContain('bootstrap_provisioning_host "$candidate_address" "$BOOTSTRAP_VERSION"');
+    expect(workflow).not.toContain('echo "$candidate_address"');
   });
 
   it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {
