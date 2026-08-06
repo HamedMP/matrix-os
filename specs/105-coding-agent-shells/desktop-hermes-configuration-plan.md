@@ -234,7 +234,7 @@ git commit -m "feat(desktop): add Hermes configuration IPC"
 - Consumes: Task 1 contract types and Task 2 IPC channels through `invoke()`.
 - Produces: `HermesConfigurationDialog({ open, version, onClose, onOpenSetupTerminal, onConfigurationChanged })`.
 
-- [ ] **Step 1: Write failing pure-model tests**
+- [x] **Step 1: Write failing pure-model tests**
 
 Test category ordering/counts, settings and credential search, nested value access, typed list parsing, draft comparison, and stale revision rejection.
 
@@ -250,17 +250,17 @@ it("accepts only bounded scalar JSON lists", () => {
 });
 ```
 
-- [ ] **Step 2: Run the model tests and verify red**
+- [x] **Step 2: Run the model tests and verify red**
 
 Run: `flox activate -- bun run test -- tests/desktop/hermes-form-model.test.ts`
 
 Expected: FAIL because the form-model module does not exist.
 
-- [ ] **Step 3: Implement the focused pure model**
+- [x] **Step 3: Implement the focused pure model**
 
 Export `titleCase`, `configValueAt`, `setConfigValue`, `configurationCategories`, `matchingConfigurationFields`, `matchingCredentials`, `parseHermesList`, and `valuesEqual`. Keep all functions pure and bounded by the shared contract.
 
-- [ ] **Step 4: Write failing modal interaction tests**
+- [x] **Step 4: Write failing modal interaction tests**
 
 Mock `invoke()` and cover initial parallel load, Desktop-token modal rendering, tabs, category navigation, search, field controls, invalid values, discard, save, write-only credential set/remove, loading states, fixed safe errors, and terminal fallback.
 
@@ -282,7 +282,7 @@ await waitFor(() => expect(invokeMock).toHaveBeenCalledWith(
 ));
 ```
 
-- [ ] **Step 5: Implement the Desktop-native modal**
+- [x] **Step 5: Implement the Desktop-native modal**
 
 Use Radix Dialog for focus containment and Desktop `Button`/token variables for appearance. Keep the composition component below 500 lines by extracting field and credential rows. Configuration values live only in component state. Credential input clears immediately after accepted mutation and is never echoed into status copy.
 
@@ -298,13 +298,13 @@ interface HermesConfigurationDialogProps {
 }
 ```
 
-- [ ] **Step 6: Run model and modal tests and verify green**
+- [x] **Step 6: Run model and modal tests and verify green**
 
 Run: `flox activate -- bun run test -- tests/desktop/hermes-form-model.test.ts tests/desktop/hermes-configuration-dialog.test.tsx`
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 7: Commit the native modal slice**
+- [x] **Step 7: Commit the native modal slice**
 
 ```bash
 git add desktop/src/renderer/src/features/settings/hermes tests/desktop/hermes-form-model.test.ts tests/desktop/hermes-configuration-dialog.test.tsx
