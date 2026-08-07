@@ -19,6 +19,27 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain("MATRIX_API_ORIGIN=https://api.matrix-os.com");
   });
 
+  it("attests an exact-head production control-plane candidate without promotion", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/platform-cloud-run.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("terminal_acceptance_pr:");
+    expect(workflow).toContain('TERMINAL_ACCEPTANCE_PR: ${{ github.event_name == \'workflow_dispatch\' && inputs.terminal_acceptance_pr || \'\' }}');
+    expect(workflow).toContain('if [ -n "$TERMINAL_ACCEPTANCE_PR" ]; then');
+    expect(workflow).toContain('if [ "$DEPLOY_ENVIRONMENT" != production ]; then');
+    expect(workflow).toContain('if [ "$PROMOTE_REQUESTED" = true ]; then');
+    expect(workflow).toContain('candidate_tag="terminal-pr-${TERMINAL_ACCEPTANCE_PR}-${GITHUB_SHA::12}"');
+    expect(workflow).toContain('--tag "$candidate_tag"');
+    expect(workflow).toContain('candidate_bootstrap_url="https://${candidate_tag}---${service_url#https://}"');
+    expect(workflow).toContain('name: Write terminal acceptance candidate attestation');
+    expect(workflow).toContain('environment: "production"');
+    expect(workflow).toContain('--arg candidateOrigin "$CANDIDATE_URL"');
+    expect(workflow).toContain('name: platform-production-candidate-${{ env.TERMINAL_ACCEPTANCE_PR }}-${{ github.sha }}');
+    expect(workflow).toContain('path: /tmp/platform-production-candidate.json');
+  });
+
   it("bootstraps a missing Cloud Run service before deriving its dedicated API origin", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/preview-platform.yml"),

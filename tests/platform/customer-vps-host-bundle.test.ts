@@ -1182,7 +1182,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).not.toContain('bootstrap_provisioning_host "$candidate_address" "$BOOTSTRAP_VERSION"');
   });
 
-  it('manual preview provisioning can use only the pinned zero-traffic platform candidate', () => {
+  it('manual preview provisioning can use only the attested exact-head production control-plane candidate', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
@@ -1190,13 +1190,16 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('use_platform_candidate="${USE_PLATFORM_CANDIDATE:-false}"');
     expect(workflow).toContain('The platform candidate requires a fresh exact-head preview build.');
     expect(workflow).toContain('actions: read');
-    expect(workflow).toContain('actions/workflows/preview-platform.yml/runs');
+    expect(workflow).toContain('actions/workflows/platform-cloud-run.yml/runs');
     expect(workflow).toContain('-f head_sha="$HEAD_SHA"');
     expect(workflow).toContain('gh run download "$candidate_run_id"');
-    expect(workflow).toContain('platform-candidate-${PR_NUMBER}-${HEAD_SHA}');
-    expect(workflow).toContain('.headSha == $head and .prNumber == $pr and .candidateOrigin == $origin');
+    expect(workflow).toContain('platform-production-candidate-${PR_NUMBER}-${HEAD_SHA}');
+    expect(workflow).toContain('platform_origin="$(sed -n');
+    expect(workflow).toContain('expected_candidate_origin="https://terminal-pr-${PR_NUMBER}-${HEAD_SHA:0:12}---${platform_origin#https://}"');
+    expect(workflow).toContain('.candidateOrigin == $expectedOrigin');
+    expect(workflow).toContain('.headSha == $head and .prNumber == $pr and .environment == "production"');
     expect(workflow).toContain('PROVISION_PLATFORM_URL="$candidate_origin"');
-    expect(workflow).not.toContain('platform_origin="$(sed -n');
+    expect(workflow).not.toContain('actions/workflows/preview-platform.yml/runs');
     expect(workflow).not.toContain('PROVISION_PLATFORM_URL="https://candidate---${platform_origin#https://}"');
     expect(workflow).toContain('-X POST "${PROVISION_PLATFORM_URL}/vps/preview/provision"');
     expect(workflow).not.toContain('provision_platform_url:');
