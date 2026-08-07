@@ -123,6 +123,12 @@ describe('platform/customer-vps', () => {
       PLATFORM_CANDIDATE_URL: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
     }).platformCandidateUrl).toBe('https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app');
     expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://terminal-pr-1136-fa9f4d0d9b50---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBe('https://terminal-pr-1136-fa9f4d0d9b50---matrix-platform-jqxkjdhtkq-ey.a.run.app');
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://terminal-pr-1136-fa9f4d0d9b5---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBeUndefined();
+    expect(loadCustomerVpsConfig({
       PLATFORM_CANDIDATE_URL: 'https://pr-1136---matrix-platform-jqxkjdhtkq-ey.a.run.app',
     }).platformCandidateUrl).toBeUndefined();
     expect(loadCustomerVpsConfig({
