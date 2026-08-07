@@ -1214,6 +1214,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       'systemctl start matrix-restore.service',
       'report_bootstrap_stage restore_ready',
       'report_bootstrap_stage gateway_starting',
+      'report_bootstrap_stage gateway_preflight_checking_exec',
+      'report_bootstrap_stage gateway_preflight_checking_paths',
+      'report_bootstrap_stage gateway_preflight_checking_environment',
       'report_bootstrap_stage gateway_preflight_ready',
       'systemctl start --no-block matrix-gateway.service',
       'report_bootstrap_stage gateway_unit_started',
@@ -1237,6 +1240,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(cloudInit).toContain("signal|core-dump) printf 'gateway_unit_failed_signal'");
     expect(cloudInit).toContain("exit-code) printf 'gateway_unit_failed_exit'");
     expect(cloudInit).toContain("*) printf 'gateway_unit_failed_other'");
+    expect(cloudInit).toContain(
+      'timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/bin/matrix-gateway',
+    );
+    expect(cloudInit).not.toContain('runuser -u matrix -- test');
   });
 
   it('publishes bounded gateway registration phases from the exact preview bootstrap', () => {

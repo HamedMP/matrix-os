@@ -2267,25 +2267,28 @@ export async function advanceUserMachineBootstrapStage(
         WHEN 'restore_starting' THEN 6
         WHEN 'restore_ready' THEN 7
         WHEN 'gateway_starting' THEN 8
-        WHEN 'gateway_preflight_ready' THEN 9
-        WHEN 'gateway_unit_failed_chdir' THEN 10
-        WHEN 'gateway_unit_failed_exec' THEN 11
-        WHEN 'gateway_unit_failed_user' THEN 12
-        WHEN 'gateway_unit_failed_group' THEN 13
-        WHEN 'gateway_unit_failed_environment' THEN 14
-        WHEN 'gateway_unit_failed_exit' THEN 15
-        WHEN 'gateway_unit_failed_timeout' THEN 16
-        WHEN 'gateway_unit_failed_resource' THEN 17
-        WHEN 'gateway_unit_failed_signal' THEN 18
-        WHEN 'gateway_unit_failed_other' THEN 19
-        WHEN 'gateway_unit_started' THEN 20
-        WHEN 'gateway_wrapper_started' THEN 21
-        WHEN 'gateway_home_ready' THEN 22
-        WHEN 'gateway_launch_ready' THEN 23
-        WHEN 'gateway_process_started' THEN 24
-        WHEN 'gateway_healthy' THEN 25
-        WHEN 'registration_ready' THEN 26
-        WHEN 'registered' THEN 27
+        WHEN 'gateway_preflight_checking_exec' THEN 9
+        WHEN 'gateway_preflight_checking_paths' THEN 10
+        WHEN 'gateway_preflight_checking_environment' THEN 11
+        WHEN 'gateway_preflight_ready' THEN 12
+        WHEN 'gateway_unit_failed_chdir' THEN 13
+        WHEN 'gateway_unit_failed_exec' THEN 14
+        WHEN 'gateway_unit_failed_user' THEN 15
+        WHEN 'gateway_unit_failed_group' THEN 16
+        WHEN 'gateway_unit_failed_environment' THEN 17
+        WHEN 'gateway_unit_failed_exit' THEN 18
+        WHEN 'gateway_unit_failed_timeout' THEN 19
+        WHEN 'gateway_unit_failed_resource' THEN 20
+        WHEN 'gateway_unit_failed_signal' THEN 21
+        WHEN 'gateway_unit_failed_other' THEN 22
+        WHEN 'gateway_unit_started' THEN 23
+        WHEN 'gateway_wrapper_started' THEN 24
+        WHEN 'gateway_home_ready' THEN 25
+        WHEN 'gateway_launch_ready' THEN 26
+        WHEN 'gateway_process_started' THEN 27
+        WHEN 'gateway_healthy' THEN 28
+        WHEN 'registration_ready' THEN 29
+        WHEN 'registered' THEN 30
         ELSE 0
       END < ${rank}
     `)

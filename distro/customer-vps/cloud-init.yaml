@@ -716,18 +716,21 @@ runcmd:
     systemctl start matrix-restore.service
     report_bootstrap_stage restore_ready
     report_bootstrap_stage gateway_starting
-    if ! runuser -u matrix -- test -x /opt/matrix/bin/matrix-gateway ||
-      ! runuser -u matrix -- test -x /opt/matrix/runtime/node/bin/node; then
+    report_bootstrap_stage gateway_preflight_checking_exec
+    if ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/bin/matrix-gateway ||
+      ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/runtime/node/bin/node; then
       report_bootstrap_stage gateway_unit_failed_exec
       exit 1
     fi
-    if ! runuser -u matrix -- test -x /opt/matrix ||
-      ! runuser -u matrix -- test -x /opt/matrix/app; then
+    report_bootstrap_stage gateway_preflight_checking_paths
+    if ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix ||
+      ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/app; then
       report_bootstrap_stage gateway_unit_failed_chdir
       exit 1
     fi
+    report_bootstrap_stage gateway_preflight_checking_environment
     for gateway_env_file in /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env /opt/matrix/bin/matrix-owner-env; do
-      if ! runuser -u matrix -- test -r "$gateway_env_file"; then
+      if ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -r "$gateway_env_file"; then
         report_bootstrap_stage gateway_unit_failed_environment
         exit 1
       fi
