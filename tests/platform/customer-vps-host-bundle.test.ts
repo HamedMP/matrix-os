@@ -1221,6 +1221,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       'install -m 0755 "$RUNNER_TEMP/matrix-gateway" distro/customer-vps/host-bin/matrix-gateway',
     );
     expect(gateway).toContain('report_bootstrap_stage gateway_process_started');
+    expect(gateway).toContain('report_bootstrap_stage gateway_wrapper_started');
+    expect(gateway).toContain('report_bootstrap_stage gateway_home_ready');
+    expect(gateway).toContain('report_bootstrap_stage gateway_launch_ready');
     expect(gateway).toContain('report_bootstrap_stage gateway_healthy');
     expect(gateway).toContain('report_bootstrap_stage registration_ready');
     expect(gateway).toContain('fetch_metadata_value()');

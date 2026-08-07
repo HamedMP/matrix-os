@@ -60,6 +60,7 @@ report_bootstrap_stage() {
     echo "matrix-gateway: bootstrap progress callback unavailable" >&2
   fi
 }
+report_bootstrap_stage gateway_wrapper_started
 
 sync_bundled_home_assets() {
   local script_dir sync_script
@@ -87,6 +88,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 sync_bundled_home_assets
+report_bootstrap_stage gateway_home_ready
 if [ -x "$APP_DIR/scripts/sync-matrix-agent-skills.sh" ] && [ -d "$APP_DIR/skills/matrix" ]; then
   MATRIX_SKILL_TARGETS=matrix,claude,codex \
     MATRIX_SKILLS_SOURCE="$APP_DIR/skills/matrix" \
@@ -99,6 +101,7 @@ if [ -f "$APP_DIR/packages/gateway/dist/shell/register-agent-bridges-cli.js" ]; 
     "$NODE_BIN" "$APP_DIR/packages/gateway/dist/shell/register-agent-bridges-cli.js" || \
     echo "matrix-gateway: agent bridge registration skipped" >&2
 fi
+report_bootstrap_stage gateway_launch_ready
 cd "$APP_DIR"
 if [ -f "$APP_DIR/packages/gateway/dist/main.js" ]; then
   "$NODE_BIN" "$APP_DIR/packages/gateway/dist/main.js" &

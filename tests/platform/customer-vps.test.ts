@@ -1366,6 +1366,18 @@ describe('platform/customer-vps', () => {
     })).resolves.toEqual({ accepted: true, stage: 'packages_ready' });
     await expect(service.reportBootstrapProgress('registration-token', {
       machineId: provisioned.machineId,
+      stage: 'gateway_wrapper_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_wrapper_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_launch_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_launch_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
       stage: 'gateway_process_started',
     })).resolves.toEqual({ accepted: true, stage: 'gateway_process_started' });
     await expect(service.reportBootstrapProgress('registration-token', {
