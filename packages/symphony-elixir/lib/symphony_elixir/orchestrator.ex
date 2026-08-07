@@ -12,7 +12,6 @@ defmodule SymphonyElixir.Orchestrator do
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
-  @setup_required_poll_interval_ms 300_000
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -118,7 +117,14 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_info(:run_poll_cycle, state) do
     state = refresh_runtime_config(state)
     state = maybe_dispatch(state)
-    state = schedule_tick(state, next_poll_delay_ms(state))
+    state =
+      schedule_tick(
+        state,
+        SymphonyElixir.PollingPolicy.next_delay_ms(
+          state.last_tracker_status,
+          state.poll_interval_ms
+        )
+      )
     state = %{state | poll_check_in_progress: false}
 
     notify_dashboard()
@@ -1242,15 +1248,6 @@ defmodule SymphonyElixir.Orchestrator do
     :timer.send_after(@poll_transition_render_delay_ms, self(), :run_poll_cycle)
     :ok
   end
-
-  defp next_poll_delay_ms(%State{
-         last_tracker_status: :setup_required,
-         poll_interval_ms: poll_interval_ms
-       }) do
-    max(poll_interval_ms, @setup_required_poll_interval_ms)
-  end
-
-  defp next_poll_delay_ms(%State{poll_interval_ms: poll_interval_ms}), do: poll_interval_ms
 
   defp next_poll_in_ms(nil, _now_ms), do: nil
 

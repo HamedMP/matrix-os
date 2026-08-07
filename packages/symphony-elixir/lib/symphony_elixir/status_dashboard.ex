@@ -1945,7 +1945,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp truncate(value, _max), do: value
 
   defp dashboard_enabled? do
-    non_test_environment?() and terminal_output_available?()
+    non_test_environment?() and SymphonyElixir.TerminalCapabilities.output_available?()
   end
 
   defp non_test_environment? do
@@ -1957,13 +1957,6 @@ defmodule SymphonyElixir.StatusDashboard do
       end
     else
       true
-    end
-  end
-
-  defp terminal_output_available? do
-    case :io.columns() do
-      {:ok, columns} when is_integer(columns) and columns > 0 -> true
-      _ -> false
     end
   end
 

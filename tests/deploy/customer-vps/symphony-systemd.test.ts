@@ -181,6 +181,10 @@ describe("customer VPS Symphony systemd unit", () => {
 
   it("keeps terminal status dashboard rendering stable", async () => {
     const statusDashboard = await readFile("packages/symphony-elixir/lib/symphony_elixir/status_dashboard.ex", "utf8");
+    const terminalCapabilities = await readFile(
+      "packages/symphony-elixir/lib/symphony_elixir/terminal_capabilities.ex",
+      "utf8",
+    );
 
     expect(statusDashboard).toContain("def handle_info(:tick, state)");
     expect(statusDashboard).toContain("schedule_tick(state.refresh_ms)");
@@ -194,8 +198,9 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(statusDashboard).not.toContain('Enum.map_join(", ", &format_retry_summary/1)');
     expect(statusDashboard).not.toContain("when byte_size(value) > max");
     expect(statusDashboard).toContain("String.trim_trailing");
-    expect(statusDashboard).toContain("terminal_output_available?()");
-    expect(statusDashboard).toContain(":io.columns()");
+    expect(statusDashboard).toContain("SymphonyElixir.TerminalCapabilities.output_available?()");
+    expect(terminalCapabilities).toContain("def output_available?");
+    expect(terminalCapabilities).toContain(":io.columns()");
   });
 
   it("keeps Codex dynamic tools inside the workspace and bounded on Linear calls", async () => {
@@ -233,13 +238,19 @@ describe("customer VPS Symphony systemd unit", () => {
 
   it("backs off platform polling while Linear setup is required", async () => {
     const orchestrator = await readFile("packages/symphony-elixir/lib/symphony_elixir/orchestrator.ex", "utf8");
+    const pollingPolicy = await readFile(
+      "packages/symphony-elixir/lib/symphony_elixir/polling_policy.ex",
+      "utf8",
+    );
     const workflow = await readFile("packages/symphony-elixir/WORKFLOW.md", "utf8");
 
     expect(workflow).toContain("interval_ms: 5000");
-    expect(orchestrator).toContain("@setup_required_poll_interval_ms 300_000");
-    expect(orchestrator).toContain("state = schedule_tick(state, next_poll_delay_ms(state))");
-    expect(orchestrator).toMatch(/defp next_poll_delay_ms\(%State\{\s*last_tracker_status: :setup_required,/);
-    expect(orchestrator).toContain("max(poll_interval_ms, @setup_required_poll_interval_ms)");
+    expect(orchestrator).toMatch(
+      /SymphonyElixir\.PollingPolicy\.next_delay_ms\(\s*state\.last_tracker_status,\s*state\.poll_interval_ms\s*\)/,
+    );
+    expect(pollingPolicy).toContain("@setup_required_poll_interval_ms 300_000");
+    expect(pollingPolicy).toContain("def next_delay_ms(:setup_required, poll_interval_ms)");
+    expect(pollingPolicy).toContain("max(poll_interval_ms, @setup_required_poll_interval_ms)");
   });
 
   it("uses Matrix-owned repository and runtime endpoint secrets", async () => {
