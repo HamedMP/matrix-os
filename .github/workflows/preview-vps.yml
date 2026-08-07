@@ -525,7 +525,8 @@ jobs:
               echo "The pinned production platform origin is unavailable." >&2
               exit 1
             fi
-            PROVISION_PLATFORM_URL="https://candidate---${platform_origin#https://}"
+            candidate_tag="pr-${PR_NUMBER}-${HEAD_SHA:0:12}"
+            PROVISION_PLATFORM_URL="https://${candidate_tag}---${platform_origin#https://}"
             curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
               "${PROVISION_PLATFORM_URL}/health" >/dev/null
             echo "Using the zero-traffic platform candidate for preview provisioning."

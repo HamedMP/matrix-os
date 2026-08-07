@@ -30,10 +30,18 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain('if [ -z "$service_base_url" ]; then');
     expect(workflow).toContain('deploy_preview "$BOOTSTRAP_API_ORIGIN"');
     expect(workflow).toContain('deploy_preview "$PREVIEW_API_ORIGIN"');
+    expect(workflow).toContain('preview_tag="pr-${PR_NUMBER}-${head_sha::12}"');
+    expect(workflow).toContain('--tag "$preview_tag"');
+    expect(workflow).toContain('PLATFORM_CANDIDATE_URL=${api_origin}');
+    expect(workflow).toContain('superseded_tags="$(jq -r --arg current "$preview_tag"');
+    expect(workflow).toContain('--remove-tags "$superseded_tags" --quiet');
+    expect(workflow).toContain('echo "PREVIEW_TAG=$preview_tag" >> "$GITHUB_ENV"');
+    expect(workflow).toContain('--arg prefix "pr-${PR_NUMBER}-"');
+    expect(workflow).toContain('--remove-tags "$tags" --quiet');
 
     const bootstrap = workflow.indexOf('deploy_preview "$BOOTSTRAP_API_ORIGIN"');
     const deriveOrigin = workflow.indexOf(
-      'PREVIEW_API_ORIGIN="https://pr-${PR_NUMBER}---${service_base_url#https://}"',
+      'PREVIEW_API_ORIGIN="https://${preview_tag}---${service_base_url#https://}"',
     );
     const finalDeploy = workflow.indexOf('deploy_preview "$PREVIEW_API_ORIGIN"');
     expect(bootstrap).toBeGreaterThan(-1);
