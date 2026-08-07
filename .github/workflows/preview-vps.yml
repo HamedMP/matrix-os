@@ -281,12 +281,16 @@ jobs:
           cp distro/customer-vps/host-bin/matrix-sync-agent "$RUNNER_TEMP/"
           cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"
           cp distro/customer-vps/host-bin/matrix-gateway "$RUNNER_TEMP/"
+          cp distro/customer-vps/host-bin/matrix-restore.sh "$RUNNER_TEMP/"
+          cp distro/customer-vps/host-bin/matrix-sync-bundled-home-assets "$RUNNER_TEMP/"
           git checkout --detach "${{ steps.version.outputs.bootstrap_sha }}"
           install -m 0755 "$RUNNER_TEMP/build-host-bundle.sh" scripts/build-host-bundle.sh
           rm -rf scripts/spikes/terminal-runtime
           cp -a "$RUNNER_TEMP/terminal-runtime-spikes" scripts/spikes/terminal-runtime
           install -m 0755 "$RUNNER_TEMP/matrix-sync-agent" distro/customer-vps/host-bin/matrix-sync-agent
           install -m 0755 "$RUNNER_TEMP/matrix-gateway" distro/customer-vps/host-bin/matrix-gateway
+          install -m 0755 "$RUNNER_TEMP/matrix-restore.sh" distro/customer-vps/host-bin/matrix-restore.sh
+          install -m 0755 "$RUNNER_TEMP/matrix-sync-bundled-home-assets" distro/customer-vps/host-bin/matrix-sync-bundled-home-assets
           cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/
           MATRIX_TERMINAL_RUNTIME_DORMANT=1 ./scripts/build-host-bundle.sh
           terminal_generation_target="$(readlink dist/host-bundle/stage/libexec/terminal-runtime/current)"
@@ -298,7 +302,7 @@ jobs:
           mv dist/host-bundle dist/bootstrap
           rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control
           rm -rf scripts/spikes/terminal-runtime
-          git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-gateway distro/customer-vps/host-bin/matrix-sync-agent
+          git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-gateway distro/customer-vps/host-bin/matrix-restore.sh distro/customer-vps/host-bin/matrix-sync-agent distro/customer-vps/host-bin/matrix-sync-bundled-home-assets
           git checkout --detach "${{ needs.gate.outputs.head_sha }}"
       - name: Build host bundle
         id: activation_bundle
@@ -772,7 +776,8 @@ jobs:
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet")"
           address="$(jq -er --arg handle "$HANDLE" '
-            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+              and .deletedAt == null and .status != "deleted")]
             | if length == 1 then .[0].publicIPv4 else error("preview_unavailable") end
           ' <<<"$fleet")"
           if ! wait_for_preview_gateway "$address"; then
@@ -790,7 +795,8 @@ jobs:
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet")"
               machine="$(jq -ce --arg handle "$HANDLE" '
-                  [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+                  [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+                    and .deletedAt == null and .status != "deleted")]
                   | if length == 1 then .[0] else {} end
                 ' <<<"$fleet")"
               deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
@@ -842,7 +848,8 @@ jobs:
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet")"; then
                 machine="$(jq -ce --arg handle "$HANDLE" '
-                    [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+                    [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+                      and .deletedAt == null and .status != "deleted")]
                     | if length == 1 then .[0] else {} end
                   ' <<<"$fleet")"
                 deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"

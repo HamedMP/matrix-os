@@ -14,10 +14,11 @@ const request = async (name, input, operationId = createOperationId()) => {
 const output = (result) => process.stdout.write(`${JSON.stringify(result)}\n`);
 if (operation === 'create' || operation === 'create-race') {
   if (!/^[0-9a-f]{40}$/.test(value)) throw new Error('probe_head_invalid');
+  if (!/^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$/.test(extra)) throw new Error('probe_nonce_invalid');
   output(await request('CreateStart', {
     displayName: operation === 'create'
-      ? `accept-${value.slice(0, 12)}`
-      : `accept-race-${value.slice(0, 12)}`,
+      ? `accept-${value.slice(0, 12)}-${extra}`
+      : `accept-race-${value.slice(0, 12)}-${extra}`,
     cwd: { kind: 'home-relative', path: '' },
     launch: { kind: 'shell' },
   }));
