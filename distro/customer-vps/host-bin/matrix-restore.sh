@@ -46,12 +46,15 @@ check_r2_exists system/vps-meta.json "VPS metadata" || vps_meta_status="$?"
 check_r2_exists "$latest_pointer_key" "latest snapshot pointer" || latest_pointer_status="$?"
 
 if [ "$vps_meta_status" -eq 44 ] && [ "$latest_pointer_status" -eq 44 ]; then
+  # First installation: neither registration metadata nor a backup exists.
   touch "$restore_flag"
   exit 0
 fi
-if [ "$vps_meta_status" -eq 44 ] || [ "$latest_pointer_status" -eq 44 ]; then
-  echo "matrix-restore: owner restore state is incomplete" >&2
-  exit 1
+if [ "$vps_meta_status" -eq 0 ] && [ "$latest_pointer_status" -eq 44 ]; then
+  # A registered host may reboot before its first scheduled backup. Its local
+  # Postgres volume remains authoritative until the first pointer is written.
+  touch "$restore_flag"
+  exit 0
 fi
 
 if ! /opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"; then

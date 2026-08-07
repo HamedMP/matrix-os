@@ -708,10 +708,14 @@ exit 99
     expect(operationalError.restoreFlagExists).toBe(false);
     expect(operationalError.result.stderr).toContain('matrix-restore: failed to check VPS metadata');
 
-    const ambiguous = runRestoreWithFakeMatrixctl({ vpsMeta: 0, latestPointer: 44 });
-    expect(ambiguous.result.status).toBe(1);
-    expect(ambiguous.restoreFlagExists).toBe(false);
-    expect(ambiguous.result.stderr).toContain('matrix-restore: owner restore state is incomplete');
+    const registeredBeforeBackup = runRestoreWithFakeMatrixctl({ vpsMeta: 0, latestPointer: 44 });
+    expect(registeredBeforeBackup.result.status, registeredBeforeBackup.result.stderr).toBe(0);
+    expect(registeredBeforeBackup.restoreFlagExists).toBe(true);
+
+    const backupWithoutMetadata = runRestoreWithFakeMatrixctl({ vpsMeta: 44, latestPointer: 0 });
+    expect(backupWithoutMetadata.result.status).toBe(1);
+    expect(backupWithoutMetadata.restoreFlagExists).toBe(false);
+    expect(backupWithoutMetadata.result.stderr).toContain('matrix-restore: failed to fetch latest pointer');
   });
 
   it('fails customer-host R2 operations for unreadable config or a non-EU endpoint', () => {
