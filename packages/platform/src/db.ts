@@ -2265,7 +2265,10 @@ export async function advanceUserMachineBootstrapStage(
         WHEN 'bundle_installed' THEN 4
         WHEN 'database_ready' THEN 5
         WHEN 'gateway_starting' THEN 6
-        WHEN 'registered' THEN 7
+        WHEN 'gateway_process_started' THEN 7
+        WHEN 'gateway_healthy' THEN 8
+        WHEN 'registration_ready' THEN 9
+        WHEN 'registered' THEN 10
         ELSE 0
       END < ${rank}
     `)
