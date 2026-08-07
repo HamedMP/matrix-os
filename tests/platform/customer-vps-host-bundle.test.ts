@@ -1199,11 +1199,34 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('reports durable clean-boot stages without requiring preview SSH access', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const cloudInit = readFileSync(
+      join(root, 'distro/customer-vps/cloud-init.yaml'),
+      'utf8',
+    );
 
     expect(workflow).toContain(`bootstrap_stage="$(jq -r '.bootstrapStage // "pending"' <<< "$progress_machine")"`);
     expect(workflow).toContain('Bootstrap stage for ${HANDLE}: ${bootstrap_stage}');
     expect(workflow).not.toContain('VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}');
     expect(workflow).not.toContain('root@${candidate_address}');
+
+    const handoff = [
+      'report_bootstrap_stage restore_starting',
+      'systemctl start matrix-restore.service',
+      'report_bootstrap_stage restore_ready',
+      'report_bootstrap_stage gateway_starting',
+      'systemctl start matrix-gateway.service',
+      'report_bootstrap_stage gateway_unit_started',
+      'systemctl start matrix-shell.service matrix-symphony.service',
+    ];
+    let previousIndex = -1;
+    for (const marker of handoff) {
+      const index = cloudInit.indexOf(marker);
+      expect(index, marker).toBeGreaterThan(previousIndex);
+      previousIndex = index;
+    }
+    expect(cloudInit).not.toContain(
+      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service',
+    );
   });
 
   it('publishes bounded gateway registration phases from the exact preview bootstrap', () => {
