@@ -1366,14 +1366,26 @@ describe('platform/customer-vps', () => {
     })).resolves.toEqual({ accepted: true, stage: 'packages_ready' });
     await expect(service.reportBootstrapProgress('registration-token', {
       machineId: provisioned.machineId,
+      stage: 'gateway_process_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_process_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_healthy',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_healthy' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'registration_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'registration_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
       stage: 'cloud_init_started',
-    })).resolves.toEqual({ accepted: true, stage: 'packages_ready' });
+    })).resolves.toEqual({ accepted: true, stage: 'registration_ready' });
 
     const row = await getUserMachine(db, provisioned.machineId);
-    expect(row?.bootstrapStage).toBe('packages_ready');
+    expect(row?.bootstrapStage).toBe('registration_ready');
     expect(row?.bootstrapStageAt).toBe('2026-04-26T12:00:00.000Z');
     await expect(service.status(provisioned.machineId)).resolves.toMatchObject({
-      bootstrapStage: 'packages_ready',
+      bootstrapStage: 'registration_ready',
       bootstrapStageAt: '2026-04-26T12:00:00.000Z',
     });
   });

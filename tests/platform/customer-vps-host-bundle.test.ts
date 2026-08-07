@@ -1206,6 +1206,32 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).not.toContain('root@${candidate_address}');
   });
 
+  it('publishes bounded gateway registration phases from the exact preview bootstrap', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const gateway = readFileSync(
+      join(root, 'distro/customer-vps/host-bin/matrix-gateway'),
+      'utf8',
+    );
+
+    expect(workflow).toContain(
+      'cp distro/customer-vps/host-bin/matrix-gateway "$RUNNER_TEMP/"',
+    );
+    expect(workflow).toContain(
+      'install -m 0755 "$RUNNER_TEMP/matrix-gateway" distro/customer-vps/host-bin/matrix-gateway',
+    );
+    expect(gateway).toContain('report_bootstrap_stage gateway_process_started');
+    expect(gateway).toContain('report_bootstrap_stage gateway_healthy');
+    expect(gateway).toContain('report_bootstrap_stage registration_ready');
+    expect(gateway).toContain('fetch_metadata_value()');
+    expect(gateway).toContain('is_public_ipv4()');
+    expect(gateway).toContain('gateway_health_ready=true');
+    expect(gateway).toContain('[ "$gateway_health_ready" = true ]');
+    expect(gateway).toContain("printf 'header = \"authorization: Bearer %s\"\\n'");
+    expect(gateway).toContain('curl --config -');
+    expect(gateway).not.toContain('-H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}"');
+  });
+
   it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
@@ -1543,10 +1569,13 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const launcher = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
 
     expect(launcher).toContain('MATRIX_PLATFORM_REGISTER_URL');
-    expect(launcher).toContain('/hetzner/v1/metadata/instance-id');
-    expect(launcher).toContain('/hetzner/v1/metadata/public-ipv4');
+    expect(launcher).toContain('/hetzner/v1/metadata/${metadata_path}');
+    expect(launcher).toContain('fetch_metadata_value instance-id');
+    expect(launcher).toContain('fetch_metadata_value public-ipv4');
     expect(launcher).toContain('/vps/register');
-    expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(launcher).toContain(
+      'curl --config /dev/fd/3 --fail --silent --show-error --max-time 10',
+    );
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
