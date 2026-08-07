@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This fixed host helper must not inherit Node injection settings from the
+# gateway service or an operator shell. Its caller also supplies an allowlisted
+# environment, while these unsets keep direct maintenance invocations safe.
+unset NODE_OPTIONS NODE_PATH
+
 NODE_BIN="${MATRIX_NODE_BIN:-/opt/matrix/runtime/node/bin/node}"
-if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
-  NODE_BIN="$(command -v node)"
+if [ ! -x "$NODE_BIN" ]; then
+  exit 44
+fi
+if ! "$NODE_BIN" --version >/dev/null 2>&1; then
+  exit 45
 fi
 
-"$NODE_BIN" <<'NODE'
+node_status=0
+"$NODE_BIN" --input-type=commonjs <<'NODE' || node_status=$?
 const {
   chmodSync,
   copyFileSync,
@@ -33,6 +42,17 @@ const skipped = [];
 const logLines = [`[${now}] Template sync started`];
 const logMaxBytes = parsePositiveInt(process.env.TEMPLATE_SYNC_LOG_MAX_BYTES, 256 * 1024);
 const systemOwnedFirstPartyAppCache = new Map();
+const failureExitCodes = Object.freeze({
+  template: 40,
+  home: 41,
+  copy: 42,
+  commit: 43,
+});
+const boundedCopyExitCodes = Object.freeze({
+  EACCES: 47, EPERM: 47, ENOSPC: 48, EDQUOT: 48,
+  ENOENT: 50, ENOTDIR: 51, EISDIR: 51, ELOOP: 51,
+});
+let failurePhase = "template";
 
 const userOwnedFiles = new Set([
   "system/activity.log",
@@ -186,93 +206,115 @@ function logSkipped(relPath, reason) {
   logLines.push(`[${now}] Skipped: ${relPath} (${reason})`);
 }
 
-if (!existsSync(templateManifestPath)) {
-  logLines.push(`[${now}] No template manifest found, skipping sync`);
-} else {
-  const templateManifest = readJson(templateManifestPath);
-  const installedManifest = readInstalledManifest(installedManifestPath);
+try {
+  if (!existsSync(templateManifestPath)) {
+    logLines.push(`[${now}] No template manifest found, skipping sync`);
+  } else {
+    failurePhase = "template";
+    const templateManifest = readJson(templateManifestPath);
+    failurePhase = "home";
+    const installedManifest = readInstalledManifest(installedManifestPath);
 
-  for (const [rawRelPath, templateHash] of Object.entries(templateManifest).sort(([a], [b]) => a.localeCompare(b))) {
-    const relPath = safeRelPath(rawRelPath);
-    if (!relPath || typeof templateHash !== "string") {
-      logSkipped(String(rawRelPath), "unsafe template manifest entry");
-      continue;
-    }
+    for (const [rawRelPath, templateHash] of Object.entries(templateManifest).sort(([a], [b]) => a.localeCompare(b))) {
+      const relPath = safeRelPath(rawRelPath);
+      if (!relPath || typeof templateHash !== "string") {
+        logSkipped(String(rawRelPath), "unsafe template manifest entry");
+        continue;
+      }
 
-    const templatePath = join(templateDir, ...relPath.split("/"));
-    const homePath = join(homeDir, ...relPath.split("/"));
-    if (!existsSync(templatePath) || !statSync(templatePath).isFile()) continue;
+      const templatePath = join(templateDir, ...relPath.split("/"));
+      const homePath = join(homeDir, ...relPath.split("/"));
+      failurePhase = "template";
+      if (!existsSync(templatePath) || !statSync(templatePath).isFile()) continue;
 
-    if (isProtectedUserPath(relPath)) {
-      logSkipped(relPath, "protected user data");
-      continue;
-    }
+      if (isProtectedUserPath(relPath)) {
+        logSkipped(relPath, "protected user data");
+        continue;
+      }
 
-    if (isIconPath(relPath) && existsSync(homePath)) {
-      installedManifest[relPath] = hashFile(homePath);
-      continue;
-    }
+      failurePhase = "home";
+      if (isIconPath(relPath) && existsSync(homePath)) {
+        installedManifest[relPath] = hashFile(homePath);
+        continue;
+      }
 
-    if (!existsSync(homePath)) {
-      copyTemplateFile(templatePath, homePath);
-      installedManifest[relPath] = templateHash;
-      added.push(relPath);
-      logLines.push(`[${now}] Added: ${relPath}`);
-      continue;
-    }
+      if (!existsSync(homePath)) {
+        failurePhase = "copy";
+        copyTemplateFile(templatePath, homePath);
+        installedManifest[relPath] = templateHash;
+        added.push(relPath);
+        logLines.push(`[${now}] Added: ${relPath}`);
+        continue;
+      }
 
-    const homeStat = lstatSync(homePath);
-    if (!homeStat.isFile()) {
-      logSkipped(relPath, "customized by user");
-      continue;
-    }
+      failurePhase = "home";
+      const homeStat = lstatSync(homePath);
+      if (!homeStat.isFile()) {
+        logSkipped(relPath, "customized by user");
+        continue;
+      }
 
-    const userHash = hashFile(homePath);
-    const installedHash = installedManifest[relPath];
+      const userHash = hashFile(homePath);
+      const installedHash = installedManifest[relPath];
 
-    if (installedHash === undefined) {
+      if (installedHash === undefined) {
+        if (userHash === templateHash) {
+          installedManifest[relPath] = templateHash;
+        } else if (isSystemOwnedFirstPartyApp(appSlugForRelPath(relPath))) {
+          failurePhase = "copy";
+          copyTemplateFile(templatePath, homePath);
+          installedManifest[relPath] = templateHash;
+          updated.push(relPath);
+          logLines.push(`[${now}] Updated: ${relPath}`);
+        } else {
+          logSkipped(relPath, "customized by user");
+        }
+        continue;
+      }
+
+      if (userHash === installedHash) {
+        if (templateHash !== installedHash) {
+          failurePhase = "copy";
+          copyTemplateFile(templatePath, homePath);
+          installedManifest[relPath] = templateHash;
+          updated.push(relPath);
+          logLines.push(`[${now}] Updated: ${relPath}`);
+        }
+        continue;
+      }
+
       if (userHash === templateHash) {
         installedManifest[relPath] = templateHash;
-      } else if (isSystemOwnedFirstPartyApp(appSlugForRelPath(relPath))) {
-        copyTemplateFile(templatePath, homePath);
-        installedManifest[relPath] = templateHash;
-        updated.push(relPath);
-        logLines.push(`[${now}] Updated: ${relPath}`);
-      } else {
-        logSkipped(relPath, "customized by user");
+        continue;
       }
-      continue;
+
+      logSkipped(relPath, "customized by user");
     }
 
-    if (userHash === installedHash) {
-      if (templateHash !== installedHash) {
-        copyTemplateFile(templatePath, homePath);
-        installedManifest[relPath] = templateHash;
-        updated.push(relPath);
-        logLines.push(`[${now}] Updated: ${relPath}`);
-      }
-      continue;
-    }
-
-    if (userHash === templateHash) {
-      installedManifest[relPath] = templateHash;
-      continue;
-    }
-
-    logSkipped(relPath, "customized by user");
+    failurePhase = "commit";
+    mkdirSync(dirname(installedManifestPath), { recursive: true });
+    writeTextAtomic(installedManifestPath, `${JSON.stringify(installedManifest, null, 2)}\n`);
   }
 
-  mkdirSync(dirname(installedManifestPath), { recursive: true });
-  writeTextAtomic(installedManifestPath, `${JSON.stringify(installedManifest, null, 2)}\n`);
-}
-
-const logDir = join(homeDir, "system", "logs");
-mkdirSync(logDir, { recursive: true });
-logLines.push(`[${now}] Template sync completed: ${updated.length} updated, ${added.length} added, ${skipped.length} skipped`);
-try {
-  appendBoundedLog(join(logDir, "template-sync.log"), `${logLines.join("\n")}\n`);
+  failurePhase = "home";
+  const logDir = join(homeDir, "system", "logs");
+  mkdirSync(logDir, { recursive: true });
+  logLines.push(`[${now}] Template sync completed: ${updated.length} updated, ${added.length} added, ${skipped.length} skipped`);
+  try {
+    appendBoundedLog(join(logDir, "template-sync.log"), `${logLines.join("\n")}\n`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`matrix-sync-bundled-home-assets: unable to write template sync log: ${message}`);
+  }
 } catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`matrix-sync-bundled-home-assets: unable to write template sync log: ${message}`);
+  console.error(`matrix-sync-bundled-home-assets: failed (${failurePhase})`);
+  const errno = err && typeof err === "object" && "code" in err ? err.code : undefined;
+  process.exitCode = failurePhase === "copy" && typeof errno === "string"
+    ? boundedCopyExitCodes[errno] ?? failureExitCodes.copy
+    : failureExitCodes[failurePhase] ?? 49;
 }
 NODE
+case "$node_status" in
+  0|40|41|42|43|47|48|50|51) exit "$node_status" ;;
+  *) exit 46 ;;
+esac

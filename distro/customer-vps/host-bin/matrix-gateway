@@ -62,21 +62,61 @@ if declare -F matrix_prepend_path_once >/dev/null 2>&1; then
 else
   export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 fi
+report_bootstrap_stage gateway_environment_ready
 
 sync_bundled_home_assets() {
-  local script_dir sync_script
+  local script_dir sync_script sync_status
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   sync_script="${MATRIX_SYNC_BUNDLED_HOME_ASSETS:-$script_dir/matrix-sync-bundled-home-assets}"
   if [ -x "$sync_script" ]; then
-    APP_DIR="$APP_DIR" MATRIX_HOME="$MATRIX_HOME" MATRIX_NODE_BIN="$NODE_BIN" "$sync_script"
+    sync_status=0
+    /usr/bin/timeout --signal=TERM --kill-after=5s 120s \
+      /usr/bin/env -i \
+      APP_DIR="$APP_DIR" \
+      MATRIX_HOME="$MATRIX_HOME" \
+      MATRIX_NODE_BIN="$NODE_BIN" \
+      PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+      "$sync_script" || sync_status=$?
+    if [ "$sync_status" -ne 0 ]; then
+      case "$sync_status" in
+        40) report_bootstrap_stage gateway_home_assets_failed_template ;;
+        41) report_bootstrap_stage gateway_home_assets_failed_home ;;
+        42) report_bootstrap_stage gateway_home_assets_failed_copy ;;
+        43) report_bootstrap_stage gateway_home_assets_failed_commit ;;
+        44) report_bootstrap_stage gateway_home_assets_failed_node_missing ;;
+        45) report_bootstrap_stage gateway_home_assets_failed_node_unusable ;;
+        46) report_bootstrap_stage gateway_home_assets_failed_node_program ;;
+        47) report_bootstrap_stage gateway_home_assets_failed_status_47 ;;
+        48) report_bootstrap_stage gateway_home_assets_failed_status_48 ;;
+        50) report_bootstrap_stage gateway_home_assets_failed_status_50 ;;
+        51) report_bootstrap_stage gateway_home_assets_failed_status_51 ;;
+        1) report_bootstrap_stage gateway_home_assets_failed_status_1 ;;
+        2) report_bootstrap_stage gateway_home_assets_failed_status_2 ;;
+        9) report_bootstrap_stage gateway_home_assets_failed_status_9 ;;
+        49) report_bootstrap_stage gateway_home_assets_failed_status_49 ;;
+        125) report_bootstrap_stage gateway_home_assets_failed_status_125 ;;
+        126) report_bootstrap_stage gateway_home_assets_failed_status_126 ;;
+        127) report_bootstrap_stage gateway_home_assets_failed_status_127 ;;
+        134) report_bootstrap_stage gateway_home_assets_failed_status_134 ;;
+        139) report_bootstrap_stage gateway_home_assets_failed_status_139 ;;
+        143) report_bootstrap_stage gateway_home_assets_failed_status_143 ;;
+        124|137) report_bootstrap_stage gateway_home_assets_timed_out ;;
+        *) report_bootstrap_stage gateway_home_assets_failed_other ;;
+      esac
+      echo "matrix-gateway: bundled home sync failed" >&2
+      return 1
+    fi
   else
     echo "matrix-gateway: bundled home sync script not executable: $sync_script" >&2
     return 1
   fi
+  report_bootstrap_stage gateway_home_assets_ready
 
+  report_bootstrap_stage gateway_home_ownership_started
   if [ -d "$MATRIX_HOME/apps" ] && id matrix >/dev/null 2>&1; then
     chown -R matrix:matrix "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
   fi
+  report_bootstrap_stage gateway_home_ownership_ready
 }
 
 gateway_pid=""
@@ -88,6 +128,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+report_bootstrap_stage gateway_home_sync_started
 sync_bundled_home_assets
 report_bootstrap_stage gateway_home_ready
 if [ -x "$APP_DIR/scripts/sync-matrix-agent-skills.sh" ] && [ -d "$APP_DIR/skills/matrix" ]; then

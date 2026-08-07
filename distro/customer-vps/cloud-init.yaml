@@ -716,6 +716,10 @@ runcmd:
     report_bootstrap_stage restore_starting
     systemctl start matrix-restore.service
     report_bootstrap_stage restore_ready
+    if ! chown -hR matrix:matrix /home/matrix/home; then
+      report_bootstrap_stage gateway_unit_failed_environment
+      exit 1
+    fi
     report_bootstrap_stage gateway_starting
     report_bootstrap_stage gateway_preflight_checking_exec
     if ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/bin/matrix-gateway ||

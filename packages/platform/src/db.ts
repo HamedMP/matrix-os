@@ -2283,12 +2283,40 @@ export async function advanceUserMachineBootstrapStage(
         WHEN 'gateway_unit_failed_other' THEN 22
         WHEN 'gateway_unit_started' THEN 23
         WHEN 'gateway_wrapper_started' THEN 24
-        WHEN 'gateway_home_ready' THEN 25
-        WHEN 'gateway_launch_ready' THEN 26
-        WHEN 'gateway_process_started' THEN 27
-        WHEN 'gateway_healthy' THEN 28
-        WHEN 'registration_ready' THEN 29
-        WHEN 'registered' THEN 30
+        WHEN 'gateway_environment_ready' THEN 25
+        WHEN 'gateway_home_sync_started' THEN 26
+        WHEN 'gateway_home_assets_failed_template' THEN 27
+        WHEN 'gateway_home_assets_failed_home' THEN 28
+        WHEN 'gateway_home_assets_failed_copy' THEN 29
+        WHEN 'gateway_home_assets_failed_commit' THEN 30
+        WHEN 'gateway_home_assets_failed_status_1' THEN 31
+        WHEN 'gateway_home_assets_failed_status_2' THEN 32
+        WHEN 'gateway_home_assets_failed_status_9' THEN 33
+        WHEN 'gateway_home_assets_failed_status_47' THEN 34
+        WHEN 'gateway_home_assets_failed_status_48' THEN 35
+        WHEN 'gateway_home_assets_failed_status_49' THEN 36
+        WHEN 'gateway_home_assets_failed_status_50' THEN 37
+        WHEN 'gateway_home_assets_failed_status_51' THEN 38
+        WHEN 'gateway_home_assets_failed_status_125' THEN 39
+        WHEN 'gateway_home_assets_failed_status_126' THEN 40
+        WHEN 'gateway_home_assets_failed_status_127' THEN 41
+        WHEN 'gateway_home_assets_failed_status_134' THEN 42
+        WHEN 'gateway_home_assets_failed_status_139' THEN 43
+        WHEN 'gateway_home_assets_failed_status_143' THEN 44
+        WHEN 'gateway_home_assets_failed_node_missing' THEN 45
+        WHEN 'gateway_home_assets_failed_node_unusable' THEN 46
+        WHEN 'gateway_home_assets_failed_node_program' THEN 47
+        WHEN 'gateway_home_assets_failed_other' THEN 48
+        WHEN 'gateway_home_assets_timed_out' THEN 49
+        WHEN 'gateway_home_assets_ready' THEN 50
+        WHEN 'gateway_home_ownership_started' THEN 51
+        WHEN 'gateway_home_ownership_ready' THEN 52
+        WHEN 'gateway_home_ready' THEN 53
+        WHEN 'gateway_launch_ready' THEN 54
+        WHEN 'gateway_process_started' THEN 55
+        WHEN 'gateway_healthy' THEN 56
+        WHEN 'registration_ready' THEN 57
+        WHEN 'registered' THEN 58
         ELSE 0
       END < ${rank}
     `)

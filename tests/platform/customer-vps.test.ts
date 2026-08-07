@@ -1417,6 +1417,38 @@ describe('platform/customer-vps', () => {
     })).resolves.toEqual({ accepted: true, stage: 'gateway_wrapper_started' });
     await expect(service.reportBootstrapProgress('registration-token', {
       machineId: provisioned.machineId,
+      stage: 'gateway_environment_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_environment_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_sync_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_sync_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_assets_failed_copy',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_assets_failed_copy' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_assets_failed_status_9',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_assets_failed_status_9' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_assets_failed_node_program',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_assets_failed_node_program' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_assets_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_assets_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_ownership_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_ownership_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_ownership_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_ownership_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
       stage: 'gateway_home_ready',
     })).resolves.toEqual({ accepted: true, stage: 'gateway_home_ready' });
     await expect(service.reportBootstrapProgress('registration-token', {

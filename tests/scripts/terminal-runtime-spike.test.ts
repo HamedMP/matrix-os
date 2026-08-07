@@ -433,7 +433,10 @@ describe('terminal runtime spike evidence', () => {
       'install -m 0755 "$RUNNER_TEMP/matrix-sync-agent" distro/customer-vps/host-bin/matrix-sync-agent',
     );
     expect(workflow).toContain(
-      'git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-gateway distro/customer-vps/host-bin/matrix-sync-agent',
+      'install -m 0755 "$RUNNER_TEMP/matrix-sync-bundled-home-assets" distro/customer-vps/host-bin/matrix-sync-bundled-home-assets',
+    );
+    expect(workflow).toContain(
+      'git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-gateway distro/customer-vps/host-bin/matrix-restore.sh distro/customer-vps/host-bin/matrix-sync-agent distro/customer-vps/host-bin/matrix-sync-bundled-home-assets',
     );
     expect(workflow.indexOf('install -m 0755 "$RUNNER_TEMP/matrix-sync-agent"')).toBeLessThan(
       workflow.indexOf('MATRIX_TERMINAL_RUNTIME_DORMANT=1 ./scripts/build-host-bundle.sh'),
@@ -564,10 +567,11 @@ describe('terminal runtime spike evidence', () => {
     expect(changesJob).not.toContain('timeout-minutes: 2');
   });
   it('requires an exact-head production acceptance matrix beyond S1 and S2', async () => {
-    const [workflow, helper, runner, verifier] = await Promise.all([
+    const [workflow, helper, runner, verifier, probe] = await Promise.all([
       readRepo('.github/workflows/terminal-runtime-production-acceptance.yml'),
       readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-control'), readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh'),
       readRepo('scripts/spikes/terminal-runtime/verify-production-evidence.mjs'),
+      readRepo('scripts/spikes/terminal-runtime/production-probe.mjs'),
     ]);
     expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 11400))',
       'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
@@ -625,6 +629,8 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).toContain('readonly codex=/opt/matrix/runtime/node/bin/codex');
     expect(runner).toContain('[ -x "$codex" ]');
     expect(runner).not.toContain("sh -c 'command -v codex'");
+    expect(runner).toContain('owner_probe create "$head_sha" "$run_nonce"');
+    expect(probe).toContain('`accept-${value.slice(0, 12)}-${extra}`');
     expect(workflow).not.toContain('VPS_SSH_KEY');
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {

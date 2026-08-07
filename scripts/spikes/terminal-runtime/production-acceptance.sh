@@ -126,7 +126,7 @@ phase1() {
   write_state phase1-running
   local created runtime_id unit session_name
   write_phase creating_runtime
-  created="$(owner_probe create "$head_sha")"; runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
+  created="$(owner_probe create "$head_sha" "$run_nonce")"; runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
   [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]
   printf '%s\n' "$runtime_id" >"$state_root/runtime-id"; chmod 0600 "$state_root/runtime-id"
   unit="${unit_prefix}${runtime_id}.service"; session_name="matrix-t-${runtime_id}"
@@ -266,7 +266,7 @@ phase2() {
   [ "$(printf '%s' "$recovered" | json_field recoveryReason)" = history_unavailable ]
   wait_active "$unit"; mark corruptionFallsBackFresh
   local race_created race_id race_unit
-  race_created="$(owner_probe create-race "$head_sha")"
+  race_created="$(owner_probe create-race "$head_sha" "$run_nonce")"
   race_id="$(printf '%s' "$race_created" | json_field runtimeId)"
   race_unit="${unit_prefix}${race_id}.service"
   wait_active "$race_unit"
