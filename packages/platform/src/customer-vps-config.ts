@@ -45,7 +45,7 @@ function taggedCloudRunOrigin(value: string | undefined): string | undefined {
       || url.pathname !== '/'
       || url.search !== ''
       || url.hash !== ''
-      || !/^(?:candidate|pr-[1-9][0-9]*-[0-9a-f]{12})---[a-z0-9-]+-[a-z0-9]{10}-[a-z]{2}\.a\.run\.app$/.test(url.hostname)
+      || !/^(?:candidate|(?:terminal-)?pr-[1-9][0-9]*-[0-9a-f]{12})---[a-z0-9-]+-[a-z0-9]{10}-[a-z]{2}\.a\.run\.app$/.test(url.hostname)
     ) {
       return undefined;
     }
