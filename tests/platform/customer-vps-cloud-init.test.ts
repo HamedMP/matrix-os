@@ -316,9 +316,9 @@ exit 99
     expect(cloudInit).toContain(
       'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
-    expect(cloudInit).toContain(
-      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service',
-    );
+    expect(cloudInit).toContain('systemctl start matrix-restore.service');
+    expect(cloudInit).toContain('systemctl start matrix-gateway.service');
+    expect(cloudInit).toContain('systemctl start matrix-shell.service matrix-symphony.service');
     expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
     );
@@ -326,7 +326,7 @@ exit 99
     expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
-    expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
+    expect(cloudInit.indexOf('systemctl start matrix-shell.service matrix-symphony.service')).toBeLessThan(
       cloudInit.indexOf('systemctl start --no-block matrix-hermes.service'),
     );
     expect(cloudInit.indexOf('systemctl start --no-block matrix-hermes.service')).toBeLessThan(
