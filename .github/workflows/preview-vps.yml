@@ -38,7 +38,7 @@ on:
         default: false
         type: boolean
       use_platform_candidate:
-        description: "Provision through the pinned zero-traffic platform candidate"
+        description: "Provision through the attested exact-head production control-plane candidate"
         required: false
         default: false
         type: boolean
@@ -522,36 +522,46 @@ jobs:
           PROVISION_PLATFORM_URL="$PLATFORM_PUBLIC_URL"
           if [ "$USE_PLATFORM_CANDIDATE" = "true" ]; then
             candidate_runs="$(gh api --method GET \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-platform.yml/runs" \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/platform-cloud-run.yml/runs" \
               -f head_sha="$HEAD_SHA" -f event=workflow_dispatch -f status=success -f per_page=20)"
             if ! candidate_run_id="$(jq -er --arg head "$HEAD_SHA" '
               [.workflow_runs[]
                | select(.head_sha == $head and .event == "workflow_dispatch" and .conclusion == "success")]
               | sort_by(.created_at) | last | .id
             ' <<< "$candidate_runs")"; then
-              echo "The exact-head platform candidate attestation is unavailable." >&2
+              echo "The exact-head production control-plane candidate attestation is unavailable." >&2
               exit 1
             fi
             candidate_dir="$(mktemp -d)"
             trap 'rm -rf -- "$candidate_dir"' EXIT
             gh run download "$candidate_run_id" \
               --repo "$GITHUB_REPOSITORY" \
-              --name "platform-candidate-${PR_NUMBER}-${HEAD_SHA}" \
+              --name "platform-production-candidate-${PR_NUMBER}-${HEAD_SHA}" \
               --dir "$candidate_dir"
-            candidate_file="$candidate_dir/platform-candidate.json"
+            candidate_file="$candidate_dir/platform-production-candidate.json"
             if [ ! -f "$candidate_file" ] || [ -L "$candidate_file" ] ||
               [ "$(stat -c %s "$candidate_file")" -gt 4096 ]; then
-              echo "The exact-head platform candidate attestation is invalid." >&2
+              echo "The exact-head production control-plane candidate attestation is invalid." >&2
               exit 1
             fi
+            platform_origin="$(sed -n 's/^PLATFORM_ORIGIN = "\(https:\/\/[a-z0-9-]\+\.a\.run\.app\)"$/\1/p' \
+              packages/edge-router/wrangler.toml)"
+            if [ -z "$platform_origin" ] || [ "$(printf '%s\n' "$platform_origin" | wc -l)" -ne 1 ]; then
+              echo "The pinned production platform origin is unavailable." >&2
+              exit 1
+            fi
+            expected_candidate_origin="https://terminal-pr-${PR_NUMBER}-${HEAD_SHA:0:12}---${platform_origin#https://}"
             candidate_origin="$(jq -er '.candidateOrigin | select(type == "string")' "$candidate_file")"
-            if ! jq -e --arg head "$HEAD_SHA" --argjson pr "$PR_NUMBER" --arg origin "$candidate_origin" '
-              type == "object" and (keys | sort) == ["candidateOrigin", "headSha", "prNumber"]
-              and .headSha == $head and .prNumber == $pr and .candidateOrigin == $origin
-            ' "$candidate_file" >/dev/null ||
-              ! printf '%s' "$candidate_origin" |
-                grep -Eq "^https://pr-${PR_NUMBER}-${HEAD_SHA:0:12}---[a-z0-9-]+-[a-z0-9]{10}-[a-z]{2}\\.a\\.run\\.app$"; then
-              echo "The exact-head platform candidate attestation is invalid." >&2
+            if ! jq -e --arg head "$HEAD_SHA" --argjson pr "$PR_NUMBER" \
+              --arg origin "$candidate_origin" --arg expectedOrigin "$expected_candidate_origin" '
+              type == "object"
+              and (keys | sort) == ["candidateOrigin", "environment", "headSha", "prNumber", "revisionName", "schemaVersion"]
+              and .schemaVersion == 1
+              and .headSha == $head and .prNumber == $pr and .environment == "production"
+              and .candidateOrigin == $origin and .candidateOrigin == $expectedOrigin
+              and (.revisionName | type == "string" and test("^[a-z][a-z0-9-]{0,62}$"))
+            ' "$candidate_file" >/dev/null; then
+              echo "The exact-head production control-plane candidate attestation is invalid." >&2
               exit 1
             fi
             PROVISION_PLATFORM_URL="$candidate_origin"

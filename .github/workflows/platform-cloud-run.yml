@@ -28,6 +28,10 @@ on:
         required: true
         default: false
         type: boolean
+      terminal_acceptance_pr:
+        description: Optional PR number for an exact-head terminal acceptance candidate
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -57,6 +61,8 @@ jobs:
       POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+      PROMOTE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.promote || false }}
+      TERMINAL_ACCEPTANCE_PR: ${{ github.event_name == 'workflow_dispatch' && inputs.terminal_acceptance_pr || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -84,6 +90,20 @@ jobs:
           if [ "${#missing[@]}" -gt 0 ]; then
             printf 'Missing required GitHub environment variable(s): %s\n' "${missing[*]}" >&2
             exit 1
+          fi
+          if [ -n "$TERMINAL_ACCEPTANCE_PR" ]; then
+            if ! printf '%s' "$TERMINAL_ACCEPTANCE_PR" | grep -Eq '^[1-9][0-9]{0,5}$'; then
+              echo "Invalid terminal acceptance PR number." >&2
+              exit 1
+            fi
+            if [ "$DEPLOY_ENVIRONMENT" != production ]; then
+              echo "Terminal acceptance candidates require the production control plane." >&2
+              exit 1
+            fi
+            if [ "$PROMOTE_REQUESTED" = true ]; then
+              echo "Terminal acceptance candidates must remain zero traffic." >&2
+              exit 1
+            fi
           fi
 
       - name: Authenticate to Google Cloud
@@ -345,6 +365,10 @@ jobs:
           service_json=""
           service_url=""
           candidate_bootstrap_url=""
+          candidate_tag="candidate"
+          if [ -n "$TERMINAL_ACCEPTANCE_PR" ]; then
+            candidate_tag="terminal-pr-${TERMINAL_ACCEPTANCE_PR}-${GITHUB_SHA::12}"
+          fi
           if service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
@@ -353,7 +377,7 @@ jobs:
             service_url=$(printf '%s\n' "$service_json" | jq -r '.status.url // empty')
             case "$service_url" in
               https://*.a.run.app)
-                candidate_bootstrap_url="https://candidate---${service_url#https://}"
+                candidate_bootstrap_url="https://${candidate_tag}---${service_url#https://}"
                 ;;
               *)
                 echo "Existing Cloud Run service did not expose a trusted service URL." >&2
@@ -362,13 +386,18 @@ jobs:
             esac
           fi
 
-          traffic_flags=(--tag candidate)
+          if [ "$service_exists" = 0 ] && [ -n "$TERMINAL_ACCEPTANCE_PR" ]; then
+            echo "The production platform service must exist before terminal acceptance." >&2
+            exit 1
+          fi
+
+          traffic_flags=(--tag "$candidate_tag")
           if [ "$service_exists" = "1" ]; then
             traffic_flags+=(--no-traffic)
           fi
 
           min_instances=0
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && [ -z "$TERMINAL_ACCEPTANCE_PR" ]; then
             min_instances=1
           fi
 
@@ -394,15 +423,15 @@ jobs:
             --format=json); then
             exit 1
           fi
-          candidate_url=$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)
-          candidate_revision=$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)
+          candidate_url=$(printf '%s\n' "$deploy_json" | jq -r --arg tag "$candidate_tag" '.status.traffic[]? | select(.tag == $tag) | .url // empty' | head -1)
+          candidate_revision=$(printf '%s\n' "$deploy_json" | jq -r --arg tag "$candidate_tag" '.status.traffic[]? | select(.tag == $tag) | .revisionName // empty' | head -1)
           if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
             service_json=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION" \
               --format=json)
-            candidate_url=$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)
-            candidate_revision=$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)
+            candidate_url=$(printf '%s\n' "$service_json" | jq -r --arg tag "$candidate_tag" '.status.traffic[]? | select(.tag == $tag) | .url // empty' | head -1)
+            candidate_revision=$(printf '%s\n' "$service_json" | jq -r --arg tag "$candidate_tag" '.status.traffic[]? | select(.tag == $tag) | .revisionName // empty' | head -1)
           fi
           if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
             echo "Could not resolve deployed candidate URL/revision; refusing to continue." >&2
@@ -411,6 +440,7 @@ jobs:
           echo "Resolved candidate revision $candidate_revision at $candidate_url"
           echo "CANDIDATE_URL=$candidate_url" >> "$GITHUB_ENV"
           echo "CANDIDATE_REVISION=$candidate_revision" >> "$GITHUB_ENV"
+          echo "CANDIDATE_TAG=$candidate_tag" >> "$GITHUB_ENV"
 
       - name: Smoke candidate revision
         run: |
@@ -490,6 +520,27 @@ jobs:
             exit 1
           fi
           curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url" >/dev/null
+
+      - name: Write terminal acceptance candidate attestation
+        if: env.TERMINAL_ACCEPTANCE_PR != ''
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg headSha "$GITHUB_SHA" \
+            --argjson prNumber "$TERMINAL_ACCEPTANCE_PR" \
+            --arg candidateOrigin "$CANDIDATE_URL" \
+            --arg revisionName "$CANDIDATE_REVISION" \
+            '{schemaVersion: 1, headSha: $headSha, prNumber: $prNumber, environment: "production", candidateOrigin: $candidateOrigin, revisionName: $revisionName}' \
+            > /tmp/platform-production-candidate.json
+
+      - name: Upload terminal acceptance candidate attestation
+        if: env.TERMINAL_ACCEPTANCE_PR != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: platform-production-candidate-${{ env.TERMINAL_ACCEPTANCE_PR }}-${{ github.sha }}
+          path: /tmp/platform-production-candidate.json
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Promote revision
         if: ${{ github.event_name == 'push' || inputs.promote }}
