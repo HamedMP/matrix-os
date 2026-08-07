@@ -433,7 +433,7 @@ describe('terminal runtime spike evidence', () => {
       'install -m 0755 "$RUNNER_TEMP/matrix-sync-agent" distro/customer-vps/host-bin/matrix-sync-agent',
     );
     expect(workflow).toContain(
-      'git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-sync-agent',
+      'git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-gateway distro/customer-vps/host-bin/matrix-sync-agent',
     );
     expect(workflow.indexOf('install -m 0755 "$RUNNER_TEMP/matrix-sync-agent"')).toBeLessThan(
       workflow.indexOf('MATRIX_TERMINAL_RUNTIME_DORMANT=1 ./scripts/build-host-bundle.sh'),
