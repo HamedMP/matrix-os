@@ -133,7 +133,7 @@ r2_exists() {
       ;;
   esac
   case "$output" in
-    *"(404)"*|*"Not Found"*|*"NotFound"*|*"NoSuchKey"*)
+    *"An error occurred (404) when calling the HeadObject operation:"*|*"An error occurred (NoSuchKey) when calling the HeadObject operation:"*|*"An error occurred (NotFound) when calling the HeadObject operation:"*)
       return 44
       ;;
   esac

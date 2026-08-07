@@ -842,5 +842,12 @@ exit 99
       'An error occurred (404) when calling the HeadObject operation: Not Found',
     );
     expect(notFoundResult.status).toBe(44);
+
+    const unrelatedNotFound = runMatrixctlExistsWithFakeAws(
+      1,
+      'configuration endpoint Not Found',
+    );
+    expect(unrelatedNotFound.status).toBe(2);
+    expect(unrelatedNotFound.stderr).toContain('matrixctl: r2 exists failed');
   });
 });
