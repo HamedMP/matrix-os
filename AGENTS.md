@@ -153,34 +153,13 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 
 ## Running
 
-```bash
-bun run test              # unit tests
-bun run test:watch        # Vitest watch mode
-bun run test:integration  # integration tests (needs ANTHROPIC_API_KEY, uses haiku)
-bun run test:coverage     # coverage report
-bun run test:e2e          # end-to-end tests
-bun run build:shell:production  # canonical production shell build (release-parity auth/shell build)
-bun run build:desktop     # Electron desktop production build
+Run scripts with `bun run <script>`; see `package.json` for the full list (`test*`, `dev*`, `docker*`, `build:*`, `typecheck`, `check:patterns`). Non-obvious ones:
 
-bun run dev               # local dev: gateway + proxy + shell
-bun run dev:gateway       # gateway only
-bun run dev:shell         # shell only
-bun run dev:mobile-shell  # browser shell forced into the mobile launcher/runtime
-bun run dev:proxy         # proxy only
-bun run dev:platform      # platform only
-bun run dev:kernel        # kernel package only
-bun run dev:desktop       # Electron desktop shell
-
-bun run docker            # Legacy/local Docker dev only; not production customer runtime
-bun run docker:full       # + proxy, platform, conduit
-bun run docker:all        # + observability stack
-bun run docker:multi      # + alice & bob multi-user
-bun run docker:stop       # stop containers, preserve volumes
-bun run docker:restart    # restart dev container
-bun run docker:logs       # tail dev container logs
-bun run docker:shell      # shell into container as matrixos user
-bun run docker:build      # full rebuild (no cache)
-```
+- `test:integration` needs `ANTHROPIC_API_KEY` and runs on haiku (<$0.10/run).
+- `test:golden-snapshots` is the preferred low-CPU single-worker gate for golden snapshot, host-bundle snapshot workflow, and related customer-VPS provisioning changes.
+- `build:shell:production` is the canonical production shell build (release-parity auth/shell build).
+- `dev:mobile-shell` forces the browser shell into the mobile launcher/runtime.
+- `docker*` is legacy/local dev only -- never the production customer runtime.
 
 **IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
@@ -192,22 +171,15 @@ bun run docker:build      # full rebuild (no cache)
 
 Production customer runtime ships as VPS-native host bundles. R2 stores immutable tarball bytes, platform Postgres stores release metadata and channel pointers, and each VPS keeps the installed release at `/opt/matrix/release.json`.
 
+Full runbook (channels, build/publish/deploy, verification, R2 cleanup, PostHog bootstrap): use the **release-procedure** skill. Desktop app packaging: use the **desktop-release** skill.
+
+These invariants stay here because they bind every release:
+
 - **Package safety**: pnpm is pinned to 10.33.4 and `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` (7 days). Keep `pnpm install --frozen-lockfile` in CI/release paths; do not bypass the lockfile or downgrade pnpm below 10.16.
-- **Bundle object store split**: host-bundle publish/download flows now prefer dedicated `R2_BUNDLES_*` / `S3_BUNDLES_*` settings when present and fall back to the existing `R2_*` / `S3_*` sync store otherwise. Keep sync/user objects on the primary store; use `R2_BUNDLES_ENDPOINT` or `R2_ENDPOINT` for jurisdictional bundle buckets instead of repointing the sync bucket.
-- **Main channel**: pushes to `main` run `.github/workflows/host-bundle-release.yml`, build a host bundle, register it in platform DB, and promote `dev` by default.
-- **Tags**: `v*` tags build immutable release versions and promote `canary` by default. Promote `stable` only after live verification.
-- **Manual release**: workflow dispatch can choose `dev`, `canary`, `beta`, or `stable`, plus severity/changelog. Security severity may auto-deploy.
-- **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell bundle. `NEXT_PUBLIC_POSTHOG_API_HOST` should stay the relative `/relay` same-origin proxy for client traffic; use `POSTHOG_HOST=https://eu.posthog.com` as the private API host for source-map uploads or PostHog API scripts.
-- **PostHog alerts bootstrap**: `bun run observability:posthog-alerts` idempotently provisions the "Matrix OS Errors" dashboard plus the baseline exception/provisioning/billing/onboarding insights. Requires `POSTHOG_PERSONAL_API_KEY` and `POSTHOG_PROJECT_ID`; optional `POSTHOG_API_HOST` defaults to `https://eu.posthog.com`. Issue/spike alerts are still configured manually in the PostHog UI because there is no stable public API for them.
-- **Incremental bundle metadata ships with every host bundle**: `./scripts/build-host-bundle.sh` now emits `dist/host-bundle/incremental-manifest.json` plus `dist/host-bundle/objects/sha256/*`, and `./scripts/publish-release.sh` / platform release registration must publish them alongside the full tarball. Platform serves `/system-bundles/<version>/incremental-manifest.json` and `/system-bundles/objects/sha256/<sha256>`, but `requiresFullBundle` remains `true` until the VPS-side delta installer is explicitly enabled.
+- **Desktop canary is a recreated mutable release, not an append-only asset bucket**: each successful canary run must preserve the rolling `desktop-canary` tag, delete only the previous GitHub release object after artifacts/manifest/release notes are ready, then publish a fresh prerelease. Do not let timestamped canary assets accumulate across runs.
+- **Golden snapshots are a separate fail-closed acceleration path**: eligible `main`, `v*` tag, and manual customer-channel publications enqueue an idempotent build after publish via `bun run release:enqueue-golden-snapshot -- --version <version>` / `scripts/enqueue-golden-snapshot.mjs`, but enqueue/build failure must not block host-bundle publication or the unchanged existing-fleet deploy job.
+- **Snapshot auth and rollout stay split**: release automation uses `PLATFORM_SECRET` only for immutable build enqueue. Status, retry, revoke, inventory, and cleanup controls require `GOLDEN_SNAPSHOT_OPERATOR_SECRET`, and `GOLDEN_SNAPSHOT_BUILDS_ENABLED` must stay separate from `GOLDEN_SNAPSHOTS_ENABLED` so selection stays off until the disposable-spike and rollout gates pass.
 - **User data invariant**: updates may replace `/opt/matrix/app` only. Never overwrite owner data under `$MATRIX_HOME` (`/home/matrix/home`), especially `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, identity/profile/session/state files, logs, memory, or conversations. Template sync may add/upgrade OS-owned files, but protected user paths must be skipped. Exception: the four OS-bundled wallpapers (`xp-bliss.jpg`, `win11-bloom.jpg`, `macos-light.svg`, `moraine-lake.jpg`) under `system/wallpapers/` are template-managed so OS designs reach existing VPS homes; every other file there (user uploads, and the superseded `xp-bliss.svg`/`win11-bloom.svg` files older homes received) stays protected.
-- **Local emergency build**: `set -a; source .env; set +a; HOST_BUNDLE_VERSION=<version> HOST_BUNDLE_CHANNEL=<channel> MATRIX_BUILD_SHA=$(git rev-parse HEAD) MATRIX_BUILD_REF=main ./scripts/build-host-bundle.sh`.
-- **Publish**: `./scripts/publish-release.sh <version> --channel <channel>` uploads `system-bundles/<version>/matrix-host-bundle.tar.gz` and `.sha256`, then registers release metadata through `/system-bundles/releases`.
-- **Deploy**: trigger existing VPSes through platform with `POST /vps/deploy {"channel":"dev"}` or `{"version":"<version>"}`. Do not SSH-copy bundles except for break-glass recovery.
-- **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
-- **Feature test VMs**: for risky shell/onboarding/platform changes, prefer a disposable test VPS over the user's primary computer. Use the same Clerk login, switch via `https://app.matrix-os.com/runtime` or explicit `https://app.matrix-os.com/vm/<handle>`, deploy exact bundle versions, and ask the user whether to delete the test VM after validation to avoid extra Hetzner charges.
-- **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
-- **Optional developer tools provision out of band**: the post-payment Default installs step stores selected `codex`, `claude-code`, `opencode`, and `pi` tool IDs for provisioning, then first boot runs `matrix-developer-tools.service` to install them asynchronously. Failures should show up under `/var/lib/matrix-developer-tools/` (`*.log`, `failed-tools`, `installed-tools`) and retry via systemd; they must not block core Matrix readiness.
 
 ## Customer Support Notes
 
@@ -215,16 +187,6 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Machine resizing exists as a platform-internal support primitive**: `POST /vps/:machineId/resize` is protected by platform auth and is intended for support or platform automation, not direct customer UI use. It performs an in-place Hetzner `change_type` flow with graceful shutdown first, `upgrade_disk: false`, guarded `running -> resizing -> running` state, and stale resize reconciliation.
 - **Resize compatibility is constrained by Hetzner disk rules**: local root disks cannot shrink. Treat same-or-larger local disk x86 moves as eligible; reject smaller-disk downgrades before shutting down the customer VPS. For current plan shapes, `cpx22 -> cpx32/cpx52` and `cpx32 -> cpx52` are valid, while `cpx32 -> cpx22` and `cpx52 -> cpx32/cpx22` are not safe unless a separate migration/storage architecture proves the root data fits.
 - **Customer-facing plan changes are separate**: billing/Stripe may change a user's plan entitlement, but existing VPS resizing should remain support/platform-controlled until preflight compatibility checks and UX copy explicitly handle unsupported downgrades.
-
-## Desktop Release Workflow
-
-- **Desktop OTA channels include `dev`**: treat `dev`, `canary`, `beta`, and `stable` as first-class update channels. Unsigned prerelease packaging must omit empty mac signing env vars rather than exporting blank values.
-- **mac artifact verification must be exact-name, not glob-based**: compute the version/artifact base once, then verify `Matrix-OS-${version}-mac-${arch}.{dmg,zip}` plus both `.blockmap` files and fail on unexpected extra mac artifacts.
-- **mac CI must smoke-test the produced DMG**: mount the generated DMG with `hdiutil`, copy `Matrix OS.app` out with `ditto`, and verify the executable before upload/publish.
-- **Prerelease mac manifests may be arch-only**: when a channel build does not emit `<channel>-mac.yml`, merge `arm64-mac.yml` + `x64-mac.yml` as the fallback manifest pair instead of failing the publish.
-- **`desktop/electron-builder.yml` should not hardcode mac `arch:` arrays**: the workflow matrix `--arch` flag is the source of truth for which architecture each mac job builds.
-- **Packaged desktop CSP must be main-process injected and gateway-scoped**: do not reintroduce a static renderer HTML CSP meta tag or broad `connect-src https: wss:` allowances. The packaged renderer policy must be injected from Electron with the resolved Matrix gateway origin.
-- **Desktop auth callback is `matrixos://auth?status=approved`**: keep `matrix-os://device-auth` only as a legacy compatibility path, register both URL schemes, keep deep-link handling in the main process, and preserve cold-start deep-link handoff until a window exists. Only trusted native desktop clients (`matrix-os-desktop`, `matrix-os-macos`) may receive signed native redirects, and the legacy scheme must stay narrowed to `matrix-os://device-auth` with no query params. The deep link is only a focus signal; auth still completes via polling.
 
 ## Shell Gotchas
 
@@ -255,6 +217,7 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Customer VPS shell/gateway changes need host-bundle rebuild + publish**: per-user VPSes do not use the Docker user image. Run `set -a; source .env; set +a; ./scripts/build-host-bundle.sh`, publish `dist/host-bundle/matrix-host-bundle.tar.gz` and `.sha256` to `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh existing VPSes in place and restart `matrix-gateway.service`, `matrix-shell.service`, and `matrix-code.service`.
 - **Hermes state is owner-local under `MATRIX_HOME`**: customer VPSes now canonicalize Hermes data at `/home/matrix/home/.hermes` via `HERMES_HOME`; legacy `/home/matrix/.hermes` is only a compatibility symlink. When changing `distro/customer-vps/host-bin/matrix-owner-env` or service launchers, preserve `matrix_reconcile_owner_home`, pass the reconcile owner/group through migrations, and guard new owner-env helpers with `declare -F` so older bundles degrade gracefully instead of crashing.
 - **Pipedream stays platform-owned**: never put `PIPEDREAM_*` secrets on customer VPSes. VPS gateways need `PLATFORM_INTERNAL_URL` plus their existing `UPGRADE_TOKEN`/`MATRIX_HANDLE` so `/api/integrations*` proxies to platform-owned routes.
+- **Customer-VPS service homes may be read-only by design**: host units can run with `ProtectHome=read-only`. Do not assume `~/.npm` or other owner-home cache paths are writable during service startup or self-repair; redirect reproducible scratch/cache data to the unit's private temp/runtime directory instead of weakening home protections.
 - **Never publish a shell bundle with the example Clerk key**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is baked at host-bundle build time. If production logs show `clerk.example.com`, the served shell bundle was built with the placeholder key and must be rebuilt and redeployed.
 - **Canvas panning must be target-gated**: wheel/pointer pan handlers should only accept events from the canvas surface/zoom overlay, not bubbled events from selected app windows. Add regression tests for scrolling inside an active app window.
 
@@ -295,6 +258,8 @@ react-doctor scans a **project directory that has a React `package.json`** (e.g.
 minimal React `package.json` and running react-doctor there. See
 https://github.com/millionco/react-doctor. CI runs this on the project dirs of changed React files.
 
+**Local review before Greptile (mandatory)**: after local validation gates and before any paid Greptile request, the agent doing the work must review the diff itself (Claude `/code-review`, the Codex equivalent, or the three repository review passes applied directly). Greptile is a current-head confirmation gate, not the first reviewer. Verify reviewer findings against the actual code and tool behavior before acting on them.
+
 **Production shell build gate**: when a PR changes `shell/`, shell-facing `packages/platform/`, or CI wiring for the auth shell, run `bun run build:shell:production`. This is the canonical production build command, matches release tooling, and `CI Results` now blocks on the `Shell Production Build` job.
 
 **Focused test reruns**: if `bun run test -- <path>` or `pnpm run test -- <path>` ignores the file filter and fans out into a broad repo run, fall back to `pnpm exec vitest run <path>` (or `pnpm exec vitest <path>` for watch mode) after the usual prerequisite builds are up to date.
@@ -313,6 +278,10 @@ evidence still blocks review-readiness. Do not rely on verbal descriptions for v
 a screenshot is practical.
 
 **Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.
+
+**Dormant terminal-runtime gate**: `MATRIX_TERMINAL_RUNTIME_DORMANT=1` is preview-only and must stay off by default. If a PR touches the dormant terminal-runtime generation or activation path, require exact-head S1/S2 proof plus `.github/workflows/terminal-runtime-production-acceptance.yml` (label `terminal-production-acceptance`) or `scripts/spikes/terminal-runtime/production-acceptance.sh` against the matching `pr-<number>` disposable preview before treating activation or rollout as review-ready.
+
+**Preview feature-proof gate**: for runtime/provider activation, systemd hardening, or other deploy-only host changes, a green preview deploy, inventory check, or generic health check is not enough. Keep the PR draft until the exact `pr-<number>` preview passes the feature-specific live acceptance path; when host evidence is needed, use `./scripts/preview-logs.sh --handle pr-<number>` and enroll log shipping first with `./scripts/enable-vps-logship.sh pr-<number> preview` if required. If the disposable preview is stale, still carries a previous head, or updater convergence stalls, recycle only that preview through the supported close/reopen PR path before collecting fresh proof.
 
 ### Three Review Passes
 
@@ -385,8 +354,8 @@ blocker, not a green light):
 ### Hard Rules (never violate)
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
-- **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
-- **Do not spam Greptile re-review comments** -- Greptile is configured to review every new commit. If the score/footer is stale after a push, it means the review is still running; wait and poll instead of repeatedly mentioning it.
+- **No PR merge until Greptile reports 5/5 on the current head** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
+- **Do not assume Greptile reruns on every push** -- non-draft PR open may get one automatic review of the initial head, but later commits require an explicit `@greptileai` request. Treat each run as paid, review locally first, and request at most once per head SHA.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
@@ -419,6 +388,7 @@ Read these on demand, not every session:
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
+- `docs/dev/golden-vps-snapshots.md` -- when working on golden snapshot build/selection, release enqueue, sanitation, or recovery fallback behavior
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS
 - `docs/dev/preview-environments.md` -- when a change needs to be seen running: per-PR preview VPSes (`preview-vps` label), platform preview revisions, HMR staging slots, and centralized log queries via `scripts/preview-logs.sh`
 - `docs/dev/releases.md` -- when tagging a release or managing versions
@@ -433,33 +403,6 @@ Read these on demand, not every session:
 - **NEVER call TeamDelete** -- team files are cheap, lost work is expensive
 - Sub-agents spawned for parallel exploration share the parent's worktree; they must commit before exiting.
 
-## Active Technologies
-- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
-- User-owned Postgres workspace tables for canonical canvas documents and references; filesystem export/backup integration under `~/system/` or project export bundles where required by recovery flows (071-tldraw-workspace-canvas)
-- TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, node-pty, zod/v4, citty, ws, Node child_process/fs/promises/path/crypto APIs, zellij 0.44.1 pinned in Docker images (068-zellij-cli)
-- Files under the owner-controlled Matrix home (`~/system/shell-sessions.json`, `~/system/layouts/*.kdl`) plus local CLI files under `~/.matrixos/profiles.json` and `~/.matrixos/profiles/<name>/` (068-zellij-cli)
-- TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, Zod 4 via `zod/v4`, existing `jose` JWT validation, Vitest (072-request-principal)
-- No new persistence; request principal is request-scoped. Existing consumers continue to use owner-controlled PostgreSQL/Kysely and sync R2/object storage through existing repositories. (072-request-principal)
-- TypeScript strict, ES modules, Node.js 24+ for gateway; React 19, React Native 0.83, Expo Router 55 for mobile shell + Hono gateway, Zod 4 via `zod/v4`, existing terminal stack (`node-pty`, `@xterm/xterm` on web), Expo Router, React Native WebView, Clerk Expo, AsyncStorage/SecureStore (075-mobile-shell)
-- Owner-controlled Matrix home files for shell/terminal session metadata (`~/system/terminal-sessions.json`, terminal layout files) plus existing owner Postgres where current workspace/app data already lives. No new embedded database or ORM. (075-mobile-shell)
-- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono gateway routes, Zod 4 via `zod/v4`, Kysely/Postgres, Matrix homeserver appservice support, self-hosted Telegram and WhatsApp bridge runtimes, existing Matrix OS shell/app bridge, Hermes/Claude Agent SDK V1 `query()` path (077-matrix-messaging-bridge)
-- Owner-local Postgres on the customer VPS for Matrix OS permission/audit data; separate homeserver database; separate Telegram bridge database; separate WhatsApp bridge database; owner-local media/cache paths covered by backup/restore policy (077-matrix-messaging-bridge)
-- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 shell/platform, Hono gateway + Hono, Zod 4 via `zod/v4`, Kysely/Postgres, existing onboarding WebSocket, existing Symphony routes, existing integrations registry/Pipedream proxy, existing terminal stack, lucide-react, Playwright/Vitest, always-on Hermes with Claude/Codex augmentation, Finna-inspired admin/control surface patterns (082-paid-beta-readiness)
-- Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
-- TypeScript 5.9+, strict mode, ES modules; runtime target Node.js 24+ + Existing sync-client CLI, gateway shell routes, Hono, Zod 4, native Fetch/FormData/Blob, existing `ws` attach transport (106-terminal-rich-paste)
-- Owner-controlled filesystem under Matrix home for paste assets; no new database persistence (106-terminal-rich-paste)
-- TypeScript 5.5+ strict ES modules on Node.js 24+; POSIX shell/cloud-init for host sanitation and activation; GitHub Actions YAML + Hono, Kysely, PostgreSQL, Zod 4 via `zod/v4`, native `fetch`, Vitest, existing host-bundle and customer-VPS services, Hetzner Cloud API v1 (109-golden-vps-snapshots)
-- Platform PostgreSQL via Kysely for authoritative lifecycle, jobs, leases, evidence, and exact-resource cleanup; Hetzner snapshot storage for disk images; R2 remains the immutable host-bundle object store (109-golden-vps-snapshots)
-
-- TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
-- Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
-
-## Recent Changes
-
-- 106-terminal-rich-paste: Planned attached CLI rich paste for local image paths and observable clipboard image pastes, with owner-scoped gateway paste assets and safe prompt rewriting.
-- 077-matrix-messaging-bridge: Planned owner-controlled Matrix messaging bridge for Telegram and WhatsApp first, with homeserver/appservice spike gates, per-room Hermes permissions, and separate owner-local bridge/homeserver/permission storage.
-- 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
-
 ## Agent skills
 
 ### Canonical Matrix skill pack
@@ -471,21 +414,15 @@ Read these on demand, not every session:
 
 ### Matrix CLI agent bootstrap
 
-- Preferred developer bootstrap commands are:
+Commands, readiness gates, and session conventions live in the **matrix-cloud-run** skill. Two rules stay here because they are security boundaries, not procedure:
 
-```bash
-matrix login
-matrix run -it -- claude
-matrix run -it -- codex
-matrix run -it --session setup -- gh auth login
-matrix shell connect -c setup
-```
-
-- `matrix run -it` starts a zellij-backed Matrix shell session and attaches the local terminal over `/ws/terminal`; use named sessions such as `setup` when multiple humans/agents may need to reattach the same VPS context.
-- `matrix login` may stay open while the browser completes signup, trial checkout, and provisioning; approve the CLI in that same browser tab once the instance is ready. For local dev, `matrix login --profile local` or `matrix login --dev` skips the device flow and writes the local dev stub token.
 - Keep auth flows separate: use browser/device approval for `matrix login`, then run `gh auth login` inside the Matrix terminal session for GitHub browser auth. Do not ask users to upload local private SSH keys into Matrix; Matrix-managed SSH keys live on the VPS.
-- Prefer `matrix shell connect` over `matrix shell attach`. `matrix shell connect -c <session>` is the create-if-missing path.
-- If `matrix run -it`, `matrix shell new`, or `matrix shell attach` fails with `zellij_failed`, run `matrix shell ls` and connect to an existing session instead of retrying the same create path.
+- Every remote command gets its own unique purpose-specific named session. Never share one generic setup session across unrelated work.
+
+### Matrix handoff
+
+- Use the repo `matrix-handoff` workflow (`.agents/skills/matrix-handoff/` and Claude `/matrix-handoff`) when moving an active local task onto Matrix. Always preview first, then rerun the identical command with the exact printed `--approve TOKEN`; any scope change requires a new preview.
+- Handoffs must stay secret-free: exclude `.env`, auth stores, private keys, `.git`, dependencies, and generated output; use `--no-history` when transcript discovery is ambiguous or the conversation may contain sensitive content. The workflow always creates a new unique destination instead of overwriting an existing Matrix project.
 
 ### Stack review monitor
 
@@ -506,5 +443,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/109-golden-vps-snapshots/plan.md`.
+Current Spec Kit plan: `specs/106-terminal-rich-paste/plan.md`.
 <!-- SPECKIT END -->
