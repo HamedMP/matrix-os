@@ -689,11 +689,69 @@ runcmd:
     systemctl enable matrix-update-runtime.service
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-update-runtime.service
+    gateway_unit_failure_stage() {
+      gateway_exec_status="$(systemctl show matrix-gateway.service --property=ExecMainStatus --value 2>/dev/null || true)"
+      gateway_result="$(systemctl show matrix-gateway.service --property=Result --value 2>/dev/null || true)"
+      case "$gateway_exec_status" in
+        200) printf 'gateway_unit_failed_chdir'; return ;;
+        203) printf 'gateway_unit_failed_exec'; return ;;
+        216) printf 'gateway_unit_failed_group'; return ;;
+        217) printf 'gateway_unit_failed_user'; return ;;
+        [1-9]|[1-9][0-9]|1[0-9][0-9]) printf 'gateway_unit_failed_exit'; return ;;
+      esac
+      case "$gateway_result" in
+        timeout) printf 'gateway_unit_failed_timeout' ;;
+        resources) printf 'gateway_unit_failed_resource' ;;
+        signal|core-dump) printf 'gateway_unit_failed_signal' ;;
+        exit-code) printf 'gateway_unit_failed_exit' ;;
+        *) printf 'gateway_unit_failed_other' ;;
+      esac
+    }
+    fail_gateway_unit_start() {
+      report_bootstrap_stage "$(gateway_unit_failure_stage)"
+      systemctl stop matrix-gateway.service >/dev/null 2>&1 || true
+      exit 1
+    }
     report_bootstrap_stage restore_starting
     systemctl start matrix-restore.service
     report_bootstrap_stage restore_ready
     report_bootstrap_stage gateway_starting
-    systemctl start matrix-gateway.service
+    if ! runuser -u matrix -- test -x /opt/matrix/bin/matrix-gateway ||
+      ! runuser -u matrix -- test -x /opt/matrix/runtime/node/bin/node; then
+      report_bootstrap_stage gateway_unit_failed_exec
+      exit 1
+    fi
+    if ! runuser -u matrix -- test -x /opt/matrix ||
+      ! runuser -u matrix -- test -x /opt/matrix/app; then
+      report_bootstrap_stage gateway_unit_failed_chdir
+      exit 1
+    fi
+    for gateway_env_file in /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env /opt/matrix/bin/matrix-owner-env; do
+      if ! runuser -u matrix -- test -r "$gateway_env_file"; then
+        report_bootstrap_stage gateway_unit_failed_environment
+        exit 1
+      fi
+    done
+    report_bootstrap_stage gateway_preflight_ready
+    systemctl start --no-block matrix-gateway.service || fail_gateway_unit_start
+    gateway_unit_ready=false
+    gateway_active_samples=0
+    for _ in $(seq 1 30); do
+      if systemctl is-failed --quiet matrix-gateway.service; then
+        fail_gateway_unit_start
+      fi
+      if systemctl is-active --quiet matrix-gateway.service; then
+        gateway_active_samples=$((gateway_active_samples + 1))
+        if [ "$gateway_active_samples" -ge 2 ]; then
+          gateway_unit_ready=true
+          break
+        fi
+      else
+        gateway_active_samples=0
+      fi
+      sleep 1
+    done
+    [ "$gateway_unit_ready" = true ] || fail_gateway_unit_start
     report_bootstrap_stage gateway_unit_started
     systemctl start matrix-shell.service matrix-symphony.service
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2

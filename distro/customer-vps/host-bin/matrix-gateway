@@ -2,11 +2,31 @@
 set -euo pipefail
 
 source /opt/matrix/env/host.env
-if [ -f /opt/matrix/env/postgres.env ]; then
-  source /opt/matrix/env/postgres.env
-fi
 if [ -f /opt/matrix/env/registration.env ]; then
   source /opt/matrix/env/registration.env
+fi
+REGISTER_FLAG="/opt/matrix/register-complete"
+
+report_bootstrap_stage() {
+  local stage="$1" payload
+  [ ! -f "$REGISTER_FLAG" ] || return 0
+  [ -n "${MATRIX_REGISTRATION_TOKEN:-}" ] || return 0
+  case "${MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL:-}" in
+    https://*/vps/bootstrap-progress) ;;
+    *) return 0 ;;
+  esac
+  payload="$(printf '{"machineId":"%s","stage":"%s"}' "$MATRIX_MACHINE_ID" "$stage")"
+  if ! printf 'header = "authorization: Bearer %s"\n' "$MATRIX_REGISTRATION_TOKEN" |
+    curl --config - --fail --silent --connect-timeout 5 --max-time 10 \
+      -X POST -H 'content-type: application/json' --data-binary "$payload" \
+      "$MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL" >/dev/null; then
+    echo "matrix-gateway: bootstrap progress callback unavailable" >&2
+  fi
+}
+report_bootstrap_stage gateway_wrapper_started
+
+if [ -f /opt/matrix/env/postgres.env ]; then
+  source /opt/matrix/env/postgres.env
 fi
 if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
@@ -15,7 +35,6 @@ fi
 NODE_BIN="${MATRIX_NODE_BIN:-/opt/matrix/runtime/node/bin/node}"
 APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 GATEWAY_PORT="${PORT:-4000}"
-REGISTER_FLAG="/opt/matrix/register-complete"
 
 export NODE_ENV="${NODE_ENV:-production}"
 export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
@@ -43,24 +62,6 @@ if declare -F matrix_prepend_path_once >/dev/null 2>&1; then
 else
   export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 fi
-
-report_bootstrap_stage() {
-  local stage="$1" payload
-  [ ! -f "$REGISTER_FLAG" ] || return 0
-  [ -n "${MATRIX_REGISTRATION_TOKEN:-}" ] || return 0
-  case "${MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL:-}" in
-    https://*/vps/bootstrap-progress) ;;
-    *) return 0 ;;
-  esac
-  payload="$(printf '{"machineId":"%s","stage":"%s"}' "$MATRIX_MACHINE_ID" "$stage")"
-  if ! printf 'header = "authorization: Bearer %s"\n' "$MATRIX_REGISTRATION_TOKEN" |
-    curl --config - --fail --silent --connect-timeout 5 --max-time 10 \
-      -X POST -H 'content-type: application/json' --data-binary "$payload" \
-      "$MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL" >/dev/null; then
-    echo "matrix-gateway: bootstrap progress callback unavailable" >&2
-  fi
-}
-report_bootstrap_stage gateway_wrapper_started
 
 sync_bundled_home_assets() {
   local script_dir sync_script

@@ -56,7 +56,7 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(cloudInit).toContain("systemctl enable matrix-update-runtime.service");
     expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service");
     expect(cloudInit).toContain("systemctl start matrix-restore.service");
-    expect(cloudInit).toContain("systemctl start matrix-gateway.service");
+    expect(cloudInit).toContain("systemctl start --no-block matrix-gateway.service");
     expect(cloudInit).toContain("systemctl start matrix-shell.service matrix-symphony.service");
     expect(cloudInit).toContain("systemctl start --no-block matrix-code-server.service");
     expect(cloudInit).toContain("systemctl start --no-block matrix-code.service");

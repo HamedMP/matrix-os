@@ -1214,7 +1214,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       'systemctl start matrix-restore.service',
       'report_bootstrap_stage restore_ready',
       'report_bootstrap_stage gateway_starting',
-      'systemctl start matrix-gateway.service',
+      'report_bootstrap_stage gateway_preflight_ready',
+      'systemctl start --no-block matrix-gateway.service',
       'report_bootstrap_stage gateway_unit_started',
       'systemctl start matrix-shell.service matrix-symphony.service',
     ];
@@ -1227,6 +1228,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service',
     );
+    expect(cloudInit).toContain('200) printf \'gateway_unit_failed_chdir\'');
+    expect(cloudInit).toContain('203) printf \'gateway_unit_failed_exec\'');
+    expect(cloudInit).toContain('216) printf \'gateway_unit_failed_group\'');
+    expect(cloudInit).toContain('217) printf \'gateway_unit_failed_user\'');
+    expect(cloudInit).toContain("timeout) printf 'gateway_unit_failed_timeout'");
+    expect(cloudInit).toContain("resources) printf 'gateway_unit_failed_resource'");
+    expect(cloudInit).toContain("signal|core-dump) printf 'gateway_unit_failed_signal'");
+    expect(cloudInit).toContain("exit-code) printf 'gateway_unit_failed_exit'");
+    expect(cloudInit).toContain("*) printf 'gateway_unit_failed_other'");
   });
 
   it('publishes bounded gateway registration phases from the exact preview bootstrap', () => {
@@ -1249,6 +1259,12 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(gateway).toContain('report_bootstrap_stage gateway_launch_ready');
     expect(gateway).toContain('report_bootstrap_stage gateway_healthy');
     expect(gateway).toContain('report_bootstrap_stage registration_ready');
+    expect(gateway.indexOf('report_bootstrap_stage gateway_wrapper_started')).toBeLessThan(
+      gateway.indexOf('source /opt/matrix/env/postgres.env'),
+    );
+    expect(gateway.indexOf('report_bootstrap_stage gateway_wrapper_started')).toBeLessThan(
+      gateway.indexOf('source /opt/matrix/bin/matrix-owner-env'),
+    );
     expect(gateway).toContain('fetch_metadata_value()');
     expect(gateway).toContain('is_public_ipv4()');
     expect(gateway).toContain('gateway_health_ready=true');
