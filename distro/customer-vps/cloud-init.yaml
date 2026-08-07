@@ -593,7 +593,7 @@ runcmd:
     fi
     install -d -o root -g root -m 0755 /home/matrixos
     ln -sfn /home/matrix/home /home/matrixos/home
-    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
+    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env /opt/matrix/env/r2.env
 
     . /opt/matrix/env/host.env
     [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }

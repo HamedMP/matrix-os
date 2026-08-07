@@ -1599,6 +1599,19 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(launcher).not.toContain('system/wallpapers');
   });
 
+  it('makes R2 credentials readable by the matrix-owned restore gate', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(
+      join(root, 'distro/customer-vps/cloud-init.yaml'),
+      'utf8',
+    );
+    const envOwnership = cloudInit
+      .split('\n')
+      .find((line) => line.includes('chown root:matrix /opt/matrix/postgres-compose.yml'));
+
+    expect(envOwnership).toContain('/opt/matrix/env/r2.env');
+  });
+
   it('restore script resolves matrixctl from the installed host bin directory', () => {
     const root = process.cwd();
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
