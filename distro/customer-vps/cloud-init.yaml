@@ -689,8 +689,13 @@ runcmd:
     systemctl enable matrix-update-runtime.service
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-update-runtime.service
+    report_bootstrap_stage restore_starting
+    systemctl start matrix-restore.service
+    report_bootstrap_stage restore_ready
     report_bootstrap_stage gateway_starting
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service
+    systemctl start matrix-gateway.service
+    report_bootstrap_stage gateway_unit_started
+    systemctl start matrix-shell.service matrix-symphony.service
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2
     systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2
