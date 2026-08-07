@@ -117,13 +117,16 @@ describe('platform/customer-vps', () => {
 
   it('accepts only a trusted tagged Cloud Run origin for candidate bootstrap progress', () => {
     expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBe('https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app');
+    expect(loadCustomerVpsConfig({
       PLATFORM_CANDIDATE_URL: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
     }).platformCandidateUrl).toBe('https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app');
     expect(loadCustomerVpsConfig({
-      PLATFORM_CANDIDATE_URL: 'https://candidate---api.matrix-os.com',
+      PLATFORM_CANDIDATE_URL: 'https://pr-1136---matrix-platform-jqxkjdhtkq-ey.a.run.app',
     }).platformCandidateUrl).toBeUndefined();
     expect(loadCustomerVpsConfig({
-      PLATFORM_CANDIDATE_URL: 'http://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      PLATFORM_CANDIDATE_URL: 'http://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
     }).platformCandidateUrl).toBeUndefined();
   });
 
