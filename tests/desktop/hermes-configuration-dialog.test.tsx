@@ -85,6 +85,11 @@ describe("Desktop Hermes configuration dialog", () => {
 
     expect(screen.getByText("Loading Hermes configuration…")).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "Configure Hermes" })).toBeTruthy();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.style.top).toBe("50%");
+    expect(dialog.style.transform).toBe("translate(-50%, -50%)");
+    expect(dialog.style.maxHeight).toBe("calc(100vh - 32px)");
+    expect(dialog.className).not.toContain("-translate-x-1/2");
     expect(screen.getByText("Version 0.20.0")).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Settings" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Credentials" })).toBeTruthy();

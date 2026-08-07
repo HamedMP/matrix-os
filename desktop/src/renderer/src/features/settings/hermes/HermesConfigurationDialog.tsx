@@ -192,7 +192,7 @@ export function HermesConfigurationDialog({
   };
 
   return (
-    <Dialog open={open} onClose={requestClose} width={980}>
+    <Dialog open={open} onClose={requestClose} width={980} placement="center">
       <div className="relative flex h-[min(720px,82vh)] flex-col overflow-hidden">
         <header className="flex items-start justify-between border-b px-5 py-4" style={{ borderColor: "var(--border-subtle)" }}>
           <div className="flex items-start gap-3">
