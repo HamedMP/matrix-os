@@ -36,6 +36,11 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain('superseded_tags="$(jq -r --arg current "$preview_tag"');
     expect(workflow).toContain('--remove-tags "$superseded_tags" --quiet');
     expect(workflow).toContain('echo "PREVIEW_TAG=$preview_tag" >> "$GITHUB_ENV"');
+    expect(workflow).toContain('name: Write exact candidate attestation');
+    expect(workflow).toContain('--arg headSha "${{ github.event.pull_request.head.sha || github.sha }}"');
+    expect(workflow).toContain('--arg candidateOrigin "$PREVIEW_API_ORIGIN"');
+    expect(workflow).toContain('path: /tmp/platform-candidate.json');
+    expect(workflow).toContain('name: platform-candidate-${{ env.PR_NUMBER }}-${{ github.event.pull_request.head.sha || github.sha }}');
     expect(workflow).toContain('--arg prefix "pr-${PR_NUMBER}-"');
     expect(workflow).toContain('--remove-tags "$tags" --quiet');
 

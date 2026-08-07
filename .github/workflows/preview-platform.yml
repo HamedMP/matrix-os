@@ -207,6 +207,26 @@ jobs:
           echo "PREVIEW_API_ORIGIN=$PREVIEW_API_ORIGIN" >> "$GITHUB_ENV"
           echo "PREVIEW_TAG=$preview_tag" >> "$GITHUB_ENV"
 
+      - name: Write exact candidate attestation
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg headSha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --argjson prNumber "$PR_NUMBER" \
+            --arg candidateOrigin "$PREVIEW_API_ORIGIN" \
+            '{headSha: $headSha, prNumber: $prNumber, candidateOrigin: $candidateOrigin}' \
+            > /tmp/platform-candidate.json
+
+      - name: Upload exact candidate attestation
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: platform-candidate-${{ env.PR_NUMBER }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/platform-candidate.json
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Comment preview URL on PR
         if: steps.config.outputs.configured == 'true' && github.event_name == 'pull_request'
         env:

@@ -44,6 +44,7 @@ on:
         type: boolean
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
@@ -363,6 +364,7 @@ jobs:
       ACTIVATION_GENERATION_TARGET: ${{ needs.build.outputs.activation_generation_target }}
       HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
       USE_PLATFORM_CANDIDATE: ${{ needs.gate.outputs.use_platform_candidate }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
         if: needs.gate.outputs.action == 'deploy'
@@ -519,14 +521,40 @@ jobs:
           # allowlist on already-running previews.
           PROVISION_PLATFORM_URL="$PLATFORM_PUBLIC_URL"
           if [ "$USE_PLATFORM_CANDIDATE" = "true" ]; then
-            platform_origin="$(sed -n 's/^PLATFORM_ORIGIN = "\(https:\/\/[a-z0-9-]\+\.a\.run\.app\)"$/\1/p' \
-              packages/edge-router/wrangler.toml)"
-            if [ -z "$platform_origin" ] || [ "$(printf '%s\n' "$platform_origin" | wc -l)" -ne 1 ]; then
-              echo "The pinned production platform origin is unavailable." >&2
+            candidate_runs="$(gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-platform.yml/runs" \
+              -f head_sha="$HEAD_SHA" -f event=workflow_dispatch -f status=success -f per_page=20)"
+            if ! candidate_run_id="$(jq -er --arg head "$HEAD_SHA" '
+              [.workflow_runs[]
+               | select(.head_sha == $head and .event == "workflow_dispatch" and .conclusion == "success")]
+              | sort_by(.created_at) | last | .id
+            ' <<< "$candidate_runs")"; then
+              echo "The exact-head platform candidate attestation is unavailable." >&2
               exit 1
             fi
-            candidate_tag="pr-${PR_NUMBER}-${HEAD_SHA:0:12}"
-            PROVISION_PLATFORM_URL="https://${candidate_tag}---${platform_origin#https://}"
+            candidate_dir="$(mktemp -d)"
+            trap 'rm -rf -- "$candidate_dir"' EXIT
+            gh run download "$candidate_run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "platform-candidate-${PR_NUMBER}-${HEAD_SHA}" \
+              --dir "$candidate_dir"
+            candidate_file="$candidate_dir/platform-candidate.json"
+            if [ ! -f "$candidate_file" ] || [ -L "$candidate_file" ] ||
+              [ "$(stat -c %s "$candidate_file")" -gt 4096 ]; then
+              echo "The exact-head platform candidate attestation is invalid." >&2
+              exit 1
+            fi
+            candidate_origin="$(jq -er '.candidateOrigin | select(type == "string")' "$candidate_file")"
+            if ! jq -e --arg head "$HEAD_SHA" --argjson pr "$PR_NUMBER" --arg origin "$candidate_origin" '
+              type == "object" and (keys | sort) == ["candidateOrigin", "headSha", "prNumber"]
+              and .headSha == $head and .prNumber == $pr and .candidateOrigin == $origin
+            ' "$candidate_file" >/dev/null ||
+              ! printf '%s' "$candidate_origin" |
+                grep -Eq "^https://pr-${PR_NUMBER}-${HEAD_SHA:0:12}---[a-z0-9-]+-[a-z0-9]{10}-[a-z]{2}\\.a\\.run\\.app$"; then
+              echo "The exact-head platform candidate attestation is invalid." >&2
+              exit 1
+            fi
+            PROVISION_PLATFORM_URL="$candidate_origin"
             curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
               "${PROVISION_PLATFORM_URL}/health" >/dev/null
             echo "Using the zero-traffic platform candidate for preview provisioning."
