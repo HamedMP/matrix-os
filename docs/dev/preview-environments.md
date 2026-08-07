@@ -60,7 +60,9 @@ Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
 3. Provisions VPS `pr-<N>` (runtime slot `pr-<N>`, owned by the
    `PREVIEW_CLERK_USER_ID` Clerk user and shared only with the bounded
    `PREVIEW_CLERK_ACCESS_USER_IDS` allowlist) if absent, then deploys exactly
-   that version to exactly that handle. Shared access applies only to
+   that version to exactly that handle. A newly provisioned disposable preview
+   starts with an empty database instead of restoring an older per-PR snapshot;
+   customer VPS restore behavior is unchanged. Shared access applies only to
    server-classified preview machines; customer and primary runtimes remain
    owner-only.
 4. Comments the URL on the PR: `https://app.matrix-os.com/vm/pr-<N>`.

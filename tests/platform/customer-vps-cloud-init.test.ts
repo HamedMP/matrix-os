@@ -50,6 +50,7 @@ describe('platform/customer-vps-cloud-init', () => {
     clerkUserId: 'user_123',
     handle: 'alice',
     runtimeSlot: 'staging',
+    restoreMode: 'restore',
     developerTools: 'codex claude-code opencode pi',
     imageVersion: 'stable',
     updateChannel: 'stable',
@@ -115,7 +116,7 @@ describe('platform/customer-vps-cloud-init', () => {
     }
   }
 
-  function runRestoreWithFakeMatrixctl(existsStatus: number) {
+  function runRestoreWithFakeMatrixctl(existsStatus: number, restoreMode = 'restore') {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'second-restore-r2-'));
     const fakeMatrixctlPath = join(tempDir, 'matrixctl');
@@ -154,6 +155,7 @@ exit 99
         env: {
           ...process.env,
           SECOND_RESTORE_TEST_ROOT: tempDir,
+          MATRIX_RESTORE_MODE: restoreMode,
         },
       });
       return {
@@ -701,6 +703,14 @@ exit 99
     expect(operationalError.result.status).toBe(1);
     expect(operationalError.restoreFlagExists).toBe(false);
     expect(operationalError.result.stderr).toContain('matrix-restore: failed to check VPS metadata');
+  });
+
+  it('starts a server-classified disposable preview with an empty database', () => {
+    const empty = runRestoreWithFakeMatrixctl(99, 'empty');
+
+    expect(empty.result.status, empty.result.stderr).toBe(0);
+    expect(empty.restoreFlagExists).toBe(true);
+    expect(empty.result.stderr).not.toContain('unexpected matrixctl call');
   });
 
   it('runs DB backup on an hourly systemd timer', () => {

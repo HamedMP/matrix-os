@@ -178,6 +178,7 @@ describe('platform/customer-vps', () => {
     expect(row?.developerTools).toEqual(['codex', 'pi']);
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS='codex pi'");
+    expect(createInput?.userData).toContain('MATRIX_RESTORE_MODE=restore');
     expect(createInput?.userData).toContain(
       'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=http://localhost:9000/vps/bootstrap-progress',
     );
@@ -1135,6 +1136,7 @@ describe('platform/customer-vps', () => {
       `MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
     );
     expect(createInput?.userData).toContain(`MATRIX_IMAGE_VERSION=${bootstrapVersion}`);
+    expect(createInput?.userData).toContain('MATRIX_RESTORE_MODE=empty');
     expect(createInput?.userData).toContain(
       'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app/vps/bootstrap-progress',
     );
