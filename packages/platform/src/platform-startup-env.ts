@@ -54,6 +54,45 @@ export function checkUnsafeDefaultSecrets(
   return problems;
 }
 
+export function checkCustomerVpsPrimaryStorageEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  log: (msg: string) => void = console.error,
+): string[] {
+  if (env.NODE_ENV !== 'production' || env.CUSTOMER_VPS_ENABLED !== 'true') return [];
+
+  const problems: string[] = [];
+  const accountId = env.R2_ACCOUNT_ID?.trim();
+  const endpoint = env.R2_ENDPOINT?.trim();
+  if (!endpoint || !accountId || (env.S3_ENDPOINT?.trim() && env.S3_ENDPOINT.trim() !== endpoint)) {
+    problems.push('R2_ENDPOINT');
+  } else {
+    try {
+      const parsed = new URL(endpoint);
+      const expectedHost = `${accountId}.eu.r2.cloudflarestorage.com`;
+      if (
+        parsed.protocol !== 'https:' ||
+        parsed.hostname !== expectedHost ||
+        parsed.port !== '' ||
+        parsed.username !== '' ||
+        parsed.password !== '' ||
+        parsed.pathname !== '/' ||
+        parsed.search !== '' ||
+        parsed.hash !== ''
+      ) {
+        problems.push('R2_ENDPOINT');
+      }
+    } catch (error: unknown) {
+      if (!(error instanceof TypeError)) throw error;
+      problems.push('R2_ENDPOINT');
+    }
+  }
+
+  if (problems.length > 0) {
+    log('[platform] Production customer VPS provisioning requires the canonical EU primary R2 endpoint.');
+  }
+  return problems;
+}
+
 export function checkHostBundleStorageEnv(
   env: NodeJS.ProcessEnv = process.env,
   log: (msg: string) => void = console.warn,

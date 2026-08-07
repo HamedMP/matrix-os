@@ -1,9 +1,52 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  checkCustomerVpsPrimaryStorageEnv,
   checkHostBundleStorageEnv,
   checkHomeMirrorS3Env,
   checkUnsafeDefaultSecrets,
 } from "../../packages/platform/src/main.js";
+
+describe('checkCustomerVpsPrimaryStorageEnv', () => {
+  const productionBase = {
+    NODE_ENV: 'production',
+    CUSTOMER_VPS_ENABLED: 'true',
+    R2_ACCOUNT_ID: 'current-account',
+    R2_ACCESS_KEY_ID: 'access',
+    R2_SECRET_ACCESS_KEY: 'secret',
+    R2_BUCKET: 'matrixos-sync',
+  };
+
+  it('requires an explicit primary endpoint for production customer provisioning', () => {
+    expect(checkCustomerVpsPrimaryStorageEnv(productionBase, vi.fn()))
+      .toContain('R2_ENDPOINT');
+  });
+
+  it.each([
+    'http://current-account.eu.r2.cloudflarestorage.com',
+    'https://current-account.r2.cloudflarestorage.com',
+    'https://other-account.eu.r2.cloudflarestorage.com',
+    'https://current-account.eu.r2.cloudflarestorage.com/path',
+    'https://user@current-account.eu.r2.cloudflarestorage.com',
+  ])('rejects a non-canonical production endpoint: %s', (endpoint) => {
+    expect(checkCustomerVpsPrimaryStorageEnv({ ...productionBase, R2_ENDPOINT: endpoint }, vi.fn()))
+      .toContain('R2_ENDPOINT');
+  });
+
+  it('accepts the exact EU endpoint for the configured account', () => {
+    expect(checkCustomerVpsPrimaryStorageEnv({
+      ...productionBase,
+      R2_ENDPOINT: 'https://current-account.eu.r2.cloudflarestorage.com',
+    }, vi.fn())).toEqual([]);
+  });
+
+  it('preserves account-id fallback outside production customer provisioning', () => {
+    expect(checkCustomerVpsPrimaryStorageEnv({
+      NODE_ENV: 'development',
+      CUSTOMER_VPS_ENABLED: 'true',
+      R2_ACCOUNT_ID: 'local-account',
+    }, vi.fn())).toEqual([]);
+  });
+});
 
 describe("checkHomeMirrorS3Env (startup assertion for silent-failure #6)", () => {
   it("returns [] and does not log when MATRIX_HOME_MIRROR is not 'true'", () => {

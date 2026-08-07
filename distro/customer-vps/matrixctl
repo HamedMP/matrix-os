@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ -f /opt/matrix/env/r2.env ]; then
+R2_ENV_FILE="${MATRIX_R2_ENV_FILE:-/opt/matrix/env/r2.env}"
+HOST_ENV_FILE="${MATRIX_HOST_ENV_FILE:-/opt/matrix/env/host.env}"
+R2_ENV_LOADED=false
+if [ -e "$R2_ENV_FILE" ]; then
+  if [ ! -f "$R2_ENV_FILE" ] || [ ! -r "$R2_ENV_FILE" ]; then
+    echo "matrixctl: r2 configuration unreadable" >&2
+    exit 2
+  fi
   # shellcheck disable=SC1091
   set +u
-  source /opt/matrix/env/r2.env
+  if ! source "$R2_ENV_FILE"; then
+    set -u
+    echo "matrixctl: r2 configuration invalid" >&2
+    exit 2
+  fi
   set -u
+  R2_ENV_LOADED=true
 fi
-if [ -f /opt/matrix/env/host.env ]; then
+if [ -f "$HOST_ENV_FILE" ]; then
   # shellcheck disable=SC1091
   set +u
-  source /opt/matrix/env/host.env
+  source "$HOST_ENV_FILE"
   set -u
 fi
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
@@ -42,6 +54,14 @@ fail() {
 require_r2() {
   [ -n "$R2_BUCKET" ] || fail "r2 bucket not configured"
   [ -n "$R2_PREFIX" ] || fail "r2 prefix not configured"
+  [ -n "$AWS_ACCESS_KEY_ID" ] || fail "r2 access key not configured"
+  [ -n "$AWS_SECRET_ACCESS_KEY" ] || fail "r2 secret key not configured"
+  if [ -n "${MATRIX_MACHINE_ID:-}" ]; then
+    [ "$R2_ENV_LOADED" = true ] || fail "r2 configuration file missing"
+    [ -n "$R2_ACCOUNT_ID" ] || fail "r2 account not configured"
+    [ "$R2_ENDPOINT" = "https://${R2_ACCOUNT_ID}.eu.r2.cloudflarestorage.com" ] \
+      || fail "r2 endpoint invalid"
+  fi
 }
 
 r2_endpoint_arg() {
@@ -114,7 +134,7 @@ r2_exists() {
   esac
   case "$output" in
     *"(404)"*|*"Not Found"*|*"NotFound"*|*"NoSuchKey"*)
-      return 1
+      return 44
       ;;
   esac
   echo "matrixctl: r2 exists failed" >&2

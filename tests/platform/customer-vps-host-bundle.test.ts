@@ -1240,7 +1240,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
 
     expect(restore).toContain('if /opt/matrix/bin/matrixctl r2 exists "$key"; then');
-    expect(restore).toContain('check_r2_exists_or_skip_restore system/vps-meta.json "VPS metadata"');
+    expect(restore).toContain('check_r2_exists system/vps-meta.json "VPS metadata"');
     expect(restore).toContain('latest_pointer_key="system/db/latest"');
     expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"');
   });
@@ -1262,5 +1262,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain("grep -Fq 'r2.cloudflarestorage.com'");
     expect(workflow).toContain('Candidate host bundle signer returned a native R2 URL outside the bundle bucket; refusing to promote.');
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url"');
+    expect(workflow).toContain('R2_ENDPOINT=r2-endpoint:latest');
+    expect(workflow).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=false');
+    expect(workflow).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=true');
+    expect(workflow).toContain('$CANDIDATE_URL/vps/storage-check');
+    expect(workflow).toContain('PRODUCTION_REVISION');
+    expect(workflow).toContain('--to-revisions "$PRODUCTION_REVISION=100"');
   });
 });
