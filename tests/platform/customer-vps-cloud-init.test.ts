@@ -317,7 +317,7 @@ exit 99
       'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain('systemctl start matrix-restore.service');
-    expect(cloudInit).toContain('systemctl start matrix-gateway.service');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-gateway.service');
     expect(cloudInit).toContain('systemctl start matrix-shell.service matrix-symphony.service');
     expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
