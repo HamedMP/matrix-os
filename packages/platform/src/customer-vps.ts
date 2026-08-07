@@ -195,6 +195,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
   '      MATRIX_HANDLE={{handle}}',
   '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
+  '      MATRIX_RESTORE_MODE={{restoreMode}}',
   "      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'",
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
   '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
@@ -303,6 +304,7 @@ function buildHostConfig(
   postgresPassword: string,
   bundleRef: HostBundleRef,
   candidateBootstrapProgress = false,
+  restoreMode: CustomerHostConfig['restoreMode'] = 'restore',
 ): CustomerHostConfig {
   const registerUrl = new URL(config.platformRegisterUrl);
   let bootstrapCallbackOrigin = registerUrl.origin;
@@ -322,6 +324,7 @@ function buildHostConfig(
     clerkUserId: input.clerkUserId,
     handle: input.handle,
     runtimeSlot: input.runtimeSlot,
+    restoreMode,
     developerTools: developerToolsShellList(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
     imageVersion: bundleRef.imageVersion,
     updateChannel: config.imageVersion,
@@ -777,6 +780,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           hostBundleUrl: hostBundleUrlForImageVersion(deps.config, imageVersion),
         },
         row.candidateBootstrapProgress,
+        row.provisioningClass === 'preview' ? 'empty' : 'restore',
       );
       const userData = renderCloudInitTemplate(
         deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
@@ -1304,6 +1308,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         registration.token,
         postgresPassword,
         bundleRef,
+        false,
+        active.provisioningClass === 'preview' ? 'empty' : 'restore',
       );
       const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId, input.runtimeSlot);
       if (!existing) {

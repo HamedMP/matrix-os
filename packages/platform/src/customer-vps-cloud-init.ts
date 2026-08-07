@@ -6,6 +6,7 @@ export interface CustomerHostConfig {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  restoreMode: 'restore' | 'empty';
   developerTools: string;
   imageVersion: string;
   updateChannel: string;
