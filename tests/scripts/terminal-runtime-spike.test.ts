@@ -613,7 +613,7 @@ describe('terminal runtime spike evidence', () => {
       'write_phase starting_agent',
       'write_phase waiting_roles',
       'owner_probe() { command_bounded 70 runuser -u matrix --',
-      'zellij() { command_bounded 30 runuser -u matrix --',
+      'trap \'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"\' EXIT',
     ]);
     expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
@@ -644,8 +644,8 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }',
       'systemctl_change() { command_bounded 40 /usr/bin/systemctl "$@"; }',
       'systemctl_cancel() { command_bounded 20 /usr/bin/systemctl "$@"; }',
-      'trap - ERR TERM INT HUP',
-      'local exit_status=$?',
+      'trap - EXIT ERR TERM INT HUP',
+      'local exit_status="${1:-$?}"',
       'failure_code=command_timeout',
     ]);
     const failPhase = runner.slice(
