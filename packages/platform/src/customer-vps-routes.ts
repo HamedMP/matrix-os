@@ -43,6 +43,7 @@ export function meetsMessagingResourceFloor(
 export interface CustomerVpsRoutesDeps {
   service: CustomerVpsService;
   platformSecret: string;
+  assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   probeMachineHealth?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<boolean>;
   probeMachineRuntime?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<{
     healthy: boolean;
@@ -127,6 +128,21 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
     }
     return null;
   }
+
+  app.post('/storage-check', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    if (!deps.assertPrimaryStorageReady) {
+      return c.json({ error: 'Storage unavailable' }, 503);
+    }
+    try {
+      await deps.assertPrimaryStorageReady({ force: true });
+      return c.json({ status: 'ok' });
+    } catch (err: unknown) {
+      logCustomerVpsError('primary storage capability check failed', err);
+      return c.json({ error: 'Storage unavailable' }, 503);
+    }
+  });
 
   app.post('/provision', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
     const authError = requirePlatformAuth(c);

@@ -92,6 +92,8 @@ describe('platform/customer-vps-cloud-init', () => {
           R2_BUCKET: 'matrixos-sync',
           R2_PREFIX: 'matrixos-sync/user_123/',
           R2_ENDPOINT: 'https://r2.example',
+          AWS_ACCESS_KEY_ID: 'test-access-key',
+          AWS_SECRET_ACCESS_KEY: 'test-secret-key',
         },
       });
     } finally {
@@ -99,7 +101,9 @@ describe('platform/customer-vps-cloud-init', () => {
     }
   }
 
-  function runRestoreWithFakeMatrixctl(existsStatus: number) {
+  function runRestoreWithFakeMatrixctl(
+    existsStatus: number | { vpsMeta: number; latestPointer: number },
+  ) {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'second-restore-r2-'));
     const fakeMatrixctlPath = join(tempDir, 'matrixctl');
@@ -110,7 +114,10 @@ describe('platform/customer-vps-cloud-init', () => {
       fakeMatrixctlPath,
       `#!/usr/bin/env bash
 if [ "$1" = "r2" ] && [ "$2" = "exists" ]; then
-  exit ${existsStatus}
+  if [ "$3" = "system/vps-meta.json" ]; then
+    exit ${typeof existsStatus === 'number' ? existsStatus : existsStatus.vpsMeta}
+  fi
+  exit ${typeof existsStatus === 'number' ? existsStatus : existsStatus.latestPointer}
 fi
 echo "unexpected matrixctl call: $*" >&2
 exit 99
@@ -671,10 +678,10 @@ exit 99
     const bundled = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-restore.sh'), 'utf8');
 
     for (const script of [restore, bundled]) {
-      expect(script).toContain('check_r2_exists_or_skip_restore()');
+      expect(script).toContain('check_r2_exists()');
       expect(script).toContain('local status');
       expect(script).toMatch(/else\n\s+status="\$[?]"/);
-      expect(script).toContain('if [ "$status" -eq 1 ]; then');
+      expect(script).toContain('if [ "$status" -eq 44 ]; then');
       expect(script).toContain('touch "$restore_flag"');
       expect(script).toContain('matrix-restore: failed to check');
       expect(script).not.toContain('if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then');
@@ -683,9 +690,13 @@ exit 99
   });
 
   it('executes restore skip only for not-found R2 exists status', () => {
-    const notFound = runRestoreWithFakeMatrixctl(1);
+    const notFound = runRestoreWithFakeMatrixctl(44);
     expect(notFound.result.status, notFound.result.stderr).toBe(0);
     expect(notFound.restoreFlagExists).toBe(true);
+
+    const genericFailure = runRestoreWithFakeMatrixctl(1);
+    expect(genericFailure.result.status).toBe(1);
+    expect(genericFailure.restoreFlagExists).toBe(false);
 
     const timeout = runRestoreWithFakeMatrixctl(124);
     expect(timeout.result.status).toBe(1);
@@ -696,6 +707,59 @@ exit 99
     expect(operationalError.result.status).toBe(1);
     expect(operationalError.restoreFlagExists).toBe(false);
     expect(operationalError.result.stderr).toContain('matrix-restore: failed to check VPS metadata');
+
+    const registeredBeforeBackup = runRestoreWithFakeMatrixctl({ vpsMeta: 0, latestPointer: 44 });
+    expect(registeredBeforeBackup.result.status, registeredBeforeBackup.result.stderr).toBe(0);
+    expect(registeredBeforeBackup.restoreFlagExists).toBe(true);
+
+    const backupWithoutMetadata = runRestoreWithFakeMatrixctl({ vpsMeta: 44, latestPointer: 0 });
+    expect(backupWithoutMetadata.result.status).toBe(1);
+    expect(backupWithoutMetadata.restoreFlagExists).toBe(false);
+    expect(backupWithoutMetadata.result.stderr).toContain('matrix-restore: failed to fetch latest pointer');
+  });
+
+  it('fails customer-host R2 operations for unreadable config or a non-EU endpoint', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrixctl-r2-config-'));
+    const r2Env = join(tempDir, 'r2.env');
+    const commonEnv = {
+      ...process.env,
+      MATRIX_MACHINE_ID: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      MATRIX_R2_ENV_FILE: r2Env,
+      MATRIX_HOST_ENV_FILE: join(tempDir, 'missing-host.env'),
+    };
+
+    try {
+      writeFileSync(r2Env, 'R2_BUCKET=matrixos-sync\n');
+      chmodSync(r2Env, 0o000);
+      const unreadable = spawnSync(
+        'bash',
+        [join(root, 'distro/customer-vps/matrixctl'), 'r2', 'exists', 'system/db/latest'],
+        { cwd: root, encoding: 'utf8', env: commonEnv },
+      );
+      expect(unreadable.status).toBe(2);
+      expect(unreadable.stderr).toContain('matrixctl: r2 configuration unreadable');
+
+      chmodSync(r2Env, 0o600);
+      writeFileSync(r2Env, [
+        'AWS_ACCESS_KEY_ID=test-access-key',
+        'AWS_SECRET_ACCESS_KEY=test-secret-key',
+        'R2_BUCKET=matrixos-sync',
+        'R2_PREFIX=matrixos-sync/user_123/',
+        'R2_ACCOUNT_ID=current-account',
+        'R2_ENDPOINT=https://current-account.r2.cloudflarestorage.com',
+      ].join('\n'));
+      const wrongEndpoint = spawnSync(
+        'bash',
+        [join(root, 'distro/customer-vps/matrixctl'), 'r2', 'exists', 'system/db/latest'],
+        { cwd: root, encoding: 'utf8', env: commonEnv },
+      );
+      expect(wrongEndpoint.status).toBe(1);
+      expect(wrongEndpoint.stderr).toContain('matrixctl: r2 endpoint invalid');
+    } finally {
+      chmodSync(r2Env, 0o600);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('runs DB backup on an hourly systemd timer', () => {
@@ -781,6 +845,13 @@ exit 99
       255,
       'An error occurred (404) when calling the HeadObject operation: Not Found',
     );
-    expect(notFoundResult.status).toBe(1);
+    expect(notFoundResult.status).toBe(44);
+
+    const unrelatedNotFound = runMatrixctlExistsWithFakeAws(
+      1,
+      'configuration endpoint Not Found',
+    );
+    expect(unrelatedNotFound.status).toBe(2);
+    expect(unrelatedNotFound.stderr).toContain('matrixctl: r2 exists failed');
   });
 });

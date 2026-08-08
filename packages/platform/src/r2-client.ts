@@ -36,7 +36,11 @@ export interface R2Client {
     body: string | Uint8Array | ReadableStream<Uint8Array>,
     options?: { signal?: AbortSignal },
   ): Promise<{ etag?: string }>;
-  deleteObject(key: string): Promise<void>;
+  headObject(
+    key: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ exists: boolean; etag?: string }>;
+  deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
   destroy(): void;
 }
 
@@ -65,6 +69,7 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     S3Client,
     GetObjectCommand,
     PutObjectCommand,
+    HeadObjectCommand,
     DeleteObjectCommand,
     CreateMultipartUploadCommand,
     UploadPartCommand,
@@ -179,10 +184,39 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
       return { etag: response.ETag ?? undefined };
     },
 
-    async deleteObject(key: string): Promise<void> {
+    async headObject(
+      key: string,
+      options?: { signal?: AbortSignal },
+    ): Promise<{ exists: boolean; etag?: string }> {
+      const command = new HeadObjectCommand({ Bucket: bucket, Key: key });
+      try {
+        const response = await s3.send(command, {
+          abortSignal: options?.signal ?? AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+        });
+        return { exists: true, etag: response.ETag ?? undefined };
+      } catch (error: unknown) {
+        const providerError = error as {
+          name?: string;
+          $metadata?: { httpStatusCode?: number };
+        };
+        if (
+          providerError.name === "NoSuchKey" ||
+          providerError.name === "NotFound" ||
+          providerError.$metadata?.httpStatusCode === 404
+        ) {
+          return { exists: false };
+        }
+        throw error;
+      }
+    },
+
+    async deleteObject(
+      key: string,
+      options?: { signal?: AbortSignal },
+    ): Promise<void> {
       const command = new DeleteObjectCommand({ Bucket: bucket, Key: key });
       await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
+        abortSignal: options?.signal ?? AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
       });
     },
 
