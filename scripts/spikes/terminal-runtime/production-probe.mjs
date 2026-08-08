@@ -84,9 +84,7 @@ if (operation === 'create' || operation === 'create-race') {
       entry.args.some((argument) => argument.endsWith('/keeper.js')))?.pid ?? 0,
     zellijClient: zellij[0]?.pid ?? 0,
     zellijServer: zellij[1]?.pid ?? 0,
-    shell: processes.find((entry) =>
-      entry.comm === 'bash' && entry.args.some((argument) =>
-        argument.includes('MATRIX_ACCEPT_LOOP')))?.pid ?? 0,
+    shell: processes.find((entry) => entry.comm === 'bash')?.pid ?? 0,
     agent: processes.find((entry) =>
       /^codex(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
         /\/codex(?:-|$)/.test(argument)))?.pid ?? 0,

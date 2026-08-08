@@ -613,7 +613,7 @@ describe('terminal runtime spike evidence', () => {
       'write_phase starting_agent',
       'write_phase waiting_roles',
       'owner_probe() { command_bounded 70 runuser -u matrix --',
-      'trap \'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"\' EXIT',
+      'trap \'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"\' EXIT', 'grep -aqF \'MATRIX_ACCEPT_LOOP\' "/proc/${shell_pid}/cmdline"',
     ]);
     expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
@@ -630,7 +630,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).toContain('[ -x "$codex" ]');
     expect(runner).not.toContain("sh -c 'command -v codex'");
     expect(runner).toContain('owner_probe create "$head_sha" "$run_nonce"');
-    expect(probe).toContain('`accept-${value.slice(0, 12)}-${extra}`');
+    expectAll(probe, ['`accept-${value.slice(0, 12)}-${extra}`', "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0"]); expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
     expect(workflow).not.toContain('VPS_SSH_KEY');
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {

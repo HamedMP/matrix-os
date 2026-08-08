@@ -139,12 +139,11 @@ phase1() {
   write_phase starting_agent
   [ -x "$codex" ]
   zellij --session "$session_name" action new-pane -- "$codex"
-  write_phase waiting_roles
-  local baseline="" shell_pid="" agent_pid="" role_failure=roles_unavailable
+  write_phase waiting_roles; local baseline="" shell_pid="" agent_pid="" role_failure=roles_unavailable
   for _ in $(seq 1 12); do
     baseline="$(roles "$runtime_id" 2>/dev/null || true)"
     shell_pid="$(printf '%s' "$baseline" | json_field shell 2>/dev/null || true)"; agent_pid="$(printf '%s' "$baseline" | json_field agent 2>/dev/null || true)"
-    if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]] && [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]]; then
+    if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]] && [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]] && grep -aqF 'MATRIX_ACCEPT_LOOP' "/proc/${shell_pid}/cmdline"; then
       printf '%s\n' "$baseline" >"$state_root/roles.json"; chmod 0600 "$state_root/roles.json"
       role_failure=roles_unstable
       break
@@ -157,8 +156,7 @@ phase1() {
     fi
     sleep 1
   done
-  failure_hint="$role_failure"
-  roles_match "$runtime_id"
+  failure_hint="$role_failure"; roles_match "$runtime_id"
   failure_hint=""
   mark continuousOutput; mark codingAgentPreserved
   write_phase runtime_created
