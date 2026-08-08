@@ -541,16 +541,16 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     }
     expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
-    expect(runner).toContain('readonly claude=/opt/matrix/runtime/node/bin/claude');
-    expectAll(runner, ['[ -x "$claude" ]', 'owner_probe create-agent "$head_sha" "$run_nonce"',
+    expect(runner).toContain('readonly pi=/opt/matrix/runtime/node/bin/pi');
+    expectAll(runner, ['[ -x "$pi" ]', 'owner_probe create-agent "$head_sha" "$run_nonce"',
       'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent']);
     expect(runner).not.toContain('action new-pane -- "$codex" app-server');
     expect(runner).not.toContain("sh -c 'command -v codex'");
     expect(runner).toContain('owner_probe create "$head_sha" "$run_nonce"');
     expectAll(probe, [
       '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
-      "launch: { kind: 'agent', configurationRef: operationId }", "agent: 'claude'",
-      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/claude(?:[./-]|$)/',
+      "launch: { kind: 'agent', configurationRef: operationId }", "agent: 'pi'",
+      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/pi(?:[./-]|$)/',
     ]);
     expect(probe).not.toContain("prompt:");
     expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");

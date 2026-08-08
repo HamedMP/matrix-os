@@ -1,8 +1,13 @@
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
 import type { Socket } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import { createSupervisorClient } from '../../packages/terminal-runtime/src/client.js';
 import { decodeFrame, encodeFrame } from '../../packages/terminal-runtime/src/framing.js';
+import { waitForChild } from '../../packages/terminal-runtime/src/pane.js';
 const OPERATION_ID = 'fedcba9876543210fedcba9876543210';
 const REQUEST = {
   version: 1 as const, operation: 'List' as const,
@@ -38,6 +43,30 @@ function request(socket: FakeSocket) {
   }).request(REQUEST);
 }
 describe('terminal runtime supervisor client', () => {
+  it('gives Claude a linked regular fd and removes it after exit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-claude-settings-'));
+    const path = join(root, OPERATION_ID), payload = '{"permissions":{}}';
+    const child = Object.assign(new EventEmitter(), {
+      stdin: null, stdio: [null, null, null, null], kill: vi.fn(),
+    });
+    let inheritedFd = -1;
+    const spawnChild = vi.fn((_file, _args, options) => {
+      inheritedFd = Number((options?.stdio as unknown[])[3]); return child;
+    }) as unknown as typeof spawn;
+    try {
+      const result = waitForChild({
+        file: 'claude', args: [], cwd: root, env: {}, stdin: null,
+        fdPayload: payload, fdPayloadFile: true,
+      }, spawnChild, path);
+      await vi.waitFor(() => expect(inheritedFd).toBeGreaterThan(2));
+      const metadata = await lstat(path);
+      expect([metadata.isFile(), metadata.mode & 0o777]).toEqual([true, 0o600]);
+      expect(await readFile(`/proc/self/fd/${inheritedFd}`, 'utf8')).toBe(payload);
+      child.emit('exit', 0, null);
+      await expect(result).resolves.toBe(0); await expect(lstat(path))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('exchanges exactly one bounded request and response', async () => {
     const received: unknown[] = [];
     const socket = fakeSocket({ onEnd: (peer, bytes) => {

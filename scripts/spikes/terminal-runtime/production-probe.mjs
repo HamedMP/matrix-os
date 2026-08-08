@@ -26,7 +26,7 @@ if (operation === 'create' || operation === 'create-race' ||
   if (operation === 'create-agent') {
     await configurationStore.publish(operationId, {
       schemaVersion: 1,
-      agent: 'claude',
+      agent: 'pi',
       cwd: { kind: 'home-relative', path: '' },
       mode: 'default',
       approvalPolicy: 'never',
@@ -122,8 +122,8 @@ if (operation === 'create' || operation === 'create-race' ||
       argument.endsWith('/pane.js')))?.pid ?? 0,
     shell: processes.find((entry) => entry.comm === 'bash')?.pid ?? 0,
     agent: processes.find((entry) =>
-      /^claude(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
-        /\/claude(?:[./-]|$)/.test(argument)))?.pid ?? 0,
+      /^pi(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
+        /\/pi(?:[./-]|$)/.test(argument)))?.pid ?? 0,
   });
 } else {
   throw new Error('probe_operation_invalid');

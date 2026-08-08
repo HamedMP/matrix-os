@@ -19,6 +19,9 @@ import { CODEX_VERIFIED_VERSION } from '../../packages/contracts/src/index.js';
 function sha256(content: string) {
   return createHash('sha256').update(content).digest('hex');
 }
+function expectAll(source: string, values: string[]) {
+  for (const value of values) expect(source).toContain(value);
+}
 
 function runDevBundleGate(env: Record<string, string>) {
   const root = process.cwd();
@@ -675,12 +678,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-phase-'));
     const appDir = join(tempDir, 'app');
     const homeDir = join(tempDir, 'home');
-
     try {
       mkdirSync(join(appDir, 'home'), { recursive: true });
       mkdirSync(homeDir, { recursive: true });
       writeFileSync(join(appDir, 'home', '.template-manifest.json'), '{');
-
       const templateFailure = spawnSync(
         'bash',
         [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')],
@@ -690,18 +691,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
           env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: process.execPath },
         },
       );
-
       expect(templateFailure.status).toBe(40);
       expect(templateFailure.stderr).not.toContain(tempDir);
       expect(templateFailure.stderr).not.toContain('SyntaxError');
-
       writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
         'apps/notes/src/App.tsx': sha256('bundled v1'),
       }, null, 2));
       mkdirSync(join(appDir, 'home', 'apps', 'notes', 'src'), { recursive: true });
       writeFileSync(join(appDir, 'home', 'apps', 'notes', 'src', 'App.tsx'), 'bundled v1');
       writeFileSync(join(homeDir, 'apps'), 'not a directory');
-
       const copyFailure = spawnSync(
         'bash',
         [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')],
@@ -711,7 +709,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
           env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: process.execPath },
         },
       );
-
       expect(copyFailure.status).toBe(51);
       expect(copyFailure.stderr).not.toContain(tempDir);
       expect(copyFailure.stderr).not.toContain('ENOTDIR');
@@ -719,18 +716,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
-
   it('bundled home sync pins CommonJS stdin despite inherited Node defaults', () => {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-node-mode-'));
     const appDir = join(tempDir, 'app');
     const homeDir = join(tempDir, 'home');
-
     try {
       mkdirSync(join(appDir, 'home'), { recursive: true });
       mkdirSync(homeDir, { recursive: true });
       writeFileSync(join(appDir, 'home', '.template-manifest.json'), '{}\n');
-
       const result = spawnSync(
         'bash',
         [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')],
@@ -746,14 +740,12 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
           },
         },
       );
-
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
-
   it('bundled home sync returns bounded Node startup codes', () => {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-node-startup-'));
@@ -761,19 +753,16 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const homeDir = join(tempDir, 'home');
     const fakeNode = join(tempDir, 'node');
     const helper = join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets');
-
     try {
       mkdirSync(join(appDir, 'home'), { recursive: true });
       mkdirSync(homeDir, { recursive: true });
       writeFileSync(join(appDir, 'home', '.template-manifest.json'), '{}\n');
-
       const missing = spawnSync('bash', [helper], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: join(tempDir, 'missing') },
       });
       expect(missing.status).toBe(44);
-
       writeFileSync(fakeNode, '#!/bin/sh\nexit 1\n');
       chmodSync(fakeNode, 0o755);
       const unusable = spawnSync('bash', [helper], {
@@ -782,7 +771,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
         env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: fakeNode },
       });
       expect(unusable.status).toBe(45);
-
       writeFileSync(fakeNode, '#!/bin/sh\n[ "$1" = "--version" ] && exit 0\nexit 1\n');
       const programFailure = spawnSync('bash', [helper], {
         cwd: root,
@@ -794,7 +782,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
-
   it('bundled home sync rotates its log before appending past the size cap', () => {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-log-'));
@@ -1221,7 +1208,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('preview VPS workflow safely resumes an existing active preview', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-
     expect(workflow).toContain('provisioning|running)');
     expect(workflow).toContain('if [ "$runtime_slot" = "$HANDLE" ]; then');
     expect(workflow).toContain('Reusing existing ${HANDLE} preview (${status})');
@@ -1235,18 +1221,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('preview VPS workflow retires only an exact or legacy-slot failed disposable preview before reprovisioning', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-
-    expect(workflow).toContain('retire_failed_preview()');
-    expect(workflow).toContain('[ "$status" = "failed" ]');
-    expect(workflow).toContain('.clerkUserId == $owner');
-    expect(workflow).toContain('.handle == $handle');
-    expect(workflow).toContain('(.runtimeSlot == $handle or .runtimeSlot == "preview")');
-    expect(workflow).toContain('.status == "failed"');
-    expect(workflow).toContain('.deletedAt == null');
-    expect(workflow).toContain('test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")');
-    expect(workflow).toContain('-X DELETE "${PLATFORM_PUBLIC_URL}/vps/${failed_machine_id}"');
-    expect(workflow).toContain('if [ "$delete_code" != "200" ] && [ "$delete_code" != "404" ]; then');
-    expect(workflow).toContain('Failed preview retirement did not converge.');
+    expectAll(workflow, [
+      'retire_failed_preview()', '[ "$status" = "failed" ]', '.clerkUserId == $owner',
+      '.handle == $handle', '(.runtimeSlot == $handle or .runtimeSlot == "preview")',
+      '.status == "failed"', '.deletedAt == null',
+      'test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")',
+      '-X DELETE "${PLATFORM_PUBLIC_URL}/vps/${failed_machine_id}"',
+      'if [ "$delete_code" != "200" ] && [ "$delete_code" != "404" ]; then',
+      'Failed preview retirement did not converge.',
+    ]);
     expect(workflow.indexOf('retire_failed_preview "$fleet_machine"')).toBeLessThan(
       workflow.indexOf('-X POST "${PROVISION_PLATFORM_URL}/vps/preview/provision"'),
     );
@@ -1255,7 +1238,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('preview VPS workflow prefers active same-handle rows over failed history', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-
     expect(workflow).toContain('select(.handle == $h and .status != "deleted" and .deletedAt == null)');
     expect(workflow).toContain('if .status == "running" then 0');
     expect(workflow).toContain('elif .status == "provisioning" then 1');
@@ -1266,20 +1248,17 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('preview VPS workflow reports only allowlisted provisioning failure codes', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-
-    expect(workflow).toContain('sanitize_failure_code()');
-    expect(workflow).toContain("failure_code=\"$(jq -r '.failureCode // \"none\"' <<< \"$fleet_machine\" | sanitize_failure_code)\"");
-    expect(workflow).toContain('Fleet failure code for ${HANDLE}: ${failure_code}');
-    expect(workflow).toContain('Provisioning failed for ${HANDLE} (${failure_code})');
-    expect(workflow).toContain('quota_exceeded|provider_unavailable|provider_timeout|user_data_too_large|r2_unavailable');
-    expect(workflow).toContain('registration_rejected|registration_timeout|retry_exhausted|unknown|none');
+    expectAll(workflow, [
+      'sanitize_failure_code()', "failure_code=\"$(jq -r '.failureCode // \"none\"' <<< \"$fleet_machine\" | sanitize_failure_code)\"",
+      'Fleet failure code for ${HANDLE}: ${failure_code}', 'Provisioning failed for ${HANDLE} (${failure_code})',
+      'quota_exceeded|provider_unavailable|provider_timeout|user_data_too_large|r2_unavailable',
+      'registration_rejected|registration_timeout|retry_exhausted|unknown|none',
+    ]);
     expect(workflow).not.toContain('echo "$fleet_machine"');
   });
-
   it('preview cleanup removes bounded legacy failed same-handle machines without adopting a live mismatched slot', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/terminal-runtime-spikes.yml'), 'utf8');
-
     expect(workflow).toContain(
       '.handle == $handle and .deletedAt == null and .status != "deleted" and\n' +
       '              (.runtimeSlot == $handle or .status == "failed")',
@@ -1304,11 +1283,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       '.deletedAt == null and\n                .status != "deleted"',
     );
   });
-
   it('preview VPS workflow installs the exact dormant bootstrap before registration', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-
     expect(workflow).toContain('bootstrapVersion: $bootstrap');
     expect(workflow).toContain('--arg bootstrap "$BOOTSTRAP_VERSION"');
     expect(workflow).not.toContain('bootstrap_provisioning_host()');
@@ -1318,31 +1295,23 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('deadline=$((SECONDS + 840))');
     expect(workflow).not.toContain('bootstrap_provisioning_host "$candidate_address" "$BOOTSTRAP_VERSION"');
   });
-
   it('manual preview provisioning can use only the attested exact-head production control-plane candidate', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-
-    expect(workflow).toContain('use_platform_candidate:');
-    expect(workflow).toContain('use_platform_candidate="${USE_PLATFORM_CANDIDATE:-false}"');
-    expect(workflow).toContain('The platform candidate requires a fresh exact-head preview build.');
-    expect(workflow).toContain('actions: read');
-    expect(workflow).toContain('actions/workflows/platform-cloud-run.yml/runs');
-    expect(workflow).toContain('-f head_sha="$HEAD_SHA"');
-    expect(workflow).toContain('gh run download "$candidate_run_id"');
-    expect(workflow).toContain('platform-production-candidate-${PR_NUMBER}-${HEAD_SHA}');
-    expect(workflow).toContain('platform_origin="$(sed -n');
-    expect(workflow).toContain('expected_candidate_origin="https://terminal-pr-${PR_NUMBER}-${HEAD_SHA:0:12}---${platform_origin#https://}"');
-    expect(workflow).toContain('.candidateOrigin == $expectedOrigin');
-    expect(workflow).toContain('.headSha == $head and .prNumber == $pr and .environment == "production"');
-    expect(workflow).toContain('PROVISION_PLATFORM_URL="$candidate_origin"');
+    expectAll(workflow, [
+      'use_platform_candidate:', 'use_platform_candidate="${USE_PLATFORM_CANDIDATE:-false}"',
+      'The platform candidate requires a fresh exact-head preview build.', 'actions: read',
+      'actions/workflows/platform-cloud-run.yml/runs', '-f head_sha="$HEAD_SHA"',
+      'gh run download "$candidate_run_id"', 'platform-production-candidate-${PR_NUMBER}-${HEAD_SHA}',
+      'platform_origin="$(sed -n', 'expected_candidate_origin="https://terminal-pr-${PR_NUMBER}-${HEAD_SHA:0:12}---${platform_origin#https://}"',
+      '.candidateOrigin == $expectedOrigin', '.headSha == $head and .prNumber == $pr and .environment == "production"',
+      'PROVISION_PLATFORM_URL="$candidate_origin"', '-X POST "${PROVISION_PLATFORM_URL}/vps/preview/provision"',
+    ]);
     expect(workflow).not.toContain('actions/workflows/preview-platform.yml/runs');
     expect(workflow).not.toContain('PROVISION_PLATFORM_URL="https://candidate---${platform_origin#https://}"');
-    expect(workflow).toContain('-X POST "${PROVISION_PLATFORM_URL}/vps/preview/provision"');
     expect(workflow).not.toContain('provision_platform_url:');
     expect(workflow).not.toContain('${{ inputs.provision_platform_url }}');
   });
-
   it('reports durable clean-boot stages without requiring preview SSH access', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
@@ -1350,12 +1319,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       join(root, 'distro/customer-vps/cloud-init.yaml'),
       'utf8',
     );
-
     expect(workflow).toContain(`bootstrap_stage="$(jq -r '.bootstrapStage // "pending"' <<< "$progress_machine")"`);
     expect(workflow).toContain('Bootstrap stage for ${HANDLE}: ${bootstrap_stage}');
     expect(workflow).not.toContain('VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}');
     expect(workflow).not.toContain('root@${candidate_address}');
-
     const handoff = [
       'report_bootstrap_stage restore_starting',
       'systemctl start matrix-restore.service',
@@ -1393,7 +1360,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     );
     expect(cloudInit).not.toContain('runuser -u matrix -- test');
   });
-
   it('publishes bounded gateway registration phases from the exact preview bootstrap', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
@@ -1401,44 +1367,34 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       join(root, 'distro/customer-vps/host-bin/matrix-gateway'),
       'utf8',
     );
-
-    expect(workflow).toContain(
+    expectAll(workflow, [
       'cp distro/customer-vps/host-bin/matrix-gateway "$RUNNER_TEMP/"',
-    );
-    expect(workflow).toContain(
       'install -m 0755 "$RUNNER_TEMP/matrix-gateway" distro/customer-vps/host-bin/matrix-gateway',
-    );
-    expect(workflow).toContain(
       'cp distro/customer-vps/host-bin/matrix-sync-bundled-home-assets "$RUNNER_TEMP/"',
-    );
-    expect(workflow).toContain(
       'install -m 0755 "$RUNNER_TEMP/matrix-sync-bundled-home-assets" distro/customer-vps/host-bin/matrix-sync-bundled-home-assets',
-    );
-    expect(gateway).toContain('report_bootstrap_stage gateway_process_started');
-    expect(gateway).toContain('report_bootstrap_stage gateway_wrapper_started');
-    expect(gateway).toContain('report_bootstrap_stage gateway_environment_ready');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_sync_started');
-    expect(gateway).toContain('/usr/bin/env -i');
-    expect(gateway).toContain('PATH=/usr/sbin:/usr/bin:/sbin:/bin');
-    expect(gateway).toContain('/usr/bin/timeout --signal=TERM --kill-after=5s 120s');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_assets_failed_template');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_assets_failed_home');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_assets_failed_copy');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_assets_failed_commit');
+    ]);
+    expectAll(gateway, [
+      'report_bootstrap_stage gateway_process_started', 'report_bootstrap_stage gateway_wrapper_started',
+      'report_bootstrap_stage gateway_environment_ready', 'report_bootstrap_stage gateway_home_sync_started',
+      '/usr/bin/env -i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+      '/usr/bin/timeout --signal=TERM --kill-after=5s 120s',
+      'report_bootstrap_stage gateway_home_assets_failed_template', 'report_bootstrap_stage gateway_home_assets_failed_home',
+      'report_bootstrap_stage gateway_home_assets_failed_copy', 'report_bootstrap_stage gateway_home_assets_failed_commit',
+    ]);
     for (const status of [1, 2, 9, 47, 48, 49, 50, 51, 125, 126, 127, 134, 139, 143]) {
       expect(gateway).toMatch(
         new RegExp(`${status}\\) report_bootstrap_stage gateway_home_assets_failed_status_${status}`),
       );
     }
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_assets_failed_other');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_assets_timed_out');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_assets_ready');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_ownership_started');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_ownership_ready');
-    expect(gateway).toContain('report_bootstrap_stage gateway_home_ready');
-    expect(gateway).toContain('report_bootstrap_stage gateway_launch_ready');
-    expect(gateway).toContain('report_bootstrap_stage gateway_healthy');
-    expect(gateway).toContain('report_bootstrap_stage registration_ready');
+    expectAll(gateway, [
+      'report_bootstrap_stage gateway_home_assets_failed_other', 'report_bootstrap_stage gateway_home_assets_timed_out',
+      'report_bootstrap_stage gateway_home_assets_ready', 'report_bootstrap_stage gateway_home_ownership_started',
+      'report_bootstrap_stage gateway_home_ownership_ready', 'report_bootstrap_stage gateway_home_ready',
+      'report_bootstrap_stage gateway_launch_ready', 'report_bootstrap_stage gateway_healthy',
+      'report_bootstrap_stage registration_ready', 'fetch_metadata_value()', 'is_public_ipv4()',
+      'gateway_health_ready=true', '[ "$gateway_health_ready" = true ]',
+      "printf 'header = \"authorization: Bearer %s\"\\n'", 'curl --config -',
+    ]);
     expect(gateway.indexOf('report_bootstrap_stage gateway_wrapper_started')).toBeLessThan(
       gateway.indexOf('source /opt/matrix/env/postgres.env'),
     );
@@ -1468,15 +1424,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(gateway.indexOf('chown -R matrix:matrix')).toBeLessThan(
       gateway.indexOf('report_bootstrap_stage gateway_home_ownership_ready'),
     );
-    expect(gateway).toContain('fetch_metadata_value()');
-    expect(gateway).toContain('is_public_ipv4()');
-    expect(gateway).toContain('gateway_health_ready=true');
-    expect(gateway).toContain('[ "$gateway_health_ready" = true ]');
-    expect(gateway).toContain("printf 'header = \"authorization: Bearer %s\"\\n'");
-    expect(gateway).toContain('curl --config -');
     expect(gateway).not.toContain('-H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}"');
   });
-
   it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');

@@ -16,7 +16,7 @@ readonly state_file="${state_root}/state"; readonly probe=/opt/matrix/libexec/te
 readonly verifier=/opt/matrix/libexec/terminal-runtime/current/spikes/verify-production-evidence.mjs; readonly version_a="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-a"
 readonly version_b="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-b"; readonly unit_prefix=matrix-terminal-session@
 readonly home=/home/matrix/home; readonly cache_root="${home}/system/terminal-runtime/zellij-cache"; readonly uid="$(id -u matrix)"
-readonly claude=/opt/matrix/runtime/node/bin/claude
+readonly pi=/opt/matrix/runtime/node/bin/pi
 readonly update_wait_seconds=1800
 current_phase=initializing
 failure_hint=""
@@ -140,7 +140,7 @@ phase1() {
   zellij --session "$session_name" action write-chars -- \
     "exec bash -lc 'while true; do printf \"MATRIX_ACCEPT_LOOP\\n\"; sleep 1; done'"
   zellij --session "$session_name" action send-keys Enter
-  write_phase starting_agent; [ -x "$claude" ]
+  write_phase starting_agent; [ -x "$pi" ]
   agent_created="$(owner_probe create-agent "$head_sha" "$run_nonce")"
   agent_runtime_id="$(printf '%s' "$agent_created" | json_field runtimeId)"
   [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]

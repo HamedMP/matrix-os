@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
-import { resolve, sep } from 'node:path';
+import { type Stats } from 'node:fs';
+import { type FileHandle, lstat, open, unlink } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import {
   AgentConfigurationSchema,
   OperationIdSchema,
@@ -7,6 +9,7 @@ import {
 } from './contracts.js';
 import {
   createAgentConfigurationStore,
+  defaultAgentConfigurationDirectory,
 } from './agent-configurations.js';
 
 const SAFE_ENVIRONMENT_KEYS = [
@@ -27,6 +30,7 @@ export type ProviderLaunch = {
   env: Record<string, string>;
   stdin: string | null;
   fdPayload: string | null;
+  fdPayloadFile?: boolean;
 };
 
 export function paneEnvironment(
@@ -138,6 +142,7 @@ export function buildProviderLaunch(
         env: environment,
         stdin: configuration.prompt ?? null,
         fdPayload: JSON.stringify(claudeSettings(configuration, home)),
+        fdPayloadFile: true,
       };
     case 'codex': {
       if (
@@ -196,10 +201,47 @@ export function buildProviderLaunch(
   }
 }
 
-async function waitForChild(
+async function removePayloadFile(
+  path: string, identity: Pick<Stats, 'dev' | 'ino'>,
+): Promise<void> {
+  try {
+    const current = await lstat(path);
+    if (current.dev === identity.dev && current.ino === identity.ino)
+      await unlink(path);
+  } catch (error: unknown) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+      throw error;
+  }
+}
+
+export async function waitForChild(
   launch: ProviderLaunch,
   spawnChild = spawn,
+  fdPayloadPath?: string,
 ): Promise<number> {
+  let payloadHandle: FileHandle | null = null;
+  let payloadIdentity: Stats | null = null;
+  if (launch.fdPayloadFile) {
+    if (launch.fdPayload === null || !fdPayloadPath) {
+      throw new Error('agent_configuration_file_unavailable');
+    }
+    payloadHandle = await open(fdPayloadPath, 'wx+', 0o600);
+    const bytes = Buffer.from(launch.fdPayload, 'utf8');
+    payloadIdentity = await payloadHandle.stat();
+    try {
+      if (!payloadIdentity.isFile() || payloadIdentity.nlink !== 1)
+        throw new Error('agent_configuration_file_invalid');
+      await payloadHandle.write(bytes, 0, bytes.byteLength, 0);
+      await payloadHandle.sync();
+    } catch (error: unknown) {
+      try {
+        await payloadHandle.close();
+      } finally {
+        await removePayloadFile(fdPayloadPath, payloadIdentity);
+      }
+      throw error;
+    }
+  }
   return await new Promise<number>((resolveChild, rejectChild) => {
     const child = spawnChild(launch.file, launch.args, {
       cwd: launch.cwd,
@@ -209,7 +251,7 @@ async function waitForChild(
         launch.stdin === null ? 'inherit' : 'pipe',
         'inherit',
         'inherit',
-        launch.fdPayload === null ? 'ignore' : 'pipe',
+        launch.fdPayload === null ? 'ignore' : payloadHandle?.fd ?? 'pipe',
       ],
     });
     child.once('error', (error: Error) => rejectChild(error));
@@ -218,7 +260,7 @@ async function waitForChild(
       else resolveChild(code ?? 1);
     });
     if (launch.stdin !== null) child.stdin?.end(launch.stdin);
-    if (launch.fdPayload !== null) {
+    if (launch.fdPayload !== null && !payloadHandle) {
       const configurationPipe = child.stdio[3];
       if (
         configurationPipe &&
@@ -229,6 +271,14 @@ async function waitForChild(
       } else {
         child.kill('SIGTERM');
         rejectChild(new Error('agent_configuration_pipe_unavailable'));
+      }
+    }
+  }).finally(async () => {
+    try {
+      await payloadHandle?.close();
+    } finally {
+      if (fdPayloadPath && payloadIdentity) {
+        await removePayloadFile(fdPayloadPath, payloadIdentity);
       }
     }
   });
@@ -251,7 +301,9 @@ export async function runPane(kind: string | undefined): Promise<number> {
   );
   const store = createAgentConfigurationStore();
   const configuration = await store.claim(configurationRef);
-  return await waitForChild(buildProviderLaunch(configuration));
+  const payloadPath = configuration.agent === 'claude'
+    ? join(defaultAgentConfigurationDirectory(), configurationRef) : undefined;
+  return await waitForChild(buildProviderLaunch(configuration), spawn, payloadPath);
 }
 
 if (process.argv[1]?.endsWith('/pane.js')) {
