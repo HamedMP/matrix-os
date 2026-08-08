@@ -85,7 +85,9 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}"');
     expect(script).toContain('scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');
-    expect(script).toContain('bin app runtime systemd release.json incremental-manifest.json');
+    expect(script).toContain(
+      'bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json',
+    );
     expect(script).toContain('manifest.json');
     expect(script).toContain('release.json');
     expect(script).toContain('incremental-manifest.json');
@@ -103,7 +105,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
     expect(script).toContain('matrix-messaging-health');
     expect(script).toContain('"$STAGE_DIR/runtime/node/bin/gh"');
-    expect(script).toContain('bin app runtime systemd release.json');
+    expect(script).toContain('bin app runtime systemd user-systemd terminal-runtime release.json');
   });
 
   it('pins, verifies, smoke-tests, and packages the configured Zellij binary', () => {
@@ -125,7 +127,9 @@ describe('customer VPS host bundle', () => {
       'timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"',
     );
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/zellij"');
-    expect(script).toContain('tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd release.json incremental-manifest.json');
+    expect(script).toContain(
+      'tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json',
+    );
     expect(smoke).toContain('import { spawn } from "node-pty"');
     expect(smoke).toContain('const TEST_TIMEOUT_MS = 10_000');
     expect(smoke).toContain('const OLD_HOST_QUERY_TIMEOUT_MS = 500');
@@ -771,7 +775,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
-    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
     expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
     expect(workflow).toContain('dist/host-bundle/objects/**');
     expect(workflow).toContain('./scripts/publish-release.sh "$VERSION" --channel none');
@@ -789,6 +793,65 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('Timed out waiting for ${HANDLE} to install ${VERSION}');
     expect(workflow.indexOf('Preview ready: ${HANDLE} is healthy on ${VERSION}'))
       .toBeLessThan(workflow.indexOf('name: Comment preview URL on PR'));
+  });
+
+  it('user-systemd acceptance recovers only its exact disposable preview updater', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(
+      join(root, '.github/workflows/user-systemd-terminal-production-acceptance.yml'),
+      'utf8',
+    );
+
+    expect(workflow).toContain('name: Recover the exact-head disposable preview updater');
+    expect(workflow).toContain('runs?head_sha=${HEAD_SHA}&per_page=100');
+    expect(workflow).not.toContain('runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100');
+    expect(workflow).toContain('(.event == "pull_request" or .event == "workflow_dispatch")');
+    expect(workflow).toContain('.conclusion == "success"');
+    expect(workflow).toContain('gh run view "$preview_run_id" --repo "$GITHUB_REPOSITORY" --log');
+    expect(workflow).toContain('Preview version: v[0-9]{4}');
+    expect(workflow).toContain('actions/runs/${candidate}/artifacts');
+    expect(workflow).toContain('select(.name == $name and .expired == false)');
+    expect(workflow).not.toContain('gh run download "$preview_run_id"');
+    expect(workflow).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$');
+    expect(workflow).toContain('select(.handle == $handle and .runtimeSlot == $handle');
+    expect(workflow).toContain('x-matrix-acceptance-signature');
+    expect(workflow).toContain('x-matrix-acceptance-response-signature');
+    expect(workflow).toContain('classify_recovery_phase');
+    expect(workflow).toContain('diagnose_recovery_state');
+    expect(workflow).toContain('phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)');
+    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
+    expect(workflow).toContain('recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
+    expect(workflow).toContain('initial_recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
+    expect(workflow).toContain('/usr/bin/python3 - "$error_path"');
+    expect(workflow).toContain('os.O_RDONLY | os.O_NOFOLLOW');
+    expect(workflow).not.toContain('/usr/bin/jq -r \'.code // ""\' "$error_path"');
+    expect(workflow).toContain('retry_progress_observed=false');
+    expect(workflow).toContain('{ [ "$diagnostic_error" = none ] || [ "$diagnostic_phase" != "$recovery_phase" ]; }; then');
+    expect(workflow).toContain('if [ "$retry_progress_observed" = true ] && [ "$diagnostic_error" != none ]; then');
+    expect(workflow).toContain('Exact-head updater reported a bounded failure: ${recovery_diagnostic}.');
+    expect(workflow).toContain('readiness=${last_host_readiness}; ${recovery_diagnostic}.');
+    expect(workflow).toContain('idle|prepare|download|verify|extract|terminal-runtime)');
+    expect(workflow).toContain('app-install|host-bin|health|invalid)');
+    expect(workflow).toContain('[ "$recovery_phase" = terminal-runtime ]');
+    expect(workflow).toContain('if ! matrix_uid="$(jq -er');
+    expect(workflow).toContain('Owner user-manager reload failed during bounded recovery.');
+    expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]');
+    expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]');
+    expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]');
+    expect(workflow).toContain("'{version: $version, handle: $handle}'");
+    expect(workflow).toContain('--data-binary "$deploy_body"');
+    expect(workflow).not.toContain('name: Resolve exact-head disposable preview');
+    expect(workflow.indexOf('name: Recover the exact-head disposable preview updater'))
+      .toBeLessThan(workflow.indexOf('name: Install bounded acceptance assets through the authenticated runtime'));
+  });
+
+  it('unrelated PR labels cannot cancel an active preview deployment', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain("github.event.action == 'labeled'");
+    expect(workflow).toContain("github.event.label.name != 'preview-vps'");
+    expect(workflow).toContain('github.run_id || \'active\'');
   });
 
   it('preview VPS workflow uses the durable preview provision contract', () => {
@@ -861,9 +924,24 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then');
     expect(workflow).toContain('ref: ${{ needs.gate.outputs.head_sha }}');
     expect(workflow).toContain('REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}');
-    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('^v[0-9]{4}\\\\.[0-9]{2}\\\\.[0-9]{2}-pr${PR_NUMBER}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$');
     expect(workflow).toContain('Invalid pinned preview version');
     expect(workflow).toContain('[ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]');
+  });
+
+  it('manual preview dispatch can tear down one exact disposable PR handle', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('teardown_preview:');
+    expect(workflow).toContain('TEARDOWN_PREVIEW: ${{ inputs.teardown_preview }}');
+    expect(workflow).toContain('if [ "$TEARDOWN_PREVIEW" = "true" ]; then');
+    expect(workflow).toContain('action="teardown"');
+    expect(workflow.indexOf('if [ "$TEARDOWN_PREVIEW" = "true" ]; then'))
+      .toBeLessThan(workflow.indexOf('if [ "$VERIFY_INVENTORY" = "true" ]; then'));
+    expect(workflow).toContain("if: needs.gate.outputs.action == 'teardown'");
+    expect(workflow).toContain('select(.handle == $h and .status != "deleted")');
   });
 
   it('manual preview verification uses a short-lived token from an active QA session', () => {
@@ -1125,6 +1203,20 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(gatewayStart).toBeGreaterThan(daemonReload);
   });
 
+  it('bounds the terminal user-manager reload before app replacement', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const reloadStart = syncAgent.indexOf('reload_terminal_user_manager()');
+    const appInstall = syncAgent.indexOf('write_update_phase app-install');
+    const reloadBody = syncAgent.slice(reloadStart, syncAgent.indexOf('\n}', reloadStart));
+
+    expect(reloadStart).toBeGreaterThanOrEqual(0);
+    expect(reloadStart).toBeLessThan(appInstall);
+    expect(reloadBody).toContain('/usr/bin/timeout --signal=KILL 30');
+    expect(reloadBody).toContain('systemctl --user daemon-reload');
+  });
+
   it('restarts the optional Hermes dashboard after replacing its host wrapper', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
@@ -1171,6 +1263,191 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('Repair complete; retrying pending update');
   });
 
+  it('sync agent persists bounded errors for destructive update phase failures', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('write_update_error "checksum_mismatch"');
+    expect(syncAgent).toContain('write_update_error "bundle_extract_failed"');
+    expect(syncAgent).toContain('write_update_error "bundle_layout_invalid"');
+    expect(syncAgent).toContain('write_update_error "terminal_runtime_install_failed"');
+    expect(syncAgent).toContain('write_update_error "post_install_service_start_failed"');
+    expect(syncAgent).toContain('write_update_error "post_install_host_bin_failed"');
+    expect(syncAgent).toContain('write_update_error "post_install_health_failed"');
+    expect(syncAgent).toContain('write_update_error "post_install_rollback_failed"');
+    expect(syncAgent).toContain('write_update_error "apply_failed"');
+    expect(syncAgent).toContain('write_update_error "apply_interrupted"');
+    expect(syncAgent).toContain('temp="$(mktemp "$APP_DIR/.update-error.json.XXXXXX")" || return 1');
+    expect(syncAgent).toContain('python3 - "$temp" "$code" "$message" "$version" "$available_kb" "$required_kb"');
+    expect(syncAgent).toContain('if ! mv -fT "$temp" "$UPDATE_ERROR_MARKER"; then');
+    expect(syncAgent).toContain('readonly UPDATE_PHASE_MARKER="$STAGING_DIR/update-phase"');
+    expect(syncAgent).toContain('write_update_phase download');
+    expect(syncAgent).toContain('write_update_phase verify');
+    expect(syncAgent).toContain('write_update_phase extract');
+    expect(syncAgent).toContain('write_update_phase terminal-runtime');
+    expect(syncAgent).toContain('write_update_phase app-install');
+    expect(syncAgent).toContain('write_update_phase host-bin');
+    expect(syncAgent).toContain('write_update_phase health');
+    expect(syncAgent).toContain('recover_interrupted_update');
+    expect(syncAgent).toContain('run_apply_update');
+
+    const hostBinFailure = syncAgent.indexOf('log "ERROR: host-bin installation failed — rolling back"');
+    const hostBinRollback = syncAgent.indexOf('if do_rollback; then', hostBinFailure);
+    const durableHostBinError = syncAgent.indexOf('write_update_error "post_install_host_bin_failed"', hostBinFailure);
+    expect(hostBinFailure).toBeGreaterThan(-1);
+    expect(hostBinRollback).toBeGreaterThan(hostBinFailure);
+    expect(durableHostBinError).toBeGreaterThan(hostBinRollback);
+
+    const healthFailure = syncAgent.indexOf('log "ERROR: health check failed — rolling back"');
+    const healthRollback = syncAgent.indexOf('if do_rollback; then', healthFailure);
+    const durableHealthError = syncAgent.indexOf('write_update_error "post_install_health_failed"', healthFailure);
+    expect(healthFailure).toBeGreaterThan(-1);
+    expect(healthRollback).toBeGreaterThan(healthFailure);
+    expect(durableHealthError).toBeGreaterThan(healthRollback);
+  });
+
+  it('keeps explicit update triggers durable until the apply phase is recorded', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const triggerBranch = syncAgent.indexOf('if [ -f "$UPDATE_TRIGGER" ]; then');
+    const prepareTriggeredUpdate = syncAgent.indexOf('if prepare_triggered_update; then', triggerBranch);
+    const earlyTriggerRemoval = syncAgent.indexOf('consume_update_trigger', triggerBranch);
+    const preparePhase = syncAgent.indexOf('write_update_phase prepare');
+    const durableTriggerRemoval = syncAgent.indexOf('consume_update_trigger || return 1', preparePhase);
+
+    expect(syncAgent).toContain('sudo rm -f -- "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('if [ "$trigger_source" = explicit ]; then');
+    expect(syncAgent).toContain('run_apply_update explicit');
+    expect(triggerBranch).toBeGreaterThan(-1);
+    expect(prepareTriggeredUpdate).toBeGreaterThan(triggerBranch);
+    expect(earlyTriggerRemoval === -1 || earlyTriggerRemoval > prepareTriggeredUpdate).toBe(true);
+    expect(preparePhase).toBeGreaterThan(-1);
+    expect(durableTriggerRemoval).toBeGreaterThan(preparePhase);
+  });
+
+  it('binds explicit immutable update requests to the fetched release version', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const requestedVersion = syncAgent.indexOf('requested_version="$target"');
+    const targetMismatch = syncAgent.indexOf('[ "$remote_version" = "$requested_version" ]');
+    const durableError = syncAgent.indexOf('write_update_error "update_target_mismatch"');
+    const preparedMarker = syncAgent.indexOf('write_prepared_update_marker "$manifest"');
+
+    expect(requestedVersion).toBeGreaterThan(-1);
+    expect(targetMismatch).toBeGreaterThan(requestedVersion);
+    expect(durableError).toBeGreaterThan(targetMismatch);
+    expect(preparedMarker).toBeGreaterThan(durableError);
+  });
+
+  it('treats a clean explicit request for the installed immutable version as idempotent', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const sameVersionGuard = syncAgent.indexOf('requested_update_is_already_current()');
+    const interruptedPhaseGuard = syncAgent.indexOf('[ ! -e "$UPDATE_PHASE_MARKER" ]', sameVersionGuard);
+    const durableErrorGuard = syncAgent.indexOf('[ ! -e "$UPDATE_ERROR_MARKER" ]', interruptedPhaseGuard);
+    const idempotentLog = syncAgent.indexOf(
+      'Exact requested version is already installed; consuming idempotent request',
+      durableErrorGuard,
+    );
+    const targetCleanup = syncAgent.indexOf('rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"', idempotentLog);
+    const triggerCleanup = syncAgent.indexOf('consume_update_trigger', idempotentLog);
+
+    expect(sameVersionGuard).toBeGreaterThan(-1);
+    expect(interruptedPhaseGuard).toBeGreaterThan(sameVersionGuard);
+    expect(durableErrorGuard).toBeGreaterThan(interruptedPhaseGuard);
+    expect(idempotentLog).toBeGreaterThan(durableErrorGuard);
+    expect(targetCleanup).toBeGreaterThan(idempotentLog);
+    expect(triggerCleanup).toBeGreaterThan(targetCleanup);
+    expect(idempotentLog).toBeLessThan(syncAgent.indexOf('write_update_phase prepare'));
+  });
+
+  it('reapplies an exact-version bundle when its immutable terminal generation is incomplete', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const readinessGuard = syncAgent.indexOf('installed_terminal_runtime_is_ready()');
+    const markerGuard = syncAgent.indexOf('[ -f "$marker" ] && [ ! -L "$marker" ]', readinessGuard);
+    const generationGuard = syncAgent.indexOf('[ -d "$generation_dir" ] && [ ! -L "$generation_dir" ]', markerGuard);
+    const assetLoop = syncAgent.indexOf(
+      'for asset in matrix-terminal-user-keeper.mjs matrix-terminal-attach.mjs',
+      generationGuard,
+    );
+    const assetGuard = syncAgent.indexOf(
+      '[ -f "$generation_dir/$asset" ] && [ ! -L "$generation_dir/$asset" ]',
+      assetLoop,
+    );
+    const zellijGuard = syncAgent.indexOf('[ -x "$generation_dir/zellij" ]', assetGuard);
+    const digestGuard = syncAgent.indexOf('[ "$actual_generation" = "$generation" ]', zellijGuard);
+    const sameVersionGuard = syncAgent.indexOf('requested_update_is_already_current()');
+    const readinessCall = syncAgent.indexOf('installed_terminal_runtime_is_ready || return 1', sameVersionGuard);
+
+    expect(readinessGuard).toBeGreaterThan(-1);
+    expect(markerGuard).toBeGreaterThan(readinessGuard);
+    expect(generationGuard).toBeGreaterThan(markerGuard);
+    expect(assetLoop).toBeGreaterThan(generationGuard);
+    expect(assetGuard).toBeGreaterThan(assetLoop);
+    expect(zellijGuard).toBeGreaterThan(assetGuard);
+    expect(digestGuard).toBeGreaterThan(zellijGuard);
+    expect(readinessCall).toBeGreaterThan(sameVersionGuard);
+  });
+
+  it('securely bootstraps an incomplete terminal runtime before privileged helper use', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const bootstrap = syncAgent.indexOf('install_terminal_runtime_bootstrap_helpers()');
+    const boundedNames = syncAgent.indexOf(
+      'for name in matrix-terminal-generation-id matrix-terminal-generation-gc.py',
+      bootstrap,
+    );
+    const sourceGuard = syncAgent.indexOf(
+      '[ -f "$source" ] && [ ! -L "$source" ] || return 1',
+      boundedNames,
+    );
+    const rootOwnedInstall = syncAgent.indexOf(
+      'sudo install -o root -g root -m 0755 "$source" "$incoming"',
+      sourceGuard,
+    );
+    const atomicMove = syncAgent.indexOf('sudo mv -Tf "$incoming" "$destination"', rootOwnedInstall);
+    const bootstrapCall = syncAgent.indexOf(
+      'install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"',
+      atomicMove,
+    );
+    const runtimePhase = syncAgent.indexOf('write_update_phase terminal-runtime', bootstrapCall);
+    const installRuntime = syncAgent.indexOf('install_terminal_runtime_payload "$extract_dir"', runtimePhase);
+    const hostBinInstall = syncAgent.indexOf('install_host_bin_payload "$extract_dir/bin"');
+
+    expect(bootstrap).toBeGreaterThan(-1);
+    expect(boundedNames).toBeGreaterThan(bootstrap);
+    expect(sourceGuard).toBeGreaterThan(boundedNames);
+    expect(rootOwnedInstall).toBeGreaterThan(sourceGuard);
+    expect(atomicMove).toBeGreaterThan(rootOwnedInstall);
+    expect(bootstrapCall).toBeGreaterThan(atomicMove);
+    expect(runtimePhase).toBeGreaterThan(bootstrapCall);
+    expect(installRuntime).toBeGreaterThan(runtimePhase);
+    expect(hostBinInstall).toBeGreaterThan(installRuntime);
+  });
+
+  it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('download_bundle()');
+    expect(syncAgent).toContain('for attempt in 1 2; do');
+    expect(syncAgent).toContain('/usr/bin/timeout --signal=KILL 1800 curl');
+    expect(syncAgent).toContain('continue_args=(--continue-at -)');
+    expect(syncAgent).toContain('fetch_manifest "$(release_url_for_version "$version")"');
+    expect(syncAgent).toContain('[ "$refreshed_version" = "$version" ]');
+    expect(syncAgent).toContain('[ "$refreshed_sha256" = "$expected_sha256" ]');
+    expect(syncAgent).toContain('[ "$refreshed_size" = "$expected_size" ]');
+    expect(syncAgent).toContain('write_update_error "download_metadata_changed"');
+    expect(syncAgent).toContain('write_update_error "download_failed"');
+    expect(syncAgent).toContain('download_bundle "$version" "$sha256" "$(json_field "$manifest" size)" "$bundle_url" "$bundle_file"');
+  });
+
   it('sync agent replaces the app tree with root permissions', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
@@ -1180,7 +1457,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('sudo mv "$extract_dir/app" "$APP_DIR"');
     expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
     expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
-    expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('sudo rm -f -- "$UPDATE_TRIGGER"');
     expect(syncAgent).toContain('prepare_triggered_update');
     expect(syncAgent).toContain('restart_sync_agent_after_update');
     expect(syncAgent).toContain('sudo systemctl restart --no-block matrix-sync-agent.service');
@@ -1204,6 +1481,17 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');
     expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
     expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
+  });
+
+  it('sync agent atomically replaces host-bin scripts without truncating itself', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('install_host_bin_payload()');
+    expect(syncAgent).toContain('sudo install -o root -g root -m 0755 "$source" "$incoming"');
+    expect(syncAgent).toContain('sudo mv -Tf "$incoming" "$destination"');
+    expect(syncAgent).toContain('install_host_bin_payload "$extract_dir/bin"');
+    expect(syncAgent).not.toContain('sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \\;');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {

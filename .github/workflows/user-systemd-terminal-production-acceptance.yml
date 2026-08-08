@@ -1,0 +1,976 @@
+name: User-systemd Terminal Production Acceptance
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: user-systemd-terminal-production-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    if: >-
+      github.event.label.name == 'user-systemd-production-acceptance' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.resolve.outputs.pr }}
+      head: ${{ steps.resolve.outputs.head }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      handle: ${{ steps.resolve.outputs.handle }}
+    steps:
+      - id: resolve
+        name: Resolve immutable same-repository head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}")"
+          head="$(jq -r .head.sha <<<"$pr_json")"
+          ref="$(jq -r .head.ref <<<"$pr_json")"
+          repo="$(jq -r .head.repo.full_name <<<"$pr_json")"
+          if [ "$repo" != "$GITHUB_REPOSITORY" ] ||
+            [ "$head" != "$EVENT_HEAD" ] ||
+            ! printf '%s' "$head" | grep -Eq '^[0-9a-f]{40}$' ||
+            ! jq -e '.labels | any(.name == "preview-vps") and
+              any(.name == "user-systemd-production-acceptance")' <<<"$pr_json" >/dev/null; then
+            echo "Acceptance requires the immutable same-repository preview head." >&2
+            exit 1
+          fi
+          {
+            echo "pr=$PR"
+            echo "head=$head"
+            echo "ref=$ref"
+            echo "handle=pr-$PR"
+          } >>"$GITHUB_OUTPUT"
+
+  build:
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+      NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
+      NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: 28
+          elixir-version: 1.19
+      - name: Build two exact-head user-systemd acceptance bundles
+        env:
+          HEAD_SHA: ${{ needs.gate.outputs.head }}
+          HEAD_REF: ${{ needs.gate.outputs.ref }}
+          RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ] ||
+            [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "A real Clerk publishable key is required." >&2
+            exit 1
+          fi
+          for suffix in a b; do
+            version="v0.0.0-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
+            HOST_BUNDLE_VERSION="$version" HOST_BUNDLE_CHANNEL=none \
+              MATRIX_BUILD_SHA="$HEAD_SHA" MATRIX_BUILD_REF="$HEAD_REF" \
+              ./scripts/build-host-bundle.sh
+            mv dist/host-bundle "dist/user-systemd-acceptance-${suffix}"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: user-systemd-terminal-bundles-${{ needs.gate.outputs.head }}
+          path: |
+            dist/user-systemd-acceptance-a/matrix-host-bundle.tar.gz
+            dist/user-systemd-acceptance-a/matrix-host-bundle.tar.gz.sha256
+            dist/user-systemd-acceptance-a/manifest.json
+            dist/user-systemd-acceptance-a/incremental-manifest.json
+            dist/user-systemd-acceptance-a/objects/**
+            dist/user-systemd-acceptance-b/matrix-host-bundle.tar.gz
+            dist/user-systemd-acceptance-b/matrix-host-bundle.tar.gz.sha256
+            dist/user-systemd-acceptance-b/manifest.json
+            dist/user-systemd-acceptance-b/incremental-manifest.json
+            dist/user-systemd-acceptance-b/objects/**
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BUNDLES_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}
+      R2_ENDPOINT: ${{ vars.R2_BUNDLES_ENDPOINT || vars.R2_ENDPOINT || format('https://{0}.r2.cloudflarestorage.com', secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID) }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: user-systemd-terminal-bundles-${{ needs.gate.outputs.head }}
+          path: dist
+      - name: Publish both immutable register-only bundles
+        env:
+          HEAD_SHA: ${{ needs.gate.outputs.head }}
+          PR: ${{ needs.gate.outputs.pr }}
+          RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          for suffix in a b; do
+            rm -rf dist/host-bundle
+            cp -a "dist/user-systemd-acceptance-${suffix}" dist/host-bundle
+            version="v0.0.0-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
+            ./scripts/publish-release.sh "$version" --channel none \
+              --changelog "User-systemd terminal acceptance for PR #${PR}"
+          done
+
+  prove:
+    needs: [gate, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      HANDLE: ${{ needs.gate.outputs.handle }}
+      HEAD_SHA: ${{ needs.gate.outputs.head }}
+      PR: ${{ needs.gate.outputs.pr }}
+      RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+      TEST_ONLY_ACTIVATION: MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+      - name: Recover the exact-head disposable preview updater
+        id: preview
+        run: |
+          set -euo pipefail
+          [ "$TEST_ONLY_ACTIVATION" = "MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1" ]
+          candidate_ids="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${HEAD_SHA}&per_page=100" \
+            --jq '[.workflow_runs[] | select(.head_sha == "'"$HEAD_SHA"'" and
+                .status == "completed" and .conclusion == "success" and
+                (.event == "pull_request" or .event == "workflow_dispatch"))]
+              | sort_by(.created_at) | reverse | .[].id')"
+          preview_run_id=""
+          for candidate in $candidate_ids; do
+            artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate}/artifacts")"
+            if jq -e --arg name "preview-bundle-${PR}" \
+              '[.artifacts[] | select(.name == $name and .expired == false)] | length == 1' \
+              <<<"$artifacts" >/dev/null; then
+              preview_run_id="$candidate"
+              break
+            fi
+          done
+          if ! printf '%s' "$preview_run_id" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "No completed exact-head Preview VPS artifact is available." >&2
+            exit 1
+          fi
+          preview_log="$RUNNER_TEMP/exact-head-preview.log"
+          gh run view "$preview_run_id" --repo "$GITHUB_REPOSITORY" --log >"$preview_log"
+          target_version="$(grep -Eo \
+            'Preview version: v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-pr[0-9]+(-[0-9]+-[0-9]+)?-[0-9a-f]{7}' \
+            "$preview_log" | sed 's/^Preview version: //' | sort -u)"
+          if ! printf '%s' "$target_version" |
+            grep -Eq "^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-pr${PR}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$" ||
+            [[ "$target_version" == *$'\n'* ]] ||
+            [ "${target_version##*-}" != "${HEAD_SHA:0:7}" ]; then
+            echo "The completed preview log is not for one immutable acceptance head." >&2
+            exit 1
+          fi
+
+          fleet="$(curl --fail --silent --show-error --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+          machine="$(jq -ce --arg handle "$HANDLE" '
+            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+              and .status == "running")] | if length == 1 then .[0] else error("invalid preview") end
+          ' <<<"$fleet")"
+          current_version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+          address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+          if ! printf '%s' "$current_version" |
+            grep -Eq "^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-pr${PR}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$" ||
+            ! printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+            echo "Refusing updater recovery outside the exact disposable PR preview." >&2
+            exit 1
+          fi
+          echo "::add-mask::$address"
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          send_signed_command() {
+            local body="$1" response="$2" timestamp nonce signature response_signature headers
+            timestamp="$(date +%s)"
+            nonce="$(openssl rand -hex 16)"
+            signature="$(ACCEPTANCE_SIGNING_KEY="$token" ACCEPTANCE_BODY="$body" node --input-type=module -e '
+              import{createHash,createHmac}from"node:crypto";
+              const digest=createHash("sha256").update(process.env.ACCEPTANCE_BODY).digest("hex");
+              process.stdout.write(createHmac("sha256",process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
+            ' "$timestamp" "$nonce")"
+            headers="$RUNNER_TEMP/user-systemd-recovery-headers"
+            if ! curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" \
+              -D "$headers" -o "$response" -X POST \
+              'https://app.matrix-os.com/api/internal/terminal-acceptance/run' \
+              -H "x-matrix-acceptance-timestamp: $timestamp" \
+              -H "x-matrix-acceptance-nonce: $nonce" \
+              -H "x-matrix-acceptance-signature: $signature" \
+              -H 'content-type: application/json' --data-binary "$body"; then
+              return 1
+            fi
+            response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
+            if ! ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+              import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+              import { readFile } from "node:fs/promises";
+              const [timestamp, nonce, signature, path] = process.argv.slice(1);
+              const body = await readFile(path);
+              const digest = createHash("sha256").update(body).digest("hex");
+              const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+              if (!/^[0-9a-f]{64}$/.test(signature) ||
+                !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            ' "$timestamp" "$nonce" "$response_signature" "$response"; then
+              return 1
+            fi
+            jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
+              "$response" >/dev/null
+          }
+          probe_runtime_readiness() {
+            local response="$RUNNER_TEMP/user-systemd-runtime-readiness.json" body readiness_script
+            read -r -d '' readiness_script <<'BASH' || true
+          set -u
+          target="$1"
+          path_state() {
+            local path="$1"
+            if [ -L "$path" ] || { [ -e "$path" ] && [ ! -f "$path" ]; }; then
+              printf 'invalid\n'
+            elif [ -f "$path" ]; then
+              printf 'present\n'
+            else
+              printf 'missing\n'
+            fi
+          }
+
+          bundle_state="$(path_state /opt/matrix/app/BUNDLE_VERSION)"
+          case "$bundle_state" in
+            invalid) printf 'invalid:bundle-path\n'; exit 0 ;;
+            missing) printf 'pending:bundle-missing\n'; exit 0 ;;
+          esac
+          IFS= read -r installed_version </opt/matrix/app/BUNDLE_VERSION || installed_version=
+          if [ "$installed_version" != "$target" ]; then
+            printf 'pending:bundle-version\n'
+            exit 0
+          fi
+
+          for marker_spec in \
+            /opt/matrix/app/.update-now:update-trigger \
+            /opt/matrix/staging/update-phase:update-phase \
+            /opt/matrix/app/.update-error.json:update-error; do
+            marker="${marker_spec%%:*}"
+            case "$marker" in
+              /opt/matrix/app/.update-now)
+                pending_code=pending:update-trigger
+                invalid_code=invalid:update-trigger-path
+                ;;
+              /opt/matrix/staging/update-phase)
+                pending_code=pending:update-phase
+                invalid_code=invalid:update-phase-path
+                ;;
+              /opt/matrix/app/.update-error.json)
+                pending_code=pending:update-error
+                invalid_code=invalid:update-error-path
+                ;;
+            esac
+            marker_state="$(path_state "$marker")"
+            case "$marker_state" in
+              invalid) printf '%s\n' "$invalid_code"; exit 0 ;;
+              present) printf '%s\n' "$pending_code"; exit 0 ;;
+            esac
+          done
+
+          runtime_marker=/opt/matrix/app/TERMINAL_RUNTIME_GENERATION
+          runtime_state="$(path_state "$runtime_marker")"
+          case "$runtime_state" in
+            invalid) printf 'invalid:generation-marker-path\n'; exit 0 ;;
+            missing) printf 'pending:generation-marker\n'; exit 0 ;;
+          esac
+          IFS= read -r generation <"$runtime_marker" || generation=
+          if ! printf '%s' "$generation" | grep -Eq '^gen_[0-9a-f]{64}$'; then
+            printf 'invalid:generation-marker\n'
+            exit 0
+          fi
+          generation_dir="/opt/matrix/terminal-runtime/generations/${generation}"
+          if [ -L "$generation_dir" ] || { [ -e "$generation_dir" ] && [ ! -d "$generation_dir" ]; }; then
+            printf 'invalid:generation-dir-path\n'
+            exit 0
+          fi
+          if [ ! -d "$generation_dir" ]; then
+            printf 'pending:generation-dir\n'
+            exit 0
+          fi
+          for asset in zellij matrix-terminal-user-keeper.mjs matrix-terminal-attach.mjs; do
+            asset_path="${generation_dir}/${asset}"
+            if [ -L "$asset_path" ] || { [ -e "$asset_path" ] && [ ! -f "$asset_path" ]; }; then
+              printf 'invalid:generation-assets-path\n'
+              exit 0
+            fi
+            if [ ! -f "$asset_path" ]; then
+              printf 'pending:generation-assets\n'
+              exit 0
+            fi
+          done
+          generation_helper=/opt/matrix/bin/matrix-terminal-generation-id
+          if [ -L "$generation_helper" ] || { [ -e "$generation_helper" ] && [ ! -f "$generation_helper" ]; }; then
+            printf 'invalid:generation-helper-path\n'
+            exit 0
+          fi
+          if [ ! -x "$generation_helper" ]; then
+            printf 'pending:generation-helper\n'
+            exit 0
+          fi
+          actual_generation="$("$generation_helper" \
+            "$generation_dir/zellij" \
+            "$generation_dir/matrix-terminal-user-keeper.mjs" \
+            "$generation_dir/matrix-terminal-attach.mjs" 2>/dev/null)" || {
+            printf 'pending:generation-digest\n'
+            exit 0
+          }
+          if [ "$actual_generation" != "$generation" ]; then
+            printf 'invalid:generation-digest\n'
+            exit 0
+          fi
+          if ! runuser -u matrix -- "$generation_dir/zellij" --version >/dev/null 2>&1; then
+            printf 'pending:zellij-exec\n'
+            exit 0
+          fi
+          printf 'ready\n'
+          BASH
+            body="$(jq -cn --arg script "$readiness_script" --arg target "$target_version" \
+              '{command:["/usr/bin/sudo","/bin/bash","-c",$script,"matrix-runtime-readiness",$target],timeoutMs:45000}')"
+            send_signed_command "$body" "$response"
+            jq -er '.stdout | select(test("^(ready|(pending|invalid):[a-z0-9-]{1,64})\\n$")) | rtrimstr("\n")' \
+              "$response"
+          }
+          classify_recovery_phase() {
+            local response="$RUNNER_TEMP/user-systemd-recovery-phase.json" body
+            body='{"command":["/usr/bin/sudo","/bin/bash","-c","marker=/opt/matrix/staging/update-phase; if [ -L \"$marker\" ] || { [ -e \"$marker\" ] && [ ! -f \"$marker\" ]; }; then printf \"invalid\\n\"; elif [ ! -e \"$marker\" ]; then printf \"idle\\n\"; else IFS= read -r phase <\"$marker\" || phase=; case \"$phase\" in prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) printf \"%s\\n\" \"$phase\" ;; *) printf \"invalid\\n\" ;; esac; fi"]}'
+            send_signed_command "$body" "$response"
+            jq -er '.stdout | select(test("^(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)\\n$")) | rtrimstr("\n")' \
+              "$response"
+          }
+          diagnose_recovery_state() {
+            local response="$RUNNER_TEMP/user-systemd-recovery-diagnostic.json" body diagnostic_script
+            read -r -d '' diagnostic_script <<'BASH' || true
+          set -u
+          phase=idle
+          phase_path=/opt/matrix/staging/update-phase
+          if [ -L "$phase_path" ] || { [ -e "$phase_path" ] && [ ! -f "$phase_path" ]; }; then
+            phase=invalid
+          elif [ -f "$phase_path" ]; then
+            IFS= read -r phase <"$phase_path" || phase=invalid
+            case "$phase" in
+              prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
+              *) phase=invalid ;;
+            esac
+          fi
+
+          error=none
+          error_path=/opt/matrix/app/.update-error.json
+          if [ -L "$error_path" ] || { [ -e "$error_path" ] && [ ! -f "$error_path" ]; }; then
+            error=invalid
+          elif [ -f "$error_path" ]; then
+            error="$(
+              /usr/bin/python3 - "$error_path" 2>/dev/null <<'PYTHON' || true
+          import json
+          import os
+          import stat
+          import sys
+
+          fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+          try:
+              metadata = os.fstat(fd)
+              if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
+                  raise ValueError("invalid bounded update error marker")
+              payload = os.read(fd, 4097)
+              if len(payload) > 4096:
+                  raise ValueError("invalid bounded update error marker")
+              value = json.loads(payload).get("code", "")
+              if not isinstance(value, str):
+                  raise ValueError("invalid update error code")
+              print(value)
+          finally:
+              os.close(fd)
+          PYTHON
+            )"
+            case "$error" in
+              apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch) ;;
+              *) error=invalid ;;
+            esac
+          fi
+          printf 'phase=%s error=%s\n' "$phase" "$error"
+          BASH
+            body="$(jq -cn --arg script "$diagnostic_script" \
+              '{command:["/usr/bin/sudo","/bin/bash","-c",$script],timeoutMs:45000}')"
+            send_signed_command "$body" "$response"
+            jq -er '.stdout | select(test("^phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid) error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)\\n$")) | rtrimstr("\n")' \
+              "$response"
+          }
+          response="$RUNNER_TEMP/user-systemd-recovery.json"
+          host_readiness="$(probe_runtime_readiness)"
+          case "$host_readiness" in
+            invalid:*)
+              echo "Refusing exact-head recovery from ${host_readiness}." >&2
+              exit 1
+              ;;
+          esac
+          recovery_phase=idle
+          retry_progress_observed=true
+          if [ "$current_version" != "$target_version" ] || [ "$host_readiness" != ready ]; then
+            initial_recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf 'phase=invalid error=invalid\n')"
+            if [[ "$initial_recovery_diagnostic" == *" error=invalid" ]]; then
+              echo "Refusing exact-head recovery from ${initial_recovery_diagnostic}." >&2
+              exit 1
+            fi
+            recovery_phase="$(classify_recovery_phase)"
+            case "$recovery_phase" in
+              idle|prepare|download|verify|extract|terminal-runtime) ;;
+              app-install|host-bin|health|invalid)
+                echo "Refusing to interrupt updater in bounded ${recovery_phase} phase." >&2
+                exit 1
+                ;;
+            esac
+            body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","stop","--no-block","matrix-sync-agent.service"]}'
+            send_signed_command "$body" "$response"
+            stop_deadline=$((SECONDS + 90))
+            updater_active=unknown
+            while [ "$SECONDS" -lt "$stop_deadline" ]; do
+              body='{"command":["/usr/bin/systemctl","show","matrix-sync-agent.service","--property=ActiveState"]}'
+              send_signed_command "$body" "$response"
+              updater_active="$(jq -r '.stdout // ""' "$response" | sed -n 's/^ActiveState=//p')"
+              if [ "$updater_active" = inactive ] || [ "$updater_active" = failed ]; then
+                break
+              fi
+              sleep 5
+            done
+            if [ "$updater_active" != inactive ] && [ "$updater_active" != failed ]; then
+              echo "Updater did not stop within the bounded recovery window." >&2
+              exit 1
+            fi
+            if [ "$recovery_phase" = terminal-runtime ]; then
+              body='{"command":["/usr/bin/id","-u","matrix"]}'
+              if ! send_signed_command "$body" "$response"; then
+                echo "Owner user-manager reload failed during bounded recovery." >&2
+                exit 1
+              fi
+              if ! matrix_uid="$(jq -er '.stdout | select(test("^[0-9]{1,10}\\n$")) | rtrimstr("\n")' "$response")"; then
+                echo "Owner user-manager reload failed during bounded recovery." >&2
+                exit 1
+              fi
+              body="$(jq -cn --arg runtime_dir "/run/user/${matrix_uid}" \
+                --arg bus "unix:path=/run/user/${matrix_uid}/bus" \
+                '{command:["/usr/bin/sudo","-u","matrix","/usr/bin/env","HOME=/home/matrix/home",("XDG_RUNTIME_DIR=" + $runtime_dir),("DBUS_SESSION_BUS_ADDRESS=" + $bus),"/usr/bin/timeout","--signal=KILL","30","/usr/bin/systemctl","--user","daemon-reload"],timeoutMs:45000}')"
+              if ! send_signed_command "$body" "$response"; then
+                echo "Owner user-manager reload failed during bounded recovery." >&2
+                exit 1
+              fi
+            fi
+            body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","reset-failed","matrix-sync-agent.service"]}'
+            send_signed_command "$body" "$response"
+            body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","start","matrix-sync-agent.service"]}'
+            send_signed_command "$body" "$response"
+            deploy_body="$(jq -cn --arg version "$target_version" --arg handle "$HANDLE" \
+              '{version: $version, handle: $handle}')"
+            code="$(curl --silent --show-error --max-time 120 -o "$RUNNER_TEMP/recovery-deploy.json" \
+              -w '%{http_code}' -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" -H 'content-type: application/json' \
+              --data-binary "$deploy_body")"
+            if [ "$code" != 200 ] ||
+              ! jq -e --arg handle "$HANDLE" '
+                .triggered == 1 and .failed == 0 and
+                (.results | length == 1 and .[0].handle == $handle and .[0].status == "triggered")
+              ' "$RUNNER_TEMP/recovery-deploy.json" >/dev/null; then
+              echo "Exact-head preview deploy recovery failed with HTTP ${code}." >&2
+              exit 1
+            fi
+            # A previous failed attempt leaves a durable bounded error until
+            # apply_update starts and atomically clears it. Do not mistake that
+            # pre-existing marker for the result of this explicitly retried
+            # update; require observable retry progress first.
+            retry_progress_observed=false
+          fi
+
+          deadline=$((SECONDS + 1200))
+          inactive_samples=0
+          probe_failures=0
+          last_host_readiness="$host_readiness"
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if ! fleet="$(curl --fail --silent --show-error --max-time 30 \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"; then
+              sleep 15
+              continue
+            fi
+            machine="$(jq -ce --arg handle "$HANDLE" '
+              [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+                and .status == "running")] | if length == 1 then .[0] else {} end
+            ' <<<"$fleet")"
+            version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
+            fleet_address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+            host_readiness=""
+            if [ "$fleet_address" = "$address" ]; then
+              host_readiness="$(probe_runtime_readiness 2>/dev/null || true)"
+            fi
+            if [ -n "$host_readiness" ]; then
+              last_host_readiness="$host_readiness"
+            else
+              last_host_readiness=probe-unavailable
+            fi
+            if recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null)"; then
+              diagnostic_phase="${recovery_diagnostic#phase=}"
+              diagnostic_phase="${diagnostic_phase%% *}"
+              diagnostic_error="${recovery_diagnostic##* error=}"
+              if [ "$retry_progress_observed" = false ] &&
+                { [ "$diagnostic_error" = none ] || [ "$diagnostic_phase" != "$recovery_phase" ]; }; then
+                retry_progress_observed=true
+              fi
+              if [ "$retry_progress_observed" = true ] && [ "$diagnostic_error" != none ]; then
+                echo "Exact-head updater reported a bounded failure: ${recovery_diagnostic}." >&2
+                exit 1
+              fi
+            fi
+            case "$host_readiness" in
+              invalid:*)
+                echo "Exact-head runtime entered ${host_readiness} during recovery." >&2
+                exit 1
+                ;;
+            esac
+            if [ "$version" = "$target_version" ] && [ "$fleet_address" = "$address" ] &&
+              [ "$host_readiness" = ready ]; then
+              echo "address=$address" >>"$GITHUB_OUTPUT"
+              echo "version=$version" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            body='{"command":["/usr/bin/systemctl","show","matrix-sync-agent.service","--property=ActiveState","--property=SubState","--property=Result","--property=ExecMainStatus"]}'
+            if send_signed_command "$body" "$response"; then
+              probe_failures=0
+              service_state="$(jq -r '.stdout // ""' "$response")"
+              active_state="$(sed -n 's/^ActiveState=//p' <<<"$service_state")"
+              sub_state="$(sed -n 's/^SubState=//p' <<<"$service_state")"
+              result="$(sed -n 's/^Result=//p' <<<"$service_state")"
+              exec_status="$(sed -n 's/^ExecMainStatus=//p' <<<"$service_state")"
+              case "$active_state" in
+                active|activating|inactive|failed|deactivating) ;;
+                *) active_state=other ;;
+              esac
+              case "$sub_state" in
+                running|start|dead|failed|auto-restart|exited|stop-sigterm|stop-post|start-pre|start-post) ;;
+                *) sub_state=other ;;
+              esac
+              case "$result" in
+                success|exit-code|signal|timeout|core-dump|watchdog|start-limit-hit|resources|protocol|none) ;;
+                *) result=other ;;
+              esac
+              if ! printf '%s' "$exec_status" | grep -Eq '^[0-9]{1,3}$'; then
+                exec_status=other
+              fi
+              if [ "$active_state" = active ] || [ "$active_state" = activating ]; then
+                inactive_samples=0
+              else
+                inactive_samples=$((inactive_samples + 1))
+                if [ "$inactive_samples" -ge 3 ]; then
+                  echo "Updater unavailable: active=${active_state} sub=${sub_state} result=${result} exit=${exec_status}." >&2
+                  exit 1
+                fi
+              fi
+            else
+              probe_failures=$((probe_failures + 1))
+              if [ "$probe_failures" -ge 5 ]; then
+                echo "Updater state probe remained unavailable." >&2
+                exit 1
+              fi
+            fi
+            sleep 15
+          done
+          recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf 'phase=invalid error=invalid\n')"
+          echo "Exact-head preview was unavailable after a bounded wait: readiness=${last_host_readiness}; ${recovery_diagnostic}." >&2
+          exit 1
+      - name: Install bounded acceptance assets through the authenticated runtime
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+        run: |
+          set -euo pipefail
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          endpoint='https://app.matrix-os.com/api/internal/terminal-acceptance/run'
+          send_signed_command() {
+            local body="$1" response="$2" timestamp nonce signature response_signature headers
+            timestamp="$(date +%s)"
+            nonce="$(openssl rand -hex 16)"
+            signature="$(ACCEPTANCE_SIGNING_KEY="$token" ACCEPTANCE_BODY="$body" node --input-type=module -e '
+              import{createHash,createHmac}from"node:crypto";
+              const digest=createHash("sha256").update(process.env.ACCEPTANCE_BODY).digest("hex");
+              process.stdout.write(createHmac("sha256",process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
+            ' "$timestamp" "$nonce")"
+            headers="$RUNNER_TEMP/user-systemd-command-headers"
+            # The disposable VPS has a per-host self-signed certificate. Request and response
+            # HMACs provide end-to-end authenticity; the reusable key never crosses this link.
+            curl --fail --silent --show-error --max-time 90 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -D "$headers" -o "$response" -X POST "$endpoint" \
+              -H "x-matrix-acceptance-timestamp: $timestamp" \
+              -H "x-matrix-acceptance-nonce: $nonce" \
+              -H "x-matrix-acceptance-signature: $signature" \
+              -H 'content-type: application/json' \
+              --data-binary "$body"
+            response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+              import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+              import { readFile } from "node:fs/promises";
+              const [timestamp, nonce, signature, path] = process.argv.slice(1);
+              const body = await readFile(path);
+              const digest = createHash("sha256").update(body).digest("hex");
+              const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+              if (!/^[0-9a-f]{64}$/.test(signature) ||
+                !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            ' "$timestamp" "$nonce" "$response_signature" "$response"
+          }
+          send_command() {
+            local body="$1" response="$RUNNER_TEMP/user-systemd-command.json"
+            send_signed_command "$body" "$response"
+            jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
+              "$response" >/dev/null
+          }
+          upload_asset() {
+            local source="$1" remote="$2" suffix="$3" group="$4" mode="$5"
+            local payload offset chunk script body
+            [[ "$group" == root || "$group" == matrix ]]
+            [[ "$mode" == 0700 || "$mode" == 0640 ]]
+            local encoded="/tmp/matrix-user-systemd-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}.b64"
+            local decoded="/tmp/matrix-user-systemd-${HEAD_SHA:0:7}-${RUN_NONCE}-${suffix}"
+            payload="$(gzip -9 -c "$source" | base64 --wrap=0)"
+            body="$(jq -cn --arg file "$encoded" '{command:["/usr/bin/truncate","--size","0",$file]}')"
+            send_command "$body"
+            offset=0
+            while [ "$offset" -lt "${#payload}" ]; do
+              chunk="${payload:$offset:3000}"
+              script="$(jq -nr --arg file "$encoded" --arg chunk "$chunk" \
+                '"printf %s " + ($chunk|@sh) + " >> " + ($file|@sh)')"
+              body="$(jq -cn --arg script "$script" '{command:["/bin/bash","-c",$script]}')"
+              send_command "$body"
+              offset=$((offset + 3000))
+            done
+            script="$(jq -nr --arg input "$encoded" --arg output "$decoded" \
+              '"umask 077; base64 --decode " + ($input|@sh) + " | gzip --decompress > " + ($output|@sh)')"
+            body="$(jq -cn --arg script "$script" '{command:["/bin/bash","-c",$script]}')"
+            send_command "$body"
+            body="$(jq -cn --arg source "$decoded" --arg target "$remote" \
+              --arg group "$group" --arg mode "$mode" \
+              '{command:["/usr/bin/sudo","/usr/bin/install","-o","root","-g",$group,"-m",$mode,$source,$target]}')"
+            send_command "$body"
+            body="$(jq -cn --arg first "$encoded" --arg second "$decoded" \
+              '{command:["/usr/bin/rm","-f","--",$first,$second]}')"
+            send_command "$body"
+          }
+          remote_base="/var/tmp/matrix-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}"
+          upload_asset scripts/spikes/user-systemd-terminal/production-acceptance.sh \
+            "${remote_base}.sh" helper root 0700
+          upload_asset scripts/spikes/user-systemd-terminal/production-probe.mjs \
+            "${remote_base}-probe.mjs" probe matrix 0640
+          printf '%s\n' "$remote_base" >"$RUNNER_TEMP/user-systemd-remote-base"
+      - name: Run two-bundle, gateway-failure, rollback, and pre-reboot matrix
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+          PREVIEW_VERSION: ${{ steps.preview.outputs.version }}
+        run: |
+          set -euo pipefail
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          helper="$(cat "$RUNNER_TEMP/user-systemd-remote-base").sh"
+          send_signed_command() {
+            local body="$1" response="$2" timestamp nonce signature response_signature headers
+            timestamp="$(date +%s)"
+            nonce="$(openssl rand -hex 16)"
+            signature="$(ACCEPTANCE_SIGNING_KEY="$token" ACCEPTANCE_BODY="$body" node --input-type=module -e '
+              import{createHash,createHmac}from"node:crypto";
+              const digest=createHash("sha256").update(process.env.ACCEPTANCE_BODY).digest("hex");
+              process.stdout.write(createHmac("sha256",process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
+            ' "$timestamp" "$nonce")"
+            headers="$RUNNER_TEMP/user-systemd-helper-headers"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -D "$headers" -o "$response" -X POST \
+              'https://app.matrix-os.com/api/internal/terminal-acceptance/run' \
+              -H "x-matrix-acceptance-timestamp: $timestamp" \
+              -H "x-matrix-acceptance-nonce: $nonce" \
+              -H "x-matrix-acceptance-signature: $signature" \
+              -H 'content-type: application/json' --data-binary "$body"
+            response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+              import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+              import { readFile } from "node:fs/promises";
+              const [timestamp, nonce, signature, path] = process.argv.slice(1);
+              const body = await readFile(path);
+              const digest = createHash("sha256").update(body).digest("hex");
+              const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+              if (!/^[0-9a-f]{64}$/.test(signature) ||
+                !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            ' "$timestamp" "$nonce" "$response_signature" "$response"
+          }
+          call_helper() {
+            local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
+            body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
+              --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" --arg version "$PREVIEW_VERSION" '{
+              command:["/usr/bin/sudo",$helper,$op,$sha,$nonce,$version],timeoutMs:30000}')"
+            send_signed_command "$body" "$response"
+            jq -er 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) | .stdout' \
+              "$response"
+          }
+          call_helper prepare
+          sleep 5
+          deadline=$((SECONDS + 2100))
+          until state="$(call_helper status 2>/dev/null)" && grep -q '^prepared$' <<<"$state"; do
+            if [[ "${state:-}" == failed:* ]] || [ "${state:-}" = failed ]; then
+              echo "Acceptance failed at ${state}" >&2
+              exit 1
+            fi
+            [ "$SECONDS" -lt "$deadline" ] || exit 1
+            sleep 5
+          done
+          call_helper launch
+          deadline=$((SECONDS + 14400))
+          progress_deadline="$deadline"
+          last_state=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if state="$(call_helper status 2>/dev/null)" && grep -q '^phase1-ready$' <<<"$state"; then
+              break
+            fi
+            if [[ "${state:-}" == failed:* ]] || [ "${state:-}" = failed ]; then
+              echo "Acceptance failed at ${state}" >&2
+              exit 1
+            fi
+            if [[ "${state:-}" == phase1-running:* ]] && [ "$state" != "$last_state" ]; then
+              echo "Acceptance progress: ${state}"
+              last_state="$state"
+              case "$state" in
+                phase1-running:bundle-a-update|phase1-running:bundle-b-update|phase1-running:rollback-update)
+                  progress_timeout=5700
+                  ;;
+                phase1-running:gateway-restart)
+                  progress_timeout=900
+                  ;;
+                *)
+                  progress_timeout=600
+                  ;;
+              esac
+              progress_deadline=$((SECONDS + progress_timeout))
+            elif [[ "${state:-}" == phase1-running:* ]] && [ "$SECONDS" -ge "$progress_deadline" ]; then
+              echo "Acceptance phase stalled at ${state}" >&2
+              exit 1
+            fi
+            sleep 15
+          done
+          if ! grep -q '^phase1-ready$' <<<"${state:-}"; then
+            echo "Acceptance stalled at ${state:-unavailable}" >&2
+            exit 1
+          fi
+          call_helper reboot
+      - name: Verify zero automatic execution after reboot
+        id: evidence
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+          PREVIEW_VERSION: ${{ steps.preview.outputs.version }}
+        run: |
+          set -euo pipefail
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          helper="$(cat "$RUNNER_TEMP/user-systemd-remote-base").sh"
+          send_signed_command() {
+            local body="$1" response="$2" timestamp nonce signature response_signature headers
+            timestamp="$(date +%s)"
+            nonce="$(openssl rand -hex 16)"
+            signature="$(ACCEPTANCE_SIGNING_KEY="$token" ACCEPTANCE_BODY="$body" node --input-type=module -e '
+              import{createHash,createHmac}from"node:crypto";
+              const digest=createHash("sha256").update(process.env.ACCEPTANCE_BODY).digest("hex");
+              process.stdout.write(createHmac("sha256",process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1\n${process.argv[1]}\n${process.argv[2]}\n${digest}`).digest("hex"));
+            ' "$timestamp" "$nonce")"
+            headers="$RUNNER_TEMP/user-systemd-helper-headers"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -D "$headers" -o "$response" -X POST \
+              'https://app.matrix-os.com/api/internal/terminal-acceptance/run' \
+              -H "x-matrix-acceptance-timestamp: $timestamp" \
+              -H "x-matrix-acceptance-nonce: $nonce" \
+              -H "x-matrix-acceptance-signature: $signature" \
+              -H 'content-type: application/json' --data-binary "$body"
+            response_signature="$(awk 'BEGIN{IGNORECASE=1} /^x-matrix-acceptance-response-signature:/ {gsub("\\r", "", $2); value=$2} END{print value}' "$headers")"
+            ACCEPTANCE_SIGNING_KEY="$token" node --input-type=module -e '
+              import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+              import { readFile } from "node:fs/promises";
+              const [timestamp, nonce, signature, path] = process.argv.slice(1);
+              const body = await readFile(path);
+              const digest = createHash("sha256").update(body).digest("hex");
+              const expected = createHmac("sha256", process.env.ACCEPTANCE_SIGNING_KEY)
+                .update(`v1-response\n${timestamp}\n${nonce}\n${digest}`).digest("hex");
+              if (!/^[0-9a-f]{64}$/.test(signature) ||
+                !timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) process.exit(1);
+            ' "$timestamp" "$nonce" "$response_signature" "$response"
+          }
+          call_helper() {
+            local operation="$1" response="$RUNNER_TEMP/user-systemd-helper.json" body
+            body="$(jq -cn --arg helper "$helper" --arg op "$operation" \
+              --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" --arg version "$PREVIEW_VERSION" '{
+              command:["/usr/bin/sudo",$helper,$op,$sha,$nonce,$version],timeoutMs:30000}')"
+            if ! send_signed_command "$body" "$response"; then
+              return 1
+            fi
+            jq -er 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null) | .stdout' \
+              "$response"
+          }
+          sleep 20
+          deadline=$((SECONDS + 900))
+          state=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if state="$(call_helper status 2>/dev/null)" && grep -q '^reboot-ready$' <<<"$state"; then
+              break
+            fi
+            if [[ "${state:-}" == failed:* ]] || [ "${state:-}" = failed ]; then
+              echo "Acceptance failed before reboot resume at ${state}" >&2
+              exit 1
+            fi
+            sleep 15
+          done
+          if ! grep -q '^reboot-ready$' <<<"${state:-}"; then
+            echo "Acceptance reboot did not complete before resume" >&2
+            exit 1
+          fi
+          call_helper resume
+          deadline=$((SECONDS + 900))
+          last_state=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if state="$(call_helper status 2>/dev/null)" && grep -q '^complete$' <<<"$state"; then
+              break
+            fi
+            if [[ "${state:-}" == failed:* ]] || [ "${state:-}" = failed ]; then
+              echo "Acceptance failed at ${state}" >&2
+              exit 1
+            fi
+            if [[ "${state:-}" == phase2-running:* ]] && [ "$state" != "$last_state" ]; then
+              echo "Acceptance progress: ${state}"
+              last_state="$state"
+            fi
+            sleep 10
+          done
+          if ! grep -q '^complete$' <<<"${state:-}"; then
+            echo "Acceptance stalled at ${state:-unavailable}" >&2
+            exit 1
+          fi
+          call_helper pack >"$RUNNER_TEMP/user-systemd-terminal-evidence.json"
+          jq -e --arg head "$HEAD_SHA" '
+            .schemaVersion == 1 and .headSha == $head and
+            (.summarySha256 | test("^[0-9a-f]{64}$")) and
+            .checks == ([
+              "browserAttachmentPtysRemainGatewayOwned",
+              "bundleOnePreservesRuntimes",
+              "bundleTwoPreservesRuntimes",
+              "conflictingDescriptorReuseFailsClosed",
+              "corruptAndSymlinkStateFailsClosed",
+              "deleteIsIdempotent",
+              "deleteRemovesExactRuntime",
+              "deleteRemovesSocketAndSnapshots",
+              "detachPreservesRuntimes",
+              "gatewayRestartPreservesRuntimes",
+              "gatewayMemoryIsolation",
+              "gatewaySigkillPreservesRuntimes",
+              "generationGcIsReferenceAndSymlinkSafe",
+              "generationRetentionIsBounded",
+              "hostileDescriptorFieldsFailClosed",
+              "independentRuntimeCgroups",
+              "invalidRuntimeIdsFailClosed",
+              "metadataRenamePreservesRuntime",
+              "newRuntimesUseCurrentGeneration",
+              "ordinaryShellRuntime",
+              "postRollbackRuntimeUsesCompatibleGeneration",
+              "realCodingAgentRuntime",
+              "rebootCreatesNoReplacementPids",
+              "rebootProducesNoOutput",
+              "rebootStartsNoRuntime",
+              "resourceControlsPresent",
+              "resourceControlsEffective",
+              "resourceLimitIsolatesFailure",
+              "rollbackPreservesRuntimes",
+              "staleInactiveStateIsRecoverable"
+            ] | sort)
+          ' "$RUNNER_TEMP/user-systemd-terminal-evidence.json" >/dev/null
+          node --input-type=module - "$RUNNER_TEMP/user-systemd-terminal-evidence.json" <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFile } from "node:fs/promises";
+          const evidence = JSON.parse(await readFile(process.argv[2], "utf8"));
+          const { summarySha256, ...payload } = evidence;
+          const expected = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+          if (summarySha256 !== expected) process.exit(1);
+          NODE
+          digest="$(jq -er .summarySha256 "$RUNNER_TEMP/user-systemd-terminal-evidence.json")"
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: user-systemd-terminal-production-${{ needs.gate.outputs.head }}
+          path: ${{ runner.temp }}/user-systemd-terminal-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Comment exact-head production evidence
+        env:
+          DIGEST: ${{ steps.evidence.outputs.digest }}
+        run: |
+          set -euo pipefail
+          body="**User-systemd terminal production acceptance passed**
+
+          - Commit: \`${HEAD_SHA}\`
+          - Bundle A: \`v0.0.0-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-a\`
+          - Bundle B: \`v0.0.0-user-systemd-accept-${HEAD_SHA:0:7}-${RUN_NONCE}-b\`
+          - Shell and real Codex runtimes, disconnect, gateway restart/SIGKILL, two bundles, rollback, exact deletion, hostile-state GC, resource isolation, and reboot: pass
+          - Evidence SHA-256: \`${DIGEST}\`
+          - Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          The bounded artifact contains check names only; terminal contents, credentials, paths, names, PIDs, and host addresses are excluded. Production activation remains a separate decision."
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" >/dev/null

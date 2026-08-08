@@ -48,6 +48,7 @@ import { createWorkspaceSessionOrchestrator } from "./workspace-session-orchestr
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
+import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
@@ -249,9 +250,13 @@ import {
   ShellPreferencesStore,
   createPendingTerminalInputQueue,
   createShellCommandRunner,
+  createTerminalAcceptanceRoutes,
   createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
+  createUserSystemdTerminalRuntime,
+  createUserSystemdZellijAdapter,
+  loadInstalledTerminalRuntimeGeneration,
   ShellRegistry as ZellijShellRegistry,
   shellWsMessageDataToString,
 } from "./shell/index.js";
@@ -353,7 +358,24 @@ export async function createGateway(config: GatewayConfig) {
     persistPath: terminalSessionsPersistPath,
     autoRestore: false,
   });
-  const workspaceZellijRuntime = createZellijRuntime({ homePath });
+  const userSystemdTerminalsEnabled = process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED === "1";
+  const terminalRuntimeGeneration = userSystemdTerminalsEnabled
+    ? await loadInstalledTerminalRuntimeGeneration(process.env.MATRIX_APP_DIR ?? process.cwd())
+    : null;
+  const userSystemdTerminalController = terminalRuntimeGeneration
+    ? createUserSystemdTerminalRuntime({
+        homePath,
+        generation: terminalRuntimeGeneration,
+        generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
+      })
+    : null;
+  const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
+    ? createUserSystemdZellijRuntime({
+        homePath,
+        generation: terminalRuntimeGeneration,
+        controller: userSystemdTerminalController,
+      })
+    : createZellijRuntime({ homePath });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge({
     homePath,
     registry: sessionRegistry,
@@ -361,7 +383,13 @@ export async function createGateway(config: GatewayConfig) {
   });
   const shellScrollbackStore = new ScrollbackStore({ homePath });
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
-  const zellijAdapter = createZellijAdapter({ homePath });
+  const zellijAdapter = userSystemdTerminalController && terminalRuntimeGeneration
+    ? createUserSystemdZellijAdapter({
+        homePath,
+        generation: terminalRuntimeGeneration,
+        controller: userSystemdTerminalController,
+      })
+    : createZellijAdapter({ homePath });
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
@@ -1714,6 +1742,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
+  const shellCommandRunner = createShellCommandRunner({ homePath });
   const shellRouteDeps = {
     homePath,
     registry: zellijShellRegistry,
@@ -1722,7 +1751,7 @@ export async function createGateway(config: GatewayConfig) {
     layouts: shellLayoutStore,
     shellBackend: zellijAdapter,
     shellThemeConfig: zellijAdapter,
-    commandRunner: createShellCommandRunner({ homePath }),
+    commandRunner: shellCommandRunner,
     terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
   };
@@ -1749,6 +1778,15 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  const runtimeHandle = process.env.MATRIX_HANDLE ?? "";
+  const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)
+    && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
+  if (terminalAcceptanceEnabled) {
+    app.route("/api/internal/terminal-acceptance", createTerminalAcceptanceRoutes({
+      secret: process.env.UPGRADE_TOKEN ?? "",
+      run: (input) => shellCommandRunner.run(input),
+    }));
+  }
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
@@ -2881,6 +2919,7 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({
     homePath,
     eventPublisher: workspaceEventPublisher,
+    zellijRuntime: workspaceZellijRuntime,
   }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");

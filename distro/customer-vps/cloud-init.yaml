@@ -589,6 +589,12 @@ runcmd:
     fi
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+    if [ -d /opt/matrix/terminal-runtime ]; then
+      chown -R root:root /opt/matrix/terminal-runtime
+      if [ -x /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs ]; then
+        install -o root -g root -m 0755 /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs /usr/local/bin/matrix-terminal-attach
+      fi
+    fi
     chmod -R g+rwX /opt/matrix/app
     if [ -f /opt/matrix/release.json ]; then
       bundle_version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' /opt/matrix/release.json | head -n 1)"
@@ -606,6 +612,10 @@ runcmd:
     if [ -d /opt/matrix/systemd ]; then
       install -d -o root -g root -m 0755 /etc/systemd/system
       install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/
+    fi
+    if [ -d /opt/matrix/user-systemd ]; then
+      install -d -o root -g root -m 0755 /etc/systemd/user
+      find /opt/matrix/user-systemd -maxdepth 1 -type f \( -name 'matrix-*.service' -o -name 'matrix-*.slice' \) -exec install -o root -g root -m 0644 {} /etc/systemd/user/ \;
     fi
     if [ -f /opt/matrix/release.json ]; then
       chown root:matrix /opt/matrix/release.json
@@ -652,6 +662,8 @@ runcmd:
     systemctl daemon-reload
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
+    matrix_uid="$(id -u matrix)"
+    runuser -u matrix -- env HOME=/home/matrix/home XDG_RUNTIME_DIR="/run/user/${matrix_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" systemctl --user daemon-reload
     systemctl disable matrix-openclaw-gateway.service || true
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
