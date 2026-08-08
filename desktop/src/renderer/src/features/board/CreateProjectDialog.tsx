@@ -87,6 +87,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cloneRequestId] = useState(() => `req_${crypto.randomUUID()}`);
+  const folderRequestRef = useRef<{ payload: string; id: string } | null>(null);
   const dialogClosedRef = useRef(false);
   const dialogGenerationRef = useRef(0);
   // Latest runtime identity. A submission captures the identity it was sent to
@@ -217,7 +218,18 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
           clientRequestId: cloneRequestId,
         });
       } else {
-        await submitNewFolder(ctx, { name: name.trim(), parentPath });
+        const folderPayload = JSON.stringify({ name: name.trim(), parentPath });
+        if (folderRequestRef.current?.payload !== folderPayload) {
+          folderRequestRef.current = {
+            payload: folderPayload,
+            id: `req_desktop_folder_${crypto.randomUUID()}`,
+          };
+        }
+        await submitNewFolder(ctx, {
+          name: name.trim(),
+          parentPath,
+          clientRequestId: folderRequestRef.current.id,
+        });
       }
     } catch (err: unknown) {
       if (isCurrent()) setError(toUserMessage(err));
