@@ -99,9 +99,9 @@ wait_update() {
 wait_failed_update() { for _ in $(seq 1 "$update_wait_seconds"); do [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] && return 0; sleep 1; done; return 1; }
 zellij() { command_bounded 30 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
 fail_phase() {
-  local exit_status=$?
+  local exit_status="${1:-$?}"
   local failure_code
-  trap - ERR TERM INT HUP
+  trap - EXIT ERR TERM INT HUP
   if [ "$exit_status" -eq 124 ] || [ "$exit_status" -eq 137 ] ||
     [ "$exit_status" -eq 143 ]; then
     failure_code=command_timeout
@@ -118,7 +118,7 @@ fail_phase() {
   exit 1
 }
 phase1() {
-  trap fail_phase ERR TERM INT HUP
+  trap fail_phase ERR TERM INT HUP; trap 'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"' EXIT
   install -d -o root -g root -m 0700 "$root_parent"
   find "$root_parent" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf -- {} +
   rm -rf -- "$state_root"
@@ -227,7 +227,7 @@ EOF
 }
 phase2() {
   current_phase=phase2
-  trap fail_phase ERR TERM INT HUP
+  trap fail_phase ERR TERM INT HUP; trap 'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"' EXIT
   [ "$(cat "$state_file")" = reboot-scheduled ]
   write_state phase2-running
   local runtime_id unit inspected recovered recovery_mode
