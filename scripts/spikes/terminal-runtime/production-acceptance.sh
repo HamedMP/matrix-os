@@ -16,8 +16,7 @@ readonly state_file="${state_root}/state"; readonly probe=/opt/matrix/libexec/te
 readonly verifier=/opt/matrix/libexec/terminal-runtime/current/spikes/verify-production-evidence.mjs; readonly version_a="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-a"
 readonly version_b="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-b"; readonly unit_prefix=matrix-terminal-session@
 readonly home=/home/matrix/home; readonly cache_root="${home}/system/terminal-runtime/zellij-cache"; readonly uid="$(id -u matrix)"
-readonly codex=/opt/matrix/runtime/node/bin/codex
-readonly agent_event="${home}/system/terminal-runtime/acceptance-events/${head_sha}-${run_nonce}.jsonl"
+readonly claude=/opt/matrix/runtime/node/bin/claude
 readonly update_wait_seconds=1800
 current_phase=initializing
 failure_hint=""
@@ -118,7 +117,6 @@ fail_phase() {
   fi
   write_state "failed_${current_phase}_${failure_code}"
   rm -f -- /etc/systemd/system/matrix-gateway.service.d/zz-terminal-acceptance.conf
-  rm -f -- "$agent_event"
   systemctl_change daemon-reload >/dev/null 2>&1 || true
   systemctl_change start matrix-gateway.service matrix-shell.service >/dev/null 2>&1 || true
   exit 1
@@ -142,7 +140,7 @@ phase1() {
   zellij --session "$session_name" action write-chars -- \
     "exec bash -lc 'while true; do printf \"MATRIX_ACCEPT_LOOP\\n\"; sleep 1; done'"
   zellij --session "$session_name" action send-keys Enter
-  write_phase starting_agent; [ -x "$codex" ]
+  write_phase starting_agent; [ -x "$claude" ]
   agent_created="$(owner_probe create-agent "$head_sha" "$run_nonce")"
   agent_runtime_id="$(printf '%s' "$agent_created" | json_field runtimeId)"
   [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]
@@ -231,7 +229,7 @@ EOF
     mark forceRunAbsent
   fi
   if ! journalctl -u "$unit" -u "$agent_unit" --no-pager 2>/dev/null |
-    grep -E 'MATRIX_ACCEPT_LOOP|accept-(agent-)?[0-9a-f]{7}|/home/matrix/home|sleep 7200' >/dev/null; then
+    grep -E 'MATRIX_ACCEPT_LOOP|accept-(agent-)?[0-9a-f]{7}|/home/matrix/home' >/dev/null; then
     mark journalPrivacy
   fi
   write_state phase1-ready
@@ -314,7 +312,6 @@ phase2() {
   owner_probe delete "$agent_runtime_id" >/dev/null
   wait_absent "$agent_unit"
   [ ! -e "$home/system/terminal-runtime/receipts/${agent_runtime_id}.json" ]
-  rm -f -- "$agent_event"
   write_state complete
   /opt/matrix/runtime/node/bin/node "$verifier" \
     --write-summary "$evidence_root" "$head_sha"
@@ -363,7 +360,6 @@ case "$operation" in
       "matrix-terminal-production-${head_sha}-${run_nonce}-phase1.service" \
       "matrix-terminal-production-${head_sha}-${run_nonce}-phase2.service" \
       >/dev/null 2>&1 || true
-    rm -f -- "$agent_event"
     echo production_acceptance_cancelled
     ;;
   phase1) phase1 ;;
