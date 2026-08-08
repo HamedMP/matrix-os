@@ -630,7 +630,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).toContain('[ -x "$codex" ]');
     expect(runner).not.toContain("sh -c 'command -v codex'");
     expect(runner).toContain('owner_probe create "$head_sha" "$run_nonce"');
-    expectAll(probe, ['`accept-${value.slice(0, 12)}-${extra}`', "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0"]); expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
+    expectAll(probe, ['`accept-${value.slice(0, 12)}-${extra}`', "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/codex(?:[./-]|$)/']); expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
     expect(workflow).not.toContain('VPS_SSH_KEY');
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
