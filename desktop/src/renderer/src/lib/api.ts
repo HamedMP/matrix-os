@@ -41,7 +41,7 @@ export interface ApiClient {
   getBlob(path: string, options?: BoundedReadOptions): Promise<Blob>;
   post<T>(path: string, body: unknown, options?: RequestTimeoutOptions): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
-  put<T>(path: string, body: unknown): Promise<T>;
+  put<T>(path: string, body: unknown, options?: RequestTimeoutOptions): Promise<T>;
   delete<T>(path: string): Promise<T>;
   putText<T>(path: string, body: string): Promise<T>;
   baseUrl: string;
@@ -162,12 +162,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
-    put: (path, body) =>
+    put: (path, body, requestOptions) =>
       request(path, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }),
+      }, requestOptions),
     // The gateway task DELETE route parses the JSON body unconditionally, so a
     // body-less DELETE 400s; always send an empty JSON object.
     delete: (path) =>
