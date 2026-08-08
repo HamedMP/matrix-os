@@ -514,7 +514,7 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 11400))',
       'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
-      'call_helper acceptance-pack', 'call_helper acceptance-cancel',
+      'call_helper acceptance-pack', 'call_helper acceptance-cancel', 'call_helper acceptance-diagnose',
       'production_acceptance_state=${state}', 'Validate the complete production matrix']);
     expect(workflow).toContain("group: terminal-runtime-production-${{ github.event.label.name == 'terminal-production-acceptance' && github.event.pull_request.number || github.run_id }}");
     expect(workflow).not.toContain('group: terminal-runtime-production-${{ github.event.pull_request.number }}\n');
@@ -532,7 +532,7 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
-    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']);
+    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-diagnose | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']);
     expect(helper).not.toContain('[ ! -x "$target" ]');
     for (const check of `bundleOnePreservesRuntime bundleTwoPreservesRuntime failedUpdatePreservesRuntime explicitRollbackPreservesRuntime rebootStartsNoRuntime
 explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingleUnit recoverDeleteCannotResurrect corruptionFallsBackFresh deleteWaitsForEmptyCgroup`.split(/\s+/)) {
@@ -555,6 +555,8 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expect(probe).not.toContain("prompt:");
     expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
     expect(workflow).not.toContain('VPS_SSH_KEY');
+    expectAll(runner, ['diagnose)', 'production_acceptance_diagnostic=', "grep -E '^terminal_keeper_[a-z0-9_]{1,96}$'"]);
+    expect(runner).not.toContain('journalctl -u "$unit" --no-pager');
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
     const runner = await readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh');
