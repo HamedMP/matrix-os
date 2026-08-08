@@ -19,6 +19,11 @@ describe("IPC contract", () => {
       "runtime:unsubscribe-thread-events",
       "runtime:get-notification-preferences",
       "runtime:update-notification-preferences",
+      "runtime:get-hermes-configuration",
+      "runtime:get-hermes-environment",
+      "runtime:update-hermes-configuration",
+      "runtime:set-hermes-credential",
+      "runtime:remove-hermes-credential",
       "runtime:submit-approval-decision",
       "runtime:submit-input-answer",
       "runtime:get-thread-snapshot",
@@ -49,6 +54,58 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("keeps Hermes setup IPC typed and credentials write-only", () => {
+    const getConfiguration = INVOKE_CHANNELS["runtime:get-hermes-configuration"];
+    const getEnvironment = INVOKE_CHANNELS["runtime:get-hermes-environment"];
+    const updateConfiguration = INVOKE_CHANNELS["runtime:update-hermes-configuration"];
+    const setCredential = INVOKE_CHANNELS["runtime:set-hermes-credential"];
+    const removeCredential = INVOKE_CHANNELS["runtime:remove-hermes-credential"];
+    const configuration = {
+      config: { general: { model: "anthropic/claude-opus-4.6" } },
+      defaults: {},
+      fields: {
+        "general.model": {
+          type: "string",
+          description: "Default model",
+          category: "general",
+        },
+      },
+      categoryOrder: ["general"],
+    };
+    const environment = {
+      ANTHROPIC_API_KEY: {
+        is_set: true,
+        redacted_value: "sk-ant-...1234",
+        description: "Anthropic API key",
+        category: "Providers",
+        is_password: true,
+        tools: ["hermes"],
+        advanced: false,
+        channel_managed: false,
+        provider: "anthropic",
+        provider_label: "Anthropic",
+      },
+    };
+
+    expect(getConfiguration.request.safeParse({}).success).toBe(true);
+    expect(getConfiguration.response.safeParse(configuration).success).toBe(true);
+    expect(getEnvironment.response.safeParse(environment).success).toBe(true);
+    expect(getEnvironment.response.safeParse({
+      ANTHROPIC_API_KEY: { ...environment.ANTHROPIC_API_KEY, value: "secret" },
+    }).success).toBe(false);
+    expect(updateConfiguration.request.safeParse({
+      changes: [{ path: "general.model", value: "openai/gpt-5" }],
+    }).success).toBe(true);
+    expect(setCredential.request.safeParse({ key: "OPENAI_API_KEY", value: "secret" }).success).toBe(true);
+    expect(setCredential.request.safeParse({
+      key: "OPENAI_API_KEY",
+      value: "secret",
+      bearerToken: "leak",
+    }).success).toBe(false);
+    expect(removeCredential.request.safeParse({ key: "OPENAI_API_KEY" }).success).toBe(true);
+    expect(updateConfiguration.response.safeParse({ ok: true }).success).toBe(true);
   });
 
   it("validates trusted desktop thread stream IPC without credential fields", () => {
