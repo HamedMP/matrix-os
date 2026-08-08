@@ -627,7 +627,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
     expect(runner).toContain('readonly codex=/opt/matrix/runtime/node/bin/codex');
-    expect(runner).toContain('[ -x "$codex" ]');
+    expectAll(runner, ['[ -x "$codex" ]', 'action new-pane -- "$codex" app-server']);
     expect(runner).not.toContain("sh -c 'command -v codex'");
     expect(runner).toContain('owner_probe create "$head_sha" "$run_nonce"');
     expectAll(probe, ['`accept-${value.slice(0, 12)}-${extra}`', "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/codex(?:[./-]|$)/']); expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
