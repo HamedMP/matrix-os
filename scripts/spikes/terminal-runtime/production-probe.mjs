@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-import { mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import {
   createAgentConfigurationStore,
   createOperationId,
   createSupervisorClient,
 } from '../index.js';
 const home = '/home/matrix/home';
-const codexExpectedVersion = '0.146.0';
 const [operation = '', value = '', extra = ''] = process.argv.slice(2);
 const runtimeId = /^[0-9a-f]{32}$/.test(value) ? value : null;
 const client = createSupervisorClient();
@@ -25,15 +24,10 @@ if (operation === 'create' || operation === 'create-race' ||
   const operationId = createOperationId();
   const configurationStore = createAgentConfigurationStore();
   if (operation === 'create-agent') {
-    const eventDirectory = `${home}/system/terminal-runtime/acceptance-events`;
-    const providerEventPath =
-      `system/terminal-runtime/acceptance-events/${value}-${extra}.jsonl`;
-    await mkdir(eventDirectory, { recursive: true, mode: 0o700 });
     await configurationStore.publish(operationId, {
       schemaVersion: 1,
-      agent: 'codex',
+      agent: 'claude',
       cwd: { kind: 'home-relative', path: '' },
-      prompt: 'Use the shell tool to run /usr/bin/sleep 7200 and wait for it to finish.',
       mode: 'default',
       approvalPolicy: 'never',
       sandbox: {
@@ -42,9 +36,6 @@ if (operation === 'create' || operation === 'create-race' ||
         writableRoots: [],
         denyWriteRoots: [],
       },
-      providerEventPath,
-      codexExpectedVersion,
-      codexExecutable: '/opt/matrix/runtime/node/bin/codex',
     });
     try {
       output(await request('CreateStart', {
@@ -131,8 +122,8 @@ if (operation === 'create' || operation === 'create-race' ||
       argument.endsWith('/pane.js')))?.pid ?? 0,
     shell: processes.find((entry) => entry.comm === 'bash')?.pid ?? 0,
     agent: processes.find((entry) =>
-      /^codex(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
-        /\/codex(?:[./-]|$)/.test(argument)))?.pid ?? 0,
+      /^claude(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
+        /\/claude(?:[./-]|$)/.test(argument)))?.pid ?? 0,
   });
 } else {
   throw new Error('probe_operation_invalid');

@@ -541,17 +541,18 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     }
     expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
-    expect(runner).toContain('readonly codex=/opt/matrix/runtime/node/bin/codex');
-    expectAll(runner, ['[ -x "$codex" ]', 'owner_probe create-agent "$head_sha" "$run_nonce"',
+    expect(runner).toContain('readonly claude=/opt/matrix/runtime/node/bin/claude');
+    expectAll(runner, ['[ -x "$claude" ]', 'owner_probe create-agent "$head_sha" "$run_nonce"',
       'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent']);
     expect(runner).not.toContain('action new-pane -- "$codex" app-server');
     expect(runner).not.toContain("sh -c 'command -v codex'");
     expect(runner).toContain('owner_probe create "$head_sha" "$run_nonce"');
     expectAll(probe, [
       '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
-      "launch: { kind: 'agent', configurationRef: operationId }", "codexExecutable: '/opt/matrix/runtime/node/bin/codex'",
-      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/codex(?:[./-]|$)/',
+      "launch: { kind: 'agent', configurationRef: operationId }", "agent: 'claude'",
+      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/claude(?:[./-]|$)/',
     ]);
+    expect(probe).not.toContain("prompt:");
     expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
     expect(workflow).not.toContain('VPS_SSH_KEY');
   });
@@ -567,7 +568,7 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expect(failureWrite).toBeGreaterThan(-1); expect(failureWrite).toBeLessThan(failPhase.indexOf('systemctl_change daemon-reload'));
     const cancelCase = runner.slice(runner.indexOf('  cancel)'), runner.indexOf('  phase1) phase1'));
     expect(cancelCase.indexOf('write_state failed_cancelled_operation_failed')).toBeLessThan(cancelCase.indexOf('systemctl_cancel stop'));
-    expect(cancelCase).toContain('rm -f -- "$agent_event"');
+    expect(cancelCase).not.toContain('agent_event');
     const unboundedSystemctl = runner.split('\n').filter((line) => {
       if (!/(^|[^A-Za-z_])systemctl(?: |$)/.test(line)) return false;
       return (
