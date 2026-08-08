@@ -4,6 +4,7 @@ import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { CustomerVpsError, logCustomerVpsError, type CustomerVpsFailureCode } from './customer-vps-errors.js';
 import { bearerTokenMatches } from './customer-vps-auth.js';
 import {
+  BootstrapProgressRequestSchema,
   MachineIdParamSchema,
   PreviewProvisionRequestSchema,
   ProvisionRequestSchema,
@@ -242,6 +243,25 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
         },
       });
       return jsonError(c, err, '/vps/register');
+    }
+  });
+
+  app.post('/bootstrap-progress', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    let parsed: ReturnType<typeof BootstrapProgressRequestSchema.safeParse>;
+    try {
+      parsed = BootstrapProgressRequestSchema.safeParse(await readJson(c));
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/bootstrap-progress');
+    }
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    try {
+      const auth = c.req.header('authorization');
+      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
+      return c.json(await deps.service.reportBootstrapProgress(token, parsed.data), 200);
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/bootstrap-progress');
     }
   });
 

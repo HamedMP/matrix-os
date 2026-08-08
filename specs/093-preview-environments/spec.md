@@ -69,7 +69,10 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   `PREVIEW_CLERK_USER_ID` secret and identical `handle` / `runtimeSlot` values of
   `pr-<N>`. The platform commits the machine and its durable provisioning job in one
   transaction before returning `202`; the workflow rejects an accepted response unless
-  that exact machine is immediately visible in `/vps/fleet`.
+  that exact machine is immediately visible in `/vps/fleet`. The server-derived
+  provisioning class sets preview hosts to an explicit empty restore mode, so a newly
+  provisioned disposable preview never restores an older per-PR snapshot; customer
+  machines retain the normal owner-data restore gate.
 - Deploy: `POST /vps/deploy {"version": "...", "handle": "pr-<N>"}` — version-pinned,
   single-handle. Never channel-wide.
 - Report: PR comment with the VM URL, bundle version, and log-query one-liner.

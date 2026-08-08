@@ -91,8 +91,10 @@ write_progress() {
   local progress_stage="$1"
   local progress_tmp="$evidence_root/.progress-stage.$$"
   local progress_uptime_tmp="$evidence_root/.progress-uptime.$$"
+  local last_work_tmp="$evidence_root/.last-work-stage.$$"
+  local last_work_uptime_tmp="$evidence_root/.last-work-uptime.$$"
   case "$progress_stage" in
-    startup_cleanup|runtime_setup|runtime_dirs|unit_check|binary_check|binary_version|binary_manifest|binary_digest|binary_metadata|config_dump|config_check|cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach|base_start|base_start_requested|base_release|base_wait_ready|base_ready|base_attach|base_detached|base_gateway_restart|base_gateway_crash|base_shell_restart|base_stop|base_stopped|keeper_loss|server_loss|memory_pressure|recovery_restore|corruption_fallback|summary_build) ;;
+    startup_cleanup|runtime_setup|runtime_dirs|unit_check|binary_check|binary_version|binary_manifest|binary_digest|binary_metadata|config_dump|config_check|cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach|base_start|base_start_requested|base_release|base_wait_ready|base_ready|base_attach|base_detached|base_gateway_restart|base_gateway_crash|base_shell_restart|base_stop|base_stopped|keeper_loss|server_loss|memory_pressure|recovery_restore|s2_cache_saved|s2_initial_stopped|s2_recover_started|s2_recover_ready|s2_viewport_checked|s2_cache_frozen|s2_restored_stopped|corruption_fallback|s2_delete|summary_build) ;;
     *) return 2 ;;
   esac
   printf '%s\n' "$progress_stage" >"$progress_tmp"
@@ -101,6 +103,18 @@ write_progress() {
   chmod 0600 "$progress_uptime_tmp"
   mv -f -- "$progress_tmp" "$evidence_root/progress-stage.txt"
   mv -f -- "$progress_uptime_tmp" "$evidence_root/progress-uptime.txt"
+  case "$progress_stage" in
+    cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach) ;;
+    summary_build) ;;
+    *)
+      printf '%s\n' "$progress_stage" >"$last_work_tmp"
+      /usr/bin/awk '{ print $1 }' /proc/uptime >"$last_work_uptime_tmp"
+      chmod 0600 "$last_work_tmp"
+      chmod 0600 "$last_work_uptime_tmp"
+      mv -f -- "$last_work_tmp" "$evidence_root/last-work-stage.txt"
+      mv -f -- "$last_work_uptime_tmp" "$evidence_root/last-work-uptime.txt"
+      ;;
+  esac
 }
 systemctl_bounded() {
   command_bounded 35 /usr/bin/systemctl "$@"
@@ -202,7 +216,7 @@ install -d -o root -g root -m 0700 "$zellij_delete_ops_root"
 rm -rf -- "$evidence_root"
 install -d -o root -g root -m 0700 "$evidence_root"
 write_progress startup_cleanup
-trap 'status=$?; build_summary; cleanup; exit $status' EXIT
+trap 'status=$?; cleanup; build_summary; exit $status' EXIT
 rm -rf -- "$evidence_root"
 install -d -o root -g root -m 0700 "$evidence_root" "$evidence_root/s1" "$evidence_root/s1/checks" "$evidence_root/s2" "$evidence_root/s2/checks"
 write_progress runtime_setup
@@ -411,6 +425,28 @@ wait_cgroup_empty() {
     sleep 0.1
   done
   return 1
+}
+stop_runtime_empty() {
+  local unit="$1" cgroup="$2" events_path events_fd="" state
+  if ! [[ "$cgroup" =~ ^/[-A-Za-z0-9_.@/]+$ ]]; then return 2; fi
+  events_path="/sys/fs/cgroup${cgroup}/cgroup.events"
+  if [ -e "$events_path" ]; then
+    if [ -L "$events_path" ] || ! exec {events_fd}<"$events_path"; then return 1; fi
+  fi
+  if ! systemctl_bounded stop "$unit" >/dev/null 2>&1; then
+    if [ -n "$events_fd" ]; then exec {events_fd}<&-; fi
+    return 1
+  fi
+  if [ -n "$events_fd" ]; then
+    if wait_cgroup_empty "$events_fd" "/sys/fs/cgroup${cgroup}"; then
+      exec {events_fd}<&-
+      return 0
+    fi
+    exec {events_fd}<&-
+    return 1
+  fi
+  state="$(systemctl_value_bounded "$unit" ActiveState 2>/dev/null || true)"
+  [[ "$state" =~ ^(inactive|failed)$ ]]
 }
 # S1: readiness and stable ownership.
 write_progress base_start
@@ -667,6 +703,7 @@ release_pane "$recovery_id"
 recovery_unit="${unit_prefix}${recovery_id}.service"
 if wait_state "$recovery_unit" active; then
   recovery_session="matrix-t-${recovery_id}"
+  recovery_cgroup="$(runtime_cgroup "$recovery_id")"
   zellij_cmd --session "$recovery_session" action new-pane --direction right -- /usr/bin/bash "$support_root/pane-probe.sh" >/dev/null 2>&1 || true
   output_command='for i in $(seq 1 10050); do printf "MATRIX_SCROLL_%05d\n" "$i"; done; printf "MATRIX_VIEWPORT_MARKER\n"'
   zellij_cmd --session "$recovery_session" action write-chars -- "$output_command" >/dev/null 2>&1 || true
@@ -705,11 +742,18 @@ if wait_state "$recovery_unit" active; then
   printf 'runtime_files=%s\nruntime_bytes=%s\n' "$mapped_count" "$mapped_bytes" >"$evidence_root/s2/runtime-accounting.txt"
   if [ "$mapped_count" -gt 0 ]; then mark_pass s2 cacheMappedByRuntime; fi
   if [ "$mapped_bytes" -le 67108864 ]; then mark_pass s2 diskAccountingBounded; fi
-  systemctl_bounded stop "$recovery_unit" >/dev/null 2>&1 || true
+  write_progress s2_cache_saved
+  if ! stop_runtime_empty "$recovery_unit" "$recovery_cgroup"; then
+    echo "spike_recovery_stop_failed" >&2
+    exit 20
+  fi
+  write_progress s2_initial_stopped
   start_runtime "$recovery_id" recover
+  write_progress s2_recover_started
   if wait_file "$runtime_root/confirmations/${recovery_id}.gated"; then mark_pass s2 commandsConfirmationGated; fi
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
   if wait_state "$recovery_unit" active 300; then
+    write_progress s2_recover_ready
     panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
     pane_count="$(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const v=JSON.parse(s);process.stdout.write(String(Array.isArray(v)?v.filter(p=>!p.is_plugin).length:0))}catch(error){process.stdout.write("0")}})' )"
     if [ "$pane_count" -ge 2 ]; then mark_pass s2 layoutRestored; fi
@@ -753,6 +797,7 @@ if wait_state "$recovery_unit" active; then
     printf 'serialized_probe_lines=%s\n' "$scroll_count" >"$evidence_root/s2/restored-counts.txt"
     if [ "$scroll_count" -gt 0 ] && [ "$scroll_count" -le 10000 ]; then mark_pass s2 scrollbackBounded; fi
     rm -f -- "$dump_file"
+    write_progress s2_viewport_checked
     corrupt_target="$recovery_cache_dir/session-layout.kdl"
     if [ -n "$corrupt_target" ] && [[ "$recovery_cache_dir" == "$cache_root"/* ]] && [ "$(basename "$recovery_cache_dir")" = "$recovery_session" ]; then
       recovery_cache_parent="$(dirname "$recovery_cache_dir")"
@@ -767,7 +812,12 @@ if wait_state "$recovery_unit" active; then
       chown -R matrix:matrix "$recovery_cache_dir"
       find "$recovery_cache_dir" -type d -exec chmod 0700 {} + && find "$recovery_cache_dir" -type f -exec chmod 0600 {} +
     fi
-    systemctl_bounded stop "$recovery_unit" >/dev/null 2>&1 || true
+    write_progress s2_cache_frozen
+    if ! stop_runtime_empty "$recovery_unit" "$recovery_cgroup"; then
+      echo "spike_recovery_stop_failed" >&2
+      exit 20
+    fi
+    write_progress s2_restored_stopped
   else
     if [ -f "$runtime_root/startup-failures/${recovery_id}.json" ]; then
       cp "$runtime_root/startup-failures/${recovery_id}.json" "$evidence_root/s2/recovery-startup-failure.json"
@@ -778,31 +828,32 @@ if wait_state "$recovery_unit" active; then
     # Leave nested nodes unclosed so the parser must reject the cache.
     printf 'layout {\n  pane {\n' >"$corrupt_target"
     start_runtime "$recovery_id" recover
-    if wait_not_active "$recovery_unit"; then
+    if wait_not_active "$recovery_unit" &&
+      stop_runtime_empty "$recovery_unit" "$recovery_cgroup"; then
+      zellij_delete_if_present "$recovery_id" >/dev/null 2>&1 || true
       rm -rf -- "$recovery_cache_dir"
       install -d -o matrix -g matrix -m 0700 "$recovery_cache_dir"
-      zellij_delete_if_present "$recovery_id" >/dev/null 2>&1 || true
+      systemctl_bounded reset-failed "$recovery_unit" >/dev/null 2>&1 || true
       start_runtime "$recovery_id" create
       release_pane "$recovery_id"
       if wait_state "$recovery_unit" active; then mark_pass s2 corruptionFallback; fi
     fi
   fi
-  systemctl_bounded stop "$recovery_unit" >/dev/null 2>&1 || true
-  zellij_delete_if_present "$recovery_id" >/dev/null 2>&1 || true
-  rm -rf -- "$recovery_cache_dir"
-  remaining="$(find "$recovery_cache_dir" -type f 2>/dev/null | wc -l)"
-  if [ "$remaining" -eq 0 ]; then mark_pass s2 deletionComplete; fi
+  write_progress s2_delete
+  if stop_runtime_empty "$recovery_unit" "$recovery_cgroup"; then
+    zellij_delete_if_present "$recovery_id" >/dev/null 2>&1 || true
+    rm -rf -- "$recovery_cache_dir"
+    if [ ! -e "$recovery_cache_dir" ]; then mark_pass s2 deletionComplete; fi
+  fi
   rm -f -- "/tmp/matrix-terminal-mapped-${run_key}.txt"
 fi
+trap - EXIT
+cleanup
 write_progress summary_build
 build_summary
 summary_status="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");const v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(`${v.s1.status}:${v.s2.status}`)' "$evidence_root/summary.json")"
 if [ "$summary_status" != 'pass:pass' ]; then
   echo "spike_gate_failed" >&2
-  trap - EXIT
-  cleanup
   exit 20
 fi
-trap - EXIT
-cleanup
 exit 0

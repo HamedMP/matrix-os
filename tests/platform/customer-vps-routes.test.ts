@@ -86,6 +86,7 @@ describe('platform/customer-vps-routes', () => {
       { clerkUserId: 'user_123', handle: 'preview-897', runtimeSlot: 'preview-897' },
       { clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-896' },
       { clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897', serverType: 'cpx52' },
+      { clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897', bootstrapVersion: '../stable' },
     ]) {
       const invalid = await app.request('/vps/preview/provision', {
         method: 'POST',
@@ -104,6 +105,7 @@ describe('platform/customer-vps-routes', () => {
         handle: 'pr-897',
         runtimeSlot: 'pr-897',
         accessClerkUserIds: ['user_456'],
+        bootstrapVersion: 'v2026.08.06-pr897-bootstrap-123-1-abcdef0',
       }),
     });
 
@@ -114,6 +116,7 @@ describe('platform/customer-vps-routes', () => {
       handle: 'pr-897',
       runtimeSlot: 'pr-897',
       accessClerkUserIds: ['user_456'],
+      bootstrapVersion: 'v2026.08.06-pr897-bootstrap-123-1-abcdef0',
     });
     expect(provision).not.toHaveBeenCalled();
 
@@ -180,6 +183,29 @@ describe('platform/customer-vps-routes', () => {
     const provisionBody = await provision.json();
     expect(provisionBody.status).toBe('provisioning');
 
+    const progress = await app.request('/vps/bootstrap-progress', {
+      method: 'POST',
+      headers: { authorization: 'Bearer registration-token', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        machineId: provisionBody.machineId,
+        stage: 'cloud_init_started',
+      }),
+    });
+    expect(progress.status).toBe(200);
+    expect(await progress.json()).toEqual({ accepted: true, stage: 'cloud_init_started' });
+
+    const invalidProgress = await app.request('/vps/bootstrap-progress', {
+      method: 'POST',
+      headers: { authorization: 'Bearer registration-token', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        machineId: provisionBody.machineId,
+        stage: 'shell_command_output',
+        detail: '/private/path',
+      }),
+    });
+    expect(invalidProgress.status).toBe(400);
+    expect(await invalidProgress.json()).toEqual({ error: 'Invalid request' });
+
     const register = await app.request('/vps/register', {
       method: 'POST',
       headers: { authorization: 'Bearer registration-token', 'content-type': 'application/json' },
@@ -197,7 +223,11 @@ describe('platform/customer-vps-routes', () => {
     });
     expect(status.status).toBe(200);
     const statusBody = await status.json();
-    expect(statusBody).toMatchObject({ status: 'running', handle: 'alice' });
+    expect(statusBody).toMatchObject({
+      status: 'running',
+      handle: 'alice',
+      bootstrapStage: 'registered',
+    });
     expect(statusBody).not.toHaveProperty('registrationTokenHash');
     expect(statusBody).not.toHaveProperty('registrationTokenExpiresAt');
     expect(statusBody).not.toHaveProperty('hetznerServerId');
@@ -394,6 +424,22 @@ describe('platform/customer-vps-routes', () => {
     });
 
     expect(res.status).toBe(413);
+
+    const progress = await app.request('/vps/bootstrap-progress', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer registration-token',
+        'content-type': 'application/json',
+        'content-length': '5001',
+      },
+      body: JSON.stringify({
+        machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+        stage: 'cloud_init_started',
+        padding: 'x'.repeat(5000),
+      }),
+    });
+
+    expect(progress.status).toBe(413);
   });
 
   it('rejects resize bodies over 4096 bytes before parsing', async () => {

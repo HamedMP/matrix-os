@@ -423,15 +423,16 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
   it("installs and rolls back the optional preview proof helper with the host layer", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
 
-    for (const name of [
-      "matrix-terminal-spike-control",
-      "matrix-terminal-spike-pane",
-    ]) {
+    for (const name of ["matrix-terminal-spike-control"]) {
       expect(updater).toContain('name="' + name + '"');
       expect(updater).toContain('rm -f -- "$BIN_DIR/' + name + '"');
       expect(updater).toContain('"$BIN_DIR/' + name + '"');
       expect(updater).toContain('    ' + name);
     }
+    expect(updater).toContain(
+      'rm -f -- "$BIN_DIR/matrix-terminal-spike-pane"',
+    );
+    expect(updater).not.toContain('name="matrix-terminal-spike-pane"');
   });
 
   it("packages only the production VPS dependency closure within the archive member cap", () => {

@@ -50,11 +50,13 @@ describe('platform/customer-vps-cloud-init', () => {
     clerkUserId: 'user_123',
     handle: 'alice',
     runtimeSlot: 'staging',
+    restoreMode: 'restore',
     developerTools: 'codex claude-code opencode pi',
     imageVersion: 'stable',
     updateChannel: 'stable',
     hostBundleUrl: 'https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
+    platformBootstrapProgressUrl: 'https://platform.example/vps/bootstrap-progress',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
     registrationToken: 'registration-secret',
@@ -71,6 +73,21 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogPublicHost: 'https://eu.posthog.com',
     posthogApiHost: '/relay',
   };
+
+  it('reports bounded bootstrap stages without placing the registration token in argv', async () => {
+    const template = await loadCustomerVpsCloudInitTemplate();
+    const rendered = renderCloudInitTemplate(template, input);
+
+    expect(rendered).toContain('MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://platform.example/vps/bootstrap-progress');
+    expect(rendered).toContain('report_bootstrap_stage cloud_init_started');
+    expect(rendered).toContain('report_bootstrap_stage packages_ready');
+    expect(rendered).toContain('report_bootstrap_stage bundle_downloaded');
+    expect(rendered).toContain('report_bootstrap_stage bundle_installed');
+    expect(rendered).toContain('report_bootstrap_stage database_ready');
+    expect(rendered).toContain('report_bootstrap_stage gateway_starting');
+    expect(rendered).toContain('curl --config -');
+    expect(rendered).not.toContain('-H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}"');
+  });
 
   function runMatrixctlExistsWithFakeAws(exitCode: number, stderr: string) {
     const root = process.cwd();
@@ -99,7 +116,7 @@ describe('platform/customer-vps-cloud-init', () => {
     }
   }
 
-  function runRestoreWithFakeMatrixctl(existsStatus: number) {
+  function runRestoreWithFakeMatrixctl(existsStatus: number, restoreMode = 'restore') {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'second-restore-r2-'));
     const fakeMatrixctlPath = join(tempDir, 'matrixctl');
@@ -138,6 +155,7 @@ exit 99
         env: {
           ...process.env,
           SECOND_RESTORE_TEST_ROOT: tempDir,
+          MATRIX_RESTORE_MODE: restoreMode,
         },
       });
       return {
@@ -300,9 +318,9 @@ exit 99
     expect(cloudInit).toContain(
       'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
-    expect(cloudInit).toContain(
-      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service',
-    );
+    expect(cloudInit).toContain('systemctl start matrix-restore.service');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-gateway.service');
+    expect(cloudInit).toContain('systemctl start matrix-shell.service matrix-symphony.service');
     expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
     );
@@ -310,7 +328,7 @@ exit 99
     expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
-    expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
+    expect(cloudInit.indexOf('systemctl start matrix-shell.service matrix-symphony.service')).toBeLessThan(
       cloudInit.indexOf('systemctl start --no-block matrix-hermes.service'),
     );
     expect(cloudInit.indexOf('systemctl start --no-block matrix-hermes.service')).toBeLessThan(
@@ -685,6 +703,14 @@ exit 99
     expect(operationalError.result.status).toBe(1);
     expect(operationalError.restoreFlagExists).toBe(false);
     expect(operationalError.result.stderr).toContain('matrix-restore: failed to check VPS metadata');
+  });
+
+  it('starts a server-classified disposable preview with an empty database', () => {
+    const empty = runRestoreWithFakeMatrixctl(99, 'empty');
+
+    expect(empty.result.status, empty.result.stderr).toBe(0);
+    expect(empty.restoreFlagExists).toBe(true);
+    expect(empty.result.stderr).not.toContain('unexpected matrixctl call');
   });
 
   it('runs DB backup on an hourly systemd timer', () => {

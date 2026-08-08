@@ -7,6 +7,7 @@ import {
 } from './contracts.js';
 import { decodeFrame, encodeFrame, MAX_FRAME_BYTES } from './framing.js';
 const DEFAULT_TIMEOUT_MS = 10_000;
+const READINESS_TIMEOUT_MS = 40_000;
 const MAX_FRAME_CHUNKS = 1_024;
 export type SupervisorClient = {
   request(request: ProtocolRequest): Promise<ProtocolResponse>;
@@ -20,14 +21,18 @@ export function createSupervisorClient(options: {
   if (!socketPath.startsWith('/') || socketPath.length > 107) {
     throw new Error('invalid_socket_configuration');
   }
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
+  const configuredTimeoutMs = options.timeoutMs;
+  if (configuredTimeoutMs !== undefined &&
+    (!Number.isSafeInteger(configuredTimeoutMs) || configuredTimeoutMs < 1 || configuredTimeoutMs > 60_000)) {
     throw new Error('invalid_timeout_configuration');
   }
   const connect = options.connect ?? ((path: string) => createConnection(path));
   return {
     async request(request: ProtocolRequest): Promise<ProtocolResponse> {
       const parsedRequest = ProtocolRequestSchema.parse(request);
+      const timeoutMs = configuredTimeoutMs ??
+        (['CreateStart', 'Recover', 'Delete'].includes(parsedRequest.operation)
+          ? READINESS_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
       const outbound = encodeFrame(parsedRequest);
       return await new Promise<ProtocolResponse>((resolve, reject) => {
         const socket = connect(socketPath);

@@ -405,10 +405,12 @@ write_files:
       MATRIX_CLERK_USER_ID={{clerkUserId}}
       MATRIX_HANDLE={{handle}}
       MATRIX_RUNTIME_SLOT={{runtimeSlot}}
+      MATRIX_RESTORE_MODE={{restoreMode}}
       MATRIX_DEVELOPER_TOOLS='{{developerTools}}'
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
+      MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL={{platformBootstrapProgressUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
@@ -486,6 +488,23 @@ runcmd:
       printf 'vm.swappiness=10\n' > /etc/sysctl.d/99-matrix-swap.conf
       sysctl -p /etc/sysctl.d/99-matrix-swap.conf
     ) || echo "matrix-host: swap setup failed (non-fatal)" >&2
+    . /opt/matrix/env/host.env
+    . /opt/matrix/env/registration.env
+    report_bootstrap_stage() {
+      stage="$1"
+      case "${MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL:-}" in
+        https://*/vps/bootstrap-progress) ;;
+        *) echo "matrix-host: bootstrap progress endpoint unavailable" >&2; return 0 ;;
+      esac
+      payload="$(printf '{"machineId":"%s","stage":"%s"}' "$MATRIX_MACHINE_ID" "$stage")"
+      if ! printf 'header = "authorization: Bearer %s"\n' "$MATRIX_REGISTRATION_TOKEN" |
+        curl --config - --fail --silent --connect-timeout 5 --max-time 10 \
+          -X POST -H 'content-type: application/json' --data-binary "$payload" \
+          "$MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL" >/dev/null; then
+        echo "matrix-host: bootstrap progress callback unavailable" >&2
+      fi
+    }
+    report_bootstrap_stage cloud_init_started
     apt_get_update() {
       apt-get update \
         -o Acquire::Retries=5 \
@@ -520,6 +539,7 @@ runcmd:
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+    report_bootstrap_stage packages_ready
 
     install -d -o root -g matrix -m 0770 /opt/matrix
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
@@ -574,7 +594,7 @@ runcmd:
     fi
     install -d -o root -g root -m 0755 /home/matrixos
     ln -sfn /home/matrix/home /home/matrixos/home
-    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
+    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env /opt/matrix/env/r2.env
 
     . /opt/matrix/env/host.env
     [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }
@@ -583,6 +603,7 @@ runcmd:
     expected="$(awk '{print $1}' /tmp/matrix-host.tgz.sha256)"
     actual="$(sha256sum /tmp/matrix-host.tgz | awk '{print $1}')"
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
+    report_bootstrap_stage bundle_downloaded
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
     chmod -R g+rwX /opt/matrix/runtime/node
@@ -629,6 +650,7 @@ runcmd:
     if [ -x /opt/matrix/bin/zellij ]; then
       ln -sf /opt/matrix/bin/zellij /usr/local/bin/zellij
     fi
+    report_bootstrap_stage bundle_installed
     openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=customer-vps.matrix-os.local" -keyout /opt/matrix/tls/key.pem -out /opt/matrix/tls/cert.pem
     chown root:matrix /opt/matrix/tls/key.pem /opt/matrix/tls/cert.pem
     chmod 0640 /opt/matrix/tls/key.pem
@@ -650,6 +672,16 @@ runcmd:
         -p 127.0.0.1:5432:5432 \
         postgres:16 >/dev/null
     fi
+    database_ready=false
+    for _ in $(seq 1 60); do
+      if docker exec matrix-postgres pg_isready -U matrix -d matrix >/dev/null 2>&1; then
+        database_ready=true
+        break
+      fi
+      sleep 1
+    done
+    [ "$database_ready" = true ] || { echo "matrix-host: postgres readiness timed out" >&2; exit 1; }
+    report_bootstrap_stage database_ready
 
     systemctl daemon-reload
     systemctl enable --now matrix-terminal-runtime.service
@@ -658,7 +690,78 @@ runcmd:
     systemctl enable matrix-update-runtime.service
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-update-runtime.service
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service
+    gateway_unit_failure_stage() {
+      gateway_exec_status="$(systemctl show matrix-gateway.service --property=ExecMainStatus --value 2>/dev/null || true)"
+      gateway_result="$(systemctl show matrix-gateway.service --property=Result --value 2>/dev/null || true)"
+      case "$gateway_exec_status" in
+        200) printf 'gateway_unit_failed_chdir'; return ;;
+        203) printf 'gateway_unit_failed_exec'; return ;;
+        216) printf 'gateway_unit_failed_group'; return ;;
+        217) printf 'gateway_unit_failed_user'; return ;;
+        [1-9]|[1-9][0-9]|1[0-9][0-9]) printf 'gateway_unit_failed_exit'; return ;;
+      esac
+      case "$gateway_result" in
+        timeout) printf 'gateway_unit_failed_timeout' ;;
+        resources) printf 'gateway_unit_failed_resource' ;;
+        signal|core-dump) printf 'gateway_unit_failed_signal' ;;
+        exit-code) printf 'gateway_unit_failed_exit' ;;
+        *) printf 'gateway_unit_failed_other' ;;
+      esac
+    }
+    fail_gateway_unit_start() {
+      report_bootstrap_stage "$(gateway_unit_failure_stage)"
+      systemctl stop matrix-gateway.service >/dev/null 2>&1 || true
+      exit 1
+    }
+    report_bootstrap_stage restore_starting
+    systemctl start matrix-restore.service
+    report_bootstrap_stage restore_ready
+    if ! chown -hR matrix:matrix /home/matrix/home; then
+      report_bootstrap_stage gateway_unit_failed_environment
+      exit 1
+    fi
+    report_bootstrap_stage gateway_starting
+    report_bootstrap_stage gateway_preflight_checking_exec
+    if ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/bin/matrix-gateway ||
+      ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/runtime/node/bin/node; then
+      report_bootstrap_stage gateway_unit_failed_exec
+      exit 1
+    fi
+    report_bootstrap_stage gateway_preflight_checking_paths
+    if ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix ||
+      ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/app; then
+      report_bootstrap_stage gateway_unit_failed_chdir
+      exit 1
+    fi
+    report_bootstrap_stage gateway_preflight_checking_environment
+    for gateway_env_file in /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env /opt/matrix/bin/matrix-owner-env; do
+      if ! timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -r "$gateway_env_file"; then
+        report_bootstrap_stage gateway_unit_failed_environment
+        exit 1
+      fi
+    done
+    report_bootstrap_stage gateway_preflight_ready
+    systemctl start --no-block matrix-gateway.service || fail_gateway_unit_start
+    gateway_unit_ready=false
+    gateway_active_samples=0
+    for _ in $(seq 1 30); do
+      if systemctl is-failed --quiet matrix-gateway.service; then
+        fail_gateway_unit_start
+      fi
+      if systemctl is-active --quiet matrix-gateway.service; then
+        gateway_active_samples=$((gateway_active_samples + 1))
+        if [ "$gateway_active_samples" -ge 2 ]; then
+          gateway_unit_ready=true
+          break
+        fi
+      else
+        gateway_active_samples=0
+      fi
+      sleep 1
+    done
+    [ "$gateway_unit_ready" = true ] || fail_gateway_unit_start
+    report_bootstrap_stage gateway_unit_started
+    systemctl start matrix-shell.service matrix-symphony.service
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2
     systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2

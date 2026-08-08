@@ -115,6 +115,27 @@ describe('platform/customer-vps', () => {
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
   });
 
+  it('accepts only a trusted tagged Cloud Run origin for candidate bootstrap progress', () => {
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBe('https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app');
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBe('https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app');
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://terminal-pr-1136-fa9f4d0d9b50---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBe('https://terminal-pr-1136-fa9f4d0d9b50---matrix-platform-jqxkjdhtkq-ey.a.run.app');
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://terminal-pr-1136-fa9f4d0d9b5---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBeUndefined();
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'https://pr-1136---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBeUndefined();
+    expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: 'http://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+    }).platformCandidateUrl).toBeUndefined();
+  });
+
   it('does not use the private PostHog ingest host as the public browser host', () => {
     const config = loadCustomerVpsConfig({
       POSTHOG_HOST: 'https://eu.i.posthog.com',
@@ -157,6 +178,10 @@ describe('platform/customer-vps', () => {
     expect(row?.developerTools).toEqual(['codex', 'pi']);
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS='codex pi'");
+    expect(createInput?.userData).toContain('MATRIX_RESTORE_MODE=restore');
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=http://localhost:9000/vps/bootstrap-progress',
+    );
   });
 
   it('preserves an intentional empty developer tool selection', async () => {
@@ -1075,6 +1100,104 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
   });
 
+  it('pins preview first boot to an explicitly registered immutable bootstrap release', async () => {
+    const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-123-1-abcdef0';
+    await upsertHostBundleRelease(db, {
+      version: bootstrapVersion,
+      gitCommit: 'abcdef0123456789abcdef0123456789abcdef01',
+      gitRef: 'bootstrap',
+      buildTime: '2026-08-06T08:00:00.000Z',
+      bundleKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
+      checksumKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz.sha256`,
+      sha256: 'b'.repeat(64),
+      size: 1_257_725_742,
+      severity: 'normal',
+      updateType: 'manual',
+      changelog: 'Dormant preview bootstrap',
+      createdAt: '2026-08-06T08:01:00.000Z',
+    });
+    const { service, hetzner } = createService({
+      config: createTestConfig({
+        platformRegisterUrl: 'https://app.matrix-os.com/vps/register',
+        platformCandidateUrl: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      }),
+    });
+
+    const provisioned = await service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion,
+    });
+
+    expect((await getUserMachine(db, provisioned.machineId))?.imageVersion).toBe(bootstrapVersion);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain(
+      `MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
+    );
+    expect(createInput?.userData).toContain(`MATRIX_IMAGE_VERSION=${bootstrapVersion}`);
+    expect(createInput?.userData).toContain('MATRIX_RESTORE_MODE=empty');
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app/vps/bootstrap-progress',
+    );
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_REGISTER_URL=https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app/vps/register',
+    );
+    expect(createInput?.userData).toContain(
+      'PLATFORM_INTERNAL_URL=https://app.matrix-os.com',
+    );
+  });
+
+  it('fails preview bootstrap closed without a trusted candidate callback origin', async () => {
+    const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-124-1-abcdef0';
+    await upsertHostBundleRelease(db, {
+      version: bootstrapVersion,
+      gitCommit: 'abcdef0123456789abcdef0123456789abcdef01',
+      gitRef: 'bootstrap',
+      buildTime: '2026-08-06T08:00:00.000Z',
+      bundleKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
+      checksumKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz.sha256`,
+      sha256: 'b'.repeat(64),
+      size: 1_257_725_742,
+      severity: 'normal',
+      updateType: 'manual',
+      changelog: 'Dormant preview bootstrap',
+      createdAt: '2026-08-06T08:01:00.000Z',
+    });
+    const { service, hetzner } = createService({
+      config: createTestConfig({ platformCandidateUrl: undefined }),
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion,
+    })).rejects.toMatchObject({
+      status: 503,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning failed',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    expect(await getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff112')).toBeUndefined();
+  });
+
+  it('fails preview provisioning closed when the requested bootstrap release is not registered', async () => {
+    const { service, hetzner } = createService();
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion: 'v2026.08.06-pr1136-bootstrap-123-1-abcdef0',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning failed',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
   it('can provision an isolated staging runtime for the same Clerk user', async () => {
     let nextId = 0;
     const ids = [
@@ -1238,6 +1361,136 @@ describe('platform/customer-vps', () => {
     expect(row?.registrationTokenHash).toBeNull();
     expect(row?.registrationTokenExpiresAt).toBeNull();
     expect(systemStore.writtenMeta).toHaveLength(1);
+  });
+
+  it('records authenticated bootstrap progress monotonically before registration', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'cloud_init_started',
+    })).resolves.toEqual({ accepted: true, stage: 'cloud_init_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'packages_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'packages_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'restore_starting',
+    })).resolves.toEqual({ accepted: true, stage: 'restore_starting' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'restore_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'restore_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_starting',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_starting' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_preflight_checking_exec',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_preflight_checking_exec' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_preflight_checking_paths',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_preflight_checking_paths' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_preflight_checking_environment',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_preflight_checking_environment' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_preflight_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_preflight_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_unit_failed_exec',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_unit_failed_exec' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_unit_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_unit_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_wrapper_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_wrapper_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_environment_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_environment_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_sync_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_sync_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_assets_failed_copy',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_assets_failed_copy' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_assets_failed_status_9',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_assets_failed_status_9' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_assets_failed_node_program',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_assets_failed_node_program' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_assets_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_assets_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_ownership_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_ownership_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_ownership_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_ownership_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_home_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_home_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_launch_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_launch_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_process_started',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_process_started' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'gateway_healthy',
+    })).resolves.toEqual({ accepted: true, stage: 'gateway_healthy' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'registration_ready',
+    })).resolves.toEqual({ accepted: true, stage: 'registration_ready' });
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'cloud_init_started',
+    })).resolves.toEqual({ accepted: true, stage: 'registration_ready' });
+
+    const row = await getUserMachine(db, provisioned.machineId);
+    expect(row?.bootstrapStage).toBe('registration_ready');
+    expect(row?.bootstrapStageAt).toBe('2026-04-26T12:00:00.000Z');
+    await expect(service.status(provisioned.machineId)).resolves.toMatchObject({
+      bootstrapStage: 'registration_ready',
+      bootstrapStageAt: '2026-04-26T12:00:00.000Z',
+    });
+  });
+
+  it('rejects bootstrap progress with an invalid token without changing state', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.reportBootstrapProgress('wrong-token', {
+      machineId: provisioned.machineId,
+      stage: 'cloud_init_started',
+    })).rejects.toMatchObject({ status: 401, code: 'registration_rejected' });
+
+    expect((await getUserMachine(db, provisioned.machineId))?.bootstrapStage).toBeNull();
   });
 
   it('returns a warning when registration metadata cannot be persisted', async () => {
@@ -1516,6 +1769,9 @@ describe('platform/customer-vps', () => {
       status: 'recovering',
       hetznerServerId: 789012,
       publicIPv4: '203.0.113.11',
+      bootstrapStage: null,
+      bootstrapStageAt: null,
+      candidateBootstrapProgress: false,
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });

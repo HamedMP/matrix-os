@@ -37,8 +37,14 @@ on:
         required: false
         default: false
         type: boolean
+      use_platform_candidate:
+        description: "Provision through the attested exact-head production control-plane candidate"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
@@ -62,6 +68,7 @@ jobs:
       base_sha: ${{ steps.decide.outputs.base_sha }}
       head_ref: ${{ steps.decide.outputs.head_ref }}
       requested_version: ${{ steps.decide.outputs.requested_version }}
+      use_platform_candidate: ${{ steps.decide.outputs.use_platform_candidate }}
     steps:
       - name: Decide action
         id: decide
@@ -77,10 +84,20 @@ jobs:
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
+          USE_PLATFORM_CANDIDATE: ${{ inputs.use_platform_candidate }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           action="skip"
+          use_platform_candidate="${USE_PLATFORM_CANDIDATE:-false}"
+          if [ "$use_platform_candidate" != "true" ] && [ "$use_platform_candidate" != "false" ]; then
+            echo "Invalid platform candidate selection" >&2
+            exit 1
+          fi
+          if [ "$use_platform_candidate" = "true" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "The platform candidate is available only to an explicit manual preview run." >&2
+            exit 1
+          fi
           if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
             echo "Invalid PR number" >&2
             exit 1
@@ -114,6 +131,10 @@ jobs:
           elif [ "$HAS_LABEL" = "true" ]; then
             action="deploy"
           fi
+          if [ "$use_platform_candidate" = "true" ] && [ "$action" != "deploy" ]; then
+            echo "The platform candidate requires a fresh exact-head preview build." >&2
+            exit 1
+          fi
           if [ "$action" != "skip" ] && ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "Invalid PR head SHA" >&2
             exit 1
@@ -138,6 +159,7 @@ jobs:
             echo "base_sha=$base_sha"
             echo "head_ref=$head_ref"
             echo "requested_version=$REQUESTED_VERSION"
+            echo "use_platform_candidate=$use_platform_candidate"
           } >> "$GITHUB_OUTPUT"
           echo "action=$action pr=$PR_NUMBER"
 
@@ -258,14 +280,18 @@ jobs:
           cp -a scripts/spikes/terminal-runtime "$RUNNER_TEMP/terminal-runtime-spikes"
           cp distro/customer-vps/host-bin/matrix-sync-agent "$RUNNER_TEMP/"
           cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"
-          cp distro/customer-vps/host-bin/matrix-terminal-spike-pane "$RUNNER_TEMP/"
+          cp distro/customer-vps/host-bin/matrix-gateway "$RUNNER_TEMP/"
+          cp distro/customer-vps/host-bin/matrix-restore.sh "$RUNNER_TEMP/"
+          cp distro/customer-vps/host-bin/matrix-sync-bundled-home-assets "$RUNNER_TEMP/"
           git checkout --detach "${{ steps.version.outputs.bootstrap_sha }}"
           install -m 0755 "$RUNNER_TEMP/build-host-bundle.sh" scripts/build-host-bundle.sh
           rm -rf scripts/spikes/terminal-runtime
           cp -a "$RUNNER_TEMP/terminal-runtime-spikes" scripts/spikes/terminal-runtime
           install -m 0755 "$RUNNER_TEMP/matrix-sync-agent" distro/customer-vps/host-bin/matrix-sync-agent
+          install -m 0755 "$RUNNER_TEMP/matrix-gateway" distro/customer-vps/host-bin/matrix-gateway
+          install -m 0755 "$RUNNER_TEMP/matrix-restore.sh" distro/customer-vps/host-bin/matrix-restore.sh
+          install -m 0755 "$RUNNER_TEMP/matrix-sync-bundled-home-assets" distro/customer-vps/host-bin/matrix-sync-bundled-home-assets
           cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/
-          cp "$RUNNER_TEMP/matrix-terminal-spike-pane" distro/customer-vps/host-bin/
           MATRIX_TERMINAL_RUNTIME_DORMANT=1 ./scripts/build-host-bundle.sh
           terminal_generation_target="$(readlink dist/host-bundle/stage/libexec/terminal-runtime/current)"
           [[ "$terminal_generation_target" =~ ^v1/[0-9a-f]{64}$ ]] || {
@@ -275,9 +301,8 @@ jobs:
           echo "terminal_generation_target=$terminal_generation_target" >>"$GITHUB_OUTPUT"
           mv dist/host-bundle dist/bootstrap
           rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control
-          rm -f distro/customer-vps/host-bin/matrix-terminal-spike-pane
           rm -rf scripts/spikes/terminal-runtime
-          git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-sync-agent
+          git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-gateway distro/customer-vps/host-bin/matrix-restore.sh distro/customer-vps/host-bin/matrix-sync-agent distro/customer-vps/host-bin/matrix-sync-bundled-home-assets
           git checkout --detach "${{ needs.gate.outputs.head_sha }}"
       - name: Build host bundle
         id: activation_bundle
@@ -342,6 +367,8 @@ jobs:
       BOOTSTRAP_GENERATION_TARGET: ${{ needs.build.outputs.bootstrap_generation_target }}
       ACTIVATION_GENERATION_TARGET: ${{ needs.build.outputs.activation_generation_target }}
       HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+      USE_PLATFORM_CANDIDATE: ${{ needs.gate.outputs.use_platform_candidate }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
         if: needs.gate.outputs.action == 'deploy'
@@ -386,12 +413,77 @@ jobs:
             exit 1
           fi
 
+          sanitize_failure_code() {
+            local failure_code
+            if ! IFS= read -r failure_code; then failure_code=unknown; fi
+            case "$failure_code" in
+              quota_exceeded|provider_unavailable|provider_timeout|user_data_too_large|r2_unavailable|invalid_state|billing_required|not_found|registration_rejected|registration_timeout|retry_exhausted|unknown|none)
+                printf '%s\n' "$failure_code"
+                ;;
+              *)
+                printf '%s\n' unknown
+                ;;
+            esac
+          }
+
+          retire_failed_preview() {
+            local failed_machine="$1"
+            local failed_machine_id delete_code retirement_deadline retirement_state
+            if ! failed_machine_id="$(jq -er \
+              --arg owner "$PREVIEW_CLERK_USER_ID" \
+              --arg handle "$HANDLE" '
+                if (
+                  type == "object"
+                  and .clerkUserId == $owner
+                  and .handle == $handle
+                  # Preview rows created before per-PR slot isolation used the
+                  # fixed `preview` slot. Only failed rows reach this claim.
+                  and (.runtimeSlot == $handle or .runtimeSlot == "preview")
+                  and .status == "failed"
+                  and .deletedAt == null
+                  and (.machineId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+                ) then .machineId else error("invalid failed preview") end
+              ' <<< "$failed_machine" 2>/dev/null)"; then
+              echo "Failed preview does not match the exact disposable preview identity." >&2
+              exit 1
+            fi
+
+            delete_code="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' \
+              -X DELETE "${PLATFORM_PUBLIC_URL}/vps/${failed_machine_id}" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}")"
+            if [ "$delete_code" != "200" ] && [ "$delete_code" != "404" ]; then
+              echo "Failed preview retirement was rejected (HTTP ${delete_code})." >&2
+              exit 1
+            fi
+
+            retirement_deadline=$((SECONDS + 120))
+            while true; do
+              retirement_state="$(curl -fsS --max-time 30 \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                "${PLATFORM_PUBLIC_URL}/vps/fleet" |
+                jq -r --arg id "$failed_machine_id" '
+                  [.machines[]
+                    | select(.machineId == $id and .deletedAt == null and .status != "deleted")]
+                  | if length == 0 then "retired" else "active" end
+                ')"
+              if [ "$retirement_state" = "retired" ]; then
+                echo "Retired the exact failed disposable preview before reprovisioning."
+                break
+              fi
+              if [ "$SECONDS" -ge "$retirement_deadline" ]; then
+                echo "Failed preview retirement did not converge." >&2
+                exit 1
+              fi
+              sleep 5
+            done
+          }
+
           fleet_machine="$(curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -c --arg h "$HANDLE" \
               '[.machines[]
-                | select(.handle == $h and .status != "deleted")
+                | select(.handle == $h and .status != "deleted" and .deletedAt == null)
                 | . + { _preview_rank:
                     (if .status == "running" then 0
                      elif .status == "provisioning" then 1
@@ -401,8 +493,12 @@ jobs:
                | (.[0] // {status: "absent", machineId: ""})
                | del(._preview_rank)')"
           status="$(jq -r '.status' <<< "$fleet_machine")"
+          failure_code="$(jq -r '.failureCode // "none"' <<< "$fleet_machine" | sanitize_failure_code)"
           runtime_slot="$(jq -r '.runtimeSlot // ""' <<< "$fleet_machine")"
           echo "Fleet status for ${HANDLE}: ${status}"
+          if [ "$status" = "failed" ]; then
+            echo "Fleet failure code for ${HANDLE}: ${failure_code}"
+          fi
 
           case "$status" in
             provisioning|running)
@@ -421,15 +517,71 @@ jobs:
               ;;
           esac
 
+          if [ "$status" = "failed" ]; then
+            retire_failed_preview "$fleet_machine"
+          fi
+
           # The idempotent provision call also reconciles the complete access
           # allowlist on already-running previews.
+          PROVISION_PLATFORM_URL="$PLATFORM_PUBLIC_URL"
+          if [ "$USE_PLATFORM_CANDIDATE" = "true" ]; then
+            candidate_runs="$(gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/platform-cloud-run.yml/runs" \
+              -f head_sha="$HEAD_SHA" -f event=workflow_dispatch -f status=success -f per_page=20)"
+            if ! candidate_run_id="$(jq -er --arg head "$HEAD_SHA" '
+              [.workflow_runs[]
+               | select(.head_sha == $head and .event == "workflow_dispatch" and .conclusion == "success")]
+              | sort_by(.created_at) | last | .id
+            ' <<< "$candidate_runs")"; then
+              echo "The exact-head production control-plane candidate attestation is unavailable." >&2
+              exit 1
+            fi
+            candidate_dir="$(mktemp -d)"
+            trap 'rm -rf -- "$candidate_dir"' EXIT
+            gh run download "$candidate_run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "platform-production-candidate-${PR_NUMBER}-${HEAD_SHA}" \
+              --dir "$candidate_dir"
+            candidate_file="$candidate_dir/platform-production-candidate.json"
+            if [ ! -f "$candidate_file" ] || [ -L "$candidate_file" ] ||
+              [ "$(stat -c %s "$candidate_file")" -gt 4096 ]; then
+              echo "The exact-head production control-plane candidate attestation is invalid." >&2
+              exit 1
+            fi
+            platform_origin="$(sed -n 's/^PLATFORM_ORIGIN = "\(https:\/\/[a-z0-9-]\+\.a\.run\.app\)"$/\1/p' \
+              packages/edge-router/wrangler.toml)"
+            if [ -z "$platform_origin" ] || [ "$(printf '%s\n' "$platform_origin" | wc -l)" -ne 1 ]; then
+              echo "The pinned production platform origin is unavailable." >&2
+              exit 1
+            fi
+            expected_candidate_origin="https://terminal-pr-${PR_NUMBER}-${HEAD_SHA:0:12}---${platform_origin#https://}"
+            candidate_origin="$(jq -er '.candidateOrigin | select(type == "string")' "$candidate_file")"
+            if ! jq -e --arg head "$HEAD_SHA" --argjson pr "$PR_NUMBER" \
+              --arg origin "$candidate_origin" --arg expectedOrigin "$expected_candidate_origin" '
+              type == "object"
+              and (keys | sort) == ["candidateOrigin", "environment", "headSha", "prNumber", "revisionName", "schemaVersion"]
+              and .schemaVersion == 1
+              and .headSha == $head and .prNumber == $pr and .environment == "production"
+              and .candidateOrigin == $origin and .candidateOrigin == $expectedOrigin
+              and (.revisionName | type == "string" and test("^[a-z][a-z0-9-]{0,62}$"))
+            ' "$candidate_file" >/dev/null; then
+              echo "The exact-head production control-plane candidate attestation is invalid." >&2
+              exit 1
+            fi
+            PROVISION_PLATFORM_URL="$candidate_origin"
+            curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+              "${PROVISION_PLATFORM_URL}/health" >/dev/null
+            echo "Using the zero-traffic platform candidate for preview provisioning."
+          fi
           provision_body="$(jq -cn \
             --arg owner "$PREVIEW_CLERK_USER_ID" \
             --arg handle "$HANDLE" \
+            --arg bootstrap "$BOOTSTRAP_VERSION" \
             --argjson access "$access_user_ids" \
-            '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}')"
+            '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}
+             + (if $bootstrap == "" then {} else {bootstrapVersion: $bootstrap} end)')"
           code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
-            -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision" \
+            -X POST "${PROVISION_PLATFORM_URL}/vps/preview/provision" \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             -H "content-type: application/json" \
             --data-binary "$provision_body")"
@@ -462,17 +614,38 @@ jobs:
 
           if [ "$status" = "provisioning" ]; then
             echo "Waiting for the VPS to come up..."
-            deadline=$((SECONDS + 600))
+            # Stay below the platform's 15-minute registration-token boundary
+            # while cloud-init installs the already-pinned dormant bootstrap.
+            deadline=$((SECONDS + 840))
+            last_bootstrap_stage=pending
             while true; do
               sleep 15
-              status="$(curl -fsS --max-time 30 \
+              polled_machine="$(curl -fsS --max-time 30 \
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-                jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
-                  '[.machines[] | select(.handle == $h and .machineId == $id)] | .[0].status // "absent"')"
+                jq -c --arg h "$HANDLE" --arg id "$accepted_machine_id" \
+                  '[.machines[] | select(.handle == $h and .machineId == $id)]
+                   | (.[0] // {status: "absent", failureCode: null})')"
+              status="$(jq -r '.status' <<< "$polled_machine")"
               [ "$status" = "running" ] && break
+              progress_machine="$polled_machine"
+              if [ "$USE_PLATFORM_CANDIDATE" = "true" ]; then
+                if candidate_fleet="$(curl -fsS --max-time 30 \
+                  -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                  "${PROVISION_PLATFORM_URL}/vps/fleet" 2>/dev/null)"; then
+                  progress_machine="$(jq -c --arg h "$HANDLE" \
+                    '.machines | map(select(.handle == $h and .runtimeSlot == $h and .deletedAt == null)) | .[0] // {}' \
+                    <<< "$candidate_fleet")"
+                fi
+              fi
+              bootstrap_stage="$(jq -r '.bootstrapStage // "pending"' <<< "$progress_machine")"
+              if [ "$bootstrap_stage" != "$last_bootstrap_stage" ]; then
+                echo "Bootstrap stage for ${HANDLE}: ${bootstrap_stage}"
+                last_bootstrap_stage="$bootstrap_stage"
+              fi
               if [ "$status" = "failed" ]; then
-                echo "Provisioning failed for ${HANDLE}" >&2
+                failure_code="$(jq -r '.failureCode // "none"' <<< "$polled_machine" | sanitize_failure_code)"
+                echo "Provisioning failed for ${HANDLE} (${failure_code})" >&2
                 exit 1
               fi
               if [ "$SECONDS" -ge "$deadline" ]; then
@@ -603,7 +776,8 @@ jobs:
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet")"
           address="$(jq -er --arg handle "$HANDLE" '
-            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+              and .deletedAt == null and .status != "deleted")]
             | if length == 1 then .[0].publicIPv4 else error("preview_unavailable") end
           ' <<<"$fleet")"
           if ! wait_for_preview_gateway "$address"; then
@@ -613,6 +787,7 @@ jobs:
           for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"; do
             target_sha="$HEAD_SHA"
             target_generation="$ACTIVATION_GENERATION_TARGET"
+            attestation_retry_required=false
             if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then
               target_sha="$BOOTSTRAP_SHA"
               target_generation="$BOOTSTRAP_GENERATION_TARGET"
@@ -620,7 +795,8 @@ jobs:
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet")"
               machine="$(jq -ce --arg handle "$HANDLE" '
-                  [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+                  [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+                    and .deletedAt == null and .status != "deleted")]
                   | if length == 1 then .[0] else {} end
                 ' <<<"$fleet")"
               deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
@@ -631,10 +807,17 @@ jobs:
                 echo "Reusing the exact dormant parent already installed on the preview."
                 continue
               fi
+              # A clean host applies this first bundle with the legacy updater
+              # process image. That process installs the typed updater bytes and
+              # units but predates terminal-runtime generation installation. A
+              # single pinned reapply through the newly installed updater is the
+              # compatibility bridge; both passes remain fully attested.
+              attestation_retry_required=true
             fi
             deploy_deadline=$((SECONDS + 4500))
             deploy_converged=false
             version_seen=false
+            attestation_retry_sent=false
             last_updater_diagnostic=""
             last_signal=$((SECONDS - 60))
             while [ "$SECONDS" -lt "$deploy_deadline" ]; do
@@ -665,7 +848,8 @@ jobs:
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet")"; then
                 machine="$(jq -ce --arg handle "$HANDLE" '
-                    [.machines[] | select(.handle == $handle and .runtimeSlot == $handle)]
+                    [.machines[] | select(.handle == $handle and .runtimeSlot == $handle
+                      and .deletedAt == null and .status != "deleted")]
                     | if length == 1 then .[0] else {} end
                   ' <<<"$fleet")"
                 deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
@@ -689,6 +873,28 @@ jobs:
                     preview_install_matches "$address" "$target_version" "$target_sha" "$target_generation"; then
                     deploy_converged=true
                     break
+                  fi
+                  if [ "$attestation_retry_required" = true ] &&
+                    [ "$attestation_retry_sent" != true ] && [ "$updater_diagnostic_result" = "Update service: idle phase=idle failure=none" ]; then
+                    code=""
+                    if ! code="$(attempt "$target_version")"; then
+                      code=000
+                    fi
+                    if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+                      echo "Preview deploy authorization failed." >&2
+                      exit 1
+                    fi
+                    if [ "$code" = "200" ] &&
+                      jq -e --arg handle "$HANDLE" '
+                        .triggered == 1 and .failed == 0 and (.results | length) == 1
+                        and .results[0].handle == $handle
+                        and .results[0].status == "triggered"
+                      ' /tmp/deploy.json >/dev/null; then
+                      attestation_retry_sent=true
+                      echo "Reapplying the pinned preview release through the installed updater for host-runtime attestation."
+                    else
+                      echo "Waiting for the preview update boundary."
+                    fi
                   fi
                   echo "Waiting for the installed preview release and terminal generation."
                 fi

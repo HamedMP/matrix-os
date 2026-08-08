@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
-import { createOperationId, createSupervisorClient } from '../index.js';
+import {
+  createAgentConfigurationStore,
+  createOperationId,
+  createSupervisorClient,
+} from '../index.js';
+const home = '/home/matrix/home';
 const [operation = '', value = '', extra = ''] = process.argv.slice(2);
 const runtimeId = /^[0-9a-f]{32}$/.test(value) ? value : null;
 const client = createSupervisorClient();
@@ -12,15 +17,45 @@ const request = async (name, input, operationId = createOperationId()) => {
   return response.result;
 };
 const output = (result) => process.stdout.write(`${JSON.stringify(result)}\n`);
-if (operation === 'create' || operation === 'create-race') {
+if (operation === 'create' || operation === 'create-race' ||
+    operation === 'create-agent') {
   if (!/^[0-9a-f]{40}$/.test(value)) throw new Error('probe_head_invalid');
-  output(await request('CreateStart', {
-    displayName: operation === 'create'
-      ? `accept-${value.slice(0, 12)}`
-      : `accept-race-${value.slice(0, 12)}`,
-    cwd: { kind: 'home-relative', path: '' },
-    launch: { kind: 'shell' },
-  }));
+  if (!/^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$/.test(extra)) throw new Error('probe_nonce_invalid');
+  const operationId = createOperationId();
+  const configurationStore = createAgentConfigurationStore();
+  if (operation === 'create-agent') {
+    await configurationStore.publish(operationId, {
+      schemaVersion: 1,
+      agent: 'claude',
+      cwd: { kind: 'home-relative', path: '' },
+      mode: 'default',
+      approvalPolicy: 'never',
+      sandbox: {
+        enabled: false,
+        mode: 'danger-full-access',
+        writableRoots: [],
+        denyWriteRoots: [],
+      },
+    });
+    try {
+      output(await request('CreateStart', {
+        displayName: `accept-agent-${value.slice(0, 12)}-${extra}`,
+        cwd: { kind: 'home-relative', path: '' },
+        launch: { kind: 'agent', configurationRef: operationId },
+      }, operationId));
+    } catch (error) {
+      await configurationStore.remove(operationId);
+      throw error;
+    }
+  } else {
+    output(await request('CreateStart', {
+      displayName: operation === 'create'
+        ? `accept-${value.slice(0, 12)}-${extra}`
+        : `accept-race-${value.slice(0, 12)}-${extra}`,
+      cwd: { kind: 'home-relative', path: '' },
+      launch: { kind: 'shell' },
+    }, operationId));
+  }
 } else if (operation === 'inspect' && runtimeId) {
   output(await request('Inspect', { runtimeId }));
 } else if (operation === 'recover' && runtimeId) {
@@ -83,12 +118,12 @@ if (operation === 'create' || operation === 'create-race') {
       entry.args.some((argument) => argument.endsWith('/keeper.js')))?.pid ?? 0,
     zellijClient: zellij[0]?.pid ?? 0,
     zellijServer: zellij[1]?.pid ?? 0,
-    shell: processes.find((entry) =>
-      entry.comm === 'bash' && entry.args.some((argument) =>
-        argument.includes('MATRIX_ACCEPT_LOOP')))?.pid ?? 0,
+    pane: processes.find((entry) => entry.args.some((argument) =>
+      argument.endsWith('/pane.js')))?.pid ?? 0,
+    shell: processes.find((entry) => entry.comm === 'bash')?.pid ?? 0,
     agent: processes.find((entry) =>
-      /^codex(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
-        /\/codex(?:-|$)/.test(argument)))?.pid ?? 0,
+      /^claude(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
+        /\/claude(?:[./-]|$)/.test(argument)))?.pid ?? 0,
   });
 } else {
   throw new Error('probe_operation_invalid');

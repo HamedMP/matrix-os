@@ -16,9 +16,11 @@ type FakeSocket = EventEmitter & {
 function fakeSocket(options: {
   onEnd?: (socket: FakeSocket, bytes: Buffer) => void;
   timeout?: boolean;
+  timeoutValues?: number[];
 }): FakeSocket {
   const socket = new EventEmitter() as FakeSocket;
-  socket.setTimeout = () => {
+  socket.setTimeout = (milliseconds) => {
+    options.timeoutValues?.push(milliseconds);
     if (options.timeout) queueMicrotask(() => socket.emit('timeout'));
   };
   socket.end = (bytes) => options.onEnd?.(socket, bytes);
@@ -58,6 +60,23 @@ describe('terminal runtime supervisor client', () => {
     })).toThrow('invalid_timeout_configuration');
     await expect(request(fakeSocket({ timeout: true })))
       .rejects.toThrow('supervisor_timeout');
+  });
+  it('allows readiness-bound operations to outlive the systemd start deadline', async () => {
+    const timeoutValues: number[] = [], socket = fakeSocket({ timeoutValues, onEnd: (peer) => queueMicrotask(() => {
+      peer.emit('data', encodeFrame({
+        version: 1, ok: true, operationId: OPERATION_ID,
+        result: { runtimeId: '0123456789abcdef0123456789abcdef', lifecycleState: 'starting' },
+      }));
+      peer.emit('end');
+    }) });
+    await createSupervisorClient({ connect: () => {
+      queueMicrotask(() => socket.emit('connect'));
+      return socket as unknown as Socket;
+    } }).request({
+      version: 1, operation: 'CreateStart', operationId: OPERATION_ID,
+      input: { displayName: 'accept-runtime', cwd: { kind: 'home-relative', path: '' }, launch: { kind: 'shell' } },
+    });
+    expect(timeoutValues).toEqual([40_000]);
   });
   it('rejects incomplete and pathologically fragmented responses', async () => {
     await expect(request(fakeSocket({ onEnd: (peer) => {

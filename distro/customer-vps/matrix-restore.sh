@@ -9,6 +9,11 @@ fi
 restore_flag="/opt/matrix/restore-complete"
 latest_file="/var/lib/matrix/db/latest"
 snapshot_path="/var/lib/matrix/db/latest.dump"
+restore_mode="${MATRIX_RESTORE_MODE:-restore}"
+case "$restore_mode" in
+  restore|empty) ;;
+  *) echo "matrix-restore: invalid restore mode" >&2; exit 1 ;;
+esac
 runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"
 case "$runtime_slot" in
   ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) echo "matrix-restore: invalid runtime slot" >&2; exit 1 ;;
@@ -23,6 +28,10 @@ fi
 
 mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
 rm -f "$restore_flag"
+if [ "$restore_mode" = "empty" ]; then
+  touch "$restore_flag"
+  exit 0
+fi
 
 check_r2_exists_or_skip_restore() {
   local key="$1"
