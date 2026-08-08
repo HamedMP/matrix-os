@@ -7,7 +7,7 @@ if [ "$(id -u)" -ne 0 ] || [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]] ||
   exit 2
 fi
 case "$operation" in
-  launch|status|reboot|resume|pack|cancel|phase1|phase2) ;;
+  launch|status|diagnose|reboot|resume|pack|cancel|phase1|phase2) ;;
   *) echo "production_acceptance_invalid_request" >&2; exit 2 ;;
 esac
 readonly root_parent=/var/lib/matrix-terminal-acceptance; readonly state_root="${root_parent}/${head_sha}-${run_nonce}"
@@ -329,6 +329,26 @@ case "$operation" in
     ;;
   status)
     [ -f "$state_file" ] || { echo unavailable; exit 3; }; cat "$state_file"
+    ;;
+  diagnose)
+    diagnostic="$(owner_probe find-shell "$head_sha" "$run_nonce" 2>/dev/null || true)"
+    runtime_id="$(printf '%s' "$diagnostic" | json_field runtimeId 2>/dev/null || true)"
+    lifecycle="$(printf '%s' "$diagnostic" | json_field lifecycleState 2>/dev/null || true)"
+    result=unavailable; main_code=unavailable; main_status=unavailable; keeper_code=unavailable
+    if [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]; then
+      unit="${unit_prefix}${runtime_id}.service"
+      show="$(systemctl_read show "$unit" -p Result -p ExecMainCode -p ExecMainStatus --value 2>/dev/null || true)"
+      mapfile -t values <<<"$show"
+      [[ "${values[0]:-}" =~ ^[a-z-]{1,32}$ ]] && result="${values[0]}"
+      [[ "${values[1]:-}" =~ ^[a-z-]{1,32}$ ]] && main_code="${values[1]}"
+      [[ "${values[2]:-}" =~ ^[0-9]{1,3}$ ]] && main_status="${values[2]}"
+      keeper_code="$(journalctl -u "$unit" --since=-10min --no-pager --output=cat 2>/dev/null |
+        grep -E '^terminal_keeper_[a-z0-9_]{1,96}$' | tail -n 1 || true)"
+      [[ "$keeper_code" =~ ^terminal_keeper_[a-z0-9_]{1,96}$ ]] || keeper_code=unavailable
+    fi
+    [[ "$lifecycle" =~ ^[a-z_]{1,32}$ ]] || lifecycle=unavailable
+    printf 'production_acceptance_diagnostic=%s,%s,%s,%s,%s\n' \
+      "$lifecycle" "$result" "$main_code" "$main_status" "$keeper_code"
     ;;
   reboot)
     [ "$(cat "$state_file")" = phase1-ready ]

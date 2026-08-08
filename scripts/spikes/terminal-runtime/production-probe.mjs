@@ -58,6 +58,16 @@ if (operation === 'create' || operation === 'create-race' ||
   }
 } else if (operation === 'inspect' && runtimeId) {
   output(await request('Inspect', { runtimeId }));
+} else if (operation === 'find-shell') {
+  if (!/^[0-9a-f]{40}$/.test(value)) throw new Error('probe_head_invalid');
+  if (!/^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$/.test(extra)) throw new Error('probe_nonce_invalid');
+  const name = `accept-${value.slice(0, 12)}-${extra}`;
+  const runtimes = await request('List', {});
+  const match = Array.isArray(runtimes)
+    ? runtimes.find((entry) => entry?.displayName === name) : undefined;
+  output(match && /^[0-9a-f]{32}$/.test(match.runtimeId)
+    ? { runtimeId: match.runtimeId, lifecycleState: match.lifecycleState }
+    : { runtimeId: null, lifecycleState: 'missing' });
 } else if (operation === 'recover' && runtimeId) {
   output(await request('Recover', { runtimeId }));
 } else if (operation === 'rename' && runtimeId && /^[a-z0-9-]{1,64}$/.test(extra)) {

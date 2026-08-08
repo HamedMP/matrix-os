@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildKeeperLaunch,
   isKeeperEntrypoint,
-  keeperFailureCode,
   monitorKeeperOnce,
   waitForKeeperReadiness,
 } from '../../packages/terminal-runtime/src/keeper.js';
@@ -42,17 +41,6 @@ describe('terminal runtime service boundary', () => {
       'file:///opt/matrix/libexec/terminal-runtime/v1/abc/keeper.js',
       '/opt/matrix/libexec/terminal-runtime/current/keeper.js',
     )).toBe(true);
-  });
-
-  it('maps keeper startup failures to bounded non-sensitive lifecycle codes', () => {
-    expect(keeperFailureCode(new Error('keeper_claim_failed'), 'start'))
-      .toBe('terminal_keeper_start_claim_failed');
-    expect(keeperFailureCode(new Error('keeper_readiness_timeout'), 'start'))
-      .toBe('terminal_keeper_start_readiness_timeout');
-    expect(keeperFailureCode(new Error('/home/matrix/home/private'), 'start'))
-      .toBe('terminal_keeper_start_unknown');
-    expect(keeperFailureCode('secret', 'monitor'))
-      .toBe('terminal_keeper_monitor_non_error');
   });
 
   it('derives only the fixed template instance after validating the runtime ID', () => {

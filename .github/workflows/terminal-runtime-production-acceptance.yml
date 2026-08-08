@@ -266,6 +266,7 @@ jobs:
               fi
               [ "$state" != phase1-ready ] || break
               if [[ "$state" =~ ^failed(_|$) ]]; then
+                call_helper acceptance-diagnose || true
                 call_helper acceptance-cancel >/dev/null 2>&1 || true
                 exit 1
               fi

@@ -11,7 +11,7 @@ case "$operation" in
     [ "$#" -eq 3 ] && [[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]] ||
       { echo "spike_control_invalid_request" >&2; exit 2; }
     ;;
-  acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel)
+  acceptance-launch | acceptance-status | acceptance-diagnose | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel)
     [ "$#" -eq 3 ] && [[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]] ||
       { echo "spike_control_invalid_request" >&2; exit 2; }
     ;;
@@ -46,7 +46,7 @@ case "$operation" in
   pack)
     target="/opt/matrix/libexec/terminal-runtime/current/spikes/pack-evidence.sh"
     ;;
-  acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel)
+  acceptance-launch | acceptance-status | acceptance-diagnose | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel)
     target="/opt/matrix/libexec/terminal-runtime/current/spikes/production-acceptance.sh"
     set -- "${operation#acceptance-}" "$pr_head_sha" "$3"
     ;;
