@@ -22,7 +22,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       artifact_prefix: ${{ steps.meta.outputs.artifact_prefix }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - id: meta
         run: |
@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Move desktop-canary tag
         run: |
@@ -57,7 +57,7 @@ jobs:
           git tag -f desktop-canary "$GITHUB_SHA"
           git push origin refs/tags/desktop-canary --force
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           pattern: ${{ needs.prepare.outputs.artifact_prefix }}-*
           path: desktop-release
