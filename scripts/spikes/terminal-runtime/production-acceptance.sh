@@ -136,8 +136,7 @@ phase1() {
   zellij --session "$session_name" action write-chars -- \
     "exec bash -lc 'while true; do printf \"MATRIX_ACCEPT_LOOP\\n\"; sleep 1; done'"
   zellij --session "$session_name" action send-keys Enter
-  write_phase starting_agent
-  [ -x "$codex" ]
+  write_phase starting_agent; [ -x "$codex" ]
   zellij --session "$session_name" action new-pane -- "$codex"
   write_phase waiting_roles; local baseline="" shell_pid="" agent_pid="" role_failure=roles_unavailable
   for _ in $(seq 1 12); do

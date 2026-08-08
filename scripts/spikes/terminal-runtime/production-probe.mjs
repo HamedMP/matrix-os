@@ -87,7 +87,7 @@ if (operation === 'create' || operation === 'create-race') {
     shell: processes.find((entry) => entry.comm === 'bash')?.pid ?? 0,
     agent: processes.find((entry) =>
       /^codex(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
-        /\/codex(?:-|$)/.test(argument)))?.pid ?? 0,
+        /\/codex(?:[./-]|$)/.test(argument)))?.pid ?? 0,
   });
 } else {
   throw new Error('probe_operation_invalid');
