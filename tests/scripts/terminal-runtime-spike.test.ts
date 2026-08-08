@@ -29,7 +29,7 @@ const s2Checks = passing(`exactOptionSyntax cacheMappedByRuntime layoutRestored 
 scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
 deletionComplete diskAccountingBounded liveSerializationDisableSafe`);
 const productionChecks = passing(`runtimeLive continuousOutput codingAgentPreserved twoDevicesOneRuntime detachPreservesRuntime renamePreservesIdentity bundleOnePreservesRuntime bundleTwoPreservesRuntime supervisorPreserved failedUpdatePreservesRuntime explicitRollbackPreservesRuntime daemonReloadPreservesRuntime forceRunAbsent journalPrivacy
-rebootStartsNoRuntime rebootShowsInterrupted explicitRecoverRestoresRuntime concurrentRecoverSingleUnit corruptionFallsBackFresh recoverDeleteCannotResurrect deleteWaitsForEmptyCgroup deleteRemovesRecoveryState`);
+rebootStartsNoRuntime rebootShowsInterrupted explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingleUnit corruptionFallsBackFresh recoverDeleteCannotResurrect deleteWaitsForEmptyCgroup deleteRemovesRecoveryState`);
 async function evidence(overrides: Record<string, unknown> = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-evidence-'));
   roots.push(root);
@@ -78,35 +78,16 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
 describe('terminal runtime spike evidence', () => {
   it('runs the evidence CLI when invoked through the immutable current-generation symlink', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'matrix-terminal-verifier-symlink-'));
-    roots.push(fixture);
-    const generation = join(fixture, 'generation');
-    const current = join(fixture, 'current');
+    roots.push(fixture); const generation = join(fixture, 'generation'); const current = join(fixture, 'current');
     await mkdir(generation);
     await Promise.all([
-      writeFile(
-        join(generation, 'verify-evidence.mjs'),
-        await readRepo('scripts/spikes/terminal-runtime/verify-evidence.mjs'),
-      ),
-      writeFile(
-        join(generation, 'v0.44.3-matrix.1.build.json'),
-        await readRepo('scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json'),
-      ),
+      writeFile(join(generation, 'verify-evidence.mjs'), await readRepo('scripts/spikes/terminal-runtime/verify-evidence.mjs')),
+      writeFile(join(generation, 'v0.44.3-matrix.1.build.json'), await readRepo('scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json')),
     ]);
-    await symlink(generation, current, 'dir');
-    const root = await evidence();
-    const result = spawnSync(process.execPath, [
-      join(current, 'verify-evidence.mjs'),
-      root,
-      '--pack',
-      'a'.repeat(40),
-    ], { encoding: 'utf8' });
-    expect(result.error).toBeUndefined();
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe('');
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      schemaVersion: 1,
-      prHeadSha: 'a'.repeat(40),
-    });
+    await symlink(generation, current, 'dir'); const root = await evidence();
+    const result = spawnSync(process.execPath, [join(current, 'verify-evidence.mjs'), root, '--pack', 'a'.repeat(40)], { encoding: 'utf8' });
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(0); expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toMatchObject({ schemaVersion: 1, prHeadSha: 'a'.repeat(40) });
   });
 
   it('builds and verifies the pinned Matrix Zellij resurrection patch', async () => {
@@ -382,47 +363,19 @@ describe('terminal runtime spike evidence', () => {
     expect(updater).not.toContain('name="matrix-terminal-spike-pane"');
   });
   it('preflights the exact installed workload helper before asking Zellij to launch it', async () => {
-    const [keeper, packer] = await Promise.all([
-      readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
-      readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'),
-    ]);
+    const [keeper, packer] = await Promise.all([readRepo('scripts/spikes/terminal-runtime/keeper.mjs'), readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh')]);
     expectAll(keeper, [
-      'async function verifyWorkloadHelper()',
-      "spawnProcess(NODE, [WORKLOAD_PANE], {",
-      "throw new Error('workload_helper')",
-      'await verifyWorkloadHelper();',
-      "const WORKLOAD_HELPER_STATES = new Set([",
-      'workloadHelperState',
-      'workloadHelperExitStatus',
-      "workloadHelperState = 'spawn_error'",
-      "workloadHelperState = 'early_exit'",
-      "workloadHelperState = 'running'",
-      "workloadHelperState = 'cleanup_error'",
-      "workloadHelperState = 'cleanup_timeout'",
+      'async function verifyWorkloadHelper()', "spawnProcess(NODE, [WORKLOAD_PANE], {", "throw new Error('workload_helper')", 'await verifyWorkloadHelper();',
+      "const WORKLOAD_HELPER_STATES = new Set([", 'workloadHelperState', 'workloadHelperExitStatus', "workloadHelperState = 'spawn_error'",
+      "workloadHelperState = 'early_exit'", "workloadHelperState = 'running'", "workloadHelperState = 'cleanup_error'", "workloadHelperState = 'cleanup_timeout'",
     ]);
     expectAll(packer, [
-      'keeper_helper',
-      'keeper_helper_exit',
-      'failure_helper',
-      'failure_helper_exit',
-      'v.workloadHelperState',
-      'v.workloadHelperExitStatus',
-      'q${keeper_helper}',
-      'j${keeper_helper_exit}',
-      'q${failure_helper}',
-      'j${failure_helper_exit}',
-      'failure_progress',
-      'failure_runner_status',
-      'failure_base_state',
-      'failure_base_substate',
-      'failure_base_status',
-      'd${failure_progress}',
-      'u${failure_runner_status}',
+      'keeper_helper', 'keeper_helper_exit', 'failure_helper', 'failure_helper_exit', 'v.workloadHelperState', 'v.workloadHelperExitStatus',
+      'q${keeper_helper}', 'j${keeper_helper_exit}', 'q${failure_helper}', 'j${failure_helper_exit}', 'failure_progress', 'failure_runner_status',
+      'failure_base_state', 'failure_base_substate', 'failure_base_status', 'd${failure_progress}', 'u${failure_runner_status}',
       'b${failure_base_state}_${failure_base_substate}_${failure_base_status}',
     ]);
-    expect(keeper.indexOf('await verifyWorkloadHelper();')).toBeLessThan(
-      keeper.indexOf('await launchCreateWorkloadPane(sessionName, env);'),
-    );
+    expect(keeper.indexOf('await verifyWorkloadHelper();')).toBeLessThan(keeper.indexOf('await launchCreateWorkloadPane(sessionName, env);'));
   });
   it('carries the compatible stable updater through a dormant preview bootstrap', async () => {
     const workflow = await readRepo('.github/workflows/preview-vps.yml');
@@ -489,29 +442,15 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
   });
   it('records a bounded privacy-safe workload pane state for failed readiness', async () => {
-    const [keeper, packer] = await Promise.all([
-      readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
-      readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'),
-    ]);
+    const [keeper, packer] = await Promise.all([readRepo('scripts/spikes/terminal-runtime/keeper.mjs'), readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh')]);
     expectAll(keeper, [
-      "const WORKLOAD_PANE_STATES = new Set([",
-      "['--session', sessionName, 'action', 'list-panes', '--all', '--json']",
-      'panes.length > 16',
-      'pane.terminal_command === `${NODE} ${WORKLOAD_PANE}`',
-      'pane.pane_command === `${NODE} ${WORKLOAD_PANE}`',
-      'workloadPaneState',
-      'workloadPaneExitStatus',
-      'pane.exit_status',
+      "const WORKLOAD_PANE_STATES = new Set([", "['--session', sessionName, 'action', 'list-panes', '--all', '--json']", 'panes.length > 16',
+      'pane.terminal_command === `${NODE} ${WORKLOAD_PANE}`', 'pane.pane_command === `${NODE} ${WORKLOAD_PANE}`',
+      'workloadPaneState', 'workloadPaneExitStatus', 'pane.exit_status',
     ]);
     expectAll(packer, [
-      'keeper_workload',
-      'keeper_workload_exit',
-      'failure_workload',
-      'failure_workload_exit',
-      'w${keeper_workload}',
-      'e${keeper_workload_exit}',
-      'w${failure_workload}',
-      'e${failure_workload_exit}',
+      'keeper_workload', 'keeper_workload_exit', 'failure_workload', 'failure_workload_exit',
+      'w${keeper_workload}', 'e${keeper_workload_exit}', 'w${failure_workload}', 'e${failure_workload_exit}',
       '/^(not_launched|missing|running|held_success|held_failure|other|ambiguous)$/.test(v.workloadPaneState)',
       '(v.workloadPaneExitStatus!==null&&(!Number.isInteger(v.workloadPaneExitStatus)||v.workloadPaneExitStatus<0||v.workloadPaneExitStatus>255))',
     ]);
@@ -577,41 +516,17 @@ describe('terminal runtime spike evidence', () => {
       'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
       'call_helper acceptance-pack', 'call_helper acceptance-cancel',
       'production_acceptance_state=${state}', 'Validate the complete production matrix']);
-    expect(workflow).toContain(
-      "group: terminal-runtime-production-${{ github.event.label.name == 'terminal-production-acceptance' && github.event.pull_request.number || github.run_id }}",
-    );
-    expect(workflow).not.toContain(
-      'group: terminal-runtime-production-${{ github.event.pull_request.number }}\n',
-    );
-    const cancellationCleanup = workflow.slice(
-      workflow.indexOf('- name: Cancel incomplete production acceptance'),
-    );
+    expect(workflow).toContain("group: terminal-runtime-production-${{ github.event.label.name == 'terminal-production-acceptance' && github.event.pull_request.number || github.run_id }}");
+    expect(workflow).not.toContain('group: terminal-runtime-production-${{ github.event.pull_request.number }}\n');
+    const cancellationCleanup = workflow.slice(workflow.indexOf('- name: Cancel incomplete production acceptance'));
     expectAll(cancellationCleanup, [
-      "if: ${{ (cancelled() || failure()) && steps.recover.outcome != 'success' }}",
-      'acceptance-cancel',
-      '--max-time 45',
+      "if: ${{ (cancelled() || failure()) && steps.recover.outcome != 'success' }}", 'acceptance-cancel', '--max-time 45',
     ]);
     expectAll(runner, [
-      'readonly update_wait_seconds=1800',
-      'for _ in $(seq 1 "$update_wait_seconds")',
-      '--property=RuntimeMaxSec=10800',
-      '--property=RuntimeMaxSec=600',
-      '--property=TimeoutStopSec=45',
-      'systemctl_cancel stop',
-      'write_phase runtime_created',
-      'write_phase bundle_one',
-      'write_phase bundle_two',
-      'write_phase forced_failure',
-      'write_phase reapply_one',
-      'write_phase rollback_two',
-      'write_phase final_checks',
-    ]);
-    expectAll(runner, [
-      'write_phase creating_runtime',
-      'write_phase waiting_runtime',
-      'write_phase seeding_output',
-      'write_phase starting_agent',
-      'write_phase waiting_roles',
+      'readonly update_wait_seconds=1800', 'for _ in $(seq 1 "$update_wait_seconds")', '--property=RuntimeMaxSec=10800', '--property=RuntimeMaxSec=600',
+      '--property=TimeoutStopSec=45', 'systemctl_cancel stop', 'write_phase runtime_created', 'write_phase bundle_one', 'write_phase bundle_two',
+      'write_phase forced_failure', 'write_phase reapply_one', 'write_phase rollback_two', 'write_phase final_checks', 'write_phase creating_runtime',
+      'write_phase waiting_runtime', 'write_phase seeding_output', 'write_phase starting_agent', 'write_phase waiting_roles',
       'owner_probe() { command_bounded 70 runuser -u matrix --',
       'trap \'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"\' EXIT', 'grep -aqF \'MATRIX_ACCEPT_LOOP\' "/proc/${shell_pid}/cmdline"',
     ]);
@@ -620,59 +535,39 @@ describe('terminal runtime spike evidence', () => {
     expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']);
     expect(helper).not.toContain('[ ! -x "$target" ]');
     for (const check of `bundleOnePreservesRuntime bundleTwoPreservesRuntime failedUpdatePreservesRuntime explicitRollbackPreservesRuntime rebootStartsNoRuntime
-explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotResurrect corruptionFallsBackFresh deleteWaitsForEmptyCgroup`.split(/\s+/)) {
+explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingleUnit recoverDeleteCannotResurrect corruptionFallsBackFresh deleteWaitsForEmptyCgroup`.split(/\s+/)) {
       expect(runner).toContain(check);
       expect(verifier).toContain(check);
     }
     expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
     expect(runner).toContain('readonly codex=/opt/matrix/runtime/node/bin/codex');
-    expectAll(runner, ['[ -x "$codex" ]', 'action new-pane -- "$codex" app-server']);
+    expectAll(runner, ['[ -x "$codex" ]', 'owner_probe create-agent "$head_sha" "$run_nonce"',
+      'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent']);
+    expect(runner).not.toContain('action new-pane -- "$codex" app-server');
     expect(runner).not.toContain("sh -c 'command -v codex'");
     expect(runner).toContain('owner_probe create "$head_sha" "$run_nonce"');
-    expectAll(probe, ['`accept-${value.slice(0, 12)}-${extra}`', "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/codex(?:[./-]|$)/']); expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
+    expectAll(probe, [
+      '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
+      "launch: { kind: 'agent', configurationRef: operationId }", "codexExecutable: '/opt/matrix/runtime/node/bin/codex'",
+      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/codex(?:[./-]|$)/',
+    ]);
+    expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
     expect(workflow).not.toContain('VPS_SSH_KEY');
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
-    const runner = await readRepo(
-      'scripts/spikes/terminal-runtime/production-acceptance.sh',
-    );
+    const runner = await readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh');
     expectAll(runner, [
-      'systemctl_read()',
-      'systemctl_change()',
-      'systemctl_cancel()',
-      'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }',
-      'systemctl_change() { command_bounded 40 /usr/bin/systemctl "$@"; }',
-      'systemctl_cancel() { command_bounded 20 /usr/bin/systemctl "$@"; }',
-      'trap - EXIT ERR TERM INT HUP',
-      'local exit_status="${1:-$?}"',
-      'failure_code=command_timeout',
+      'systemctl_read()', 'systemctl_change()', 'systemctl_cancel()', 'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }',
+      'systemctl_change() { command_bounded 40 /usr/bin/systemctl "$@"; }', 'systemctl_cancel() { command_bounded 20 /usr/bin/systemctl "$@"; }',
+      'trap - EXIT ERR TERM INT HUP', 'local exit_status="${1:-$?}"', 'failure_code=command_timeout',
     ]);
-    const failPhase = runner.slice(
-      runner.indexOf('fail_phase() {'),
-      runner.indexOf('\nphase1() {'),
-    );
-    expect(
-      failPhase.indexOf(
-        'write_state "failed_${current_phase}_${failure_code}"',
-      ),
-    ).toBeGreaterThan(-1);
-    expect(
-      failPhase.indexOf(
-        'write_state "failed_${current_phase}_${failure_code}"',
-      ),
-    ).toBeLessThan(
-      failPhase.indexOf('systemctl_change daemon-reload'),
-    );
-    const cancelCase = runner.slice(
-      runner.indexOf('  cancel)'),
-      runner.indexOf('  phase1) phase1'),
-    );
-    expect(
-      cancelCase.indexOf('write_state failed_cancelled_operation_failed'),
-    ).toBeLessThan(
-      cancelCase.indexOf('systemctl_cancel stop'),
-    );
+    const failPhase = runner.slice(runner.indexOf('fail_phase() {'), runner.indexOf('\nphase1() {'));
+    const failureWrite = failPhase.indexOf('write_state "failed_${current_phase}_${failure_code}"');
+    expect(failureWrite).toBeGreaterThan(-1); expect(failureWrite).toBeLessThan(failPhase.indexOf('systemctl_change daemon-reload'));
+    const cancelCase = runner.slice(runner.indexOf('  cancel)'), runner.indexOf('  phase1) phase1'));
+    expect(cancelCase.indexOf('write_state failed_cancelled_operation_failed')).toBeLessThan(cancelCase.indexOf('systemctl_cancel stop'));
+    expect(cancelCase).toContain('rm -f -- "$agent_event"');
     const unboundedSystemctl = runner.split('\n').filter((line) => {
       if (!/(^|[^A-Za-z_])systemctl(?: |$)/.test(line)) return false;
       return (
@@ -688,34 +583,17 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(unboundedOwnerProbe).toEqual([]);
   });
   it('process-group-bounds production acceptance probes and reports missing roles', async () => {
-    const runner = await readRepo(
-      'scripts/spikes/terminal-runtime/production-acceptance.sh',
-    );
+    const runner = await readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh');
     expectAll(runner, [
-      'command_bounded() {',
-      '/usr/bin/setsid "$@" </dev/null &',
-      'kill -TERM -- "-$operation_pid"',
-      'kill -KILL -- "-$operation_pid"',
-      'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }',
-      'owner_probe() { command_bounded 70 runuser -u matrix --',
-      'roles() { command_bounded 8 runuser -u matrix --',
-      'request_update() { command_bounded 70 runuser -u matrix --',
-      'zellij() { command_bounded 30 runuser -u matrix --',
-      '/usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \\',
-      'stop_process_group "$attach_parent_one"',
-      'stop_process_group "$attach_parent_two"',
-      'role_failure=agent_unavailable',
-      'role_failure=shell_unavailable',
-      'role_failure=roles_unavailable',
-      'role_failure=roles_unstable',
-      'failure_hint="$role_failure"',
+      'command_bounded() {', '/usr/bin/setsid "$@" </dev/null &', 'kill -TERM -- "-$operation_pid"', 'kill -KILL -- "-$operation_pid"',
+      'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }', 'owner_probe() { command_bounded 70 runuser -u matrix --',
+      'roles() { command_bounded 8 runuser -u matrix --', 'request_update() { command_bounded 70 runuser -u matrix --',
+      'zellij() { command_bounded 30 runuser -u matrix --', '/usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \\',
+      'stop_process_group "$attach_parent_one"', 'stop_process_group "$attach_parent_two"', 'role_failure=agent_unavailable',
+      'role_failure=shell_unavailable', 'role_failure=roles_unavailable', 'role_failure=roles_unstable', 'failure_hint="$role_failure"',
     ]);
-    expect(runner).not.toContain(
-      '/usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser',
-    );
-    const boundedFunction = runner.match(
-      /command_bounded\(\) \{[\s\S]*?\n\}/,
-    )?.[0];
+    expect(runner).not.toContain('/usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser');
+    const boundedFunction = runner.match(/command_bounded\(\) \{[\s\S]*?\n\}/)?.[0];
     expect(boundedFunction).toBeDefined();
     const completed = spawnSync(
       '/bin/bash',
@@ -725,8 +603,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       ],
       { encoding: 'utf8', timeout: 2_500 },
     );
-    expect(completed.error).toBeUndefined();
-    expect(completed.status).toBe(0);
+    expect(completed.error).toBeUndefined(); expect(completed.status).toBe(0);
     const timedOut = spawnSync(
       '/bin/bash',
       [
@@ -735,8 +612,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       ],
       { encoding: 'utf8', timeout: 2_500 },
     );
-    expect(timedOut.error).toBeUndefined();
-    expect(timedOut.status).toBe(124);
+    expect(timedOut.error).toBeUndefined(); expect(timedOut.status).toBe(124);
   });
   it('fails closed on incomplete, stale, or extended production evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-production-evidence-'));
