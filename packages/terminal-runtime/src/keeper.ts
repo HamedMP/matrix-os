@@ -189,6 +189,15 @@ export async function monitorKeeperOnce(options: {
     await options.sessionResponds();
 }
 
+export function paneOutcomeCode(render: string): string | null {
+  const matches = stripVTControlCharacters(render).match(
+    /terminal_pane_(?:failed(?:_non_error)?|agent_exit_(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))(?![0-9])/g,
+  );
+  return matches?.at(-1)
+    ? `terminal_keeper_observed_${matches.at(-1)?.slice('terminal_'.length)}`
+    : null;
+}
+
 export function isKeeperEntrypoint(moduleUrl: string, argvPath: string | undefined): boolean {
   if (!argvPath) return false;
   return moduleUrl.endsWith('/keeper.js') && argvPath.endsWith('/keeper.js');
@@ -310,6 +319,7 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
   let stopping = false;
   let exitCode = 0;
   let renderWindow = '';
+  let observedPaneOutcome: string | null = null;
   const requiresConfirmation =
     descriptor.intent === 'recover' &&
     descriptor.recoveryMode !== 'fresh-shell';
@@ -330,6 +340,11 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
       // Inspect a bounded in-memory window only; never copy terminal contents
       // to journals or durable supervisor state.
       renderWindow = `${renderWindow}${data}`.slice(-16_384);
+      const outcome = paneOutcomeCode(renderWindow);
+      if (outcome && outcome !== observedPaneOutcome) {
+        observedPaneOutcome = outcome;
+        process.stderr.write(`${outcome}\n`);
+      }
       if (
         !confirmationGated &&
         stripVTControlCharacters(renderWindow).includes('<ENTER> run')

@@ -10,6 +10,7 @@ import {
   directAgentProviderPid,
   isKeeperEntrypoint,
   monitorKeeperOnce,
+  paneOutcomeCode,
   stageAgentConfiguration,
   waitForKeeperReadiness,
 } from '../../packages/terminal-runtime/src/keeper.js';
@@ -290,6 +291,12 @@ describe('terminal runtime service boundary', () => {
     expect(paneExitLifecycleCode('agent', 0)).toBe('terminal_pane_agent_exit_0');
     expect(paneExitLifecycleCode('agent', 128)).toBe('terminal_pane_agent_exit_128');
     expect(paneExitLifecycleCode('shell', 0)).toBeNull();
+    expect(paneOutcomeCode('\u001b[31msecret\u001b[0m terminal_pane_failed\r\n'))
+      .toBe('terminal_keeper_observed_pane_failed');
+    expect(paneOutcomeCode('terminal_pane_agent_exit_0')).toBe(
+      'terminal_keeper_observed_pane_agent_exit_0',
+    );
+    expect(paneOutcomeCode('terminal_pane_agent_exit_999')).toBeNull();
   });
 
   it('rejects Claude on-failure approval in supervised mode', () => {

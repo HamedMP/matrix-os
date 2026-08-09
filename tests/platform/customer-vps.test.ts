@@ -85,6 +85,18 @@ describe('platform/customer-vps', () => {
     return { service, hetzner, systemStore };
   }
 
+  async function registerPreviewBootstrap(version: string): Promise<void> {
+    await upsertHostBundleRelease(db, {
+      version, gitCommit: 'abcdef0123456789abcdef0123456789abcdef01',
+      gitRef: 'bootstrap', buildTime: '2026-08-06T08:00:00.000Z',
+      bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`,
+      checksumKey: `system-bundles/${version}/matrix-host-bundle.tar.gz.sha256`,
+      sha256: 'b'.repeat(64), size: 1_257_725_742, severity: 'normal',
+      updateType: 'manual', changelog: 'Dormant preview bootstrap',
+      createdAt: '2026-08-06T08:01:00.000Z',
+    });
+  }
+
   function activeEntitlement(overrides: Partial<BillingEntitlement> = {}): BillingEntitlement {
     return {
       clerkUserId: 'user_123',
@@ -116,24 +128,17 @@ describe('platform/customer-vps', () => {
     expect(config.registrationTokenTtlMs).toBe(30 * 60 * 1000);
   });
   it('accepts only a trusted tagged Cloud Run origin for candidate bootstrap progress', () => {
-    expect(loadCustomerVpsConfig({
-      PLATFORM_CANDIDATE_URL: 'https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
-    }).platformCandidateUrl).toBe('https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app');
-    expect(loadCustomerVpsConfig({
-      PLATFORM_CANDIDATE_URL: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
-    }).platformCandidateUrl).toBe('https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app');
-    expect(loadCustomerVpsConfig({
-      PLATFORM_CANDIDATE_URL: 'https://terminal-pr-1136-fa9f4d0d9b50---matrix-platform-jqxkjdhtkq-ey.a.run.app',
-    }).platformCandidateUrl).toBe('https://terminal-pr-1136-fa9f4d0d9b50---matrix-platform-jqxkjdhtkq-ey.a.run.app');
-    expect(loadCustomerVpsConfig({
-      PLATFORM_CANDIDATE_URL: 'https://terminal-pr-1136-fa9f4d0d9b5---matrix-platform-jqxkjdhtkq-ey.a.run.app',
-    }).platformCandidateUrl).toBeUndefined();
-    expect(loadCustomerVpsConfig({
-      PLATFORM_CANDIDATE_URL: 'https://pr-1136---matrix-platform-jqxkjdhtkq-ey.a.run.app',
-    }).platformCandidateUrl).toBeUndefined();
-    expect(loadCustomerVpsConfig({
-      PLATFORM_CANDIDATE_URL: 'http://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
-    }).platformCandidateUrl).toBeUndefined();
+    const accepted = ['https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      'https://terminal-pr-1136-fa9f4d0d9b50---matrix-platform-jqxkjdhtkq-ey.a.run.app'];
+    for (const url of accepted) expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: url }).platformCandidateUrl).toBe(url);
+    for (const url of ['https://terminal-pr-1136-fa9f4d0d9b5---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      'https://pr-1136---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      'http://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app']) {
+      expect(loadCustomerVpsConfig({ PLATFORM_CANDIDATE_URL: url })
+        .platformCandidateUrl).toBeUndefined();
+    }
   });
 
   it('does not use the private PostHog ingest host as the public browser host', () => {
@@ -1102,20 +1107,7 @@ describe('platform/customer-vps', () => {
 
   it('pins preview first boot to an explicitly registered immutable bootstrap release', async () => {
     const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-123-1-abcdef0';
-    await upsertHostBundleRelease(db, {
-      version: bootstrapVersion,
-      gitCommit: 'abcdef0123456789abcdef0123456789abcdef01',
-      gitRef: 'bootstrap',
-      buildTime: '2026-08-06T08:00:00.000Z',
-      bundleKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
-      checksumKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz.sha256`,
-      sha256: 'b'.repeat(64),
-      size: 1_257_725_742,
-      severity: 'normal',
-      updateType: 'manual',
-      changelog: 'Dormant preview bootstrap',
-      createdAt: '2026-08-06T08:01:00.000Z',
-    });
+    await registerPreviewBootstrap(bootstrapVersion);
     const { service, hetzner } = createService({
       config: createTestConfig({
         platformRegisterUrl: 'https://app.matrix-os.com/vps/register',
@@ -1147,20 +1139,7 @@ describe('platform/customer-vps', () => {
   });
   it('fails preview bootstrap closed without a trusted candidate callback origin', async () => {
     const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-124-1-abcdef0';
-    await upsertHostBundleRelease(db, {
-      version: bootstrapVersion,
-      gitCommit: 'abcdef0123456789abcdef0123456789abcdef01',
-      gitRef: 'bootstrap',
-      buildTime: '2026-08-06T08:00:00.000Z',
-      bundleKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
-      checksumKey: `system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz.sha256`,
-      sha256: 'b'.repeat(64),
-      size: 1_257_725_742,
-      severity: 'normal',
-      updateType: 'manual',
-      changelog: 'Dormant preview bootstrap',
-      createdAt: '2026-08-06T08:01:00.000Z',
-    });
+    await registerPreviewBootstrap(bootstrapVersion);
     const { service, hetzner } = createService({
       config: createTestConfig({ platformCandidateUrl: undefined }),
     });
