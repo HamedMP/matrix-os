@@ -10,6 +10,10 @@ import { getGatewayUrl } from "./gateway";
 
 const READ_TIMEOUT_MS = 10_000;
 const MUTATION_TIMEOUT_MS = 15_000;
+// Runtime transitions have a 75s gateway deadline and can include bounded
+// systemd readiness work. Keep the client waiting past that deadline so a
+// successful transition is not reported as an ambiguous network failure.
+const RUNTIME_SWITCH_TIMEOUT_MS = 90_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const SAFE_ERROR_CODE_MAX = 64;
 
@@ -157,13 +161,16 @@ export async function updateAgentSettings(
   options: ClientOptions = {},
 ): Promise<NormalizedAgentSettings> {
   const fetcher = options.fetcher ?? fetch;
+  const timeoutMs = update.runtime === undefined
+    ? MUTATION_TIMEOUT_MS
+    : RUNTIME_SWITCH_TIMEOUT_MS;
   let response: Response;
   try {
     response = await fetcher(`${getGatewayUrl()}/api/settings/agent`, requestInit({
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(update),
-    }, MUTATION_TIMEOUT_MS));
+    }, timeoutMs));
   } catch (error) {
     throw new AgentSettingsClientError(
       "unavailable",

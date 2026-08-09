@@ -117,7 +117,14 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_info(:run_poll_cycle, state) do
     state = refresh_runtime_config(state)
     state = maybe_dispatch(state)
-    state = schedule_tick(state, state.poll_interval_ms)
+    state =
+      schedule_tick(
+        state,
+        SymphonyElixir.PollingPolicy.next_delay_ms(
+          state.last_tracker_status,
+          state.poll_interval_ms
+        )
+      )
     state = %{state | poll_check_in_progress: false}
 
     notify_dashboard()

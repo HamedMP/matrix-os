@@ -120,6 +120,7 @@ import {
 } from './container-endpoint.js';
 import { startPlatformServer } from './platform-startup.js';
 import {
+  checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
   checkUnsafeDefaultSecrets,
@@ -130,6 +131,7 @@ export { escapeInlineScriptJson } from './auth-pages.js';
 export { buildPostAuthRedirectPath } from './request-routing.js';
 export type { PlatformApp } from './platform-app-types.js';
 export {
+  checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
   checkUnsafeDefaultSecrets,
@@ -323,6 +325,7 @@ export function createApp(deps: {
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
   hostBundleObjectStore?: CustomerVpsObjectStore;
+  assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -745,6 +748,7 @@ export function createApp(deps: {
       probeMachineRuntime,
       recordRuntimeMetrics: platformMetricsRoutes.recordRuntimeMetrics,
       captureEvent: captureFunnelEvent,
+      assertPrimaryStorageReady: deps.assertPrimaryStorageReady,
     }));
   }
 
@@ -944,6 +948,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     customerVpsProxyDispatcher,
     createApp,
     checkUnsafeDefaultSecrets,
+    checkCustomerVpsPrimaryStorageEnv,
     checkHomeMirrorS3Env,
     checkHostBundleStorageEnv,
     collectTenantPublicTelemetryEnv,

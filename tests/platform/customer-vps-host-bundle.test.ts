@@ -51,6 +51,19 @@ function runHostBundlePreflight(env: Record<string, string>) {
   });
 }
 
+function compareSyncAgentVersions(candidate: string, current: string): string {
+  const root = process.cwd();
+  const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+  const functionSource = syncAgent.match(/compare_host_bundle_versions\(\) \{[\s\S]*?\n\}/)?.[0];
+  expect(functionSource).toBeDefined();
+  const result = spawnSync('bash', ['-c', `${functionSource}\ncompare_host_bundle_versions "$1" "$2"`, 'version-test', candidate, current], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  expect(result.status, result.stderr || result.stdout).toBe(0);
+  return result.stdout.trim();
+}
+
 describe('customer VPS host bundle', () => {
   it('build script packages the systemd entrypoint binaries', () => {
     const root = process.cwd();
@@ -1067,6 +1080,25 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(updater).toContain('Usage: matrix-update [--no-tail] [apply|rollback|repair|stable|canary|beta|dev|v<version>|main-<build>]');
   });
 
+  it('sync agent distinguishes newer and older date-based host bundles', () => {
+    const syncAgent = readFileSync(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(compareSyncAgentVersions('v2026.08.06-1', 'v2026.08.05-912')).toBe('newer');
+    expect(compareSyncAgentVersions('v2026.08.05-912', 'v2026.08.05-912')).toBe('equal');
+    expect(compareSyncAgentVersions('v2026.08.04-898', 'v2026.08.05-912')).toBe('older');
+    expect(compareSyncAgentVersions('v0.0.0-preview', 'v2026.08.05-912')).toBe('unknown');
+    expect(syncAgent).toContain('version_comparison="$(compare_host_bundle_versions "$remote_version" "$cur")"');
+    expect(syncAgent).toContain('if [ "$version_comparison" = "older" ]; then');
+    expect(syncAgent).toContain('Ignoring older channel release: $remote_version (current: $cur)');
+    expect(syncAgent).toContain([
+      'if [ "$version_comparison" = "older" ]; then',
+      '    log "Ignoring older channel release: $remote_version (current: $cur)"',
+      '    rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"',
+      '    return 0',
+      '  fi',
+    ].join('\n'));
+  });
+
   it('sync agent installs bundled messaging systemd units during updates', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
@@ -1208,7 +1240,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
 
     expect(restore).toContain('if /opt/matrix/bin/matrixctl r2 exists "$key"; then');
-    expect(restore).toContain('check_r2_exists_or_skip_restore system/vps-meta.json "VPS metadata"');
+    expect(restore).toContain('check_r2_exists system/vps-meta.json "VPS metadata"');
     expect(restore).toContain('latest_pointer_key="system/db/latest"');
     expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"');
   });
@@ -1230,5 +1262,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain("grep -Fq 'r2.cloudflarestorage.com'");
     expect(workflow).toContain('Candidate host bundle signer returned a native R2 URL outside the bundle bucket; refusing to promote.');
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url"');
+    expect(workflow).toContain('R2_ENDPOINT=r2-endpoint:latest');
+    expect(workflow).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=false');
+    expect(workflow).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=true');
+    expect(workflow).toContain('$CANDIDATE_URL/vps/storage-check');
+    expect(workflow).toContain('PRODUCTION_REVISION');
+    expect(workflow).toContain('--to-revisions "$PRODUCTION_REVISION=100"');
   });
 });

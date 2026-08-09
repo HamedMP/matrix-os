@@ -417,13 +417,14 @@ describe('CI workflows', () => {
     expect(workflow).toContain('- ".github/workflows/platform-cloud-run.yml"');
   });
 
-  it('verifies platform Cloud Run promotion sends all traffic to the candidate revision', () => {
+  it('verifies platform Cloud Run promotion sends all traffic to the production-role revision', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('Verify promoted revision traffic');
-    expect(workflow).toContain('select(.revisionName == env.CANDIDATE_REVISION) | .percent');
-    expect(workflow).toContain('select(.revisionName != env.CANDIDATE_REVISION and (.percent // 0) > 0)');
+    expect(workflow).toContain('select(.revisionName == env.PRODUCTION_REVISION) | .percent');
+    expect(workflow).toContain('select(.revisionName != env.PRODUCTION_REVISION and (.percent // 0) > 0)');
+    expect(workflow).toContain('--image "$IMAGE_DIGEST"');
   });
 
   it('uses a registry-backed BuildKit cache for platform Cloud Build', () => {

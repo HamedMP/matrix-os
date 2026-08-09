@@ -109,6 +109,36 @@ describe("T135: System info", () => {
     }
   });
 
+  it("reports the persistent update channel separately from bundle provenance", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release.json");
+    const hostEnvPath = join(homePath, "host.env");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    const previousHostEnvPath = process.env.MATRIX_HOST_ENV_FILE;
+    const previousUpdateChannel = process.env.MATRIX_UPDATE_CHANNEL;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    process.env.MATRIX_HOST_ENV_FILE = hostEnvPath;
+    process.env.MATRIX_UPDATE_CHANNEL = "dev";
+    writeFileSync(releasePath, JSON.stringify({ version: "v2026.08.05-912", channel: "dev" }));
+    writeFileSync(hostEnvPath, "MATRIX_UPDATE_CHANNEL=stable\n");
+
+    try {
+      const info = getSystemInfo(homePath);
+
+      expect(info.release?.channel).toBe("dev");
+      expect(info.channel).toBe("dev");
+      expect(info.updateChannel).toBe("stable");
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      if (previousHostEnvPath === undefined) delete process.env.MATRIX_HOST_ENV_FILE;
+      else process.env.MATRIX_HOST_ENV_FILE = previousHostEnvPath;
+      if (previousUpdateChannel === undefined) delete process.env.MATRIX_UPDATE_CHANNEL;
+      else process.env.MATRIX_UPDATE_CHANNEL = previousUpdateChannel;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to the installed bundle version when release metadata has no version", () => {
     const homePath = tmpHome();
     const releasePath = join(homePath, "release.json");

@@ -1945,6 +1945,10 @@ defmodule SymphonyElixir.StatusDashboard do
   defp truncate(value, _max), do: value
 
   defp dashboard_enabled? do
+    non_test_environment?() and SymphonyElixir.TerminalCapabilities.output_available?()
+  end
+
+  defp non_test_environment? do
     if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
       try do
         Mix.env() != :test

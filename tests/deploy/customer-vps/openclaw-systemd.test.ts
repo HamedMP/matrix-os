@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,6 +123,65 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(wrapper).toContain("runtime policy validation failed");
     expect(wrapper).toContain("gateway run --bind loopback --port 18789 --auth token");
     expect(wrapper).not.toMatch(/--token[ =]/);
+  });
+
+  it("keeps npm plugin repair cache out of the read-only owner home", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-openclaw-gateway-test-"));
+    const runtimeHome = join(root, "home");
+    const stateDir = join(runtimeHome, ".openclaw");
+    const agentRuntimeDir = join(runtimeHome, "system/agent-runtime");
+    const nodeBinDir = join(root, "node/bin");
+    const privateTmpDir = join(root, "tmp");
+    const openClawBin = join(nodeBinDir, "openclaw");
+    const tokenPath = join(agentRuntimeDir, "openclaw.env");
+    const capturedCachePath = join(stateDir, "captured-npm-cache");
+
+    try {
+      await mkdir(stateDir, { recursive: true });
+      await mkdir(agentRuntimeDir, { recursive: true });
+      await mkdir(nodeBinDir, { recursive: true });
+      await mkdir(privateTmpDir, { recursive: true });
+      await writeFile(tokenPath, `OPENCLAW_GATEWAY_TOKEN=${"a".repeat(64)}\n`);
+      await symlink(process.execPath, join(nodeBinDir, "node"));
+      await writeFile(
+        openClawBin,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          ': "${npm_config_cache:?npm cache must be configured}"',
+          'mkdir -p "$npm_config_cache/_cacache"',
+          'printf \'%s\\n\' "$npm_config_cache" >"$OPENCLAW_STATE_DIR/captured-npm-cache"',
+        ].join("\n"),
+      );
+      await chmod(openClawBin, 0o755);
+      await chmod(runtimeHome, 0o555);
+
+      const env = { ...process.env };
+      delete env.npm_config_cache;
+      delete env.NPM_CONFIG_CACHE;
+
+      await expect(execFileAsync("bash", [wrapperPath], {
+        env: {
+          ...env,
+          MATRIX_RUNTIME_HOME: runtimeHome,
+          MATRIX_NODE_PREFIX: join(root, "node"),
+          OPENCLAW_STATE_DIR: stateDir,
+          OPENCLAW_CONFIG_PATH: join(stateDir, "openclaw.json"),
+          OPENCLAW_ENV_FILE: tokenPath,
+          OPENCLAW_BIN: openClawBin,
+          TMPDIR: privateTmpDir,
+        },
+      })).resolves.toMatchObject({ stderr: "" });
+
+      expect(await readFile(capturedCachePath, "utf8")).toBe(
+        `${privateTmpDir}/matrix-openclaw/npm-cache\n`,
+      );
+      await expect(access(join(runtimeHome, ".npm"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(join(stateDir, "npm-cache"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await chmod(runtimeHome, 0o700).catch(() => {});
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("uses a bounded, hardened owner service", async () => {

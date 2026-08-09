@@ -310,13 +310,20 @@ function MessagingProviders({
     <Button
       size="sm"
       variant="outline"
+      disabled={busy}
       onClick={() => setHermesConfigOpen(true)}
       aria-label="Configure Hermes provider"
     >
       <Settings2Icon className="size-3.5" /> Configure Hermes
     </Button>
   ) : onOpenTerminal ? (
-    <Button size="sm" variant="outline" onClick={() => onOpenTerminal(terminalAction)} aria-label="Configure Openclaw provider">
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={busy}
+      onClick={() => onOpenTerminal(terminalAction)}
+      aria-label="Configure Openclaw provider"
+    >
       <TerminalIcon className="size-3.5" /> Configure OpenClaw
     </Button>
   ) : null;

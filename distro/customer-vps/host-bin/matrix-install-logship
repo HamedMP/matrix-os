@@ -168,7 +168,9 @@ loki.source.journal "matrix_symphony" {
   matches       = "_SYSTEMD_UNIT=matrix-symphony.service"
   relabel_rules = loki.relabel.journal.rules
   labels        = { source = "journal", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
-  forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]
+  // Symphony renders an ANSI status dashboard to stdout. Keep that raw stream
+  // in Loki for host troubleshooting, but do not bill it as PostHog product logs.
+  forward_to    = [loki.write.central.receiver]
 }
 
 local.file_match "kernel_jsonl" {
