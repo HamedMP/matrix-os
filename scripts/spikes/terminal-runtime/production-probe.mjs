@@ -108,11 +108,12 @@ if (operation === 'create' || operation === 'create-race' ||
     .trim().split(/\s+/).filter(Boolean).map(Number);
   const processes = (await Promise.all(pids.map(async (pid) => {
     try {
-      const [comm, raw] = await Promise.all([
+      const [comm, raw, status] = await Promise.all([
         readFile(`/proc/${pid}/comm`, 'utf8'),
         readFile(`/proc/${pid}/cmdline`),
+        readFile(`/proc/${pid}/status`, 'utf8'),
       ]);
-      return { pid, comm: comm.trim(), args: raw.toString().split('\0').filter(Boolean) };
+      return { pid, parentPid: Number(status.match(/^PPid:\s+(\d+)$/m)?.[1] ?? 0), comm: comm.trim(), args: raw.toString().split('\0').filter(Boolean) };
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
         return null;
@@ -123,17 +124,16 @@ if (operation === 'create' || operation === 'create-race' ||
   const zellij = processes.filter((entry) =>
     entry.comm === 'zellij' && !entry.args.includes('list-sessions'))
     .sort((left, right) => left.pid - right.pid);
+  const pane = processes.find((entry) => entry.args.some((argument) =>
+    argument.endsWith('/pane.js')));
   output({
     keeper: processes.find((entry) =>
       entry.args.some((argument) => argument.endsWith('/keeper.js')))?.pid ?? 0,
     zellijClient: zellij[0]?.pid ?? 0,
     zellijServer: zellij[1]?.pid ?? 0,
-    pane: processes.find((entry) => entry.args.some((argument) =>
-      argument.endsWith('/pane.js')))?.pid ?? 0,
+    pane: pane?.pid ?? 0,
     shell: processes.find((entry) => entry.comm === 'bash')?.pid ?? 0,
-    agent: processes.find((entry) =>
-      /^pi(?:-|$)/.test(entry.comm) || entry.args.some((argument) =>
-        /\/pi(?:[./-]|$)/.test(argument)))?.pid ?? 0,
+    agent: processes.find((entry) => entry.parentPid === pane?.pid)?.pid ?? 0,
   });
 } else {
   throw new Error('probe_operation_invalid');

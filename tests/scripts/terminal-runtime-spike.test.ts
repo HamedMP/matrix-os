@@ -551,7 +551,7 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expectAll(probe, [
       '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
       "launch: { kind: 'agent', configurationRef: operationId }", "agent: 'pi'",
-      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", '/\\/pi(?:[./-]|$)/',
+      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", "entry.parentPid === pane?.pid",
     ]);
     expect(probe).not.toContain("prompt:");
     expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
