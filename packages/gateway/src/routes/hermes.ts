@@ -183,7 +183,7 @@ function sanitizeEnvironment(value: unknown): HermesEnvironment | null {
       is_set: rawEntry.is_set,
       redacted_value: rawEntry.redacted_value,
       description: rawEntry.description,
-      url: rawEntry.url,
+      url: rawEntry.url === "" ? null : rawEntry.url,
       category: rawEntry.category,
       is_password: rawEntry.is_password,
       tools: rawEntry.tools,
