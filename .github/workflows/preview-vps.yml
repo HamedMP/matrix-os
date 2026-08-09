@@ -614,9 +614,9 @@ jobs:
 
           if [ "$status" = "provisioning" ]; then
             echo "Waiting for the VPS to come up..."
-            # Stay below the platform's 15-minute registration-token boundary
+            # Stay below the platform's 30-minute registration-token boundary
             # while cloud-init installs the already-pinned dormant bootstrap.
-            deadline=$((SECONDS + 840))
+            deadline=$((SECONDS + 1620))
             last_bootstrap_stage=pending
             while true; do
               sleep 15

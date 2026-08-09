@@ -1292,7 +1292,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).not.toContain('command:["/opt/matrix/bin/matrix-update",$version]');
     expect(workflow).not.toContain('Pre-registration bootstrap accepted for ${HANDLE}.');
     expect(workflow).not.toContain('bootstrap_requested=false');
-    expect(workflow).toContain('deadline=$((SECONDS + 840))');
+    expect(workflow).toContain("platform's 30-minute registration-token boundary");
+    expect(workflow).toContain('deadline=$((SECONDS + 1620))');
     expect(workflow).not.toContain('bootstrap_provisioning_host "$candidate_address" "$BOOTSTRAP_VERSION"');
   });
   it('manual preview provisioning can use only the attested exact-head production control-plane candidate', () => {

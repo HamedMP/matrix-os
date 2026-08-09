@@ -113,6 +113,7 @@ describe('platform/customer-vps', () => {
 
     expect(config.imageVersion).toBe('stable');
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
+    expect(config.registrationTokenTtlMs).toBe(30 * 60 * 1000);
   });
 
   it('accepts only a trusted tagged Cloud Run origin for candidate bootstrap progress', () => {
