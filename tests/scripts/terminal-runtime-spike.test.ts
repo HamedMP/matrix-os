@@ -542,7 +542,8 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
     expect(runner).toContain('readonly pi=/opt/matrix/runtime/node/bin/pi');
-    expectAll(runner, ['[ -x "$pi" ]', 'owner_probe create-agent "$head_sha" "$run_nonce"',
+    expectAll(runner, ['wait_pi_ready', '/var/lib/matrix-developer-tools/installed-tools',
+      '"$pi" --version', 'owner_probe create-agent "$head_sha" "$run_nonce"',
       'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent']);
     expect(runner).not.toContain('action new-pane -- "$codex" app-server');
     expect(runner).not.toContain("sh -c 'command -v codex'");

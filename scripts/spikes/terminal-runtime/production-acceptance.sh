@@ -101,6 +101,17 @@ wait_update() {
     sleep 1
   done; return 1; }
 wait_failed_update() { for _ in $(seq 1 "$update_wait_seconds"); do [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] && return 0; sleep 1; done; return 1; }
+wait_pi_ready() {
+  local installed=/var/lib/matrix-developer-tools/installed-tools
+  for _ in $(seq 1 "$update_wait_seconds"); do
+    if grep -qxF pi "$installed" 2>/dev/null && [ -x "$pi" ] &&
+      command_bounded 30 runuser -u matrix -- env HOME="$home" PATH="/opt/matrix/runtime/node/bin:/usr/bin:/bin" "$pi" --version >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
 zellij() { command_bounded 30 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
 fail_phase() {
   local exit_status="${1:-$?}"
@@ -140,7 +151,7 @@ phase1() {
   zellij --session "$session_name" action write-chars -- \
     "exec bash -lc 'while true; do printf \"MATRIX_ACCEPT_LOOP\\n\"; sleep 1; done'"
   zellij --session "$session_name" action send-keys Enter
-  write_phase starting_agent; [ -x "$pi" ]
+  write_phase starting_agent; wait_pi_ready
   agent_created="$(owner_probe create-agent "$head_sha" "$run_nonce")"
   agent_runtime_id="$(printf '%s' "$agent_created" | json_field runtimeId)"
   [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]
