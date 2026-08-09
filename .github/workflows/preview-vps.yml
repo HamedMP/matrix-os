@@ -274,7 +274,7 @@ jobs:
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -c --arg h "$HANDLE" \
               '[.machines[]
-                | select(.handle == $h and .status != "deleted")
+                | select(.handle == $h and .status != "deleted" and .deletedAt == null)
                 | . + { _preview_rank:
                     (if .status == "running" then 0
                      elif .status == "provisioning" then 1
@@ -336,7 +336,7 @@ jobs:
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
-              '[.machines[] | select(.handle == $h and .machineId == $id and .runtimeSlot == $h)] | .[0].status // "absent"')"
+              '[.machines[] | select(.handle == $h and .machineId == $id and .runtimeSlot == $h and .deletedAt == null)] | .[0].status // "absent"')"
           echo "Immediate fleet visibility for ${HANDLE}: ${status}"
           if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then
             echo "Accepted preview machine is not durably visible in the fleet." >&2
@@ -352,7 +352,7 @@ jobs:
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet" |
                 jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
-                  '[.machines[] | select(.handle == $h and .machineId == $id)] | .[0].status // "absent"')"
+                  '[.machines[] | select(.handle == $h and .machineId == $id and .deletedAt == null)] | .[0].status // "absent"')"
               [ "$status" = "running" ] && break
               if [ "$status" = "failed" ]; then
                 echo "Provisioning failed for ${HANDLE}" >&2
@@ -397,7 +397,7 @@ jobs:
               "${PLATFORM_PUBLIC_URL}/vps/fleet" |
               jq -c --arg h "$HANDLE" \
                 '[.machines[]
-                  | select(.handle == $h and .runtimeSlot == $h and .status != "deleted")
+                  | select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)
                   | . + { _preview_rank:
                       (if .status == "running" then 0
                        elif .status == "provisioning" then 1
@@ -551,7 +551,7 @@ jobs:
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -r --arg h "$HANDLE" \
-              '[.machines[] | select(.handle == $h and .status != "deleted")] | .[0].machineId // ""')"
+              '[.machines[] | select(.handle == $h and .status != "deleted" and .deletedAt == null)] | .[0].machineId // ""')"
           if [ -z "$machine_id" ]; then
             echo "No active VPS for ${HANDLE}; nothing to tear down."
             exit 0
@@ -588,7 +588,7 @@ jobs:
           curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-            jq -c '.machines[] | select((.handle | test("^pr-[0-9]+$")) and .status != "deleted")' |
+            jq -c '.machines[] | select((.handle | test("^pr-[0-9]+$")) and .status != "deleted" and .deletedAt == null)' |
             while IFS= read -r machine; do
               handle="$(jq -r .handle <<< "$machine")"
               machine_id="$(jq -r .machineId <<< "$machine")"

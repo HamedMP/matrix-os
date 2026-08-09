@@ -783,7 +783,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('Waiting for ${HANDLE} to install ${VERSION}');
-    expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h and .status != "deleted")');
+    expect(workflow).toContain(
+      'select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)',
+    );
     expect(workflow).toContain('.healthy == true and .runtimeVersion == $v');
     expect(workflow).toContain('Preview ready: ${HANDLE} is healthy on ${VERSION}');
     expect(workflow).toContain('Timed out waiting for ${HANDLE} to install ${VERSION}');
@@ -821,7 +823,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('Immediate fleet visibility for ${HANDLE}: ${status}');
-    expect(workflow).toContain('select(.handle == $h and .machineId == $id and .runtimeSlot == $h)');
+    expect(workflow).toContain(
+      'select(.handle == $h and .machineId == $id and .runtimeSlot == $h and .deletedAt == null)',
+    );
     expect(workflow).toContain('if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then');
     expect(workflow.indexOf('Immediate fleet visibility for ${HANDLE}: ${status}'))
       .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + 600))'));
@@ -849,6 +853,24 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('elif .status == "provisioning" then 1');
     expect(workflow).toContain('elif .status == "failed" then 2');
     expect(workflow).toContain('sort_by(._preview_rank, (if .runtimeSlot == $h then 0 else 1 end), .provisionedAt)');
+  });
+
+  it('preview VPS workflow excludes soft-retired rows from every fleet lookup', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow.match(/select\(\.handle == \$h and \.status != "deleted" and \.deletedAt == null\)/g))
+      .toHaveLength(2);
+    expect(workflow).toContain(
+      'select(.handle == $h and .machineId == $id and .runtimeSlot == $h and .deletedAt == null)',
+    );
+    expect(workflow).toContain('select(.handle == $h and .machineId == $id and .deletedAt == null)');
+    expect(workflow).toContain(
+      'select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)',
+    );
+    expect(workflow).toContain(
+      'select((.handle | test("^pr-[0-9]+$")) and .status != "deleted" and .deletedAt == null)',
+    );
   });
 
   it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {
