@@ -399,7 +399,6 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
           checking = false;
         }
       }, 1_000);
-      monitor.unref();
       const stop = (): void => {
         if (stopping) return;
         stopping = true;

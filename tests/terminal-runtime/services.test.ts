@@ -247,6 +247,8 @@ describe('terminal runtime service boundary', () => {
     expect(directAgentProviderPid([...processes, { pid: 15, parentPid: 13,
       comm: 'pi', args: ['pi'] }])).toBe(15);
   });
+  it('keeps idle runtime health monitoring referenced', async () => expect(await readFile(
+    'packages/terminal-runtime/src/keeper.ts', 'utf8')).not.toContain('monitor.unref()'));
   it.each(['claude', 'codex', 'opencode', 'pi'] as const)(
     'builds a fixed %s provider launch with dynamic data on stdin or fd 3',
     (agent) => {
@@ -293,9 +295,8 @@ describe('terminal runtime service boundary', () => {
     expect(paneExitLifecycleCode('shell', 0)).toBeNull();
     expect(paneOutcomeCode('\u001b[31msecret\u001b[0m terminal_pane_failed\r\n'))
       .toBe('terminal_keeper_observed_pane_failed');
-    expect(paneOutcomeCode('terminal_pane_agent_exit_0')).toBe(
-      'terminal_keeper_observed_pane_agent_exit_0',
-    );
+    expect(paneOutcomeCode('terminal_pane_agent_exit_0'))
+      .toBe('terminal_keeper_observed_pane_agent_exit_0');
     expect(paneOutcomeCode('terminal_pane_agent_exit_999')).toBeNull();
   });
 
