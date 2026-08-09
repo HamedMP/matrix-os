@@ -160,6 +160,7 @@ export async function waitForKeeperReadiness(options: {
     throw new Error('keeper_poll_invalid');
   }
   const deadline = Date.now() + timeoutMs;
+  let readySamples = 0;
   while (Date.now() <= deadline) {
     const evidence = await options.readEvidence();
     if (!evidence.clientAlive) throw new Error('keeper_client_exited');
@@ -168,10 +169,12 @@ export async function waitForKeeperReadiness(options: {
       evidence.roles &&
       (!options.requiresConfirmation || evidence.confirmationGated === true)
     ) {
-      const ready = { runtimeId, roles: evidence.roles };
-      await options.notifyReady(ready);
-      return ready;
-    }
+      if (++readySamples >= 5) {
+        const ready = { runtimeId, roles: evidence.roles };
+        await options.notifyReady(ready);
+        return ready;
+      }
+    } else readySamples = 0;
     await options.delay(pollMs);
   }
   throw new Error('keeper_readiness_timeout');
@@ -179,9 +182,11 @@ export async function waitForKeeperReadiness(options: {
 
 export async function monitorKeeperOnce(options: {
   clientAlive: boolean;
+  workloadAlive?: boolean;
   sessionResponds(): Promise<boolean>;
 }): Promise<boolean> {
-  return options.clientAlive && await options.sessionResponds();
+  return options.clientAlive && options.workloadAlive !== false &&
+    await options.sessionResponds();
 }
 
 export function isKeeperEntrypoint(moduleUrl: string, argvPath: string | undefined): boolean {
@@ -360,6 +365,8 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
         try {
           if (!await monitorKeeperOnce({
             clientAlive,
+            workloadAlive: !startsFresh ||
+              await cgroupRoles(cgroup, descriptor.launch.kind, true) !== null,
             sessionResponds: async () =>
               await exactSessionResponds(sessionName, launch.env),
           })) {

@@ -192,7 +192,7 @@ export function buildProviderLaunch(
     case 'pi':
       return {
         file: '/opt/matrix/runtime/node/bin/pi',
-        args: [],
+        args: ['--offline'],
         cwd,
         env: environment,
         stdin: configuration.prompt ?? null,
@@ -306,6 +306,15 @@ export async function runPane(kind: string | undefined): Promise<number> {
   return await waitForChild(buildProviderLaunch(configuration), spawn, payloadPath);
 }
 
+export function paneExitLifecycleCode(
+  kind: string | undefined,
+  exitCode: number,
+): string | null {
+  if (kind !== 'agent' || !Number.isInteger(exitCode) || exitCode < 0 ||
+    exitCode > 255) return null;
+  return `terminal_pane_agent_exit_${exitCode}`;
+}
+
 export function runtimeIdFromCgroup(membership: string): string {
   const unified = membership.split(/\r?\n/)
     .filter((line) => line.startsWith('0::'));
@@ -320,7 +329,10 @@ export function runtimeIdFromCgroup(membership: string): string {
 
 async function runPaneEntrypoint(kind: string | undefined): Promise<number> {
   try {
-    return await runPane(kind);
+    const exitCode = await runPane(kind);
+    const lifecycleCode = paneExitLifecycleCode(kind, exitCode);
+    if (lifecycleCode) process.stderr.write(`${lifecycleCode}\n`);
+    return exitCode;
   } catch (error: unknown) {
     const suffix = error instanceof Error ? '' : '_non_error';
     process.stderr.write(`terminal_pane_failed${suffix}\n`);

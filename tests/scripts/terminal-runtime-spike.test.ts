@@ -17,6 +17,7 @@ const roots: string[] = [];
 const expectAll = (source: string, expected: string[]) => {
   for (const value of expected) expect(source).toContain(value);
 };
+const expectNone = (source: string, expected: string[]) => { for (const value of expected) expect(source).not.toContain(value); };
 const readRepo = (path: string) => readFile(join(process.cwd(), path), 'utf8');
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -77,8 +78,7 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
 }
 describe('terminal runtime spike evidence', () => {
   it('runs the evidence CLI when invoked through the immutable current-generation symlink', async () => {
-    const fixture = await mkdtemp(join(tmpdir(), 'matrix-terminal-verifier-symlink-'));
-    roots.push(fixture); const generation = join(fixture, 'generation'); const current = join(fixture, 'current');
+    const fixture = await mkdtemp(join(tmpdir(), 'matrix-terminal-verifier-symlink-')); roots.push(fixture); const generation = join(fixture, 'generation'); const current = join(fixture, 'current');
     await mkdir(generation);
     await Promise.all([
       writeFile(join(generation, 'verify-evidence.mjs'), await readRepo('scripts/spikes/terminal-runtime/verify-evidence.mjs')),
@@ -89,7 +89,6 @@ describe('terminal runtime spike evidence', () => {
     expect(result.error).toBeUndefined(); expect(result.status).toBe(0); expect(result.stderr).toBe('');
     expect(JSON.parse(result.stdout)).toMatchObject({ schemaVersion: 1, prHeadSha: 'a'.repeat(40) });
   });
-
   it('builds and verifies the pinned Matrix Zellij resurrection patch', async () => {
     const [
       builder,
@@ -273,18 +272,10 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('$((SECONDS - last_pack_success)) -ge 120');
     expect(workflow).toContain('evidence_gateway_unavailable_${http_code}');
     expect(workflow).toContain('last_semantic_pack_success=$SECONDS');
-    expect(workflow).toContain('semantic_response_timeout=300');
-    expect(workflow).toContain(
-      '$((SECONDS - last_semantic_pack_success)) -ge "$semantic_response_timeout"',
-    );
-    expect(workflow).toContain(
-      'evidence_gateway_response_invalid_${http_code}_${response_shape}',
-    );
     expectAll(workflow, [
-      'if type != "object" then "non_object"',
-      'elif has("error") then "error_object"',
-      'elif ((.exitCode | type) == "number" or .exitCode == null)',
-      'then "command_result_exit_" +',
+      'semantic_response_timeout=300', '$((SECONDS - last_semantic_pack_success)) -ge "$semantic_response_timeout"',
+      'evidence_gateway_response_invalid_${http_code}_${response_shape}', 'if type != "object" then "non_object"',
+      'elif has("error") then "error_object"', 'elif ((.exitCode | type) == "number" or .exitCode == null)', 'then "command_result_exit_" +',
       '(if .exitCode == null then "null" elif .exitCode == 0 then "zero" else "nonzero" end)',
       '(if .signal == null then "none" elif .signal == "SIGTERM" then "sigterm"',
       '(if .stdout == "" then "empty" else "set" end)',
@@ -400,46 +391,18 @@ describe('terminal runtime spike evidence', () => {
       readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
       readRepo('scripts/spikes/terminal-runtime/pane-probe.sh'),
     ]);
-    expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
-    expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath);');
-    expect(keeper).toContain(
-      "const startupAuthorized = descriptor.intent === 'recover' || paneReleased;",
-    );
-    expect(keeper).toContain(
-      "if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched)",
-    );
-    expect(keeper).not.toContain(
-      "paneReleased && gateRecorded && descriptor.intent === 'create'",
-    );
-    expect(keeper).toContain("const WORKLOAD_PANE = join(dirname(keeperExecutable), 'workload-pane.mjs')");
-    expect(keeper).toContain("process.comm === 'MainThread'");
-    expect(keeper).toContain('process.cmdline[0] === NODE');
-    expect(keeper).toContain('process.cmdline[1] === WORKLOAD_PANE');
-    expect(keeper).toContain("['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', NODE, WORKLOAD_PANE]");
-    expect(keeper).toContain("throw new Error('workload_launch'");
-    expect(keeper).not.toContain("throw new Error('workload_target')");
-    expect(keeper).not.toContain('const target = stdout.trim()');
-    expect(keeper).toContain('workloadPaneLaunched = true');
-    expect(keeper.indexOf('await execFileAsync(')).toBeLessThan(
-      keeper.indexOf('workloadPaneLaunched = true'),
-    );
-    expect(keeper.indexOf('workloadPaneLaunched = true')).toBeLessThan(
-      keeper.indexOf('await cgroupRoles(cgroup.path, descriptor.intent === \'create\')'),
-    );
-    expect(keeper).toContain("confirmationState = descriptor.intent === 'create' ? 'not_required' : 'waiting'");
-    expect(keeper).toContain("confirmationState = 'gated'");
-    expect(keeper).not.toContain('confirmHeldCreatePane');
-    expect(keeper).not.toContain("'action', 'send-keys'");
-    expect(keeper).not.toContain("'action', 'write', '13'");
-    expect(keeper).not.toContain("pty.write('\\r')");
-    expect(keeper).toContain("if (startupAuthorized && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
-    expect(keeper.indexOf('const responsive = startupAuthorized')).toBeLessThan(
-      keeper.indexOf("descriptor.intent === 'create' && !workloadPaneLaunched"),
-    );
-    expect(paneProbe).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
-    expect(paneProbe).not.toContain('/proc/self/cgroup');
-    expect(paneProbe).not.toContain('pane-release');
-    expect(keeper).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
+    expectAll(keeper, ['const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`', 'const paneReleased = await regularFileExists(paneReleasePath);',
+      "const startupAuthorized = descriptor.intent === 'recover' || paneReleased;", "if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched)",
+      "const WORKLOAD_PANE = join(dirname(keeperExecutable), 'workload-pane.mjs')", "process.comm === 'MainThread'", 'process.cmdline[0] === NODE',
+      'process.cmdline[1] === WORKLOAD_PANE', "['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', NODE, WORKLOAD_PANE]",
+      "throw new Error('workload_launch'", 'workloadPaneLaunched = true', "confirmationState = descriptor.intent === 'create' ? 'not_required' : 'waiting'",
+      "confirmationState = 'gated'", "if (startupAuthorized && responsive && detected && (descriptor.intent === 'create' || gateRecorded))"]);
+    expectNone(keeper, ["paneReleased && gateRecorded && descriptor.intent === 'create'", "throw new Error('workload_target')", 'const target = stdout.trim()',
+      'confirmHeldCreatePane', "'action', 'send-keys'", "'action', 'write', '13'", "pty.write('\\r')", 'MATRIX_TERMINAL_RUNTIME_ID']);
+    expect(keeper.indexOf('await execFileAsync(')).toBeLessThan(keeper.indexOf('workloadPaneLaunched = true'));
+    expect(keeper.indexOf('workloadPaneLaunched = true')).toBeLessThan(keeper.indexOf('await cgroupRoles(cgroup.path, descriptor.intent === \'create\')'));
+    expect(keeper.indexOf('const responsive = startupAuthorized')).toBeLessThan(keeper.indexOf("descriptor.intent === 'create' && !workloadPaneLaunched"));
+    expectNone(paneProbe, ['MATRIX_TERMINAL_RUNTIME_ID', '/proc/self/cgroup', 'pane-release']);
   });
   it('records a bounded privacy-safe workload pane state for failed readiness', async () => {
     const [keeper, packer] = await Promise.all([readRepo('scripts/spikes/terminal-runtime/keeper.mjs'), readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh')]);
@@ -498,10 +461,7 @@ describe('terminal runtime spike evidence', () => {
   });
   it('gives CI change detection observed checkout time plus margin', async () => {
     const workflow = await readRepo('.github/workflows/ci.yml');
-    const changesJob = workflow.slice(
-      workflow.indexOf('  changes:'),
-      workflow.indexOf('\n  # ── Gate 1:'),
-    );
+    const changesJob = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('\n  # ── Gate 1:'));
     expect(changesJob).toContain('timeout-minutes: 5');
     expect(changesJob).not.toContain('timeout-minutes: 2');
   });
@@ -541,22 +501,19 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     }
     expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
-    expect(runner).toContain('readonly pi=/opt/matrix/runtime/node/bin/pi');
-    expectAll(runner, ['wait_pi_ready', '/var/lib/matrix-developer-tools/installed-tools',
+    expectAll(runner, ['readonly pi=/opt/matrix/runtime/node/bin/pi', 'wait_pi_ready', '/var/lib/matrix-developer-tools/installed-tools',
       '"$pi" --version', 'owner_probe create-agent "$head_sha" "$run_nonce"',
-      'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent']);
-    expect(runner).not.toContain('action new-pane -- "$codex" app-server');
-    expect(runner).not.toContain("sh -c 'command -v codex'");
-    expect(runner).toContain('owner_probe create "$head_sha" "$run_nonce"');
+      'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent', 'owner_probe create "$head_sha" "$run_nonce"']);
+    expectNone(runner, ['action new-pane -- "$codex" app-server', "sh -c 'command -v codex'"]);
     expectAll(probe, [
       '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
       "launch: { kind: 'agent', configurationRef: operationId }", "agent: 'pi'",
-      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", "entry.parentPid === pane?.pid",
+      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", "entry.parentPid === pane?.pid", 'processCount: processes.length',
     ]);
-    expect(probe).not.toContain("prompt:");
-    expect(probe).not.toContain("argument.includes('MATRIX_ACCEPT_LOOP')");
+    expectNone(probe, ["prompt:", "argument.includes('MATRIX_ACCEPT_LOOP')"]);
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expectAll(runner, ['diagnose)', 'production_acceptance_diagnostic=', "grep -E '^terminal_keeper_[a-z0-9_]{1,96}$'"]);
+    expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=']);
     expect(runner).not.toContain('journalctl -u "$unit" --no-pager');
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
@@ -572,18 +529,10 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     const cancelCase = runner.slice(runner.indexOf('  cancel)'), runner.indexOf('  phase1) phase1'));
     expect(cancelCase.indexOf('write_state failed_cancelled_operation_failed')).toBeLessThan(cancelCase.indexOf('systemctl_cancel stop'));
     expect(cancelCase).not.toContain('agent_event');
-    const unboundedSystemctl = runner.split('\n').filter((line) => {
-      if (!/(^|[^A-Za-z_])systemctl(?: |$)/.test(line)) return false;
-      return (
-        !line.includes('/usr/bin/systemctl "$@"') &&
-        !line.includes('-- /usr/bin/systemctl reboot')
-      );
-    });
+    const unboundedSystemctl = runner.split('\n').filter((line) => /(^|[^A-Za-z_])systemctl(?: |$)/.test(line) &&
+      !line.includes('/usr/bin/systemctl "$@"') && !line.includes('-- /usr/bin/systemctl reboot'));
     expect(unboundedSystemctl).toEqual([]);
-    const unboundedOwnerProbe = runner.split('\n').filter((line) =>
-      line.includes('runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe"') &&
-      !line.includes('command_bounded'),
-    );
+    const unboundedOwnerProbe = runner.split('\n').filter((line) => line.includes('runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe"') && !line.includes('command_bounded'));
     expect(unboundedOwnerProbe).toEqual([]);
   });
   it('process-group-bounds production acceptance probes and reports missing roles', async () => {
@@ -599,23 +548,13 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expect(runner).not.toContain('/usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser');
     const boundedFunction = runner.match(/command_bounded\(\) \{[\s\S]*?\n\}/)?.[0];
     expect(boundedFunction).toBeDefined();
-    const completed = spawnSync(
-      '/bin/bash',
-      [
-        '-c',
-        `${boundedFunction}\ncommand_bounded 1 /bin/bash -c '(trap "" HUP TERM; sleep 30) & exit 0'`,
-      ],
-      { encoding: 'utf8', timeout: 2_500 },
-    );
+    const completed = spawnSync('/bin/bash', ['-c',
+      `${boundedFunction}\ncommand_bounded 1 /bin/bash -c '(trap "" HUP TERM; sleep 30) & exit 0'`],
+    { encoding: 'utf8', timeout: 2_500 });
     expect(completed.error).toBeUndefined(); expect(completed.status).toBe(0);
-    const timedOut = spawnSync(
-      '/bin/bash',
-      [
-        '-c',
-        `${boundedFunction}\ncommand_bounded 1 /bin/bash -c 'trap "" HUP TERM; sleep 30'`,
-      ],
-      { encoding: 'utf8', timeout: 2_500 },
-    );
+    const timedOut = spawnSync('/bin/bash', ['-c',
+      `${boundedFunction}\ncommand_bounded 1 /bin/bash -c 'trap "" HUP TERM; sleep 30'`],
+    { encoding: 'utf8', timeout: 2_500 });
     expect(timedOut.error).toBeUndefined(); expect(timedOut.status).toBe(124);
   });
   it('fails closed on incomplete, stale, or extended production evidence', async () => {
@@ -1217,30 +1156,12 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expect(packer).toContain('${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}');
   });
   it('preserves the last work stage and reports every attempt-scoped startup failure', async () => {
-    const [packer, runner] = await Promise.all([
-      readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'),
-      readRepo('scripts/spikes/terminal-runtime/run-remote.sh'),
-    ]);
-    expectAll(runner, [
-      'last-work-stage.txt',
-      'last-work-uptime.txt',
-      'case "$progress_stage" in',
-      'cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach) ;;',
-    ]);
-    expectAll(packer, [
-      'runtime_ids=("$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id")',
-      'startup_failure_rollup() {',
-      'startup-failures/${runtime_id}.json',
-      'last-work-stage.txt',
-      'startup_rollup="$(startup_failure_rollup)"',
-      '_f${startup_rollup}_',
-    ]);
+    const [packer, runner] = await Promise.all([readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'), readRepo('scripts/spikes/terminal-runtime/run-remote.sh')]);
+    expectAll(runner, ['last-work-stage.txt', 'last-work-uptime.txt', 'case "$progress_stage" in', 'cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach) ;;']);
+    expectAll(packer, ['runtime_ids=("$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id")', 'startup_failure_rollup() {',
+      'startup-failures/${runtime_id}.json', 'last-work-stage.txt', 'startup_rollup="$(startup_failure_rollup)"', '_f${startup_rollup}_']);
     expect(packer).toContain('[[ "$startup_rollup" =~ ^[a-z0-9_]{1,1024}$ ]]');
-    expect(
-      packer.indexOf('failure_progress_path="$evidence_root/last-work-stage.txt"'),
-    ).toBeLessThan(
-      packer.indexOf('failure_progress_path="$evidence_root/progress-stage.txt"'),
-    );
+    expect(packer.indexOf('failure_progress_path="$evidence_root/last-work-stage.txt"')).toBeLessThan(packer.indexOf('failure_progress_path="$evidence_root/progress-stage.txt"'));
   });
   it('activates the aggregate slice before starting the first template instance', async () => {
     const runner = await readRepo('scripts/spikes/terminal-runtime/run-remote.sh');

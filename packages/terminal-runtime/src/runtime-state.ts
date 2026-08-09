@@ -59,7 +59,7 @@ export async function createRuntimeState(options: {
     resources.push(receiptsDirectory);
     operationsDirectory = await SecureDirectory.open(
       join(options.durableRoot, 'operations'),
-      { owner: options.durableOwner },
+      { owner: options.durableOwner, maxEntries: 4_096 },
     );
     resources.push(operationsDirectory);
     descriptorDirectory = await SecureDirectory.open(
@@ -90,7 +90,7 @@ export async function createRuntimeState(options: {
   return {
     receipts: new ReceiptStore(receiptsDirectory),
     names: new NameIndexStore(durableDirectory),
-    operations: new OperationRecordStore(operationsDirectory),
+    operations: new OperationRecordStore(operationsDirectory, options.nowMs),
     descriptors,
     locks,
     async close() {

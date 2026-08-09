@@ -21,13 +21,9 @@ function sha256(content: string) {
 }
 function expectAll(source: string, values: string[]) { for (const value of values) expect(source).toContain(value); }
 function expectNone(source: string, values: string[]) { for (const value of values) expect(source).not.toContain(value); }
-function expectOrdered(source: string, values: string[]) {
-  let previous = -1;
-  for (const value of values) {
-    const index = source.indexOf(value);
-    expect(index, value).toBeGreaterThan(previous); previous = index;
-  }
-}
+function expectOrdered(source: string, values: string[]) { let previous = -1; for (const value of values) {
+  const index = source.indexOf(value); expect(index, value).toBeGreaterThan(previous); previous = index;
+} }
 function runBundledHomeSync(
   root: string, appDir: string, homeDir: string, env: Record<string, string> = {},
 ) {

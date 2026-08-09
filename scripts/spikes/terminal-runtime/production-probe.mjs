@@ -127,6 +127,7 @@ if (operation === 'create' || operation === 'create-race' ||
   const pane = processes.find((entry) => entry.args.some((argument) =>
     argument.endsWith('/pane.js')));
   output({
+    processCount: processes.length,
     keeper: processes.find((entry) =>
       entry.args.some((argument) => argument.endsWith('/keeper.js')))?.pid ?? 0,
     zellijClient: zellij[0]?.pid ?? 0,

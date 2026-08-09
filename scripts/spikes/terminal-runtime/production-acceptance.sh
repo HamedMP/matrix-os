@@ -16,10 +16,7 @@ readonly state_file="${state_root}/state"; readonly probe=/opt/matrix/libexec/te
 readonly verifier=/opt/matrix/libexec/terminal-runtime/current/spikes/verify-production-evidence.mjs; readonly version_a="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-a"
 readonly version_b="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-b"; readonly unit_prefix=matrix-terminal-session@
 readonly home=/home/matrix/home; readonly cache_root="${home}/system/terminal-runtime/zellij-cache"; readonly uid="$(id -u matrix)"
-readonly pi=/opt/matrix/runtime/node/bin/pi
-readonly update_wait_seconds=1800
-current_phase=initializing
-failure_hint=""
+readonly pi=/opt/matrix/runtime/node/bin/pi; readonly update_wait_seconds=1800; current_phase=initializing; failure_hint=""
 readonly -a zellij_env=(
   env HOME="$home" MATRIX_HOME="$home" LANG=C.UTF-8 TERM=xterm-256color
   PATH="$home/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin"
@@ -87,10 +84,7 @@ wait_active() { local unit="$1"; for _ in $(seq 1 180); do [ "$(systemctl_read i
 wait_absent() { local unit="$1"; for _ in $(seq 1 60); do local state; state="$(systemctl_read is-active "$unit" 2>/dev/null || true)"; [ "$state" != active ] && [ "$state" != activating ] && return 0; sleep 1; done; return 1; }
 roles() { command_bounded 8 runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }
 roles_match() { local current; current="$(roles "$1")"; [ "$current" = "$(cat "$2")" ]; }
-both_roles_match() {
-  roles_match "$1" "$state_root/roles.json" &&
-    roles_match "$2" "$state_root/agent-roles.json"
-}
+both_roles_match() { roles_match "$1" "$state_root/roles.json" && roles_match "$2" "$state_root/agent-roles.json"; }
 request_update() { command_bounded 70 runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
 wait_update() {
   local expected="$1"; for _ in $(seq 1 "$update_wait_seconds"); do
@@ -360,6 +354,30 @@ case "$operation" in
     [[ "$lifecycle" =~ ^[a-z_]{1,32}$ ]] || lifecycle=unavailable
     printf 'production_acceptance_diagnostic=%s,%s,%s,%s,%s\n' \
       "$lifecycle" "$result" "$main_code" "$main_status" "$keeper_code"
+    agent_result=unavailable; agent_main_code=unavailable; agent_main_status=unavailable
+    agent_keeper_code=unavailable; agent_pane_code=unavailable; agent_runtime_id=""
+    if [ -f "$state_root/agent-runtime-id" ] &&
+      [ ! -L "$state_root/agent-runtime-id" ] &&
+      [ "$(stat -c %s "$state_root/agent-runtime-id" 2>/dev/null || true)" = 33 ]; then
+      IFS= read -r agent_runtime_id <"$state_root/agent-runtime-id" || true
+    fi
+    if [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]; then
+      agent_unit="${unit_prefix}${agent_runtime_id}.service"
+      mapfile -t agent_values < <(systemctl_read show "$agent_unit" -p Result -p ExecMainCode -p ExecMainStatus --value 2>/dev/null || true)
+      [[ "${agent_values[0]:-}" =~ ^[a-z-]{1,32}$ ]] && agent_result="${agent_values[0]}"
+      [[ "${agent_values[1]:-}" =~ ^[a-z-]{1,32}$ ]] && agent_main_code="${agent_values[1]}"
+      [[ "${agent_values[2]:-}" =~ ^[0-9]{1,3}$ ]] && agent_main_status="${agent_values[2]}"
+      agent_journal="$(journalctl -u "$agent_unit" --since=-10min --no-pager --output=cat 2>/dev/null || true)"
+      agent_keeper_code="$(printf '%s\n' "$agent_journal" | grep -E '^terminal_keeper_[a-z0-9_]{1,96}$' | tail -n 1 || true)"
+      [[ "$agent_keeper_code" =~ ^terminal_keeper_[a-z0-9_]{1,96}$ ]] || agent_keeper_code=unavailable
+      agent_pane_code="$(printf '%s\n' "$agent_journal" | grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$' | tail -n 1 || true)"
+      [[ "$agent_pane_code" =~ ^terminal_pane_agent_exit_[0-9]{1,3}$ ]] || agent_pane_code=unavailable
+    fi
+    printf 'production_acceptance_agent_diagnostic=%s,%s,%s,%s,%s\n' "$agent_result" \
+      "$agent_main_code" "$agent_main_status" "$agent_keeper_code" "$agent_pane_code"
+    agent_roles="$(roles "$agent_runtime_id" 2>/dev/null || true)"
+    [[ "$agent_roles" =~ ^\{"processCount":[0-9]{1,3},"keeper":[0-9]{1,10},"zellijClient":[0-9]{1,10},"zellijServer":[0-9]{1,10},"pane":[0-9]{1,10},"shell":[0-9]{1,10},"agent":[0-9]{1,10}\}$ ]] || agent_roles=unavailable
+    printf 'production_acceptance_agent_roles=%s\n' "$agent_roles"
     ;;
   reboot)
     [ "$(cat "$state_file")" = phase1-ready ]

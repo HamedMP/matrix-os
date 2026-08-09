@@ -115,7 +115,6 @@ describe('platform/customer-vps', () => {
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
     expect(config.registrationTokenTtlMs).toBe(30 * 60 * 1000);
   });
-
   it('accepts only a trusted tagged Cloud Run origin for candidate bootstrap progress', () => {
     expect(loadCustomerVpsConfig({
       PLATFORM_CANDIDATE_URL: 'https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
@@ -1123,14 +1122,12 @@ describe('platform/customer-vps', () => {
         platformCandidateUrl: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
       }),
     });
-
     const provisioned = await service.provisionPreview({
       clerkUserId: 'user_preview',
       handle: 'pr-1136',
       runtimeSlot: 'pr-1136',
       bootstrapVersion,
     });
-
     expect((await getUserMachine(db, provisioned.machineId))?.imageVersion).toBe(bootstrapVersion);
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain(
@@ -1148,7 +1145,6 @@ describe('platform/customer-vps', () => {
       'PLATFORM_INTERNAL_URL=https://app.matrix-os.com',
     );
   });
-
   it('fails preview bootstrap closed without a trusted candidate callback origin', async () => {
     const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-124-1-abcdef0';
     await upsertHostBundleRelease(db, {
@@ -1168,7 +1164,6 @@ describe('platform/customer-vps', () => {
     const { service, hetzner } = createService({
       config: createTestConfig({ platformCandidateUrl: undefined }),
     });
-
     await expect(service.provisionPreview({
       clerkUserId: 'user_preview',
       handle: 'pr-1136',
@@ -1182,10 +1177,8 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).not.toHaveBeenCalled();
     expect(await getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff112')).toBeUndefined();
   });
-
   it('fails preview provisioning closed when the requested bootstrap release is not registered', async () => {
     const { service, hetzner } = createService();
-
     await expect(service.provisionPreview({
       clerkUserId: 'user_preview',
       handle: 'pr-1136',
@@ -1198,7 +1191,6 @@ describe('platform/customer-vps', () => {
     });
     expect(hetzner.createServer).not.toHaveBeenCalled();
   });
-
   it('can provision an isolated staging runtime for the same Clerk user', async () => {
     let nextId = 0;
     const ids = [
@@ -1367,7 +1359,6 @@ describe('platform/customer-vps', () => {
   it('records authenticated bootstrap progress monotonically before registration', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
-
     const stages = [
       'cloud_init_started', 'packages_ready', 'restore_starting', 'restore_ready',
       'gateway_starting', 'gateway_preflight_checking_exec',
@@ -1388,7 +1379,6 @@ describe('platform/customer-vps', () => {
       machineId: provisioned.machineId,
       stage: 'cloud_init_started',
     })).resolves.toEqual({ accepted: true, stage: 'registration_ready' });
-
     const row = await getUserMachine(db, provisioned.machineId);
     expect(row?.bootstrapStage).toBe('registration_ready');
     expect(row?.bootstrapStageAt).toBe('2026-04-26T12:00:00.000Z');
@@ -1397,19 +1387,15 @@ describe('platform/customer-vps', () => {
       bootstrapStageAt: '2026-04-26T12:00:00.000Z',
     });
   });
-
   it('rejects bootstrap progress with an invalid token without changing state', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
-
     await expect(service.reportBootstrapProgress('wrong-token', {
       machineId: provisioned.machineId,
       stage: 'cloud_init_started',
     })).rejects.toMatchObject({ status: 401, code: 'registration_rejected' });
-
     expect((await getUserMachine(db, provisioned.machineId))?.bootstrapStage).toBeNull();
   });
-
   it('returns a warning when registration metadata cannot be persisted', async () => {
     const { service } = createService({
       systemStore: createMockCustomerVpsSystemStore({

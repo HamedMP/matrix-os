@@ -1,4 +1,9 @@
-import { readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
+import type { Socket } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildKeeperLaunch,
@@ -17,18 +22,65 @@ import {
 } from '../../packages/terminal-runtime/src/contracts.js';
 import {
   buildProviderLaunch,
+  paneExitLifecycleCode,
   runtimeIdFromCgroup,
+  waitForChild,
 } from '../../packages/terminal-runtime/src/pane.js';
 import {
   decodePeerCredentials,
   handleSupervisorFrame,
 } from '../../packages/terminal-runtime/src/supervisor.js';
 import { decodeFrame, encodeFrame } from '../../packages/terminal-runtime/src/framing.js';
+import { createRuntimeState } from '../../packages/terminal-runtime/src/runtime-state.js';
+import { createSupervisorClient } from '../../packages/terminal-runtime/src/client.js';
 
 const runtimeId = '0123456789abcdef0123456789abcdef';
 const operationId = 'fedcba9876543210fedcba9876543210';
 
 describe('terminal runtime service boundary', () => {
+  it('retains recent idempotency records past the legacy listing ceiling', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-operation-cap-'));
+    const now = Date.parse('2026-07-26T01:00:00.000Z');
+    const state = await createRuntimeState({ durableRoot: join(root, 'durable'), runtimeRoot: join(root, 'run'), nowMs: () => now });
+    try {
+      for (let generation = 1; generation <= 1_026; generation += 1) {
+        const id = generation.toString(16).padStart(32, '0');
+        const accepted = { schemaVersion: 1 as const, operationId: id, runtimeId, generation,
+          intent: 'recover' as const, status: 'accepted' as const, requestHash: generation.toString(16).padStart(64, '0'), committedAt: '2026-07-26T00:00:00.000Z' };
+        await state.operations.commit(accepted);
+        if (generation < 1_026) await state.operations.complete({ ...accepted, status: 'ready', result: { ok: true, value: {} } });
+      }
+      await expect(state.operations.nextGeneration()).resolves.toBe(1_027);
+      await expect(state.operations.pruneCompleted(now + 8 * 86_400_000)).resolves.toBe(1_023);
+      await expect(state.operations.read((1_026).toString(16).padStart(32, '0'))).resolves.toMatchObject({ status: 'accepted' });
+    } finally { await state.close(); await rm(root, { recursive: true, force: true }); }
+  });
+  it('uses the readiness deadline for create requests', async () => {
+    const socket = Object.assign(new EventEmitter(), { destroy: vi.fn(), setTimeout: vi.fn(),
+      end: vi.fn(() => queueMicrotask(() => { socket.emit('data', encodeFrame({ version: 1,
+        ok: true, operationId, result: { runtimeId, lifecycleState: 'starting' } })); socket.emit('end'); })) });
+    await createSupervisorClient({ connect: () => (queueMicrotask(() => socket.emit('connect')),
+      socket as unknown as Socket) }).request({ version: 1, operation: 'CreateStart', operationId,
+      input: { displayName: 'accept-runtime', cwd: { kind: 'home-relative', path: '' }, launch: { kind: 'shell' } } });
+    expect(socket.setTimeout).toHaveBeenCalledWith(40_000);
+  });
+  it('links Claude settings on fd 3 and removes them after exit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-claude-settings-'));
+    const path = join(root, operationId), payload = '{"permissions":{}}';
+    const child = Object.assign(new EventEmitter(), { stdin: null, stdio: [null, null, null, null], kill: vi.fn() });
+    let inheritedFd = -1;
+    const spawnChild = vi.fn((_file, _args, options) => (inheritedFd =
+      Number((options?.stdio as unknown[])[3]), child)) as unknown as typeof spawn;
+    try {
+      const result = waitForChild({ file: 'claude', args: [], cwd: root, env: {}, stdin: null,
+        fdPayload: payload, fdPayloadFile: true }, spawnChild, path);
+      await vi.waitFor(() => expect(inheritedFd).toBeGreaterThan(2));
+      const metadata = await lstat(path);
+      expect([metadata.isFile(), metadata.mode & 0o777, await readFile(`/proc/self/fd/${inheritedFd}`, 'utf8')])
+        .toEqual([true, 0o600, payload]); child.emit('exit', 0, null); await expect(result).resolves.toBe(0);
+      await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('uses the exact verified v0.44.3 serialization options without forced commands', async () => {
     const config = await readFile(
       'packages/terminal-runtime/assets/config.kdl',
@@ -167,38 +219,32 @@ describe('terminal runtime service boundary', () => {
 
   it('re-keys one-shot agent configuration to the immutable runtime ID', async () => {
     const configuration = {} as Parameters<typeof buildProviderLaunch>[0];
-    const store = { claim: vi.fn(async () => configuration),
-      publish: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) };
-    const descriptor = {
-      schemaVersion: 1, runtimeId, operationId, intent: 'create',
-      cwd: { kind: 'home-relative', path: 'projects/example' },
-      launch: { kind: 'agent', configurationRef: operationId },
-      createdAt: '2026-07-26T00:00:00.000Z',
-    } as const;
+    const store = { claim: vi.fn(async () => configuration), publish: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined) };
+    const descriptor = { schemaVersion: 1, runtimeId, operationId, intent: 'create',
+      cwd: { kind: 'home-relative', path: 'projects/example' }, launch: { kind: 'agent', configurationRef: operationId }, createdAt: '2026-07-26T00:00:00.000Z' } as const;
     await stageAgentConfiguration(descriptor, runtimeId, store);
     expect(store.claim).toHaveBeenCalledWith(operationId);
     expect(store.publish).toHaveBeenCalledWith(runtimeId, configuration);
     store.publish.mockRejectedValueOnce(new Error('write_failed'));
-    await expect(stageAgentConfiguration(descriptor, runtimeId, store)).rejects.toThrow('write_failed');
+    await expect(stageAgentConfiguration(descriptor, runtimeId, store)).rejects
+      .toThrow('write_failed');
     expect(store.remove).toHaveBeenCalledWith(runtimeId);
   });
   it('derives the runtime identity only from the exact terminal unit cgroup', () => {
     expect(runtimeIdFromCgroup(`0::/system.slice/matrix-terminal.slice/matrix-terminal-session@${runtimeId}.service\n`)).toBe(runtimeId);
     for (const membership of [
       `0::/system.slice/matrix-terminal-session@${runtimeId}.service/child\n`,
-      `0::/system.slice/matrix-terminal-session@../${runtimeId}.service\n`,
-      `0::/evil.slice/matrix-terminal-session@${runtimeId}.service\n`, `1:name=systemd:/matrix-terminal-session@${runtimeId}.service\n`,
-      `0::/matrix-terminal-session@${runtimeId}.service\n0::/matrix-terminal-session@${runtimeId}.service\n`,
+      `0::/system.slice/matrix-terminal-session@../${runtimeId}.service\n`, `0::/evil.slice/matrix-terminal-session@${runtimeId}.service\n`,
+      `1:name=systemd:/matrix-terminal-session@${runtimeId}.service\n`, `0::/matrix-terminal-session@${runtimeId}.service\n0::/matrix-terminal-session@${runtimeId}.service\n`,
     ]) expect(() => runtimeIdFromCgroup(membership)).toThrow('agent_cgroup_invalid');
   });
   it('requires a live direct provider child for agent readiness evidence', () => {
-    const processes = [
-      { pid: 13, parentPid: 12, comm: 'node', args: ['/generation/pane.js', 'agent'] },
+    const processes = [{ pid: 13, parentPid: 12, comm: 'node', args: ['/generation/pane.js', 'agent'] },
       { pid: 14, parentPid: 1, comm: 'pi', args: ['pi'] }];
     expect(directAgentProviderPid(processes)).toBeUndefined();
-    expect(directAgentProviderPid([...processes,
-      { pid: 15, parentPid: 13, comm: 'pi', args: ['pi'] },
-    ])).toBe(15);
+    expect(directAgentProviderPid([...processes, { pid: 15, parentPid: 13,
+      comm: 'pi', args: ['pi'] }])).toBe(15);
   });
   it.each(['claude', 'codex', 'opencode', 'pi'] as const)(
     'builds a fixed %s provider launch with dynamic data on stdin or fd 3',
@@ -235,11 +281,16 @@ describe('terminal runtime service boundary', () => {
       expect(JSON.stringify(launch.args)).not.toContain('workspace-write');
       expect(`${launch.stdin ?? ''}${launch.fdPayload ?? ''}`).toContain(prompt);
       expect(launch.cwd).toBe('/home/matrix/home/projects/private');
-      if (agent === 'pi') {
-        expect(launch.file).toBe('/opt/matrix/runtime/node/bin/pi');
-      }
+      if (agent === 'pi') expect([launch.file, launch.args])
+        .toEqual(['/opt/matrix/runtime/node/bin/pi', ['--offline']]);
     },
   );
+
+  it('emits only bounded generic lifecycle codes when an agent pane exits', () => {
+    expect(paneExitLifecycleCode('agent', 0)).toBe('terminal_pane_agent_exit_0');
+    expect(paneExitLifecycleCode('agent', 128)).toBe('terminal_pane_agent_exit_128');
+    expect(paneExitLifecycleCode('shell', 0)).toBeNull();
+  });
 
   it('rejects Claude on-failure approval in supervised mode', () => {
     expect(() => buildProviderLaunch({
@@ -320,16 +371,19 @@ describe('terminal runtime service boundary', () => {
         },
       },
     ];
+    let reads = 0;
+    const readEvidence = vi.fn(async () => sequence[Math.min(reads++, 1)]!);
     const evidence = await waitForKeeperReadiness({
       runtimeId,
       timeoutMs: 1_000,
       pollMs: 1,
-      readEvidence: vi.fn(async () => sequence.shift() ?? sequence[0]),
+      readEvidence,
       delay: vi.fn(async () => undefined),
       notifyReady,
     });
 
     expect(evidence.roles.shell).toBe(13);
+    expect(readEvidence).toHaveBeenCalledTimes(6);
     expect(notifyReady).toHaveBeenCalledTimes(1);
   });
 
@@ -359,9 +413,8 @@ describe('terminal runtime service boundary', () => {
         },
       },
     ];
-    const readEvidence = vi.fn(
-      async () => sequence.shift() ?? sequence[0],
-    );
+    let reads = 0;
+    const readEvidence = vi.fn(async () => sequence[Math.min(reads++, 1)]!);
     await waitForKeeperReadiness({
       runtimeId,
       requiresConfirmation: true,
@@ -371,7 +424,7 @@ describe('terminal runtime service boundary', () => {
       delay: vi.fn(async () => undefined),
       notifyReady,
     });
-    expect(readEvidence).toHaveBeenCalledTimes(2);
+    expect(readEvidence).toHaveBeenCalledTimes(6);
     expect(notifyReady).toHaveBeenCalledTimes(1);
   });
 
@@ -402,6 +455,11 @@ describe('terminal runtime service boundary', () => {
     })).resolves.toBe(false);
     await expect(monitorKeeperOnce({
       clientAlive: false,
+      sessionResponds: vi.fn(async () => true),
+    })).resolves.toBe(false);
+    await expect(monitorKeeperOnce({
+      clientAlive: true,
+      workloadAlive: false,
       sessionResponds: vi.fn(async () => true),
     })).resolves.toBe(false);
   });
