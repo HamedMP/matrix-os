@@ -1202,7 +1202,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('select(.handle == $h and .machineId == $id and .runtimeSlot == $h)');
     expect(workflow).toContain('if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then');
     expect(workflow.indexOf('Immediate fleet visibility for ${HANDLE}: ${status}'))
-      .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + 840))'));
+      .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + 1620))'));
   });
 
   it('preview VPS workflow safely resumes an existing active preview', () => {
