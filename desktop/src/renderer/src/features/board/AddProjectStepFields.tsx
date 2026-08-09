@@ -2,7 +2,8 @@
 // orchestration live in CreateProjectDialog; these components only render
 // fields and forward edits.
 import { Button } from "../../design/primitives";
-import ComputerFileBrowser from "../files/ComputerFileBrowser";
+import type { Project } from "../../stores/board";
+import ComputerFileBrowser, { type FolderPickerChoice } from "../files/ComputerFileBrowser";
 
 export const FIELD_STYLE: React.CSSProperties = {
   background: "var(--bg-raised)",
@@ -103,15 +104,45 @@ export function ExistingFolderStepFields({
   name,
   onNameChange,
   folderPath,
+  projects,
   onChooseFolder,
+  onOpenProject,
   submitting,
 }: {
   name: string;
   onNameChange: (value: string) => void;
   folderPath: string;
+  projects: Project[];
   onChooseFolder: (path: string) => void;
+  onOpenProject: (slug: string) => void;
   submitting: boolean;
 }) {
+  const projectForRegistryPath = (path: string): Project | undefined => {
+    const segments = path.replace(/^\.\/+/, "").replace(/\/+$/, "").split("/");
+    if (segments.length !== 2 || segments[0] !== "projects") return undefined;
+    return projects.find((project) => project.slug === segments[1]);
+  };
+  const resolveFolderChoice = (path: string): FolderPickerChoice => {
+    const normalized = path.replace(/^\.\/+/, "").replace(/\/+$/, "");
+    const segments = normalized.split("/");
+    if (segments[0] !== "projects") return { kind: "choose" };
+    // projects/<slug> is Matrix-owned registry state. Only the repo checkout
+    // beneath it (and its descendants) is a user workspace.
+    if (segments.length >= 3 && segments[2] === "repo") return { kind: "choose" };
+    const project = projectForRegistryPath(normalized);
+    if (project) {
+      return {
+        kind: "alternate",
+        label: `Open ${project.name}`,
+        message: "This folder contains Matrix project data, not a workspace.",
+      };
+    }
+    return {
+      kind: "blocked",
+      message: "This folder is managed by Matrix and can't be used as a workspace.",
+    };
+  };
+
   return (
     <>
       <label className="flex flex-col gap-1">
@@ -127,7 +158,16 @@ export function ExistingFolderStepFields({
       </label>
       <div className="flex flex-col gap-1.5">
         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Choose a folder on this computer</span>
-        <ComputerFileBrowser compact mode="folder-picker" onChooseFolder={onChooseFolder} />
+        <ComputerFileBrowser
+          compact
+          mode="folder-picker"
+          onChooseFolder={onChooseFolder}
+          resolveFolderChoice={resolveFolderChoice}
+          onAlternateFolderAction={(path) => {
+            const project = projectForRegistryPath(path);
+            if (project) onOpenProject(project.slug);
+          }}
+        />
         <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
           {folderPath ? `Selected: ${folderPath}` : "Select a folder. It stays in place and remains yours."}
         </span>

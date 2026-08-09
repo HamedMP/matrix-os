@@ -1,7 +1,7 @@
 // Submit orchestration for the add-project dialog: one function per mode.
 // Every helper re-checks the dialog generation (isCurrent) after each await
-// so a closed dialog or a superseded submit never mutates state, and all
-// client-visible errors are generic copy.
+// so a closed dialog or a superseded submit never mutates state. User-facing
+// errors use bounded app-owned copy rather than raw upstream messages.
 import type { ApiClient } from "../../lib/api";
 import { AppError, toUserMessage } from "../../lib/errors";
 import type { Project } from "../../stores/board";
@@ -11,6 +11,7 @@ import { slugifyProjectName } from "./add-project-model";
 export interface AddProjectSubmitContext {
   api: ApiClient;
   runtimeSlot: string;
+  getProjects: () => Project[];
   createProject: (
     api: ApiClient,
     input: { name: string; mode: "scratch" | "github" | "folder"; url?: string; path?: string },
@@ -24,6 +25,39 @@ export interface AddProjectSubmitContext {
   close: () => void;
 }
 
+function projectPathMatches(localPath: string | undefined, selectedPath: string): boolean {
+  if (!localPath) return false;
+  const normalizedLocalPath = localPath.replaceAll("\\", "/").replace(/\/+$/, "");
+  const normalizedSelectedPath = selectedPath
+    .replaceAll("\\", "/")
+    .replace(/^\.\/+/, "")
+    .replace(/\/+$/, "");
+  return normalizedSelectedPath.length > 0
+    && (normalizedLocalPath === normalizedSelectedPath
+      || normalizedLocalPath.endsWith(`/${normalizedSelectedPath}`));
+}
+
+async function handleExistingFolderProject(
+  ctx: AddProjectSubmitContext,
+  input: { name: string; path: string },
+): Promise<boolean> {
+  const projects = ctx.getProjects();
+  // Folder identity is stronger than the editable display name. In particular,
+  // managed checkouts end in /repo, so deriving the form name from the final
+  // path segment cannot recover the owning project slug.
+  const projectAtPath = projects.find((project) => projectPathMatches(project.localPath, input.path));
+  if (projectAtPath) {
+    await finish(ctx, projectAtPath);
+    return true;
+  }
+  const existingProject = projects.find(
+    (project) => project.slug === slugifyProjectName(input.name),
+  );
+  if (!existingProject) return false;
+  ctx.setError(`A project named “${existingProject.name}” already exists. Choose another name.`);
+  return true;
+}
+
 // Shared success path for every mode: make the new project active and open
 // its project tab.
 async function finish(ctx: AddProjectSubmitContext, project: { slug: string; name: string }): Promise<void> {
@@ -33,13 +67,26 @@ async function finish(ctx: AddProjectSubmitContext, project: { slug: string; nam
   ctx.openTab({ kind: "project", projectSlug: project.slug, title: project.name || project.slug });
 }
 
+export async function openExistingProject(ctx: AddProjectSubmitContext, slug: string): Promise<void> {
+  const project = ctx.getProjects().find((candidate) => candidate.slug === slug);
+  if (!project) {
+    ctx.setError("That project is no longer available. Refresh and try again.");
+    return;
+  }
+  await finish(ctx, project);
+}
+
 export async function submitExistingFolder(
   ctx: AddProjectSubmitContext,
   input: { name: string; path: string },
 ): Promise<void> {
+  if (await handleExistingFolderProject(ctx, input)) return;
   const project = await ctx.createProject(ctx.api, { name: input.name, mode: "folder", path: input.path });
   if (!ctx.isCurrent()) return;
   if (!project) {
+    await ctx.loadProjects(ctx.api);
+    if (!ctx.isCurrent()) return;
+    if (await handleExistingFolderProject(ctx, input)) return;
     ctx.setError("Couldn't connect that folder. Check that it exists on this computer.");
     return;
   }

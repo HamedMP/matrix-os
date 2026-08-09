@@ -28,6 +28,11 @@ import {
 
 type BrowserStatus = "loading" | "ready" | "error";
 
+export type FolderPickerChoice =
+  | { kind: "choose" }
+  | { kind: "blocked"; message: string }
+  | { kind: "alternate"; label: string; message: string };
+
 const NO_ENTRIES: BrowserEntry[] = [];
 
 function joinPath(parent: string, name: string): string {
@@ -44,6 +49,8 @@ export default function ComputerFileBrowser({
   mode = "browse",
   onOpenFile,
   onChooseFolder,
+  resolveFolderChoice,
+  onAlternateFolderAction,
 }: {
   compact?: boolean;
   // framed renders the browser as its own bordered card (dialogs, pickers).
@@ -55,6 +62,8 @@ export default function ComputerFileBrowser({
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
   onChooseFolder?: (path: string) => void;
+  resolveFolderChoice?: (path: string) => FolderPickerChoice;
+  onAlternateFolderAction?: (path: string) => void;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -232,6 +241,9 @@ export default function ComputerFileBrowser({
   }, [viewCurrentPath]);
 
   const chosenName = (viewCandidatePath.split("/").pop() || "Matrix home");
+  const folderChoice = viewCandidatePath
+    ? resolveFolderChoice?.(viewCandidatePath) ?? { kind: "choose" as const }
+    : null;
   // Name flexes (minmax(0,1fr) + truncate); Size/Modified are fixed-width
   // right-aligned columns sized to the format.ts outputs, so long names only
   // truncate once the pane is genuinely out of room.
@@ -346,12 +358,29 @@ export default function ComputerFileBrowser({
 
       {onChooseFolder ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
-          <span className="min-w-0 truncate text-xs" style={{ color: "var(--text-secondary)" }} title={viewCandidatePath || "Matrix home"}>
-            {viewCandidatePath || "Matrix home"}
-          </span>
-          <Button variant="primary" disabled={!viewCandidatePath} onClick={() => onChooseFolder(viewCandidatePath)}>
-            Choose {chosenName}
-          </Button>
+          <div className="min-w-0">
+            <div className="truncate text-xs" style={{ color: "var(--text-secondary)" }} title={viewCandidatePath || "Matrix home"}>
+              {viewCandidatePath || "Matrix home"}
+            </div>
+            {folderChoice && folderChoice.kind !== "choose" ? (
+              <div className="mt-0.5 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+                {folderChoice.message}
+              </div>
+            ) : null}
+          </div>
+          {folderChoice?.kind === "alternate" ? (
+            <Button variant="primary" onClick={() => onAlternateFolderAction?.(viewCandidatePath)}>
+              {folderChoice.label}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              disabled={!viewCandidatePath || folderChoice?.kind === "blocked"}
+              onClick={() => onChooseFolder(viewCandidatePath)}
+            >
+              Choose {chosenName}
+            </Button>
+          )}
         </div>
       ) : null}
     </div>
