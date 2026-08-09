@@ -196,6 +196,9 @@ describe('terminal runtime service boundary', () => {
       expect(JSON.stringify(launch.args)).not.toContain('workspace-write');
       expect(`${launch.stdin ?? ''}${launch.fdPayload ?? ''}`).toContain(prompt);
       expect(launch.cwd).toBe('/home/matrix/home/projects/private');
+      if (agent === 'pi') {
+        expect(launch.file).toBe('/opt/matrix/runtime/node/bin/pi');
+      }
     },
   );
 

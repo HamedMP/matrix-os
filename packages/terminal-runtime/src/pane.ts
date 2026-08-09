@@ -191,7 +191,7 @@ export function buildProviderLaunch(
       };
     case 'pi':
       return {
-        file: 'pi',
+        file: '/opt/matrix/runtime/node/bin/pi',
         args: [],
         cwd,
         env: environment,
