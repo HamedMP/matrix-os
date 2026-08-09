@@ -2,8 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildKeeperLaunch,
+  directAgentProviderPid,
   isKeeperEntrypoint,
   monitorKeeperOnce,
+  stageAgentConfiguration,
   waitForKeeperReadiness,
 } from '../../packages/terminal-runtime/src/keeper.js';
 import {
@@ -13,7 +15,10 @@ import {
 import {
   unitNameForRuntimeId,
 } from '../../packages/terminal-runtime/src/contracts.js';
-import { buildProviderLaunch, runPaneEntrypoint } from '../../packages/terminal-runtime/src/pane.js';
+import {
+  buildProviderLaunch,
+  runtimeIdFromCgroup,
+} from '../../packages/terminal-runtime/src/pane.js';
 import {
   decodePeerCredentials,
   handleSupervisorFrame,
@@ -144,12 +149,11 @@ describe('terminal runtime service boundary', () => {
     expect(create.env.ZELLIJ_CONFIG_FILE).toBe(
       '/opt/matrix/libexec/terminal-runtime/current/config.kdl',
     );
-    expect(create.env.MATRIX_TERMINAL_CONFIGURATION_REF).toBe(operationId);
+    expect(create.env).not.toHaveProperty('MATRIX_TERMINAL_CONFIGURATION_REF');
     expect(Object.keys(create.env).sort()).toEqual([
       'HOME',
       'LANG',
       'MATRIX_HOME',
-      'MATRIX_TERMINAL_CONFIGURATION_REF',
       'PATH',
       'TERM',
       'XDG_CACHE_HOME',
@@ -161,6 +165,41 @@ describe('terminal runtime service boundary', () => {
     ]);
   });
 
+  it('re-keys one-shot agent configuration to the immutable runtime ID', async () => {
+    const configuration = {} as Parameters<typeof buildProviderLaunch>[0];
+    const store = { claim: vi.fn(async () => configuration),
+      publish: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) };
+    const descriptor = {
+      schemaVersion: 1, runtimeId, operationId, intent: 'create',
+      cwd: { kind: 'home-relative', path: 'projects/example' },
+      launch: { kind: 'agent', configurationRef: operationId },
+      createdAt: '2026-07-26T00:00:00.000Z',
+    } as const;
+    await stageAgentConfiguration(descriptor, runtimeId, store);
+    expect(store.claim).toHaveBeenCalledWith(operationId);
+    expect(store.publish).toHaveBeenCalledWith(runtimeId, configuration);
+    store.publish.mockRejectedValueOnce(new Error('write_failed'));
+    await expect(stageAgentConfiguration(descriptor, runtimeId, store)).rejects.toThrow('write_failed');
+    expect(store.remove).toHaveBeenCalledWith(runtimeId);
+  });
+  it('derives the runtime identity only from the exact terminal unit cgroup', () => {
+    expect(runtimeIdFromCgroup(`0::/system.slice/matrix-terminal.slice/matrix-terminal-session@${runtimeId}.service\n`)).toBe(runtimeId);
+    for (const membership of [
+      `0::/system.slice/matrix-terminal-session@${runtimeId}.service/child\n`,
+      `0::/system.slice/matrix-terminal-session@../${runtimeId}.service\n`,
+      `0::/evil.slice/matrix-terminal-session@${runtimeId}.service\n`, `1:name=systemd:/matrix-terminal-session@${runtimeId}.service\n`,
+      `0::/matrix-terminal-session@${runtimeId}.service\n0::/matrix-terminal-session@${runtimeId}.service\n`,
+    ]) expect(() => runtimeIdFromCgroup(membership)).toThrow('agent_cgroup_invalid');
+  });
+  it('requires a live direct provider child for agent readiness evidence', () => {
+    const processes = [
+      { pid: 13, parentPid: 12, comm: 'node', args: ['/generation/pane.js', 'agent'] },
+      { pid: 14, parentPid: 1, comm: 'pi', args: ['pi'] }];
+    expect(directAgentProviderPid(processes)).toBeUndefined();
+    expect(directAgentProviderPid([...processes,
+      { pid: 15, parentPid: 13, comm: 'pi', args: ['pi'] },
+    ])).toBe(15);
+  });
   it.each(['claude', 'codex', 'opencode', 'pi'] as const)(
     'builds a fixed %s provider launch with dynamic data on stdin or fd 3',
     (agent) => {
@@ -201,21 +240,6 @@ describe('terminal runtime service boundary', () => {
       }
     },
   );
-
-  it('reports bounded agent pane failures without exposing the error', async () => {
-    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    try {
-      await expect(runPaneEntrypoint('agent', async () => 23)).resolves.toBe(23);
-      expect(write).toHaveBeenCalledWith('terminal_pane_agent_exited\n');
-      write.mockClear();
-      await expect(runPaneEntrypoint('agent', async () => {
-        throw new Error('/private/provider/path');
-      })).resolves.toBe(16);
-      expect(write).toHaveBeenCalledWith('terminal_pane_start_failed\n');
-    } finally {
-      write.mockRestore();
-    }
-  });
 
   it('rejects Claude on-failure approval in supervised mode', () => {
     expect(() => buildProviderLaunch({

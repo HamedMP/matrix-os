@@ -11,6 +11,7 @@ import {
   RuntimeIdSchema,
   type Descriptor,
 } from './contracts.js';
+import { createAgentConfigurationStore } from './agent-configurations.js';
 import { claimKeeperDescriptor } from './keeper-client.js';
 
 const KEEPER_LAYOUT = '/opt/matrix/libexec/terminal-runtime/current/layout.kdl';
@@ -103,10 +104,6 @@ export function buildKeeperLaunch(
   const descriptor = DescriptorSchema.parse(rawDescriptor);
   const sessionName = `matrix-t-${descriptor.runtimeId}`;
   const environment = keeperEnvironment(home);
-  if (descriptor.launch.kind === 'agent') {
-    environment.MATRIX_TERMINAL_CONFIGURATION_REF =
-      descriptor.launch.configurationRef;
-  }
   return {
     file: ZELLIJ,
     args:
@@ -122,6 +119,26 @@ export function buildKeeperLaunch(
     cwd: ownerPath(home, descriptor.cwd.path),
     env: environment,
   };
+}
+
+export async function stageAgentConfiguration(
+  rawDescriptor: Descriptor,
+  runtimeIdInput: string,
+  store: Pick<ReturnType<typeof createAgentConfigurationStore>,
+    'claim' | 'publish' | 'remove'> = createAgentConfigurationStore(),
+): Promise<void> {
+  const descriptor = DescriptorSchema.parse(rawDescriptor);
+  const runtimeId = RuntimeIdSchema.parse(runtimeIdInput);
+  if (descriptor.runtimeId !== runtimeId)
+    throw new Error('agent_configuration_identity_mismatch');
+  if (descriptor.launch.kind !== 'agent') return;
+  const configuration = await store.claim(descriptor.launch.configurationRef);
+  try {
+    await store.publish(runtimeId, configuration);
+  } catch (error: unknown) {
+    await store.remove(runtimeId);
+    throw error;
+  }
 }
 
 export async function waitForKeeperReadiness(options: {
@@ -203,9 +220,19 @@ async function ownCgroup(runtimeId: string): Promise<string> {
   return `/sys/fs/cgroup${relative}`;
 }
 
+export function directAgentProviderPid(
+  processes: Array<{ pid: number; parentPid: number; args: string[] }>,
+): number | undefined {
+  const pane = processes.find((entry) =>
+    entry.args.some((argument) => argument.endsWith('/pane.js')) &&
+    entry.args.includes('agent'));
+  return processes.find((entry) => entry.parentPid === pane?.pid)?.pid;
+}
+
 async function cgroupRoles(
   path: string,
-  requireShell: boolean,
+  workloadKind: 'shell' | 'agent',
+  requireWorkload: boolean,
 ): Promise<KeeperRoles | null> {
   const pids = (await readFile(`${path}/cgroup.procs`, 'utf8'))
     .split(/\s+/)
@@ -213,12 +240,16 @@ async function cgroupRoles(
     .map((value) => Number.parseInt(value, 10));
   const processes = (await Promise.all(pids.map(async (pid) => {
     try {
-      const [comm, cmdline] = await Promise.all([
+      const [comm, cmdline, status] = await Promise.all([
         readFile(`/proc/${pid}/comm`, 'utf8'),
         readFile(`/proc/${pid}/cmdline`),
+        readFile(`/proc/${pid}/status`, 'utf8'),
       ]);
+      const parentPid = /^PPid:\s+(\d+)$/m.exec(status)?.[1];
+      if (!parentPid) return null;
       return {
         pid,
+        parentPid: Number.parseInt(parentPid, 10),
         comm: comm.trim(),
         args: cmdline.toString('utf8').split('\0').filter(Boolean),
       };
@@ -231,20 +262,20 @@ async function cgroupRoles(
   }))).filter((value) => value !== null);
   const keeper = processes.find((entry) =>
     entry.args.some((argument) => argument.endsWith('/keeper.js')));
-  const zellij = processes
-    .filter((entry) =>
-      entry.comm === 'zellij' && !entry.args.includes('list-sessions'))
+  const zellij = processes.filter((entry) =>
+    entry.comm === 'zellij' && !entry.args.includes('list-sessions'))
     .sort((left, right) => left.pid - right.pid);
-  const shell = processes.find((entry) =>
-    entry.comm === 'bash' ||
-    entry.args.some((argument) => argument.endsWith('/pane.js')) &&
-      entry.args.includes('agent'));
-  if (!keeper || zellij.length < 2 || (requireShell && !shell)) return null;
+  const workloadPid = workloadKind === 'agent'
+    ? directAgentProviderPid(processes)
+    : processes.find((entry) => entry.comm === 'bash')?.pid;
+  if (!keeper || zellij.length < 2 || (requireWorkload && !workloadPid)) {
+    return null;
+  }
   return {
     keeper: keeper.pid,
     zellijClient: zellij[0].pid,
     zellijServer: zellij[1].pid,
-    shell: shell?.pid ?? 0,
+    shell: workloadPid ?? 0,
   };
 }
 
@@ -264,6 +295,11 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
     cwd: await validateKeeperCwd(DEFAULT_HOME, descriptor.cwd.path),
   };
   const cgroup = await ownCgroup(runtimeId);
+  const agentConfigurationStore = descriptor.launch.kind === 'agent'
+    ? createAgentConfigurationStore()
+    : null;
+  if (agentConfigurationStore)
+    await stageAgentConfiguration(descriptor, runtimeId, agentConfigurationStore);
   const sessionName = `matrix-t-${runtimeId}`;
   let clientAlive = true;
   let stopping = false;
@@ -276,29 +312,30 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
     descriptor.intent === 'create' ||
     descriptor.recoveryMode === 'fresh-shell';
   let confirmationGated = !requiresConfirmation;
-  const pty = spawnPty(launch.file, launch.args, {
-    name: 'xterm-256color',
-    cols: 120,
-    rows: 40,
-    cwd: launch.cwd,
-    env: launch.env,
-  });
-  pty.onData((data) => {
-    // Inspect a bounded in-memory window only; never copy terminal contents to
-    // journals or durable supervisor state.
-    renderWindow = `${renderWindow}${data}`.slice(-16_384);
-    if (
-      !confirmationGated &&
-      stripVTControlCharacters(renderWindow).includes('<ENTER> run')
-    ) {
-      confirmationGated = true;
-    }
-  });
-  pty.onExit(() => {
-    clientAlive = false;
-    if (!stopping) exitCode = 17;
-  });
+  let pty: ReturnType<typeof spawnPty> | null = null;
   try {
+    pty = spawnPty(launch.file, launch.args, {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 40,
+      cwd: launch.cwd,
+      env: launch.env,
+    });
+    pty.onData((data) => {
+      // Inspect a bounded in-memory window only; never copy terminal contents
+      // to journals or durable supervisor state.
+      renderWindow = `${renderWindow}${data}`.slice(-16_384);
+      if (
+        !confirmationGated &&
+        stripVTControlCharacters(renderWindow).includes('<ENTER> run')
+      ) {
+        confirmationGated = true;
+      }
+    });
+    pty.onExit(() => {
+      clientAlive = false;
+      if (!stopping) exitCode = 17;
+    });
     await waitForKeeperReadiness({
       runtimeId,
       requiresConfirmation,
@@ -309,7 +346,7 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
           sessionName,
           launch.env,
         ),
-        roles: await cgroupRoles(cgroup, startsFresh),
+        roles: await cgroupRoles(cgroup, descriptor.launch.kind, startsFresh),
       }),
       delay: async (milliseconds) =>
         await new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
@@ -346,7 +383,7 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
         stopping = true;
         clearInterval(monitor);
         try {
-          pty.kill();
+          pty?.kill();
         } catch (error: unknown) {
           recordKeeperFailure(error, 'terminal_keeper_stop_failed');
           exitCode = 1;
@@ -359,10 +396,17 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
   } finally {
     stopping = true;
     try {
-      pty.kill();
+      pty?.kill();
     } catch (error: unknown) {
       recordKeeperFailure(error, 'terminal_keeper_cleanup_failed');
       exitCode = 1;
+    }
+    if (agentConfigurationStore) {
+      try {
+        await agentConfigurationStore.remove(runtimeId);
+      } catch (error: unknown) {
+        recordKeeperFailure(error, 'terminal_keeper_configuration_cleanup_failed');
+      }
     }
   }
 }

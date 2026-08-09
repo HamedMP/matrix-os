@@ -19,8 +19,23 @@ import { CODEX_VERIFIED_VERSION } from '../../packages/contracts/src/index.js';
 function sha256(content: string) {
   return createHash('sha256').update(content).digest('hex');
 }
-function expectAll(source: string, values: string[]) {
-  for (const value of values) expect(source).toContain(value);
+function expectAll(source: string, values: string[]) { for (const value of values) expect(source).toContain(value); }
+function expectNone(source: string, values: string[]) { for (const value of values) expect(source).not.toContain(value); }
+function expectOrdered(source: string, values: string[]) {
+  let previous = -1;
+  for (const value of values) {
+    const index = source.indexOf(value);
+    expect(index, value).toBeGreaterThan(previous); previous = index;
+  }
+}
+function runBundledHomeSync(
+  root: string, appDir: string, homeDir: string, env: Record<string, string> = {},
+) {
+  const helper = join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets');
+  return spawnSync('bash', [helper], { cwd: root, encoding: 'utf8',
+    env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir,
+      MATRIX_NODE_BIN: process.execPath, ...env },
+  });
 }
 
 function runDevBundleGate(env: Record<string, string>) {
@@ -673,110 +688,50 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     }
   });
 
-  it('bundled home sync returns bounded phase codes without leaking paths', () => {
+  it('bundled home sync pins Node mode and returns bounded phase codes', () => {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-phase-'));
     const appDir = join(tempDir, 'app');
     const homeDir = join(tempDir, 'home');
+    const manifest = join(appDir, 'home', '.template-manifest.json');
+    const fakeNode = join(tempDir, 'node');
     try {
       mkdirSync(join(appDir, 'home'), { recursive: true });
       mkdirSync(homeDir, { recursive: true });
-      writeFileSync(join(appDir, 'home', '.template-manifest.json'), '{');
-      const templateFailure = spawnSync(
-        'bash',
-        [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')],
-        {
-          cwd: root,
-          encoding: 'utf8',
-          env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: process.execPath },
-        },
-      );
+      writeFileSync(manifest, '{');
+      const templateFailure = runBundledHomeSync(root, appDir, homeDir);
       expect(templateFailure.status).toBe(40);
       expect(templateFailure.stderr).not.toContain(tempDir);
       expect(templateFailure.stderr).not.toContain('SyntaxError');
-      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+      writeFileSync(manifest, JSON.stringify({
         'apps/notes/src/App.tsx': sha256('bundled v1'),
       }, null, 2));
       mkdirSync(join(appDir, 'home', 'apps', 'notes', 'src'), { recursive: true });
       writeFileSync(join(appDir, 'home', 'apps', 'notes', 'src', 'App.tsx'), 'bundled v1');
       writeFileSync(join(homeDir, 'apps'), 'not a directory');
-      const copyFailure = spawnSync(
-        'bash',
-        [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')],
-        {
-          cwd: root,
-          encoding: 'utf8',
-          env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: process.execPath },
-        },
-      );
+      const copyFailure = runBundledHomeSync(root, appDir, homeDir);
       expect(copyFailure.status).toBe(51);
       expect(copyFailure.stderr).not.toContain(tempDir);
       expect(copyFailure.stderr).not.toContain('ENOTDIR');
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-  it('bundled home sync pins CommonJS stdin despite inherited Node defaults', () => {
-    const root = process.cwd();
-    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-node-mode-'));
-    const appDir = join(tempDir, 'app');
-    const homeDir = join(tempDir, 'home');
-    try {
-      mkdirSync(join(appDir, 'home'), { recursive: true });
-      mkdirSync(homeDir, { recursive: true });
-      writeFileSync(join(appDir, 'home', '.template-manifest.json'), '{}\n');
-      const result = spawnSync(
-        'bash',
-        [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')],
-        {
-          cwd: root,
-          encoding: 'utf8',
-          env: {
-            ...process.env,
-            APP_DIR: appDir,
-            MATRIX_HOME: homeDir,
-            MATRIX_NODE_BIN: process.execPath,
-            NODE_OPTIONS: '--experimental-default-type=module',
-          },
-        },
-      );
+      rmSync(join(homeDir, 'apps'));
+      writeFileSync(manifest, '{}\n');
+      const result = runBundledHomeSync(root, appDir, homeDir, {
+        NODE_OPTIONS: '--experimental-default-type=module',
+      });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-  it('bundled home sync returns bounded Node startup codes', () => {
-    const root = process.cwd();
-    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-node-startup-'));
-    const appDir = join(tempDir, 'app');
-    const homeDir = join(tempDir, 'home');
-    const fakeNode = join(tempDir, 'node');
-    const helper = join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets');
-    try {
-      mkdirSync(join(appDir, 'home'), { recursive: true });
-      mkdirSync(homeDir, { recursive: true });
-      writeFileSync(join(appDir, 'home', '.template-manifest.json'), '{}\n');
-      const missing = spawnSync('bash', [helper], {
-        cwd: root,
-        encoding: 'utf8',
-        env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: join(tempDir, 'missing') },
+      const missing = runBundledHomeSync(root, appDir, homeDir, {
+        MATRIX_NODE_BIN: join(tempDir, 'missing'),
       });
       expect(missing.status).toBe(44);
       writeFileSync(fakeNode, '#!/bin/sh\nexit 1\n');
       chmodSync(fakeNode, 0o755);
-      const unusable = spawnSync('bash', [helper], {
-        cwd: root,
-        encoding: 'utf8',
-        env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: fakeNode },
-      });
+      const unusable = runBundledHomeSync(root, appDir, homeDir,
+        { MATRIX_NODE_BIN: fakeNode });
       expect(unusable.status).toBe(45);
       writeFileSync(fakeNode, '#!/bin/sh\n[ "$1" = "--version" ] && exit 0\nexit 1\n');
-      const programFailure = spawnSync('bash', [helper], {
-        cwd: root,
-        encoding: 'utf8',
-        env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: homeDir, MATRIX_NODE_BIN: fakeNode },
-      });
+      const programFailure = runBundledHomeSync(root, appDir, homeDir,
+        { MATRIX_NODE_BIN: fakeNode });
       expect(programFailure.status).toBe(46);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -1259,42 +1214,26 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('preview cleanup removes bounded legacy failed same-handle machines without adopting a live mismatched slot', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/terminal-runtime-spikes.yml'), 'utf8');
-    expect(workflow).toContain(
+    expectAll(workflow, [
       '.handle == $handle and .deletedAt == null and .status != "deleted" and\n' +
-      '              (.runtimeSlot == $handle or .status == "failed")',
-    );
-    expect(workflow).toContain(
-      'type == "array" and length <= 8',
-    );
-    expect(workflow).not.toContain('type == "array" and length >= 1 and length <= 8');
-    expect(workflow).toContain(
-      '(unique | length) == length',
-    );
-    expect(workflow).toContain(
+        '              (.runtimeSlot == $handle or .status == "failed")',
+      'type == "array" and length <= 8', '(unique | length) == length',
       'while IFS= read -r machine_id; do',
-    );
-    expect(workflow).toContain(
       'if [ "$delete_code" != 200 ] && [ "$delete_code" != 404 ]; then',
-    );
-    expect(workflow).toContain(
       '(.machineId as $machine_id | $ids | index($machine_id)) != null',
-    );
-    expect(workflow).toContain(
       '.deletedAt == null and\n                .status != "deleted"',
-    );
+    ]);
+    expect(workflow).not.toContain('type == "array" and length >= 1 and length <= 8');
   });
   it('preview VPS workflow installs the exact dormant bootstrap before registration', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-    expect(workflow).toContain('bootstrapVersion: $bootstrap');
-    expect(workflow).toContain('--arg bootstrap "$BOOTSTRAP_VERSION"');
-    expect(workflow).not.toContain('bootstrap_provisioning_host()');
-    expect(workflow).not.toContain('command:["/opt/matrix/bin/matrix-update",$version]');
-    expect(workflow).not.toContain('Pre-registration bootstrap accepted for ${HANDLE}.');
-    expect(workflow).not.toContain('bootstrap_requested=false');
-    expect(workflow).toContain("platform's 30-minute registration-token boundary");
-    expect(workflow).toContain('deadline=$((SECONDS + 1620))');
-    expect(workflow).not.toContain('bootstrap_provisioning_host "$candidate_address" "$BOOTSTRAP_VERSION"');
+    expectAll(workflow, ['bootstrapVersion: $bootstrap', '--arg bootstrap "$BOOTSTRAP_VERSION"',
+      "platform's 30-minute registration-token boundary", 'deadline=$((SECONDS + 1620))']);
+    expectNone(workflow, ['bootstrap_provisioning_host()',
+      'command:["/opt/matrix/bin/matrix-update",$version]',
+      'Pre-registration bootstrap accepted for ${HANDLE}.', 'bootstrap_requested=false',
+      'bootstrap_provisioning_host "$candidate_address" "$BOOTSTRAP_VERSION"']);
   });
   it('manual preview provisioning can use only the attested exact-head production control-plane candidate', () => {
     const root = process.cwd();
@@ -1308,10 +1247,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       '.candidateOrigin == $expectedOrigin', '.headSha == $head and .prNumber == $pr and .environment == "production"',
       'PROVISION_PLATFORM_URL="$candidate_origin"', '-X POST "${PROVISION_PLATFORM_URL}/vps/preview/provision"',
     ]);
-    expect(workflow).not.toContain('actions/workflows/preview-platform.yml/runs');
-    expect(workflow).not.toContain('PROVISION_PLATFORM_URL="https://candidate---${platform_origin#https://}"');
-    expect(workflow).not.toContain('provision_platform_url:');
-    expect(workflow).not.toContain('${{ inputs.provision_platform_url }}');
+    expectNone(workflow, ['actions/workflows/preview-platform.yml/runs',
+      'PROVISION_PLATFORM_URL="https://candidate---${platform_origin#https://}"',
+      'provision_platform_url:', '${{ inputs.provision_platform_url }}']);
   });
   it('reports durable clean-boot stages without requiring preview SSH access', () => {
     const root = process.cwd();
@@ -1320,46 +1258,29 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       join(root, 'distro/customer-vps/cloud-init.yaml'),
       'utf8',
     );
-    expect(workflow).toContain(`bootstrap_stage="$(jq -r '.bootstrapStage // "pending"' <<< "$progress_machine")"`);
-    expect(workflow).toContain('Bootstrap stage for ${HANDLE}: ${bootstrap_stage}');
-    expect(workflow).not.toContain('VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}');
-    expect(workflow).not.toContain('root@${candidate_address}');
-    const handoff = [
-      'report_bootstrap_stage restore_starting',
-      'systemctl start matrix-restore.service',
-      'report_bootstrap_stage restore_ready',
-      'chown -hR matrix:matrix /home/matrix/home',
-      'report_bootstrap_stage gateway_starting',
-      'report_bootstrap_stage gateway_preflight_checking_exec',
-      'report_bootstrap_stage gateway_preflight_checking_paths',
+    expectAll(workflow, [`bootstrap_stage="$(jq -r '.bootstrapStage // "pending"' <<< "$progress_machine")"`,
+      'Bootstrap stage for ${HANDLE}: ${bootstrap_stage}']);
+    expectNone(workflow, ['VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}',
+      'root@${candidate_address}']);
+    expectOrdered(cloudInit, [
+      'report_bootstrap_stage restore_starting', 'systemctl start matrix-restore.service',
+      'report_bootstrap_stage restore_ready', 'chown -hR matrix:matrix /home/matrix/home',
+      'report_bootstrap_stage gateway_starting', 'report_bootstrap_stage gateway_preflight_checking_exec', 'report_bootstrap_stage gateway_preflight_checking_paths',
       'report_bootstrap_stage gateway_preflight_checking_environment',
-      'report_bootstrap_stage gateway_preflight_ready',
-      'systemctl start --no-block matrix-gateway.service',
-      'report_bootstrap_stage gateway_unit_started',
-      'systemctl start matrix-shell.service matrix-symphony.service',
-    ];
-    let previousIndex = -1;
-    for (const marker of handoff) {
-      const index = cloudInit.indexOf(marker);
-      expect(index, marker).toBeGreaterThan(previousIndex);
-      previousIndex = index;
-    }
-    expect(cloudInit).not.toContain(
+      'report_bootstrap_stage gateway_preflight_ready', 'systemctl start --no-block matrix-gateway.service',
+      'report_bootstrap_stage gateway_unit_started', 'systemctl start matrix-shell.service matrix-symphony.service',
+    ]);
+    expectNone(cloudInit, [
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service',
-    );
-    expect(cloudInit).toContain('200) printf \'gateway_unit_failed_chdir\'');
-    expect(cloudInit).toContain('203) printf \'gateway_unit_failed_exec\'');
-    expect(cloudInit).toContain('216) printf \'gateway_unit_failed_group\'');
-    expect(cloudInit).toContain('217) printf \'gateway_unit_failed_user\'');
-    expect(cloudInit).toContain("timeout) printf 'gateway_unit_failed_timeout'");
-    expect(cloudInit).toContain("resources) printf 'gateway_unit_failed_resource'");
-    expect(cloudInit).toContain("signal|core-dump) printf 'gateway_unit_failed_signal'");
-    expect(cloudInit).toContain("exit-code) printf 'gateway_unit_failed_exit'");
-    expect(cloudInit).toContain("*) printf 'gateway_unit_failed_other'");
-    expect(cloudInit).toContain(
+      'runuser -u matrix -- test',
+    ]);
+    expectAll(cloudInit, ['200) printf \'gateway_unit_failed_chdir\'',
+      '203) printf \'gateway_unit_failed_exec\'', '216) printf \'gateway_unit_failed_group\'',
+      '217) printf \'gateway_unit_failed_user\'', "timeout) printf 'gateway_unit_failed_timeout'",
+      "resources) printf 'gateway_unit_failed_resource'", "signal|core-dump) printf 'gateway_unit_failed_signal'",
+      "exit-code) printf 'gateway_unit_failed_exit'", "*) printf 'gateway_unit_failed_other'",
       'timeout 5s setpriv --reuid=matrix --regid=matrix --init-groups -- test -x /opt/matrix/bin/matrix-gateway',
-    );
-    expect(cloudInit).not.toContain('runuser -u matrix -- test');
+    ]);
   });
   it('publishes bounded gateway registration phases from the exact preview bootstrap', () => {
     const root = process.cwd();
@@ -1382,11 +1303,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       'report_bootstrap_stage gateway_home_assets_failed_template', 'report_bootstrap_stage gateway_home_assets_failed_home',
       'report_bootstrap_stage gateway_home_assets_failed_copy', 'report_bootstrap_stage gateway_home_assets_failed_commit',
     ]);
-    for (const status of [1, 2, 9, 47, 48, 49, 50, 51, 125, 126, 127, 134, 139, 143]) {
-      expect(gateway).toMatch(
-        new RegExp(`${status}\\) report_bootstrap_stage gateway_home_assets_failed_status_${status}`),
-      );
-    }
+    for (const status of [1, 2, 9, 47, 48, 49, 50, 51, 125, 126, 127, 134, 139, 143])
+      expect(gateway).toContain(`${status}) report_bootstrap_stage gateway_home_assets_failed_status_${status}`);
     expectAll(gateway, [
       'report_bootstrap_stage gateway_home_assets_failed_other', 'report_bootstrap_stage gateway_home_assets_timed_out',
       'report_bootstrap_stage gateway_home_assets_ready', 'report_bootstrap_stage gateway_home_ownership_started',
@@ -1396,35 +1314,21 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       'gateway_health_ready=true', '[ "$gateway_health_ready" = true ]',
       "printf 'header = \"authorization: Bearer %s\"\\n'", 'curl --config -',
     ]);
-    expect(gateway.indexOf('report_bootstrap_stage gateway_wrapper_started')).toBeLessThan(
-      gateway.indexOf('source /opt/matrix/env/postgres.env'),
-    );
+    expect(gateway.indexOf('report_bootstrap_stage gateway_wrapper_started'))
+      .toBeLessThan(gateway.indexOf('source /opt/matrix/env/postgres.env'));
     expect(gateway.indexOf('report_bootstrap_stage gateway_wrapper_started')).toBeLessThan(
       gateway.indexOf('source /opt/matrix/bin/matrix-owner-env'),
     );
-    expect(gateway.indexOf('report_bootstrap_stage gateway_environment_ready')).toBeLessThan(
-      gateway.indexOf('report_bootstrap_stage gateway_home_sync_started'),
-    );
-    expect(gateway.indexOf('report_bootstrap_stage gateway_home_sync_started')).toBeLessThan(
-      gateway.indexOf('\nsync_bundled_home_assets\n'),
-    );
-    expect(gateway).toMatch(/40\) report_bootstrap_stage gateway_home_assets_failed_template/);
-    expect(gateway).toMatch(/41\) report_bootstrap_stage gateway_home_assets_failed_home/);
-    expect(gateway).toMatch(/42\) report_bootstrap_stage gateway_home_assets_failed_copy/);
-    expect(gateway).toMatch(/43\) report_bootstrap_stage gateway_home_assets_failed_commit/);
-    expect(gateway).toMatch(/44\) report_bootstrap_stage gateway_home_assets_failed_node_missing/);
-    expect(gateway).toMatch(/45\) report_bootstrap_stage gateway_home_assets_failed_node_unusable/);
-    expect(gateway).toMatch(/46\) report_bootstrap_stage gateway_home_assets_failed_node_program/);
-    expect(gateway).toMatch(/124\|137\) report_bootstrap_stage gateway_home_assets_timed_out/);
-    expect(gateway.indexOf('report_bootstrap_stage gateway_home_assets_ready')).toBeLessThan(
-      gateway.indexOf('report_bootstrap_stage gateway_home_ownership_started'),
-    );
-    expect(gateway.indexOf('report_bootstrap_stage gateway_home_ownership_started')).toBeLessThan(
-      gateway.indexOf('chown -R matrix:matrix'),
-    );
-    expect(gateway.indexOf('chown -R matrix:matrix')).toBeLessThan(
-      gateway.indexOf('report_bootstrap_stage gateway_home_ownership_ready'),
-    );
+    expectOrdered(gateway, ['report_bootstrap_stage gateway_environment_ready',
+      'report_bootstrap_stage gateway_home_sync_started', '\nsync_bundled_home_assets\n']);
+    expectAll(gateway, ['40) report_bootstrap_stage gateway_home_assets_failed_template',
+      '41) report_bootstrap_stage gateway_home_assets_failed_home', '42) report_bootstrap_stage gateway_home_assets_failed_copy',
+      '43) report_bootstrap_stage gateway_home_assets_failed_commit', '44) report_bootstrap_stage gateway_home_assets_failed_node_missing',
+      '45) report_bootstrap_stage gateway_home_assets_failed_node_unusable', '46) report_bootstrap_stage gateway_home_assets_failed_node_program',
+      '124|137) report_bootstrap_stage gateway_home_assets_timed_out']);
+    expectOrdered(gateway, ['report_bootstrap_stage gateway_home_assets_ready',
+      'report_bootstrap_stage gateway_home_ownership_started',
+      'chown -R matrix:matrix', 'report_bootstrap_stage gateway_home_ownership_ready']);
     expect(gateway).not.toContain('-H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}"');
   });
   it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {

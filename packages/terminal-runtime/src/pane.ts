@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { type Stats } from 'node:fs';
-import { type FileHandle, lstat, open, unlink } from 'node:fs/promises';
+import { type FileHandle, lstat, open, readFile, unlink } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import {
   AgentConfigurationSchema,
-  OperationIdSchema,
+  RuntimeIdSchema,
   type AgentConfiguration,
 } from './contracts.js';
 import {
@@ -296,8 +296,8 @@ export async function runPane(kind: string | undefined): Promise<number> {
     });
   }
   if (kind !== 'agent') return 64;
-  const configurationRef = OperationIdSchema.parse(
-    process.env.MATRIX_TERMINAL_CONFIGURATION_REF,
+  const configurationRef = runtimeIdFromCgroup(
+    await readFile('/proc/self/cgroup', 'utf8'),
   );
   const store = createAgentConfigurationStore();
   const configuration = await store.claim(configurationRef);
@@ -306,15 +306,24 @@ export async function runPane(kind: string | undefined): Promise<number> {
   return await waitForChild(buildProviderLaunch(configuration), spawn, payloadPath);
 }
 
-export async function runPaneEntrypoint(kind: string | undefined, run = runPane): Promise<number> {
+export function runtimeIdFromCgroup(membership: string): string {
+  const unified = membership.split(/\r?\n/)
+    .filter((line) => line.startsWith('0::'));
+  if (unified.length !== 1 || unified[0].includes('..')) {
+    throw new Error('agent_cgroup_invalid');
+  }
+  const match = /(?:^|\/)matrix-terminal\.slice\/matrix-terminal-session@([0-9a-f]{32})\.service$/
+    .exec(unified[0].slice(3));
+  if (!match) throw new Error('agent_cgroup_invalid');
+  return RuntimeIdSchema.parse(match[1]);
+}
+
+async function runPaneEntrypoint(kind: string | undefined): Promise<number> {
   try {
-    const code = await run(kind);
-    if (kind === 'agent' && code !== 0)
-      process.stderr.write('terminal_pane_agent_exited\n');
-    return code;
+    return await runPane(kind);
   } catch (error: unknown) {
     const suffix = error instanceof Error ? '' : '_non_error';
-    process.stderr.write(`terminal_pane_start_failed${suffix}\n`);
+    process.stderr.write(`terminal_pane_failed${suffix}\n`);
     return 16;
   }
 }
