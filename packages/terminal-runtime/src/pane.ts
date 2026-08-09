@@ -306,6 +306,19 @@ export async function runPane(kind: string | undefined): Promise<number> {
   return await waitForChild(buildProviderLaunch(configuration), spawn, payloadPath);
 }
 
+export async function runPaneEntrypoint(kind: string | undefined, run = runPane): Promise<number> {
+  try {
+    const code = await run(kind);
+    if (kind === 'agent' && code !== 0)
+      process.stderr.write('terminal_pane_agent_exited\n');
+    return code;
+  } catch (error: unknown) {
+    const suffix = error instanceof Error ? '' : '_non_error';
+    process.stderr.write(`terminal_pane_start_failed${suffix}\n`);
+    return 16;
+  }
+}
+
 if (process.argv[1]?.endsWith('/pane.js')) {
-  process.exitCode = await runPane(process.argv[2]);
+  process.exitCode = await runPaneEntrypoint(process.argv[2]);
 }

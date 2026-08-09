@@ -345,7 +345,7 @@ case "$operation" in
     diagnostic="$(owner_probe find-shell "$head_sha" "$run_nonce" 2>/dev/null || true)"
     runtime_id="$(printf '%s' "$diagnostic" | json_field runtimeId 2>/dev/null || true)"
     lifecycle="$(printf '%s' "$diagnostic" | json_field lifecycleState 2>/dev/null || true)"
-    result=unavailable; main_code=unavailable; main_status=unavailable; keeper_code=unavailable
+    result=unavailable; main_code=unavailable; main_status=unavailable; keeper_code=unavailable; pane_code=unavailable
     if [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]; then
       unit="${unit_prefix}${runtime_id}.service"
       show="$(systemctl_read show "$unit" -p Result -p ExecMainCode -p ExecMainStatus --value 2>/dev/null || true)"
@@ -357,9 +357,15 @@ case "$operation" in
         grep -E '^terminal_keeper_[a-z0-9_]{1,96}$' | tail -n 1 || true)"
       [[ "$keeper_code" =~ ^terminal_keeper_[a-z0-9_]{1,96}$ ]] || keeper_code=unavailable
     fi
+    agent_runtime_id="$(cat "$state_root/agent-runtime-id" 2>/dev/null || true)"
+    if [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]; then
+      pane_code="$(journalctl -u "${unit_prefix}${agent_runtime_id}.service" --since=-10min --no-pager --output=cat 2>/dev/null |
+        grep -E '^terminal_pane_(agent_exited|start_failed(_non_error)?)$' | tail -n 1 || true)"
+      [[ "$pane_code" =~ ^terminal_pane_(agent_exited|start_failed(_non_error)?)$ ]] || pane_code=unavailable
+    fi
     [[ "$lifecycle" =~ ^[a-z_]{1,32}$ ]] || lifecycle=unavailable
-    printf 'production_acceptance_diagnostic=%s,%s,%s,%s,%s\n' \
-      "$lifecycle" "$result" "$main_code" "$main_status" "$keeper_code"
+    printf 'production_acceptance_diagnostic=%s,%s,%s,%s,%s,%s\n' \
+      "$lifecycle" "$result" "$main_code" "$main_status" "$keeper_code" "$pane_code"
     ;;
   reboot)
     [ "$(cat "$state_file")" = phase1-ready ]

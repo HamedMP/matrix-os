@@ -13,7 +13,7 @@ import {
 import {
   unitNameForRuntimeId,
 } from '../../packages/terminal-runtime/src/contracts.js';
-import { buildProviderLaunch } from '../../packages/terminal-runtime/src/pane.js';
+import { buildProviderLaunch, runPaneEntrypoint } from '../../packages/terminal-runtime/src/pane.js';
 import {
   decodePeerCredentials,
   handleSupervisorFrame,
@@ -201,6 +201,21 @@ describe('terminal runtime service boundary', () => {
       }
     },
   );
+
+  it('reports bounded agent pane failures without exposing the error', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await expect(runPaneEntrypoint('agent', async () => 23)).resolves.toBe(23);
+      expect(write).toHaveBeenCalledWith('terminal_pane_agent_exited\n');
+      write.mockClear();
+      await expect(runPaneEntrypoint('agent', async () => {
+        throw new Error('/private/provider/path');
+      })).resolves.toBe(16);
+      expect(write).toHaveBeenCalledWith('terminal_pane_start_failed\n');
+    } finally {
+      write.mockRestore();
+    }
+  });
 
   it('rejects Claude on-failure approval in supervised mode', () => {
     expect(() => buildProviderLaunch({
