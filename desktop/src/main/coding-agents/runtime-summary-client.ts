@@ -14,6 +14,7 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ProjectAgentWorkspaceSchema,
+  ProviderUsageResponseSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
@@ -37,6 +38,7 @@ import {
   type FileWriteRequest,
   type FileWriteResponse,
   type ProjectAgentWorkspace,
+  type ProviderUsageResponse,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -56,6 +58,7 @@ import {
 } from "../../shared/coding-agent-project-workspace";
 
 const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
+const PROVIDER_USAGE_TIMEOUT_MS = 10_000;
 const PROJECT_WORKSPACE_TIMEOUT_MS = 10_000;
 const NOTIFICATION_PREFERENCES_TIMEOUT_MS = 10_000;
 const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
@@ -80,6 +83,9 @@ const NotificationPreferencesResponseSchema = z.object({
 }).strict();
 const CreateAgentTurnErrorEnvelopeSchema = z.object({
   error: CreateAgentTurnErrorSchema,
+}).strict();
+const ProviderUsageRequestOptionsSchema = z.object({
+  forceRefresh: z.boolean().optional(),
 }).strict();
 
 export type CodingAgentCreateTurnResult =
@@ -157,6 +163,37 @@ export async function fetchCodingAgentRuntimeSummary(
     throw new Error("runtime summary unavailable");
   }
   return parsed.data;
+}
+
+export async function fetchCodingAgentProviderUsage(
+  auth: AuthService,
+  options: { forceRefresh?: boolean } = {},
+  fetchFn: FetchFn = fetch,
+): Promise<ProviderUsageResponse> {
+  const token = auth.getToken();
+  const parsedOptions = ProviderUsageRequestOptionsSchema.safeParse(options);
+  if (!token || !parsedOptions.success) {
+    throw new Error("provider usage unavailable");
+  }
+
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/usage");
+  if (parsedOptions.data.forceRefresh) url.searchParams.set("refresh", "1");
+  try {
+    const response = await fetchFn(url.toString(), {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(PROVIDER_USAGE_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error("provider usage unavailable");
+    const parsed = ProviderUsageResponseSchema.safeParse(await response.json());
+    if (!parsed.success) throw new Error("provider usage unavailable");
+    return parsed.data;
+  } catch {
+    throw new Error("provider usage unavailable");
+  }
 }
 
 export async function fetchCodingAgentProjectWorkspace(

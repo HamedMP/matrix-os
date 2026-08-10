@@ -24,6 +24,7 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ProjectAgentWorkspaceSchema,
+  ProviderUsageResponseSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   MatrixComputerListSchema,
@@ -154,6 +155,10 @@ export const INVOKE_CHANNELS = {
   "runtime:get-summary": {
     request: Empty,
     response: RuntimeSummarySchema,
+  },
+  "runtime:get-provider-usage": {
+    request: z.object({ forceRefresh: z.boolean().optional() }).strict(),
+    response: ProviderUsageResponseSchema,
   },
   "runtime:get-project-workspace": {
     request: CodingAgentProjectWorkspaceRequestSchema,

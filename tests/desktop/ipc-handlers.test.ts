@@ -37,6 +37,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     onRuntimeChanged: vi.fn(),
     getUpdateStatus: vi.fn(() => "disabled"),
     fetchRuntimeSummary: vi.fn(),
+    fetchProviderUsage: vi.fn(),
     fetchProjectWorkspace: vi.fn(),
     fetchReviewSummaries: vi.fn(),
     fetchReviewSnapshot: vi.fn(),
@@ -186,6 +187,59 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-summary")).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-summary")).rejects.not.toThrow("10.0.0.5");
+  });
+
+  it("returns strict provider usage and rejects credential-bearing requests", async () => {
+    const response = {
+      usageSources: [{
+        id: "openai-chatgpt",
+        displayName: "OpenAI / ChatGPT",
+        linkedAgentProviderIds: ["codex"],
+        state: "available",
+        accuracy: "provider_reported",
+        windows: [{ id: "primary", label: "5-hour window", remainingPercent: 72 }],
+        observedAt: "2026-08-10T12:00:00.000Z",
+        setupActions: [],
+      }],
+      serverTime: "2026-08-10T12:00:00.000Z",
+    };
+    const fetchProviderUsage = vi.fn().mockResolvedValue(response);
+    const harness = makeHarness({ fetchProviderUsage } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-provider-usage", { forceRefresh: true }))
+      .resolves.toEqual(response);
+    expect(fetchProviderUsage).toHaveBeenCalledOnce();
+    expect(fetchProviderUsage).toHaveBeenCalledWith({ forceRefresh: true });
+    await expect(harness.invoke("runtime:get-provider-usage", {
+      forceRefresh: true,
+      bearerToken: "secret",
+    })).rejects.toThrow("invalid request");
+  });
+
+  it("maps provider usage failures and invalid output to generic IPC errors", async () => {
+    const failing = makeHarness({
+      fetchProviderUsage: vi.fn().mockRejectedValue(
+        new Error("provider token failed at /home/private"),
+      ),
+    } as Partial<HandlerContext>);
+    const invalid = makeHarness({
+      fetchProviderUsage: vi.fn().mockResolvedValue({
+        usageSources: [{
+          id: "openai-chatgpt",
+          displayName: "OpenAI / ChatGPT",
+          linkedAgentProviderIds: ["codex"],
+          state: "available",
+          accuracy: "provider_reported",
+          windows: [{ id: "primary", label: "5-hour window", remainingPercent: 120 }],
+          setupActions: [],
+        }],
+        serverTime: "2026-08-10T12:00:00.000Z",
+      }),
+    } as Partial<HandlerContext>);
+
+    await expect(failing.invoke("runtime:get-provider-usage")).rejects.toThrow("internal error");
+    await expect(failing.invoke("runtime:get-provider-usage")).rejects.not.toThrow("/home/private");
+    await expect(invalid.invoke("runtime:get-provider-usage")).rejects.toThrow("internal error");
   });
 
   it("DT-001 returns a project workspace through strict trusted-core IPC", async () => {

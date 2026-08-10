@@ -9,6 +9,7 @@ import {
   fetchCodingAgentFileContent,
   fetchCodingAgentFileSearch,
   fetchCodingAgentNotificationPreferences,
+  fetchCodingAgentProviderUsage,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   prepareCodingAgentSourceCommit,
@@ -149,6 +150,107 @@ function projectWorkspaceBody() {
     updatedAt: "2026-07-10T12:00:00.000Z",
   };
 }
+
+function providerUsageBody() {
+  return {
+    usageSources: [{
+      id: "openai-chatgpt",
+      displayName: "OpenAI / ChatGPT",
+      linkedAgentProviderIds: ["codex"],
+      state: "available",
+      accuracy: "provider_reported",
+      windows: [{
+        id: "primary",
+        label: "5-hour window",
+        remainingPercent: 72,
+        resetsAt: "2026-08-10T16:00:00.000Z",
+        windowMinutes: 300,
+      }],
+      observedAt: "2026-08-10T12:00:00.000Z",
+      expiresAt: "2026-08-10T12:05:00.000Z",
+      setupActions: [],
+    }],
+    serverTime: "2026-08-10T12:00:00.000Z",
+  };
+}
+
+describe("coding agent provider usage client", () => {
+  it("fetches strict provider usage for the selected runtime", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(providerUsageBody()), { status: 200 }),
+    );
+
+    const response = await fetchCodingAgentProviderUsage(auth("secondary"), {}, fetchFn);
+
+    expect(response).toEqual(providerUsageBody());
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/usage?runtime=secondary",
+      expect.objectContaining({
+        method: "GET",
+        headers: {
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+        },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("adds refresh=1 only for an explicit forced refresh", async () => {
+    const fetchFn = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify(providerUsageBody()), { status: 200 })
+    );
+
+    await fetchCodingAgentProviderUsage(auth("secondary"), { forceRefresh: true }, fetchFn);
+    await fetchCodingAgentProviderUsage(auth("secondary"), {}, fetchFn);
+
+    expect(fetchFn.mock.calls[0]?.[0]).toBe(
+      "https://runtime.test/api/coding-agents/usage?runtime=secondary&refresh=1",
+    );
+    expect(fetchFn.mock.calls[1]?.[0]).toBe(
+      "https://runtime.test/api/coding-agents/usage?runtime=secondary",
+    );
+  });
+
+  it.each([
+    { ...providerUsageBody(), accessToken: "secret" },
+    {
+      ...providerUsageBody(),
+      usageSources: [{ ...providerUsageBody().usageSources[0], rawProviderError: "/home/private" }],
+    },
+    {
+      ...providerUsageBody(),
+      usageSources: [{
+        ...providerUsageBody().usageSources[0],
+        windows: [{ ...providerUsageBody().usageSources[0]!.windows[0], remainingPercent: 120 }],
+      }],
+    },
+  ])("rejects unsafe or malformed provider responses", async (body) => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(body), { status: 200 }),
+    );
+
+    await expect(fetchCodingAgentProviderUsage(auth(), {}, fetchFn))
+      .rejects.toThrow("provider usage unavailable");
+  });
+
+  it("maps missing auth and non-success responses to one generic error", async () => {
+    const missingAuth = {
+      ...auth(),
+      getToken: () => null,
+    } as unknown as AuthService;
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response("provider token failed at /home/private", { status: 503 }),
+    );
+
+    await expect(fetchCodingAgentProviderUsage(missingAuth, {}, fetchFn))
+      .rejects.toThrow("provider usage unavailable");
+    await expect(fetchCodingAgentProviderUsage(auth(), {}, fetchFn))
+      .rejects.toThrow("provider usage unavailable");
+    await expect(fetchCodingAgentProviderUsage(auth(), {}, fetchFn))
+      .rejects.not.toThrow(/provider token|\/home\/private/);
+  });
+});
 
 function sourceCommitBody() {
   return {

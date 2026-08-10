@@ -6,7 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
-import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
+import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ProviderUsageResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
@@ -29,6 +29,9 @@ export interface HandlerContext {
   onRuntimeChanged: (slot: string) => void;
   getUpdateStatus: () => UpdateStatus;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
+  fetchProviderUsage: (
+    options: { forceRefresh?: boolean },
+  ) => Promise<ProviderUsageResponse>;
   fetchProjectWorkspace: (
     request: CodingAgentProjectWorkspaceRequest,
   ) => Promise<ProjectAgentWorkspace>;
@@ -151,6 +154,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
   handle("runtime:get-summary", () => ctx.fetchRuntimeSummary());
+  handle("runtime:get-provider-usage", (request) => ctx.fetchProviderUsage(request));
   handle("runtime:get-project-workspace", (request) => ctx.fetchProjectWorkspace(request));
   handle("runtime:get-notification-preferences", () => ctx.fetchNotificationPreferences());
   handle("runtime:update-notification-preferences", (request) => ctx.updateNotificationPreferences(request));
