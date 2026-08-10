@@ -5,6 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -22,9 +24,15 @@ import { useBrowserViewPreference } from "./browser-view-preference";
 import {
   BrowserToolbar,
   EntryButton,
+  hasRegularDroppedFiles,
   measureGridColumns,
+  regularDroppedFiles,
   SortHeader,
 } from "./browser-views";
+import {
+  createFileUploadController,
+  type FileUploadRow,
+} from "./file-upload-controller";
 
 type BrowserStatus = "loading" | "ready" | "error";
 
@@ -76,6 +84,11 @@ export default function ComputerFileBrowser({
   // <body>, arrow keys stop working, and a keyboard user is stranded outside
   // the listing with no way back in except the mouse.
   const restoreFocusRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dragDepth = useRef(0);
+  const uploadControllerRef = useRef<ReturnType<typeof createFileUploadController> | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [uploads, setUploads] = useState<FileUploadRow[]>([]);
 
   const markFocusForRestore = useCallback(() => {
     const active = document.activeElement;
@@ -87,6 +100,10 @@ export default function ComputerFileBrowser({
   // or replacement session never shows the previous owner's directory names or
   // lets stale rows fire onOpenFile/onChooseFolder against the new API.
   const browserScope = `${runtimeSlot}|${authGeneration}`;
+  const scopeRef = useRef(browserScope);
+  const currentPathRef = useRef(currentPath);
+  scopeRef.current = browserScope;
+  currentPathRef.current = currentPath;
   const [loadedScope, setLoadedScope] = useState(browserScope);
   const scoped = loadedScope === browserScope;
   const viewCurrentPath = scoped ? currentPath : "";
@@ -126,6 +143,48 @@ export default function ComputerFileBrowser({
       setError(toUserMessage(err));
     }
   }, [api]);
+
+  useEffect(() => {
+    if (!api || mode !== "browse") {
+      uploadControllerRef.current = null;
+      setUploads([]);
+      return;
+    }
+    const controller = createFileUploadController({
+      api,
+      getScope: () => scopeRef.current,
+      onUploaded: (directory) => {
+        if (directory === currentPathRef.current) void load(directory);
+      },
+    });
+    uploadControllerRef.current = controller;
+    const unsubscribe = controller.subscribe(setUploads);
+    return () => {
+      if (uploadControllerRef.current === controller) uploadControllerRef.current = null;
+      unsubscribe();
+      controller.dispose();
+    };
+  }, [api, browserScope, load, mode]);
+
+  const enqueueFiles = useCallback((files: File[], destination = viewCurrentPath) => {
+    uploadControllerRef.current?.enqueue(files, destination);
+  }, [viewCurrentPath]);
+
+  const onListingDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (mode !== "browse" || !hasRegularDroppedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragActive(false);
+    enqueueFiles(regularDroppedFiles(event.dataTransfer));
+  }, [enqueueFiles, mode]);
+
+  const onListingPaste = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
+    if (mode !== "browse") return;
+    const files = Array.from(event.clipboardData.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    enqueueFiles(files);
+  }, [enqueueFiles, mode]);
 
   useEffect(() => {
     setLoadedScope(browserScope);
@@ -276,6 +335,9 @@ export default function ComputerFileBrowser({
             if (entry.type === "directory") navigate(path);
           }}
           onKeyDown={(event) => onEntryKeyDown(event, entry, path, index)}
+          onDropFiles={mode === "browse" && entry.type === "directory"
+            ? (files) => enqueueFiles(files, path)
+            : undefined}
         />
       );
     });
@@ -340,9 +402,66 @@ export default function ComputerFileBrowser({
         onUp={goUp}
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
+        onUpload={mode === "browse" ? () => fileInputRef.current?.click() : undefined}
       />
 
-      <div className={`${compact ? "h-52" : "min-h-0 flex-1"} overflow-y-auto p-1.5`}>{content}</div>
+      {mode === "browse" ? (
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="sr-only"
+          aria-label="Choose files to upload"
+          onChange={(event) => {
+            enqueueFiles(Array.from(event.currentTarget.files ?? []));
+            event.currentTarget.value = "";
+          }}
+        />
+      ) : null}
+      <div
+        data-files-listing
+        className={`${compact ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto p-1.5`}
+        onDragEnter={mode === "browse" ? (event) => {
+          if (!hasRegularDroppedFiles(event.dataTransfer)) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          setDragActive(true);
+        } : undefined}
+        onDragLeave={mode === "browse" ? () => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragActive(false);
+        } : undefined}
+        onDragOver={mode === "browse" ? (event) => {
+          if (hasRegularDroppedFiles(event.dataTransfer)) event.preventDefault();
+        } : undefined}
+        onDrop={mode === "browse" ? onListingDrop : undefined}
+        onPaste={mode === "browse" ? onListingPaste : undefined}
+      >
+        {content}
+        {dragActive ? (
+          <div className="pointer-events-none absolute inset-2 flex items-center justify-center rounded-lg border border-dashed text-sm" style={{ borderColor: "var(--accent)", color: "var(--accent)", background: "var(--bg-surface)" }}>
+            Drop files to upload
+          </div>
+        ) : null}
+      </div>
+
+      {uploads.length > 0 ? (
+        <div className="shrink-0 space-y-1 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }} aria-live="polite">
+          {uploads.slice(0, 4).map((upload) => (
+            <div key={upload.id} className="flex min-h-7 items-center justify-between gap-2">
+              <span className="min-w-0 truncate">{upload.name}: {upload.error ?? upload.status}</span>
+              {upload.status === "failed" ? (
+                <span className="flex shrink-0 items-center gap-1">
+                  {upload.error !== "Files are limited to 10 MB." ? (
+                    <Button variant="subtle" className="h-7 text-xs" onClick={() => uploadControllerRef.current?.retry(upload.id)}>Retry</Button>
+                  ) : null}
+                  <Button variant="ghost" className="h-7 text-xs" onClick={() => uploadControllerRef.current?.remove(upload.id)}>Remove</Button>
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {onChooseFolder ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>

@@ -12,6 +12,8 @@ import { useDraftChat } from "../../stores/draft-chat";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useProviderPreferences } from "../settings/provider-preferences";
 import { PromptInput } from "../chat/elements/prompt-input";
+import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
+import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
 import { AgentComposerPickers } from "../coding-agents/composer-pickers";
 import { capabilityEnabled } from "../coding-agents/capabilities";
 import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
@@ -75,6 +77,7 @@ export function ProjectChatDraft({
     return seed ? mergeComposerSeed(initialDraft, seed.draft) : initialDraft;
   });
   const providerSelectionTouchedRef = useRef(restoredEntry?.pickerTouched ?? false);
+  const attachments = useConversationAttachments();
 
   useEffect(() => {
     const store = useDraftChat.getState();
@@ -145,7 +148,7 @@ export function ProjectChatDraft({
   async function submit() {
     if (submitting || submitInFlightRef.current) return;
     let effective = effectiveDraft;
-    if (!effective.prompt.trim()) return;
+    if (!effective.prompt.trim() && attachments.items.length === 0) return;
     submitInFlightRef.current = true;
     setResolvingTarget(true);
     try {
@@ -162,7 +165,14 @@ export function ProjectChatDraft({
         effective = { ...effective, ...relation };
         setDraft(effective);
       }
-      const threadId = await createThread(effective);
+      const uploaded = await attachments.uploadAll();
+      if (!uploaded.ok) return;
+      const prompt = effective.prompt.trim() || "Please inspect the attached files.";
+      const threadId = await createThread({
+        ...effective,
+        prompt,
+        ...(uploaded.attachments.length > 0 ? { attachments: uploaded.attachments } : {}),
+      });
       if (!threadId) {
         // Keep the prompt for retry; drop one-shot launch context (review
         // references, task targeting) exactly like the legacy form did.
@@ -172,6 +182,7 @@ export function ProjectChatDraft({
       providerSelectionTouchedRef.current = false;
       useDraftChat.getState().clearDraft(projectId);
       setDraft(initialDraft);
+      attachments.clear();
       onCreated();
     } finally {
       submitInFlightRef.current = false;
@@ -181,7 +192,7 @@ export function ProjectChatDraft({
 
   const selectedProvider = summary.providers.find((provider) => provider.id === effectiveDraft.providerId)
     ?? summary.providers[0];
-  const promptEmpty = effectiveDraft.prompt.trim().length === 0;
+  const promptEmpty = effectiveDraft.prompt.trim().length === 0 && attachments.items.length === 0;
 
   return (
     <section
@@ -189,6 +200,7 @@ export function ProjectChatDraft({
       className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden"
       style={{ background: "var(--bg-app)" }}
       data-slot="project-chat-draft"
+      {...attachments.paneProps}
     >
       <ProjectChatHero
         projectLabel={projectLabel}
@@ -211,6 +223,14 @@ export function ProjectChatDraft({
               onSubmit={() => void submit()}
               busy={busy}
               disabled={busy}
+              canSubmit={!busy && (effectiveDraft.prompt.trim().length > 0 || attachments.items.length > 0)}
+              attachments={(
+                <AttachmentPreviewRow
+                  items={attachments.items}
+                  onRemove={attachments.remove}
+                  onRetry={(localId) => void attachments.retry(localId)}
+                />
+              )}
               autoFocus={active}
               focusRequestId={active ? focusRequestId + localFocusBumps : 0}
               maxLength={24_000}

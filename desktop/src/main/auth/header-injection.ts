@@ -172,7 +172,9 @@ export function installGatewayCors(
     if (isGatewayResponse) {
       responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
       responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
-      responseHeaders["Access-Control-Allow-Headers"] = ["Authorization, Content-Type, x-runtime-slot"];
+      responseHeaders["Access-Control-Allow-Headers"] = [
+        "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename",
+      ];
       responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
     }
     if (isGatewayResponse && details.method === "OPTIONS") {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
@@ -89,6 +90,14 @@ describe("ChatTab", () => {
     useProjectView.setState({ entries: {}, runtimeScope: null });
     useProjectWorkspaces.setState({ entries: {} });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      authGeneration: 1,
+      api: null,
+    });
     Object.defineProperty(window, "operator", {
       configurable: true,
       value: {
@@ -184,5 +193,63 @@ describe("ChatTab", () => {
 
     expect(screen.queryByTestId("thread-view")).toBeNull();
     expect(screen.getByText("hello")).toBeTruthy();
+  });
+
+  it("previews pasted files horizontally, uploads on Send, and sends Hermes readable paths", async () => {
+    const send = vi.fn();
+    const putBytes = vi.fn(async (path: string, file: File) => ({
+      ok: true,
+      path: decodeURIComponent(path.split("path=")[1] ?? ""),
+      size: file.size,
+    }));
+    useHermesChat.setState({ messages: [], status: "idle", send, abort: vi.fn() });
+    useConnection.setState({ api: { putBytes } as never });
+    render(<React.StrictMode><ChatTab /></React.StrictMode>);
+
+    const pane = screen.getByRole("region", { name: "Hermes conversation" });
+    const pasted = new File(["screen"], "screen.png", { type: "image/png" });
+    fireEvent.paste(pane, { clipboardData: { files: [pasted] } });
+
+    expect(await screen.findByRole("button", { name: "Remove screen.png" })).toBeTruthy();
+    const previewRow = screen.getByRole("group", { name: "Attachments" });
+    expect(previewRow.className).toContain("overflow-x-auto");
+    const input = screen.getByLabelText("Do anything");
+    fireEvent.change(input, { target: { value: "Review this screenshot" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(putBytes).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(send).toHaveBeenCalledWith(expect.stringMatching(
+      /^Review this screenshot\n\nAttached files[\s\S]*~\/uploads\/desktop-chat\/[A-Za-z0-9]+-screen\.png \(\/home\/matrix\/home\/uploads\/desktop-chat\/[A-Za-z0-9]+-screen\.png\)$/,
+    )));
+    expect(screen.queryByRole("button", { name: "Remove screen.png" })).toBeNull();
+  });
+
+  it("does not intercept a text-only drop in Chat", () => {
+    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
+    render(<ChatTab />);
+
+    const pane = screen.getByRole("region", { name: "Hermes conversation" });
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", {
+      value: { items: [{ kind: "string" }], files: [] },
+    });
+    pane.dispatchEvent(drop);
+
+    expect(drop.defaultPrevented).toBe(false);
+    expect(screen.queryByRole("group", { name: "Attachments" })).toBeNull();
+  });
+
+  it("retains a failed Chat preview instead of sending", async () => {
+    const send = vi.fn();
+    useHermesChat.setState({ messages: [], status: "idle", send, abort: vi.fn() });
+    useConnection.setState({ api: { putBytes: vi.fn().mockRejectedValue(new Error("offline")) } as never });
+    render(<ChatTab />);
+    const pane = screen.getByRole("region", { name: "Hermes conversation" });
+    fireEvent.drop(pane, { dataTransfer: { files: [new File(["x"], "notes.txt", { type: "text/plain" })] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Upload failed. Try again.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry notes.txt" })).toBeTruthy();
+    expect(send).not.toHaveBeenCalled();
   });
 });

@@ -62,6 +62,7 @@ describe("installGatewayCors", () => {
     expect(res.responseHeaders?.["Access-Control-Allow-Origin"]).toEqual(["http://localhost:5173"]);
     expect(res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]).toContain("Authorization");
     expect(res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]).toContain("x-runtime-slot");
+    expect(res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]).toContain("X-Matrix-Filename");
     expect(res.responseHeaders?.["Access-Control-Allow-Credentials"]).toEqual(["true"]);
     expect(res.responseHeaders?.["content-type"]).toEqual(["application/json"]);
   });

@@ -46,6 +46,8 @@ import { Conversation, ConversationContent, ConversationItem } from "../chat/ele
 import { Marker, MarkerContent, MarkerIcon } from "../chat/elements/marker";
 import { Message, MessageContent, MessageFooter } from "../chat/elements/message";
 import { PromptInput } from "../chat/elements/prompt-input";
+import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
+import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
 import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
 import { AgentComposerPickers } from "./composer-pickers";
 import { ToolCallDetailMeta } from "./tool-call-detail";
@@ -610,14 +612,17 @@ function ConversationComposer({
   waitingForAction,
   threadBusy,
   composerControls,
+  attachments,
 }: {
   threadId: string;
   waitingForAction: boolean;
   threadBusy: boolean;
   // Left side of the composer bottom row (provider/mode pickers).
   composerControls?: ReactNode;
+  attachments: ReturnType<typeof useConversationAttachments>;
 }) {
   const [message, setMessage] = useState("");
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const turnStatus = useCodingAgentWorkspace((state) => state.turnStatus);
   const turnThreadId = useCodingAgentWorkspace((state) => state.turnThreadId);
   const turnError = useCodingAgentWorkspace((state) => state.turnError);
@@ -628,15 +633,29 @@ function ConversationComposer({
   const abortSupported = agentThreadAbortSupported();
 
   async function submit() {
-    if (!message.trim() || waitingForAction || submitting) return;
+    if ((!message.trim() && attachments.items.length === 0) || waitingForAction || submitting || uploadingAttachments) return;
     // Every submit is a direct send. A follow-up aimed at a busy conversation
     // returns a safe recoverable conflict, which surfaces through turnError.
     // Pending messages are durable server-owned records (SPEC 105 FR-100), and
     // queueing must be explicit rather than silent (FR-027, FR-101), so this
     // client deliberately keeps no local queue: a renderer-only queue would be
     // lost on reload and invisible to the mobile, browser, and CLI shells.
-    const sent = await send({ threadId, message });
-    if (sent) setMessage("");
+    setUploadingAttachments(true);
+    try {
+      const uploaded = await attachments.uploadAll();
+      if (!uploaded.ok) return;
+      const sent = await send({
+        threadId,
+        message: message.trim() || "Please inspect the attached files.",
+        ...(uploaded.attachments.length > 0 ? { attachments: uploaded.attachments } : {}),
+      });
+      if (sent) {
+        setMessage("");
+        attachments.clear();
+      }
+    } finally {
+      setUploadingAttachments(false);
+    }
   }
 
   return (
@@ -651,9 +670,17 @@ function ConversationComposer({
           value={message}
           onChange={setMessage}
           onSubmit={() => void submit()}
-          onAbort={abortSupported ? () => void abortAgentThread(threadId) : undefined}
-          busy={submitting || threadBusy}
-          disabled={waitingForAction}
+          onAbort={abortSupported && (submitting || threadBusy) ? () => void abortAgentThread(threadId) : undefined}
+          busy={submitting || threadBusy || uploadingAttachments}
+          disabled={waitingForAction || uploadingAttachments}
+          canSubmit={!waitingForAction && !uploadingAttachments && (message.trim().length > 0 || attachments.items.length > 0)}
+          attachments={(
+            <AttachmentPreviewRow
+              items={attachments.items}
+              onRemove={attachments.remove}
+              onRetry={(localId) => void attachments.retry(localId)}
+            />
+          )}
           // Matches the CreateAgentTurnRequestSchema message cap so oversized
           // drafts are prevented client-side instead of failing generically.
           maxLength={24_000}
@@ -692,6 +719,7 @@ export function AgentConversationView({
   const threadActive = threadRunning
     || snapshot?.thread.status === "waiting_for_approval"
     || snapshot?.thread.status === "waiting_for_input";
+  const attachments = useConversationAttachments(snapshot?.thread.id ?? null);
   const items = useMemo(() => timelineItems(conversationItems(snapshot?.events.items ?? [])), [snapshot?.events.items]);
   // Per-turn "Worked for Xs" rows, derived from event timestamps only.
   const turnSummaryByItemKey = useMemo(() => {
@@ -732,7 +760,7 @@ export function AgentConversationView({
   const showWorking = running && !streamingAssistant;
 
   return (
-    <section aria-label={`Conversation ${snapshot.thread.title}`} className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-app)" }}>
+    <section aria-label={`Conversation ${snapshot.thread.title}`} className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-app)" }} {...attachments.paneProps}>
       {/* pr-12 reserves the top-right corner for the floating inspector
           toggle (ProjectChatsView overlays it at right-2.5 top-2.5), so the
           attention pill is never clipped beneath it; the title column is the
@@ -800,6 +828,7 @@ export function AgentConversationView({
           threadId={snapshot.thread.id}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
           threadBusy={running}
+          attachments={attachments}
           composerControls={
             summary ? (
               <AgentComposerPickers

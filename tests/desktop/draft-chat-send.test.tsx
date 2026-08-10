@@ -345,4 +345,40 @@ describe("draft chat implicit thread creation", () => {
     expect(screen.getByLabelText("Message new chat")).toBeTruthy();
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
   });
+
+  it("uploads dropped files and creates a project chat with existing structured refs", async () => {
+    const putBytes = vi.fn(async (path: string, file: File) => ({
+      ok: true,
+      path: decodeURIComponent(path.split("path=")[1] ?? ""),
+      size: file.size,
+    }));
+    useConnection.setState({ api: { putBytes } as never });
+    const { invoke } = mockOperator();
+    const composer = await openDraft();
+    const pane = screen.getByRole("region", { name: "New chat in Matrix OS" });
+    fireEvent.drop(pane, {
+      dataTransfer: { files: [new File(["context"], "context.txt", { type: "text/plain" })] },
+    });
+
+    expect(await screen.findByRole("button", { name: "Remove context.txt" })).toBeTruthy();
+    fireEvent.change(composer, { target: { value: "Use this context" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({
+          prompt: "Use this context",
+          attachments: [expect.objectContaining({
+            id: expect.stringMatching(/^desktop_upload_[A-Za-z0-9]+$/),
+            kind: "structured_ref",
+            label: "context.txt",
+            path: expect.stringMatching(/^uploads\/desktop-chat\/[A-Za-z0-9]+-context\.txt$/),
+            mimeType: "text/plain",
+          })],
+        }),
+      );
+    });
+    expect(screen.queryByRole("button", { name: "Remove context.txt" })).toBeNull();
+  });
 });
