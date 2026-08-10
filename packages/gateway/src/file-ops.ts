@@ -2,16 +2,11 @@ import {
   stat as fsStat,
   mkdir,
   writeFile,
-  rm,
-  copyFile,
   access,
   readdir,
-  opendir,
-  readlink,
-  symlink,
 } from "node:fs/promises";
-import { basename, dirname, extname, join, posix } from "node:path";
-import { constants, existsSync } from "node:fs";
+import { basename, dirname, extname, posix } from "node:path";
+import { existsSync } from "node:fs";
 import {
   containsDeniedFileApiPath,
   isDeniedFileApiPath,
@@ -32,90 +27,21 @@ import {
   isFileManagementMutationAllowed,
   isFileManagementParentAllowed,
 } from "./file-management/policy.js";
+import {
+  captureSourceIdentity,
+  copyToExclusiveDestination,
+  isDirectorySelfOrDescendant,
+  isExclusiveDestinationConflict,
+  PartialDirectoryCopyError,
+  removeVerifiedSource,
+  type FileCopyDependencies,
+  type SafeSourceCleanupDependencies,
+  type SourceIdentity,
+} from "./file-management/exclusive-copy.js";
+
+export type { FileCopyDependencies } from "./file-management/exclusive-copy.js";
 
 type ErrnoException = NodeJS.ErrnoException;
-interface SourceIdentity {
-  dev: bigint;
-  ino: bigint;
-  mode: bigint;
-  size: bigint;
-  mtimeNs: bigint;
-  ctimeNs: bigint;
-}
-async function captureSourceIdentity(path: string): Promise<SourceIdentity> {
-  const stats = await fsStat(path, { bigint: true });
-  return {
-    dev: stats.dev,
-    ino: stats.ino,
-    mode: stats.mode,
-    size: stats.size,
-    mtimeNs: stats.mtimeNs,
-    ctimeNs: stats.ctimeNs,
-  };
-}
-function sourceIdentityMatches(expected: SourceIdentity, actual: SourceIdentity): boolean {
-  return expected.dev === actual.dev
-    && expected.ino === actual.ino
-    && expected.mode === actual.mode
-    && expected.size === actual.size
-    && expected.mtimeNs === actual.mtimeNs
-    && expected.ctimeNs === actual.ctimeNs;
-}
-
-function isExclusiveDestinationConflict(error: unknown): boolean {
-  const code = (error as ErrnoException).code;
-  return code === "EEXIST" || code === "ERR_FS_CP_EEXIST";
-}
-
-export interface FileCopyDependencies {
-  afterDirectoryClaim?: (target: string) => Promise<void>;
-}
-
-class PartialDirectoryCopyError extends Error {
-  constructor(
-    readonly target: string,
-    cause: unknown,
-  ) {
-    super("Directory copy left a partial destination", { cause });
-  }
-}
-
-async function copyDirectoryContents(source: string, target: string): Promise<void> {
-  const sourceDirectory = await opendir(source);
-  for await (const entry of sourceDirectory) {
-    const sourceEntry = join(source, entry.name);
-    const targetEntry = join(target, entry.name);
-    if (entry.isDirectory()) {
-      await mkdir(targetEntry);
-      await copyDirectoryContents(sourceEntry, targetEntry);
-    } else if (entry.isFile()) {
-      await copyFile(sourceEntry, targetEntry, constants.COPYFILE_EXCL);
-    } else if (entry.isSymbolicLink()) {
-      await symlink(await readlink(sourceEntry), targetEntry);
-    } else {
-      throw new Error("Unsupported directory entry type");
-    }
-  }
-}
-
-async function copyToExclusiveDestination(
-  source: string,
-  target: string,
-  dependencies: FileCopyDependencies = {},
-): Promise<void> {
-  if (!(await fsStat(source)).isDirectory()) {
-    await copyFile(source, target, constants.COPYFILE_EXCL);
-    return;
-  }
-
-  await mkdir(target);
-  try {
-    await dependencies.afterDirectoryClaim?.(target);
-    await copyDirectoryContents(source, target);
-  } catch (error: unknown) {
-    throw new PartialDirectoryCopyError(target, error);
-  }
-}
 
 export interface FileStatResult {
   name: string;
@@ -132,12 +58,13 @@ export interface FileManagementMutationResult {
   path?: string;
   resultCode?: FileOperationResultCode;
   capabilities?: FileEntryCapabilities;
+  recoveryPath?: string;
+  partialPath?: string;
   errorCode?: "invalid_path" | "protected" | "destination_conflict" | "source_missing" | "cleanup_failed" | "failed";
 }
 
-export interface FileRenameDependencies {
+export interface FileRenameDependencies extends FileCopyDependencies, SafeSourceCleanupDependencies {
   beforeCleanup?: (path: string) => Promise<void>;
-  removeSource?: (path: string) => Promise<void>;
 }
 
 export async function createFile(
@@ -226,15 +153,24 @@ export async function renameFile(
   ) {
     return { ok: false, errorCode: "protected" };
   }
+  if (await isDirectorySelfOrDescendant(reauthorizedSource, reauthorizedTarget)) {
+    return { ok: false, errorCode: "invalid_path" };
+  }
   let path: string;
   let sourceIdentity: SourceIdentity;
   try {
     sourceIdentity = await captureSourceIdentity(reauthorizedSource);
-    await copyToExclusiveDestination(reauthorizedSource, reauthorizedTarget);
+    await copyToExclusiveDestination(homePath, reauthorizedSource, reauthorizedTarget, dependencies);
     const normalizedPath = normalizeHomeRelativePath(homePath, reauthorizedTarget);
     if (!normalizedPath) return { ok: false, errorCode: "failed" };
     path = normalizedPath;
   } catch (err: unknown) {
+    if (err instanceof PartialDirectoryCopyError) {
+      const partialPath = normalizeHomeRelativePath(homePath, err.target);
+      return partialPath
+        ? { ok: false, errorCode: "failed", partialPath }
+        : { ok: false, errorCode: "failed" };
+    }
     if (isExclusiveDestinationConflict(err)) {
       return { ok: false, errorCode: "destination_conflict" };
     }
@@ -244,17 +180,27 @@ export async function renameFile(
 
   try {
     await dependencies.beforeCleanup?.(reauthorizedSource);
-    const removeSource = dependencies.removeSource
-      ?? ((source: string) => rm(source, { recursive: true }));
     const cleanupSource = resolveExistingFileApiPath(homePath, sourcePath);
     if (
       cleanupSource !== reauthorizedSource
       || !isFileManagementMutationAllowed(homePath, sourcePath)
-      || !sourceIdentityMatches(sourceIdentity, await captureSourceIdentity(cleanupSource))
     ) {
       throw new Error("Source authorization or identity changed before cleanup");
     }
-    await removeSource(cleanupSource);
+    const cleanupResult = await removeVerifiedSource(cleanupSource, sourceIdentity, dependencies);
+    if (!cleanupResult.ok) {
+      const recoveryPath = cleanupResult.recoveryPath
+        ? normalizeHomeRelativePath(homePath, cleanupResult.recoveryPath) ?? undefined
+        : undefined;
+      return {
+        ok: false,
+        path,
+        resultCode: "cleanup_failed",
+        errorCode: "cleanup_failed",
+        capabilities: getFileEntryCapabilities(homePath, path),
+        ...(recoveryPath ? { recoveryPath } : {}),
+      };
+    }
   } catch (err: unknown) {
     console.warn("[file-ops] Typed rename cleanup failed:", err instanceof Error ? err.message : String(err));
     return {
@@ -345,7 +291,7 @@ export async function fileRename(
   from: string,
   to: string,
   dependencies: FileRenameDependencies = {},
-): Promise<{ ok: boolean; error?: string; status?: number }> {
+): Promise<{ ok: boolean; error?: string; status?: number; recoveryPath?: string; partialPath?: string }> {
   const lexicalFrom = resolveWithinHome(homePath, from);
   const resolvedTo = resolveWritableFileApiPath(homePath, to);
   if (!lexicalFrom || !resolvedTo || isDeniedFileApiPath(homePath, from) || !isFileManagementMutationAllowed(homePath, from) || !isFileManagementMutationAllowed(homePath, to)) return { ok: false, error: "Invalid path" };
@@ -366,27 +312,41 @@ export async function fileRename(
     if (!reauthorizedFrom || !reauthorizedTo || !isFileManagementMutationAllowed(homePath, from) || !isFileManagementMutationAllowed(homePath, to)) {
       return { ok: false, error: "Invalid path" };
     }
+    if (await isDirectorySelfOrDescendant(reauthorizedFrom, reauthorizedTo)) {
+      return { ok: false, error: "Invalid path" };
+    }
     const sourceIdentity = await captureSourceIdentity(reauthorizedFrom);
-    await copyToExclusiveDestination(reauthorizedFrom, reauthorizedTo);
+    await copyToExclusiveDestination(homePath, reauthorizedFrom, reauthorizedTo, dependencies);
     try {
       await dependencies.beforeCleanup?.(reauthorizedFrom);
-      const removeSource = dependencies.removeSource
-        ?? ((source: string) => rm(source, { recursive: true }));
       const cleanupSource = resolveExistingFileApiPath(homePath, from);
       if (
         cleanupSource !== reauthorizedFrom
         || !isFileManagementMutationAllowed(homePath, from)
-        || !sourceIdentityMatches(sourceIdentity, await captureSourceIdentity(cleanupSource))
       ) {
         throw new Error("Source authorization or identity changed before cleanup");
       }
-      await removeSource(cleanupSource);
+      const cleanupResult = await removeVerifiedSource(cleanupSource, sourceIdentity, dependencies);
+      if (!cleanupResult.ok) {
+        const recoveryPath = cleanupResult.recoveryPath
+          ? normalizeHomeRelativePath(homePath, cleanupResult.recoveryPath) ?? undefined
+          : undefined;
+        return recoveryPath
+          ? { ok: false, error: "Failed to rename", recoveryPath }
+          : { ok: false, error: "Failed to rename" };
+      }
     } catch (err: unknown) {
       console.warn("[file-ops] Rename cleanup failed:", err instanceof Error ? err.message : String(err));
       return { ok: false, error: "Failed to rename" };
     }
     return { ok: true };
   } catch (err: unknown) {
+    if (err instanceof PartialDirectoryCopyError) {
+      const partialPath = normalizeHomeRelativePath(homePath, err.target);
+      return partialPath
+        ? { ok: false, error: "Failed to rename", partialPath }
+        : { ok: false, error: "Failed to rename" };
+    }
     if (isExclusiveDestinationConflict(err)) {
       return { ok: false, error: "Destination already exists", status: 409 };
     }
@@ -421,7 +381,10 @@ export async function fileCopy(
     if (!reauthorizedFrom || containsDeniedFileApiPath(homePath, reauthorizedFrom) || !reauthorizedTo || !isFileManagementMutationAllowed(homePath, to)) {
       return { ok: false, error: "Invalid path" };
     }
-    await copyToExclusiveDestination(reauthorizedFrom, reauthorizedTo, dependencies);
+    if (await isDirectorySelfOrDescendant(reauthorizedFrom, reauthorizedTo)) {
+      return { ok: false, error: "Invalid path" };
+    }
+    await copyToExclusiveDestination(homePath, reauthorizedFrom, reauthorizedTo, dependencies);
     return { ok: true };
   } catch (err: unknown) {
     if (err instanceof PartialDirectoryCopyError) {
@@ -476,7 +439,7 @@ export async function fileDuplicate(
       if (!reauthorizedSource || containsDeniedFileApiPath(homePath, reauthorizedSource) || !reauthorizedTarget || !isFileManagementMutationAllowed(homePath, requestedNewPath)) {
         return { ok: false, error: "Invalid path" };
       }
-      await copyToExclusiveDestination(reauthorizedSource, reauthorizedTarget, dependencies);
+      await copyToExclusiveDestination(homePath, reauthorizedSource, reauthorizedTarget, dependencies);
       const newPath = normalizeHomeRelativePath(homePath, reauthorizedTarget);
       if (!newPath) return { ok: false, error: "Failed to duplicate" };
       return { ok: true, newPath };
