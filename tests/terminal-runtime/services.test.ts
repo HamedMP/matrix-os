@@ -5,15 +5,7 @@ import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  buildKeeperLaunch,
-  directAgentProviderPid,
-  isKeeperEntrypoint,
-  monitorKeeperOnce,
-  paneOutcomeCode,
-  stageAgentConfiguration,
-  waitForKeeperReadiness,
-} from '../../packages/terminal-runtime/src/keeper.js';
+import { buildKeeperLaunch, directAgentProviderPid, isKeeperEntrypoint, keeperFailureCode, monitorKeeperOnce, paneOutcomeCode, stageAgentConfiguration, waitForKeeperReadiness } from '../../packages/terminal-runtime/src/keeper.js';
 import {
   classifyRuntimeProcesses,
   createSystemdExecutor,
@@ -21,12 +13,7 @@ import {
 import {
   unitNameForRuntimeId,
 } from '../../packages/terminal-runtime/src/contracts.js';
-import {
-  buildProviderLaunch,
-  paneExitLifecycleCode,
-  runtimeIdFromCgroup,
-  waitForChild,
-} from '../../packages/terminal-runtime/src/pane.js';
+import { buildProviderLaunch, paneExitLifecycleCode, runtimeIdFromCgroup, waitForChild } from '../../packages/terminal-runtime/src/pane.js';
 import {
   decodePeerCredentials,
   handleSupervisorFrame,
@@ -241,14 +228,14 @@ describe('terminal runtime service boundary', () => {
     ]) expect(() => runtimeIdFromCgroup(membership)).toThrow('agent_cgroup_invalid');
   });
   it('requires a live direct provider child for agent readiness evidence', () => {
-    const processes = [{ pid: 13, parentPid: 12, comm: 'node', args: ['/generation/pane.js', 'agent'] },
-      { pid: 14, parentPid: 1, comm: 'pi', args: ['pi'] }];
+    const processes = [{ pid: 13, parentPid: 12, comm: 'node', args: ['/generation/pane.js', 'agent'] }, { pid: 14, parentPid: 1, comm: 'pi', args: ['pi'] }];
     expect(directAgentProviderPid(processes)).toBeUndefined();
     expect(directAgentProviderPid([...processes, { pid: 15, parentPid: 13,
       comm: 'pi', args: ['pi'] }])).toBe(15);
   });
   it('keeps idle runtime health monitoring referenced', async () => expect(await readFile(
     'packages/terminal-runtime/src/keeper.ts', 'utf8')).not.toContain('monitor.unref()'));
+  it('reports only allowlisted keeper startup reasons', () => expect([keeperFailureCode(new Error('keeper_claim_failed')), keeperFailureCode(new Error('/home/matrix/private')), keeperFailureCode('private prompt')]).toEqual(['keeper_claim_failed', 'internal', 'non_error']));
   it.each(['claude', 'codex', 'opencode', 'pi'] as const)(
     'builds a fixed %s provider launch with dynamic data on stdin or fd 3',
     (agent) => {

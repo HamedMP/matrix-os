@@ -23,10 +23,11 @@ const ZELLIJ = '/opt/matrix/bin/zellij';
 const DEFAULT_HOME = '/home/matrix/home';
 const execFile = promisify(execFileCallback);
 
-function recordKeeperFailure(error: unknown, code: string): void {
-  const suffix = error instanceof Error ? '' : '_non_error';
-  process.stderr.write(`${code}${suffix}\n`);
+export function keeperFailureCode(error: unknown): string {
+  const allowed = ['keeper_cwd_invalid', 'keeper_cgroup_invalid', 'keeper_claim_failed', 'keeper_claim_timeout', 'keeper_claim_invalid', 'keeper_socket_invalid', 'keeper_timeout_invalid', 'keeper_client_exited', 'keeper_readiness_timeout', 'agent_configuration_identity_mismatch', 'state_not_found', 'state_invalid', 'state_too_large', 'unsafe_file'];
+  return !(error instanceof Error) ? 'non_error' : allowed.includes(error.message) ? error.message : 'internal';
 }
+function recordKeeperFailure(error: unknown, code: string): void { process.stderr.write(`${code}_${keeperFailureCode(error)}\n`); }
 
 export type KeeperRoles = {
   keeper: number;

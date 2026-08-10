@@ -507,6 +507,7 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expectNone(runner, ['action new-pane -- "$codex" app-server', "sh -c 'command -v codex'"]);
     expectAll(probe, [
       '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
+      "operation === 'find-agent'", "`accept-agent-${value.slice(0, 12)}-${extra}`",
       "launch: { kind: 'agent', configurationRef: operationId }", "agent: 'pi'",
       "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", "entry.parentPid === pane?.pid", 'processCount: processes.length',
     ]);

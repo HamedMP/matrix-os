@@ -361,6 +361,8 @@ case "$operation" in
       [ "$(stat -c %s "$state_root/agent-runtime-id" 2>/dev/null || true)" = 33 ]; then
       IFS= read -r agent_runtime_id <"$state_root/agent-runtime-id" || true
     fi
+    if [[ ! "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]; then agent_diagnostic="$(owner_probe find-agent "$head_sha" "$run_nonce" 2>/dev/null || true)"; agent_runtime_id="$(printf '%s' "$agent_diagnostic" | json_field runtimeId 2>/dev/null || true)"
+    fi
     if [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]; then
       agent_unit="${unit_prefix}${agent_runtime_id}.service"
       mapfile -t agent_values < <(systemctl_read show "$agent_unit" -p Result -p ExecMainCode -p ExecMainStatus --value 2>/dev/null || true)

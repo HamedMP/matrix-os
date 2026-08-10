@@ -19,8 +19,7 @@ const request = async (name, input, operationId = createOperationId()) => {
 const output = (result) => process.stdout.write(`${JSON.stringify(result)}\n`);
 if (operation === 'create' || operation === 'create-race' ||
     operation === 'create-agent') {
-  if (!/^[0-9a-f]{40}$/.test(value)) throw new Error('probe_head_invalid');
-  if (!/^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$/.test(extra)) throw new Error('probe_nonce_invalid');
+  if (!/^[0-9a-f]{40}$/.test(value)) throw new Error('probe_head_invalid'); if (!/^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$/.test(extra)) throw new Error('probe_nonce_invalid');
   const operationId = createOperationId();
   const configurationStore = createAgentConfigurationStore();
   if (operation === 'create-agent') {
@@ -58,10 +57,10 @@ if (operation === 'create' || operation === 'create-race' ||
   }
 } else if (operation === 'inspect' && runtimeId) {
   output(await request('Inspect', { runtimeId }));
-} else if (operation === 'find-shell') {
+} else if (operation === 'find-shell' || operation === 'find-agent') {
   if (!/^[0-9a-f]{40}$/.test(value)) throw new Error('probe_head_invalid');
   if (!/^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$/.test(extra)) throw new Error('probe_nonce_invalid');
-  const name = `accept-${value.slice(0, 12)}-${extra}`;
+  const name = operation === 'find-agent' ? `accept-agent-${value.slice(0, 12)}-${extra}` : `accept-${value.slice(0, 12)}-${extra}`;
   const runtimes = await request('List', {});
   const match = Array.isArray(runtimes)
     ? runtimes.find((entry) => entry?.displayName === name) : undefined;
