@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useProviderUsage } from "../../stores/provider-usage";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useWorkspace, type PanelLayout } from "../../stores/workspace";
@@ -19,10 +20,12 @@ import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 
 export default function MissionControl() {
+  const connectionStatus = useConnection((s) => s.status);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const codingAgentSummary = useCodingAgentWorkspace((s) => s.summary);
   const loadProjects = useBoard((s) => s.loadProjects);
   const openTab = useTabs((s) => s.openTab);
   const tabCount = useTabs((s) => s.tabs.length);
@@ -114,6 +117,37 @@ export default function MissionControl() {
       }
     });
   }, [api, runtimeScope, runtimeSlot]);
+
+  useEffect(() => {
+    const usage = useProviderUsage.getState();
+    if (connectionStatus !== "signed-in" || !api) {
+      usage.clear();
+      return;
+    }
+
+    const capabilityEnabled = codingAgentSummary?.capabilities?.some(
+      (capability) => capability.id === "codingAgentsUsageSummary" && capability.enabled,
+    ) ?? false;
+    if (!capabilityEnabled) {
+      if (codingAgentSummary) usage.clear();
+      return;
+    }
+
+    usage.ensureRuntimeScope(runtimeScope);
+    void usage.refresh();
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") {
+        void useProviderUsage.getState().refresh();
+      }
+    };
+    const refreshInterval = window.setInterval(refreshIfVisible, 5 * 60_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      window.clearInterval(refreshInterval);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [api, codingAgentSummary, connectionStatus, runtimeScope]);
 
   return (
     <div className="flex flex-1 overflow-hidden">

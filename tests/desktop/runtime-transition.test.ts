@@ -5,6 +5,7 @@ import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
+import { useProviderUsage } from "../../desktop/src/renderer/src/stores/provider-usage";
 import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useEditorTabs } from "../../desktop/src/renderer/src/features/editor/editor-tabs-store";
 import { useGit } from "../../desktop/src/renderer/src/stores/git";
@@ -50,6 +51,24 @@ describe("desktop runtime transition", () => {
       entries: { proj_old: { view: "chats", selectedThreadId: "thread_old", touchedAt: 1 } },
       runtimeScope: "old",
     });
+    useProviderUsage.setState({
+      status: "ready",
+      response: {
+        usageSources: [{
+          id: "openai-chatgpt",
+          displayName: "OpenAI / ChatGPT",
+          linkedAgentProviderIds: ["codex"],
+          state: "available",
+          accuracy: "provider_reported",
+          windows: [{ id: "five-hour", label: "5-hour", remainingPercent: 72 }],
+          observedAt: "2026-08-10T12:00:00.000Z",
+          setupActions: [],
+        }],
+        serverTime: "2026-08-10T12:00:00.000Z",
+      },
+      runtimeScope: "old-runtime",
+      error: null,
+    });
   });
 
   it("atomically removes identifiers and attachments owned by the previous computer", () => {
@@ -69,6 +88,12 @@ describe("desktop runtime transition", () => {
     expect(useCodingAgentWorkspace.getState()).toMatchObject({ activeThreadId: null, selectedReviewId: null });
     expect(useProjectWorkspaces.getState().entries).toEqual({});
     expect(useProjectView.getState().entries).toEqual({});
+    expect(useProviderUsage.getState()).toMatchObject({
+      status: "idle",
+      response: null,
+      runtimeScope: null,
+      error: null,
+    });
   });
 
   it("clears unsent chat drafts owned by the previous identity", () => {
