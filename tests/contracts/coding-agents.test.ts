@@ -22,11 +22,13 @@ import {
   FileWriteResponseSchema,
   FileMetadataSchema,
   PreviewSessionSummarySchema,
+  ProviderUsageResponseSchema,
   ReviewDiffLineSchema,
   ReviewFileDiffSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  RuntimeCapabilityIdSchema,
   SafeAssistantPreviewSourceTextSchema,
   SafeAssistantPreviewTextSchema,
   SafeClientErrorSchema,
@@ -43,6 +45,62 @@ import {
 const now = "2026-07-06T12:00:00.000Z";
 
 describe("coding agent contracts", () => {
+  it("normalizes provider usage remaining without accepting fabricated or secret data", () => {
+    const codexSource = {
+      id: "openai-chatgpt",
+      displayName: "Codex",
+      linkedAgentProviderIds: ["codex"],
+      state: "available",
+      accuracy: "provider_reported",
+      windows: [{
+        id: "primary",
+        label: "5-hour",
+        remainingPercent: 72,
+        resetsAt: "2026-08-10T08:00:00.000Z",
+        windowMinutes: 300,
+      }],
+      credits: { remaining: 12.5, unit: "USD" },
+      observedAt: "2026-08-10T06:00:00.000Z",
+      expiresAt: "2026-08-10T06:01:00.000Z",
+      setupActions: [],
+    } as const;
+    const response = {
+      usageSources: [codexSource, {
+        id: "pi",
+        displayName: "Pi",
+        linkedAgentProviderIds: ["pi"],
+        state: "unsupported",
+        windows: [],
+        setupActions: [],
+      }],
+      serverTime: "2026-08-10T06:00:00.000Z",
+    };
+
+    expect(ProviderUsageResponseSchema.parse(response)).toEqual(response);
+    expect(RuntimeCapabilityIdSchema.parse("codingAgentsUsageSummary"))
+      .toBe("codingAgentsUsageSummary");
+
+    for (const invalidSource of [
+      { ...codexSource, windows: [{ ...codexSource.windows[0], remainingPercent: 101 }] },
+      { ...codexSource, windows: [{ ...codexSource.windows[0], remainingPercent: Number.NaN }] },
+      { ...codexSource, windows: Array.from({ length: 5 }, (_, index) => ({
+        ...codexSource.windows[0],
+        id: `window-${index}`,
+      })) },
+      { ...codexSource, linkedAgentProviderIds: ["codex", "codex"] },
+      { ...codexSource, displayName: "Provider failed at /home/matrix/private" },
+      { ...codexSource, state: "available", windows: [], credits: undefined },
+      { ...codexSource, state: "unsupported" },
+      { ...codexSource, accessToken: "secret" },
+      { ...codexSource, providerPayload: { raw: true } },
+    ]) {
+      expect(() => ProviderUsageResponseSchema.parse({
+        usageSources: [invalidSource],
+        serverTime: response.serverTime,
+      })).toThrow();
+    }
+  });
+
   it("rejects unsafe identifiers and unsafe client error text", () => {
     expect(ThreadIdSchema.parse("thread_abc-123")).toBe("thread_abc-123");
     expect(() => ThreadIdSchema.parse("../thread_abc")).toThrow();

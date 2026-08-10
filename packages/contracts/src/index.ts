@@ -337,6 +337,7 @@ export const RuntimeCapabilityIdSchema = z.enum([
   "codingAgentsSameThreadTurns",
   "codingAgentsConversationView",
   "codingAgentsKanbanView",
+  "codingAgentsUsageSummary",
 ]);
 
 export const RuntimeTargetSchema = z.object({
@@ -430,6 +431,83 @@ export const AgentProviderSummarySchema = z.object({
 });
 
 export type AgentProviderSummary = z.infer<typeof AgentProviderSummarySchema>;
+
+export const ProviderUsageStateSchema = z.enum([
+  "available",
+  "stale",
+  "setup_required",
+  "unavailable",
+  "unsupported",
+]);
+export const ProviderUsageAccuracySchema = z.enum([
+  "provider_reported",
+  "provider_derived",
+]);
+export const ProviderUsageWindowSchema = z.object({
+  id: z.string().min(1).max(80).regex(SAFE_SLUG),
+  label: SafeDisplayStringSchema,
+  remainingPercent: z.number().finite().min(0).max(100),
+  resetsAt: IsoTimestampSchema.optional(),
+  windowMinutes: z.number().int().min(1).max(525_600).optional(),
+}).strict();
+export const ProviderUsageCreditsSchema = z.object({
+  remaining: z.number().finite().min(0).max(1_000_000_000),
+  unit: z.string().min(1).max(24).regex(/^[A-Za-z][A-Za-z0-9._-]{0,23}$/),
+}).strict();
+export const ProviderUsageSourceSummarySchema = z.object({
+  id: z.string().min(1).max(80).regex(SAFE_SLUG),
+  displayName: SafeDisplayStringSchema,
+  linkedAgentProviderIds: z.array(ProviderIdSchema).max(6),
+  state: ProviderUsageStateSchema,
+  accuracy: ProviderUsageAccuracySchema.optional(),
+  windows: z.array(ProviderUsageWindowSchema).max(4),
+  credits: ProviderUsageCreditsSchema.optional(),
+  observedAt: IsoTimestampSchema.optional(),
+  expiresAt: IsoTimestampSchema.optional(),
+  setupActions: z.array(SafeSetupActionSchema).max(4),
+}).strict().superRefine((source, context) => {
+  if (new Set(source.linkedAgentProviderIds).size !== source.linkedAgentProviderIds.length) {
+    context.addIssue({
+      code: "custom",
+      message: "Linked provider ids must be unique",
+      path: ["linkedAgentProviderIds"],
+    });
+  }
+  const hasUsageData = source.windows.length > 0 || source.credits !== undefined;
+  if ((source.state === "available" || source.state === "stale") && !hasUsageData) {
+    context.addIssue({ code: "custom", message: "Usage data is required", path: ["state"] });
+  }
+  if (source.state !== "available" && source.state !== "stale" && hasUsageData) {
+    context.addIssue({ code: "custom", message: "Usage data is unavailable", path: ["state"] });
+  }
+  if (hasUsageData && source.accuracy === undefined) {
+    context.addIssue({ code: "custom", message: "Usage accuracy is required", path: ["accuracy"] });
+  }
+  if (!hasUsageData && source.accuracy !== undefined) {
+    context.addIssue({ code: "custom", message: "Usage accuracy is unavailable", path: ["accuracy"] });
+  }
+});
+export const ProviderUsageResponseSchema = z.object({
+  usageSources: z.array(ProviderUsageSourceSummarySchema).max(20)
+    .superRefine((sources, context) => {
+      const ids = new Set<string>();
+      for (const source of sources) {
+        if (ids.has(source.id)) {
+          context.addIssue({ code: "custom", message: "Duplicate usage source", path: [source.id] });
+          return;
+        }
+        ids.add(source.id);
+      }
+    }),
+  serverTime: IsoTimestampSchema,
+}).strict();
+
+export type ProviderUsageState = z.infer<typeof ProviderUsageStateSchema>;
+export type ProviderUsageAccuracy = z.infer<typeof ProviderUsageAccuracySchema>;
+export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;
+export type ProviderUsageCredits = z.infer<typeof ProviderUsageCreditsSchema>;
+export type ProviderUsageSourceSummary = z.infer<typeof ProviderUsageSourceSummarySchema>;
+export type ProviderUsageResponse = z.infer<typeof ProviderUsageResponseSchema>;
 
 export const AgentThreadStatusSchema = z.enum([
   "queued",
