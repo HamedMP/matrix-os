@@ -185,10 +185,8 @@ export async function monitorKeeperOnce(options: {
   workloadAlive?: boolean;
   sessionResponds(): Promise<boolean>;
 }): Promise<boolean> {
-  return options.clientAlive && options.workloadAlive !== false &&
-    await options.sessionResponds();
+  return options.clientAlive && options.workloadAlive !== false && await options.sessionResponds();
 }
-
 export function paneOutcomeCode(render: string): string | null {
   const matches = stripVTControlCharacters(render).match(
     /terminal_pane_(?:failed(?:_non_error)?|agent_exit_(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))(?![0-9])/g,
@@ -197,21 +195,25 @@ export function paneOutcomeCode(render: string): string | null {
     ? `terminal_keeper_observed_${matches.at(-1)?.slice('terminal_'.length)}`
     : null;
 }
-
 const HEADLESS_TERMINAL_QUERIES = [
   ['\x1b[?996n', '\x1b[?997;1n'],
   ['\x1b[c', '\x1b[?1;2c'],
   ['\x1b]11;?\x07', '\x1b]11;rgb:0000/0000/0000\x07'],
 ] as const;
-export function headlessTerminalReply(render: string, state: number): { state: number; data: string } {
-  let data = '';
-  for (const [index, [query, response]] of HEADLESS_TERMINAL_QUERIES.entries()) {
-    const bit = 1 << index;
-    if (!(state & bit) && render.includes(query)) { state |= bit; data += response; }
+export function headlessTerminalReply(chunk: string, state: string): { state: string; data: string } {
+  const input = `${state}${chunk}`; let data = '', cursor = 0;
+  for (let replies = 0; replies < 16; replies++) {
+    const next = HEADLESS_TERMINAL_QUERIES.map(([query, response]) =>
+      ({ index: input.indexOf(query, cursor), query, response }))
+      .filter((candidate) => candidate.index >= 0).sort((left, right) => left.index - right.index)[0];
+    if (!next) break;
+    data += next.response; cursor = next.index + next.query.length;
   }
+  state = Array.from({ length: Math.min(input.length, 8) }, (_, index) => input.slice(-index - 1))
+    .filter((suffix) => HEADLESS_TERMINAL_QUERIES.some(([query]) =>
+      suffix.length < query.length && query.startsWith(suffix))).at(-1) ?? '';
   return { state, data };
 }
-
 export function isKeeperEntrypoint(moduleUrl: string, argvPath: string | undefined): boolean {
   if (!argvPath) return false;
   return moduleUrl.endsWith('/keeper.js') && argvPath.endsWith('/keeper.js');
@@ -329,7 +331,7 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
   const requiresConfirmation = descriptor.intent === 'recover' && descriptor.recoveryMode !== 'fresh-shell';
   const startsFresh = descriptor.intent === 'create' || descriptor.recoveryMode === 'fresh-shell';
   let confirmationGated = !requiresConfirmation;
-  let terminalReplyState = 0;
+  let terminalReplyState = '';
   let pty: ReturnType<typeof spawnPty> | null = null;
   try {
     pty = spawnPty(launch.file, launch.args, {
@@ -341,7 +343,7 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
     });
     pty.onData((data) => {
       renderWindow = `${renderWindow}${data}`.slice(-16_384);
-      const reply = headlessTerminalReply(renderWindow, terminalReplyState);
+      const reply = headlessTerminalReply(data, terminalReplyState);
       terminalReplyState = reply.state;
       if (reply.data) pty?.write(reply.data);
       const outcome = paneOutcomeCode(renderWindow);

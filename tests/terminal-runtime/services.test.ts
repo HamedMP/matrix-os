@@ -292,13 +292,13 @@ describe('terminal runtime service boundary', () => {
     expect(spawnChild).toHaveBeenCalledWith(launch.file, launch.args,
       expect.objectContaining({ stdio: ['inherit', 'inherit', 'inherit', 'ignore'] }));
   });
-  it('answers headless terminal queries once without reflecting output', () => {
-    const pending = headlessTerminalReply('\u001b[?', 0);
-    expect(pending).toEqual({ state: 0, data: '' });
-    const answered = headlessTerminalReply('private output\u001b[?996n\u001b[c\u001b]11;?\u0007', pending.state);
+  it('answers repeated streamed terminal queries without reflecting output', () => {
+    const pending = headlessTerminalReply('\u001b[?', '');
+    expect(pending).toEqual({ state: '\u001b[?', data: '' });
+    const answered = headlessTerminalReply('996nprivate output\u001b[c\u001b]11;?\u0007', pending.state);
     expect(answered.data).toBe('\u001b[?997;1n\u001b[?1;2c\u001b]11;rgb:0000/0000/0000\u0007');
     expect(answered.data).not.toContain('private output');
-    expect(headlessTerminalReply('\u001b[?996n\u001b[c\u001b]11;?\u0007', answered.state).data).toBe('');
+    expect(headlessTerminalReply('\u001b[?996n\u001b[c\u001b]11;?\u0007', answered.state).data).toBe(answered.data);
   });
   it('emits only bounded generic lifecycle codes when an agent pane exits', () => {
     expect(paneExitLifecycleCode('agent', 0)).toBe('terminal_pane_agent_exit_0');
