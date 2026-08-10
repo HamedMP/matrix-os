@@ -72,8 +72,7 @@ wait_pi_ready() {
       command_bounded 30 runuser -u matrix -- env HOME="$home" PATH="/opt/matrix/runtime/node/bin:/usr/bin:/bin" "$pi" --version >/dev/null 2>&1; then
       return 0; fi
     sleep 1
-  done; return 1
-}
+  done; return 1; }
 zellij() { command_bounded 30 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
 fail_phase() {
   local exit_status="${1:-$?}" failure_code; trap - EXIT ERR TERM INT HUP
@@ -314,8 +313,7 @@ case "$operation" in
     [[ "$lifecycle" =~ ^[a-z_]{1,32}$ ]] || lifecycle=unavailable
     printf 'production_acceptance_diagnostic=%s,%s,%s,%s,%s\n' \
       "$lifecycle" "$result" "$main_code" "$main_status" "$keeper_code"
-    agent_result=unavailable; agent_main_code=unavailable; agent_main_status=unavailable
-    agent_keeper_code=unavailable; agent_pane_code=unavailable; agent_runtime_id=""
+    agent_result=unavailable; agent_main_code=unavailable; agent_main_status=unavailable; agent_keeper_code=unavailable; agent_pane_code=unavailable; agent_runtime_id=""; agent_active=unavailable; agent_populated=unavailable; agent_processes=unavailable
     if [ -f "$state_root/agent-runtime-id" ] &&
       [ ! -L "$state_root/agent-runtime-id" ] &&
       [ "$(stat -c %s "$state_root/agent-runtime-id" 2>/dev/null || true)" = 33 ]; then
@@ -324,7 +322,7 @@ case "$operation" in
     if [[ ! "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]; then agent_diagnostic="$(owner_probe find-agent "$head_sha" "$run_nonce" 2>/dev/null || true)"; agent_runtime_id="$(printf '%s' "$agent_diagnostic" | json_field runtimeId 2>/dev/null || true)"
     fi
     if [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]; then
-      agent_unit="${unit_prefix}${agent_runtime_id}.service"
+      agent_unit="${unit_prefix}${agent_runtime_id}.service"; agent_active="$(systemctl_read is-active "$agent_unit" 2>/dev/null || true)"; [[ "$agent_active" =~ ^[a-z-]{1,32}$ ]] || agent_active=unavailable
       mapfile -t agent_values < <(systemctl_read show "$agent_unit" -p Result -p ExecMainCode -p ExecMainStatus --value 2>/dev/null || true)
       [[ "${agent_values[0]:-}" =~ ^[a-z-]{1,32}$ ]] && agent_result="${agent_values[0]}"
       [[ "${agent_values[1]:-}" =~ ^[a-z-]{1,32}$ ]] && agent_main_code="${agent_values[1]}"
@@ -333,13 +331,15 @@ case "$operation" in
       agent_keeper_code="$(printf '%s\n' "$agent_journal" | grep -E '^terminal_keeper_[a-z0-9_]{1,96}$' | tail -n 1 || true)"
       [[ "$agent_keeper_code" =~ ^terminal_keeper_[a-z0-9_]{1,96}$ ]] || agent_keeper_code=unavailable
       agent_pane_code="$(printf '%s\n' "$agent_journal" | grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$' | tail -n 1 || true)"
-      [[ "$agent_pane_code" =~ ^terminal_pane_agent_exit_[0-9]{1,3}$ ]] || agent_pane_code=unavailable
+      [[ "$agent_pane_code" =~ ^terminal_pane_agent_exit_[0-9]{1,3}$ ]] || agent_pane_code=unavailable; agent_control_group="$(systemctl_read show "$agent_unit" -p ControlGroup --value 2>/dev/null || true)"; agent_cgroup="/sys/fs/cgroup${agent_control_group}"
+      if [ "$agent_control_group" = "/matrix-terminal.slice/${agent_unit}" ] && [ -f "$agent_cgroup/cgroup.events" ] && [ ! -L "$agent_cgroup/cgroup.events" ] && [ -f "$agent_cgroup/cgroup.procs" ] && [ ! -L "$agent_cgroup/cgroup.procs" ]; then
+        agent_populated="$(awk '$1 == "populated" { print $2 }' "$agent_cgroup/cgroup.events")"; agent_processes="$(wc -w <"$agent_cgroup/cgroup.procs")"; [[ "$agent_populated" =~ ^[01]$ ]] || agent_populated=unavailable; [[ "$agent_processes" =~ ^([0-9]|[1-9][0-9]{1,2})$ ]] || agent_processes=unavailable; fi
     fi
     printf 'production_acceptance_agent_diagnostic=%s,%s,%s,%s,%s\n' "$agent_result" \
       "$agent_main_code" "$agent_main_status" "$agent_keeper_code" "$agent_pane_code"
     agent_roles="$(roles "$agent_runtime_id" 2>/dev/null || true)"
     [[ "$agent_roles" =~ ^\{"processCount":[0-9]{1,3},"keeper":[0-9]{1,10},"zellijClient":[0-9]{1,10},"zellijServer":[0-9]{1,10},"pane":[0-9]{1,10},"shell":[0-9]{1,10},"agent":[0-9]{1,10}\}$ ]] || agent_roles=unavailable
-    printf 'production_acceptance_agent_roles=%s\n' "$agent_roles"
+    printf 'production_acceptance_agent_roles=%s\n' "$agent_roles"; printf 'production_acceptance_agent_cgroup=%s,%s,%s\n' "$agent_active" "$agent_populated" "$agent_processes"
     ;;
   reboot)
     [ "$(cat "$state_file")" = phase1-ready ]

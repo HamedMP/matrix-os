@@ -514,7 +514,7 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expectNone(probe, ["prompt:", "argument.includes('MATRIX_ACCEPT_LOOP')"]);
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expectAll(runner, ['diagnose)', 'production_acceptance_diagnostic=', "grep -E '^terminal_keeper_[a-z0-9_]{1,96}$'"]);
-    expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=']);
+    expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=', 'production_acceptance_agent_cgroup=', 'cgroup.events']);
     expect(runner).not.toContain('journalctl -u "$unit" --no-pager');
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
