@@ -8,7 +8,8 @@ operation="$1"
 pr_head_sha="$2"
 case "$operation" in
   launch | pack)
-    [ "$#" -eq 2 ] || { echo "spike_control_invalid_request" >&2; exit 2; }
+    [ "$#" -eq 3 ] && [[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]] ||
+      { echo "spike_control_invalid_request" >&2; exit 2; }
     ;;
   acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack)
     [ "$#" -eq 3 ] && [[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]] ||
@@ -25,6 +26,17 @@ if [[ ! "$pr_head_sha" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "spike_control_requires_root" >&2
+  exit 3
+fi
+generation_head_path="/opt/matrix/libexec/terminal-runtime/current/spikes/build-head-sha"
+generation_head=""
+if [ -f "$generation_head_path" ] && [ ! -L "$generation_head_path" ] &&
+  [ "$(/usr/bin/stat -c %s "$generation_head_path" 2>/dev/null || true)" = 41 ]; then
+  IFS= read -r generation_head <"$generation_head_path" || true
+fi
+if ! [[ "$generation_head" =~ ^[0-9a-f]{40}$ ]] ||
+  [ "$generation_head" != "$pr_head_sha" ]; then
+  echo "spike_control_generation_mismatch" >&2
   exit 3
 fi
 case "$operation" in
@@ -55,4 +67,4 @@ fi
 if [[ "$operation" == acceptance-* ]]; then
   exec /usr/bin/bash "$target" "$@"
 fi
-exec /usr/bin/bash "$target" "$pr_head_sha"
+exec /usr/bin/bash "$target" "$pr_head_sha" "$3"

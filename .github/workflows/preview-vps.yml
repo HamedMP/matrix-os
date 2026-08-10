@@ -157,6 +157,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       bootstrap_version: ${{ steps.version.outputs.bootstrap_version }}
+      bootstrap_sha: ${{ steps.version.outputs.bootstrap_sha }}
+      bootstrap_generation_target: ${{ steps.bootstrap_bundle.outputs.terminal_generation_target }}
+      activation_generation_target: ${{ steps.activation_bundle.outputs.terminal_generation_target }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -208,37 +211,76 @@ jobs:
         env:
           PR_NUMBER: ${{ needs.gate.outputs.pr }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
-          BASE_SHA: ${{ needs.gate.outputs.base_sha }}
           REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}
         run: |
           set -euo pipefail
           VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if git diff --unified=0 "$BASE_SHA" "$HEAD_SHA" -- \
-            packages/gateway/src/shell/runtime-client.ts |
-            grep -F 'return nodeEnv === "production" ? "supervised" : "legacy";' >/dev/null; then
-            echo "bootstrap_version=v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${BASE_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          activation_line='return nodeEnv === "production" ? "supervised" : "legacy";'
+          git fetch --no-tags origin main
+          merge_base="$(git merge-base origin/main "$HEAD_SHA")"
+          mapfile -t activation_commits < <(git log --format=%H --reverse -S "$activation_line" "$merge_base..$HEAD_SHA" -- packages/gateway/src/shell/runtime-client.ts)
+          if [ "${#activation_commits[@]}" -gt 1 ]; then
+            echo "Preview branch has multiple production terminal activation boundaries." >&2
+            exit 1
+          fi
+          if [ "${#activation_commits[@]}" -eq 1 ]; then
+            bootstrap_sha="$(git rev-parse "${activation_commits[0]}^")"
+            if ! git merge-base --is-ancestor "$merge_base" "$bootstrap_sha" ||
+              ! git merge-base --is-ancestor "$bootstrap_sha" "$HEAD_SHA"; then
+              echo "Preview dormant bootstrap parent is outside the approved branch history." >&2
+              exit 1
+            fi
+            activation_diff="$(git diff --unified=0 "$bootstrap_sha" "${activation_commits[0]}" -- packages/gateway/src/shell/runtime-client.ts)"
+            dormant_source="$(git show "$bootstrap_sha:packages/gateway/src/shell/runtime-client.ts")"
+            if ! grep -Fq "+    $activation_line" <<<"$activation_diff" ||
+              grep -Fq "$activation_line" <<<"$dormant_source"; then
+              echo "Preview terminal activation boundary is not an exact dormant-parent transition." >&2
+              exit 1
+            fi
+            echo "bootstrap_sha=$bootstrap_sha" >> "$GITHUB_OUTPUT"
+            echo "bootstrap_version=v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${bootstrap_sha:0:7}" >> "$GITHUB_OUTPUT"
           fi
           echo "Preview version: $VERSION"
 
       - name: Build dormant parent bootstrap bundle
+        id: bootstrap_bundle
         if: steps.version.outputs.bootstrap_version != ''
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.bootstrap_version }}
           HOST_BUNDLE_CHANNEL: none
-          MATRIX_BUILD_SHA: ${{ needs.gate.outputs.base_sha }}
+          MATRIX_BUILD_SHA: ${{ steps.version.outputs.bootstrap_sha }}
           MATRIX_BUILD_REF: bootstrap
           HOST_BUNDLE_ZELLIJ_BUILD_DIR: ${{ runner.temp }}/matrix-zellij
         run: |
           set -euo pipefail
+          cp scripts/build-host-bundle.sh "$RUNNER_TEMP/build-host-bundle.sh"
+          cp -a scripts/spikes/terminal-runtime "$RUNNER_TEMP/terminal-runtime-spikes"
+          cp distro/customer-vps/host-bin/matrix-sync-agent "$RUNNER_TEMP/"
           cp distro/customer-vps/host-bin/matrix-terminal-spike-control "$RUNNER_TEMP/"
-          git checkout --detach "${{ needs.gate.outputs.base_sha }}"
+          cp distro/customer-vps/host-bin/matrix-terminal-spike-pane "$RUNNER_TEMP/"
+          git checkout --detach "${{ steps.version.outputs.bootstrap_sha }}"
+          install -m 0755 "$RUNNER_TEMP/build-host-bundle.sh" scripts/build-host-bundle.sh
+          rm -rf scripts/spikes/terminal-runtime
+          cp -a "$RUNNER_TEMP/terminal-runtime-spikes" scripts/spikes/terminal-runtime
+          install -m 0755 "$RUNNER_TEMP/matrix-sync-agent" distro/customer-vps/host-bin/matrix-sync-agent
           cp "$RUNNER_TEMP/matrix-terminal-spike-control" distro/customer-vps/host-bin/
-          ./scripts/build-host-bundle.sh
+          cp "$RUNNER_TEMP/matrix-terminal-spike-pane" distro/customer-vps/host-bin/
+          MATRIX_TERMINAL_RUNTIME_DORMANT=1 ./scripts/build-host-bundle.sh
+          terminal_generation_target="$(readlink dist/host-bundle/stage/libexec/terminal-runtime/current)"
+          [[ "$terminal_generation_target" =~ ^v1/[0-9a-f]{64}$ ]] || {
+            echo "Preview bootstrap terminal generation target is invalid." >&2
+            exit 1
+          }
+          echo "terminal_generation_target=$terminal_generation_target" >>"$GITHUB_OUTPUT"
           mv dist/host-bundle dist/bootstrap
           rm -f distro/customer-vps/host-bin/matrix-terminal-spike-control
+          rm -f distro/customer-vps/host-bin/matrix-terminal-spike-pane
+          rm -rf scripts/spikes/terminal-runtime
+          git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-sync-agent
           git checkout --detach "${{ needs.gate.outputs.head_sha }}"
       - name: Build host bundle
+        id: activation_bundle
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
           HOST_BUNDLE_CHANNEL: none
@@ -248,6 +290,12 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/build-host-bundle.sh
+          terminal_generation_target="$(readlink dist/host-bundle/stage/libexec/terminal-runtime/current)"
+          [[ "$terminal_generation_target" =~ ^v1/[0-9a-f]{64}$ ]] || {
+            echo "Preview activation terminal generation target is invalid." >&2
+            exit 1
+          }
+          echo "terminal_generation_target=$terminal_generation_target" >>"$GITHUB_OUTPUT"
           mv dist/host-bundle dist/activation
 
       - name: Upload bundle artifact
@@ -290,8 +338,10 @@ jobs:
       PR_NUMBER: ${{ needs.gate.outputs.pr }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
       BOOTSTRAP_VERSION: ${{ needs.build.outputs.bootstrap_version }}
+      BOOTSTRAP_SHA: ${{ needs.build.outputs.bootstrap_sha }}
+      BOOTSTRAP_GENERATION_TARGET: ${{ needs.build.outputs.bootstrap_generation_target }}
+      ACTIVATION_GENERATION_TARGET: ${{ needs.build.outputs.activation_generation_target }}
       HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
-      BASE_SHA: ${{ needs.gate.outputs.base_sha }}
     steps:
       - uses: actions/checkout@v6
         if: needs.gate.outputs.action == 'deploy'
@@ -481,6 +531,52 @@ jobs:
             diagnostic="$(updater_diagnostic "$1")" || return 1
             [ "$diagnostic" = "Update service: idle phase=idle failure=none" ]
           }
+          preview_install_matches() {
+            local address="$1" expected_version="$2" expected_sha="$3" expected_generation="$4"
+            local release_body release_code release_response="$RUNNER_TEMP/preview-installed-release.json"
+            local generation_body generation_code generation_response="$RUNNER_TEMP/preview-installed-generation.json"
+            local head_body head_code head_response="$RUNNER_TEMP/preview-installed-generation-head.json"
+            is_public_ipv4 "$address" || return 1
+            [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+            [ -z "$expected_generation" ] || [[ "$expected_generation" =~ ^v1/[0-9a-f]{64}$ ]] || return 1
+            release_body="$(jq -cn '{command:["/usr/bin/cat","/opt/matrix/release.json"],timeoutMs:10000}')"
+            generation_body="$(jq -cn '{command:["/usr/bin/readlink","/opt/matrix/libexec/terminal-runtime/current"],timeoutMs:10000}')"
+            head_body="$(jq -cn '{command:["/usr/bin/cat","/opt/matrix/libexec/terminal-runtime/current/spikes/build-head-sha"],timeoutMs:10000}')"
+            rm -f -- "$release_response" "$generation_response" "$head_response"
+            release_code="$(curl --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" -o "$release_response" -w '%{http_code}' \
+              -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' --data-binary "$release_body")" || return 1
+            generation_code="$(curl --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" -o "$generation_response" -w '%{http_code}' \
+              -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' --data-binary "$generation_body")" || return 1
+            head_code="$(curl --silent --show-error --max-time 30 --connect-timeout 10 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" -o "$head_response" -w '%{http_code}' \
+              -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' --data-binary "$head_body")" || return 1
+            [ "$release_code" = 200 ] && [ "$generation_code" = 200 ] && [ "$head_code" = 200 ] &&
+              jq -e --arg version "$expected_version" --arg sha "$expected_sha" '
+                type == "object" and .exitCode == 0 and .timedOut == false and
+                .truncated == false and .signal == null and .stderr == "" and
+                (.stdout | length <= 4096) and
+                ((.stdout | fromjson) | .version == $version and .gitCommit == $sha)
+              ' "$release_response" >/dev/null &&
+              jq -e --arg generation "$expected_generation" '
+                type == "object" and .exitCode == 0 and .timedOut == false and
+                .truncated == false and .signal == null and .stderr == "" and
+                (($generation == "" and (.stdout | test("^v1/[0-9a-f]{64}\\n$"))) or
+                 .stdout == ($generation + "\n"))
+              ' "$generation_response" >/dev/null &&
+              jq -e --arg sha "$expected_sha" '
+                type == "object" and .exitCode == 0 and .timedOut == false and
+                .truncated == false and .signal == null and .stderr == "" and
+                .stdout == ($sha + "\n")
+              ' "$head_response" >/dev/null
+          }
           preview_gateway_ready() {
             local address="$1" response="$RUNNER_TEMP/preview-gateway-ready.json" body
             is_public_ipv4 "$address" || return 1
@@ -515,7 +611,11 @@ jobs:
             exit 1
           fi
           for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"; do
+            target_sha="$HEAD_SHA"
+            target_generation="$ACTIVATION_GENERATION_TARGET"
             if [ -n "$BOOTSTRAP_VERSION" ] && [ "$target_version" = "$BOOTSTRAP_VERSION" ]; then
+              target_sha="$BOOTSTRAP_SHA"
+              target_generation="$BOOTSTRAP_GENERATION_TARGET"
               fleet="$(curl -fsS --max-time 30 \
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet")"
@@ -525,8 +625,9 @@ jobs:
                 ' <<<"$fleet")"
               deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
               address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-              if [[ "$deployed" == *"-${BASE_SHA:0:7}" ]] &&
-                updater_idle "$address"; then
+              if [[ "$deployed" == *"-${BOOTSTRAP_SHA:0:7}" ]] &&
+                updater_idle "$address" &&
+                preview_install_matches "$address" "$target_version" "$target_sha" "$target_generation"; then
                 echo "Reusing the exact dormant parent already installed on the preview."
                 continue
               fi
@@ -569,27 +670,27 @@ jobs:
                   ' <<<"$fleet")"
                 deployed="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
                 address="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
+                updater_diagnostic_result=""
+                if updater_diagnostic_result="$(updater_diagnostic "$address")"; then
+                  if [ "$updater_diagnostic_result" != "$last_updater_diagnostic" ]; then
+                    echo "Preview updater state: ${updater_diagnostic_result}"
+                    last_updater_diagnostic="$updater_diagnostic_result"
+                  fi
+                  case "$updater_diagnostic_result" in
+                    "Update service: failed phase=failed failure="*)
+                      echo "Preview updater failed after rollback: ${updater_diagnostic_result}" >&2
+                      exit 1
+                      ;;
+                  esac
+                fi
                 if [ "$deployed" = "$target_version" ]; then
                   version_seen=true
-                  if updater_idle "$address"; then
+                  if [ "$updater_diagnostic_result" = "Update service: idle phase=idle failure=none" ] &&
+                    preview_install_matches "$address" "$target_version" "$target_sha" "$target_generation"; then
                     deploy_converged=true
                     break
                   fi
-                  echo "Waiting for the preview updater to become idle."
-                else
-                  updater_diagnostic_result=""
-                  if updater_diagnostic_result="$(updater_diagnostic "$address")"; then
-                    if [ "$updater_diagnostic_result" != "$last_updater_diagnostic" ]; then
-                      echo "Preview updater state: ${updater_diagnostic_result}"
-                      last_updater_diagnostic="$updater_diagnostic_result"
-                    fi
-                    case "$updater_diagnostic_result" in
-                      "Update service: failed phase=failed failure="*)
-                        echo "Preview updater failed after rollback: ${updater_diagnostic_result}" >&2
-                        exit 1
-                        ;;
-                    esac
-                  fi
+                  echo "Waiting for the installed preview release and terminal generation."
                 fi
               fi
               sleep 15

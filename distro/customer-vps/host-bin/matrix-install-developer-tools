@@ -16,6 +16,7 @@ STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
 INSTALLED_FILE="$STATE_DIR/installed-tools"
 CODEX_VERSION="0.146.0"
+PI_CODING_AGENT_VERSION="0.84.1"
 
 log() {
   printf 'matrix-install-developer-tools: %s\n' "$*"
@@ -112,14 +113,19 @@ codex_version_is_current() {
   printf '%s\n' "$output" | grep -Eq "(^|[[:space:]])${escaped_version}([[:space:]]|$)"
 }
 
+pi_version_is_current() {
+  [ "$(/opt/matrix/runtime/node/bin/pi --version 2>/dev/null)" = "$PI_CODING_AGENT_VERSION" ]
+}
+
 is_tool_installed() {
   local tool="$1"
   local bin_name
   bin_name="$(tool_bin_name "$tool")"
   grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ] || return 1
-  if [ "$tool" = "codex" ]; then
-    codex_version_is_current
-  fi
+  case "$tool" in
+    codex) codex_version_is_current ;;
+    pi) pi_version_is_current ;;
+  esac
 }
 
 if [ "$MODE" != "--sandbox-only" ]; then
