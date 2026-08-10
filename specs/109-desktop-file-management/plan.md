@@ -44,6 +44,7 @@
 **Files:**
 
 - Create: `packages/gateway/src/file-management/contracts.ts`
+- Create: `packages/gateway/src/file-management/exclusive-copy.ts`
 - Create: `packages/gateway/src/file-management/policy.ts`
 - Modify: `packages/gateway/src/files-tree.ts`
 - Modify: `packages/gateway/src/path-security.ts`
@@ -51,13 +52,15 @@
 - Test: `tests/gateway/file-management-contracts.test.ts`
 - Test: `tests/gateway/files-tree.test.ts`
 - Test: `tests/gateway/file-ops.test.ts`
+- Test: `tests/gateway/file-management-copy-safety.test.ts`
+- Test: `tests/gateway/file-management-typed-ops.test.ts`
 
 - [ ] Write failing schema tests for UUID request IDs, 1–100 unique same-parent sources, 4,096-byte paths, 255-byte names, typed create/rename payloads, discriminated preflight/execute requests with an execution fingerprint, bounded conflict choices, and stable result codes.
 - [ ] Write failing public listing tests showing top-level dot roots remain omitted; visible protected roots (`system`, `agents`) and denied-subtree ancestors expose `canRename: false`, `canMove: false`, `canTrash: false`; ordinary owner files expose all three capabilities. Independently test that mutations targeting hidden dot roots are rejected.
 - [ ] Run the focused tests and confirm RED because contracts/capabilities do not exist.
 - [ ] Implement exported Zod schemas and inferred types using `zod/v4`.
 - [ ] Implement one normalized mutation policy used by both listing and execution. Reject traversal, absolute paths, denied roots, symlink escapes, home root mutation, separators/control characters, and platform-reserved names.
-- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, reject exact denied sources and ancestors containing denied content while preserving protected-source copy compatibility, use exclusive destination creation/copy, reject occupied rename targets, verify stable source identity/content-version metadata before cleanup, remove the source only after confirmed copy success, surface cleanup-failure duplicates, and return only normalized relative paths plus safe capability/result data. Claim directory targets at the top level, retain/report one bounded partial target after nested failure, and never fan out Keep Both names for nested conflicts.
+- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, reject exact denied sources and ancestors containing denied content while preserving protected-source copy compatibility, use exclusive destination creation/copy, and reject occupied rename targets. Reject directory self/descendant targets before claiming them. During traversal, repeatedly validate source and claimed-target identities with `lstat`/`realpath`, never dereference source symlinks, and fail closed if an entry or target changes. Capture a bounded recursive source snapshot (maximum 10,000 entries and depth 128), atomically detach a matching source into an exclusive same-parent recovery directory after copy success, verify the detached snapshot, and remove only that verified detached source. Surface cleanup failures with one normalized recovery path; never overwrite a replacement while restoring. Claim directory targets at the top level, retain/report one bounded partial target after nested failure (including rename), and never fan out Keep Both names for nested conflicts. Return only normalized relative paths plus safe capability/result data.
 - [ ] Extend directory listings with the capability object without breaking existing fields.
 - [ ] Run focused tests and confirm GREEN, then refactor duplicate path checks into pure helpers.
 
