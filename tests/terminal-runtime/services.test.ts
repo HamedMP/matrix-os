@@ -5,7 +5,7 @@ import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { buildKeeperLaunch, directAgentProviderPid, isKeeperEntrypoint, keeperFailureCode, monitorKeeperOnce, paneOutcomeCode, stageAgentConfiguration, waitForKeeperReadiness } from '../../packages/terminal-runtime/src/keeper.js';
+import { buildKeeperLaunch, directAgentProviderPid, headlessTerminalReply, isKeeperEntrypoint, keeperFailureCode, monitorKeeperOnce, paneOutcomeCode, stageAgentConfiguration, waitForKeeperReadiness } from '../../packages/terminal-runtime/src/keeper.js';
 import {
   classifyRuntimeProcesses,
   createSystemdExecutor,
@@ -271,8 +271,7 @@ describe('terminal runtime service boundary', () => {
       expect(JSON.stringify(launch.args)).not.toContain('workspace-write');
       expect(`${launch.stdin ?? ''}${launch.fdPayload ?? ''}`).toContain(prompt);
       expect(launch.cwd).toBe('/home/matrix/home/projects/private');
-      if (agent === 'pi') expect([launch.file, launch.args])
-        .toEqual(['/opt/matrix/runtime/node/bin/pi', ['--offline']]);
+      if (agent === 'pi') expect([launch.file, launch.args]).toEqual(['/opt/matrix/runtime/node/bin/pi', ['--offline']]);
     },
   );
 
@@ -292,6 +291,14 @@ describe('terminal runtime service boundary', () => {
     await expect(waiting).resolves.toBe(0);
     expect(spawnChild).toHaveBeenCalledWith(launch.file, launch.args,
       expect.objectContaining({ stdio: ['inherit', 'inherit', 'inherit', 'ignore'] }));
+  });
+  it('answers headless terminal queries once without reflecting output', () => {
+    const pending = headlessTerminalReply('\u001b[?', 0);
+    expect(pending).toEqual({ state: 0, data: '' });
+    const answered = headlessTerminalReply('private output\u001b[?996n\u001b[c\u001b]11;?\u0007', pending.state);
+    expect(answered.data).toBe('\u001b[?997;1n\u001b[?1;2c\u001b]11;rgb:0000/0000/0000\u0007');
+    expect(answered.data).not.toContain('private output');
+    expect(headlessTerminalReply('\u001b[?996n\u001b[c\u001b]11;?\u0007', answered.state).data).toBe('');
   });
   it('emits only bounded generic lifecycle codes when an agent pane exits', () => {
     expect(paneExitLifecycleCode('agent', 0)).toBe('terminal_pane_agent_exit_0');
@@ -469,11 +476,8 @@ describe('terminal runtime service boundary', () => {
       clientAlive: false,
       sessionResponds: vi.fn(async () => true),
     })).resolves.toBe(false);
-    await expect(monitorKeeperOnce({
-      clientAlive: true,
-      workloadAlive: false,
-      sessionResponds: vi.fn(async () => true),
-    })).resolves.toBe(false);
+    await expect(monitorKeeperOnce({ clientAlive: true, workloadAlive: false,
+      sessionResponds: vi.fn(async () => true) })).resolves.toBe(false);
   });
 
   it('authenticates the peer before parsing or dispatching a bounded protocol frame', async () => {

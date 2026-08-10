@@ -125,8 +125,7 @@ export function buildKeeperLaunch(
 export async function stageAgentConfiguration(
   rawDescriptor: Descriptor,
   runtimeIdInput: string,
-  store: Pick<ReturnType<typeof createAgentConfigurationStore>,
-    'claim' | 'publish' | 'remove'> = createAgentConfigurationStore(),
+  store: Pick<ReturnType<typeof createAgentConfigurationStore>, 'claim' | 'publish' | 'remove'> = createAgentConfigurationStore(),
 ): Promise<void> {
   const descriptor = DescriptorSchema.parse(rawDescriptor);
   const runtimeId = RuntimeIdSchema.parse(runtimeIdInput);
@@ -199,6 +198,20 @@ export function paneOutcomeCode(render: string): string | null {
     : null;
 }
 
+const HEADLESS_TERMINAL_QUERIES = [
+  ['\x1b[?996n', '\x1b[?997;1n'],
+  ['\x1b[c', '\x1b[?1;2c'],
+  ['\x1b]11;?\x07', '\x1b]11;rgb:0000/0000/0000\x07'],
+] as const;
+export function headlessTerminalReply(render: string, state: number): { state: number; data: string } {
+  let data = '';
+  for (const [index, [query, response]] of HEADLESS_TERMINAL_QUERIES.entries()) {
+    const bit = 1 << index;
+    if (!(state & bit) && render.includes(query)) { state |= bit; data += response; }
+  }
+  return { state, data };
+}
+
 export function isKeeperEntrypoint(moduleUrl: string, argvPath: string | undefined): boolean {
   if (!argvPath) return false;
   return moduleUrl.endsWith('/keeper.js') && argvPath.endsWith('/keeper.js');
@@ -235,9 +248,7 @@ async function ownCgroup(runtimeId: string): Promise<string> {
   return `/sys/fs/cgroup${relative}`;
 }
 
-export function directAgentProviderPid(
-  processes: Array<{ pid: number; parentPid: number; args: string[] }>,
-): number | undefined {
+export function directAgentProviderPid(processes: Array<{ pid: number; parentPid: number; args: string[] }>): number | undefined {
   const pane = processes.find((entry) =>
     entry.args.some((argument) => argument.endsWith('/pane.js')) &&
     entry.args.includes('agent'));
@@ -310,24 +321,15 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
     cwd: await validateKeeperCwd(DEFAULT_HOME, descriptor.cwd.path),
   };
   const cgroup = await ownCgroup(runtimeId);
-  const agentConfigurationStore = descriptor.launch.kind === 'agent'
-    ? createAgentConfigurationStore()
-    : null;
-  if (agentConfigurationStore)
-    await stageAgentConfiguration(descriptor, runtimeId, agentConfigurationStore);
+  const agentConfigurationStore = descriptor.launch.kind === 'agent' ? createAgentConfigurationStore() : null;
+  if (agentConfigurationStore) await stageAgentConfiguration(descriptor, runtimeId, agentConfigurationStore);
   const sessionName = `matrix-t-${runtimeId}`;
-  let clientAlive = true;
-  let stopping = false;
-  let exitCode = 0;
-  let renderWindow = '';
+  let clientAlive = true, stopping = false, exitCode = 0, renderWindow = '';
   let observedPaneOutcome: string | null = null;
-  const requiresConfirmation =
-    descriptor.intent === 'recover' &&
-    descriptor.recoveryMode !== 'fresh-shell';
-  const startsFresh =
-    descriptor.intent === 'create' ||
-    descriptor.recoveryMode === 'fresh-shell';
+  const requiresConfirmation = descriptor.intent === 'recover' && descriptor.recoveryMode !== 'fresh-shell';
+  const startsFresh = descriptor.intent === 'create' || descriptor.recoveryMode === 'fresh-shell';
   let confirmationGated = !requiresConfirmation;
+  let terminalReplyState = 0;
   let pty: ReturnType<typeof spawnPty> | null = null;
   try {
     pty = spawnPty(launch.file, launch.args, {
@@ -338,9 +340,10 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
       env: launch.env,
     });
     pty.onData((data) => {
-      // Inspect a bounded in-memory window only; never copy terminal contents
-      // to journals or durable supervisor state.
       renderWindow = `${renderWindow}${data}`.slice(-16_384);
+      const reply = headlessTerminalReply(renderWindow, terminalReplyState);
+      terminalReplyState = reply.state;
+      if (reply.data) pty?.write(reply.data);
       const outcome = paneOutcomeCode(renderWindow);
       if (outcome && outcome !== observedPaneOutcome) {
         observedPaneOutcome = outcome;
