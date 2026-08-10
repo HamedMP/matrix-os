@@ -243,6 +243,27 @@ describe("Desktop typed file mutations", () => {
     expect(readFileSync(join(testDir, "source.md"), "utf8")).toBe("source");
     expect(readFileSync(join(testDir, "destination.md"), "utf8")).toBe("source");
   });
+
+  it("preserves a modified typed rename source instead of cleaning it up", async () => {
+    writeFileSync(join(testDir, "source.md"), "source");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await renameFile(
+      testDir,
+      { requestId, path: "source.md", name: "destination.md" },
+      { beforeCleanup: async (source) => { writeFileSync(source, "replacement"); } },
+    );
+    warn.mockRestore();
+
+    expect(result).toMatchObject({
+      ok: false,
+      path: "destination.md",
+      resultCode: "cleanup_failed",
+      errorCode: "cleanup_failed",
+    });
+    expect(readFileSync(join(testDir, "source.md"), "utf8")).toBe("replacement");
+    expect(readFileSync(join(testDir, "destination.md"), "utf8")).toBe("source");
+  });
 });
 
 describe("fileTouch", () => {
@@ -381,6 +402,28 @@ describe("fileRename", () => {
     expect(readFileSync(join(testDir, "source.md"), "utf8")).toBe("source");
     expect(readFileSync(join(testDir, "destination.md"), "utf8")).toBe("source");
   });
+
+  it("preserves a replaced legacy rename source instead of cleaning it up", async () => {
+    writeFileSync(join(testDir, "source.md"), "source");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await fileRename(
+      testDir,
+      "source.md",
+      "destination.md",
+      {
+        beforeCleanup: async (source) => {
+          rmSync(source);
+          writeFileSync(source, "replacement");
+        },
+      },
+    );
+    warn.mockRestore();
+
+    expect(result).toEqual({ ok: false, error: "Failed to rename" });
+    expect(readFileSync(join(testDir, "source.md"), "utf8")).toBe("replacement");
+    expect(readFileSync(join(testDir, "destination.md"), "utf8")).toBe("source");
+  });
 });
 
 describe("fileCopy", () => {
@@ -447,15 +490,51 @@ describe("fileCopy", () => {
     expect(["first", "second"]).toContain(readFileSync(join(testDir, "claimed.md"), "utf8"));
   });
 
-  it("preserves legacy copying from a protected read-only source", async () => {
-    mkdirSync(join(testDir, "system"));
-    writeFileSync(join(testDir, "system", "settings.json"), "settings");
+  it.each(["system", "agents"])(
+    "preserves legacy copying from protected read-only source %s",
+    async (protectedRoot) => {
+      mkdirSync(join(testDir, protectedRoot));
+      writeFileSync(join(testDir, protectedRoot, "settings.json"), "settings");
 
-    const result = await fileCopy(testDir, "system/settings.json", "settings-copy.json");
+      const result = await fileCopy(testDir, `${protectedRoot}/settings.json`, "settings-copy.json");
 
-    expect(result).toEqual({ ok: true });
-    expect(readFileSync(join(testDir, "settings-copy.json"), "utf8")).toBe("settings");
-    expect(readFileSync(join(testDir, "system", "settings.json"), "utf8")).toBe("settings");
+      expect(result).toEqual({ ok: true });
+      expect(readFileSync(join(testDir, "settings-copy.json"), "utf8")).toBe("settings");
+      expect(readFileSync(join(testDir, protectedRoot, "settings.json"), "utf8")).toBe("settings");
+    },
+  );
+
+  it.each(["data", "data/browser-profiles"])(
+    "rejects copying denied source or ancestor %s",
+    async (source) => {
+      mkdirSync(join(testDir, "data", "browser-profiles"), { recursive: true });
+      writeFileSync(join(testDir, "data", "browser-profiles", "secret.json"), "secret");
+
+      const result = await fileCopy(testDir, source, "data-copy");
+
+      expect(result).toEqual({ ok: false, error: "Invalid path" });
+      expect(existsSync(join(testDir, "data-copy"))).toBe(false);
+    },
+  );
+
+  it("reports one retained partial directory after a nested copy conflict", async () => {
+    mkdirSync(join(testDir, "source", "nested"), { recursive: true });
+    writeFileSync(join(testDir, "source", "nested", "file.md"), "content");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await fileCopy(testDir, "source", "target", {
+      afterDirectoryClaim: async (target) => {
+        mkdirSync(join(target, "nested"));
+      },
+    });
+    warn.mockRestore();
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Failed to copy",
+      partialPath: "target",
+    });
+    expect(existsSync(join(testDir, "target"))).toBe(true);
   });
 });
 
@@ -516,15 +595,53 @@ describe("fileDuplicate", () => {
     rmSync(outsideFile, { force: true });
   });
 
-  it("preserves legacy duplication from a protected read-only source", async () => {
-    mkdirSync(join(testDir, "system"));
-    writeFileSync(join(testDir, "system", "settings.json"), "settings");
+  it.each(["system", "agents"])(
+    "preserves legacy duplication from protected read-only source %s",
+    async (protectedRoot) => {
+      mkdirSync(join(testDir, protectedRoot));
+      writeFileSync(join(testDir, protectedRoot, "settings.json"), "settings");
 
-    const result = await fileDuplicate(testDir, "system");
+      const result = await fileDuplicate(testDir, protectedRoot);
 
-    expect(result).toEqual({ ok: true, newPath: "system copy" });
-    expect(readFileSync(join(testDir, "system copy", "settings.json"), "utf8")).toBe("settings");
-    expect(readFileSync(join(testDir, "system", "settings.json"), "utf8")).toBe("settings");
+      expect(result).toEqual({ ok: true, newPath: `${protectedRoot} copy` });
+      expect(readFileSync(join(testDir, `${protectedRoot} copy`, "settings.json"), "utf8")).toBe("settings");
+      expect(readFileSync(join(testDir, protectedRoot, "settings.json"), "utf8")).toBe("settings");
+    },
+  );
+
+  it.each(["data", "data/browser-profiles"])(
+    "rejects duplicating denied source or ancestor %s",
+    async (source) => {
+      mkdirSync(join(testDir, "data", "browser-profiles"), { recursive: true });
+      writeFileSync(join(testDir, "data", "browser-profiles", "secret.json"), "secret");
+
+      const result = await fileDuplicate(testDir, source);
+
+      expect(result).toEqual({ ok: false, error: "Invalid path" });
+      expect(existsSync(join(testDir, "data copy"))).toBe(false);
+      expect(existsSync(join(testDir, "data", "browser-profiles copy"))).toBe(false);
+    },
+  );
+
+  it("does not fan out copy names after a nested duplicate conflict", async () => {
+    mkdirSync(join(testDir, "folder", "nested"), { recursive: true });
+    writeFileSync(join(testDir, "folder", "nested", "file.md"), "content");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await fileDuplicate(testDir, "folder", {
+      afterDirectoryClaim: async (target) => {
+        mkdirSync(join(target, "nested"));
+      },
+    });
+    warn.mockRestore();
+
+    expect(result).toEqual({
+      ok: false,
+      newPath: "folder copy",
+      error: "Failed to duplicate",
+    });
+    expect(existsSync(join(testDir, "folder copy"))).toBe(true);
+    expect(existsSync(join(testDir, "folder copy 2"))).toBe(false);
   });
 
   it("gives concurrent duplicate claimants distinct exclusive destinations", async () => {
