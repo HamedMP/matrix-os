@@ -3,9 +3,14 @@ import type { Dirent } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, relative, extname } from "node:path";
 import { promisify } from "node:util";
-import { isDeniedFileApiPath, resolveWithinHome } from "./path-security.js";
+import {
+  isDeniedFileApiPath,
+  normalizeHomeRelativePath,
+  resolveWithinHome,
+} from "./path-security.js";
 import { getMimeType } from "./file-utils.js";
 import { getFileEntryCapabilities } from "./file-management/policy.js";
+import type { FileEntryCapabilities } from "./file-management/contracts.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,12 +24,7 @@ export interface FileTreeEntry {
   created?: string;
   mime?: string;
   children?: number;
-  capabilities: {
-    canRename: boolean;
-    canMove: boolean;
-    canTrash: boolean;
-    readOnlyReason?: "protected" | "policy";
-  };
+  capabilities: FileEntryCapabilities;
 }
 
 interface GitStatusCache {
@@ -164,7 +164,10 @@ export async function listDirectory(
         changedCount,
         modified,
         children,
-        capabilities: getFileEntryCapabilities(homePath, relative(homePath, fullPath).split("\\").join("/")),
+        capabilities: getFileEntryCapabilities(
+          homePath,
+          normalizeHomeRelativePath(homePath, fullPath) ?? "/invalid",
+        ),
       };
     }),
   );
@@ -201,7 +204,10 @@ export async function listDirectory(
         modified,
         created,
         mime: getMimeType(extname(entry.name)),
-        capabilities: getFileEntryCapabilities(homePath, relative(homePath, fullPath).split("\\").join("/")),
+        capabilities: getFileEntryCapabilities(
+          homePath,
+          normalizeHomeRelativePath(homePath, fullPath) ?? "/invalid",
+        ),
       };
     }),
   );

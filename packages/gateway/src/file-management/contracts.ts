@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import { z } from "zod/v4";
 
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+const INVALID_PORTABLE_NAME_CHARACTER = /[\\/:*?"<>|]/;
 const RESERVED_PLATFORM_NAME = /^(con|prn|aux|nul|clock\$|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 function fitsUtf8ByteLimit(value: string, limit: number): boolean {
@@ -28,8 +29,9 @@ export const FileManagementNameSchema = z.string()
   .max(255)
   .refine((value) => fitsUtf8ByteLimit(value, 255), "Name exceeds 255 UTF-8 bytes")
   .refine((value) => value.trim().length > 0 && value !== "." && value !== "..", "Name must not be blank or traversal")
-  .refine((value) => !value.includes("/") && !value.includes("\\") && !CONTROL_CHARACTER.test(value), "Name must not contain separators or control characters")
-  .refine((value) => !RESERVED_PLATFORM_NAME.test(value.replace(/[ .]+$/, "")), "Name is reserved by the platform");
+  .refine((value) => !INVALID_PORTABLE_NAME_CHARACTER.test(value) && !CONTROL_CHARACTER.test(value), "Name contains a platform-invalid character")
+  .refine((value) => !/[ .]$/.test(value), "Name must not end with a space or dot")
+  .refine((value) => !RESERVED_PLATFORM_NAME.test(value), "Name is reserved by the platform");
 
 export const FileEntryCapabilitiesSchema = z.object({
   canRename: z.boolean(),

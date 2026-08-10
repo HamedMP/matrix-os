@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   mkdirSync,
   writeFileSync,
@@ -54,6 +54,16 @@ describe("fileMkdir", () => {
     expect(result).toEqual({ ok: false, error: "Invalid path" });
     expect(existsSync(join(testDir, "system", "blocked"))).toBe(false);
   });
+
+  it.each(["data", "data/browser-profiles"])(
+    "rejects structural mutation of denied root or ancestor %s",
+    async (requestedPath) => {
+      const result = await fileMkdir(testDir, requestedPath);
+
+      expect(result).toEqual({ ok: false, error: "Invalid path" });
+      expect(existsSync(join(testDir, requestedPath))).toBe(false);
+    },
+  );
 
   it("rejects symlinked parent directories", async () => {
     const outsideDir = join(tmpdir(), `file-ops-outside-${Date.now()}`);
@@ -161,6 +171,77 @@ describe("Desktop typed file mutations", () => {
 
     expect(result).toMatchObject({ ok: true, path: "root.md", resultCode: "created" });
     expect(readFileSync(join(testDir, "root.md"), "utf8")).toBe("");
+  });
+
+  it.each([".ssh", ".trash", "system", "agents"])(
+    "rejects typed create targeting protected root %s",
+    async (name) => {
+      const result = await createFile(testDir, {
+        requestId,
+        parentDirectory: "",
+        name,
+        kind: "directory",
+      });
+
+      expect(result).toEqual({ ok: false, errorCode: "protected" });
+      expect(existsSync(join(testDir, name))).toBe(false);
+    },
+  );
+
+  it.each([".ssh", ".trash", "system", "agents"])(
+    "rejects typed rename targeting protected root %s",
+    async (name) => {
+      writeFileSync(join(testDir, "source.md"), "source");
+
+      const result = await renameFile(testDir, {
+        requestId,
+        path: "source.md",
+        name,
+      });
+
+      expect(result).toEqual({ ok: false, errorCode: "protected" });
+      expect(readFileSync(join(testDir, "source.md"), "utf8")).toBe("source");
+      expect(existsSync(join(testDir, name))).toBe(false);
+    },
+  );
+
+  it("lets only one concurrent typed rename claimant create a destination", async () => {
+    writeFileSync(join(testDir, "first.md"), "first");
+    writeFileSync(join(testDir, "second.md"), "second");
+
+    const results = await Promise.all([
+      renameFile(testDir, { requestId, path: "first.md", name: "claimed.md" }),
+      renameFile(testDir, { requestId, path: "second.md", name: "claimed.md" }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => result.errorCode === "destination_conflict")).toHaveLength(1);
+    const targetContent = readFileSync(join(testDir, "claimed.md"), "utf8");
+    const losingSource = targetContent === "first" ? "second.md" : "first.md";
+    expect(readFileSync(join(testDir, losingSource), "utf8")).toBe(
+      losingSource === "first.md" ? "first" : "second",
+    );
+  });
+
+  it("keeps a source-destination duplicate when typed rename cleanup fails", async () => {
+    writeFileSync(join(testDir, "source.md"), "source");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await renameFile(
+      testDir,
+      { requestId, path: "source.md", name: "destination.md" },
+      { removeSource: async () => { throw new Error("simulated cleanup failure"); } },
+    );
+    warn.mockRestore();
+
+    expect(result).toMatchObject({
+      ok: false,
+      path: "destination.md",
+      resultCode: "cleanup_failed",
+      errorCode: "cleanup_failed",
+    });
+    expect(readFileSync(join(testDir, "source.md"), "utf8")).toBe("source");
+    expect(readFileSync(join(testDir, "destination.md"), "utf8")).toBe("source");
   });
 });
 
@@ -283,6 +364,23 @@ describe("fileRename", () => {
     expect(existsSync(join(outsideDir, "a.md"))).toBe(false);
     rmSync(outsideDir, { recursive: true, force: true });
   });
+
+  it("keeps a source-destination duplicate when legacy rename cleanup fails", async () => {
+    writeFileSync(join(testDir, "source.md"), "source");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await fileRename(
+      testDir,
+      "source.md",
+      "destination.md",
+      { removeSource: async () => { throw new Error("simulated cleanup failure"); } },
+    );
+    warn.mockRestore();
+
+    expect(result).toEqual({ ok: false, error: "Failed to rename" });
+    expect(readFileSync(join(testDir, "source.md"), "utf8")).toBe("source");
+    expect(readFileSync(join(testDir, "destination.md"), "utf8")).toBe("source");
+  });
 });
 
 describe("fileCopy", () => {
@@ -333,6 +431,31 @@ describe("fileCopy", () => {
     expect(result).toEqual({ ok: false, error: "Invalid path" });
     expect(existsSync(join(outsideDir, "copy.md"))).toBe(false);
     rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it("lets only one concurrent copy claimant create a destination", async () => {
+    writeFileSync(join(testDir, "first.md"), "first");
+    writeFileSync(join(testDir, "second.md"), "second");
+
+    const results = await Promise.all([
+      fileCopy(testDir, "first.md", "claimed.md"),
+      fileCopy(testDir, "second.md", "claimed.md"),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => result.status === 409)).toHaveLength(1);
+    expect(["first", "second"]).toContain(readFileSync(join(testDir, "claimed.md"), "utf8"));
+  });
+
+  it("preserves legacy copying from a protected read-only source", async () => {
+    mkdirSync(join(testDir, "system"));
+    writeFileSync(join(testDir, "system", "settings.json"), "settings");
+
+    const result = await fileCopy(testDir, "system/settings.json", "settings-copy.json");
+
+    expect(result).toEqual({ ok: true });
+    expect(readFileSync(join(testDir, "settings-copy.json"), "utf8")).toBe("settings");
+    expect(readFileSync(join(testDir, "system", "settings.json"), "utf8")).toBe("settings");
   });
 });
 
@@ -391,5 +514,32 @@ describe("fileDuplicate", () => {
     expect(result).toEqual({ ok: false, error: "Invalid path" });
     expect(existsSync(join(testDir, "linked copy.md"))).toBe(false);
     rmSync(outsideFile, { force: true });
+  });
+
+  it("preserves legacy duplication from a protected read-only source", async () => {
+    mkdirSync(join(testDir, "system"));
+    writeFileSync(join(testDir, "system", "settings.json"), "settings");
+
+    const result = await fileDuplicate(testDir, "system");
+
+    expect(result).toEqual({ ok: true, newPath: "system copy" });
+    expect(readFileSync(join(testDir, "system copy", "settings.json"), "utf8")).toBe("settings");
+    expect(readFileSync(join(testDir, "system", "settings.json"), "utf8")).toBe("settings");
+  });
+
+  it("gives concurrent duplicate claimants distinct exclusive destinations", async () => {
+    writeFileSync(join(testDir, "file.md"), "content");
+
+    const results = await Promise.all([
+      fileDuplicate(testDir, "file.md"),
+      fileDuplicate(testDir, "file.md"),
+    ]);
+
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(new Set(results.map((result) => result.newPath))).toEqual(
+      new Set(["file copy.md", "file copy 2.md"]),
+    );
+    expect(readFileSync(join(testDir, "file copy.md"), "utf8")).toBe("content");
+    expect(readFileSync(join(testDir, "file copy 2.md"), "utf8")).toBe("content");
   });
 });

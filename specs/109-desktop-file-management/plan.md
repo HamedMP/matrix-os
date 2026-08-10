@@ -53,11 +53,11 @@
 - Test: `tests/gateway/file-ops.test.ts`
 
 - [ ] Write failing schema tests for UUID request IDs, 1–100 unique same-parent sources, 4,096-byte paths, 255-byte names, typed create/rename payloads, discriminated preflight/execute requests with an execution fingerprint, bounded conflict choices, and stable result codes.
-- [ ] Write failing policy tests showing protected/hidden roots expose `canRename: false`, `canMove: false`, `canTrash: false`, while ordinary owner files expose all three capabilities.
+- [ ] Write failing public listing tests showing top-level dot roots remain omitted; visible protected roots (`system`, `agents`) and denied-subtree ancestors expose `canRename: false`, `canMove: false`, `canTrash: false`; ordinary owner files expose all three capabilities. Independently test that mutations targeting hidden dot roots are rejected.
 - [ ] Run the focused tests and confirm RED because contracts/capabilities do not exist.
 - [ ] Implement exported Zod schemas and inferred types using `zod/v4`.
 - [ ] Implement one normalized mutation policy used by both listing and execution. Reject traversal, absolute paths, denied roots, symlink escapes, home root mutation, separators/control characters, and platform-reserved names.
-- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the source/parent and name immediately before the filesystem operation, use exclusive creation, reject occupied rename targets, and return only normalized relative paths plus safe capability/result data. Preserve and separately test compatibility handling for existing callers until it is explicitly removed.
+- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, use exclusive destination creation/copy, reject occupied rename targets, remove the source only after confirmed copy success, surface cleanup-failure duplicates, and return only normalized relative paths plus safe capability/result data. Preserve and separately test compatibility handling for existing callers until it is explicitly removed.
 - [ ] Extend directory listings with the capability object without breaking existing fields.
 - [ ] Run focused tests and confirm GREEN, then refactor duplicate path checks into pure helpers.
 
