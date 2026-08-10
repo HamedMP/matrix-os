@@ -138,6 +138,9 @@ describe("coding agent workspace provider", () => {
 printf 'connect-args=%s\\n' "$*" >> "$MATRIX_TEST_TRACE"
 exit 130
 `);
+      await writeFile(join(runtimeBin, "sh"), `#!/bin/sh
+exec /bin/sh "$@"
+`);
       await writeFile(join(runtimeBin, "bash"), `#!/bin/sh
 printf 'bash-args=%s\\n' "$*" >> "$MATRIX_TEST_TRACE"
 printf 'bash-prompt=%s\\n' "\${MATRIX_TERMINAL_PROMPT:-}" >> "$MATRIX_TEST_TRACE"
@@ -146,6 +149,7 @@ exit 0
       await Promise.all([
         chmod(wrapperPath, 0o700),
         chmod(join(runtimeBin, "codex"), 0o700),
+        chmod(join(runtimeBin, "sh"), 0o700),
         chmod(join(runtimeBin, "bash"), 0o700),
       ]);
 
@@ -160,6 +164,7 @@ exit 0
           MATRIX_NODE_PREFIX: join(testDir, "runtime"),
           MATRIX_TERMINAL_PROMPT: "owner-handle:\\w$ ",
           MATRIX_TEST_TRACE: tracePath,
+          PATH: runtimeBin,
           SHELL: join(runtimeBin, "bash"),
         },
       });
