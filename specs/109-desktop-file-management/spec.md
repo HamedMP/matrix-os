@@ -89,24 +89,55 @@ interface FileEntryCapabilities {
 
 Capabilities are computed by a shared Gateway policy. The renderer treats them as affordances only; every mutation re-authorizes the path.
 
+### Create and rename
+
+`POST /api/files/create`
+
+```ts
+interface CreateFileRequest {
+  parentDirectory: string;
+  name: string;
+  kind: "file" | "directory";
+}
+```
+
+`POST /api/files/rename`
+
+```ts
+interface RenameFileRequest {
+  path: string;
+  name: string;
+}
+```
+
+Both routes return the normalized resulting relative path and its fresh capability object. They use the shared Zod name/path schemas and mutation policy, re-authorize against the authenticated owner immediately before the filesystem write, exclusively create a new file/directory, and reject an occupied rename target rather than overwriting it. MAT-268 hardens and replaces the Desktop use of the legacy `mkdir`, `touch`, and `{ from, to }` rename payloads; compatibility handling for other callers remains explicitly tested at the route boundary.
+
 ### Batch move
 
 `POST /api/files/batch/move`
 
 ```ts
-interface BatchMoveRequest {
+interface BatchMovePreflightRequest {
   requestId: string; // UUID
   sources: string[]; // 1..100 unique, same parent directory
   destinationDirectory: string;
-  phase: "preflight" | "execute";
+  phase: "preflight";
+}
+
+interface BatchMoveExecuteRequest {
+  requestId: string; // same UUID as its preflight request
+  phase: "execute";
+  preflightFingerprint: string;
   conflictChoices?: Array<{
     source: string;
     resolution: "keep-both" | "skip";
   }>;
 }
+
+type BatchMoveRequest = BatchMovePreflightRequest | BatchMoveExecuteRequest;
 ```
 
-Preflight returns normalized sources, destination, ordered conflicts, invalid items, and a request fingerprint. Execute requires the same request ID and payload fingerprint and returns one terminal result per source: `moved`, `skipped`, or `failed`, plus authoritative affected directories.
+Preflight returns normalized sources, destination, ordered conflicts, invalid items, and an opaque `preflightFingerprint`. Execute requires the same request ID and that fingerprint; the Gateway retrieves the owner-scoped preflight record, rejects expired/stale/mismatched fingerprints, and returns one terminal result per source: `moved`, `skipped`, or `failed`, plus authoritative affected directories.
 
 ### Batch Trash
 
@@ -124,9 +155,10 @@ The response returns one `trashed` or `failed` result per source and the authori
 ### Idempotency
 
 - The Gateway stores at most 512 recent operation results for 10 minutes in an LRU+TTL cache.
-- A repeated request ID with the same canonical payload replays the stored result.
-- A repeated request ID with a different payload returns `409 request_id_conflict`.
-- In-flight duplicate requests share one promise and do not execute twice.
+- Cache identity is `(authenticated owner/principal ID, operation namespace, requestId)`. A client-controlled UUID therefore cannot replay or inspect another owner's result.
+- Batch move uses distinct `move:preflight` and `move:execute` namespaces so an execute can deliberately reuse its preflight request ID. The preflight canonical payload is `{ phase, sources, destinationDirectory }`; the execute canonical payload is `{ phase, preflightFingerprint, conflictChoices }`. The request ID, owner/principal, auth tokens, and absolute paths are never payload-hash fields.
+- A repeated request ID in the same owner and operation namespace with the same canonical payload replays the stored result. A payload mismatch returns `409 request_id_conflict`.
+- In-flight duplicate requests with the same owner, namespace, request ID, and payload share one promise and do not execute twice.
 - Gateway restart intentionally loses this cache. The client must reload source and destination and classify each item from authoritative state instead of blindly retrying or reporting a false failure.
 
 ### Directory change subscription
@@ -157,6 +189,8 @@ type FileDirectoryServerMessage =
 | Route / channel | Method | Auth source of truth | Public | Authorization |
 | --- | --- | --- | --- | --- |
 | `/api/files/list` | GET | Existing global Gateway auth middleware | No | Authenticated owner home; path boundary validation |
+| `/api/files/create` | POST | Existing global Gateway auth middleware | No | Revalidate parent and name against owner home and mutation policy immediately before exclusive create |
+| `/api/files/rename` | POST | Existing global Gateway auth middleware | No | Revalidate source, target name, and capability against owner home and mutation policy immediately before rename |
 | `/api/files/batch/move` | POST | Existing global Gateway auth middleware | No | Revalidate every source and destination against owner home and mutation policy |
 | `/api/files/batch/trash` | POST | Existing global Gateway auth middleware | No | Revalidate every source against owner home and Trash policy |
 | `/ws` `files:*` frames | WebSocket | Principal captured at authenticated upgrade | No | Normalize directory and bind subscription to that principal and connection |
@@ -169,7 +203,7 @@ Desktop IPC/native code is not a filesystem authority for these operations. The 
 - Mutating endpoints use Hono `bodyLimit`; the JSON contract limit is 128 KiB.
 - Reject absolute paths, traversal, NUL/control characters, denied roots, symlink escapes, sources outside one directory, root moves, and directory self/descendant moves.
 - Protected root policy supplies both list capabilities and mutation enforcement. `system`, `agents`, `.trash`, and other OS-owned/hidden policy roots cannot be renamed, moved, or trashed from Desktop.
-- Bound names to 255 UTF-8 bytes, paths to 4,096 UTF-8 bytes, arrays to 100, conflict choices to 100, result text to a small allowlist, and all in-memory caches/registries as specified above.
+- Bound names to 255 UTF-8 bytes, paths to 4,096 UTF-8 bytes, arrays to 100, conflict choices to 100, result text to a small allowlist, and all in-memory caches/registries as specified above. The result cache has a separate authenticated-owner component in its key as well as the canonical payload hash.
 - Never rely on a renderer capability flag, preflight result, or existence check as the mutation authorization decision.
 - Log detailed server failures with request ID; return stable safe error codes and generic messages.
 
