@@ -7,6 +7,7 @@ import {
   type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
   type CreateAgentTurnRequest,
+  type ProviderUsageSourceSummary,
   type SafeSetupAction,
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
@@ -48,6 +49,11 @@ export type CodingAgentProviderEventBatch = z.infer<typeof CodingAgentProviderEv
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
+  getUsageSources?(input: {
+    principal: RequestPrincipal;
+    now: () => Date;
+    signal: AbortSignal;
+  }): Promise<ProviderUsageSourceSummary[]> | ProviderUsageSourceSummary[];
   getSummary?(input: {
     principal: RequestPrincipal;
     now: () => Date;

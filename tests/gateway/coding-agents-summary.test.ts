@@ -717,6 +717,24 @@ describe("coding agent runtime summary", () => {
     expect(capability(summary, "codingAgentsApprovals")).toMatchObject({ enabled: false });
   });
 
+  it("advertises provider usage only when the gateway configures it", async () => {
+    const unavailable = await createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      now: () => now,
+    }).getSummary(testPrincipal);
+    const available = await createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      capabilities: { providerUsage: true },
+      now: () => now,
+    }).getSummary(testPrincipal);
+
+    expect(unavailable.capabilities.some(({ id }) => id === "codingAgentsUsageSummary")).toBe(false);
+    expect(capability(available, "codingAgentsUsageSummary")).toEqual({
+      id: "codingAgentsUsageSummary",
+      enabled: true,
+    });
+  });
+
   it("serves authenticated summaries through a safe route", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",
