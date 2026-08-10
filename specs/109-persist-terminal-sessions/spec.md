@@ -399,7 +399,7 @@ The privileged boundary is not accepted until unrestricted sudo is removed from 
 | `matrix-terminal-runtime.service` | root; boot-stable; not restarted by normal bundles | Own supervisor socket, protocol, locks, receipts, descriptors, reconciliation, resource accounting |
 | `matrix-terminal-session@.service` | one instance per runtime; `matrix` process identity | Fixed unit/cgroup shape and foreground keeper lifecycle |
 | `matrix-terminal-keeper` | stable helper; runtime `MainPID` | Claim descriptor, allocate PTY, launch/monitor Zellij, verify readiness, notify systemd |
-| `matrix-terminal-pane` | stable helper | Apply cwd, allocate a provider PTY for interactive launches, and deliver one-shot launch channels without dynamic Matrix argv |
+| `matrix-terminal-pane` | stable helper | Apply cwd, inherit the Zellij pane PTY, and deliver one-shot launch channels without dynamic Matrix argv |
 | `matrix-terminal-runtime-op` | fixed typed helper | Constrained install/maintenance operations where the supervisor protocol is not appropriate |
 | Gateway runtime client | application bundle | Translate owner API operations to protocol v1; attach browser PTYs only; never own production terminal liveness |
 

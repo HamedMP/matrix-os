@@ -276,23 +276,23 @@ describe('terminal runtime service boundary', () => {
     },
   );
 
-  it('allocates a provider PTY for an interactive Pi session', () => {
+  it('inherits the Zellij pane PTY for an interactive Pi session', async () => {
     const launch = buildProviderLaunch({ schemaVersion: 1, agent: 'pi',
       cwd: { kind: 'home-relative', path: '' }, mode: 'default', approvalPolicy: 'never',
       sandbox: { enabled: false, mode: 'danger-full-access', writableRoots: [], denyWriteRoots: [] } });
     expect(launch).toMatchObject({ file: '/opt/matrix/runtime/node/bin/pi',
-      args: ['--offline'], interactivePty: true, stdin: null, fdPayload: null });
+      args: ['--offline'], stdin: null, fdPayload: null });
+    expect(launch).not.toHaveProperty('interactivePty');
     expect(launch.env.PATH?.split(':')).toContain('/opt/matrix/runtime/node/bin');
+    const child = Object.assign(new EventEmitter(), { stdin: null,
+      stdio: [null, null, null, null], kill: vi.fn() });
+    const spawnChild = vi.fn(() => child) as unknown as typeof spawn;
+    const waiting = waitForChild(launch, spawnChild);
+    child.emit('exit', 0, null);
+    await expect(waiting).resolves.toBe(0);
+    expect(spawnChild).toHaveBeenCalledWith(launch.file, launch.args,
+      expect.objectContaining({ stdio: ['inherit', 'inherit', 'inherit', 'ignore'] }));
   });
-  it('launches an interactive provider with TTY stdin and stdout', async () => {
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    try { await expect(waitForChild({ file: process.execPath,
-      args: ['-e', 'process.stdout.write(String(process.stdin.isTTY&&process.stdout.isTTY))'],
-      cwd: process.cwd(), env: {}, stdin: null, fdPayload: null, interactivePty: true })).resolves.toBe(0);
-      expect(write).toHaveBeenCalledWith('true');
-    } finally { write.mockRestore(); }
-  });
-
   it('emits only bounded generic lifecycle codes when an agent pane exits', () => {
     expect(paneExitLifecycleCode('agent', 0)).toBe('terminal_pane_agent_exit_0');
     expect(paneExitLifecycleCode('agent', 128)).toBe('terminal_pane_agent_exit_128');

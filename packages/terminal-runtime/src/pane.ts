@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { type Stats } from 'node:fs';
 import { type FileHandle, lstat, open, readFile, unlink } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { spawn as spawnPty } from 'node-pty';
 import {
   AgentConfigurationSchema,
   RuntimeIdSchema,
@@ -32,7 +31,6 @@ export type ProviderLaunch = {
   stdin: string | null;
   fdPayload: string | null;
   fdPayloadFile?: boolean;
-  interactivePty?: boolean;
 };
 
 export function paneEnvironment(
@@ -200,26 +198,8 @@ export function buildProviderLaunch(
         env: environment,
         stdin: configuration.prompt ?? null,
         fdPayload: null,
-        interactivePty: configuration.prompt === undefined,
       };
   }
-}
-
-async function waitForInteractivePty(launch: ProviderLaunch): Promise<number> {
-  return await new Promise<number>((resolveChild) => {
-    const child = spawnPty(launch.file, launch.args, {
-      name: 'xterm-256color', cols: process.stdout.columns || 120, rows: process.stdout.rows || 40, cwd: launch.cwd, env: launch.env,
-    });
-    const wasRaw = process.stdin.isRaw;
-    const input = (data: Buffer): void => child.write(data.toString('utf8'));
-    const resize = (): void => child.resize(process.stdout.columns || 120, process.stdout.rows || 40);
-    const output = child.onData((data) => process.stdout.write(data));
-    process.stdin.setRawMode?.(true); process.stdin.on('data', input); process.on('SIGWINCH', resize);
-    child.onExit(({ exitCode }) => {
-      output.dispose(); process.stdin.removeListener('data', input); process.removeListener('SIGWINCH', resize);
-      process.stdin.setRawMode?.(wasRaw); resolveChild(exitCode);
-    });
-  });
 }
 
 async function removePayloadFile(
@@ -240,7 +220,6 @@ export async function waitForChild(
   spawnChild = spawn,
   fdPayloadPath?: string,
 ): Promise<number> {
-  if (launch.interactivePty) return await waitForInteractivePty(launch);
   let payloadHandle: FileHandle | null = null;
   let payloadIdentity: Stats | null = null;
   if (launch.fdPayloadFile) {
