@@ -82,6 +82,7 @@ export function createLocalAttachmentController(options: {
   let items: InternalAttachment[] = [];
   let snapshot: readonly LocalConversationAttachment[] = [];
   let disposed = false;
+  let uploadInFlight = false;
   const listeners = new Set<() => void>();
 
   const emit = () => {
@@ -114,7 +115,8 @@ export function createLocalAttachmentController(options: {
       item.status = "ready";
       emit();
       return true;
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[desktop attachments] upload failed:", err instanceof Error ? err.message : String(err));
       if (!disposed && items.includes(item)) {
         item.status = "failed";
         item.error = "Upload failed. Try again.";
@@ -132,7 +134,7 @@ export function createLocalAttachmentController(options: {
       return () => listeners.delete(listener);
     },
     add(files) {
-      if (disposed) return;
+      if (disposed || uploadInFlight) return;
       for (const file of files) {
         if (items.length >= MAX_ATTACHMENTS) break;
         if (!validFile(file)) continue;
@@ -151,6 +153,7 @@ export function createLocalAttachmentController(options: {
       emit();
     },
     remove(localId) {
+      if (uploadInFlight) return;
       const item = items.find((candidate) => candidate.localId === localId);
       if (!item) return;
       items = items.filter((candidate) => candidate !== item);
@@ -158,33 +161,44 @@ export function createLocalAttachmentController(options: {
       emit();
     },
     async retry(localId) {
+      if (uploadInFlight) return;
       const item = items.find((candidate) => candidate.localId === localId);
       if (!item || item.status !== "failed" || item.file.size > MAX_ATTACHMENT_FILE_BYTES) return;
       await uploadOne(item);
     },
     async uploadAll() {
-      const pending = items.filter((item) => !item.uploadedPath && item.status !== "failed");
-      let cursor = 0;
-      const worker = async () => {
-        while (cursor < pending.length) {
-          const index = cursor++;
-          await uploadOne(pending[index]!);
-        }
-      };
-      await Promise.all(Array.from(
-        { length: Math.min(MAX_CONCURRENT_UPLOADS, pending.length) },
-        () => worker(),
-      ));
-      if (disposed || items.some((item) => !item.uploadedPath)) return { ok: false };
-      const attachments = items.map(attachmentReference);
-      if (attachments.some((attachment) => !attachment)) return { ok: false };
-      return {
-        ok: true,
-        paths: items.map((item) => item.uploadedPath!),
-        attachments: attachments as AgentAttachment[],
-      };
+      if (uploadInFlight) return { ok: false };
+      uploadInFlight = true;
+      const batch = [...items];
+      try {
+        const pending = batch.filter((item) => !item.uploadedPath && item.status !== "failed");
+        let cursor = 0;
+        const worker = async () => {
+          while (cursor < pending.length) {
+            const index = cursor++;
+            await uploadOne(pending[index]!);
+          }
+        };
+        await Promise.all(Array.from(
+          { length: Math.min(MAX_CONCURRENT_UPLOADS, pending.length) },
+          () => worker(),
+        ));
+        const batchStillCurrent = items.length === batch.length
+          && batch.every((item, index) => items[index] === item);
+        if (disposed || !batchStillCurrent || batch.some((item) => !item.uploadedPath)) return { ok: false };
+        const attachments = batch.map(attachmentReference);
+        if (attachments.some((attachment) => !attachment)) return { ok: false };
+        return {
+          ok: true,
+          paths: batch.map((item) => item.uploadedPath!),
+          attachments: attachments as AgentAttachment[],
+        };
+      } finally {
+        uploadInFlight = false;
+      }
     },
     clear() {
+      if (uploadInFlight) return;
       for (const item of items) revoke(item);
       items = [];
       emit();

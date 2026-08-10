@@ -227,6 +227,7 @@ export function ProjectChatDraft({
               attachments={(
                 <AttachmentPreviewRow
                   items={attachments.items}
+                  disabled={busy}
                   onRemove={attachments.remove}
                   onRetry={(localId) => void attachments.retry(localId)}
                 />

@@ -207,7 +207,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
         if (payload === "\x1b[200~\x1b[201~") throw new Error("invalid terminal paste paths");
         attachmentRef.current?.write(payload);
         setPasteError(null);
-      } catch {
+      } catch (err: unknown) {
+        console.warn("[terminal] image paste failed:", err instanceof Error ? err.message : String(err));
         if (!cancelled) setPasteError("Image paste failed. Try again.");
       }
     };

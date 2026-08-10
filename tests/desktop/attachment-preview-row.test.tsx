@@ -55,4 +55,24 @@ describe("AttachmentPreviewRow", () => {
     expect(onRemove).toHaveBeenCalledWith("local_1");
     expect(onRetry).toHaveBeenCalledWith("local_3");
   });
+
+  it("disables Retry and Remove while the composer is submitting", () => {
+    const onRemove = vi.fn();
+    const onRetry = vi.fn();
+    render(<AttachmentPreviewRow
+      items={[item(1, { status: "failed", error: "Upload failed. Try again." })]}
+      disabled
+      onRemove={onRemove}
+      onRetry={onRetry}
+    />);
+
+    const retry = screen.getByRole("button", { name: "Retry file-1.txt" });
+    const remove = screen.getByRole("button", { name: "Remove file-1.txt" });
+    expect((retry as HTMLButtonElement).disabled).toBe(true);
+    expect((remove as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(retry);
+    fireEvent.click(remove);
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(onRemove).not.toHaveBeenCalled();
+  });
 });

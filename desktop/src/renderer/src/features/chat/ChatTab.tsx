@@ -95,6 +95,7 @@ function HermesPane() {
   const attachmentPreviews = (
     <AttachmentPreviewRow
       items={attachments.items}
+      disabled={uploadingAttachments}
       onRemove={attachments.remove}
       onRetry={(localId) => void attachments.retry(localId)}
     />

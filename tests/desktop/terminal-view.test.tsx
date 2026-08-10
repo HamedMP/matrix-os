@@ -229,6 +229,22 @@ describe("TerminalView session switching", () => {
     expect(postBytes).toHaveBeenCalledTimes(1);
   });
 
+  it("logs terminal image upload failures while keeping the user error generic", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const postBytes = vi.fn().mockRejectedValue(new Error("preview gateway offline"));
+    useConnection.setState({ api: { postBytes } as never });
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
+
+    fireEvent.paste(host, {
+      clipboardData: { files: [new File(["png"], "failed.png", { type: "image/png" })] },
+    });
+
+    expect(await screen.findByText("Image paste failed. Try again.")).toBeTruthy();
+    expect(warn).toHaveBeenCalledWith("[terminal] image paste failed:", "preview gateway offline");
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
   it("shows a safe error and does not upload an image over 10 MB", async () => {
     const postBytes = vi.fn();
     useConnection.setState({ api: { postBytes } as never });

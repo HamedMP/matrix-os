@@ -130,7 +130,40 @@ describe("local Desktop attachment controller", () => {
     );
   });
 
+  it("freezes attachment mutations while the submitted batch is uploading", async () => {
+    let resolveUpload!: (value: { ok: true; path: string; size: number }) => void;
+    const putBytes = vi.fn(() => new Promise((resolve) => {
+      resolveUpload = resolve;
+    }));
+    const controller = createLocalAttachmentController({
+      api: { putBytes } as never,
+      createId: (() => {
+        let next = 0;
+        return () => `locked_${next++}`;
+      })(),
+    });
+    controller.add([file("submitted.txt", 1, "text/plain")]);
+    const submittedId = controller.getSnapshot()[0]!.localId;
+
+    const upload = controller.uploadAll();
+    await vi.waitFor(() => expect(putBytes).toHaveBeenCalledTimes(1));
+    controller.add([file("late.txt", 1, "text/plain")]);
+    controller.remove(submittedId);
+
+    expect(controller.getSnapshot().map((item) => item.file.name)).toEqual(["submitted.txt"]);
+    resolveUpload({
+      ok: true,
+      path: "uploads/desktop-chat/locked_0-submitted.txt",
+      size: 1,
+    });
+    await expect(upload).resolves.toMatchObject({
+      ok: true,
+      paths: ["uploads/desktop-chat/locked_0-submitted.txt"],
+    });
+  });
+
   it("retains failed previews for Retry and reuses the stable destination", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const putBytes = vi.fn()
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce({ ok: true, path: "uploads/desktop-chat/stable_retry-retry.txt", size: 1 });
@@ -147,6 +180,7 @@ describe("local Desktop attachment controller", () => {
 
     expect(putBytes).toHaveBeenCalledTimes(2);
     expect(putBytes.mock.calls[1]?.[0]).toBe(putBytes.mock.calls[0]?.[0]);
+    expect(warn).toHaveBeenCalledWith("[desktop attachments] upload failed:", "offline");
     await expect(controller.uploadAll()).resolves.toMatchObject({ ok: true });
   });
 

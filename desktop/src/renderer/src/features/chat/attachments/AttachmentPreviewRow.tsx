@@ -22,10 +22,12 @@ function sizeLabel(size: number): string {
 
 export function AttachmentPreviewRow({
   items,
+  disabled = false,
   onRemove,
   onRetry,
 }: {
   items: readonly LocalConversationAttachment[];
+  disabled?: boolean;
   onRemove: (localId: string) => void;
   onRetry: (localId: string) => void;
 }) {
@@ -49,11 +51,11 @@ export function AttachmentPreviewRow({
           </AttachmentContent>
           <AttachmentActions>
             {item.status === "failed" && item.file.size <= MAX_ATTACHMENT_FILE_BYTES ? (
-              <AttachmentAction aria-label={`Retry ${item.file.name}`} onClick={() => onRetry(item.localId)}>
+              <AttachmentAction disabled={disabled} aria-label={`Retry ${item.file.name}`} onClick={() => onRetry(item.localId)}>
                 <RotateCcw size={14} />
               </AttachmentAction>
             ) : null}
-            <AttachmentAction aria-label={`Remove ${item.file.name}`} onClick={() => onRemove(item.localId)}>
+            <AttachmentAction disabled={disabled} aria-label={`Remove ${item.file.name}`} onClick={() => onRemove(item.localId)}>
               <X size={14} />
             </AttachmentAction>
           </AttachmentActions>
