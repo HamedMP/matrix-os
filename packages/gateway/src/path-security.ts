@@ -16,6 +16,14 @@ export function resolveWithinHome(
   return null;
 }
 
+export function normalizeHomeRelativePath(homePath: string, resolvedPath: string): string | null {
+  const base = resolve(homePath);
+  const target = resolve(resolvedPath);
+  const rel = relative(base, target);
+  if (rel.startsWith("..") || isAbsolute(rel)) return null;
+  return rel.split(sep).join("/");
+}
+
 const DENIED_FILE_API_PREFIXES = ["data/browser-profiles"];
 
 // OS-owned subtrees that must never receive user-created folders. Mirrors

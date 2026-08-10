@@ -5,6 +5,7 @@ import { join, relative, extname } from "node:path";
 import { promisify } from "node:util";
 import { isDeniedFileApiPath, resolveWithinHome } from "./path-security.js";
 import { getMimeType } from "./file-utils.js";
+import { getFileEntryCapabilities } from "./file-management/policy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +19,12 @@ export interface FileTreeEntry {
   created?: string;
   mime?: string;
   children?: number;
+  capabilities: {
+    canRename: boolean;
+    canMove: boolean;
+    canTrash: boolean;
+    readOnlyReason?: "protected" | "policy";
+  };
 }
 
 interface GitStatusCache {
@@ -157,6 +164,7 @@ export async function listDirectory(
         changedCount,
         modified,
         children,
+        capabilities: getFileEntryCapabilities(homePath, relative(homePath, fullPath).split("\\").join("/")),
       };
     }),
   );
@@ -193,6 +201,7 @@ export async function listDirectory(
         modified,
         created,
         mime: getMimeType(extname(entry.name)),
+        capabilities: getFileEntryCapabilities(homePath, relative(homePath, fullPath).split("\\").join("/")),
       };
     }),
   );

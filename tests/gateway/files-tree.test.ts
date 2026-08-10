@@ -105,6 +105,27 @@ describe("listDirectory", () => {
     expect(names).toContain("projects");
   });
 
+  it("exposes false mutation capabilities for protected roots and true capabilities for owner files", async () => {
+    mkdirSync(join(TEST_HOME, "system"), { recursive: true });
+    writeFileSync(join(TEST_HOME, "owner.md"), "owned");
+
+    const result = (await listDirectory(TEST_HOME, ""))!;
+    const protectedRoot = result.find((entry) => entry.name === "system");
+    const ownerFile = result.find((entry) => entry.name === "owner.md");
+
+    expect(protectedRoot?.capabilities).toEqual({
+      canRename: false,
+      canMove: false,
+      canTrash: false,
+      readOnlyReason: "protected",
+    });
+    expect(ownerFile?.capabilities).toEqual({
+      canRename: true,
+      canMove: true,
+      canTrash: true,
+    });
+  });
+
   it("clean files have null gitStatus", async () => {
     const result = (await listDirectory(TEST_HOME, "projects/myapp"))!;
     const readme = result.find((e) => e.name === "README.md");
