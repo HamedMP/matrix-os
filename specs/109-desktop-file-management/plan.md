@@ -22,7 +22,13 @@
 - Reference: `docs/dev/large-file-refactoring.md`
 
 - [x] Capture the confirmed MAT-268 scope, UX rules, contracts, auth matrix, resource bounds, acceptable orphan state, public test seams, and follow-up boundaries.
-- [x] Spike Node 24 directory copy semantics: a missing target is exclusively created; an existing target produces `ERR_FS_CP_EEXIST` with `force: false` and `errorOnExist: true`.
+- [x] Spike Node 24 directory copy semantics: a missing target is exclusively created; an existing target produces `ERR_FS_CP_EEXIST` with `force: false` and `errorOnExist: true`. Minimal reproducible evidence:
+
+  ```bash
+  flox activate -- node --input-type=module -e 'import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"; import { join } from "node:path"; import { tmpdir } from "node:os"; const root = await mkdtemp(join(tmpdir(), "mat268-cp-")); try { const source = join(root, "source"); const target = join(root, "target"); await mkdir(source); await writeFile(join(source, "proof.txt"), "source"); await cp(source, target, { recursive: true, force: false, errorOnExist: true }); let existingTargetCode = "none"; try { await cp(source, target, { recursive: true, force: false, errorOnExist: true }); } catch (error) { existingTargetCode = error.code; } console.log(JSON.stringify({ createdTargetContent: await readFile(join(target, "proof.txt"), "utf8"), existingTargetCode })); } finally { await rm(root, { recursive: true, force: true }); }'
+  ```
+
+  Output: `{"createdTargetContent":"source","existingTargetCode":"ERR_FS_CP_EEXIST"}`.
 - [x] Run the untouched focused baseline:
 
   ```bash
@@ -33,7 +39,7 @@
 
   **Baseline evidence (2026-08-10):** the untouched command passed: 5 test files, 91 tests. The known React `act(...)` warnings occurred in the two `FilesWorkspace` session-scope tests and remain baseline noise; this task does not change them.
 
-## Task 2: Add shared file-management contracts and mutation policy
+## Task 2: Add shared file-management contracts, structural mutations, and policy
 
 **Files:**
 
@@ -41,14 +47,17 @@
 - Create: `packages/gateway/src/file-management/policy.ts`
 - Modify: `packages/gateway/src/files-tree.ts`
 - Modify: `packages/gateway/src/path-security.ts`
+- Modify: `packages/gateway/src/file-ops.ts`
 - Test: `tests/gateway/file-management-contracts.test.ts`
 - Test: `tests/gateway/files-tree.test.ts`
+- Test: `tests/gateway/file-ops.test.ts`
 
-- [ ] Write failing schema tests for UUID request IDs, 1–100 unique same-parent sources, 4,096-byte paths, 255-byte names, discriminated preflight/execute requests, bounded conflict choices, and stable result codes.
+- [ ] Write failing schema tests for UUID request IDs, 1–100 unique same-parent sources, 4,096-byte paths, 255-byte names, typed create/rename payloads, discriminated preflight/execute requests with an execution fingerprint, bounded conflict choices, and stable result codes.
 - [ ] Write failing policy tests showing protected/hidden roots expose `canRename: false`, `canMove: false`, `canTrash: false`, while ordinary owner files expose all three capabilities.
 - [ ] Run the focused tests and confirm RED because contracts/capabilities do not exist.
 - [ ] Implement exported Zod schemas and inferred types using `zod/v4`.
 - [ ] Implement one normalized mutation policy used by both listing and execution. Reject traversal, absolute paths, denied roots, symlink escapes, home root mutation, separators/control characters, and platform-reserved names.
+- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the source/parent and name immediately before the filesystem operation, use exclusive creation, reject occupied rename targets, and return only normalized relative paths plus safe capability/result data. Preserve and separately test compatibility handling for existing callers until it is explicitly removed.
 - [ ] Extend directory listings with the capability object without breaking existing fields.
 - [ ] Run focused tests and confirm GREEN, then refactor duplicate path checks into pure helpers.
 
@@ -61,10 +70,10 @@
 - Test: `tests/gateway/file-operation-result-cache.test.ts`
 - Test: `tests/gateway/file-batch-preflight.test.ts`
 
-- [ ] Write failing fake-clock tests for 512-entry LRU eviction, 10-minute TTL expiry, identical replay, in-flight promise sharing, and `request_id_conflict` for a payload mismatch.
+- [ ] Write failing fake-clock tests for 512-entry LRU eviction, 10-minute TTL expiry, identical replay, in-flight promise sharing, `request_id_conflict` for a payload mismatch, separate preflight/execute namespaces for a shared request ID, and cross-owner isolation for identical client UUIDs.
 - [ ] Write failing preflight tests for deterministic source order, same-parent enforcement, source-not-found, protected items, current-directory destination, directory self/descendant destinations, and ordered conflicts.
 - [ ] Run both tests and confirm RED.
-- [ ] Implement canonical payload hashing with stable JSON fields; never include auth tokens or absolute paths.
+- [ ] Implement canonical payload hashing with stable JSON fields; never include auth tokens or absolute paths. Key every cache entry by authenticated owner/principal ID, operation namespace, and request ID; preflight hashes normalized source/destination fields, while execute hashes its preflight fingerprint and ordered conflict choices.
 - [ ] Implement the bounded cache with explicit `close()` clearing timers/maps.
 - [ ] Implement preflight from freshly resolved filesystem state and shared mutation policy.
 - [ ] Run tests and confirm GREEN.
@@ -114,9 +123,9 @@
 - Test: `tests/gateway/file-management-routes.test.ts`
 - Test: `tests/gateway/server-route-registrars.test.ts`
 
-- [ ] Write failing Hono integration tests for auth enforcement, 128 KiB body limit, malformed JSON, schema errors, list capabilities, preflight, execute, replay, payload mismatch, batch Trash, safe 4xx/5xx bodies, and service disposal.
+- [ ] Write failing Hono integration tests for auth enforcement, 128 KiB body limit, malformed JSON, schema errors, list capabilities, typed create/rename re-authorization and exclusive-conflict behavior, preflight, execute with a required fingerprint, same-owner replay, cross-owner request-ID isolation, payload mismatch, batch Trash, safe 4xx/5xx bodies, and service disposal.
 - [ ] Run tests and confirm RED.
-- [ ] Register explicit `/api/files/batch/move` and `/api/files/batch/trash` endpoints after global auth middleware. Parse Zod schemas at the route boundary and map typed service errors once.
+- [ ] Register explicit typed `/api/files/create`, `/api/files/rename`, `/api/files/batch/move`, and `/api/files/batch/trash` endpoints after global auth middleware. Parse Zod schemas at the route boundary and map typed service errors once; preserve compatibility handling for legacy create/rename callers at that boundary until removal is separately approved.
 - [ ] Resolve all service dependencies during route registration and add service `close()` to Gateway shutdown before shared watcher/auth dependencies are destroyed.
 - [ ] Run focused tests and confirm GREEN.
 
@@ -184,7 +193,7 @@
 - [ ] Write failing rendered tests for click/toggle/range selection, focus-driven preview, refresh retention, navigation/scope clearing, batch-limit explanation, pending row disabling, partial-result messaging, and keyboard/screen-reader labels.
 - [ ] Run tests and confirm RED.
 - [ ] Extract controller/state hooks before adding behavior to `ComputerFileBrowser.tsx`; keep composition files below the repository large-file thresholds.
-- [ ] Implement the menus, inline editor, accessible selection semantics, and notices using Desktop design primitives/tokens.
+- [ ] Implement the menus, inline editor, accessible selection semantics, and notices using Desktop design primitives/tokens and the typed re-authorized create/rename API contracts.
 - [ ] Run focused tests and confirm GREEN.
 
 ## Task 10: Add folder picker and internal drag-to-move
