@@ -182,9 +182,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
         if (!cancelled) setPasteError("Image paste is unavailable. Reconnect and try again.");
         return;
       }
-      const paths: string[] = [];
       try {
-        for (const { file, mimeType } of files) {
+        const paths = await Promise.all(files.map(async ({ file, mimeType }) => {
           const response = await api.postBytes<{ terminalPath?: unknown }>(
             `/api/terminal/sessions/${encodeURIComponent(sessionName)}/paste-assets`,
             file,
@@ -194,7 +193,6 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
             },
             { timeoutMs: 30_000 },
           );
-          if (cancelled) return;
           if (
             typeof response.terminalPath !== "string"
             || !response.terminalPath.startsWith("/home/matrix/home/")
@@ -202,8 +200,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
           ) {
             throw new Error("invalid terminal paste response");
           }
-          paths.push(response.terminalPath);
-        }
+          return response.terminalPath;
+        }));
         if (paths.length === 0 || cancelled) return;
         const payload = bracketTerminalPaths(paths);
         if (payload === "\x1b[200~\x1b[201~") throw new Error("invalid terminal paste paths");

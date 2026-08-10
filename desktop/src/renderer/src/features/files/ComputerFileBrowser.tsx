@@ -29,10 +29,7 @@ import {
   regularDroppedFiles,
   SortHeader,
 } from "./browser-views";
-import {
-  createFileUploadController,
-  type FileUploadRow,
-} from "./file-upload-controller";
+import { useFileUploads } from "./use-file-uploads";
 
 type BrowserStatus = "loading" | "ready" | "error";
 
@@ -86,9 +83,7 @@ export default function ComputerFileBrowser({
   const restoreFocusRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepth = useRef(0);
-  const uploadControllerRef = useRef<ReturnType<typeof createFileUploadController> | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [uploads, setUploads] = useState<FileUploadRow[]>([]);
 
   const markFocusForRestore = useCallback(() => {
     const active = document.activeElement;
@@ -100,10 +95,6 @@ export default function ComputerFileBrowser({
   // or replacement session never shows the previous owner's directory names or
   // lets stale rows fire onOpenFile/onChooseFolder against the new API.
   const browserScope = `${runtimeSlot}|${authGeneration}`;
-  const scopeRef = useRef(browserScope);
-  const currentPathRef = useRef(currentPath);
-  scopeRef.current = browserScope;
-  currentPathRef.current = currentPath;
   const [loadedScope, setLoadedScope] = useState(browserScope);
   const scoped = loadedScope === browserScope;
   const viewCurrentPath = scoped ? currentPath : "";
@@ -144,31 +135,17 @@ export default function ComputerFileBrowser({
     }
   }, [api]);
 
-  useEffect(() => {
-    if (!api || mode !== "browse") {
-      uploadControllerRef.current = null;
-      setUploads([]);
-      return;
-    }
-    const controller = createFileUploadController({
-      api,
-      getScope: () => scopeRef.current,
-      onUploaded: (directory) => {
-        if (directory === currentPathRef.current) void load(directory);
-      },
-    });
-    uploadControllerRef.current = controller;
-    const unsubscribe = controller.subscribe(setUploads);
-    return () => {
-      if (uploadControllerRef.current === controller) uploadControllerRef.current = null;
-      unsubscribe();
-      controller.dispose();
-    };
-  }, [api, browserScope, load, mode]);
+  const fileUploads = useFileUploads({
+    api,
+    browserScope,
+    currentPath,
+    enabled: mode === "browse",
+    onUploaded: load,
+  });
 
   const enqueueFiles = useCallback((files: File[], destination = viewCurrentPath) => {
-    uploadControllerRef.current?.enqueue(files, destination);
-  }, [viewCurrentPath]);
+    fileUploads.enqueue(files, destination);
+  }, [fileUploads.enqueue, viewCurrentPath]);
 
   const onListingDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (mode !== "browse" || !hasRegularDroppedFiles(event.dataTransfer)) return;
@@ -445,17 +422,17 @@ export default function ComputerFileBrowser({
         ) : null}
       </div>
 
-      {uploads.length > 0 ? (
+      {fileUploads.uploads.length > 0 ? (
         <div className="shrink-0 space-y-1 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }} aria-live="polite">
-          {uploads.slice(0, 4).map((upload) => (
+          {fileUploads.uploads.slice(0, 4).map((upload) => (
             <div key={upload.id} className="flex min-h-7 items-center justify-between gap-2">
               <span className="min-w-0 truncate">{upload.name}: {upload.error ?? upload.status}</span>
               {upload.status === "failed" ? (
                 <span className="flex shrink-0 items-center gap-1">
                   {upload.error !== "Files are limited to 10 MB." ? (
-                    <Button variant="subtle" className="h-7 text-xs" onClick={() => uploadControllerRef.current?.retry(upload.id)}>Retry</Button>
+                    <Button variant="subtle" className="h-7 text-xs" onClick={() => fileUploads.retry(upload.id)}>Retry</Button>
                   ) : null}
-                  <Button variant="ghost" className="h-7 text-xs" onClick={() => uploadControllerRef.current?.remove(upload.id)}>Remove</Button>
+                  <Button variant="ghost" className="h-7 text-xs" onClick={() => fileUploads.remove(upload.id)}>Remove</Button>
                 </span>
               ) : null}
             </div>

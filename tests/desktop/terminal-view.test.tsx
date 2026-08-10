@@ -167,8 +167,13 @@ describe("TerminalView session switching", () => {
       "/home/matrix/home/projects/.matrix-terminal-pastes/first.png",
       "/home/matrix/home/projects/.matrix-terminal-pastes/second.png",
     ];
-    let call = 0;
-    const postBytes = vi.fn(async () => ({ terminalPath: paths[call++] }));
+    let resolveFirst!: (value: { terminalPath: string }) => void;
+    let resolveSecond!: (value: { terminalPath: string }) => void;
+    const firstUpload = new Promise<{ terminalPath: string }>((resolve) => { resolveFirst = resolve; });
+    const secondUpload = new Promise<{ terminalPath: string }>((resolve) => { resolveSecond = resolve; });
+    const postBytes = vi.fn()
+      .mockReturnValueOnce(firstUpload)
+      .mockReturnValueOnce(secondUpload);
     useConnection.setState({ api: { postBytes } as never });
     const { container } = render(<TerminalView sessionName="alpha" />);
     const host = container.querySelector("[data-terminal-viewport]") as HTMLElement;
@@ -177,7 +182,11 @@ describe("TerminalView session switching", () => {
 
     fireEvent.paste(host, { clipboardData: { files: [first, second] } });
 
+    // Multiple clipboard images start together, while Promise.all preserves
+    // their original clipboard order even when the second upload settles first.
     await waitFor(() => expect(postBytes).toHaveBeenCalledTimes(2));
+    resolveSecond({ terminalPath: paths[1]! });
+    resolveFirst({ terminalPath: paths[0]! });
     expect(postBytes).toHaveBeenNthCalledWith(
       1,
       "/api/terminal/sessions/alpha/paste-assets",

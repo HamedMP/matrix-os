@@ -54,9 +54,10 @@ export function createFileUploadController(options: {
   };
 
   const pump = () => {
-    while (!disposed && active < MAX_CONCURRENT) {
-      const item = pending.find((candidate) => candidate.status === "queued");
-      if (!item) return;
+    if (disposed || active >= MAX_CONCURRENT) return;
+    const availableSlots = MAX_CONCURRENT - active;
+    const queued = pending.filter((candidate) => candidate.status === "queued").slice(0, availableSlots);
+    for (const item of queued) {
       item.status = "uploading";
       active += 1;
       emit();
