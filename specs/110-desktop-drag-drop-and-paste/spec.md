@@ -35,7 +35,8 @@ and non-active terminals are not drop zones.
 ## Requirements
 
 - **FR-001**: The change MUST remain inside `desktop/`, the existing Gateway Terminal
-  paste-asset storage helper and its focused tests, and this spec directory.
+  paste-asset storage helper and its focused tests, this spec directory, and the
+  canonical Terminal paste contract documents under `specs/106-terminal-rich-paste/`.
 - **FR-002**: Existing Gateway routes and contracts MUST be consumed unchanged.
 - **FR-003**: Each accepted file MUST be a regular browser `File` no larger than
   `10 * 1024 * 1024` bytes.
