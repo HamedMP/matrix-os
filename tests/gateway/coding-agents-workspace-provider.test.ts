@@ -277,6 +277,38 @@ exit 0
     }));
   });
 
+  it("exposes account usage only through the Codex adapter", async () => {
+    const codexUsageProbe = vi.fn(async () => [{
+      id: "openai-chatgpt",
+      displayName: "OpenAI / ChatGPT",
+      linkedAgentProviderIds: ["codex"],
+      state: "available" as const,
+      accuracy: "provider_reported" as const,
+      windows: [{ id: "primary", label: "5-hour window", remainingPercent: 72 }],
+      observedAt: baseNow.toISOString(),
+      setupActions: [],
+    }]);
+    const providers = createWorkspaceCodingAgentProviderSet({
+      agents: ["claude", "codex"],
+      runtime: { startSession: vi.fn(), stopSession: vi.fn() },
+      codexUsageProbe,
+    });
+    const [claude, codex] = providers.registryProviders;
+
+    expect(claude?.getUsageSources).toBeUndefined();
+    await expect(codex?.getUsageSources?.({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "openai-chatgpt", state: "available" }),
+    ]));
+    expect(codexUsageProbe).toHaveBeenCalledWith(expect.objectContaining({
+      now: expect.any(Function),
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
   it("maps Claude sandbox startup failures to safe thread events", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-workspace-provider-"));
     const runtime = {
