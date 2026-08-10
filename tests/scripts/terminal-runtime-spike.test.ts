@@ -487,9 +487,10 @@ describe('terminal runtime spike evidence', () => {
       '--property=TimeoutStopSec=45', 'systemctl_cancel stop', 'write_phase runtime_created', 'write_phase bundle_one', 'write_phase bundle_two',
       'write_phase forced_failure', 'write_phase reapply_one', 'write_phase rollback_two', 'write_phase final_checks', 'write_phase creating_runtime',
       'write_phase waiting_runtime', 'write_phase seeding_output', 'write_phase starting_agent', 'write_phase waiting_roles',
-      'owner_probe() { command_bounded 70 runuser -u matrix --',
-      'trap \'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"\' EXIT', 'grep -aqF \'MATRIX_ACCEPT_LOOP\' "/proc/${shell_pid}/cmdline"',
+      'owner_probe() { command_bounded 70 runuser -u matrix --', 'trap \'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"\' EXIT',
+      'output_bytes() {', 'output_advanced() {', 'runtime_continues() {', 'run --in-place --close-replaced-pane --name matrix-accept-output -- /bin/bash -lc', 'output_advanced "$runtime_id"', 'runtime_continues "$runtime_id" "$agent_runtime_id"',
     ]);
+    expectNone(runner, ['grep -aqF \'MATRIX_ACCEPT_LOOP\' "/proc/${shell_pid}/cmdline"', 'action write-chars --', 'action dump-screen', 'production_acceptance_shell_marker=']);
     expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
     expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-diagnose | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']);
@@ -503,19 +504,22 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
     expectAll(runner, ['readonly pi=/opt/matrix/runtime/node/bin/pi', 'wait_pi_ready', '/var/lib/matrix-developer-tools/installed-tools',
       '"$pi" --version', 'owner_probe create-agent "$head_sha" "$run_nonce"',
-      'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent', 'owner_probe create "$head_sha" "$run_nonce"', 'roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node']);
+      'both_roles_match() {', 'mark recoveryDoesNotResumeAgent', 'owner_probe create "$head_sha" "$run_nonce"',
+      'roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }']);
     expectNone(runner, ['action new-pane -- "$codex" app-server', "sh -c 'command -v codex'"]);
     expectAll(probe, [
       '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
       "operation === 'find-agent'", "`accept-agent-${value.slice(0, 12)}-${extra}`",
       "launch: { kind: 'agent', configurationRef: operationId }", "agent: 'pi'",
-      "processes.find((entry) => entry.comm === 'bash')?.pid ?? 0", "entry.parentPid === pane?.pid", 'processCount: processes.length',
+      "['attach', 'roles'].includes(operation) ? {} : await import('../index.js')", "show !== `/matrix.slice/matrix-terminal.slice/${unit}`",
+      'shell: shell?.pid ?? 0', 'output: outputProcess?.pid ?? 0', 'outputCandidates: outputCandidates.length', 'outputWriteBytes', 'const readProcessFile = async', "['ENOENT', 'ESRCH']", "['EACCES', 'EPERM']", 'readProcessFile(`/proc/${pid}/comm`', 'readProcessFile(`/proc/${pid}/cmdline`', 'readProcessFile(`/proc/${pid}/stat`', 'readProcessFile(`/proc/${outputProcess.pid}/io`', 'parentPid', 'const paneCandidates =', 'const agentCandidates =', 'agentCandidates.length === 1 ? agentCandidates[0].pid : 0', 'processCount: processes.length', 'paneCandidates: paneCandidates.length', 'agentCandidates: agentCandidates.length', "roleStage = 'systemd'", "roleStage = 'cgroup'", "roleStage = 'proc'", "roleStage = 'classify'", 'probe_roles_${roleStage}_${roleErrorCode}', 'probe_roles_global_unknown', "process.once('uncaughtException'", "process.once('unhandledRejection'",
     ]);
-    expectNone(probe, ["prompt:", "argument.includes('MATRIX_ACCEPT_LOOP')"]);
+    expectNone(probe, ["prompt:", "argument.includes('MATRIX_ACCEPT_LOOP')", '/proc/${pid}/status']);
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expectAll(runner, ['diagnose)', 'production_acceptance_diagnostic=', "grep -E '^terminal_keeper_[a-z0-9_]{1,96}$'"]);
-    expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=', 'production_acceptance_agent_cgroup=', 'cgroup.events', '/matrix.slice/matrix-terminal.slice/matrix-terminal-session.slice/']);
-    expect(runner).not.toContain('roles() { command_bounded 8 runuser'); expect(runner).not.toContain('journalctl -u "$unit" --no-pager');
+    expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=', 'production_acceptance_agent_role_values=', 'production_acceptance_agent_roles_error=', 'production_acceptance_agent_roles_command=', 'production_acceptance_shell_role_values=', 'cgroup.events', '/matrix.slice/matrix-terminal.slice/${agent_unit}']);
+    expectNone(runner, ['roles() { command_bounded 8 runuser', 'journalctl -u "$unit" --no-pager', 'attach_one=/run/matrix-terminal-accept-']);
+    expectAll(probe, ["operation === 'attach'", 'process.getuid()', 'matrix-terminal-accept-${extra}-${slot}.json', 'child.onData', 'child.onExit', 'setTimeout']);
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
     const runner = await readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh');
@@ -533,7 +537,7 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     const unboundedSystemctl = runner.split('\n').filter((line) => /(^|[^A-Za-z_])systemctl(?: |$)/.test(line) &&
       !line.includes('/usr/bin/systemctl "$@"') && !line.includes('-- /usr/bin/systemctl reboot'));
     expect(unboundedSystemctl).toEqual([]);
-    const unboundedOwnerProbe = runner.split('\n').filter((line) => line.includes('runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe"') && !line.includes('command_bounded'));
+    const unboundedOwnerProbe = runner.split('\n').filter((line) => line.includes('runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe"') && !line.includes('command_bounded') && !line.includes('"$probe" attach'));
     expect(unboundedOwnerProbe).toEqual([]);
   });
   it('process-group-bounds production acceptance probes and reports missing roles', async () => {
@@ -541,10 +545,10 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expectAll(runner, [
       'command_bounded() {', '/usr/bin/setsid "$@" </dev/null &', 'kill -TERM -- "-$operation_pid"', 'kill -KILL -- "-$operation_pid"',
       'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }', 'owner_probe() { command_bounded 70 runuser -u matrix --',
-      'roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node', 'request_update() { command_bounded 70 runuser -u matrix --',
-      'zellij() { command_bounded 30 runuser -u matrix --', '/usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \\',
+      'roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }', 'request_update() { command_bounded 70 runuser -u matrix --',
+      'zellij() { command_bounded 30 runuser -u matrix --', '/usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" attach',
       'stop_process_group "$attach_parent_one"', 'stop_process_group "$attach_parent_two"', 'role_failure=agent_unavailable',
-      'role_failure=shell_unavailable', 'role_failure=roles_unavailable', 'role_failure=roles_unstable', 'failure_hint="$role_failure"',
+      'role_failure=shell_unavailable', 'role_failure=output_unavailable', 'role_failure=roles_unavailable', 'role_failure=roles_unstable', 'failure_hint="$role_failure"',
     ]);
     expect(runner).not.toContain('/usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser');
     const boundedFunction = runner.match(/command_bounded\(\) \{[\s\S]*?\n\}/)?.[0];

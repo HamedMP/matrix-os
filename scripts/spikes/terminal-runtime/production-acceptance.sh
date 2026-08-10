@@ -54,8 +54,10 @@ json_field() { /opt/matrix/runtime/node/bin/node -e '
 wait_active() { local unit="$1"; for _ in $(seq 1 180); do [ "$(systemctl_read is-active "$unit" 2>/dev/null || true)" = active ] && return 0; sleep 1; done; return 1; }
 wait_absent() { local unit="$1"; for _ in $(seq 1 60); do local state; state="$(systemctl_read is-active "$unit" 2>/dev/null || true)"; [ "$state" != active ] && [ "$state" != activating ] && return 0; sleep 1; done; return 1; }
 roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }
-roles_match() { local current; current="$(roles "$1")"; [ "$current" = "$(cat "$2")" ]; }
+role_values() { local raw="$1" key value joined=""; for key in processCount keeper zellijClient zellijServer pane shell agent output paneCandidates agentCandidates outputCandidates; do value="$(printf '%s' "$raw" | json_field "$key" 2>/dev/null || true)"; [[ "$value" =~ ^[0-9]{1,10}$ ]] || { printf unavailable; return; }; joined="${joined}${joined:+,}${value}"; done; printf '%s' "$joined"; }
+roles_match() { local current; current="$(roles "$1")"; [ "$(role_values "$current")" = "$(cat "$2")" ]; }
 both_roles_match() { roles_match "$1" "$state_root/roles.json" && roles_match "$2" "$state_root/agent-roles.json"; }
+output_bytes() { local raw current; raw="$(roles "$1")" || return; current="$(printf '%s' "$raw" | json_field outputWriteBytes 2>/dev/null)" || return; [[ "$current" =~ ^[0-9]{1,15}$ ]] || return; printf '%s' "$current"; }; output_advanced() { local current; current="$(output_bytes "$1")" || return; (( current > last_output_bytes )) || return; last_output_bytes="$current"; }; runtime_continues() { for _ in $(seq 1 10); do if both_roles_match "$1" "$2" && output_advanced "$1"; then return; fi; sleep 1; done; return 1; }
 request_update() { command_bounded 70 runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
 wait_update() {
   local expected="$1"; for _ in $(seq 1 "$update_wait_seconds"); do
@@ -92,7 +94,7 @@ phase1() {
   rm -rf -- "$state_root"
   install -d -o root -g root -m 0700 "$checks_root"
   write_state phase1-running
-  local created runtime_id unit session_name agent_created agent_runtime_id agent_unit
+  local created runtime_id unit session_name agent_created agent_runtime_id agent_unit output_result last_output_bytes=0
   write_phase creating_runtime
   created="$(owner_probe create "$head_sha" "$run_nonce")"; runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
   [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]
@@ -101,70 +103,54 @@ phase1() {
   write_phase waiting_runtime
   wait_active "$unit"; mark runtimeLive
   write_phase seeding_output
-  zellij --session "$session_name" action write-chars -- \
-    "exec bash -lc 'while true; do printf \"MATRIX_ACCEPT_LOOP\\n\"; sleep 1; done'"
-  zellij --session "$session_name" action send-keys Enter
+  output_result="$(zellij --session "$session_name" run --in-place --close-replaced-pane --name matrix-accept-output -- /bin/bash -lc 'counter=0; while true; do counter=$((counter + 1)); printf "MATRIX_ACCEPT_LOOP:%010d\n" "$counter"; read -r -t 1 _ || true; done')"; [ "${#output_result}" -le 64 ] && [[ "$output_result" =~ terminal_[0-9]{1,10} ]]
   write_phase starting_agent; wait_pi_ready
   agent_created="$(owner_probe create-agent "$head_sha" "$run_nonce")"
   agent_runtime_id="$(printf '%s' "$agent_created" | json_field runtimeId)"
   [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]
   printf '%s\n' "$agent_runtime_id" >"$state_root/agent-runtime-id"; chmod 0600 "$state_root/agent-runtime-id"
   agent_unit="${unit_prefix}${agent_runtime_id}.service"; wait_active "$agent_unit"
-  write_phase waiting_roles; local baseline="" agent_baseline="" shell_pid="" pane_pid="" agent_pid="" role_failure=roles_unavailable
+  write_phase waiting_roles; local baseline="" agent_baseline="" shell_pid="" output_pid="" output_candidates="" pane_pid="" agent_pid="" role_failure=roles_unavailable
   for _ in $(seq 1 120); do
     baseline="$(roles "$runtime_id" 2>/dev/null || true)"; agent_baseline="$(roles "$agent_runtime_id" 2>/dev/null || true)"
-    shell_pid="$(printf '%s' "$baseline" | json_field shell 2>/dev/null || true)"
+    shell_pid="$(printf '%s' "$baseline" | json_field shell 2>/dev/null || true)"; output_pid="$(printf '%s' "$baseline" | json_field output 2>/dev/null || true)"; output_candidates="$(printf '%s' "$baseline" | json_field outputCandidates 2>/dev/null || true)"
     pane_pid="$(printf '%s' "$agent_baseline" | json_field pane 2>/dev/null || true)"
     agent_pid="$(printf '%s' "$agent_baseline" | json_field agent 2>/dev/null || true)"
-    if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]] && [[ "$pane_pid" =~ ^[1-9][0-9]*$ ]] &&
-      [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]] && grep -aqF 'MATRIX_ACCEPT_LOOP' "/proc/${shell_pid}/cmdline"; then
-      printf '%s\n' "$baseline" >"$state_root/roles.json"; printf '%s\n' "$agent_baseline" >"$state_root/agent-roles.json"
+    if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]] && [[ "$output_pid" =~ ^[1-9][0-9]*$ ]] && [ "$output_candidates" = 1 ] && [[ "$pane_pid" =~ ^[1-9][0-9]*$ ]] &&
+      [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]] && output_advanced "$runtime_id"; then
+      role_values "$baseline" >"$state_root/roles.json"; role_values "$agent_baseline" >"$state_root/agent-roles.json"
       chmod 0600 "$state_root/roles.json" "$state_root/agent-roles.json"
       role_failure=roles_unstable
       break
     fi
-    role_failure=roles_unavailable
-    if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]]; then
-      role_failure=agent_unavailable
-    elif [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]]; then
-      role_failure=shell_unavailable
-    fi
+    if [[ ! "$shell_pid" =~ ^[1-9][0-9]*$ ]]; then role_failure=shell_unavailable; elif [[ ! "$output_pid" =~ ^[1-9][0-9]*$ ]] || [ "$output_candidates" != 1 ]; then role_failure=output_unavailable
+    elif [[ ! "$pane_pid" =~ ^[1-9][0-9]*$ ]] || [[ ! "$agent_pid" =~ ^[1-9][0-9]*$ ]]; then role_failure=agent_unavailable
+    else role_failure=output_unavailable; fi
     sleep 1
   done
-  failure_hint="$role_failure"; both_roles_match "$runtime_id" "$agent_runtime_id"
+  failure_hint="$role_failure"; runtime_continues "$runtime_id" "$agent_runtime_id"
   failure_hint=""
   mark continuousOutput; mark codingAgentPreserved
   write_phase runtime_created
   local runtime_cgroup; runtime_cgroup="$(systemctl_read show "$unit" -p ControlGroup --value)"
-  local attach_one=/run/matrix-terminal-accept-"${head_sha}"-1.json attach_two=/run/matrix-terminal-accept-"${head_sha}"-2.json
+  local attach_one="/run/user/${uid}/matrix-terminal-accept-${head_sha}-1.json" attach_two="/run/user/${uid}/matrix-terminal-accept-${head_sha}-2.json"
   rm -f -- "$attach_one" "$attach_two"
-  /usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \
-    /opt/matrix/libexec/terminal-runtime/current/spikes/production-attach.mjs \
-    "$runtime_id" "$attach_one" &
+  /usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" attach "$runtime_id" "$head_sha" 1 &
   local attach_parent_one=$!
-  /usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \
-    /opt/matrix/libexec/terminal-runtime/current/spikes/production-attach.mjs \
-    "$runtime_id" "$attach_two" &
+  /usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" attach "$runtime_id" "$head_sha" 2 &
   local attach_parent_two=$!
   for _ in $(seq 1 30); do [ -f "$attach_one" ] && [ -f "$attach_two" ] && break; sleep 1; done
-  local attach_cgroup_one attach_cgroup_two
-  attach_cgroup_one="$(cat "$attach_one" | json_field cgroup)"; attach_cgroup_two="$(cat "$attach_two" | json_field cgroup)"
-  [ "$attach_cgroup_one" != "$runtime_cgroup" ]
-  [ "$attach_cgroup_two" != "$runtime_cgroup" ]
-  both_roles_match "$runtime_id" "$agent_runtime_id"; mark twoDevicesOneRuntime
-  stop_process_group "$attach_parent_one"
-  stop_process_group "$attach_parent_two"
-  rm -f -- "$attach_one" "$attach_two"
-  both_roles_match "$runtime_id" "$agent_runtime_id"; mark detachPreservesRuntime
-  local renamed; renamed="$(owner_probe rename "$runtime_id" "renamed-${head_sha:0:12}")"
-  [ "$(printf '%s' "$renamed" | json_field runtimeId)" = "$runtime_id" ]
-  both_roles_match "$runtime_id" "$agent_runtime_id"; mark renamePreservesIdentity
-  local supervisor_pid; supervisor_pid="$(systemctl_read show matrix-terminal-runtime.service -p MainPID --value)"
-  printf '%s\n' "$supervisor_pid" >"$state_root/supervisor-pid"
+  local attach_cgroup_one attach_cgroup_two; attach_cgroup_one="$(cat "$attach_one" | json_field cgroup)"; attach_cgroup_two="$(cat "$attach_two" | json_field cgroup)"
+  [ "$attach_cgroup_one" != "$runtime_cgroup" ]; [ "$attach_cgroup_two" != "$runtime_cgroup" ]
+  runtime_continues "$runtime_id" "$agent_runtime_id"; mark twoDevicesOneRuntime
+  stop_process_group "$attach_parent_one"; stop_process_group "$attach_parent_two"; rm -f -- "$attach_one" "$attach_two"
+  runtime_continues "$runtime_id" "$agent_runtime_id"; mark detachPreservesRuntime
+  local renamed; renamed="$(owner_probe rename "$runtime_id" "renamed-${head_sha:0:12}")"; [ "$(printf '%s' "$renamed" | json_field runtimeId)" = "$runtime_id" ]
+  runtime_continues "$runtime_id" "$agent_runtime_id"; mark renamePreservesIdentity; local supervisor_pid; supervisor_pid="$(systemctl_read show matrix-terminal-runtime.service -p MainPID --value)"; printf '%s\n' "$supervisor_pid" >"$state_root/supervisor-pid"
   write_phase bundle_one
-  request_update "$version_a"; wait_update "$version_a"; both_roles_match "$runtime_id" "$agent_runtime_id"; mark bundleOnePreservesRuntime
+  request_update "$version_a"; wait_update "$version_a"; runtime_continues "$runtime_id" "$agent_runtime_id"; mark bundleOnePreservesRuntime
   write_phase bundle_two
-  request_update "$version_b"; wait_update "$version_b"; both_roles_match "$runtime_id" "$agent_runtime_id"; mark bundleTwoPreservesRuntime
+  request_update "$version_b"; wait_update "$version_b"; runtime_continues "$runtime_id" "$agent_runtime_id"; mark bundleTwoPreservesRuntime
   [ "$(systemctl_read show matrix-terminal-runtime.service -p MainPID --value)" = "$supervisor_pid" ]
   mark supervisorPreserved
   install -d -o root -g root -m 0755 /etc/systemd/system/matrix-gateway.service.d
@@ -181,14 +167,14 @@ EOF
   systemctl_change daemon-reload
   systemctl_change start matrix-gateway.service matrix-shell.service
   [ "$(cat /opt/matrix/app/BUNDLE_VERSION)" = "$version_b" ]
-  both_roles_match "$runtime_id" "$agent_runtime_id"; mark failedUpdatePreservesRuntime
+  runtime_continues "$runtime_id" "$agent_runtime_id"; mark failedUpdatePreservesRuntime
   write_phase reapply_one
   request_update "$version_a"; wait_update "$version_a"
   write_phase rollback_two
   request_update rollback; wait_update "$version_b"
-  both_roles_match "$runtime_id" "$agent_runtime_id"; mark explicitRollbackPreservesRuntime
+  runtime_continues "$runtime_id" "$agent_runtime_id"; mark explicitRollbackPreservesRuntime
   write_phase final_checks
-  systemctl_change daemon-reload; both_roles_match "$runtime_id" "$agent_runtime_id"; mark daemonReloadPreservesRuntime
+  systemctl_change daemon-reload; runtime_continues "$runtime_id" "$agent_runtime_id"; mark daemonReloadPreservesRuntime
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null; then
     mark forceRunAbsent
   fi
@@ -311,8 +297,7 @@ case "$operation" in
       [[ "$keeper_code" =~ ^terminal_keeper_[a-z0-9_]{1,96}$ ]] || keeper_code=unavailable
     fi
     [[ "$lifecycle" =~ ^[a-z_]{1,32}$ ]] || lifecycle=unavailable
-    printf 'production_acceptance_diagnostic=%s,%s,%s,%s,%s\n' \
-      "$lifecycle" "$result" "$main_code" "$main_status" "$keeper_code"
+    printf 'production_acceptance_diagnostic=%s,%s,%s,%s,%s\n' "$lifecycle" "$result" "$main_code" "$main_status" "$keeper_code"
     agent_result=unavailable; agent_main_code=unavailable; agent_main_status=unavailable; agent_keeper_code=unavailable; agent_pane_code=unavailable; agent_runtime_id=""; agent_active=unavailable; agent_populated=unavailable; agent_processes=unavailable
     if [ -f "$state_root/agent-runtime-id" ] &&
       [ ! -L "$state_root/agent-runtime-id" ] &&
@@ -332,14 +317,14 @@ case "$operation" in
       [[ "$agent_keeper_code" =~ ^terminal_keeper_[a-z0-9_]{1,96}$ ]] || agent_keeper_code=unavailable
       agent_pane_code="$(printf '%s\n' "$agent_journal" | grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$' | tail -n 1 || true)"
       [[ "$agent_pane_code" =~ ^terminal_pane_agent_exit_[0-9]{1,3}$ ]] || agent_pane_code=unavailable; agent_control_group="$(systemctl_read show "$agent_unit" -p ControlGroup --value 2>/dev/null || true)"; agent_cgroup="/sys/fs/cgroup${agent_control_group}"
-      if [ "$agent_control_group" = "/matrix.slice/matrix-terminal.slice/matrix-terminal-session.slice/${agent_unit}" ] && [ -f "$agent_cgroup/cgroup.events" ] && [ ! -L "$agent_cgroup/cgroup.events" ] && [ -f "$agent_cgroup/cgroup.procs" ] && [ ! -L "$agent_cgroup/cgroup.procs" ]; then
+      if [ "$agent_control_group" = "/matrix.slice/matrix-terminal.slice/${agent_unit}" ] && [ -f "$agent_cgroup/cgroup.events" ] && [ ! -L "$agent_cgroup/cgroup.events" ] && [ -f "$agent_cgroup/cgroup.procs" ] && [ ! -L "$agent_cgroup/cgroup.procs" ]; then
         agent_populated="$(awk '$1 == "populated" { print $2 }' "$agent_cgroup/cgroup.events")"; agent_processes="$(wc -w <"$agent_cgroup/cgroup.procs")"; [[ "$agent_populated" =~ ^[01]$ ]] || agent_populated=unavailable; [[ "$agent_processes" =~ ^([0-9]|[1-9][0-9]{1,2})$ ]] || agent_processes=unavailable; fi
     fi
-    printf 'production_acceptance_agent_diagnostic=%s,%s,%s,%s,%s\n' "$agent_result" \
-      "$agent_main_code" "$agent_main_status" "$agent_keeper_code" "$agent_pane_code"
-    agent_roles="$(roles "$agent_runtime_id" 2>/dev/null || true)"
-    [[ "$agent_roles" =~ ^\{"processCount":[0-9]{1,3},"keeper":[0-9]{1,10},"zellijClient":[0-9]{1,10},"zellijServer":[0-9]{1,10},"pane":[0-9]{1,10},"shell":[0-9]{1,10},"agent":[0-9]{1,10}\}$ ]] || agent_roles=unavailable
-    printf 'production_acceptance_agent_roles=%s\n' "$agent_roles"; printf 'production_acceptance_agent_cgroup=%s,%s,%s\n' "$agent_active" "$agent_populated" "$agent_processes"
+    printf 'production_acceptance_agent_diagnostic=%s,%s,%s,%s,%s\n' "$agent_result" "$agent_main_code" "$agent_main_status" "$agent_keeper_code" "$agent_pane_code"
+    agent_roles_status=0; agent_roles="$(roles "$agent_runtime_id" 2>/dev/null)" || agent_roles_status=$?; agent_roles_bytes=${#agent_roles}; agent_role_values="$(role_values "$agent_roles")"; agent_roles_error="$(printf '%s' "$agent_roles" | json_field error 2>/dev/null || true)"
+    if [ "$agent_role_values" != unavailable ]; then agent_roles_error=none; elif [[ ! "$agent_roles_error" =~ ^probe_roles_((systemd|cgroup|proc|classify)_(eacces|eperm|enoent|esrch|enotdir|etimedout|invalid|unknown)|global_unknown)$ ]]; then agent_roles_error=unavailable; fi; agent_roles=unavailable
+    shell_roles="$(roles "$runtime_id" 2>/dev/null || true)"; shell_role_values="$(role_values "$shell_roles")"
+    [[ "$agent_roles_status" =~ ^([0-9]|[1-9][0-9]{1,2})$ ]] || agent_roles_status=unavailable; [[ "$agent_roles_bytes" =~ ^([0-9]|[1-9][0-9]{1,5})$ ]] || agent_roles_bytes=unavailable; printf 'production_acceptance_agent_roles=%s\n' "$agent_roles"; printf 'production_acceptance_agent_role_values=%s\n' "$agent_role_values"; printf 'production_acceptance_agent_roles_error=%s\n' "$agent_roles_error"; printf 'production_acceptance_agent_roles_command=%s,%s\n' "$agent_roles_status" "$agent_roles_bytes"; printf 'production_acceptance_shell_role_values=%s\n' "$shell_role_values"; printf 'production_acceptance_agent_cgroup=%s,%s,%s\n' "$agent_active" "$agent_populated" "$agent_processes"
     ;;
   reboot)
     [ "$(cat "$state_file")" = phase1-ready ]
