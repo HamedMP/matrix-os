@@ -165,7 +165,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   `path` rooted at `temporary/terminal-pastes/<YYYY-MM-DD>/` and `terminalPath`
   rooted at `/home/matrix/home/temporary/terminal-pastes/<YYYY-MM-DD>/` in production.
 
-- [ ] **Step 1: RED — change the Gateway route expectation**
+- [x] **Step 1: RED — change the Gateway route expectation**
 
   Rename the route test to `uploads pasted terminal image assets into the owner
   temporary directory` and assert:
@@ -182,7 +182,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   The temporary directory must not be pre-created in test setup; the successful
   `readFile` assertion proves recursive creation and the final atomic file write.
 
-- [ ] **Step 2: Run RED and confirm the old cwd-scoped path is the failure**
+- [x] **Step 2: Run RED and confirm the old cwd-scoped path is the failure**
 
   Run:
 
@@ -193,7 +193,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   Expected: FAIL because the response still starts with
   `projects/app/.matrix-terminal-pastes/`.
 
-- [ ] **Step 3: GREEN — select the owner temporary directory**
+- [x] **Step 3: GREEN — select the owner temporary directory**
 
   In `saveTerminalPasteAsset`, preserve all validation and atomic write code and
   change only the directory selection:
@@ -205,7 +205,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   Keep `cwd` in `TerminalPasteAssetInput` and keep route-level cwd validation for
   backward compatibility; storage must no longer depend on its value.
 
-- [ ] **Step 4: Run the focused Gateway route test**
+- [x] **Step 4: Run the focused Gateway route test**
 
   Run:
 
