@@ -503,7 +503,7 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
     expectAll(runner, ['readonly pi=/opt/matrix/runtime/node/bin/pi', 'wait_pi_ready', '/var/lib/matrix-developer-tools/installed-tools',
       '"$pi" --version', 'owner_probe create-agent "$head_sha" "$run_nonce"',
-      'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent', 'owner_probe create "$head_sha" "$run_nonce"']);
+      'both_roles_match "$runtime_id" "$agent_runtime_id"', 'mark recoveryDoesNotResumeAgent', 'owner_probe create "$head_sha" "$run_nonce"', 'roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node']);
     expectNone(runner, ['action new-pane -- "$codex" app-server', "sh -c 'command -v codex'"]);
     expectAll(probe, [
       '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
@@ -514,8 +514,8 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expectNone(probe, ["prompt:", "argument.includes('MATRIX_ACCEPT_LOOP')"]);
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expectAll(runner, ['diagnose)', 'production_acceptance_diagnostic=', "grep -E '^terminal_keeper_[a-z0-9_]{1,96}$'"]);
-    expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=', 'production_acceptance_agent_cgroup=', 'cgroup.events']);
-    expect(runner).not.toContain('journalctl -u "$unit" --no-pager');
+    expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=', 'production_acceptance_agent_cgroup=', 'cgroup.events', '/matrix.slice/matrix-terminal.slice/matrix-terminal-session.slice/']);
+    expect(runner).not.toContain('roles() { command_bounded 8 runuser'); expect(runner).not.toContain('journalctl -u "$unit" --no-pager');
   });
   it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
     const runner = await readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh');
@@ -541,7 +541,7 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     expectAll(runner, [
       'command_bounded() {', '/usr/bin/setsid "$@" </dev/null &', 'kill -TERM -- "-$operation_pid"', 'kill -KILL -- "-$operation_pid"',
       'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }', 'owner_probe() { command_bounded 70 runuser -u matrix --',
-      'roles() { command_bounded 8 runuser -u matrix --', 'request_update() { command_bounded 70 runuser -u matrix --',
+      'roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node', 'request_update() { command_bounded 70 runuser -u matrix --',
       'zellij() { command_bounded 30 runuser -u matrix --', '/usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node \\',
       'stop_process_group "$attach_parent_one"', 'stop_process_group "$attach_parent_two"', 'role_failure=agent_unavailable',
       'role_failure=shell_unavailable', 'role_failure=roles_unavailable', 'role_failure=roles_unstable', 'failure_hint="$role_failure"',

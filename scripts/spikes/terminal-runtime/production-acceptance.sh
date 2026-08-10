@@ -53,7 +53,7 @@ json_field() { /opt/matrix/runtime/node/bin/node -e '
   ' "$1"; }
 wait_active() { local unit="$1"; for _ in $(seq 1 180); do [ "$(systemctl_read is-active "$unit" 2>/dev/null || true)" = active ] && return 0; sleep 1; done; return 1; }
 wait_absent() { local unit="$1"; for _ in $(seq 1 60); do local state; state="$(systemctl_read is-active "$unit" 2>/dev/null || true)"; [ "$state" != active ] && [ "$state" != activating ] && return 0; sleep 1; done; return 1; }
-roles() { command_bounded 8 runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }
+roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }
 roles_match() { local current; current="$(roles "$1")"; [ "$current" = "$(cat "$2")" ]; }
 both_roles_match() { roles_match "$1" "$state_root/roles.json" && roles_match "$2" "$state_root/agent-roles.json"; }
 request_update() { command_bounded 70 runuser -u matrix -- /opt/matrix/bin/matrix-update "$1" >/dev/null; }
@@ -332,7 +332,7 @@ case "$operation" in
       [[ "$agent_keeper_code" =~ ^terminal_keeper_[a-z0-9_]{1,96}$ ]] || agent_keeper_code=unavailable
       agent_pane_code="$(printf '%s\n' "$agent_journal" | grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$' | tail -n 1 || true)"
       [[ "$agent_pane_code" =~ ^terminal_pane_agent_exit_[0-9]{1,3}$ ]] || agent_pane_code=unavailable; agent_control_group="$(systemctl_read show "$agent_unit" -p ControlGroup --value 2>/dev/null || true)"; agent_cgroup="/sys/fs/cgroup${agent_control_group}"
-      if [ "$agent_control_group" = "/matrix-terminal.slice/${agent_unit}" ] && [ -f "$agent_cgroup/cgroup.events" ] && [ ! -L "$agent_cgroup/cgroup.events" ] && [ -f "$agent_cgroup/cgroup.procs" ] && [ ! -L "$agent_cgroup/cgroup.procs" ]; then
+      if [ "$agent_control_group" = "/matrix.slice/matrix-terminal.slice/matrix-terminal-session.slice/${agent_unit}" ] && [ -f "$agent_cgroup/cgroup.events" ] && [ ! -L "$agent_cgroup/cgroup.events" ] && [ -f "$agent_cgroup/cgroup.procs" ] && [ ! -L "$agent_cgroup/cgroup.procs" ]; then
         agent_populated="$(awk '$1 == "populated" { print $2 }' "$agent_cgroup/cgroup.events")"; agent_processes="$(wc -w <"$agent_cgroup/cgroup.procs")"; [[ "$agent_populated" =~ ^[01]$ ]] || agent_populated=unavailable; [[ "$agent_processes" =~ ^([0-9]|[1-9][0-9]{1,2})$ ]] || agent_processes=unavailable; fi
     fi
     printf 'production_acceptance_agent_diagnostic=%s,%s,%s,%s,%s\n' "$agent_result" \
