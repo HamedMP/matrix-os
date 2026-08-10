@@ -270,7 +270,7 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     expect(installer).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(installer).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
-    expect(installer).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
+    expect(installer).toContain('PI_CODING_AGENT_VERSION="0.84.1"');
     expect(installer).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(installer).toContain('run_npm_install()');
     expect(installer).toContain('run_as_root()');
@@ -348,7 +348,7 @@ describe('customer VPS host bundle', () => {
     expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
     expect(unit).not.toContain('--tools-only');
     expect(unit).toContain('Restart=on-failure');
-    expect(installer).toContain('is_tool_installed()');
+    expect(installer).toContain('pi) pi_version_is_current ;;');
     expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
     expect(installer).toContain('optional developer tool ${tool} already installed; skipping');
     expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
