@@ -143,7 +143,7 @@ export function createLocalAttachmentController(options: {
         items.push({
           localId: `local_${uploadId}`,
           uploadId,
-          uploadPath: `uploads/desktop-chat/${uploadId}-${file.name}`,
+          uploadPath: `temporary/desktop-chat/${uploadId}-${file.name}`,
           file,
           ...(shouldPreview(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
           status: file.size <= MAX_ATTACHMENT_FILE_BYTES ? "ready" : "failed",

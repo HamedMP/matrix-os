@@ -100,30 +100,30 @@ describe("local Desktop attachment controller", () => {
 
     const upload = controller.uploadAll();
     await vi.waitFor(() => expect(putBytes).toHaveBeenCalledTimes(3));
-    resolvers.get("second.txt")?.({ ok: true, path: "uploads/desktop-chat/stable_1-second.txt", size: 1 });
+    resolvers.get("second.txt")?.({ ok: true, path: "temporary/desktop-chat/stable_1-second.txt", size: 1 });
     await vi.waitFor(() => expect(putBytes).toHaveBeenCalledTimes(4));
-    resolvers.get("fourth.txt")?.({ ok: true, path: "uploads/desktop-chat/stable_3-fourth.txt", size: 1 });
-    resolvers.get("third.txt")?.({ ok: true, path: "uploads/desktop-chat/stable_2-third.txt", size: 1 });
-    resolvers.get("first.txt")?.({ ok: true, path: "uploads/desktop-chat/stable_0-first.txt", size: 1 });
+    resolvers.get("fourth.txt")?.({ ok: true, path: "temporary/desktop-chat/stable_3-fourth.txt", size: 1 });
+    resolvers.get("third.txt")?.({ ok: true, path: "temporary/desktop-chat/stable_2-third.txt", size: 1 });
+    resolvers.get("first.txt")?.({ ok: true, path: "temporary/desktop-chat/stable_0-first.txt", size: 1 });
 
     await expect(upload).resolves.toEqual({
       ok: true,
       paths: [
-        "uploads/desktop-chat/stable_0-first.txt",
-        "uploads/desktop-chat/stable_1-second.txt",
-        "uploads/desktop-chat/stable_2-third.txt",
-        "uploads/desktop-chat/stable_3-fourth.txt",
+        "temporary/desktop-chat/stable_0-first.txt",
+        "temporary/desktop-chat/stable_1-second.txt",
+        "temporary/desktop-chat/stable_2-third.txt",
+        "temporary/desktop-chat/stable_3-fourth.txt",
       ],
       attachments: [
-        expect.objectContaining({ id: "desktop_upload_stable_0", kind: "structured_ref", label: "first.txt", path: "uploads/desktop-chat/stable_0-first.txt" }),
-        expect.objectContaining({ id: "desktop_upload_stable_1", kind: "structured_ref", label: "second.txt", path: "uploads/desktop-chat/stable_1-second.txt" }),
-        expect.objectContaining({ id: "desktop_upload_stable_2", kind: "structured_ref", label: "third.txt", path: "uploads/desktop-chat/stable_2-third.txt" }),
-        expect.objectContaining({ id: "desktop_upload_stable_3", kind: "structured_ref", label: "fourth.txt", path: "uploads/desktop-chat/stable_3-fourth.txt" }),
+        expect.objectContaining({ id: "desktop_upload_stable_0", kind: "structured_ref", label: "first.txt", path: "temporary/desktop-chat/stable_0-first.txt" }),
+        expect.objectContaining({ id: "desktop_upload_stable_1", kind: "structured_ref", label: "second.txt", path: "temporary/desktop-chat/stable_1-second.txt" }),
+        expect.objectContaining({ id: "desktop_upload_stable_2", kind: "structured_ref", label: "third.txt", path: "temporary/desktop-chat/stable_2-third.txt" }),
+        expect.objectContaining({ id: "desktop_upload_stable_3", kind: "structured_ref", label: "fourth.txt", path: "temporary/desktop-chat/stable_3-fourth.txt" }),
       ],
     });
     expect(putBytes).toHaveBeenNthCalledWith(
       1,
-      "/api/files/blob?path=uploads%2Fdesktop-chat%2Fstable_0-first.txt",
+      "/api/files/blob?path=temporary%2Fdesktop-chat%2Fstable_0-first.txt",
       expect.any(File),
       { "content-type": "text/plain" },
       { timeoutMs: 30_000 },
@@ -153,12 +153,12 @@ describe("local Desktop attachment controller", () => {
     expect(controller.getSnapshot().map((item) => item.file.name)).toEqual(["submitted.txt"]);
     resolveUpload({
       ok: true,
-      path: "uploads/desktop-chat/locked_0-submitted.txt",
+      path: "temporary/desktop-chat/locked_0-submitted.txt",
       size: 1,
     });
     await expect(upload).resolves.toMatchObject({
       ok: true,
-      paths: ["uploads/desktop-chat/locked_0-submitted.txt"],
+      paths: ["temporary/desktop-chat/locked_0-submitted.txt"],
     });
   });
 
@@ -166,7 +166,7 @@ describe("local Desktop attachment controller", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const putBytes = vi.fn()
       .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValueOnce({ ok: true, path: "uploads/desktop-chat/stable_retry-retry.txt", size: 1 });
+      .mockResolvedValueOnce({ ok: true, path: "temporary/desktop-chat/stable_retry-retry.txt", size: 1 });
     const controller = createLocalAttachmentController({
       api: { putBytes } as never,
       createId: () => "stable_retry",
@@ -185,11 +185,11 @@ describe("local Desktop attachment controller", () => {
   });
 
   it("appends both owner-readable path forms to the Hermes prompt", () => {
-    expect(appendHermesAttachmentPaths("Review these", ["uploads/desktop-chat/a.png", "uploads/desktop-chat/b.txt"])).toBe(
+    expect(appendHermesAttachmentPaths("Review these", ["temporary/desktop-chat/a.png", "temporary/desktop-chat/b.txt"])).toBe(
       "Review these\n\nAttached files (available on your Matrix computer):\n"
-      + "- ~/uploads/desktop-chat/a.png (/home/matrix/home/uploads/desktop-chat/a.png)\n"
-      + "- ~/uploads/desktop-chat/b.txt (/home/matrix/home/uploads/desktop-chat/b.txt)",
+      + "- ~/temporary/desktop-chat/a.png (/home/matrix/home/temporary/desktop-chat/a.png)\n"
+      + "- ~/temporary/desktop-chat/b.txt (/home/matrix/home/temporary/desktop-chat/b.txt)",
     );
-    expect(appendHermesAttachmentPaths("", ["uploads/desktop-chat/a.png"])).toContain("Please inspect the attached files.");
+    expect(appendHermesAttachmentPaths("", ["temporary/desktop-chat/a.png"])).toContain("Please inspect the attached files.");
   });
 });

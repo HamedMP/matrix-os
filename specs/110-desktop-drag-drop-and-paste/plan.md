@@ -102,7 +102,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   `temporary/desktop-chat/<uploadId>-<safe filename>` for both Hermes paths and
   Project Chat `structured_ref.path` values.
 
-- [ ] **Step 1: RED — change the controller contract expectations**
+- [x] **Step 1: RED — change the controller contract expectations**
 
   Update the stable expected upload path and URL assertions in
   `tests/desktop/local-attachment-controller.test.ts` from
@@ -118,7 +118,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   );
   ```
 
-- [ ] **Step 2: Run RED and confirm the old prefix is the failure**
+- [x] **Step 2: Run RED and confirm the old prefix is the failure**
 
   Run:
 
@@ -129,7 +129,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   Expected: FAIL because the controller still sends and returns
   `uploads/desktop-chat/...`.
 
-- [ ] **Step 3: GREEN — change only the composer upload prefix**
+- [x] **Step 3: GREEN — change only the composer upload prefix**
 
   In `local-attachment-controller.ts`, construct new items with:
 
@@ -137,7 +137,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   uploadPath: `temporary/desktop-chat/${uploadId}-${file.name}`,
   ```
 
-- [ ] **Step 4: Run the composer and Files tests**
+- [x] **Step 4: Run the composer and Files tests**
 
   Run:
 
