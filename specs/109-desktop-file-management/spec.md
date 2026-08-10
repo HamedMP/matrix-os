@@ -66,9 +66,10 @@ The browser Shell already exposes Finder-like file actions, but its current clie
 
 - Preflight validates the complete request before execution and returns conflicts in source order.
 - Conflict choices are `Keep Both`, `Skip`, and `Cancel`. Overwrite and directory merge are never offered.
-- `Keep Both` generates Finder-style numbered names and claims the final target without check-then-write. Node 24 spike evidence confirms `fs.cp(source, missingTarget, { recursive: true, force: false, errorOnExist: true })` exclusively creates a directory target and returns `ERR_FS_CP_EEXIST` when the target exists.
+- `Keep Both` generates Finder-style numbered names and claims the final target without check-then-write. Node 24 spike evidence confirms `fs.cp(source, missingTarget, { recursive: true, force: false, errorOnExist: true })` exclusively creates a directory target and returns `ERR_FS_CP_EEXIST` when the target exists. The Gateway claims the top-level directory itself before streaming exclusive child copies so only that top-level claim can advance to another candidate name.
 - Once execution begins, each item completes independently. The service does not attempt a batch-wide rollback.
 - An item move copies to an exclusively created target and removes the source only after copy success. A crash or removal failure may leave a source/destination duplicate; it must never remove an unconfirmed source or overwrite a destination. This duplicate is the acceptable orphan state and is surfaced by reconciliation.
+- A nested directory-copy failure retains and reports exactly the one normalized, operation-claimed partial target. It is another acceptable reconciliation state: the Gateway does not recursively delete a path that concurrent owner activity may have changed, and duplicate/Keep Both logic does not fan out additional candidate names after a nested conflict.
 
 ## Gateway contracts
 
@@ -112,7 +113,7 @@ interface RenameFileRequest {
 }
 ```
 
-Both routes return the normalized resulting relative path and its fresh capability object. They use the shared Zod name/path schemas and mutation policy, re-authorize the complete source and target paths against the authenticated owner immediately before the filesystem write, exclusively create a new file/directory, and reject an occupied rename target rather than overwriting it. Rename copies to an exclusively claimed target and removes the source only after copy success; cleanup failure returns `cleanup_failed` and leaves the explicit source/destination duplicate for reconciliation. MAT-268 hardens and replaces the Desktop use of the legacy `mkdir`, `touch`, and `{ from, to }` rename payloads; compatibility handling for other callers remains explicitly tested at the route boundary.
+Both routes return the normalized resulting relative path and its fresh capability object. They use the shared Zod name/path schemas and mutation policy, re-authorize the complete source and target paths against the authenticated owner immediately before the filesystem write, exclusively create a new file/directory, and reject an occupied rename target rather than overwriting it. Rename captures stable source identity and content-version metadata before copying, verifies it again immediately before cleanup, and removes the source only when it still matches the copied input; cleanup failure returns `cleanup_failed` and leaves the explicit source/destination duplicate for reconciliation. Exact denied sources and ancestors containing denied content are never copyable or duplicable, while legacy copying from protected `system` and `agents` sources remains compatible. MAT-268 hardens and replaces the Desktop use of the legacy `mkdir`, `touch`, and `{ from, to }` rename payloads; compatibility handling for other callers remains explicitly tested at the route boundary.
 
 ### Batch move
 

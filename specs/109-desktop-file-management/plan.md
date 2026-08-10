@@ -57,7 +57,7 @@
 - [ ] Run the focused tests and confirm RED because contracts/capabilities do not exist.
 - [ ] Implement exported Zod schemas and inferred types using `zod/v4`.
 - [ ] Implement one normalized mutation policy used by both listing and execution. Reject traversal, absolute paths, denied roots, symlink escapes, home root mutation, separators/control characters, and platform-reserved names.
-- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, use exclusive destination creation/copy, reject occupied rename targets, remove the source only after confirmed copy success, surface cleanup-failure duplicates, and return only normalized relative paths plus safe capability/result data. Preserve and separately test compatibility handling for existing callers until it is explicitly removed.
+- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, reject exact denied sources and ancestors containing denied content while preserving protected-source copy compatibility, use exclusive destination creation/copy, reject occupied rename targets, verify stable source identity/content-version metadata before cleanup, remove the source only after confirmed copy success, surface cleanup-failure duplicates, and return only normalized relative paths plus safe capability/result data. Claim directory targets at the top level, retain/report one bounded partial target after nested failure, and never fan out Keep Both names for nested conflicts.
 - [ ] Extend directory listings with the capability object without breaking existing fields.
 - [ ] Run focused tests and confirm GREEN, then refactor duplicate path checks into pure helpers.
 
@@ -91,7 +91,7 @@
 - [ ] Add concurrent tests where two requests claim the same Keep Both name and both preserve content under distinct names.
 - [ ] Add symlink, traversal, protected-root, self/descendant, and stale-preflight tests.
 - [ ] Run the focused test and confirm RED.
-- [ ] Implement `fs.cp(source, missingTarget, { recursive: true, force: false, errorOnExist: true })`, retrying bounded Keep Both candidates on `EEXIST`; remove the source only after a confirmed copy.
+- [ ] Implement an exclusive top-level directory claim followed by native exclusive per-entry copy, retrying bounded Keep Both candidates only when the top-level claim returns `EEXIST`; retain/report one normalized partial target on nested failure and remove the source only after a confirmed copy plus stable identity recheck.
 - [ ] Return stable per-item codes such as `moved`, `skipped`, `source_missing`, `destination_conflict`, `protected`, `invalid_destination`, and `cleanup_failed`; log raw errors only on the server.
 - [ ] Compose deterministic sequential execution through the result cache. Do not add a batch-wide rollback.
 - [ ] Run focused tests and confirm GREEN.
