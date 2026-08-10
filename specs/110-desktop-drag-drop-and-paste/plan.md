@@ -2,9 +2,10 @@
 
 ## Invariants
 
-- Diff scope is `desktop/`, Desktop tests, and this spec directory only.
+- Diff scope is `desktop/`, the existing Gateway Terminal paste-asset storage helper
+  and its focused tests, and this spec directory only.
 - Reuse `PUT /api/files/blob` and `POST /api/terminal/sessions/:name/paste-assets`
-  unchanged.
+  without changing either endpoint contract.
 - Implement one vertical Red -> Green slice at a time.
 - Keep the current full Gateway implementation preserved on
   `codex/mat-261-full-gateway-backup` until Preview validation completes.
@@ -40,7 +41,8 @@
 
 - [x] Add failing `TerminalView` tests for paste and drop.
 - [x] Add Desktop-local MIME/size, response, and bracketed-paste helpers.
-- [x] Upload sequentially to preserve order and write exactly once per completed batch.
+- [x] Start bounded uploads concurrently, preserve input order in the returned paths,
+  and write exactly once per completed batch.
 - [x] Verify no Enter and normal text paste fallback.
 
 ## Task 6: Verification and PR replacement
@@ -52,3 +54,17 @@
 - [ ] Force-update PR #1174 with `--force-with-lease` only after local verification.
 - [ ] Deploy and verify the Preview VPS before marking the PR ready.
 - [ ] Prepare the separate public documentation PR after implementation approval.
+
+## Task 7: Consolidate transient VPS uploads
+
+- [ ] Add failing controller coverage proving Chat and Project Chat paths use
+  `temporary/desktop-chat/` while Files-browser destinations remain unchanged.
+- [ ] Change the Desktop composer upload prefix from `uploads/desktop-chat/` to
+  `temporary/desktop-chat/`.
+- [ ] Add failing Gateway helper coverage for
+  `temporary/terminal-pastes/<YYYY-MM-DD>/`, recursive creation, and cwd independence.
+- [ ] Move Terminal paste-asset storage to the common owner-home temporary directory
+  without changing the endpoint request or response schema.
+- [ ] Keep automatic cleanup out of this PR; track it in `MAT-269`.
+- [ ] Re-run focused Desktop/Gateway tests, typechecks, pattern checks, production
+  Desktop build, exact-head Preview deployment, and live path validation.
