@@ -120,6 +120,9 @@ import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/no
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
+import { createCodexUsageProbe } from "./coding-agents/codex-usage-probe.js";
+import { createGatewayCodingAgentProviderUsageService } from "./coding-agents/provider-usage-wiring.js";
+import type { CodingAgentProviderUsageService } from "./coding-agents/provider-usage.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -445,6 +448,9 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceProviderRuntime = resolveWorkspaceProviderRuntime(process.env);
   const codingAgentWorkspaceAgents = workspaceProviderRuntime.agents;
   const codexExecutable = workspaceProviderRuntime.codexExecutable;
+  const codexUsageProbe = codexExecutable
+    ? createCodexUsageProbe({ command: codexExecutable, cwd: homePath })
+    : undefined;
   const agentCredentialLauncher = createAgentLauncher({
     cwd: homePath,
     runtimeHome: homePath,
@@ -531,6 +537,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
   let codexEventBridge: CodexEventBridge | undefined;
+  let codingAgentProviderUsageService: CodingAgentProviderUsageService | undefined;
   let codingAgentApprovalsEnabled = false;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
@@ -594,6 +601,7 @@ export async function createGateway(config: GatewayConfig) {
       homePath,
       codexEvents: codexEventBridge,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
+      codexUsageProbe,
     });
     codingAgentApprovalsEnabled = providerSet.approvalsEnabled;
     codingAgentProviders.push(...providerSet.executionProviders);
@@ -652,6 +660,19 @@ export async function createGateway(config: GatewayConfig) {
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
   });
+  const codingAgentRuntimeCapabilities = {
+    projectWorkspace: true,
+    conversationView: true,
+    kanbanView: true,
+    workspace: codingAgentWorkspaceEnabled,
+    sameThreadTurns: codingAgentTurnsEnabled,
+    approvals: codingAgentApprovalsEnabled,
+    review: true,
+    preview: true,
+    files: true,
+    sourceControl: true,
+    providerUsage: false,
+  };
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
     terminalRegistry: zellijShellRegistry,
@@ -659,18 +680,7 @@ export async function createGateway(config: GatewayConfig) {
     threads: codingAgentThreadStore,
     projects: codingAgentProjectSummaryStore,
     previews: codingAgentPreviewSummaryStore,
-    capabilities: {
-      projectWorkspace: true,
-      conversationView: true,
-      kanbanView: true,
-      workspace: codingAgentWorkspaceEnabled,
-      sameThreadTurns: codingAgentTurnsEnabled,
-      approvals: codingAgentApprovalsEnabled,
-      review: true,
-      preview: true,
-      files: true,
-      sourceControl: true,
-    },
+    capabilities: codingAgentRuntimeCapabilities,
     terminalOwnerId: process.env.MATRIX_USER_ID,
     filesOwnerId: process.env.MATRIX_USER_ID,
   });
@@ -906,11 +916,26 @@ export async function createGateway(config: GatewayConfig) {
       queryEngine = null;
       kvStore = null;
       appRegistry = null;
+      kyselyInstance = null;
       canvasRepository = null;
       canvasService = null;
       canvasSubscriptionHub = null;
       messagingRepository = null;
     }
+  }
+
+  try {
+    codingAgentProviderUsageService = await createGatewayCodingAgentProviderUsageService({
+      kysely: kyselyInstance,
+      providers: codingAgentRegistryProviders,
+      providerRegistry: codingAgentProviderRegistry,
+      runtimeId: "rt_primary",
+    });
+    codingAgentRuntimeCapabilities.providerUsage = Boolean(codingAgentProviderUsageService);
+  } catch (err: unknown) {
+    codingAgentProviderUsageService = undefined;
+    codingAgentRuntimeCapabilities.providerUsage = false;
+    logBestEffortFailure("Coding-agent provider usage setup failed", err);
   }
 
   // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
@@ -1697,6 +1722,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
   app.route("/api/coding-agents", createCodingAgentRoutes({
     service: codingAgentRuntimeSummaryService,
+    usage: codingAgentProviderUsageService,
     projectWorkspaces: codingAgentProjectWorkspaceStore,
     projectMutations: createCodingAgentProjectMutationService({ projects: codingAgentProjectManager }),
     threads: codingAgentThreadStore,
@@ -4277,6 +4303,7 @@ export async function createGateway(config: GatewayConfig) {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
       });
       syncR2?.destroy();
+      codingAgentProviderUsageService?.close();
       await canvasRepository?.destroy();
       await socialRoutes?.shutdownPostHog();
       await appDb?.destroy();
