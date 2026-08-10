@@ -219,7 +219,7 @@ describe("ChatTab", () => {
 
     await waitFor(() => expect(putBytes).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(send).toHaveBeenCalledWith(expect.stringMatching(
-      /^Review this screenshot\n\nAttached files[\s\S]*~\/uploads\/desktop-chat\/[A-Za-z0-9]+-screen\.png \(\/home\/matrix\/home\/uploads\/desktop-chat\/[A-Za-z0-9]+-screen\.png\)$/,
+      /^Review this screenshot\n\nAttached files[\s\S]*~\/temporary\/desktop-chat\/[A-Za-z0-9]+-screen\.png \(\/home\/matrix\/home\/temporary\/desktop-chat\/[A-Za-z0-9]+-screen\.png\)$/,
     )));
     expect(screen.queryByRole("button", { name: "Remove screen.png" })).toBeNull();
   });

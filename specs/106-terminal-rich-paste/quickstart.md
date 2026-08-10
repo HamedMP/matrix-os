@@ -60,7 +60,9 @@ Extend the attach loop so rich paste processing happens before `{ type: "input",
    "/var/folders/.../Screenshot 2026-07-08 at 10.31.00.png" what about this?
    ```
 
-4. Verify the remote terminal receives a prompt with a `/home/matrix/home/projects/.matrix-terminal-pastes/...` path and the original question text.
+4. Verify the remote terminal receives a prompt with a
+   `/home/matrix/home/temporary/terminal-pastes/...` path and the original question
+   text.
 5. Copy an image to the macOS clipboard and paste during attach.
 6. Verify best-effort upload succeeds when the terminal emits an observable paste transaction, or local feedback explains that the paste event was not observable.
 

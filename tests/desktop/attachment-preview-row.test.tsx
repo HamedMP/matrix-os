@@ -10,7 +10,7 @@ function item(index: number, overrides: Partial<LocalConversationAttachment> = {
   return {
     localId: `local_${index}`,
     uploadId: `upload_${index}`,
-    uploadPath: `uploads/desktop-chat/upload_${index}-file-${index}.txt`,
+    uploadPath: `temporary/desktop-chat/upload_${index}-file-${index}.txt`,
     file: new File(["x"], `file-${index}.txt`, { type: "text/plain" }),
     status: "ready",
     ...overrides,

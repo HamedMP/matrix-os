@@ -232,7 +232,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
 - Consumes: the new paths proven by Tasks 7 and 8.
 - Produces: one consistent documented storage contract and verification record.
 
-- [ ] **Step 1: Replace authoritative path examples**
+- [x] **Step 1: Replace authoritative path examples**
 
   Change current server-owned destination examples from
   `projects/.matrix-terminal-pastes/...` to
@@ -240,7 +240,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   fixtures: they intentionally prove clients accept authenticated owner-home paths
   independent of the server's current destination convention.
 
-- [ ] **Step 2: Run focused regression tests**
+- [x] **Step 2: Run focused regression tests**
 
   Run:
 
@@ -254,7 +254,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
     tests/shell/terminal-pane-privacy.test.tsx
   ```
 
-- [ ] **Step 3: Run static and production verification**
+- [x] **Step 3: Run static and production verification**
 
   Run:
 
@@ -265,7 +265,7 @@ but selects `temporary/terminal-pastes/<date>/` independently of terminal cwd.
   git diff --check
   ```
 
-- [ ] **Step 4: Run the repository-wide suite and classify failures**
+- [x] **Step 4: Run the repository-wide suite and classify failures**
 
   Run:
 

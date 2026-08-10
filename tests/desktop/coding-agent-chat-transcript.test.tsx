@@ -293,7 +293,7 @@ describe("AgentConversationView transcript", () => {
         id: expect.stringMatching(/^desktop_upload_[A-Za-z0-9]+$/),
         kind: "structured_ref",
         label: "context.txt",
-        path: expect.stringMatching(/^uploads\/desktop-chat\/[A-Za-z0-9]+-context\.txt$/),
+        path: expect.stringMatching(/^temporary\/desktop-chat\/[A-Za-z0-9]+-context\.txt$/),
       })],
     }));
     expect(screen.queryByRole("button", { name: "Remove context.txt" })).toBeNull();
