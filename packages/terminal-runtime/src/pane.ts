@@ -43,6 +43,7 @@ export function paneEnvironment(
     const value = source[key];
     if (value) environment[key] = value;
   }
+  environment.PATH = '/home/matrix/home/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin';
   return environment;
 }
 

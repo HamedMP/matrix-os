@@ -282,6 +282,7 @@ describe('terminal runtime service boundary', () => {
       sandbox: { enabled: false, mode: 'danger-full-access', writableRoots: [], denyWriteRoots: [] } });
     expect(launch).toMatchObject({ file: '/opt/matrix/runtime/node/bin/pi',
       args: ['--offline'], interactivePty: true, stdin: null, fdPayload: null });
+    expect(launch.env.PATH?.split(':')).toContain('/opt/matrix/runtime/node/bin');
   });
   it('launches an interactive provider with TTY stdin and stdout', async () => {
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
