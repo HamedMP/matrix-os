@@ -89,6 +89,8 @@ interface FileEntryCapabilities {
 
 Capabilities are computed by a shared Gateway policy. The renderer treats them as affordances only; every mutation re-authorizes the path.
 
+Top-level dot roots such as `.trash` and `.ssh` remain omitted from directory listings, matching Finder's default hidden-file behavior, so they do not produce rows or capability objects. The same policy still rejects create/copy targets inside those hidden roots and rejects rename, move, or Trash operations whose source is one of them. Visible protected roots such as `system` and `agents` remain listed with all three capabilities set to `false` and `readOnlyReason: "protected"`; visible ancestors of denied subtrees, such as `data`, are listed with all three capabilities set to `false` and `readOnlyReason: "policy"`.
+
 ### Create and rename
 
 `POST /api/files/create`
@@ -110,7 +112,7 @@ interface RenameFileRequest {
 }
 ```
 
-Both routes return the normalized resulting relative path and its fresh capability object. They use the shared Zod name/path schemas and mutation policy, re-authorize against the authenticated owner immediately before the filesystem write, exclusively create a new file/directory, and reject an occupied rename target rather than overwriting it. MAT-268 hardens and replaces the Desktop use of the legacy `mkdir`, `touch`, and `{ from, to }` rename payloads; compatibility handling for other callers remains explicitly tested at the route boundary.
+Both routes return the normalized resulting relative path and its fresh capability object. They use the shared Zod name/path schemas and mutation policy, re-authorize the complete source and target paths against the authenticated owner immediately before the filesystem write, exclusively create a new file/directory, and reject an occupied rename target rather than overwriting it. Rename copies to an exclusively claimed target and removes the source only after copy success; cleanup failure returns `cleanup_failed` and leaves the explicit source/destination duplicate for reconciliation. MAT-268 hardens and replaces the Desktop use of the legacy `mkdir`, `touch`, and `{ from, to }` rename payloads; compatibility handling for other callers remains explicitly tested at the route boundary.
 
 ### Batch move
 
@@ -202,7 +204,7 @@ Desktop IPC/native code is not a filesystem authority for these operations. The 
 - Zod 4 validates query, body, result, and WebSocket frame schemas at route boundaries.
 - Mutating endpoints use Hono `bodyLimit`; the JSON contract limit is 128 KiB.
 - Reject absolute paths, traversal, NUL/control characters, denied roots, symlink escapes, sources outside one directory, root moves, and directory self/descendant moves.
-- Protected root policy supplies both list capabilities and mutation enforcement. `system`, `agents`, `.trash`, and other OS-owned/hidden policy roots cannot be renamed, moved, or trashed from Desktop.
+- Protected root policy supplies both list capabilities and mutation enforcement. Visible `system` and `agents` rows expose all-false capabilities. `.trash`, `.ssh`, and other top-level dot roots remain hidden from listings, while mutations targeting them are still rejected. Denied roots and their visible ancestors cannot be renamed, moved, or trashed from Desktop.
 - Bound names to 255 UTF-8 bytes, paths to 4,096 UTF-8 bytes, arrays to 100, conflict choices to 100, result text to a small allowlist, and all in-memory caches/registries as specified above. The result cache has a separate authenticated-owner component in its key as well as the canonical payload hash.
 - Never rely on a renderer capability flag, preflight result, or existence check as the mutation authorization decision.
 - Log detailed server failures with request ID; return stable safe error codes and generic messages.

@@ -3,6 +3,7 @@ import {
   type FileEntryCapabilities,
 } from "./contracts.js";
 import {
+  containsDeniedFileApiPath,
   isDeniedFileApiPath,
   isProtectedHomeSubpath,
   resolveWithinHome,
@@ -41,6 +42,9 @@ export function getFileEntryCapabilities(
   }
   if (isProtectedHomeSubpath(homePath, resolved)) {
     return { ...PROTECTED_CAPABILITIES };
+  }
+  if (containsDeniedFileApiPath(homePath, resolved)) {
+    return { ...POLICY_CAPABILITIES };
   }
   return { ...MUTABLE_CAPABILITIES };
 }

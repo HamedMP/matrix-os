@@ -73,4 +73,41 @@ describe("Desktop file-management contracts", () => {
     expect(FileOperationResultCodeSchema.safeParse("destination_conflict").success).toBe(true);
     expect(FileOperationResultCodeSchema.safeParse("raw filesystem message").success).toBe(false);
   });
+
+  it("enforces UTF-8 byte limits, conflict-choice bounds, and portable names", () => {
+    const requestId = "a9d9d1d8-8e5d-45d0-8d17-2c85f4e19a11";
+    const exactly255Bytes = `${"é".repeat(127)}a`;
+    const exactly4096Bytes = "é".repeat(2_048);
+
+    expect(FileManagementNameSchema.safeParse(exactly255Bytes).success).toBe(true);
+    expect(FileManagementNameSchema.safeParse(`${exactly255Bytes}a`).success).toBe(false);
+    expect(FileManagementPathSchema.safeParse(exactly4096Bytes).success).toBe(true);
+    expect(FileManagementPathSchema.safeParse(`${exactly4096Bytes}a`).success).toBe(false);
+
+    for (const name of [
+      "trailing ",
+      "trailing.",
+      "bad:name",
+      "bad?name",
+      "bad*name",
+      "bad\"name",
+      "bad<name",
+      "bad>name",
+      "bad|name",
+      "CON",
+      "com1.txt",
+    ]) {
+      expect(FileManagementNameSchema.safeParse(name).success, name).toBe(false);
+    }
+
+    expect(BatchMoveRequestSchema.safeParse({
+      requestId,
+      phase: "execute",
+      preflightFingerprint: "opaque-fingerprint",
+      conflictChoices: Array.from({ length: 101 }, (_, index) => ({
+        source: `projects/demo/${index}.md`,
+        resolution: "skip" as const,
+      })),
+    }).success).toBe(false);
+  });
 });
