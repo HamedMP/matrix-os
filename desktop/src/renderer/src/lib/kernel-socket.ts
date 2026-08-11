@@ -3,6 +3,10 @@
 // are injectable for tests. Known message types are validated with zod;
 // unknown types pass through to subscribers for forward compatibility.
 import { z } from "zod/v4";
+import {
+  FileEntryNameSchema,
+  OwnerDirectoryPathSchema,
+} from "../features/files/file-management-contracts";
 
 export type KernelConnectionState = "connecting" | "connected" | "reconnecting" | "offline";
 
@@ -15,7 +19,18 @@ export type KernelClientMessage =
   | { type: "message"; text: string; sessionId?: string; requestId: string }
   | { type: "abort"; requestId: string }
   | { type: "approval_response"; id: string; approved: boolean }
-  | { type: "ping" };
+  | { type: "ping" }
+  | FileDirectoryClientMessage;
+
+export type FileDirectoryClientMessage =
+  | { type: "files:subscribe"; directory: string }
+  | { type: "files:unsubscribe"; directory: string }
+  | { type: "files:touch"; directory: string };
+
+export type FileDirectoryServerMessage =
+  | { type: "files:subscribed"; directory: string; revision: number }
+  | { type: "files:change"; directory: string; entry: string; event: "add" | "change" | "unlink"; revision: number }
+  | { type: "files:shutdown" };
 
 // Structurally identical to the browser WebSocket subset the socket needs.
 export interface WebSocketLike {
@@ -46,6 +61,15 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
 const OFFLINE_AFTER_FAILURES = 3;
 const MAX_FRAME_CHARS = 1_000_000;
+const FILE_DIRECTORY_CAP = 8;
+const FILE_HANDLER_CAP = 64;
+
+const RevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const FileDirectoryClientMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("files:subscribe"), directory: OwnerDirectoryPathSchema }).strict(),
+  z.object({ type: z.literal("files:unsubscribe"), directory: OwnerDirectoryPathSchema }).strict(),
+  z.object({ type: z.literal("files:touch"), directory: OwnerDirectoryPathSchema }).strict(),
+]);
 
 const requestIdField = z.string().min(1).max(256).optional();
 
@@ -75,6 +99,15 @@ export const KnownKernelMessageSchema = z.discriminatedUnion("type", [
     timeout: z.number(),
   }),
   z.looseObject({ type: z.literal("pong") }),
+  z.object({ type: z.literal("files:subscribed"), directory: OwnerDirectoryPathSchema, revision: RevisionSchema }).strict(),
+  z.object({
+    type: z.literal("files:change"),
+    directory: OwnerDirectoryPathSchema,
+    entry: FileEntryNameSchema,
+    event: z.enum(["add", "change", "unlink"]),
+    revision: RevisionSchema,
+  }).strict(),
+  z.object({ type: z.literal("files:shutdown") }).strict(),
 ]);
 
 export type KnownKernelMessage = z.infer<typeof KnownKernelMessageSchema>;
@@ -104,6 +137,11 @@ export function buildKernelWsUrl(baseUrl: string, runtimeSlot: string): string {
 
 type MessageHandler = (msg: KernelServerMessage) => void;
 type StateHandler = (state: KernelConnectionState) => void;
+export type FileDirectoryHandler = (message: FileDirectoryServerMessage) => void;
+
+interface DirectorySubscription {
+  handlers: Map<number, FileDirectoryHandler>;
+}
 
 export class KernelSocket {
   private readonly baseUrl: string;
@@ -117,6 +155,9 @@ export class KernelSocket {
   private readonly handlers = new Set<MessageHandler>();
   private readonly stateHandlers = new Set<StateHandler>();
   private readonly sendQueue: string[] = [];
+  private readonly directorySubscriptions = new Map<string, DirectorySubscription>();
+  private nextDirectoryHandlerId = 1;
+  private directoryHandlerCount = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private consecutiveFailures = 0;
@@ -168,6 +209,7 @@ export class KernelSocket {
     socket.onopen = () => {
       this.attempt = 0;
       this.consecutiveFailures = 0;
+      this.resubscribeDirectories();
       this.setState("connected");
       this.drainQueue();
     };
@@ -214,7 +256,50 @@ export class KernelSocket {
     };
   }
 
+  subscribeDirectory(directory: string, handler: FileDirectoryHandler): () => void {
+    if (this.disposed) throw new Error("KernelSocket is disposed");
+    const parsed = OwnerDirectoryPathSchema.safeParse(directory);
+    if (!parsed.success) throw new Error("Invalid file directory subscription");
+    if (this.directoryHandlerCount >= FILE_HANDLER_CAP) {
+      throw new Error(`KernelSocket file handler cap (${FILE_HANDLER_CAP}) exceeded`);
+    }
+    let subscription = this.directorySubscriptions.get(parsed.data);
+    if (!subscription) {
+      if (this.directorySubscriptions.size >= FILE_DIRECTORY_CAP) {
+        throw new Error(`KernelSocket file directory cap (${FILE_DIRECTORY_CAP}) exceeded`);
+      }
+      subscription = { handlers: new Map() };
+      this.directorySubscriptions.set(parsed.data, subscription);
+      this.sendDirectoryFrame({ type: "files:subscribe", directory: parsed.data });
+    }
+    const id = this.nextDirectoryHandlerId++;
+    subscription.handlers.set(id, handler);
+    this.directoryHandlerCount++;
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const current = this.directorySubscriptions.get(parsed.data);
+      if (!current?.handlers.delete(id)) return;
+      this.directoryHandlerCount--;
+      if (current.handlers.size === 0) {
+        this.directorySubscriptions.delete(parsed.data);
+        this.sendDirectoryFrame({ type: "files:unsubscribe", directory: parsed.data });
+      }
+    };
+  }
+
+  touchDirectory(directory: string): boolean {
+    const parsed = OwnerDirectoryPathSchema.safeParse(directory);
+    if (!parsed.success || !this.directorySubscriptions.has(parsed.data)) return false;
+    return this.sendDirectoryFrame({ type: "files:touch", directory: parsed.data });
+  }
+
   send(msg: KernelClientMessage): void {
+    if (msg.type.startsWith("files:")) {
+      if (msg.type === "files:touch") this.touchDirectory(msg.directory);
+      return;
+    }
     const data = JSON.stringify(msg);
     if (this.socket?.readyState === WS_OPEN) {
       try {
@@ -255,6 +340,8 @@ export class KernelSocket {
       }
     }
     this.setState("offline");
+    this.directorySubscriptions.clear();
+    this.directoryHandlerCount = 0;
     this.handlers.clear();
     this.stateHandlers.clear();
   }
@@ -269,12 +356,13 @@ export class KernelSocket {
     } catch (err: unknown) {
       console.warn(
         "[kernel-socket] dropping unparseable frame:",
-        err instanceof Error ? err.message : err,
+        err instanceof Error ? err.name : typeof err,
       );
       return;
     }
     const msg = parseKernelServerMessage(parsed);
     if (!msg) return;
+    if (isFileDirectoryServerMessage(msg)) this.routeDirectoryMessage(msg);
     for (const handler of [...this.handlers]) {
       try {
         handler(msg);
@@ -321,6 +409,47 @@ export class KernelSocket {
     }
   }
 
+  private resubscribeDirectories(): void {
+    for (const directory of this.directorySubscriptions.keys()) {
+      this.sendDirectoryFrame({ type: "files:subscribe", directory });
+    }
+  }
+
+  private sendDirectoryFrame(message: FileDirectoryClientMessage): boolean {
+    if (!FileDirectoryClientMessageSchema.safeParse(message).success) return false;
+    if (this.socket?.readyState !== WS_OPEN) return false;
+    try {
+      this.socket.send(JSON.stringify(message));
+      return true;
+    } catch (err: unknown) {
+      console.warn(
+        "[kernel-socket] file directory send failed:",
+        err instanceof Error ? err.name : typeof err,
+      );
+      return false;
+    }
+  }
+
+  private routeDirectoryMessage(message: FileDirectoryServerMessage): void {
+    const subscriptions = message.type === "files:shutdown"
+      ? [...this.directorySubscriptions.values()]
+      : [this.directorySubscriptions.get(message.directory)].filter(
+          (entry): entry is DirectorySubscription => entry !== undefined,
+        );
+    for (const subscription of subscriptions) {
+      for (const handler of [...subscription.handlers.values()]) {
+        try {
+          handler(message);
+        } catch (err: unknown) {
+          console.warn(
+            "[kernel-socket] file directory handler failed:",
+            err instanceof Error ? err.name : typeof err,
+          );
+        }
+      }
+    }
+  }
+
   private setState(state: KernelConnectionState): void {
     if (this.currentState === state) return;
     this.currentState = state;
@@ -342,4 +471,10 @@ export class KernelSocket {
       this.reconnectTimer = null;
     }
   }
+}
+
+function isFileDirectoryServerMessage(message: KernelServerMessage): message is FileDirectoryServerMessage {
+  return message.type === "files:subscribed"
+    || message.type === "files:change"
+    || message.type === "files:shutdown";
 }
