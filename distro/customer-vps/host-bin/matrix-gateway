@@ -2,11 +2,31 @@
 set -euo pipefail
 
 source /opt/matrix/env/host.env
-if [ -f /opt/matrix/env/postgres.env ]; then
-  source /opt/matrix/env/postgres.env
-fi
 if [ -f /opt/matrix/env/registration.env ]; then
   source /opt/matrix/env/registration.env
+fi
+REGISTER_FLAG="/opt/matrix/register-complete"
+
+report_bootstrap_stage() {
+  local stage="$1" payload
+  [ ! -f "$REGISTER_FLAG" ] || return 0
+  [ -n "${MATRIX_REGISTRATION_TOKEN:-}" ] || return 0
+  case "${MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL:-}" in
+    https://*/vps/bootstrap-progress) ;;
+    *) return 0 ;;
+  esac
+  payload="$(printf '{"machineId":"%s","stage":"%s"}' "$MATRIX_MACHINE_ID" "$stage")"
+  if ! printf 'header = "authorization: Bearer %s"\n' "$MATRIX_REGISTRATION_TOKEN" |
+    curl --config - --fail --silent --connect-timeout 5 --max-time 10 \
+      -X POST -H 'content-type: application/json' --data-binary "$payload" \
+      "$MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL" >/dev/null; then
+    echo "matrix-gateway: bootstrap progress callback unavailable" >&2
+  fi
+}
+report_bootstrap_stage gateway_wrapper_started
+
+if [ -f /opt/matrix/env/postgres.env ]; then
+  source /opt/matrix/env/postgres.env
 fi
 if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
@@ -15,7 +35,6 @@ fi
 NODE_BIN="${MATRIX_NODE_BIN:-/opt/matrix/runtime/node/bin/node}"
 APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 GATEWAY_PORT="${PORT:-4000}"
-REGISTER_FLAG="/opt/matrix/register-complete"
 
 export NODE_ENV="${NODE_ENV:-production}"
 export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
@@ -43,21 +62,61 @@ if declare -F matrix_prepend_path_once >/dev/null 2>&1; then
 else
   export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 fi
+report_bootstrap_stage gateway_environment_ready
 
 sync_bundled_home_assets() {
-  local script_dir sync_script
+  local script_dir sync_script sync_status
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   sync_script="${MATRIX_SYNC_BUNDLED_HOME_ASSETS:-$script_dir/matrix-sync-bundled-home-assets}"
   if [ -x "$sync_script" ]; then
-    APP_DIR="$APP_DIR" MATRIX_HOME="$MATRIX_HOME" MATRIX_NODE_BIN="$NODE_BIN" "$sync_script"
+    sync_status=0
+    /usr/bin/timeout --signal=TERM --kill-after=5s 120s \
+      /usr/bin/env -i \
+      APP_DIR="$APP_DIR" \
+      MATRIX_HOME="$MATRIX_HOME" \
+      MATRIX_NODE_BIN="$NODE_BIN" \
+      PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+      "$sync_script" || sync_status=$?
+    if [ "$sync_status" -ne 0 ]; then
+      case "$sync_status" in
+        40) report_bootstrap_stage gateway_home_assets_failed_template ;;
+        41) report_bootstrap_stage gateway_home_assets_failed_home ;;
+        42) report_bootstrap_stage gateway_home_assets_failed_copy ;;
+        43) report_bootstrap_stage gateway_home_assets_failed_commit ;;
+        44) report_bootstrap_stage gateway_home_assets_failed_node_missing ;;
+        45) report_bootstrap_stage gateway_home_assets_failed_node_unusable ;;
+        46) report_bootstrap_stage gateway_home_assets_failed_node_program ;;
+        47) report_bootstrap_stage gateway_home_assets_failed_status_47 ;;
+        48) report_bootstrap_stage gateway_home_assets_failed_status_48 ;;
+        50) report_bootstrap_stage gateway_home_assets_failed_status_50 ;;
+        51) report_bootstrap_stage gateway_home_assets_failed_status_51 ;;
+        1) report_bootstrap_stage gateway_home_assets_failed_status_1 ;;
+        2) report_bootstrap_stage gateway_home_assets_failed_status_2 ;;
+        9) report_bootstrap_stage gateway_home_assets_failed_status_9 ;;
+        49) report_bootstrap_stage gateway_home_assets_failed_status_49 ;;
+        125) report_bootstrap_stage gateway_home_assets_failed_status_125 ;;
+        126) report_bootstrap_stage gateway_home_assets_failed_status_126 ;;
+        127) report_bootstrap_stage gateway_home_assets_failed_status_127 ;;
+        134) report_bootstrap_stage gateway_home_assets_failed_status_134 ;;
+        139) report_bootstrap_stage gateway_home_assets_failed_status_139 ;;
+        143) report_bootstrap_stage gateway_home_assets_failed_status_143 ;;
+        124|137) report_bootstrap_stage gateway_home_assets_timed_out ;;
+        *) report_bootstrap_stage gateway_home_assets_failed_other ;;
+      esac
+      echo "matrix-gateway: bundled home sync failed" >&2
+      return 1
+    fi
   else
     echo "matrix-gateway: bundled home sync script not executable: $sync_script" >&2
     return 1
   fi
+  report_bootstrap_stage gateway_home_assets_ready
 
+  report_bootstrap_stage gateway_home_ownership_started
   if [ -d "$MATRIX_HOME/apps" ] && id matrix >/dev/null 2>&1; then
     chown -R matrix:matrix "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
   fi
+  report_bootstrap_stage gateway_home_ownership_ready
 }
 
 gateway_pid=""
@@ -69,7 +128,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+report_bootstrap_stage gateway_home_sync_started
 sync_bundled_home_assets
+report_bootstrap_stage gateway_home_ready
 if [ -x "$APP_DIR/scripts/sync-matrix-agent-skills.sh" ] && [ -d "$APP_DIR/skills/matrix" ]; then
   MATRIX_SKILL_TARGETS=matrix,claude,codex \
     MATRIX_SKILLS_SOURCE="$APP_DIR/skills/matrix" \
@@ -82,6 +143,7 @@ if [ -f "$APP_DIR/packages/gateway/dist/shell/register-agent-bridges-cli.js" ]; 
     "$NODE_BIN" "$APP_DIR/packages/gateway/dist/shell/register-agent-bridges-cli.js" || \
     echo "matrix-gateway: agent bridge registration skipped" >&2
 fi
+report_bootstrap_stage gateway_launch_ready
 cd "$APP_DIR"
 if [ -f "$APP_DIR/packages/gateway/dist/main.js" ]; then
   "$NODE_BIN" "$APP_DIR/packages/gateway/dist/main.js" &
@@ -89,9 +151,12 @@ else
   "$NODE_BIN" --import=tsx "$APP_DIR/packages/gateway/src/main.ts" &
 fi
 gateway_pid="$!"
+report_bootstrap_stage gateway_process_started
 
+gateway_health_ready=false
 for _ in $(seq 1 90); do
   if curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null; then
+    gateway_health_ready=true
     break
   fi
   if ! kill -0 "$gateway_pid" 2>/dev/null; then
@@ -99,6 +164,39 @@ for _ in $(seq 1 90); do
   fi
   sleep 2
 done
+[ "$gateway_health_ready" = true ] || {
+  echo "matrix-gateway: gateway health readiness timed out" >&2
+  exit 1
+}
+report_bootstrap_stage gateway_healthy
+
+fetch_metadata_value() {
+  local metadata_path="$1" value
+  case "$metadata_path" in
+    instance-id|public-ipv4) ;;
+    *) return 1 ;;
+  esac
+  for _ in $(seq 1 12); do
+    if value="$(curl --fail --silent --show-error --max-time 5 \
+      "http://169.254.169.254/hetzner/v1/metadata/${metadata_path}")"; then
+      printf '%s' "$value"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "matrix-gateway: instance metadata unavailable" >&2
+  return 1
+}
+
+is_public_ipv4() {
+  local octet_a octet_b octet_c octet_d extra octet
+  IFS=. read -r octet_a octet_b octet_c octet_d extra <<<"$1"
+  [ -z "$extra" ] || return 1
+  for octet in "$octet_a" "$octet_b" "$octet_c" "$octet_d"; do
+    [[ "$octet" =~ ^[0-9]{1,3}$ ]] || return 1
+    [ "$octet" -le 255 ] || return 1
+  done
+}
 
 register_once() {
   [ ! -f "$REGISTER_FLAG" ] || return 0
@@ -110,18 +208,24 @@ register_once() {
   esac
 
   local instance_id public_ipv4 payload
-  instance_id="$(curl --fail --silent --show-error --max-time 10 http://169.254.169.254/hetzner/v1/metadata/instance-id)"
-  public_ipv4="$(curl --fail --silent --show-error --max-time 10 http://169.254.169.254/hetzner/v1/metadata/public-ipv4)"
+  instance_id="$(fetch_metadata_value instance-id)"
+  public_ipv4="$(fetch_metadata_value public-ipv4)"
+  [[ "$MATRIX_MACHINE_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
+  [[ "$instance_id" =~ ^[0-9]{1,20}$ ]] || return 1
+  is_public_ipv4 "$public_ipv4" || return 1
+  [[ "$MATRIX_IMAGE_VERSION" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || return 1
   payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s"}' \
     "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION")"
+  report_bootstrap_stage registration_ready
 
   for attempt in $(seq 1 30); do
-    if curl --fail --silent --show-error --max-time 10 \
+    if printf '%s' "$payload" | curl --config /dev/fd/3 --fail --silent --show-error --max-time 10 \
       -X POST \
-      -H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}" \
       -H "content-type: application/json" \
-      --data "$payload" \
-      "$MATRIX_PLATFORM_REGISTER_URL" >/dev/null; then
+      --data-binary @- \
+      "$MATRIX_PLATFORM_REGISTER_URL" 3< <(
+        printf 'header = "authorization: Bearer %s"\n' "$MATRIX_REGISTRATION_TOKEN"
+      ) >/dev/null; then
       touch "$REGISTER_FLAG"
       chmod 0640 "$REGISTER_FLAG"
       return 0

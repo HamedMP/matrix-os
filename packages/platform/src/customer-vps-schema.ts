@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { DeveloperToolsSchema } from './developer-tools.js';
+import { CustomerVpsBootstrapStageSchema } from './customer-vps-bootstrap.js';
 
 export const CustomerVpsStatusSchema = z.enum([
   'provisioning',
@@ -37,6 +38,7 @@ export const ProvisionRequestSchema = z.object({
 
 export const PREVIEW_RUNTIME_SLOT_PATTERN = /^pr-[1-9][0-9]{0,9}$/;
 export const PreviewRuntimeSlotSchema = z.string().regex(PREVIEW_RUNTIME_SLOT_PATTERN);
+export const HostBundleVersionSchema = z.string().regex(/^[A-Za-z0-9._-]{1,128}$/);
 
 export const PreviewProvisionRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
@@ -44,6 +46,7 @@ export const PreviewProvisionRequestSchema = z.object({
   runtimeSlot: PreviewRuntimeSlotSchema,
   accessClerkUserIds: z.array(ClerkUserIdSchema).max(8).default([]),
   developerTools: DeveloperToolsSchema.optional(),
+  bootstrapVersion: HostBundleVersionSchema.optional(),
 }).strict()
   .refine((request) => request.handle === request.runtimeSlot, {
     message: 'Preview handle and runtime slot must match',
@@ -64,6 +67,11 @@ export const RegisterRequestSchema = z.object({
   publicIPv6: z.ipv6().optional(),
   imageVersion: z.string().min(1).max(128),
 });
+
+export const BootstrapProgressRequestSchema = z.object({
+  machineId: z.uuid(),
+  stage: CustomerVpsBootstrapStageSchema.exclude(['registered']),
+}).strict();
 
 export const RecoverRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
@@ -91,6 +99,7 @@ export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export type PreviewProvisionInput = z.input<typeof PreviewProvisionRequestSchema>;
 export type PreviewProvisionRequest = z.output<typeof PreviewProvisionRequestSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
+export type BootstrapProgressRequest = z.infer<typeof BootstrapProgressRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
 export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;
 export type DeployRequest = z.infer<typeof DeployRequestSchema>;

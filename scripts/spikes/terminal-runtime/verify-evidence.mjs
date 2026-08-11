@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import { lstat, mkdir, open, readFile, readdir, rm } from 'node:fs/promises';
 import { join, posix, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 export const MAX_EVIDENCE_FILE_BYTES = 256 * 1024;
 export const MAX_EVIDENCE_TOTAL_BYTES = 8 * 1024 * 1024;
 export const MAX_EVIDENCE_FILES = 256;
@@ -155,11 +155,11 @@ export async function reportGateChecks(inputRoot) {
     const stages = new Set(['descriptor', 'launch', 'cgroup', 'readiness', 'notify']);
     const codes = new Set([
       'runtime_id', 'descriptor_schema', 'descriptor_runtime', 'descriptor_cwd',
-      'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
-      'cgroup_unit', 'confirmation_inventory', 'confirmation_target',
-      'confirmation_write', 'readiness_timeout', 'startup_failed',
+      'descriptor_intent', 'descriptor_size', 'native_binding', 'client_exit', 'cgroup_unified',
+      'cgroup_unit', 'workload_launch',
+      'readiness_timeout', 'startup_failed',
     ]);
-    const confirmationStates = new Set(['waiting', 'inventory', 'target', 'write', 'sent']);
+    const confirmationStates = new Set(['waiting', 'not_required', 'gated']);
     const roleShape = typeof startup.responsive === 'boolean' && Number.isInteger(startup.zellij) && startup.zellij >= 0 && startup.zellij <= 16 && typeof startup.shell === 'boolean' && typeof startup.agent === 'boolean';
     const confirmationShape = typeof startup.gateRecorded === 'boolean' && typeof startup.paneReleased === 'boolean' && confirmationStates.has(startup.confirmationState) && Number.isInteger(startup.heldPaneCount) && startup.heldPaneCount >= 0 && startup.heldPaneCount <= 16 && typeof startup.confirmationSent === 'boolean';
     const baseShape = hasExactKeys(startup, ['stage', 'code', 'gateRecorded', 'paneReleased', 'confirmationState', 'heldPaneCount', 'confirmationSent', 'responsive', 'zellij', 'shell', 'agent']) && confirmationShape && roleShape;
@@ -238,11 +238,11 @@ export async function reportGateChecks(inputRoot) {
     const stages = new Set(['descriptor', 'launch', 'cgroup', 'readiness', 'notify']);
     const codes = new Set([
       'runtime_id', 'descriptor_schema', 'descriptor_runtime', 'descriptor_cwd',
-      'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
-      'cgroup_unit', 'confirmation_inventory', 'confirmation_target',
-      'confirmation_write', 'readiness_timeout', 'startup_failed',
+      'descriptor_intent', 'descriptor_size', 'native_binding', 'client_exit', 'cgroup_unified',
+      'cgroup_unit', 'workload_launch',
+      'readiness_timeout', 'startup_failed',
     ]);
-    const confirmationStates = new Set(['waiting', 'inventory', 'target', 'write', 'sent']);
+    const confirmationStates = new Set(['waiting', 'not_required', 'gated']);
     if (hasExactKeys(recovery, ['stage', 'code', 'gateRecorded', 'paneReleased', 'confirmationState', 'heldPaneCount', 'confirmationSent', 'responsive', 'zellij', 'shell', 'agent']) && typeof recovery.gateRecorded === 'boolean' && typeof recovery.paneReleased === 'boolean' && confirmationStates.has(recovery.confirmationState) && Number.isInteger(recovery.heldPaneCount) && recovery.heldPaneCount >= 0 && recovery.heldPaneCount <= 16 && typeof recovery.confirmationSent === 'boolean' && typeof recovery.responsive === 'boolean' && Number.isInteger(recovery.zellij) && recovery.zellij >= 0 && recovery.zellij <= 16 && typeof recovery.shell === 'boolean' && typeof recovery.agent === 'boolean' && stages.has(recovery.stage) && codes.has(recovery.code)) {
       failures.push(`s2:recovery=${recovery.stage}/${recovery.code}/gate:${Number(recovery.gateRecorded)}/release:${Number(recovery.paneReleased)}/confirmation:${recovery.confirmationState}/held:${recovery.heldPaneCount}/sent:${Number(recovery.confirmationSent)}/roles:${Number(recovery.responsive)},${recovery.zellij},${Number(recovery.shell)},${Number(recovery.agent)}`);
     }
@@ -509,8 +509,13 @@ export async function validateEvidenceDirectory(inputRoot, expectedHeadSha) {
     summarySha256: createHash('sha256').update(summaryResult.body).digest('hex'),
   };
 }
-const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
-if (import.meta.url === invokedPath) {
+export function isMainModule(moduleUrl, invokedPath) {
+  return Boolean(
+    invokedPath
+      && realpathSync(resolve(invokedPath)) === realpathSync(fileURLToPath(moduleUrl)),
+  );
+}
+if (isMainModule(import.meta.url, process.argv[1])) {
   const root = process.argv[2];
   if (!root) {
     console.error('usage: verify-evidence.mjs <evidence-directory>');

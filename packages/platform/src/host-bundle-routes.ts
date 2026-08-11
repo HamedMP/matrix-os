@@ -14,10 +14,10 @@ import {
   type PlatformDB,
 } from './db.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
+import { HostBundleVersionSchema } from './customer-vps-schema.js';
 import { timingSafeTokenEquals } from './platform-token.js';
 
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
-const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const HOST_BUNDLE_FILES = new Set([
   'matrix-host-bundle.tar.gz',
   'matrix-host-bundle.tar.gz.sha256',
@@ -29,7 +29,7 @@ const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev|beta)$/;
 const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev|beta)\.json$/;
 
 const HostBundleReleaseBodySchema = z.object({
-  version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
+  version: HostBundleVersionSchema,
   gitCommit: z.string().min(7).max(64),
   gitRef: z.string().max(256).nullable().optional(),
   buildTime: z.string().min(1).max(128),
@@ -46,7 +46,7 @@ const HostBundleReleaseBodySchema = z.object({
 });
 
 const HostBundleChannelBodySchema = z.object({
-  version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
+  version: HostBundleVersionSchema,
 });
 
 function isObjectNotFoundError(err: unknown): boolean {
@@ -153,7 +153,7 @@ export function createHostBundleRoutes(opts: {
   routes.get('/releases/:versionJson', async (c) => {
     const versionJson = c.req.param('versionJson');
     const version = versionJson.endsWith('.json') ? versionJson.slice(0, -5) : versionJson;
-    if (!HOST_BUNDLE_IMAGE_VERSION_PATTERN.test(version)) {
+    if (!HostBundleVersionSchema.safeParse(version).success) {
       return c.json({ error: 'Invalid request' }, 400);
     }
     try {
@@ -330,7 +330,7 @@ export function createHostBundleRoutes(opts: {
       }
     }
 
-    if (!HOST_BUNDLE_IMAGE_VERSION_PATTERN.test(imageVersion) || !HOST_BUNDLE_FILES.has(file)) {
+    if (!HostBundleVersionSchema.safeParse(imageVersion).success || !HOST_BUNDLE_FILES.has(file)) {
       return c.json({ error: 'Invalid request' }, 400);
     }
 

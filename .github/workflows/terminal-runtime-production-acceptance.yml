@@ -7,7 +7,7 @@ permissions:
   contents: read
   pull-requests: write
 concurrency:
-  group: terminal-runtime-production-${{ github.event.pull_request.number }}
+  group: terminal-runtime-production-${{ github.event.label.name == 'terminal-production-acceptance' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 jobs:
   gate:
@@ -254,14 +254,28 @@ jobs:
               .truncated==false and .signal==null) | .stdout' "$response"
           }
           call_helper acceptance-launch
-          deadline=$((SECONDS + 18000))
+          deadline=$((SECONDS + 11400))
+          last_state=""
           while [ "$SECONDS" -lt "$deadline" ]; do
-            if state="$(call_helper acceptance-status 2>/dev/null)" &&
-              grep -q '^phase1-ready$' <<<"$state"; then break; fi
-            if grep -q '^failed$' <<<"${state:-}"; then exit 1; fi
+            if state="$(call_helper acceptance-status 2>/dev/null)"; then
+              state="${state%$'\n'}"
+              if [ "$state" != "$last_state" ] &&
+                [[ "$state" =~ ^phase1-ready$|^phase1-running(_[a-z0-9_]+)?$|^failed(_[a-z0-9_]+)*$ ]]; then
+                echo "production_acceptance_state=${state}"
+                last_state="$state"
+              fi
+              [ "$state" != phase1-ready ] || break
+              if [[ "$state" =~ ^failed(_|$) ]]; then
+                call_helper acceptance-diagnose || true
+                call_helper acceptance-cancel >/dev/null 2>&1 || true
+                exit 1
+              fi
+            fi
             sleep 15
           done
-          grep -q '^phase1-ready$' <<<"${state:-}"
+          if [ "${state:-}" != phase1-ready ]; then
+            call_helper acceptance-cancel >/dev/null 2>&1 || true; echo "Production acceptance phase one did not complete before its bounded deadline." >&2; exit 1
+          fi
           call_helper acceptance-reboot
       - name: Wait for reboot and resume explicit recovery
         id: recover
@@ -288,21 +302,19 @@ jobs:
             jq -er 'select(.exitCode==0 and .timedOut==false and
               .truncated==false and .signal==null) | .stdout' "$RUNNER_TEMP/helper.json"
           }
-          sleep 20
-          deadline=$((SECONDS + 900))
-          until call_helper acceptance-status >/dev/null 2>&1; do
-            [ "$SECONDS" -lt "$deadline" ] || exit 1
-            sleep 15
-          done
-          call_helper acceptance-resume
+          deadline=$((SECONDS + 900)); state=""; while [ "$SECONDS" -lt "$deadline" ]; do if state="$(call_helper acceptance-status 2>/dev/null)"; then state="${state%$'\n'}"; [ "$state" = reboot-scheduled ] && break; [[ "$state" =~ ^failed(_|$) ]] && exit 1; fi; sleep 15; done
+          [ "$state" = reboot-scheduled ] || exit 1; while [ "$SECONDS" -lt "$deadline" ]; do if call_helper acceptance-resume 2>/dev/null; then state=phase2-running; break; fi; if state="$(call_helper acceptance-status 2>/dev/null)"; then [[ "$state" =~ ^phase2-running$|^complete$ ]] && break; [[ "$state" =~ ^failed(_|$) ]] && exit 1; fi; sleep 10; done
+          [[ "$state" =~ ^phase2-running$|^complete$ ]] || exit 1
           deadline=$((SECONDS + 900))
           while [ "$SECONDS" -lt "$deadline" ]; do
             if state="$(call_helper acceptance-status 2>/dev/null)" &&
               grep -q '^complete$' <<<"$state"; then break; fi
-            if grep -q '^failed$' <<<"${state:-}"; then exit 1; fi
+            if [[ "${state:-}" =~ ^failed(_|$) ]]; then call_helper acceptance-diagnose || true; exit 1; fi
             sleep 10
           done
-          grep -q '^complete$' <<<"${state:-}"
+          if [ "${state:-}" != complete ]; then
+            call_helper acceptance-cancel >/dev/null 2>&1 || true; echo "Production acceptance phase two did not complete before its bounded deadline." >&2; exit 1
+          fi
           call_helper acceptance-pack | base64 --decode >"$RUNNER_TEMP/evidence.json"
           output="$RUNNER_TEMP/terminal-production-evidence"
           mkdir -m 0700 "$output"
@@ -338,3 +350,23 @@ jobs:
           - Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
           The bounded artifact contains lifecycle check names only; terminal contents, credentials, paths, names, PIDs, and host addresses are excluded."
           gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" >/dev/null
+      - name: Cancel incomplete production acceptance
+        if: ${{ (cancelled() || failure()) && steps.recover.outcome != 'success' }}
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+        run: |
+          set -euo pipefail
+          [ -n "$ADDRESS" ] || exit 0
+          token="$(node --input-type=module -e '
+            import{createHmac}from"node:crypto";
+            process.stdout.write(createHmac("sha256",process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$token"
+          body="$(jq -cn --arg sha "$HEAD_SHA" --arg nonce "$RUN_NONCE" '{
+            command:["/usr/bin/sudo","/opt/matrix/bin/matrix-terminal-spike-control","acceptance-cancel",$sha,$nonce],
+            timeoutMs:30000}')"
+          curl --fail --silent --show-error --max-time 45 --insecure \
+            --resolve "app.matrix-os.com:443:${ADDRESS}" \
+            -o /dev/null -X POST 'https://app.matrix-os.com/api/terminal/run' \
+            -H "authorization: Bearer ${token}" -H 'content-type: application/json' \
+            --data-binary "$body" || true

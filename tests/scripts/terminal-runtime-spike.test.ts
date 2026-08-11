@@ -17,6 +17,7 @@ const roots: string[] = [];
 const expectAll = (source: string, expected: string[]) => {
   for (const value of expected) expect(source).toContain(value);
 };
+const expectNone = (source: string, expected: string[]) => { for (const value of expected) expect(source).not.toContain(value); };
 const readRepo = (path: string) => readFile(join(process.cwd(), path), 'utf8');
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -29,7 +30,7 @@ const s2Checks = passing(`exactOptionSyntax cacheMappedByRuntime layoutRestored 
 scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
 deletionComplete diskAccountingBounded liveSerializationDisableSafe`);
 const productionChecks = passing(`runtimeLive continuousOutput codingAgentPreserved twoDevicesOneRuntime detachPreservesRuntime renamePreservesIdentity bundleOnePreservesRuntime bundleTwoPreservesRuntime supervisorPreserved failedUpdatePreservesRuntime explicitRollbackPreservesRuntime daemonReloadPreservesRuntime forceRunAbsent journalPrivacy
-rebootStartsNoRuntime rebootShowsInterrupted explicitRecoverRestoresRuntime concurrentRecoverSingleUnit corruptionFallsBackFresh recoverDeleteCannotResurrect deleteWaitsForEmptyCgroup deleteRemovesRecoveryState`);
+rebootStartsNoRuntime rebootShowsInterrupted explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingleUnit corruptionFallsBackFresh recoverDeleteCannotResurrect deleteWaitsForEmptyCgroup deleteRemovesRecoveryState`);
 async function evidence(overrides: Record<string, unknown> = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-evidence-'));
   roots.push(root);
@@ -76,6 +77,18 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
   return root;
 }
 describe('terminal runtime spike evidence', () => {
+  it('runs the evidence CLI when invoked through the immutable current-generation symlink', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'matrix-terminal-verifier-symlink-')); roots.push(fixture); const generation = join(fixture, 'generation'); const current = join(fixture, 'current');
+    await mkdir(generation);
+    await Promise.all([
+      writeFile(join(generation, 'verify-evidence.mjs'), await readRepo('scripts/spikes/terminal-runtime/verify-evidence.mjs')),
+      writeFile(join(generation, 'v0.44.3-matrix.1.build.json'), await readRepo('scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json')),
+    ]);
+    await symlink(generation, current, 'dir'); const root = await evidence();
+    const result = spawnSync(process.execPath, [join(current, 'verify-evidence.mjs'), root, '--pack', 'a'.repeat(40)], { encoding: 'utf8' });
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(0); expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toMatchObject({ schemaVersion: 1, prHeadSha: 'a'.repeat(40) });
+  });
   it('builds and verifies the pinned Matrix Zellij resurrection patch', async () => {
     const [
       builder,
@@ -259,8 +272,16 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('$((SECONDS - last_pack_success)) -ge 120');
     expect(workflow).toContain('evidence_gateway_unavailable_${http_code}');
     expect(workflow).toContain('last_semantic_pack_success=$SECONDS');
-    expect(workflow).toContain('$((SECONDS - last_semantic_pack_success)) -ge 120');
-    expect(workflow).toContain('evidence_gateway_response_invalid_${http_code}');
+    expectAll(workflow, [
+      'semantic_response_timeout=300', '$((SECONDS - last_semantic_pack_success)) -ge "$semantic_response_timeout"',
+      'evidence_gateway_response_invalid_${http_code}_${response_shape}', 'if type != "object" then "non_object"',
+      'elif has("error") then "error_object"', 'elif ((.exitCode | type) == "number" or .exitCode == null)', 'then "command_result_exit_" +',
+      '(if .exitCode == null then "null" elif .exitCode == 0 then "zero" else "nonzero" end)',
+      '(if .signal == null then "none" elif .signal == "SIGTERM" then "sigterm"',
+      '(if .stdout == "" then "empty" else "set" end)',
+      '(if .stderr == "" then "empty" else "set" end)',
+      'else "unknown_object" end',
+    ]);
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
@@ -295,31 +316,57 @@ describe('terminal runtime spike evidence', () => {
     expect(template).toContain('/opt/matrix/libexec/terminal-runtime/current/spikes/keeper.mjs');
     expect(keeper).toContain('/opt/matrix/libexec/terminal-runtime/current/spikes/layout.kdl');
   });
-  it('launches the initial pane from the immutable installed generation', async () => {
+  it('starts a plain initial shell and launches the fixed workload pane explicitly', async () => {
     const layout = await readRepo('scripts/spikes/terminal-runtime/layout.kdl');
-    expect(layout).toContain(
-      'pane command="/opt/matrix/bin/matrix-terminal-spike-pane"',
-    );
+    const keeper = await readRepo('scripts/spikes/terminal-runtime/keeper.mjs');
+    expect(layout).toContain('    pane\n');
+    expect(layout).not.toContain('command=');
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
     expect(layout).not.toContain('/opt/matrix/libexec/terminal-runtime-spike/');
+    expect(keeper).toContain(
+      "['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', NODE, WORKLOAD_PANE]",
+    );
+    expect(keeper).toContain("const WORKLOAD_PANE_NAME = 'matrix-runtime-workload-probe'");
   });
-  it('launches spike panes through a self-contained fixed non-sensitive wrapper', async () => {
+  it('launches spike panes through an immutable generation helper', async () => {
     const [wrapper, buildScript, updater] = await Promise.all([
-      readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-pane'),
+      readRepo('scripts/spikes/terminal-runtime/workload-pane.mjs'),
       readRepo('scripts/build-host-bundle.sh'),
       readRepo('distro/customer-vps/host-bin/matrix-sync-agent'),
     ]);
     expectAll(wrapper, [
-      'if [ "$#" -ne 0 ]; then',
-      "exec -a matrix-agent-probe sleep 86400",
-      'exec /usr/bin/bash --noprofile --norc -i',
+      '#!/usr/bin/env node',
+      'if (process.argv.length !== 2)',
+      'setInterval(() => undefined, 60_000)',
     ]);
-    expect(wrapper).not.toContain('/opt/matrix/libexec/terminal-runtime/current/');
+    expect(wrapper).not.toContain('exec -a');
+    expect(wrapper).not.toContain('/usr/bin/sleep');
+    expect(wrapper).not.toContain('bash --noprofile');
+    expect(wrapper).not.toContain('/opt/matrix/');
     expect(wrapper).not.toContain('--force-run-commands');
     expect(buildScript).toContain(
-      '"$STAGE_DIR/bin/matrix-terminal-spike-pane"',
+      'cp -a --no-preserve=links "$ROOT_DIR/scripts/spikes/terminal-runtime/." "$terminal_generation_build/spikes/"',
     );
-    expect(updater).toContain('name="matrix-terminal-spike-pane"');
+    expect(buildScript).toContain(
+      'rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-pane"',
+    );
+    expect(updater).toContain('rm -f -- "$BIN_DIR/matrix-terminal-spike-pane"');
+    expect(updater).not.toContain('name="matrix-terminal-spike-pane"');
+  });
+  it('preflights the exact installed workload helper before asking Zellij to launch it', async () => {
+    const [keeper, packer] = await Promise.all([readRepo('scripts/spikes/terminal-runtime/keeper.mjs'), readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh')]);
+    expectAll(keeper, [
+      'async function verifyWorkloadHelper()', "spawnProcess(NODE, [WORKLOAD_PANE], {", "throw new Error('workload_helper')", 'await verifyWorkloadHelper();',
+      "const WORKLOAD_HELPER_STATES = new Set([", 'workloadHelperState', 'workloadHelperExitStatus', "workloadHelperState = 'spawn_error'",
+      "workloadHelperState = 'early_exit'", "workloadHelperState = 'running'", "workloadHelperState = 'cleanup_error'", "workloadHelperState = 'cleanup_timeout'",
+    ]);
+    expectAll(packer, [
+      'keeper_helper', 'keeper_helper_exit', 'failure_helper', 'failure_helper_exit', 'v.workloadHelperState', 'v.workloadHelperExitStatus',
+      'q${keeper_helper}', 'j${keeper_helper_exit}', 'q${failure_helper}', 'j${failure_helper_exit}', 'failure_progress', 'failure_runner_status',
+      'failure_base_state', 'failure_base_substate', 'failure_base_status', 'd${failure_progress}', 'u${failure_runner_status}',
+      'b${failure_base_state}_${failure_base_substate}_${failure_base_status}',
+    ]);
+    expect(keeper.indexOf('await verifyWorkloadHelper();')).toBeLessThan(keeper.indexOf('await launchCreateWorkloadPane(sessionName, env);'));
   });
   it('carries the compatible stable updater through a dormant preview bootstrap', async () => {
     const workflow = await readRepo('.github/workflows/preview-vps.yml');
@@ -330,7 +377,10 @@ describe('terminal runtime spike evidence', () => {
       'install -m 0755 "$RUNNER_TEMP/matrix-sync-agent" distro/customer-vps/host-bin/matrix-sync-agent',
     );
     expect(workflow).toContain(
-      'git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-sync-agent',
+      'install -m 0755 "$RUNNER_TEMP/matrix-sync-bundled-home-assets" distro/customer-vps/host-bin/matrix-sync-bundled-home-assets',
+    );
+    expect(workflow).toContain(
+      'git restore --source=HEAD -- scripts/build-host-bundle.sh scripts/spikes/terminal-runtime distro/customer-vps/host-bin/matrix-gateway distro/customer-vps/host-bin/matrix-restore.sh distro/customer-vps/host-bin/matrix-sync-agent distro/customer-vps/host-bin/matrix-sync-bundled-home-assets',
     );
     expect(workflow.indexOf('install -m 0755 "$RUNNER_TEMP/matrix-sync-agent"')).toBeLessThan(
       workflow.indexOf('MATRIX_TERMINAL_RUNTIME_DORMANT=1 ./scripts/build-host-bundle.sh'),
@@ -341,33 +391,32 @@ describe('terminal runtime spike evidence', () => {
       readRepo('scripts/spikes/terminal-runtime/keeper.mjs'),
       readRepo('scripts/spikes/terminal-runtime/pane-probe.sh'),
     ]);
-    expect(keeper).toContain('const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`');
-    expect(keeper).toContain('const paneReleased = await regularFileExists(paneReleasePath)');
-    expect(keeper).toContain(
-      "if (paneReleased && descriptor.intent === 'create' && !confirmationSent)",
-    );
-    expect(keeper).not.toContain(
-      "paneReleased && gateRecorded && descriptor.intent === 'create'",
-    );
-    expect(keeper).toContain("['--session', sessionName, 'action', 'list-panes', '--all', '--json']");
-    expect(keeper).toContain("['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)]");
-    expect(keeper).toContain("confirmationState = 'inventory'");
-    expect(keeper).toContain("confirmationState = 'target'");
-    expect(keeper).toContain("confirmationState = 'write'");
-    expect(keeper).toContain("confirmationState = 'sent'");
-    expect(keeper).toContain("throw new Error('confirmation_inventory'");
-    expect(keeper).toContain("throw new Error('confirmation_target')");
-    expect(keeper).toContain("throw new Error('confirmation_write'");
-    expect(keeper).toContain("if (panes.length === 0)");
-    expect(keeper).toContain("confirmationState = 'waiting'");
-    expect(keeper).toContain('return;');
-    expect(keeper).not.toContain("pty.write('\\r')");
-    expect(keeper).toContain("if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded))");
-    expect(keeper).toContain('const detected = paneReleased');
-    expect(paneProbe).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
-    expect(paneProbe).not.toContain('/proc/self/cgroup');
-    expect(paneProbe).not.toContain('pane-release');
-    expect(keeper).not.toContain('MATRIX_TERMINAL_RUNTIME_ID');
+    expectAll(keeper, ['const paneReleasePath = `${runtimeRoot}/pane-release/${sessionName}`', 'const paneReleased = await regularFileExists(paneReleasePath);',
+      "const startupAuthorized = descriptor.intent === 'recover' || paneReleased;", "if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched)",
+      "const WORKLOAD_PANE = join(dirname(keeperExecutable), 'workload-pane.mjs')", "process.comm === 'MainThread'", 'process.cmdline[0] === NODE',
+      'process.cmdline[1] === WORKLOAD_PANE', "['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', NODE, WORKLOAD_PANE]",
+      "throw new Error('workload_launch'", 'workloadPaneLaunched = true', "confirmationState = descriptor.intent === 'create' ? 'not_required' : 'waiting'",
+      "confirmationState = 'gated'", "if (startupAuthorized && responsive && detected && (descriptor.intent === 'create' || gateRecorded))"]);
+    expectNone(keeper, ["paneReleased && gateRecorded && descriptor.intent === 'create'", "throw new Error('workload_target')", 'const target = stdout.trim()',
+      'confirmHeldCreatePane', "'action', 'send-keys'", "'action', 'write', '13'", "pty.write('\\r')", 'MATRIX_TERMINAL_RUNTIME_ID']);
+    expect(keeper.indexOf('await execFileAsync(')).toBeLessThan(keeper.indexOf('workloadPaneLaunched = true'));
+    expect(keeper.indexOf('workloadPaneLaunched = true')).toBeLessThan(keeper.indexOf('await cgroupRoles(cgroup.path, descriptor.intent === \'create\')'));
+    expect(keeper.indexOf('const responsive = startupAuthorized')).toBeLessThan(keeper.indexOf("descriptor.intent === 'create' && !workloadPaneLaunched"));
+    expectNone(paneProbe, ['MATRIX_TERMINAL_RUNTIME_ID', '/proc/self/cgroup', 'pane-release']);
+  });
+  it('records a bounded privacy-safe workload pane state for failed readiness', async () => {
+    const [keeper, packer] = await Promise.all([readRepo('scripts/spikes/terminal-runtime/keeper.mjs'), readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh')]);
+    expectAll(keeper, [
+      "const WORKLOAD_PANE_STATES = new Set([", "['--session', sessionName, 'action', 'list-panes', '--all', '--json']", 'panes.length > 16',
+      'pane.terminal_command === `${NODE} ${WORKLOAD_PANE}`', 'pane.pane_command === `${NODE} ${WORKLOAD_PANE}`',
+      'workloadPaneState', 'workloadPaneExitStatus', 'pane.exit_status',
+    ]);
+    expectAll(packer, [
+      'keeper_workload', 'keeper_workload_exit', 'failure_workload', 'failure_workload_exit',
+      'w${keeper_workload}', 'e${keeper_workload_exit}', 'w${failure_workload}', 'e${failure_workload_exit}',
+      '/^(not_launched|missing|running|held_success|held_failure|other|ambiguous)$/.test(v.workloadPaneState)',
+      '(v.workloadPaneExitStatus!==null&&(!Number.isInteger(v.workloadPaneExitStatus)||v.workloadPaneExitStatus<0||v.workloadPaneExitStatus>255))',
+    ]);
   });
   it('can remove only its immutable disposable preview before a clean proof', async () => {
     const workflow = await readFile(
@@ -375,7 +424,13 @@ describe('terminal runtime spike evidence', () => {
       'utf8',
     );
     expectAll(workflow, ["github.event.label.name == 'terminal-preview-reprovision'", 'any(.name == "terminal-preview-reprovision")',
-      'if length == 1 then .[0].machineId else error("preview_unavailable") end', '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"']);
+      'type == "array" and length <= 8',
+      '.deletedAt == null and .status != "deleted"',
+      '(.runtimeSlot == $handle or .status == "failed")',
+      '.deletedAt == null and\n                .status != "deleted"',
+      'while IFS= read -r machine_id; do',
+      '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"']);
+    expect(workflow).not.toContain('type == "array" and length >= 1 and length <= 8');
   });
   it('packages the harness only for explicitly marked preview bundles', async () => {
     const [buildScript, previewWorkflow] = await Promise.all([
@@ -404,27 +459,108 @@ describe('terminal runtime spike evidence', () => {
       control.indexOf('exec /usr/bin/bash "$target"'),
     );
   });
+  it('gives CI change detection observed checkout time plus margin', async () => {
+    const workflow = await readRepo('.github/workflows/ci.yml');
+    const changesJob = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('\n  # ── Gate 1:'));
+    expect(changesJob).toContain('timeout-minutes: 5');
+    expect(changesJob).not.toContain('timeout-minutes: 2');
+  });
   it('requires an exact-head production acceptance matrix beyond S1 and S2', async () => {
-    const [workflow, helper, runner, verifier] = await Promise.all([
+    const [workflow, helper, runner, verifier, probe] = await Promise.all([
       readRepo('.github/workflows/terminal-runtime-production-acceptance.yml'),
       readRepo('distro/customer-vps/host-bin/matrix-terminal-spike-control'), readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh'),
       readRepo('scripts/spikes/terminal-runtime/verify-production-evidence.mjs'),
+      readRepo('scripts/spikes/terminal-runtime/production-probe.mjs'),
     ]);
-    expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 18000))',
+    expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 11400))',
       'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
-      'call_helper acceptance-pack', 'Validate the complete production matrix']);
-    expect(runner).toContain('for _ in $(seq 1 4500)');
+      'call_helper acceptance-pack', 'call_helper acceptance-cancel', 'call_helper acceptance-diagnose',
+      'production_acceptance_state=${state}', 'Validate the complete production matrix', "[ \"$state\" = reboot-scheduled ]", 'call_helper acceptance-resume 2>/dev/null']);
+    expect(workflow).toContain("group: terminal-runtime-production-${{ github.event.label.name == 'terminal-production-acceptance' && github.event.pull_request.number || github.run_id }}");
+    expect(workflow).not.toContain('group: terminal-runtime-production-${{ github.event.pull_request.number }}\n');
+    const cancellationCleanup = workflow.slice(workflow.indexOf('- name: Cancel incomplete production acceptance'));
+    expectAll(cancellationCleanup, [
+      "if: ${{ (cancelled() || failure()) && steps.recover.outcome != 'success' }}", 'acceptance-cancel', '--max-time 45',
+    ]);
+    expectAll(runner, [
+      'readonly update_wait_seconds=1800', 'for _ in $(seq 1 "$update_wait_seconds")', '--property=RuntimeMaxSec=10800', '--property=RuntimeMaxSec=600',
+      '--property=TimeoutStopSec=45', 'systemctl_cancel stop', 'write_phase runtime_created', 'write_phase bundle_one', 'write_phase bundle_two',
+      'write_phase forced_failure', 'write_phase reapply_one', 'write_phase rollback_two', 'write_phase final_checks', 'write_phase creating_runtime',
+      'write_phase waiting_runtime', 'write_phase seeding_output', 'write_phase starting_agent', 'write_phase waiting_roles',
+      'owner_probe() { command_bounded 70 runuser -u matrix --', 'trap \'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"\' EXIT',
+      'output_bytes() {', 'output_advanced() {', 'runtime_continues() {', 'run --in-place --close-replaced-pane --name matrix-accept-output -- /bin/bash -lc', 'output_advanced "$runtime_id"', 'runtime_continues "$runtime_id" "$agent_runtime_id"', 'current_phase=phase2_inspect', 'current_phase=phase2_serialized_recover', 'current_phase=phase2_corruption_fallback', 'current_phase=phase2_race', 'current_phase=phase2_delete',
+    ]);
+    expectNone(runner, ['grep -aqF \'MATRIX_ACCEPT_LOOP\' "/proc/${shell_pid}/cmdline"', 'action write-chars --', 'action dump-screen', 'production_acceptance_shell_marker=']);
+    expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
-    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack', 'exec /usr/bin/bash "$target"']);
+    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-diagnose | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']); expectAll(runner, ['readonly boot_id_file="${state_root}/boot-id"', 'echo reboot-pending', 'phase2-running|complete']);
     expect(helper).not.toContain('[ ! -x "$target" ]');
     for (const check of `bundleOnePreservesRuntime bundleTwoPreservesRuntime failedUpdatePreservesRuntime explicitRollbackPreservesRuntime rebootStartsNoRuntime
-explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotResurrect corruptionFallsBackFresh deleteWaitsForEmptyCgroup`.split(/\s+/)) {
+explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingleUnit recoverDeleteCannotResurrect corruptionFallsBackFresh deleteWaitsForEmptyCgroup`.split(/\s+/)) {
       expect(runner).toContain(check);
       expect(verifier).toContain(check);
     }
     expect(runner).toContain("pgrep -a zellij | grep -F -- '--force-run-commands'");
     expect(runner).not.toMatch(/zellij(?:_cmd)?\s[^|\n]*--force-run-commands/);
+    expectAll(runner, ['readonly pi=/opt/matrix/runtime/node/bin/pi', 'wait_pi_ready', '/var/lib/matrix-developer-tools/installed-tools',
+      '"$pi" --version', 'owner_probe create-agent "$head_sha" "$run_nonce"',
+      'both_roles_match() {', 'mark recoveryDoesNotResumeAgent', 'owner_probe create "$head_sha" "$run_nonce"',
+      'roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }']);
+    expectNone(runner, ['action new-pane -- "$codex" app-server', "sh -c 'command -v codex'"]);
+    expectAll(probe, [
+      '`accept-${value.slice(0, 12)}-${extra}`', '`accept-agent-${value.slice(0, 12)}-${extra}`', 'createAgentConfigurationStore',
+      "operation === 'find-agent'", "`accept-agent-${value.slice(0, 12)}-${extra}`",
+      "launch: { kind: 'agent', configurationRef: operationId }", "agent: 'pi'",
+      "['attach', 'roles'].includes(operation) ? {} : await import('../index.js')", "show !== `/matrix.slice/matrix-terminal.slice/${unit}`",
+      'shell: shell?.pid ?? 0', 'output: outputProcess?.pid ?? 0', 'outputCandidates: outputCandidates.length', 'outputWriteBytes', 'const readProcessFile = async', "['ENOENT', 'ESRCH']", "['EACCES', 'EPERM']", 'readProcessFile(`/proc/${pid}/comm`', 'readProcessFile(`/proc/${pid}/cmdline`', 'readProcessFile(`/proc/${pid}/stat`', 'readProcessFile(`/proc/${outputProcess.pid}/io`', 'parentPid', 'const paneCandidates =', 'const agentCandidates =', 'agentCandidates.length === 1 ? agentCandidates[0].pid : 0', "entry.args.includes('list-sessions')", 'processCount: runtimeProcesses.length', 'paneCandidates: paneCandidates.length', 'agentCandidates: agentCandidates.length', "roleStage = 'systemd'", "roleStage = 'cgroup'", "roleStage = 'proc'", "roleStage = 'classify'", 'probe_roles_${roleStage}_${roleErrorCode}', 'probe_roles_global_unknown', "process.once('uncaughtException'", "process.once('unhandledRejection'",
+    ]);
+    expectNone(probe, ["prompt:", "argument.includes('MATRIX_ACCEPT_LOOP')", '/proc/${pid}/status', 'processCount: processes.length']);
     expect(workflow).not.toContain('VPS_SSH_KEY');
+    expectAll(runner, ['diagnose)', 'production_acceptance_diagnostic=', "grep -E '^terminal_keeper_[a-z0-9_]{1,96}$'", '[ -f "$state_root/runtime-id" ]', 'IFS= read -r runtime_id <"$state_root/runtime-id"']); expect(workflow).toContain('if [[ "${state:-}" =~ ^failed(_|$) ]]; then call_helper acceptance-diagnose || true; exit 1; fi');
+    expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=', 'production_acceptance_agent_role_values=', 'production_acceptance_agent_roles_error=', 'production_acceptance_agent_roles_command=', 'production_acceptance_shell_role_values=', 'cgroup.events', '/matrix.slice/matrix-terminal.slice/${agent_unit}']);
+    expectNone(runner, ['roles() { command_bounded 8 runuser', 'journalctl -u "$unit" --no-pager', 'attach_one=/run/matrix-terminal-accept-']);
+    expectAll(probe, ["operation === 'attach'", 'process.getuid()', 'matrix-terminal-accept-${extra}-${slot}.json', 'child.onData', 'child.onExit', 'setTimeout']);
+  });
+  it('publishes a terminal acceptance state before bounded systemd cleanup', async () => {
+    const runner = await readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh');
+    expectAll(runner, [
+      'systemctl_read()', 'systemctl_change()', 'systemctl_cancel()', 'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }',
+      'systemctl_change() { command_bounded 40 /usr/bin/systemctl "$@"; }', 'systemctl_cancel() { command_bounded 20 /usr/bin/systemctl "$@"; }',
+      'trap - EXIT ERR TERM INT HUP', 'local exit_status="${1:-$?}"', 'failure_code=command_timeout',
+    ]);
+    const failPhase = runner.slice(runner.indexOf('fail_phase() {'), runner.indexOf('\nphase1() {'));
+    const failureWrite = failPhase.indexOf('write_state "failed_${current_phase}_${failure_code}"');
+    expect(failureWrite).toBeGreaterThan(-1); expect(failureWrite).toBeLessThan(failPhase.indexOf('systemctl_change daemon-reload'));
+    const cancelCase = runner.slice(runner.indexOf('  cancel)'), runner.indexOf('  phase1) phase1'));
+    expect(cancelCase.indexOf('write_state failed_cancelled_operation_failed')).toBeLessThan(cancelCase.indexOf('systemctl_cancel stop'));
+    expect(cancelCase).not.toContain('agent_event');
+    const unboundedSystemctl = runner.split('\n').filter((line) => /(^|[^A-Za-z_])systemctl(?: |$)/.test(line) &&
+      !line.includes('/usr/bin/systemctl "$@"') && !line.includes('-- /usr/bin/systemctl reboot'));
+    expect(unboundedSystemctl).toEqual([]);
+    const unboundedOwnerProbe = runner.split('\n').filter((line) => line.includes('runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe"') && !line.includes('command_bounded') && !line.includes('"$probe" attach'));
+    expect(unboundedOwnerProbe).toEqual([]);
+  });
+  it('process-group-bounds production acceptance probes and reports missing roles', async () => {
+    const runner = await readRepo('scripts/spikes/terminal-runtime/production-acceptance.sh');
+    expectAll(runner, [
+      'command_bounded() {', '/usr/bin/setsid "$@" </dev/null &', 'kill -TERM -- "-$operation_pid"', 'kill -KILL -- "-$operation_pid"',
+      'systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }', 'owner_probe() { command_bounded 70 runuser -u matrix --',
+      'roles() { command_bounded 8 /opt/matrix/runtime/node/bin/node "$probe" roles "$1"; }', 'request_update() { command_bounded 70 runuser -u matrix --',
+      'zellij() { command_bounded 30 runuser -u matrix --', '/usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" attach',
+      'stop_process_group "$attach_parent_one"', 'stop_process_group "$attach_parent_two"', 'role_failure=agent_unavailable',
+      'role_failure=shell_unavailable', 'role_failure=output_unavailable', 'role_failure=roles_unavailable', 'role_failure=roles_unstable', 'failure_hint="$role_failure"',
+    ]);
+    expect(runner).not.toContain('/usr/bin/timeout --signal=TERM --kill-after=5s 70s runuser');
+    const boundedFunction = runner.match(/command_bounded\(\) \{[\s\S]*?\n\}/)?.[0];
+    expect(boundedFunction).toBeDefined();
+    const completed = spawnSync('/bin/bash', ['-c',
+      `${boundedFunction}\ncommand_bounded 1 /bin/bash -c '(trap "" HUP TERM; sleep 30) & exit 0'`],
+    { encoding: 'utf8', timeout: 2_500 });
+    expect(completed.error).toBeUndefined(); expect(completed.status).toBe(0);
+    const timedOut = spawnSync('/bin/bash', ['-c',
+      `${boundedFunction}\ncommand_bounded 1 /bin/bash -c 'trap "" HUP TERM; sleep 30'`],
+    { encoding: 'utf8', timeout: 2_500 });
+    expect(timedOut.error).toBeUndefined(); expect(timedOut.status).toBe(124);
   });
   it('fails closed on incomplete, stale, or extended production evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-production-evidence-'));
@@ -521,7 +657,10 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expectAll(packer, [
       'keeper_responsive keeper_zellij keeper_shell keeper_agent',
       'r${keeper_responsive}_z${keeper_zellij}_s${keeper_shell}_a${keeper_agent}',
-      'spike_pack_evidence_failed_${failure_stage}_${failure_code}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}',
+      'spike_pack_evidence_failed_${gate_failures}_${failure_stage}_${failure_code}_f${startup_rollup}_r${failure_responsive}_z${failure_zellij}_s${failure_shell}_a${failure_agent}',
+      'const allowed={s1:new Set(',
+      's1none_s2none',
+      's1${missing.s1.join("_")||"none"}_s2${missing.s2.join("_")||"none"}',
       'progress_started=',
       'progress_age=$((progress_now - progress_started))',
       'progress_stage="stalled_${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}"',
@@ -546,13 +685,27 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(packer).not.toContain('tar --create');
     expect(runner).toContain('bounded_wait_child "$attach_parent"');
     expect(runner).not.toContain('wait "$attach_parent" 2>/dev/null || true');
-    expect(runner).toContain("trap 'status=$?; build_summary; cleanup; exit $status' EXIT");
+    expect(runner).toContain("trap 'status=$?; cleanup; build_summary; exit $status' EXIT");
+    expect(runner).toMatch(
+      /trap - EXIT\ncleanup\nwrite_progress summary_build\nbuild_summary\nsummary_status=/,
+    );
+    expect(runner).not.toMatch(/build_summary\nsummary_status=[\s\S]*trap - EXIT\ncleanup/);
     expect(runner).toContain('write_progress base_start');
     expect(runner).toContain('write_progress base_start_requested');
     expect(runner).toContain('write_progress keeper_loss');
     expect(runner).toContain('write_progress server_loss');
     expect(runner).toContain('write_progress memory_pressure');
     expect(runner).toContain('write_progress recovery_restore');
+    expectAll(runner, [
+      'write_progress s2_cache_saved',
+      'write_progress s2_initial_stopped',
+      'write_progress s2_recover_started',
+      'write_progress s2_recover_ready',
+      'write_progress s2_viewport_checked',
+      'write_progress s2_cache_frozen',
+      'write_progress s2_restored_stopped',
+      'write_progress s2_delete',
+    ]);
     expect(runner).toContain('write_progress corruption_fallback');
     expect(runner).toContain('progress-stage.txt');
     expect(runner).toContain('command_bounded 35 /usr/bin/systemctl "$@"');
@@ -780,15 +933,22 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
       "throw new Error('native_binding', { cause: error })",
     ]);
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
+    expect(keeper).toContain(
+      "(descriptor.intent === 'create' || gateRecorded)",
+    );
+    expect(keeper).toContain(
+      "if (startupAuthorized && responsive && detected && (descriptor.intent === 'create' || gateRecorded))",
+    );
     expect(keeper.indexOf('await notifyReady()')).toBeLessThan(keeper.indexOf('await writeReadiness('));
     expect(runner).toContain('confirmations/${recovery_id}.gated');
     const gateProof = runner.indexOf('confirmations/${recovery_id}.gated');
     const stablePaneName = runner.indexOf(
       'action rename-pane --pane-id "$serialized_pane_id" MATRIX_SCROLL_PROBE',
     );
-    const recoveredPaneResolution = runner.indexOf('p.title==="MATRIX_SCROLL_PROBE"');
+    const recoveredPaneResolution = runner.indexOf('v.title==="MATRIX_SCROLL_PROBE"');
+    expect(runner).toContain('for _ in $(seq 1 100); do\n      panes_json=');
     const safeDismiss = runner.indexOf('action write --pane-id "$serialized_pane_id" 27');
-    const heldViewport = runner.indexOf('held_viewport_anchor=');
+    const heldViewport = runner.indexOf('held_viewport_anchor="$(grep');
     expect(gateProof).toBeGreaterThan(-1);
     expect(stablePaneName).toBeGreaterThan(-1);
     expect(recoveredPaneResolution).toBeGreaterThan(gateProof);
@@ -806,6 +966,20 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     );
     expect(runner).not.toContain(
       'printf \'MATRIX_CORRUPT_STATE\\n\' >"$corrupt_target"',
+    );
+    expect(runner).toContain('stop_runtime_empty() {');
+    expect(runner).toContain(
+      'if wait_not_active "$recovery_unit" &&\n'
+      + '      stop_runtime_empty "$recovery_unit" "$recovery_cgroup"; then\n'
+      + '      zellij_delete_if_present "$recovery_id" >/dev/null 2>&1 || true\n'
+      + '      rm -rf -- "$recovery_cache_dir"',
+    );
+    expect(runner).toContain(
+      'if stop_runtime_empty "$recovery_unit" "$recovery_cgroup"; then\n'
+      + '    zellij_delete_if_present "$recovery_id" >/dev/null 2>&1 || true\n'
+      + '    rm -rf -- "$recovery_cache_dir"\n'
+      + '    if [ ! -e "$recovery_cache_dir" ]; then mark_pass s2 deletionComplete; fi\n'
+      + '  fi',
     );
   });
   it('publishes a detached Zellij delete worker PID without stdout command substitution', async () => {
@@ -927,14 +1101,14 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain('startupWatchdog = setTimeout');
     expect(keeper).toContain("void failStartup('readiness_timeout')");
     expect(keeper).toContain(
-      "paneReleased && descriptor.intent === 'create' && !confirmationSent",
+      "paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched",
     );
     expect(keeper).not.toContain(
       "paneReleased && gateRecorded && descriptor.intent === 'create'",
     );
     expect(keeper).not.toContain("descriptor.intent === 'recover' && !confirmationSent");
     expect(keeper).not.toContain('--force-run-commands');
-    expect(keeper).toContain('await recordStartupStage();\n    if (paneReleased && responsive && detected');
+    expect(keeper).toContain('await launchCreateWorkloadPane(sessionName, env)');
     expect(keeper).toContain('function startupSnapshot()');
     expect(keeper).toContain('gateRecorded,');
     expect(keeper).toContain('paneReleased: paneReleasedRecorded,');
@@ -942,7 +1116,12 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(keeper).toContain('heldPaneCount,');
     expect(keeper).toContain('...startupSnapshot()');
     expect(keeper).not.toContain("stdio: ['ignore', handle.fd, 'ignore']");
-    expect(keeper.indexOf('const detected = paneReleased')).toBeLessThan(keeper.indexOf('const responsive = Boolean(detected && await exactSessionResponds'));
+    expect(keeper.indexOf('const responsive = startupAuthorized')).toBeLessThan(
+      keeper.indexOf('const detected = startupAuthorized'),
+    );
+    expect(keeper.indexOf('const detected = startupAuthorized')).toBeLessThan(
+      keeper.indexOf('await recordStartupStage();\n    if (startupAuthorized && responsive && detected'),
+    );
   });
   it('fails a stalled startup quickly with monotonic keeper diagnostics', async () => {
     const [launcher, packer, runner, keeper] = await Promise.all([
@@ -969,6 +1148,10 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(packer).toContain('/proc/${base_pid}/comm');
     expect(packer).toContain('TimeoutStartUSec');
     expect(packer).toContain('NRestarts');
+    expectAll(packer, [
+      'base_id="1${run_namespace}"',
+      'runner_unit="matrix-terminal-runtime-spike-${run_namespace}.service"',
+    ]);
     expect(packer).toContain('startup-stages/${base_id}.json');
     expect(packer).toContain('keeper_gate keeper_release keeper_confirmation keeper_held');
     expect(packer).toContain('_g${keeper_gate}_p${keeper_release}_c${keeper_confirmation}_h${keeper_held}');
@@ -977,6 +1160,14 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     expect(packer).toContain('/usr/bin/date +%s');
     expect(packer).toContain('${base_role}_${base_wait}_${base_cgroup_count}');
     expect(packer).toContain('${progress_stage}_${keeper_stage}_${timeout_start}_${restart_count}_${runner_wait}_${base_role}_${base_wait}_${base_cgroup_count}');
+  });
+  it('preserves the last work stage and reports every attempt-scoped startup failure', async () => {
+    const [packer, runner] = await Promise.all([readRepo('scripts/spikes/terminal-runtime/pack-evidence.sh'), readRepo('scripts/spikes/terminal-runtime/run-remote.sh')]);
+    expectAll(runner, ['last-work-stage.txt', 'last-work-uptime.txt', 'case "$progress_stage" in', 'cleanup_units|cleanup_sessions|cleanup_session_[0-6]|cleanup_attach) ;;']);
+    expectAll(packer, ['runtime_ids=("$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id")', 'startup_failure_rollup() {',
+      'startup-failures/${runtime_id}.json', 'last-work-stage.txt', 'startup_rollup="$(startup_failure_rollup)"', '_f${startup_rollup}_']);
+    expect(packer).toContain('[[ "$startup_rollup" =~ ^[a-z0-9_]{1,1024}$ ]]');
+    expect(packer.indexOf('failure_progress_path="$evidence_root/last-work-stage.txt"')).toBeLessThan(packer.indexOf('failure_progress_path="$evidence_root/progress-stage.txt"'));
   });
   it('activates the aggregate slice before starting the first template instance', async () => {
     const runner = await readRepo('scripts/spikes/terminal-runtime/run-remote.sh');
@@ -1075,7 +1266,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     });
     await writeFile(
       join(root, 's1', 'base-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', gateRecorded: true, paneReleased: true, confirmationState: 'write', heldPaneCount: 1, confirmationSent: false, responsive: false, zellij: 1, shell: false, agent: false, exitCode: 1, signal: 0 })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', gateRecorded: false, paneReleased: true, confirmationState: 'not_required', heldPaneCount: 0, confirmationSent: false, responsive: false, zellij: 1, shell: false, agent: false, exitCode: 1, signal: 0 })}\n`,
       'utf8',
     );
     await writeFile(
@@ -1094,7 +1285,7 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     await mkdir(join(root, 's2'));
     await writeFile(
       join(root, 's2', 'recovery-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', gateRecorded: true, paneReleased: true, confirmationState: 'sent', heldPaneCount: 1, confirmationSent: true, responsive: true, zellij: 2, shell: true, agent: false })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', gateRecorded: true, paneReleased: true, confirmationState: 'gated', heldPaneCount: 0, confirmationSent: false, responsive: true, zellij: 2, shell: true, agent: false })}\n`,
       'utf8',
     );
     await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure\n', 'utf8');
@@ -1111,11 +1302,11 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     );
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
-      's1:startup=readiness/client_exit/gate:1/release:1/confirmation:write/held:1/sent:0',
+      's1:startup=readiness/client_exit/gate:0/release:1/confirmation:not_required/held:0/sent:0',
       's1:pty-exit=1/0',
       's1:unit=failed/failed/timeout/1/16',
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
-      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:sent/held:1/sent:1/roles:1,2,1,0',
+      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:gated/held:0/sent:0/roles:1,2,1,0',
       's2:resolution=original:2/recovered:1/panes:2/held:2/drop:0/markers:9999',
       's1:memory=slice_no_pressure',
       'spike:preflight=binary_version_checked',
@@ -1125,9 +1316,9 @@ explicitRecoverRestoresRuntime concurrentRecoverSingleUnit recoverDeleteCannotRe
     await symlink('/etc/passwd', join(root, 's1', 'base-runtime-roles.json'));
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
-      's1:startup=readiness/client_exit/gate:1/release:1/confirmation:write/held:1/sent:0',
+      's1:startup=readiness/client_exit/gate:0/release:1/confirmation:not_required/held:0/sent:0',
       's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
-      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:sent/held:1/sent:1/roles:1,2,1,0',
+      's2:recovery=readiness/readiness_timeout/gate:1/release:1/confirmation:gated/held:0/sent:0/roles:1,2,1,0',
       's2:resolution=original:2/recovered:1/panes:2/held:2/drop:0/markers:9999',
       's1:memory=slice_no_pressure',
       'spike:preflight=binary_version_checked',

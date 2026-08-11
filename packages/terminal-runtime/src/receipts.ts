@@ -181,7 +181,10 @@ export class NameIndexStore {
   }
 }
 export class OperationRecordStore {
-  constructor(private readonly directory: SecureDirectory) {}
+  private static readonly retentionMs = 7 * 86_400_000;
+  private static readonly maxCompleted = 1_024;
+  constructor(private readonly directory: SecureDirectory,
+    private readonly nowMs: () => number = Date.now) {}
   async read(operationId: string): Promise<OperationRecord | null> {
     try {
       return OperationRecordSchema.parse(
@@ -224,8 +227,27 @@ export class OperationRecordStore {
     }
     return records;
   }
+  private async pruneRecords(records: OperationRecord[], nowMs: number) {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0)
+      throw new Error('operation_time_invalid');
+    const completed = records.filter((record) => record.status !== 'accepted')
+      .sort((left, right) => left.generation - right.generation);
+    const overflow = Math.max(0,
+      completed.length - OperationRecordStore.maxCompleted);
+    const cutoff = nowMs - OperationRecordStore.retentionMs;
+    const removed = completed.filter((record, index) => index + 1 < completed.length &&
+      (index < overflow || Date.parse(record.committedAt) < cutoff));
+    for (const record of removed)
+      await this.directory.remove(operationFile(record.operationId));
+    return removed.length;
+  }
+  async pruneCompleted(nowMs = this.nowMs()): Promise<number> {
+    return await this.pruneRecords(await this.listRecords(), nowMs);
+  }
   async nextGeneration(): Promise<number> {
-    return Math.max(0, ...(await this.listRecords()).map((record) => record.generation)) + 1;
+    const records = await this.listRecords();
+    if (records.length > OperationRecordStore.maxCompleted) await this.pruneRecords(records, this.nowMs());
+    return Math.max(0, ...records.map((record) => record.generation)) + 1;
   }
   async latest(runtimeId: string, intent: OperationRecord['intent']) {
     const id = RuntimeIdSchema.parse(runtimeId);

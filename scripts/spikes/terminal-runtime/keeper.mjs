@@ -2,6 +2,7 @@
 import { execFile, spawn as spawnProcess } from 'node:child_process';
 import { lstat, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify, stripVTControlCharacters } from 'node:util';
 const execFileAsync = promisify(execFile);
@@ -13,6 +14,26 @@ const runNamespace = runtimeId.slice(1);
 const runtimeRoot = `/run/matrix-terminal-runtime-spikes/${runNamespace}`;
 const stateRoot = `/home/matrix/home/system/terminal-runtime-spikes/${runNamespace}`;
 const zellij = '/opt/matrix/bin/zellij';
+const NODE = '/opt/matrix/runtime/node/bin/node';
+const WORKLOAD_PANE = join(dirname(keeperExecutable), 'workload-pane.mjs');
+const WORKLOAD_PANE_NAME = 'matrix-runtime-workload-probe';
+const WORKLOAD_PANE_STATES = new Set([
+  'not_launched',
+  'missing',
+  'running',
+  'held_success',
+  'held_failure',
+  'other',
+  'ambiguous',
+]);
+const WORKLOAD_HELPER_STATES = new Set([
+  'not_checked',
+  'spawn_error',
+  'early_exit',
+  'running',
+  'cleanup_error',
+  'cleanup_timeout',
+]);
 let stopping = false;
 let monitor;
 let startupWatchdog;
@@ -22,12 +43,17 @@ let startupStage = 'descriptor';
 let clientExited = false;
 let clientExitEvent = null;
 let ready = false;
-let confirmationSent = false;
+const confirmationSent = false;
 let renderWindow = '';
 let gateRecorded = false;
 let paneReleasedRecorded = false;
 let confirmationState = 'waiting';
-let heldPaneCount = 0;
+const heldPaneCount = 0;
+let workloadPaneLaunched = false;
+let workloadPaneState = 'not_launched';
+let workloadPaneExitStatus = null;
+let workloadHelperState = 'not_checked';
+let workloadHelperExitStatus = null;
 let startupFailureStarted = false;
 let startupStageRevision = 0;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
@@ -42,9 +68,8 @@ const STARTUP_FAILURE_CODES = new Set([
   'client_exit',
   'cgroup_unified',
   'cgroup_unit',
-  'confirmation_inventory',
-  'confirmation_target',
-  'confirmation_write',
+  'workload_helper',
+  'workload_launch',
   'readiness_timeout',
 ]);
 function exit(code) {
@@ -175,56 +200,104 @@ async function regularFileExists(path) {
     throw error;
   }
 }
-async function confirmHeldCreatePane(sessionName, env) {
-  const options = { env, timeout: 2000, maxBuffer: 64 * 1024 };
-  confirmationState = 'inventory';
-  await recordStartupStage();
-  let stdout;
+async function verifyWorkloadHelper() {
+  workloadHelperState = 'not_checked';
+  workloadHelperExitStatus = null;
+  const child = spawnProcess(NODE, [WORKLOAD_PANE], {
+    detached: true,
+    env: zellijEnvironment(),
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  const close = new Promise((resolve) => {
+    child.once('error', () => resolve({ kind: 'error' }));
+    child.once('close', (code, signal) => resolve({ kind: 'close', code, signal }));
+  });
+  const first = await Promise.race([
+    close,
+    new Promise((resolve) => setTimeout(() => resolve({ kind: 'running' }), 250)),
+  ]);
+  if (first.kind === 'error' || !child.pid) {
+    workloadHelperState = 'spawn_error';
+    throw new Error('workload_helper');
+  }
+  if (first.kind === 'close') {
+    workloadHelperState = 'early_exit';
+    workloadHelperExitStatus = Number.isInteger(first.code) && first.code >= 0 && first.code <= 255
+      ? first.code
+      : null;
+    throw new Error('workload_helper');
+  }
+  workloadHelperState = 'running';
   try {
-    ({ stdout } = await execFileAsync(
-      zellij,
-      ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
-      options,
-    ));
+    process.kill(-child.pid, 'SIGKILL');
   } catch (error) {
-    throw new Error('confirmation_inventory', { cause: error });
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code !== 'ESRCH') {
+      workloadHelperState = 'cleanup_error';
+      throw new Error('workload_helper', { cause: error });
+    }
   }
-  let listed;
+  const stopped = await Promise.race([
+    close.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 1000)),
+  ]);
+  if (!stopped) {
+    workloadHelperState = 'cleanup_timeout';
+    throw new Error('workload_helper');
+  }
+}
+async function launchCreateWorkloadPane(sessionName, env) {
+  await verifyWorkloadHelper();
   try {
-    listed = JSON.parse(stdout);
-  } catch (error) {
-    throw new Error('confirmation_inventory', { cause: error });
-  }
-  if (!Array.isArray(listed) || listed.length > 16) {
-    throw new Error('confirmation_inventory');
-  }
-  const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
-  heldPaneCount = panes.length;
-  if (panes.length === 0) {
-    confirmationState = 'waiting';
-    await recordStartupStage();
-    return;
-  }
-  confirmationState = 'target';
-  await recordStartupStage();
-  if (panes.length !== 1 || !Number.isInteger(panes[0].id) || panes[0].id < 0) {
-    throw new Error('confirmation_target');
-  }
-  const [pane] = panes;
-  confirmationState = 'write';
-  await recordStartupStage();
-  try {
+    // The production candidate does not reliably emit its documented pane ID.
+    // Successful completion is followed by authoritative cgroup role checks.
     await execFileAsync(
       zellij,
-      ['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)],
-      options,
+      ['--session', sessionName, 'action', 'new-pane', '--name', WORKLOAD_PANE_NAME, '--', NODE, WORKLOAD_PANE],
+      { env, timeout: 2000, maxBuffer: 16 * 1024 },
     );
   } catch (error) {
-    throw new Error('confirmation_write', { cause: error });
+    throw new Error('workload_launch', { cause: error });
   }
-  confirmationState = 'sent';
-  confirmationSent = true;
+  workloadPaneLaunched = true;
   await recordStartupStage();
+}
+async function inspectWorkloadPane(sessionName, env) {
+  workloadPaneExitStatus = null;
+  try {
+    const { stdout } = await execFileAsync(
+      zellij,
+      ['--session', sessionName, 'action', 'list-panes', '--all', '--json'],
+      { env, timeout: 2000, maxBuffer: 64 * 1024 },
+    );
+    const panes = JSON.parse(stdout);
+    if (!Array.isArray(panes) || panes.length > 16) return 'ambiguous';
+    const matching = panes.filter((pane) => pane !== null
+      && typeof pane === 'object'
+      && !Array.isArray(pane)
+      && pane.is_plugin === false
+      && pane.title === WORKLOAD_PANE_NAME
+      && pane.terminal_command === `${NODE} ${WORKLOAD_PANE}`);
+    if (matching.length === 0) return 'missing';
+    if (matching.length !== 1) return 'ambiguous';
+    const [pane] = matching;
+    if (typeof pane.is_held !== 'boolean' || typeof pane.exited !== 'boolean') return 'ambiguous';
+    if (pane.exit_status !== null
+      && (!Number.isInteger(pane.exit_status) || pane.exit_status < 0 || pane.exit_status > 255)) {
+      return 'ambiguous';
+    }
+    workloadPaneExitStatus = pane.exit_status;
+    if (pane.is_held || pane.exited) {
+      if (pane.exit_status === 0) return 'held_success';
+      if (Number.isInteger(pane.exit_status)) return 'held_failure';
+      return 'other';
+    }
+    const commandLooksRunning = pane.pane_command === `${NODE} ${WORKLOAD_PANE}`;
+    return commandLooksRunning ? 'running' : 'other';
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return 'ambiguous';
+  }
 }
 async function processInfo(pid) {
   try {
@@ -249,7 +322,10 @@ async function cgroupRoles(cgroupPath, requireWorkload) {
     .filter((process) => process.comm === 'zellij' && !process.cmdline.includes('list-sessions'))
     .map((process) => process.pid);
   const shell = processes.find((entry) => entry.comm === 'bash');
-  const agent = processes.find((process) => process.cmdline[0] === 'matrix-agent-probe');
+  const agent = processes.find((process) => process.comm === 'MainThread'
+    && process.cmdline.length === 2
+    && process.cmdline[0] === NODE
+    && process.cmdline[1] === WORKLOAD_PANE);
   roleSnapshot = { ...roleSnapshot, zellij: zellijPids.length, shell: Boolean(shell), agent: Boolean(agent) };
   if (zellijPids.length < 2 || (requireWorkload && (!shell || !agent))) return null;
   return {
@@ -267,6 +343,21 @@ async function writeReadiness(value) {
   });
 }
 function startupSnapshot() {
+  const boundedWorkloadHelperState = WORKLOAD_HELPER_STATES.has(workloadHelperState)
+    ? workloadHelperState
+    : 'spawn_error';
+  const boundedWorkloadHelperExitStatus = workloadHelperExitStatus === null ||
+    Number.isInteger(workloadHelperExitStatus) && workloadHelperExitStatus >= 0
+      && workloadHelperExitStatus <= 255
+    ? workloadHelperExitStatus
+    : null;
+  const boundedWorkloadPaneState = WORKLOAD_PANE_STATES.has(workloadPaneState)
+    ? workloadPaneState
+    : 'ambiguous';
+  const boundedWorkloadPaneExitStatus = workloadPaneExitStatus === null ||
+    Number.isInteger(workloadPaneExitStatus) && workloadPaneExitStatus >= 0 && workloadPaneExitStatus <= 255
+    ? workloadPaneExitStatus
+    : null;
   return {
     stage: startupStage,
     gateRecorded,
@@ -274,6 +365,10 @@ function startupSnapshot() {
     confirmationState,
     heldPaneCount,
     confirmationSent,
+    workloadHelperState: boundedWorkloadHelperState,
+    workloadHelperExitStatus: boundedWorkloadHelperExitStatus,
+    workloadPaneState: boundedWorkloadPaneState,
+    workloadPaneExitStatus: boundedWorkloadPaneExitStatus,
     ...roleSnapshot,
   };
 }
@@ -339,6 +434,7 @@ async function main() {
   const descriptorRaw = await readFile(descriptorPath, { encoding: 'utf8', flag: 'r' });
   if (Buffer.byteLength(descriptorRaw) > 4096) throw new Error('descriptor_size');
   const descriptor = parseDescriptor(JSON.parse(descriptorRaw));
+  confirmationState = descriptor.intent === 'create' ? 'not_required' : 'waiting';
   await unlink(descriptorPath);
   await setStartupStage('launch');
   const env = zellijEnvironment();
@@ -358,11 +454,20 @@ async function main() {
     renderWindow = `${renderWindow}${data}`.slice(-16_384);
     if (!gateRecorded && stripVTControlCharacters(renderWindow).includes('<ENTER> run')) {
       gateRecorded = true;
+      confirmationState = 'gated';
       try {
         await writeFile(`${runtimeRoot}/confirmations/${runtimeId}.gated`, '', { flag: 'wx', mode: 0o600 });
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-        if (code !== 'EEXIST') exit(20);
+        if (code !== 'EEXIST') {
+          exit(20);
+          return;
+        }
+      }
+      try {
+        await recordStartupStage();
+      } catch (error) {
+        exit(20);
       }
     }
   });
@@ -386,17 +491,21 @@ async function main() {
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
     const paneReleased = await regularFileExists(paneReleasePath);
+    const startupAuthorized = descriptor.intent === 'recover' || paneReleased;
     paneReleasedRecorded = paneReleased;
-    if (paneReleased && descriptor.intent === 'create' && !confirmationSent) {
-      await confirmHeldCreatePane(sessionName, env);
+    const responsive = startupAuthorized && await exactSessionResponds();
+    roleSnapshot.responsive = responsive;
+    if (paneReleased && responsive && descriptor.intent === 'create' && !workloadPaneLaunched) {
+      await launchCreateWorkloadPane(sessionName, env);
     }
-    const detected = paneReleased
+    if (descriptor.intent === 'create' && workloadPaneLaunched) {
+      workloadPaneState = await inspectWorkloadPane(sessionName, env);
+    }
+    const detected = startupAuthorized && (descriptor.intent === 'recover' || workloadPaneLaunched)
       ? await cgroupRoles(cgroup.path, descriptor.intent === 'create')
       : null;
-    const responsive = Boolean(detected && await exactSessionResponds());
-    roleSnapshot.responsive = responsive;
     await recordStartupStage();
-    if (paneReleased && responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
+    if (startupAuthorized && responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
       roles = detected;
       break;
     }

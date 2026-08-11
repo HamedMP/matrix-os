@@ -201,15 +201,12 @@ ln -s \
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
-  chmod 0755 \
-    "$STAGE_DIR/bin/matrix-terminal-spike-control" \
-    "$STAGE_DIR/bin/matrix-terminal-spike-pane"
+  chmod 0755 "$STAGE_DIR/bin/matrix-terminal-spike-control"
   install -m 0644 "$ROOT_DIR/scripts/spikes/terminal-runtime/matrix-terminal-spike.slice" "$STAGE_DIR/systemd/matrix-terminal-spike.slice"; install -m 0644 "$ROOT_DIR/scripts/spikes/terminal-runtime/matrix-terminal-spike-template.service" "$STAGE_DIR/systemd/matrix-terminal-spike@.service"
 else
-  rm -f -- \
-    "$STAGE_DIR/bin/matrix-terminal-spike-control" \
-    "$STAGE_DIR/bin/matrix-terminal-spike-pane"
+  rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-control"
 fi
+rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-pane"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
 chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update-service" "$STAGE_DIR/bin/matrix-validate-host-bundle" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-tool-pack-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-prepare-gateway-runtime" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-terminal-supervisor" "$STAGE_DIR/bin/matrix-terminal-keeper" "$STAGE_DIR/bin/matrix-terminal-pane" "$STAGE_DIR/bin/matrix-terminal-runtime-op" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"

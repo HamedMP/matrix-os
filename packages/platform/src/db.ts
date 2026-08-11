@@ -13,6 +13,11 @@ import {
   serializeDeveloperTools,
   type DeveloperToolId,
 } from './developer-tools.js';
+import {
+  CustomerVpsBootstrapStageSchema,
+  customerVpsBootstrapStageRank,
+  type CustomerVpsBootstrapStage,
+} from './customer-vps-bootstrap.js';
 
 const DEFAULT_PLATFORM_DB_URL =
   process.env.PLATFORM_DATABASE_URL ??
@@ -69,6 +74,9 @@ interface UserMachinesTable {
   failure_at: string | null;
   resize_started_at: string | null;
   resize_target_server_type: string | null;
+  bootstrap_stage: string | null;
+  bootstrap_stage_at: string | null;
+  candidate_bootstrap_progress: boolean;
   attempt: number;
 }
 
@@ -414,6 +422,9 @@ export interface UserMachineRecord {
   failureAt: string | null;
   resizeStartedAt: string | null;
   resizeTargetServerType: string | null;
+  bootstrapStage: CustomerVpsBootstrapStage | null;
+  bootstrapStageAt: string | null;
+  candidateBootstrapProgress: boolean;
   attempt: number;
 }
 
@@ -608,6 +619,9 @@ export interface NewUserMachine {
   failureAt?: string | null;
   resizeStartedAt?: string | null;
   resizeTargetServerType?: string | null;
+  bootstrapStage?: CustomerVpsBootstrapStage | null;
+  bootstrapStageAt?: string | null;
+  candidateBootstrapProgress?: boolean;
   attempt?: number;
 }
 
@@ -705,6 +719,9 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       failure_at TEXT,
       resize_started_at TEXT,
       resize_target_server_type TEXT,
+      bootstrap_stage TEXT,
+      bootstrap_stage_at TEXT,
+      candidate_bootstrap_progress BOOLEAN NOT NULL DEFAULT false,
       attempt INTEGER NOT NULL DEFAULT 1
     )
   `.execute(db);
@@ -715,6 +732,9 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_target_server_type TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS bootstrap_stage TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS bootstrap_stage_at TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS candidate_bootstrap_progress BOOLEAN NOT NULL DEFAULT false`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
@@ -1231,6 +1251,9 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     failureAt: row.failure_at,
     resizeStartedAt: row.resize_started_at,
     resizeTargetServerType: row.resize_target_server_type,
+    bootstrapStage: CustomerVpsBootstrapStageSchema.nullable().parse(row.bootstrap_stage),
+    bootstrapStageAt: row.bootstrap_stage_at,
+    candidateBootstrapProgress: row.candidate_bootstrap_progress,
     attempt: row.attempt,
   };
 }
@@ -1259,6 +1282,9 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     failure_at: record.failureAt ?? null,
     resize_started_at: record.resizeStartedAt ?? null,
     resize_target_server_type: record.resizeTargetServerType ?? null,
+    bootstrap_stage: record.bootstrapStage ?? null,
+    bootstrap_stage_at: record.bootstrapStageAt ?? null,
+    candidate_bootstrap_progress: record.candidateBootstrapProgress ?? false,
     attempt: record.attempt ?? 1,
   };
 }
@@ -1287,6 +1313,9 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.failureAt !== undefined) update.failure_at = values.failureAt;
   if (values.resizeStartedAt !== undefined) update.resize_started_at = values.resizeStartedAt;
   if (values.resizeTargetServerType !== undefined) update.resize_target_server_type = values.resizeTargetServerType;
+  if (values.bootstrapStage !== undefined) update.bootstrap_stage = values.bootstrapStage;
+  if (values.bootstrapStageAt !== undefined) update.bootstrap_stage_at = values.bootstrapStageAt;
+  if (values.candidateBootstrapProgress !== undefined) update.candidate_bootstrap_progress = values.candidateBootstrapProgress;
   if (values.attempt !== undefined) update.attempt = values.attempt;
   return update;
 }
@@ -2202,6 +2231,95 @@ export async function completeUserMachineRegistration(
     .where('registration_token_expires_at', '>=', expiresAfterIso)
     .where('status', 'in', ['provisioning', 'recovering'])
     .where('deleted_at', 'is', null)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function advanceUserMachineBootstrapStage(
+  db: PlatformDB,
+  machineId: string,
+  expectedRegistrationTokenHash: string,
+  expiresAfterIso: string,
+  stage: CustomerVpsBootstrapStage,
+  stageAt: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const rank = customerVpsBootstrapStageRank(stage);
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set({
+      bootstrap_stage: stage,
+      bootstrap_stage_at: stageAt,
+    })
+    .where('machine_id', '=', machineId)
+    .where('registration_token_hash', '=', expectedRegistrationTokenHash)
+    .where('registration_token_expires_at', '>=', expiresAfterIso)
+    .where('status', 'in', ['provisioning', 'recovering'])
+    .where('deleted_at', 'is', null)
+    .where(sql<boolean>`
+      CASE bootstrap_stage
+        WHEN 'cloud_init_started' THEN 1
+        WHEN 'packages_ready' THEN 2
+        WHEN 'bundle_downloaded' THEN 3
+        WHEN 'bundle_installed' THEN 4
+        WHEN 'database_ready' THEN 5
+        WHEN 'restore_starting' THEN 6
+        WHEN 'restore_ready' THEN 7
+        WHEN 'gateway_starting' THEN 8
+        WHEN 'gateway_preflight_checking_exec' THEN 9
+        WHEN 'gateway_preflight_checking_paths' THEN 10
+        WHEN 'gateway_preflight_checking_environment' THEN 11
+        WHEN 'gateway_preflight_ready' THEN 12
+        WHEN 'gateway_unit_failed_chdir' THEN 13
+        WHEN 'gateway_unit_failed_exec' THEN 14
+        WHEN 'gateway_unit_failed_user' THEN 15
+        WHEN 'gateway_unit_failed_group' THEN 16
+        WHEN 'gateway_unit_failed_environment' THEN 17
+        WHEN 'gateway_unit_failed_exit' THEN 18
+        WHEN 'gateway_unit_failed_timeout' THEN 19
+        WHEN 'gateway_unit_failed_resource' THEN 20
+        WHEN 'gateway_unit_failed_signal' THEN 21
+        WHEN 'gateway_unit_failed_other' THEN 22
+        WHEN 'gateway_unit_started' THEN 23
+        WHEN 'gateway_wrapper_started' THEN 24
+        WHEN 'gateway_environment_ready' THEN 25
+        WHEN 'gateway_home_sync_started' THEN 26
+        WHEN 'gateway_home_assets_failed_template' THEN 27
+        WHEN 'gateway_home_assets_failed_home' THEN 28
+        WHEN 'gateway_home_assets_failed_copy' THEN 29
+        WHEN 'gateway_home_assets_failed_commit' THEN 30
+        WHEN 'gateway_home_assets_failed_status_1' THEN 31
+        WHEN 'gateway_home_assets_failed_status_2' THEN 32
+        WHEN 'gateway_home_assets_failed_status_9' THEN 33
+        WHEN 'gateway_home_assets_failed_status_47' THEN 34
+        WHEN 'gateway_home_assets_failed_status_48' THEN 35
+        WHEN 'gateway_home_assets_failed_status_49' THEN 36
+        WHEN 'gateway_home_assets_failed_status_50' THEN 37
+        WHEN 'gateway_home_assets_failed_status_51' THEN 38
+        WHEN 'gateway_home_assets_failed_status_125' THEN 39
+        WHEN 'gateway_home_assets_failed_status_126' THEN 40
+        WHEN 'gateway_home_assets_failed_status_127' THEN 41
+        WHEN 'gateway_home_assets_failed_status_134' THEN 42
+        WHEN 'gateway_home_assets_failed_status_139' THEN 43
+        WHEN 'gateway_home_assets_failed_status_143' THEN 44
+        WHEN 'gateway_home_assets_failed_node_missing' THEN 45
+        WHEN 'gateway_home_assets_failed_node_unusable' THEN 46
+        WHEN 'gateway_home_assets_failed_node_program' THEN 47
+        WHEN 'gateway_home_assets_failed_other' THEN 48
+        WHEN 'gateway_home_assets_timed_out' THEN 49
+        WHEN 'gateway_home_assets_ready' THEN 50
+        WHEN 'gateway_home_ownership_started' THEN 51
+        WHEN 'gateway_home_ownership_ready' THEN 52
+        WHEN 'gateway_home_ready' THEN 53
+        WHEN 'gateway_launch_ready' THEN 54
+        WHEN 'gateway_process_started' THEN 55
+        WHEN 'gateway_healthy' THEN 56
+        WHEN 'registration_ready' THEN 57
+        WHEN 'registered' THEN 58
+        ELSE 0
+      END < ${rank}
+    `)
     .returningAll()
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;

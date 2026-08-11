@@ -85,6 +85,18 @@ describe('platform/customer-vps', () => {
     return { service, hetzner, systemStore };
   }
 
+  async function registerPreviewBootstrap(version: string): Promise<void> {
+    await upsertHostBundleRelease(db, {
+      version, gitCommit: 'abcdef0123456789abcdef0123456789abcdef01',
+      gitRef: 'bootstrap', buildTime: '2026-08-06T08:00:00.000Z',
+      bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`,
+      checksumKey: `system-bundles/${version}/matrix-host-bundle.tar.gz.sha256`,
+      sha256: 'b'.repeat(64), size: 1_257_725_742, severity: 'normal',
+      updateType: 'manual', changelog: 'Dormant preview bootstrap',
+      createdAt: '2026-08-06T08:01:00.000Z',
+    });
+  }
+
   function activeEntitlement(overrides: Partial<BillingEntitlement> = {}): BillingEntitlement {
     return {
       clerkUserId: 'user_123',
@@ -113,6 +125,20 @@ describe('platform/customer-vps', () => {
 
     expect(config.imageVersion).toBe('stable');
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
+    expect(config.registrationTokenTtlMs).toBe(30 * 60 * 1000);
+  });
+  it('accepts only a trusted tagged Cloud Run origin for candidate bootstrap progress', () => {
+    const accepted = ['https://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      'https://terminal-pr-1136-fa9f4d0d9b50---matrix-platform-jqxkjdhtkq-ey.a.run.app'];
+    for (const url of accepted) expect(loadCustomerVpsConfig({
+      PLATFORM_CANDIDATE_URL: url }).platformCandidateUrl).toBe(url);
+    for (const url of ['https://terminal-pr-1136-fa9f4d0d9b5---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      'https://pr-1136---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      'http://pr-1136-47d78f49efda---matrix-platform-jqxkjdhtkq-ey.a.run.app']) {
+      expect(loadCustomerVpsConfig({ PLATFORM_CANDIDATE_URL: url })
+        .platformCandidateUrl).toBeUndefined();
+    }
   });
 
   it('does not use the private PostHog ingest host as the public browser host', () => {
@@ -157,6 +183,10 @@ describe('platform/customer-vps', () => {
     expect(row?.developerTools).toEqual(['codex', 'pi']);
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS='codex pi'");
+    expect(createInput?.userData).toContain('MATRIX_RESTORE_MODE=restore');
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=http://localhost:9000/vps/bootstrap-progress',
+    );
   });
 
   it('preserves an intentional empty developer tool selection', async () => {
@@ -1075,6 +1105,71 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('MATRIX_UPDATE_CHANNEL=stable');
   });
 
+  it('pins preview first boot to an explicitly registered immutable bootstrap release', async () => {
+    const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-123-1-abcdef0';
+    await registerPreviewBootstrap(bootstrapVersion);
+    const { service, hetzner } = createService({
+      config: createTestConfig({
+        platformRegisterUrl: 'https://app.matrix-os.com/vps/register',
+        platformCandidateUrl: 'https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app',
+      }),
+    });
+    const provisioned = await service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion,
+    });
+    expect((await getUserMachine(db, provisioned.machineId))?.imageVersion).toBe(bootstrapVersion);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain(
+      `MATRIX_HOST_BUNDLE_URL=http://localhost:9000/system-bundles/${bootstrapVersion}/matrix-host-bundle.tar.gz`,
+    );
+    expect(createInput?.userData).toContain(`MATRIX_IMAGE_VERSION=${bootstrapVersion}`);
+    expect(createInput?.userData).toContain('MATRIX_RESTORE_MODE=empty');
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_BOOTSTRAP_PROGRESS_URL=https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app/vps/bootstrap-progress',
+    );
+    expect(createInput?.userData).toContain(
+      'MATRIX_PLATFORM_REGISTER_URL=https://candidate---matrix-platform-jqxkjdhtkq-ey.a.run.app/vps/register',
+    );
+    expect(createInput?.userData).toContain(
+      'PLATFORM_INTERNAL_URL=https://app.matrix-os.com',
+    );
+  });
+  it('fails preview bootstrap closed without a trusted candidate callback origin', async () => {
+    const bootstrapVersion = 'v2026.08.06-pr1136-bootstrap-124-1-abcdef0';
+    await registerPreviewBootstrap(bootstrapVersion);
+    const { service, hetzner } = createService({
+      config: createTestConfig({ platformCandidateUrl: undefined }),
+    });
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion,
+    })).rejects.toMatchObject({
+      status: 503,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning failed',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    expect(await getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff112')).toBeUndefined();
+  });
+  it('fails preview provisioning closed when the requested bootstrap release is not registered', async () => {
+    const { service, hetzner } = createService();
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview',
+      handle: 'pr-1136',
+      runtimeSlot: 'pr-1136',
+      bootstrapVersion: 'v2026.08.06-pr1136-bootstrap-123-1-abcdef0',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'invalid_state',
+      publicMessage: 'Provisioning failed',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
   it('can provision an isolated staging runtime for the same Clerk user', async () => {
     let nextId = 0;
     const ids = [
@@ -1240,6 +1335,46 @@ describe('platform/customer-vps', () => {
     expect(systemStore.writtenMeta).toHaveLength(1);
   });
 
+  it('records authenticated bootstrap progress monotonically before registration', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    const stages = [
+      'cloud_init_started', 'packages_ready', 'restore_starting', 'restore_ready',
+      'gateway_starting', 'gateway_preflight_checking_exec',
+      'gateway_preflight_checking_paths', 'gateway_preflight_checking_environment',
+      'gateway_preflight_ready', 'gateway_unit_failed_exec', 'gateway_unit_started',
+      'gateway_wrapper_started', 'gateway_environment_ready', 'gateway_home_sync_started',
+      'gateway_home_assets_failed_copy', 'gateway_home_assets_failed_status_9',
+      'gateway_home_assets_failed_node_program', 'gateway_home_assets_ready',
+      'gateway_home_ownership_started', 'gateway_home_ownership_ready', 'gateway_home_ready',
+      'gateway_launch_ready', 'gateway_process_started', 'gateway_healthy', 'registration_ready',
+    ] as const;
+    for (const stage of stages) {
+      await expect(service.reportBootstrapProgress('registration-token', {
+        machineId: provisioned.machineId, stage,
+      })).resolves.toEqual({ accepted: true, stage });
+    }
+    await expect(service.reportBootstrapProgress('registration-token', {
+      machineId: provisioned.machineId,
+      stage: 'cloud_init_started',
+    })).resolves.toEqual({ accepted: true, stage: 'registration_ready' });
+    const row = await getUserMachine(db, provisioned.machineId);
+    expect(row?.bootstrapStage).toBe('registration_ready');
+    expect(row?.bootstrapStageAt).toBe('2026-04-26T12:00:00.000Z');
+    await expect(service.status(provisioned.machineId)).resolves.toMatchObject({
+      bootstrapStage: 'registration_ready',
+      bootstrapStageAt: '2026-04-26T12:00:00.000Z',
+    });
+  });
+  it('rejects bootstrap progress with an invalid token without changing state', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await expect(service.reportBootstrapProgress('wrong-token', {
+      machineId: provisioned.machineId,
+      stage: 'cloud_init_started',
+    })).rejects.toMatchObject({ status: 401, code: 'registration_rejected' });
+    expect((await getUserMachine(db, provisioned.machineId))?.bootstrapStage).toBeNull();
+  });
   it('returns a warning when registration metadata cannot be persisted', async () => {
     const { service } = createService({
       systemStore: createMockCustomerVpsSystemStore({
@@ -1516,6 +1651,9 @@ describe('platform/customer-vps', () => {
       status: 'recovering',
       hetznerServerId: 789012,
       publicIPv4: '203.0.113.11',
+      bootstrapStage: null,
+      bootstrapStageAt: null,
+      candidateBootstrapProgress: false,
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });

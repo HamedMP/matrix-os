@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process';
-import { resolve, sep } from 'node:path';
+import { type Stats } from 'node:fs';
+import { type FileHandle, lstat, open, readFile, unlink } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import {
   AgentConfigurationSchema,
-  OperationIdSchema,
+  RuntimeIdSchema,
   type AgentConfiguration,
 } from './contracts.js';
 import {
   createAgentConfigurationStore,
+  defaultAgentConfigurationDirectory,
 } from './agent-configurations.js';
 
 const SAFE_ENVIRONMENT_KEYS = [
@@ -27,6 +30,7 @@ export type ProviderLaunch = {
   env: Record<string, string>;
   stdin: string | null;
   fdPayload: string | null;
+  fdPayloadFile?: boolean;
 };
 
 export function paneEnvironment(
@@ -37,6 +41,7 @@ export function paneEnvironment(
     const value = source[key];
     if (value) environment[key] = value;
   }
+  environment.PATH = '/home/matrix/home/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin';
   return environment;
 }
 
@@ -138,6 +143,7 @@ export function buildProviderLaunch(
         env: environment,
         stdin: configuration.prompt ?? null,
         fdPayload: JSON.stringify(claudeSettings(configuration, home)),
+        fdPayloadFile: true,
       };
     case 'codex': {
       if (
@@ -186,20 +192,57 @@ export function buildProviderLaunch(
       };
     case 'pi':
       return {
-        file: 'pi',
-        args: [],
+        file: '/opt/matrix/runtime/node/bin/pi',
+        args: ['--offline'],
         cwd,
         env: environment,
         stdin: configuration.prompt ?? null,
-        fdPayload: JSON.stringify(configuration),
+        fdPayload: null,
       };
   }
 }
 
-async function waitForChild(
+async function removePayloadFile(
+  path: string, identity: Pick<Stats, 'dev' | 'ino'>,
+): Promise<void> {
+  try {
+    const current = await lstat(path);
+    if (current.dev === identity.dev && current.ino === identity.ino)
+      await unlink(path);
+  } catch (error: unknown) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+      throw error;
+  }
+}
+
+export async function waitForChild(
   launch: ProviderLaunch,
   spawnChild = spawn,
+  fdPayloadPath?: string,
 ): Promise<number> {
+  let payloadHandle: FileHandle | null = null;
+  let payloadIdentity: Stats | null = null;
+  if (launch.fdPayloadFile) {
+    if (launch.fdPayload === null || !fdPayloadPath) {
+      throw new Error('agent_configuration_file_unavailable');
+    }
+    payloadHandle = await open(fdPayloadPath, 'wx+', 0o600);
+    const bytes = Buffer.from(launch.fdPayload, 'utf8');
+    payloadIdentity = await payloadHandle.stat();
+    try {
+      if (!payloadIdentity.isFile() || payloadIdentity.nlink !== 1)
+        throw new Error('agent_configuration_file_invalid');
+      await payloadHandle.write(bytes, 0, bytes.byteLength, 0);
+      await payloadHandle.sync();
+    } catch (error: unknown) {
+      try {
+        await payloadHandle.close();
+      } finally {
+        await removePayloadFile(fdPayloadPath, payloadIdentity);
+      }
+      throw error;
+    }
+  }
   return await new Promise<number>((resolveChild, rejectChild) => {
     const child = spawnChild(launch.file, launch.args, {
       cwd: launch.cwd,
@@ -209,7 +252,7 @@ async function waitForChild(
         launch.stdin === null ? 'inherit' : 'pipe',
         'inherit',
         'inherit',
-        launch.fdPayload === null ? 'ignore' : 'pipe',
+        launch.fdPayload === null ? 'ignore' : payloadHandle?.fd ?? 'pipe',
       ],
     });
     child.once('error', (error: Error) => rejectChild(error));
@@ -218,7 +261,7 @@ async function waitForChild(
       else resolveChild(code ?? 1);
     });
     if (launch.stdin !== null) child.stdin?.end(launch.stdin);
-    if (launch.fdPayload !== null) {
+    if (launch.fdPayload !== null && !payloadHandle) {
       const configurationPipe = child.stdio[3];
       if (
         configurationPipe &&
@@ -229,6 +272,14 @@ async function waitForChild(
       } else {
         child.kill('SIGTERM');
         rejectChild(new Error('agent_configuration_pipe_unavailable'));
+      }
+    }
+  }).finally(async () => {
+    try {
+      await payloadHandle?.close();
+    } finally {
+      if (fdPayloadPath && payloadIdentity) {
+        await removePayloadFile(fdPayloadPath, payloadIdentity);
       }
     }
   });
@@ -246,14 +297,50 @@ export async function runPane(kind: string | undefined): Promise<number> {
     });
   }
   if (kind !== 'agent') return 64;
-  const configurationRef = OperationIdSchema.parse(
-    process.env.MATRIX_TERMINAL_CONFIGURATION_REF,
+  const configurationRef = runtimeIdFromCgroup(
+    await readFile('/proc/self/cgroup', 'utf8'),
   );
   const store = createAgentConfigurationStore();
   const configuration = await store.claim(configurationRef);
-  return await waitForChild(buildProviderLaunch(configuration));
+  const payloadPath = configuration.agent === 'claude'
+    ? join(defaultAgentConfigurationDirectory(), configurationRef) : undefined;
+  return await waitForChild(buildProviderLaunch(configuration), spawn, payloadPath);
+}
+
+export function paneExitLifecycleCode(
+  kind: string | undefined,
+  exitCode: number,
+): string | null {
+  if (kind !== 'agent' || !Number.isInteger(exitCode) || exitCode < 0 ||
+    exitCode > 255) return null;
+  return `terminal_pane_agent_exit_${exitCode}`;
+}
+
+export function runtimeIdFromCgroup(membership: string): string {
+  const unified = membership.split(/\r?\n/)
+    .filter((line) => line.startsWith('0::'));
+  if (unified.length !== 1 || unified[0].includes('..')) {
+    throw new Error('agent_cgroup_invalid');
+  }
+  const match = /(?:^|\/)matrix-terminal\.slice\/matrix-terminal-session@([0-9a-f]{32})\.service$/
+    .exec(unified[0].slice(3));
+  if (!match) throw new Error('agent_cgroup_invalid');
+  return RuntimeIdSchema.parse(match[1]);
+}
+
+async function runPaneEntrypoint(kind: string | undefined): Promise<number> {
+  try {
+    const exitCode = await runPane(kind);
+    const lifecycleCode = paneExitLifecycleCode(kind, exitCode);
+    if (lifecycleCode) process.stderr.write(`${lifecycleCode}\n`);
+    return exitCode;
+  } catch (error: unknown) {
+    const suffix = error instanceof Error ? '' : '_non_error';
+    process.stderr.write(`terminal_pane_failed${suffix}\n`);
+    return 16;
+  }
 }
 
 if (process.argv[1]?.endsWith('/pane.js')) {
-  process.exitCode = await runPane(process.argv[2]);
+  process.exitCode = await runPaneEntrypoint(process.argv[2]);
 }

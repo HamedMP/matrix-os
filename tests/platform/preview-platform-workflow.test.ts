@@ -19,6 +19,27 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain("MATRIX_API_ORIGIN=https://api.matrix-os.com");
   });
 
+  it("attests an exact-head production control-plane candidate without promotion", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/platform-cloud-run.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("terminal_acceptance_pr:");
+    expect(workflow).toContain('TERMINAL_ACCEPTANCE_PR: ${{ github.event_name == \'workflow_dispatch\' && inputs.terminal_acceptance_pr || \'\' }}');
+    expect(workflow).toContain('if [ -n "$TERMINAL_ACCEPTANCE_PR" ]; then');
+    expect(workflow).toContain('if [ "$DEPLOY_ENVIRONMENT" != production ]; then');
+    expect(workflow).toContain('if [ "$PROMOTE_REQUESTED" = true ]; then');
+    expect(workflow).toContain('candidate_tag="terminal-pr-${TERMINAL_ACCEPTANCE_PR}-${GITHUB_SHA::12}"');
+    expect(workflow).toContain('--tag "$candidate_tag"');
+    expect(workflow).toContain('candidate_bootstrap_url="https://${candidate_tag}---${service_url#https://}"');
+    expect(workflow).toContain('name: Write terminal acceptance candidate attestation');
+    expect(workflow).toContain('environment: "production"');
+    expect(workflow).toContain('--arg candidateOrigin "$CANDIDATE_URL"');
+    expect(workflow).toContain('name: platform-production-candidate-${{ env.TERMINAL_ACCEPTANCE_PR }}-${{ github.sha }}');
+    expect(workflow).toContain('path: /tmp/platform-production-candidate.json');
+  });
+
   it("bootstraps a missing Cloud Run service before deriving its dedicated API origin", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/preview-platform.yml"),
@@ -30,10 +51,23 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain('if [ -z "$service_base_url" ]; then');
     expect(workflow).toContain('deploy_preview "$BOOTSTRAP_API_ORIGIN"');
     expect(workflow).toContain('deploy_preview "$PREVIEW_API_ORIGIN"');
+    expect(workflow).toContain('preview_tag="pr-${PR_NUMBER}-${head_sha::12}"');
+    expect(workflow).toContain('--tag "$preview_tag"');
+    expect(workflow).toContain('PLATFORM_CANDIDATE_URL=${api_origin}');
+    expect(workflow).toContain('superseded_tags="$(jq -r --arg current "$preview_tag"');
+    expect(workflow).toContain('--remove-tags "$superseded_tags" --quiet');
+    expect(workflow).toContain('echo "PREVIEW_TAG=$preview_tag" >> "$GITHUB_ENV"');
+    expect(workflow).toContain('name: Write exact candidate attestation');
+    expect(workflow).toContain('--arg headSha "${{ github.event.pull_request.head.sha || github.sha }}"');
+    expect(workflow).toContain('--arg candidateOrigin "$PREVIEW_API_ORIGIN"');
+    expect(workflow).toContain('path: /tmp/platform-candidate.json');
+    expect(workflow).toContain('name: platform-candidate-${{ env.PR_NUMBER }}-${{ github.event.pull_request.head.sha || github.sha }}');
+    expect(workflow).toContain('--arg prefix "pr-${PR_NUMBER}-"');
+    expect(workflow).toContain('--remove-tags "$tags" --quiet');
 
     const bootstrap = workflow.indexOf('deploy_preview "$BOOTSTRAP_API_ORIGIN"');
     const deriveOrigin = workflow.indexOf(
-      'PREVIEW_API_ORIGIN="https://pr-${PR_NUMBER}---${service_base_url#https://}"',
+      'PREVIEW_API_ORIGIN="https://${preview_tag}---${service_base_url#https://}"',
     );
     const finalDeploy = workflow.indexOf('deploy_preview "$PREVIEW_API_ORIGIN"');
     expect(bootstrap).toBeGreaterThan(-1);

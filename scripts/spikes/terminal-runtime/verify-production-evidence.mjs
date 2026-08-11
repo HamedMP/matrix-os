@@ -23,6 +23,7 @@ const CHECKS = Object.freeze([
   'rebootStartsNoRuntime',
   'rebootShowsInterrupted',
   'explicitRecoverRestoresRuntime',
+  'recoveryDoesNotResumeAgent',
   'concurrentRecoverSingleUnit',
   'corruptionFallsBackFresh',
   'recoverDeleteCannotResurrect',
