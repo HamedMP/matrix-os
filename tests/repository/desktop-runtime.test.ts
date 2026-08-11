@@ -10,5 +10,6 @@ describe("desktop runtime boundary", () => {
     expect(readFileSync(join(root, "desktop/package.json"), "utf8")).toContain('"electron"');
     expect(existsSync(join(root, "macos"))).toBe(false);
     expect(existsSync(join(root, ".github/workflows/macos-086.yml"))).toBe(false);
+    expect(existsSync(join(root, "script/build_and_run.sh"))).toBe(false);
   });
 });
