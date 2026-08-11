@@ -136,6 +136,7 @@ async function authorizeMove(
   try {
     const sourceStat = await lstat(lexicalSource);
     if (sourceStat.isSymbolicLink()) return "invalid_destination";
+    if (!sourceStat.isFile() && !sourceStat.isDirectory()) return "invalid_destination";
     sourceIsDirectory = sourceStat.isDirectory();
   } catch (error: unknown) {
     if (isErrno(error, "ENOENT")) return "source_missing";

@@ -139,10 +139,12 @@ export class FileBatchMoveService {
         }, { moveCapability: this.moveCapability }));
       }
 
-      const sourceDirectory = posix.dirname(preflight.result.sources[0] ?? "");
       return {
         results,
-        affectedDirectories: [...new Set([sourceDirectory, preflight.result.destinationDirectory])],
+        affectedDirectories: collectAffectedDirectories(
+          preflight.result.sources,
+          preflight.result.destinationDirectory,
+        ),
       };
     });
   }
@@ -198,6 +200,19 @@ export class FileBatchMoveService {
       if (preflight.expiresAt <= now) this.preflights.delete(key);
     }
   }
+}
+
+export function collectAffectedDirectories(
+  sources: readonly string[],
+  destinationDirectory: string,
+): string[] {
+  const directories: string[] = [];
+  for (const source of sources) {
+    const sourceDirectory = posix.dirname(source);
+    if (!directories.includes(sourceDirectory)) directories.push(sourceDirectory);
+  }
+  if (!directories.includes(destinationDirectory)) directories.push(destinationDirectory);
+  return directories;
 }
 
 function validateConflictChoices(

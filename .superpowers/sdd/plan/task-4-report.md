@@ -137,3 +137,90 @@ The requested two-axis review found one hard standards issue and three spec edge
 ## Concerns
 
 The Linux native addon cannot load on this macOS host, so Linux-only Task 2 capability suites are reported as skipped. The injected test capability exercises real files, directories, atomic file-name claims, and the complete production batch/move service path; Linux CI remains responsible for the actual `renameat2(RENAME_NOREPLACE)` syscall boundary.
+
+---
+
+## Fix Round 1 — special-source rejection and complete reconciliation directories
+
+### Findings addressed
+
+- Batch move now accepts only source entries whose fresh `lstat` reports a regular file or directory. FIFOs, Unix-domain sockets, devices, and other special entries return the stable `invalid_destination` code before the native move boundary.
+- `affectedDirectories` is now built from every distinct source parent in deterministic first-seen order, followed by the destination only when it is not already present. The existing same-parent public preflight contract is unchanged; the collector remains correct for internal/future mixed-parent inputs.
+
+### TDD evidence
+
+RED:
+
+```sh
+flox activate -- pnpm exec vitest run tests/gateway/file-batch-move.test.ts -t "FIFO and socket|collects every source parent"
+```
+
+```text
+FAIL  ... rejects FIFO and socket sources as invalid destinations
+Expected invalid_destination for both entries; received moved for both entries
+
+FAIL  ... collects every source parent in first-seen order before the destination
+TypeError: collect is not a function
+
+Test Files  1 failed (1)
+Tests  2 failed | 13 skipped (15)
+```
+
+The FIFO is created with the real `mkfifo` utility. The socket test binds a real Node Unix-domain server to a short portable path and renames its socket entry into owner home before preflight, avoiding macOS's Unix-socket pathname limit without mocking entry type.
+
+GREEN:
+
+```sh
+flox activate -- pnpm exec vitest run tests/gateway/file-batch-move.test.ts -t "FIFO and socket|collects every source parent"
+```
+
+```text
+Test Files  1 passed (1)
+Tests  2 passed | 13 skipped (15)
+```
+
+### Verification
+
+```sh
+flox activate -- pnpm exec vitest run \
+  tests/gateway/file-batch-move.test.ts \
+  tests/gateway/file-batch-preflight.test.ts \
+  tests/gateway/file-operation-result-cache.test.ts \
+  tests/gateway/file-management-contracts.test.ts \
+  tests/gateway/files-tree.test.ts \
+  tests/gateway/file-ops.test.ts \
+  tests/gateway/file-management-copy-safety.test.ts \
+  tests/gateway/file-management-typed-ops.test.ts \
+  tests/gateway/native-file-capability.test.ts \
+  tests/gateway/native-file-capability-boundaries.test.ts
+```
+
+```text
+Test Files  6 passed | 4 skipped (10)
+Tests  47 passed | 64 skipped (111)
+```
+
+```sh
+flox activate -- pnpm --filter '@matrix-os/gateway' exec tsc --noEmit
+git diff --check
+```
+
+Both complete successfully. Updated Task 4 files remain below 500 lines: `move.ts` 218, `batch-service.ts` 239, and `file-batch-move.test.ts` 484.
+
+### Files changed
+
+- `packages/gateway/src/file-management/move.ts`
+- `packages/gateway/src/file-management/batch-service.ts`
+- `tests/gateway/file-batch-move.test.ts`
+- `.superpowers/sdd/plan/task-4-report.md`
+
+### Self-review
+
+- The special-entry check is generic and filesystem-backed: it uses the same fresh `lstat` already required for authorization and does not enumerate platform-specific path strings or provider errors.
+- Rejected entries never reach the injected/native move capability, never create a destination, and expose only `invalid_destination`.
+- The directory collector uses a bounded array over the contract's maximum 100 sources, avoids a non-serializable result type, preserves first occurrence, and prevents a duplicate destination.
+- No batch rollback, route, Trash, schema, or preflight same-parent behavior changed.
+
+### Concerns
+
+Windows does not expose POSIX FIFO or Unix-domain pathname entries through this fixture, so the special-entry integration test is conditionally skipped there. Production rejection is platform-generic through Node `Stats.isFile()` / `isDirectory()`. Linux native-only capability suites remain skipped on this macOS host as documented above.
