@@ -378,7 +378,7 @@ async function writeManifest(
 }
 
 function trashNameCandidates(name: string): string[] {
-  const extension = posix.extname(name);
+  const extension = isReservedTrashName(name) ? "" : posix.extname(name);
   const stem = extension ? name.slice(0, -extension.length) : name;
   return Array.from({ length: MAX_TRASH_NAME_CANDIDATES }, (_, index) => {
     if (index === 0) return name;
