@@ -471,13 +471,20 @@ describe('terminal runtime service boundary', () => {
     await expect(monitorKeeperOnce({
       clientAlive: true,
       sessionResponds: vi.fn(async () => false),
-    })).resolves.toBe(false);
+    })).resolves.toEqual({ alive: false, consecutiveFailures: 0 });
     await expect(monitorKeeperOnce({
       clientAlive: false,
       sessionResponds: vi.fn(async () => true),
-    })).resolves.toBe(false);
+    })).resolves.toEqual({ alive: false, consecutiveFailures: 0 });
     await expect(monitorKeeperOnce({ clientAlive: true, workloadAlive: false,
-      sessionResponds: vi.fn(async () => true) })).resolves.toBe(false);
+      sessionResponds: vi.fn(async () => true) })).resolves.toEqual({ alive: false, consecutiveFailures: 0 });
+    const transient = vi.fn(async () => { throw new Error('proc_race'); });
+    await expect(monitorKeeperOnce({ clientAlive: true, consecutiveFailures: 0,
+      workloadResponds: transient, sessionResponds: vi.fn(async () => true) }))
+      .resolves.toEqual({ alive: true, consecutiveFailures: 1 });
+    await expect(monitorKeeperOnce({ clientAlive: true, consecutiveFailures: 4,
+      workloadResponds: transient, sessionResponds: vi.fn(async () => true) }))
+      .rejects.toThrow('proc_race');
   });
 
   it('authenticates the peer before parsing or dispatching a bounded protocol frame', async () => {

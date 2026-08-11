@@ -183,9 +183,20 @@ export async function waitForKeeperReadiness(options: {
 export async function monitorKeeperOnce(options: {
   clientAlive: boolean;
   workloadAlive?: boolean;
+  workloadResponds?(): Promise<boolean>;
+  consecutiveFailures?: number;
   sessionResponds(): Promise<boolean>;
-}): Promise<boolean> {
-  return options.clientAlive && options.workloadAlive !== false && await options.sessionResponds();
+}): Promise<{ alive: boolean; consecutiveFailures: number }> {
+  if (!options.clientAlive || options.workloadAlive === false)
+    return { alive: false, consecutiveFailures: 0 };
+  try {
+    const workloadAlive = !options.workloadResponds || await options.workloadResponds();
+    return { alive: workloadAlive && await options.sessionResponds(), consecutiveFailures: 0 };
+  } catch (error: unknown) {
+    const consecutiveFailures = (options.consecutiveFailures ?? 0) + 1;
+    if (consecutiveFailures >= 5) throw error;
+    return { alive: true, consecutiveFailures };
+  }
 }
 export function paneOutcomeCode(render: string): string | null {
   const matches = stripVTControlCharacters(render).match(
@@ -379,18 +390,21 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
       notifyReady: async () => await notifySystemdReady(),
     });
     return await new Promise<number>((resolveKeeper) => {
-      let checking = false;
+      let checking = false, monitorFailures = 0;
       const monitor = setInterval(async () => {
         if (stopping || checking) return;
         checking = true;
         try {
-          if (!await monitorKeeperOnce({
+          const monitored = await monitorKeeperOnce({
             clientAlive,
-            workloadAlive: !startsFresh ||
+            consecutiveFailures: monitorFailures,
+            workloadResponds: async () => !startsFresh ||
               await cgroupRoles(cgroup, descriptor.launch.kind, true) !== null,
             sessionResponds: async () =>
               await exactSessionResponds(sessionName, launch.env),
-          })) {
+          });
+          monitorFailures = monitored.consecutiveFailures;
+          if (!monitored.alive) {
             stopping = true;
             clearInterval(monitor);
             resolveKeeper(exitCode || 18);
