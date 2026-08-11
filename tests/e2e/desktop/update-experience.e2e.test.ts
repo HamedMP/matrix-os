@@ -66,7 +66,7 @@ suite("desktop update experience", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  it("shows What's New after launch and places Update next to the account avatar", async () => {
+  it("shows What's New after launch and places Update below Settings", async () => {
     await page.getByRole("heading", { name: "What's New" }).waitFor({ timeout: 10_000 });
     await page.getByText("Automatic background downloads for Matrix OS updates").waitFor();
     await page.mouse.move(80, 400);
@@ -92,11 +92,24 @@ suite("desktop update experience", () => {
 
     const update = page.getByRole("button", { name: "Update Matrix OS to 0.2.0" });
     await update.waitFor({ timeout: 10_000 });
-    const avatarBox = await page.getByTitle("Manage account").boundingBox();
+    const settings = page.getByRole("button", { name: "Settings" });
+    const avatar = page.getByTitle("Manage account");
+    const settingsBox = await settings.boundingBox();
     const updateBox = await update.boundingBox();
+    const avatarBox = await avatar.boundingBox();
+    expect(settingsBox).not.toBeNull();
     expect(avatarBox).not.toBeNull();
     expect(updateBox).not.toBeNull();
-    expect(Math.abs((updateBox?.x ?? 0) - (avatarBox?.x ?? 0))).toBeLessThan(48);
+    expect(updateBox?.y ?? 0).toBeGreaterThan((settingsBox?.y ?? 0) + (settingsBox?.height ?? 0));
+    expect((updateBox?.y ?? 0) + (updateBox?.height ?? 0)).toBeLessThanOrEqual(avatarBox?.y ?? 0);
+    expect(updateBox?.width ?? 0).toBeGreaterThan((avatarBox?.width ?? 0) * 4);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-291-update-ready.png") });
+
+    await page.getByRole("button", { name: "Collapse sidebar (⌘B)" }).click();
+    const collapsedUpdateBox = await update.boundingBox();
+    expect(collapsedUpdateBox).not.toBeNull();
+    expect(Math.abs((collapsedUpdateBox?.width ?? 0) - (collapsedUpdateBox?.height ?? 0))).toBeLessThanOrEqual(2);
+    expect(collapsedUpdateBox?.width ?? 0).toBeLessThan(40);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-291-update-ready-collapsed.png") });
   }, 30_000);
 });
