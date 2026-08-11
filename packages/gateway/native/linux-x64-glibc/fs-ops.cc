@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 
 #include "fs-ops.h"
+#include "copy-staging.h"
+#include "copy-test-hooks.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -9,8 +11,6 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-#include <stdio.h>
-
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -20,7 +20,6 @@
 
 namespace matrix_fs {
 namespace {
-
 constexpr size_t kMaxEntries = 10000;
 constexpr size_t kMaxDepth = 128;
 constexpr size_t kMaxRelativePathBytes = 4096;
@@ -46,7 +45,6 @@ class Fd {
  private:
   int value_;
 };
-
 struct PathParts {
   std::vector<std::string> components;
   bool valid = false;
@@ -68,17 +66,15 @@ PathParts SplitRelative(const std::string& path) {
   result.valid = !result.components.empty();
   return result;
 }
-
 bool IsSameOrDescendant(const PathParts& source, const PathParts& target) {
   if (source.components.size() > target.components.size()) return false;
   return std::equal(source.components.begin(), source.components.end(), target.components.begin());
 }
-
 int OpenAt2(int directory, const char* path, int flags, mode_t mode = 0) {
   struct open_how how = {};
   how.flags = static_cast<__u64>(flags);
   how.mode = static_cast<__u64>(mode);
-  how.resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS;
+  how.resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV;
   return static_cast<int>(syscall(SYS_openat2, directory, path, &how, sizeof(how)));
 }
 
@@ -90,6 +86,8 @@ Fd OpenHome(const std::string& home) {
   return Fd(open(home.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
 }
 
+bool SameIdentity(const struct stat& left, const struct stat& right);
+
 Fd OpenParent(int home_fd, const PathParts& path, bool create_parents) {
   Fd current(dup(home_fd));
   if (!current) return Fd();
@@ -97,15 +95,22 @@ Fd OpenParent(int home_fd, const PathParts& path, bool create_parents) {
     const std::string& component = path.components[index];
     Fd next(OpenAt2(current.get(), component.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC));
     if (!next && errno == ENOENT && create_parents) {
-      if (mkdirat(current.get(), component.c_str(), 0777) != 0 && errno != EEXIST) return Fd();
+      const bool created = mkdirat(current.get(), component.c_str(), 0777) == 0;
+      if (!created && errno != EEXIST) return Fd();
+      struct stat claimed = {};
+      if (created && fstatat(current.get(), component.c_str(), &claimed, AT_SYMLINK_NOFOLLOW) != 0) return Fd();
       next = Fd(OpenAt2(current.get(), component.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC));
+      struct stat opened = {};
+      if (created && (!next || fstat(next.get(), &opened) != 0 || !SameIdentity(claimed, opened))) {
+        errno = ESTALE;
+        return Fd();
+      }
     }
     if (!next) return Fd();
     current = std::move(next);
   }
   return current;
 }
-
 Code ErrorCode(int error, bool partial = false) {
   if (partial) return Code::kPartial;
   switch (error) {
@@ -121,24 +126,22 @@ Code ErrorCode(int error, bool partial = false) {
     default: return Code::kFailed;
   }
 }
-
-Result Failure(int error, bool partial = false) {
-  return {ErrorCode(error, partial), error};
+Result Failure(int error, bool partial = false, std::string partial_path = {}) {
+  return {ErrorCode(error, partial), error, std::move(partial_path)};
 }
 
 bool SameIdentity(const struct stat& left, const struct stat& right) {
   return left.st_dev == right.st_dev && left.st_ino == right.st_ino && (left.st_mode & S_IFMT) == (right.st_mode & S_IFMT);
 }
-
-bool StableFile(const struct stat& left, const struct stat& right) {
+bool StableEntry(const struct stat& left, const struct stat& right) {
   return SameIdentity(left, right)
+    && left.st_mode == right.st_mode
     && left.st_size == right.st_size
     && left.st_mtim.tv_sec == right.st_mtim.tv_sec
     && left.st_mtim.tv_nsec == right.st_mtim.tv_nsec
     && left.st_ctim.tv_sec == right.st_ctim.tv_sec
     && left.st_ctim.tv_nsec == right.st_ctim.tv_nsec;
 }
-
 int WriteAll(int fd, const char* bytes, size_t length) {
   size_t offset = 0;
   while (offset < length) {
@@ -149,7 +152,6 @@ int WriteAll(int fd, const char* bytes, size_t length) {
   }
   return 0;
 }
-
 int CopyBytes(int source, int target) {
   std::array<char, 65536> buffer;
   while (true) {
@@ -164,8 +166,19 @@ int CopyBytes(int source, int target) {
 struct CopyState {
   size_t entries = 0;
   bool target_claimed = false;
+  bool test_scenario_fired = false;
+  CopyTestScenario test_scenario = CopyTestScenario::kNone;
 };
-
+std::string ParentRelativePath(const PathParts& target, const std::string& name) {
+  std::string result;
+  for (size_t index = 0; index + 1 < target.components.size(); ++index) {
+    if (!result.empty()) result.push_back('/');
+    result.append(target.components[index]);
+  }
+  if (!result.empty()) result.push_back('/');
+  result.append(name);
+  return result;
+}
 int CopyEntry(int source_parent, const std::string& source_name, int target_parent, const std::string& target_name, size_t depth, CopyState* state);
 
 int CopyDirectory(int source, int target, size_t depth, CopyState* state) {
@@ -194,27 +207,34 @@ int CopyDirectory(int source, int target, size_t depth, CopyState* state) {
   return error == 0 ? 0 : -1;
 }
 
-int CopyEntry(int source_parent, const std::string& source_name, int target_parent, const std::string& target_name, size_t depth, CopyState* state) {
-  if (depth > kMaxDepth || ++state->entries > kMaxEntries) {
-    errno = E2BIG;
-    return -1;
-  }
-  Fd identity(OpenAt2(source_parent, source_name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
-  if (!identity) return -1;
-  struct stat before = {};
-  if (fstat(identity.get(), &before) != 0) return -1;
+int CopyCapturedEntry(
+  int identity,
+  const struct stat& before,
+  int source_parent,
+  const std::string& source_name,
+  int target_parent,
+  const std::string& target_name,
+  size_t depth,
+  CopyState* state) {
+  if (RunCopyEntryTestScenario(
+        source_parent,
+        source_name,
+        depth,
+        before,
+        state->test_scenario,
+        &state->test_scenario_fired) != 0) return -1;
 
   if (S_ISREG(before.st_mode)) {
     Fd source(OpenAt2(source_parent, source_name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
     if (!source) return -1;
     struct stat opened = {};
-    if (fstat(source.get(), &opened) != 0 || !SameIdentity(before, opened)) { errno = ESTALE; return -1; }
-    Fd target(openat(target_parent, target_name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, before.st_mode & 0777));
+    if (fstat(source.get(), &opened) != 0 || !StableEntry(before, opened)) { errno = ESTALE; return -1; }
+    Fd target(openat(target_parent, target_name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, opened.st_mode & 0777));
     if (!target) return -1;
     state->target_claimed = true;
-    if (CopyBytes(source.get(), target.get()) != 0 || fchmod(target.get(), before.st_mode & 0777) != 0) return -1;
+    if (CopyBytes(source.get(), target.get()) != 0 || fchmod(target.get(), opened.st_mode & 0777) != 0) return -1;
     struct stat after = {};
-    if (fstat(source.get(), &after) != 0 || !StableFile(opened, after)) { errno = ESTALE; return -1; }
+    if (fstat(source.get(), &after) != 0 || !StableEntry(opened, after)) { errno = ESTALE; return -1; }
     return 0;
   }
 
@@ -222,21 +242,25 @@ int CopyEntry(int source_parent, const std::string& source_name, int target_pare
     Fd source(OpenAt2(source_parent, source_name.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
     if (!source) return -1;
     struct stat opened = {};
-    if (fstat(source.get(), &opened) != 0 || !SameIdentity(before, opened)) { errno = ESTALE; return -1; }
-    if (mkdirat(target_parent, target_name.c_str(), before.st_mode & 0777) != 0) return -1;
+    if (fstat(source.get(), &opened) != 0 || !StableEntry(before, opened)) { errno = ESTALE; return -1; }
+    if (mkdirat(target_parent, target_name.c_str(), opened.st_mode & 0777) != 0) return -1;
     state->target_claimed = true;
+    struct stat claimed = {};
+    if (fstatat(target_parent, target_name.c_str(), &claimed, AT_SYMLINK_NOFOLLOW) != 0) return -1;
     Fd target(OpenAt2(target_parent, target_name.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
     if (!target) return -1;
+    struct stat target_opened = {};
+    if (fstat(target.get(), &target_opened) != 0 || !SameIdentity(claimed, target_opened)) { errno = ESTALE; return -1; }
     if (CopyDirectory(source.get(), target.get(), depth, state) != 0) return -1;
-    if (fchmod(target.get(), before.st_mode & 0777) != 0) return -1;
+    if (fchmod(target.get(), opened.st_mode & 0777) != 0) return -1;
     struct stat after = {};
-    if (fstat(source.get(), &after) != 0 || !StableFile(opened, after)) { errno = ESTALE; return -1; }
+    if (fstat(source.get(), &after) != 0 || !StableEntry(opened, after)) { errno = ESTALE; return -1; }
     return 0;
   }
 
   if (S_ISLNK(before.st_mode)) {
     std::array<char, kMaxRelativePathBytes + 1> link_target;
-    const ssize_t length = readlinkat(identity.get(), "", link_target.data(), link_target.size() - 1);
+    const ssize_t length = readlinkat(identity, "", link_target.data(), link_target.size() - 1);
     if (length < 0) return -1;
     link_target[static_cast<size_t>(length)] = '\0';
     if (symlinkat(link_target.data(), target_parent, target_name.c_str()) != 0) return -1;
@@ -246,6 +270,117 @@ int CopyEntry(int source_parent, const std::string& source_name, int target_pare
 
   errno = EINVAL;
   return -1;
+}
+
+int CopyEntry(int source_parent, const std::string& source_name, int target_parent, const std::string& target_name, size_t depth, CopyState* state) {
+  if (depth > kMaxDepth || ++state->entries > kMaxEntries) {
+    errno = E2BIG;
+    return -1;
+  }
+  Fd identity(OpenAt2(source_parent, source_name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
+  if (!identity) return -1;
+  struct stat before = {};
+  if (fstat(identity.get(), &before) != 0) return -1;
+  return CopyCapturedEntry(
+    identity.get(), before, source_parent, source_name, target_parent, target_name, depth, state);
+}
+
+Result CopyDirectoryStaged(
+  int source_parent,
+  const std::string& source_name,
+  const struct stat& before,
+  int target_parent,
+  const PathParts& target_path,
+  CopyTestScenario test_scenario) {
+  Fd source(OpenAt2(source_parent, source_name.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  if (!source) return Failure(errno);
+  struct stat opened = {};
+  if (fstat(source.get(), &opened) != 0 || !StableEntry(before, opened)) return Failure(ESTALE);
+
+  StagingDirectoryClaim staging = CreateStagingDirectory(target_parent);
+  Fd stage(staging.fd);
+  if (!stage) {
+    const int error = errno;
+    return staging.name.empty()
+      ? Failure(error)
+      : Failure(error, true, ParentRelativePath(target_path, staging.name));
+  }
+  const std::string partial_path = ParentRelativePath(target_path, staging.name);
+  if (test_scenario == CopyTestScenario::kReplaceFinalAfterStageClaim
+      && InstallFinalDirectoryClaimantForTest(target_parent, target_path.components.back()) != 0) {
+    return Failure(errno, true, partial_path);
+  }
+
+  CopyState state;
+  state.entries = 1;
+  state.target_claimed = true;
+  state.test_scenario = test_scenario;
+  if (CopyDirectory(source.get(), stage.get(), 0, &state) != 0
+      || fchmod(stage.get(), opened.st_mode & 0777) != 0) {
+    return Failure(errno, true, partial_path);
+  }
+  struct stat source_after = {};
+  if (fstat(source.get(), &source_after) != 0 || !StableEntry(opened, source_after)) {
+    return Failure(ESTALE, true, partial_path);
+  }
+
+  struct stat staged_fd = {};
+  struct stat staged_name = {};
+  if (fstat(stage.get(), &staged_fd) != 0
+      || fstatat(target_parent, staging.name.c_str(), &staged_name, AT_SYMLINK_NOFOLLOW) != 0
+      || !SameIdentity(staged_fd, staged_name)) {
+    return Failure(ESTALE, true, partial_path);
+  }
+  const int published = static_cast<int>(syscall(
+    SYS_renameat2,
+    target_parent, staging.name.c_str(),
+    target_parent, target_path.components.back().c_str(),
+    RENAME_NOREPLACE));
+  if (published != 0) return {ErrorCode(errno), errno, partial_path};
+  return {Code::kOk, 0};
+}
+
+Result CopyImpl(
+  const std::string& home,
+  const std::string& source,
+  const std::string& target,
+  bool create_parents,
+  CopyTestScenario test_scenario) {
+  const PathParts source_path = SplitRelative(source);
+  const PathParts target_path = SplitRelative(target);
+  if (!source_path.valid || !target_path.valid || IsSameOrDescendant(source_path, target_path)) return Failure(EINVAL);
+  Fd home_fd = OpenHome(home);
+  if (!home_fd) return Failure(errno);
+  Fd source_parent = OpenParent(home_fd.get(), source_path, false);
+  if (!source_parent) return Failure(errno);
+  Fd target_parent = OpenParent(home_fd.get(), target_path, create_parents);
+  if (!target_parent) return Failure(errno);
+
+  const std::string& source_name = source_path.components.back();
+  Fd identity(OpenAt2(source_parent.get(), source_name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
+  if (!identity) return Failure(errno);
+  struct stat before = {};
+  if (fstat(identity.get(), &before) != 0) return Failure(errno);
+  if (S_ISDIR(before.st_mode)) {
+    return CopyDirectoryStaged(
+      source_parent.get(), source_name, before, target_parent.get(), target_path, test_scenario);
+  }
+
+  CopyState state;
+  state.entries = 1;
+  state.test_scenario = test_scenario;
+  if (CopyCapturedEntry(
+        identity.get(),
+        before,
+        source_parent.get(),
+        source_name,
+        target_parent.get(),
+        target_path.components.back(),
+        0,
+        &state) != 0) {
+    return Failure(errno, state.target_claimed);
+  }
+  return {Code::kOk, 0};
 }
 
 }  // namespace
@@ -273,20 +408,16 @@ Result Create(const std::string& home, const std::string& relative_path, bool di
 }
 
 Result Copy(const std::string& home, const std::string& source, const std::string& target, bool create_parents) {
-  const PathParts source_path = SplitRelative(source);
-  const PathParts target_path = SplitRelative(target);
-  if (!source_path.valid || !target_path.valid || IsSameOrDescendant(source_path, target_path)) return Failure(EINVAL);
-  Fd home_fd = OpenHome(home);
-  if (!home_fd) return Failure(errno);
-  Fd source_parent = OpenParent(home_fd.get(), source_path, false);
-  if (!source_parent) return Failure(errno);
-  Fd target_parent = OpenParent(home_fd.get(), target_path, create_parents);
-  if (!target_parent) return Failure(errno);
-  CopyState state;
-  if (CopyEntry(source_parent.get(), source_path.components.back(), target_parent.get(), target_path.components.back(), 0, &state) != 0) {
-    return Failure(errno, state.target_claimed);
-  }
-  return {Code::kOk, 0};
+  return CopyImpl(home, source, target, create_parents, CopyTestScenario::kNone);
+}
+
+Result CopyForTest(
+  const std::string& home,
+  const std::string& source,
+  const std::string& target,
+  bool create_parents,
+  CopyTestScenario scenario) {
+  return CopyImpl(home, source, target, create_parents, scenario);
 }
 
 Result Move(const std::string& home, const std::string& source, const std::string& target, bool create_parents) {

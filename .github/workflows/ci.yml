@@ -381,6 +381,7 @@ jobs:
         run: >-
           pnpm exec vitest run
           tests/gateway/native-file-capability.test.ts
+          tests/gateway/native-file-capability-races.test.ts
           tests/gateway/native-file-capability-boundaries.test.ts
           tests/gateway/file-management-contracts.test.ts
           tests/gateway/files-tree.test.ts

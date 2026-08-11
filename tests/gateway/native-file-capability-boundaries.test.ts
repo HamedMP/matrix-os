@@ -38,7 +38,7 @@ describeNative("Gateway native recursive copy bounds", () => {
     const overLimit = makeHome("entries-fail");
     createEmptyFiles(join(overLimit, "source"), 10_000);
     expect(await getNativeFileCapability().copy(overLimit, "source", "target", false))
-      .toEqual({ ok: false, code: "partial" });
+      .toMatchObject({ ok: false, code: "partial", partialPath: expect.stringMatching(/^\.matrix-copy-stage-/) });
   }, 60_000);
 
   it("accepts depth 128 and fails closed at depth 129", async () => {
@@ -58,6 +58,6 @@ describeNative("Gateway native recursive copy bounds", () => {
       mkdirSync(directory);
     }
     expect(await getNativeFileCapability().copy(overLimit, "source", "target", false))
-      .toEqual({ ok: false, code: "partial" });
+      .toMatchObject({ ok: false, code: "partial", partialPath: expect.stringMatching(/^\.matrix-copy-stage-/) });
   }, 30_000);
 });

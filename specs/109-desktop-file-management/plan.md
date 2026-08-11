@@ -47,6 +47,8 @@
 - Delete: `packages/gateway/src/file-management/exclusive-copy.ts` after replacing its pathname-based implementation with the native boundary
 - Create: `packages/gateway/src/file-management/native-file-capability.ts`
 - Create: `packages/gateway/native/linux-x64-glibc/addon.cc`
+- Create: `packages/gateway/native/linux-x64-glibc/copy-staging.{h,cc}`
+- Create: `packages/gateway/native/linux-x64-glibc/copy-test-hooks.{h,cc}`
 - Create: `packages/gateway/native/linux-x64-glibc/fs-ops.{h,cc}`
 - Create: `scripts/build-gateway-native-fs.sh`
 - Modify: `scripts/build-host-bundle.sh`
@@ -68,7 +70,7 @@
 - [ ] Run the focused tests and confirm RED because contracts/capabilities do not exist.
 - [ ] Implement exported Zod schemas and inferred types using `zod/v4`.
 - [ ] Implement one normalized mutation policy used by both listing and execution. Reject traversal, absolute paths, denied roots, symlink escapes, home root mutation, separators/control characters, and platform-reserved names.
-- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, reject exact denied sources and ancestors containing denied content while preserving protected-source copy compatibility, and reject directory self/descendant targets before any target-parent creation. On Linux x64 glibc, load a Gateway-only asynchronous Node-API capability that pins every parent beneath owner home with `openat2`, uses descriptor-relative no-replace creates/copies, and makes direct `renameat2(RENAME_NOREPLACE)` the move linearization point. Fail closed for missing/unsupported addon, kernel/filesystem support, and `EXDEV`; never use a pathname-based JavaScript fallback. Bound recursive copy to 10,000 entries/depth 128, preserve supported modes, copy symlinks without dereferencing, retain/report one claimed partial target after nested failure, and never fan out Keep Both names after a nested conflict.
+- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, reject exact denied sources and ancestors containing denied content while preserving protected-source copy compatibility, and reject directory self/descendant targets before any target-parent creation. On Linux x64 glibc, load a Gateway-only asynchronous Node-API capability that pins every parent beneath owner home with `openat2` including `RESOLVE_NO_XDEV`, uses descriptor-relative no-replace file creates, builds directory copies under an operation-owned staging descriptor, publishes them only with `renameat2(RENAME_NOREPLACE)`, and makes direct `renameat2(RENAME_NOREPLACE)` the move linearization point. Fail closed for missing/unsupported addon, kernel/filesystem support, and `EXDEV`; never use a pathname-based JavaScript fallback. Compare full source stability metadata across identity/readable opens, bound recursive copy to 10,000 entries/depth 128, preserve supported modes, copy symlinks without dereferencing, retain/report one staging partial after failure, never unsafe-delete a changed partial, and never fan out Keep Both names once a retained partial exists. Document the exact same-UID staging identity boundary without weakening public-target claimant preservation.
 - [ ] Extend directory listings with the capability object without breaking existing fields.
 - [ ] Run focused tests and confirm GREEN, then refactor duplicate path checks into pure helpers.
 

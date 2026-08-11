@@ -16,6 +16,22 @@ export type NativeFileCapabilityCode =
 export interface NativeFileCapabilityResult {
   ok: boolean;
   code: NativeFileCapabilityCode;
+  partialPath?: string;
+}
+
+export type NativeCopyTestScenario =
+  | "replace_final_after_stage_claim"
+  | "chmod_source_after_identity"
+  | "replace_source_after_identity";
+
+export interface NativeFileCapabilityTestHarness {
+  copyWithScenario(
+    homePath: string,
+    sourcePath: string,
+    targetPath: string,
+    createParents: boolean,
+    scenario: NativeCopyTestScenario,
+  ): Promise<NativeFileCapabilityResult>;
 }
 
 export interface NativeFileCapability {
@@ -51,6 +67,13 @@ interface NativeAddon {
     allowExisting: boolean,
   ): Promise<NativeFileCapabilityResult>;
   copy(homePath: string, sourcePath: string, targetPath: string, createParents: boolean): Promise<NativeFileCapabilityResult>;
+  copyForTest(
+    homePath: string,
+    sourcePath: string,
+    targetPath: string,
+    createParents: boolean,
+    scenario: NativeCopyTestScenario,
+  ): Promise<NativeFileCapabilityResult>;
   move(homePath: string, sourcePath: string, targetPath: string, createParents: boolean): Promise<NativeFileCapabilityResult>;
 }
 
@@ -103,4 +126,15 @@ export function getNativeFileCapability(): NativeFileCapability {
       addon.move(homePath, sourcePath, targetPath, createParents),
   };
   return cachedCapability;
+}
+
+export function getNativeFileCapabilityTestHarness(): NativeFileCapabilityTestHarness {
+  if (process.env.NODE_ENV !== "test") {
+    throw new NativeFileCapabilityUnavailableError("Native file-management test harness is unavailable");
+  }
+  const addon = loadAddon();
+  return {
+    copyWithScenario: (homePath, sourcePath, targetPath, createParents, scenario) =>
+      addon.copyForTest(homePath, sourcePath, targetPath, createParents, scenario),
+  };
 }

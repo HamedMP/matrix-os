@@ -19,6 +19,14 @@ enum class Code {
 struct Result {
   Code code = Code::kFailed;
   int system_error = 0;
+  std::string partial_path;
+};
+
+enum class CopyTestScenario {
+  kNone,
+  kReplaceFinalAfterStageClaim,
+  kChmodSourceAfterIdentity,
+  kReplaceSourceAfterIdentity,
 };
 
 Result Create(
@@ -34,6 +42,13 @@ Result Copy(
   const std::string& source,
   const std::string& target,
   bool create_parents);
+
+Result CopyForTest(
+  const std::string& home,
+  const std::string& source,
+  const std::string& target,
+  bool create_parents,
+  CopyTestScenario scenario);
 
 Result Move(
   const std::string& home,

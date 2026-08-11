@@ -115,8 +115,13 @@ describeNative("fileCopy safety", () => {
 
     const result = await fileCopy(testDir, "source", "target");
 
-    expect(result).toEqual({ ok: false, error: "Failed to copy", partialPath: "target" });
-    expect(existsSync(join(testDir, "target"))).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: "Failed to copy",
+      partialPath: expect.stringMatching(/^\.matrix-copy-stage-/),
+    });
+    expect(existsSync(join(testDir, result.partialPath!))).toBe(true);
+    expect(existsSync(join(testDir, "target"))).toBe(false);
   });
 
   it("contains a target-parent symlink swap after Gateway authorization", async () => {
@@ -239,12 +244,13 @@ describeNative("fileDuplicate reconciliation", () => {
 
     const result = await fileDuplicate(testDir, "folder");
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: false,
-      newPath: "folder copy",
+      newPath: expect.stringMatching(/^\.matrix-copy-stage-/),
       error: "Failed to duplicate",
     });
-    expect(existsSync(join(testDir, "folder copy"))).toBe(true);
+    expect(existsSync(join(testDir, result.newPath!))).toBe(true);
+    expect(existsSync(join(testDir, "folder copy"))).toBe(false);
     expect(existsSync(join(testDir, "folder copy 2"))).toBe(false);
   });
 });
