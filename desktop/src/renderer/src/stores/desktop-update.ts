@@ -40,22 +40,13 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
       invoke("update:get-state", {}),
       invoke("update:get-whats-new", {}),
     ])
-      .then(async ([snapshot, whatsNew]) => {
+      .then(([snapshot, whatsNew]) => {
         if (!active) return;
         set({
           ...(!eventReceived ? { snapshot } : {}),
           release: whatsNew.release,
           whatsNewOpen: whatsNew.shouldOpen && Boolean(whatsNew.release),
         });
-        if (whatsNew.shouldOpen && whatsNew.release) {
-          try {
-            await invoke("update:acknowledge-whats-new", {
-              version: whatsNew.release.version,
-            });
-          } catch {
-            console.warn("[desktop-update] could not acknowledge What's New");
-          }
-        }
       })
       .catch(() => {
         console.warn("[desktop-update] could not initialize update state");
@@ -79,5 +70,12 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
     }
   },
 
-  closeWhatsNew: () => set({ whatsNewOpen: false }),
+  closeWhatsNew: () => {
+    const release = get().release;
+    set({ whatsNewOpen: false });
+    if (!release) return;
+    void invoke("update:acknowledge-whats-new", { version: release.version }).catch(() => {
+      console.warn("[desktop-update] could not acknowledge What's New");
+    });
+  },
 }));

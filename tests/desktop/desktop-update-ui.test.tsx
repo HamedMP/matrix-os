@@ -24,7 +24,7 @@ describe("desktop update experience", () => {
     vi.unstubAllGlobals();
   });
 
-  it("subscribes to background update state and opens the new release once", async () => {
+  it("subscribes to background update state without acknowledging before dismissal", async () => {
     let updateListener: ((payload: unknown) => void) | null = null;
     const invoke = vi.fn(async (channel: string) => {
       if (channel === "update:get-state") return { status: "downloading", version: "1.2.3", progress: 48 };
@@ -54,7 +54,7 @@ describe("desktop update experience", () => {
     await waitFor(() => {
       expect(useDesktopUpdate.getState().whatsNewOpen).toBe(true);
     });
-    expect(invoke).toHaveBeenCalledWith("update:acknowledge-whats-new", { version: "1.2.2" });
+    expect(invoke).not.toHaveBeenCalledWith("update:acknowledge-whats-new", { version: "1.2.2" });
 
     act(() => {
       updateListener?.({ status: "ready", version: "1.2.3", progress: 100 });
@@ -100,7 +100,9 @@ describe("desktop update experience", () => {
     expect(screen.queryByRole("button", { name: /Update Matrix OS/ })).toBeNull();
   });
 
-  it("renders the installed version changelog in a focused What's New dialog", () => {
+  it("renders the installed version changelog and acknowledges it on dismissal", async () => {
+    const invoke = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("operator", { invoke, on: vi.fn() });
     useDesktopUpdate.setState({
       release: {
         version: "1.2.3",
@@ -120,6 +122,11 @@ describe("desktop update experience", () => {
     expect(screen.getByText("v1.2.3")).toBeTruthy();
     expect(screen.getByText("Latest")).toBeTruthy();
     expect(screen.getByText("Faster project loading")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Close What's New" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close What's New" }));
+
+    expect(useDesktopUpdate.getState().whatsNewOpen).toBe(false);
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("update:acknowledge-whats-new", { version: "1.2.3" });
+    });
   });
 });
