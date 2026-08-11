@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
 import { ProjectViewsStateSchema } from "../../shared/project-views";
-import { DesktopReleaseNotesSchema } from "../../shared/desktop-update";
+import {
+  DesktopReleaseNotesSchema,
+  DesktopUpdateVersionSchema,
+} from "../../shared/desktop-update";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -93,6 +96,7 @@ export interface LocalStore {
   setUnknown(key: LocalStoreKey, value: unknown): Promise<void>;
   delete(key: LocalStoreKey): Promise<void>;
   setPanelLayout(taskKey: string, layout: PanelLayout): Promise<void>;
+  acknowledgeDesktopUpdateRelease(version: string): Promise<boolean>;
 }
 
 export function createLocalStore(options: LocalStoreOptions): LocalStore {
@@ -191,6 +195,18 @@ export function createLocalStore(options: LocalStoreOptions): LocalStore {
         layouts[taskKey.slice(0, 256)] = parsedLayout;
         state.panelLayouts = prunePanelLayouts(layouts, clock());
       });
+    },
+
+    async acknowledgeDesktopUpdateRelease(version) {
+      const parsedVersion = DesktopUpdateVersionSchema.parse(version);
+      let acknowledged = false;
+      await enqueue((state) => {
+        const existing = DesktopUpdateReleaseSchema.safeParse(state.desktopUpdateRelease);
+        if (!existing.success || existing.data.version !== parsedVersion) return;
+        state.desktopUpdateRelease = { ...existing.data, shown: true };
+        acknowledged = true;
+      });
+      return acknowledged;
     },
   };
 }

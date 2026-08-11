@@ -36,6 +36,33 @@ describe("local store", () => {
     })).rejects.toThrow();
   });
 
+  it("acknowledges only the matching release inside the serialized mutation", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const currentRelease = {
+      version: "1.2.3",
+      notes: "## Fixed\n\n- Current release",
+      shown: false,
+    };
+    const newerRelease = {
+      version: "1.2.4",
+      notes: "## New\n\n- Newer downloaded release",
+      shown: false,
+    };
+    await store.set("desktopUpdateRelease", currentRelease);
+
+    const replaceWithNewer = store.set("desktopUpdateRelease", newerRelease);
+    const staleAcknowledgement = store.acknowledgeDesktopUpdateRelease("1.2.3");
+
+    await expect(staleAcknowledgement).resolves.toBe(false);
+    await replaceWithNewer;
+    expect(await store.get("desktopUpdateRelease")).toEqual(newerRelease);
+    await expect(store.acknowledgeDesktopUpdateRelease("1.2.4")).resolves.toBe(true);
+    expect(await store.get("desktopUpdateRelease")).toEqual({
+      ...newerRelease,
+      shown: true,
+    });
+  });
+
   it("returns null for unset keys", async () => {
     const store = createLocalStore({ dir: await makeDir() });
     expect(await store.get("lastProjectSlug")).toBeNull();

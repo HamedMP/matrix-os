@@ -275,9 +275,8 @@ if (!gotLock) {
           return { release, shouldOpen: !shown };
         },
         acknowledgeWhatsNew: async (version) => {
-          const stored = await store.get("desktopUpdateRelease");
-          if (!stored || stored.version !== version || version !== app.getVersion()) return;
-          await store.set("desktopUpdateRelease", { ...stored, shown: true });
+          if (version !== app.getVersion()) return;
+          await store.acknowledgeDesktopUpdateRelease(version);
         },
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
         fetchProjectWorkspace: (request) => fetchCodingAgentProjectWorkspace(auth, request),
