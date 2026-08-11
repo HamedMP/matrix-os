@@ -122,23 +122,12 @@ export function buildKeeperLaunch(
   };
 }
 
-export async function stageAgentConfiguration(
-  rawDescriptor: Descriptor,
-  runtimeIdInput: string,
-  store: Pick<ReturnType<typeof createAgentConfigurationStore>, 'claim' | 'publish' | 'remove'> = createAgentConfigurationStore(),
-): Promise<void> {
-  const descriptor = DescriptorSchema.parse(rawDescriptor);
-  const runtimeId = RuntimeIdSchema.parse(runtimeIdInput);
-  if (descriptor.runtimeId !== runtimeId)
-    throw new Error('agent_configuration_identity_mismatch');
-  if (descriptor.launch.kind !== 'agent') return;
-  const configuration = await store.claim(descriptor.launch.configurationRef);
-  try {
-    await store.publish(runtimeId, configuration);
-  } catch (error: unknown) {
-    await store.remove(runtimeId);
-    throw error;
-  }
+export async function stageAgentConfiguration(rawDescriptor: Descriptor, runtimeIdInput: string,
+  store: Pick<ReturnType<typeof createAgentConfigurationStore>, 'claim' | 'publish' | 'remove'> = createAgentConfigurationStore()): Promise<void> {
+  const descriptor = DescriptorSchema.parse(rawDescriptor), runtimeId = RuntimeIdSchema.parse(runtimeIdInput);
+  if (descriptor.runtimeId !== runtimeId) throw new Error('agent_configuration_identity_mismatch'); if (descriptor.launch.kind !== 'agent') return;
+  const configuration = await store.claim(descriptor.launch.configurationRef); try { await store.publish(runtimeId, configuration); }
+  catch (error: unknown) { await store.remove(runtimeId); throw error; }
 }
 
 export async function waitForKeeperReadiness(options: {
@@ -183,46 +172,35 @@ export async function waitForKeeperReadiness(options: {
 export async function monitorKeeperOnce(options: {
   clientAlive: boolean;
   workloadAlive?: boolean;
-  workloadResponds?(): Promise<boolean>;
-  consecutiveFailures?: number;
+  workloadResponds?(): Promise<boolean>; consecutiveFailures?: number;
   sessionResponds(): Promise<boolean>;
 }): Promise<{ alive: boolean; consecutiveFailures: number }> {
-  if (!options.clientAlive || options.workloadAlive === false)
-    return { alive: false, consecutiveFailures: 0 };
+  if (!options.clientAlive || options.workloadAlive === false) return { alive: false, consecutiveFailures: 0 };
   try {
     const workloadAlive = !options.workloadResponds || await options.workloadResponds();
     return { alive: workloadAlive && await options.sessionResponds(), consecutiveFailures: 0 };
   } catch (error: unknown) {
     const consecutiveFailures = (options.consecutiveFailures ?? 0) + 1;
-    if (consecutiveFailures >= 5) throw error;
-    return { alive: true, consecutiveFailures };
+    if (consecutiveFailures >= 5) throw error; return { alive: true, consecutiveFailures };
   }
 }
 export function paneOutcomeCode(render: string): string | null {
-  const matches = stripVTControlCharacters(render).match(
-    /terminal_pane_(?:failed(?:_non_error)?|agent_exit_(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))(?![0-9])/g,
-  );
-  return matches?.at(-1)
-    ? `terminal_keeper_observed_${matches.at(-1)?.slice('terminal_'.length)}`
-    : null;
+  const matches = stripVTControlCharacters(render)
+    .match(/terminal_pane_(?:failed(?:_non_error)?|agent_exit_(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))(?![0-9])/g);
+  return matches?.at(-1) ? `terminal_keeper_observed_${matches.at(-1)?.slice('terminal_'.length)}` : null;
 }
-const HEADLESS_TERMINAL_QUERIES = [
-  ['\x1b[?996n', '\x1b[?997;1n'],
-  ['\x1b[c', '\x1b[?1;2c'],
-  ['\x1b]11;?\x07', '\x1b]11;rgb:0000/0000/0000\x07'],
-] as const;
+const HEADLESS_TERMINAL_QUERIES = [['\x1b[?996n', '\x1b[?997;1n'], ['\x1b[c', '\x1b[?1;2c'],
+  ['\x1b]11;?\x07', '\x1b]11;rgb:0000/0000/0000\x07']] as const;
 export function headlessTerminalReply(chunk: string, state: string): { state: string; data: string } {
   const input = `${state}${chunk}`; let data = '', cursor = 0;
   for (let replies = 0; replies < 16; replies++) {
-    const next = HEADLESS_TERMINAL_QUERIES.map(([query, response]) =>
-      ({ index: input.indexOf(query, cursor), query, response }))
+    const next = HEADLESS_TERMINAL_QUERIES.map(([query, response]) => ({ index: input.indexOf(query, cursor), query, response }))
       .filter((candidate) => candidate.index >= 0).sort((left, right) => left.index - right.index)[0];
     if (!next) break;
     data += next.response; cursor = next.index + next.query.length;
   }
-  state = Array.from({ length: Math.min(input.length, 8) }, (_, index) => input.slice(-index - 1))
-    .filter((suffix) => HEADLESS_TERMINAL_QUERIES.some(([query]) =>
-      suffix.length < query.length && query.startsWith(suffix))).at(-1) ?? '';
+  state = Array.from({ length: Math.min(input.length, 8) }, (_, index) => input.slice(-index - 1)).filter((suffix) =>
+    HEADLESS_TERMINAL_QUERIES.some(([query]) => suffix.length < query.length && query.startsWith(suffix))).at(-1) ?? '';
   return { state, data };
 }
 export function isKeeperEntrypoint(moduleUrl: string, argvPath: string | undefined): boolean {
@@ -262,9 +240,7 @@ async function ownCgroup(runtimeId: string): Promise<string> {
 }
 
 export function directAgentProviderPid(processes: Array<{ pid: number; parentPid: number; args: string[] }>): number | undefined {
-  const pane = processes.find((entry) =>
-    entry.args.some((argument) => argument.endsWith('/pane.js')) &&
-    entry.args.includes('agent'));
+  const pane = processes.find((entry) => entry.args.some((argument) => argument.endsWith('/pane.js')) && entry.args.includes('agent'));
   return processes.find((entry) => entry.parentPid === pane?.pid)?.pid;
 }
 
@@ -307,9 +283,7 @@ async function cgroupRoles(
   const workloadPid = workloadKind === 'agent'
     ? directAgentProviderPid(processes)
     : processes.find((entry) => entry.comm === 'bash')?.pid;
-  if (!keeper || zellij.length < 2 || (requireWorkload && !workloadPid)) {
-    return null;
-  }
+  if (!keeper || zellij.length < 2 || (requireWorkload && !workloadPid)) return null;
   return {
     keeper: keeper.pid,
     zellijClient: zellij[0].pid,
@@ -395,14 +369,9 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
         if (stopping || checking) return;
         checking = true;
         try {
-          const monitored = await monitorKeeperOnce({
-            clientAlive,
-            consecutiveFailures: monitorFailures,
-            workloadResponds: async () => !startsFresh ||
-              await cgroupRoles(cgroup, descriptor.launch.kind, true) !== null,
-            sessionResponds: async () =>
-              await exactSessionResponds(sessionName, launch.env),
-          });
+          const monitored = await monitorKeeperOnce({ clientAlive, consecutiveFailures: monitorFailures,
+            workloadResponds: async () => !startsFresh || await cgroupRoles(cgroup, descriptor.launch.kind, true) !== null,
+            sessionResponds: async () => await exactSessionResponds(sessionName, launch.env) });
           monitorFailures = monitored.consecutiveFailures;
           if (!monitored.alive) {
             stopping = true;
