@@ -41,6 +41,11 @@ pnpm --filter '@matrix-os/observability' build
 pnpm --filter '@matrix-os/brand' build
 pnpm --filter '@matrix-os/kernel' build
 pnpm --filter '@matrix-os/gateway' build
+pnpm --filter '@matrix-os/gateway' run build:native
+test -f "$ROOT_DIR/packages/gateway/dist/native/linux-x64-glibc/matrix-fs.node" || {
+  echo "Native filesystem capability missing from Gateway build" >&2
+  exit 1
+}
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 : "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle}"
@@ -111,6 +116,12 @@ chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$S
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+NATIVE_FS_ADDON="$STAGE_DIR/app/packages/gateway/dist/native/linux-x64-glibc/matrix-fs.node"
+test -f "$NATIVE_FS_ADDON" || {
+  echo "Native filesystem capability missing from staged host bundle" >&2
+  exit 1
+}
+"$STAGE_DIR/runtime/node/bin/node" -e 'const addon = require(process.argv[1]); if (typeof addon.create !== "function" || typeof addon.copy !== "function" || typeof addon.move !== "function") process.exit(1)' "$NATIVE_FS_ADDON"
 mkdir -p "$STAGE_DIR/app/packages/symphony-elixir/release"
 cp -a "$DIST_DIR/symphony-release/." "$STAGE_DIR/app/packages/symphony-elixir/release/"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"

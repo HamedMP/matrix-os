@@ -19,17 +19,18 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, docs-contract, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, native-file-capability, unit, docs-contract, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
     expect(workflow).toContain('needs.patterns.result');
     expect(workflow).toContain('needs.react-doctor.result');
     expect(workflow).toContain('needs.sync-client.result');
+    expect(workflow).toContain('needs.native-file-capability.result');
     expect(workflow).toContain('needs.unit.result');
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$NATIVE_FILE_CAPABILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT"');
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
@@ -486,5 +487,15 @@ describe('CI workflows', () => {
     expect(releaseDocs).toContain('`deploy_after_publish=true`');
     expect(releaseDocs).toContain('Security severity does not override this opt-in deployment gate.');
     expect(releaseDocs).not.toContain('which auto-deploys the built version after publish');
+  });
+
+  it('compiles and runs the real Linux native filesystem capability in CI', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+
+    expect(workflow).toContain('native-file-capability:');
+    expect(workflow).toContain("pnpm --filter '@matrix-os/gateway' run build:native");
+    expect(workflow).toContain('tests/gateway/native-file-capability.test.ts');
+    expect(workflow).toContain('native-file-capability, unit');
   });
 });
