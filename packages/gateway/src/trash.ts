@@ -12,6 +12,10 @@ import { basename, dirname, join, posix, resolve } from "node:path";
 import { FileManagementPathSchema } from "./file-management/contracts.js";
 import { getFileEntryCapabilities } from "./file-management/policy.js";
 import {
+  moveFileNoReplace,
+  type NoReplaceFileMoveCapability,
+} from "./file-ops.js";
+import {
   resolveExistingFileApiPath,
   resolveWithinHome,
   resolveWritableFileApiPath,
@@ -31,6 +35,20 @@ export interface TrashListEntry extends TrashManifestEntry {
 
 const DEFAULT_MAX_ACTIVE_HOMES = 128;
 const DEFAULT_MAX_PENDING_OPERATIONS = 512;
+const MAX_TRASH_NAME_CANDIDATES = 100;
+
+export interface TrashManifestIo {
+  writeTemporary(path: string, contents: string): Promise<void>;
+  replaceManifest(temporaryPath: string, manifestPath: string): Promise<void>;
+  cleanupTemporary(path: string): Promise<void>;
+}
+
+export interface TrashDeleteDependencies {
+  manifestQueue?: TrashManifestQueue;
+  requestId?: string;
+  moveCapability?: NoReplaceFileMoveCapability;
+  manifestIo?: Partial<TrashManifestIo>;
+}
 
 export class TrashManifestQueueCapacityError extends Error {
   readonly code = "operation_unavailable";
@@ -106,14 +124,13 @@ export class TrashManifestQueue {
 export async function fileDelete(
   homePath: string,
   requestedPath: string,
-  manifestQueue?: TrashManifestQueue,
-  requestId?: string,
+  dependencies: TrashDeleteDependencies = {},
 ): Promise<{ ok: boolean; trashPath?: string; error?: string; status?: number }> {
   const authorization = authorizeTrashSource(homePath, requestedPath);
   if (authorization) return authorization;
 
   try {
-    return await serialize(manifestQueue, homePath, async () => {
+    return await serialize(dependencies.manifestQueue, homePath, async () => {
       const trashDir = join(homePath, ".trash");
       await mkdir(trashDir, { recursive: true });
       await assertTrashDirectory(trashDir, false);
@@ -130,21 +147,37 @@ export async function fileDelete(
       }
 
       const name = basename(source);
-      let trashName = name;
-      if (existsSync(join(trashDir, trashName))) trashName = `${randomUUID()}-${name}`;
-      const trashPath = `.trash/${trashName}`;
-      await rename(source, join(trashDir, trashName));
-      manifest.push({
-        name,
-        originalPath: requestedPath,
-        deletedAt: new Date().toISOString(),
-        trashPath,
-      });
-      await writeManifest(trashDir, manifest);
-      return { ok: true, trashPath };
+      for (const trashName of trashNameCandidates(name)) {
+        if (isReservedTrashName(trashName)) continue;
+        const trashPath = `.trash/${trashName}`;
+        const moveResult = await moveFileNoReplace(homePath, requestedPath, trashPath, {
+          moveCapability: dependencies.moveCapability,
+          requestId: dependencies.requestId,
+        });
+        if (moveResult.ok) {
+          manifest.push({
+            name,
+            originalPath: requestedPath,
+            deletedAt: new Date().toISOString(),
+            trashPath,
+          });
+          await writeManifest(trashDir, manifest, dependencies.manifestIo);
+          return { ok: true, trashPath };
+        }
+        if (moveResult.code === "destination_conflict") continue;
+        if (moveResult.code === "source_missing") {
+          return { ok: false, error: "Not found", status: 404 };
+        }
+        if (moveResult.code === "invalid_path") {
+          return { ok: false, error: "Invalid path" };
+        }
+        return { ok: false, error: "Trash operation failed", status: 500 };
+      }
+      return { ok: false, error: "Trash operation failed", status: 409 };
     });
   } catch (error: unknown) {
-    console.error(`[trash] Delete failed${requestId ? ` for request ${requestId}` : ""}:`, safeLogError(error));
+    const requestContext = dependencies.requestId ? ` for request ${dependencies.requestId}` : "";
+    console.error(`[trash] Delete failed${requestContext}:`, safeLogError(error));
     return { ok: false, error: "Trash operation failed", status: 500 };
   }
 }
@@ -287,7 +320,10 @@ function parseManifest(data: string): TrashManifestEntry[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
-  } catch {
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.error("[trash] Unexpected manifest parse failure:", safeLogError(error));
+    }
     throw new TrashManifestUnavailableError();
   }
   if (!Array.isArray(parsed) || !parsed.every(isManifestEntry)) {
@@ -311,21 +347,73 @@ function isManifestEntry(value: unknown): value is TrashManifestEntry {
     && FileManagementPathSchema.safeParse(entry.originalPath).success
     && FileManagementPathSchema.safeParse(entry.trashPath).success
     && posix.dirname(entry.trashPath) === ".trash"
+    && !isReservedTrashName(posix.basename(entry.trashPath))
     && Number.isFinite(Date.parse(entry.deletedAt));
 }
 
-async function writeManifest(trashDir: string, manifest: TrashManifestEntry[]): Promise<void> {
+async function writeManifest(
+  trashDir: string,
+  manifest: TrashManifestEntry[],
+  overrides: Partial<TrashManifestIo> = {},
+): Promise<void> {
   await assertTrashDirectory(trashDir, false);
   const manifestPath = join(trashDir, ".manifest.json");
   const temporaryPath = `${manifestPath}.${randomUUID()}.tmp`;
+  const manifestIo: TrashManifestIo = {
+    writeTemporary: (path, contents) => writeFile(path, contents, { flag: "wx" }),
+    replaceManifest: rename,
+    cleanupTemporary: (path) => rm(path, { force: true }),
+    ...overrides,
+  };
   try {
-    await writeFile(temporaryPath, JSON.stringify(manifest, null, 2), { flag: "wx" });
-    await rename(temporaryPath, manifestPath);
+    await manifestIo.writeTemporary(temporaryPath, JSON.stringify(manifest, null, 2));
+    await manifestIo.replaceManifest(temporaryPath, manifestPath);
   } finally {
-    await rm(temporaryPath, { force: true }).catch((error: unknown) => {
+    try {
+      await manifestIo.cleanupTemporary(temporaryPath);
+    } catch (error: unknown) {
       console.warn("[trash] Could not clean temporary manifest:", safeLogError(error));
-    });
+    }
   }
+}
+
+function trashNameCandidates(name: string): string[] {
+  const extension = posix.extname(name);
+  const stem = extension ? name.slice(0, -extension.length) : name;
+  return Array.from({ length: MAX_TRASH_NAME_CANDIDATES }, (_, index) => {
+    if (index === 0) return name;
+    const suffix = index === 1 ? " copy" : ` copy ${index}`;
+    return fitTrashName(stem, suffix, extension);
+  });
+}
+
+function fitTrashName(stem: string, suffix: string, extension: string): string {
+  let preservedExtension = extension;
+  let candidateStem = stem;
+  if (Buffer.byteLength(`${suffix}${preservedExtension}`, "utf8") > 255) {
+    candidateStem += preservedExtension;
+    preservedExtension = "";
+  }
+  const byteLimit = 255 - Buffer.byteLength(`${suffix}${preservedExtension}`, "utf8");
+  return `${truncateUtf8(candidateStem, byteLimit)}${suffix}${preservedExtension}`;
+}
+
+function truncateUtf8(value: string, byteLimit: number): string {
+  let result = "";
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (bytes + characterBytes > byteLimit) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
+}
+
+function isReservedTrashName(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return normalized === ".manifest.json"
+    || (normalized.startsWith(".manifest.json.") && normalized.endsWith(".tmp"));
 }
 
 async function assertTrashDirectory(trashDir: string, allowMissing: boolean): Promise<boolean> {

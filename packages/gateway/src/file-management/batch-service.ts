@@ -25,6 +25,7 @@ import type { NoReplaceFileMoveCapability } from "../file-ops.js";
 import {
   fileDelete,
   TrashManifestQueue,
+  type TrashManifestIo,
   trashEmpty,
   trashList,
   trashRestore,
@@ -74,6 +75,8 @@ export interface FileBatchTrashResult {
 export interface FileBatchTrashServiceOptions {
   resultCache?: FileOperationResultCache;
   manifestQueue?: TrashManifestQueue;
+  moveCapability?: NoReplaceFileMoveCapability;
+  manifestIo?: Partial<TrashManifestIo>;
 }
 
 export interface FileBatchMoveServiceOptions {
@@ -268,19 +271,28 @@ export class FileBatchTrashService {
   private readonly ownsResultCache: boolean;
   private readonly manifestQueue: TrashManifestQueue;
   private readonly ownsManifestQueue: boolean;
+  private readonly moveCapability: NoReplaceFileMoveCapability | undefined;
+  private readonly manifestIo: Partial<TrashManifestIo> | undefined;
   private readonly active = new Set<Promise<unknown>>();
   private closed = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(options: FileBatchTrashServiceOptions = {}) {
     this.resultCache = options.resultCache ?? new FileOperationResultCache();
     this.ownsResultCache = options.resultCache === undefined;
     this.manifestQueue = options.manifestQueue ?? new TrashManifestQueue();
     this.ownsManifestQueue = options.manifestQueue === undefined;
+    this.moveCapability = options.moveCapability;
+    this.manifestIo = options.manifestIo;
   }
 
   delete(homePath: string, requestedPath: string) {
     if (this.closed) return Promise.reject(new FileBatchTrashUnavailableError());
-    return fileDelete(homePath, requestedPath, this.manifestQueue);
+    return fileDelete(homePath, requestedPath, {
+      manifestQueue: this.manifestQueue,
+      moveCapability: this.moveCapability,
+      manifestIo: this.manifestIo,
+    });
   }
 
   list(homePath: string) {
@@ -319,8 +331,12 @@ export class FileBatchTrashService {
         const result = await fileDelete(
           input.homePath,
           source,
-          this.manifestQueue,
-          input.requestId,
+          {
+            manifestQueue: this.manifestQueue,
+            requestId: input.requestId,
+            moveCapability: this.moveCapability,
+            manifestIo: this.manifestIo,
+          },
         );
         results.push(toTrashItemResult(source, result));
       }
@@ -337,9 +353,15 @@ export class FileBatchTrashService {
     return operation;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
+  close(): Promise<void> {
+    if (!this.closePromise) {
+      this.closed = true;
+      this.closePromise = this.closeOwnedResources();
+    }
+    return this.closePromise;
+  }
+
+  private async closeOwnedResources(): Promise<void> {
     await Promise.allSettled([...this.active]);
     this.active.clear();
     if (this.ownsManifestQueue) await this.manifestQueue.close();
