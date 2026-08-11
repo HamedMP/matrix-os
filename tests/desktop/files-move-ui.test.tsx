@@ -1,125 +1,23 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ComputerFileBrowser from "@desktop/renderer/src/features/files/ComputerFileBrowser";
-import { useBrowserViewPreference } from "@desktop/renderer/src/features/files/browser-view-preference";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { FILE_MOVE_MIME } from "@desktop/renderer/src/features/files/file-drag";
 import { AppError } from "@desktop/renderer/src/lib/errors";
-
-const CAPABILITIES = { canRename: true, canMove: true, canTrash: true };
-
-function dragTransfer(types: string[] = []) {
-  const values: Record<string, string> = {};
-  return {
-    effectAllowed: "uninitialized",
-    dropEffect: "none",
-    files: [] as unknown as FileList,
-    get types() { return types.length ? types : Object.keys(values); },
-    getData: vi.fn((type: string) => values[type] ?? ""),
-    setData: vi.fn((type: string, value: string) => { values[type] = value; }),
-    setDragImage: vi.fn(),
-  } as unknown as DataTransfer;
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
-  return { promise, resolve };
-}
-
-function makeApi() {
-  const listings: Record<string, Array<{ name: string; type: "file" | "directory"; capabilities: typeof CAPABILITIES }>> = {
-    "": [
-      { name: "Archive", type: "directory", capabilities: CAPABILITIES },
-      { name: "Folder", type: "directory", capabilities: CAPABILITIES },
-      { name: "note.md", type: "file", capabilities: CAPABILITIES },
-      { name: "todo.md", type: "file", capabilities: CAPABILITIES },
-      { name: "locked.md", type: "file", capabilities: { canRename: false, canMove: false, canTrash: false } },
-    ],
-    Archive: [{ name: "Nested", type: "directory", capabilities: CAPABILITIES }],
-    Folder: [{ name: "Child", type: "directory", capabilities: CAPABILITIES }],
-    "Archive/Nested": [{ name: "deep.md", type: "file", capabilities: CAPABILITIES }],
-  };
-  let prepared: { requestId: string; sources: string[]; destinationDirectory: string } | null = null;
-  let conflictSources: string[] = [];
-  let resultCodes: Record<string, "moved" | "skipped" | "protected" | "failed"> = {};
-  let executeError: unknown = null;
-  let preflightPromise: Promise<unknown> | null = null;
-  let executePromise: Promise<unknown> | null = null;
-  return {
-    baseUrl: "https://app.matrix-os.com",
-    get: vi.fn(async (path: string) => {
-      const directory = new URLSearchParams(path.split("?")[1]).get("path") ?? "";
-      return { path: directory, entries: listings[directory] ?? [] };
-    }),
-    post: vi.fn(async (path: string, body: Record<string, unknown>) => {
-      if (path !== "/api/files/batch/move") throw new Error("unexpected mutation");
-      if (body.phase === "preflight") {
-        prepared = body as unknown as typeof prepared;
-        if (preflightPromise) return preflightPromise;
-        return {
-          sources: body.sources,
-          destinationDirectory: body.destinationDirectory,
-          conflicts: conflictSources.map((source) => ({ source, destination: `Archive/${source}` })),
-          invalid: [],
-          preflightFingerprint: "move-fingerprint",
-        };
-      }
-      if (!prepared) throw new Error("execute without preflight");
-      if (executePromise) return executePromise;
-      if (executeError) {
-        const error = executeError;
-        executeError = null;
-        throw error;
-      }
-      const sources = prepared.sources;
-      for (const source of sources) {
-        if ((resultCodes[source] ?? "moved") !== "moved") continue;
-        const name = source.split("/").pop()!;
-        const sourceDirectory = source.split("/").slice(0, -1).join("/");
-        listings[sourceDirectory] = listings[sourceDirectory]!.filter((entry) => entry.name !== name);
-        listings[prepared.destinationDirectory] ??= [];
-        listings[prepared.destinationDirectory]!.push({ name, type: "file", capabilities: CAPABILITIES });
-      }
-      return {
-        results: sources.map((source) => (resultCodes[source] ?? "moved") === "moved" ? {
-          source,
-          destination: `${prepared!.destinationDirectory}/${source.split("/").pop()!}`,
-          code: "moved",
-        } : { source, code: resultCodes[source] }),
-        affectedDirectories: [...new Set([...sources.map((source) => source.split("/").slice(0, -1).join("/")), prepared.destinationDirectory])],
-      };
-    }),
-    setConflicts(sources: string[]) { conflictSources = sources; },
-    setResultCodes(next: typeof resultCodes) { resultCodes = next; },
-    setExecuteError(error: unknown) { executeError = error; },
-    setPreflightPromise(promise: Promise<unknown>) { preflightPromise = promise; },
-    setExecutePromise(promise: Promise<unknown>) { executePromise = promise; },
-  };
-}
-
-function renderBrowser(props: Record<string, unknown> = {}) {
-  return render(<Tooltip.Provider><ComputerFileBrowser directorySocket={null} {...props as never} /></Tooltip.Provider>);
-}
+import { MoveFilesDialog } from "@desktop/renderer/src/features/files/MoveFilesDialog";
+import {
+  deferred, dragTransfer, folderListing, installMoveApi, makeApi,
+  openMoveFor, renderBrowser, startArchiveMove,
+} from "./files-move-test-fixture";
 
 describe("Files move UI", () => {
   let api: ReturnType<typeof makeApi>;
 
   beforeEach(() => {
     api = makeApi();
-    useBrowserViewPreference.setState({ view: "list" });
-    useConnection.setState({
-      status: "signed-in",
-      handle: "operator",
-      platformHost: "https://app.matrix-os.com",
-      runtimeSlot: "primary",
-      authGeneration: 1,
-      api: api as never,
-    });
+    installMoveApi(api);
   });
 
   afterEach(() => {
@@ -131,8 +29,7 @@ describe("Files move UI", () => {
     renderBrowser({ selectionPlatform: "mac" });
     const note = await screen.findByRole("button", { name: "Open note.md" });
     fireEvent.click(note);
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for note.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
+    await openMoveFor("note.md");
 
     expect(screen.getByRole("heading", { name: "Move 1 item" })).not.toBeNull();
     expect(await screen.findByRole("button", { name: "Choose Archive" })).not.toBeNull();
@@ -143,6 +40,65 @@ describe("Files move UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel move" }));
     expect(screen.queryByRole("heading", { name: "Move 1 item" })).toBeNull();
     expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("reports picker candidates to the serializable move session", async () => {
+    const chooseCandidate = vi.fn();
+    const controls = (destination: string | null) => ({
+      session: {
+        origin: "menu", stage: "picking", sources: ["note.md"], destination,
+        preflight: null, choices: [], applyToRemaining: false,
+      },
+      chooseCandidate,
+      cancelMove: vi.fn(),
+      chooseDestination: vi.fn(),
+      setApplyToRemaining: vi.fn(),
+      chooseConflict: vi.fn(),
+      confirmMove: vi.fn(),
+    });
+    const view = render(<MoveFilesDialog controls={controls(null) as never} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Choose Archive" }));
+
+    expect(chooseCandidate).toHaveBeenCalledWith("Archive");
+    expect(screen.getByRole("button", { name: "Move" }).hasAttribute("disabled")).toBe(true);
+    view.rerender(<MoveFilesDialog controls={controls("Archive") as never} />);
+    expect((await screen.findByRole("button", { name: "Choose Archive" })).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Move" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("shows a safe picker listing error and retries instead of appearing empty", async () => {
+    renderBrowser();
+    fireEvent.click(await screen.findByRole("button", { name: "Open note.md" }));
+    api.setListingError("", new Error("provider /home/operator unavailable"));
+    await openMoveFor("note.md");
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Folders could not be loaded.");
+    expect(screen.queryByText(/provider|\/home\/operator/i)).toBeNull();
+    expect(screen.queryByText("No subfolders here.")).toBeNull();
+    api.setListingError("", null);
+    fireEvent.click(screen.getByRole("button", { name: "Retry folders" }));
+    expect(await screen.findByRole("button", { name: "Choose Archive" })).not.toBeNull();
+  });
+
+  it("keeps the newest picker folder when listing responses arrive out of order", async () => {
+    renderBrowser();
+    fireEvent.click(await screen.findByRole("button", { name: "Open note.md" }));
+    await openMoveFor("note.md");
+    const archive = deferred<ReturnType<typeof folderListing>>();
+    const home = deferred<ReturnType<typeof folderListing>>();
+    api.queueListing("Archive", archive.promise);
+    api.queueListing("", home.promise);
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Choose Archive" }));
+    fireEvent.click(screen.getByRole("button", { name: "Matrix home" }));
+    home.resolve(folderListing("", ["Home only"]));
+    await act(async () => { await home.promise; });
+    expect(await screen.findByRole("button", { name: "Choose Home only" })).not.toBeNull();
+
+    archive.resolve(folderListing("Archive", ["Stale folder"]));
+    await act(async () => { await archive.promise; });
+    expect(screen.queryByRole("button", { name: "Choose Stale folder" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Choose Home only" })).not.toBeNull();
   });
 
   it("offers the same Move to picker from the row context menu", async () => {
@@ -156,8 +112,7 @@ describe("Files move UI", () => {
   it("navigates picker breadcrumbs and executes one no-conflict batch with the preflight identity", async () => {
     renderBrowser();
     fireEvent.click(await screen.findByRole("button", { name: "Open note.md" }));
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for note.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
+    await openMoveFor("note.md");
 
     const archive = await screen.findByRole("button", { name: "Choose Archive" });
     fireEvent.doubleClick(archive);
@@ -184,8 +139,7 @@ describe("Files move UI", () => {
   it("explains and rejects source and descendant picker destinations before preflight", async () => {
     renderBrowser();
     fireEvent.click(await screen.findByRole("button", { name: "Open Folder" }));
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Folder" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
+    await openMoveFor("Folder");
 
     fireEvent.click(await screen.findByRole("button", { name: "Choose Folder" }));
     expect(screen.getByRole("alert").textContent).toMatch(/outside the selected folder/i);
@@ -204,10 +158,7 @@ describe("Files move UI", () => {
     const todo = screen.getByRole("button", { name: "Open todo.md" });
     fireEvent.click(note);
     fireEvent.click(todo, { metaKey: true });
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for todo.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Choose Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    await startArchiveMove("todo.md");
 
     expect(await screen.findByRole("heading", { name: "Resolve move conflicts" })).not.toBeNull();
     expect(screen.getAllByTestId("move-conflict-source").map((row) => row.textContent)).toEqual(["note.md", "todo.md"]);
@@ -258,6 +209,30 @@ describe("Files move UI", () => {
     expect(document.querySelector("[data-file-drag-preview]")).toBeNull();
   });
 
+  it("accepts Chromium protected-mode dragover before strict payload parsing on drop", async () => {
+    const transfer = dragTransfer();
+    renderBrowser();
+    const note = await screen.findByRole("button", { name: "Open note.md" });
+    const archive = screen.getByRole("button", { name: "Open Archive" });
+    fireEvent.click(note);
+    fireEvent.dragStart(note, { dataTransfer: transfer });
+    const serialized = vi.mocked(transfer.setData).mock.calls[0]![1];
+    vi.mocked(transfer.getData).mockReturnValue("");
+
+    fireEvent.dragOver(archive, { dataTransfer: transfer });
+    expect(archive.getAttribute("data-file-drop-target")).toBe("true");
+    expect(transfer.dropEffect).toBe("move");
+
+    fireEvent.dragOver(archive, { dataTransfer: dragTransfer(["text/plain"]) });
+    expect(archive.getAttribute("data-file-drop-target")).toBe("false");
+    fireEvent.dragOver(archive, { dataTransfer: transfer });
+    expect(archive.getAttribute("data-file-drop-target")).toBe("true");
+
+    vi.mocked(transfer.getData).mockReturnValue(serialized);
+    fireEvent.drop(archive, { dataTransfer: transfer });
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+  });
+
   it("accepts an ancestor breadcrumb drop but never highlights the current directory", async () => {
     const transfer = dragTransfer();
     renderBrowser();
@@ -296,10 +271,7 @@ describe("Files move UI", () => {
 
     fireEvent.click(note);
     api.setConflicts(["note.md"]);
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for note.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Choose Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    await startArchiveMove("note.md");
     expect(await screen.findByRole("heading", { name: "Resolve move conflicts" })).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Cancel move" }));
     expect(api.post).toHaveBeenCalledOnce();
@@ -313,10 +285,7 @@ describe("Files move UI", () => {
     const todo = screen.getByRole("button", { name: "Open todo.md" });
     fireEvent.click(note);
     fireEvent.click(todo, { metaKey: true });
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for todo.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Choose Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    await startArchiveMove("todo.md");
 
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open note.md" })).toBeNull());
     expect(screen.getByRole("button", { name: "Open todo.md" }).getAttribute("aria-pressed")).toBe("true");
@@ -330,10 +299,7 @@ describe("Files move UI", () => {
     renderBrowser();
     const note = await screen.findByRole("button", { name: "Open note.md" });
     fireEvent.click(note);
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for note.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Choose Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    await startArchiveMove("note.md");
 
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("button", { name: "Open note.md" }).getAttribute("aria-pressed")).toBe("true");
@@ -342,10 +308,7 @@ describe("Files move UI", () => {
     await Promise.resolve();
     expect(api.post).toHaveBeenCalledTimes(2);
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for note.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Choose Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    await startArchiveMove("note.md");
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(4));
   });
 
@@ -378,7 +341,7 @@ describe("Files move UI", () => {
     expect(document.querySelector("[data-file-drag-preview]")).toBeNull();
   });
 
-  it("closes synchronously and suppresses a held preflight after API/runtime/auth replacement", async () => {
+  it("suppresses a held preflight after main navigation and API/runtime/auth replacement", async () => {
     const held = deferred<{
       sources: string[];
       destinationDirectory: string;
@@ -391,13 +354,13 @@ describe("Files move UI", () => {
     renderBrowser({ onPreviewPathChange });
     const note = await screen.findByRole("button", { name: "Open note.md" });
     fireEvent.click(note);
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for note.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Choose Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    await startArchiveMove("note.md");
     await waitFor(() => expect(api.post).toHaveBeenCalledOnce());
     expect(screen.getByText("Preparing move…")).not.toBeNull();
 
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open Archive", hidden: true }));
+    expect(screen.queryByText("Preparing move…")).toBeNull();
+    expect(await screen.findByRole("button", { name: "Open Nested" })).not.toBeNull();
     const replacement = makeApi();
     act(() => useConnection.setState({ api: replacement as never, runtimeSlot: "preview", authGeneration: 2 }));
     expect(screen.queryByText("Preparing move…")).toBeNull();
@@ -409,26 +372,27 @@ describe("Files move UI", () => {
 
     expect(api.post).toHaveBeenCalledOnce();
     expect(screen.queryByRole("heading", { name: "Resolve move conflicts" })).toBeNull();
-    expect((await screen.findByRole("button", { name: "Open note.md" })).getAttribute("aria-pressed")).toBe("false");
+    expect((await screen.findByRole("button", { name: "Open note.md" })).getAttribute("aria-selected")).not.toBe("true");
     expect(onPreviewPathChange).toHaveBeenLastCalledWith(null);
   });
 
-  it("keeps pending rows disabled and suppresses a held execute after auth changes", async () => {
+  it("suppresses a held execute after main navigation and auth changes", async () => {
     const held = deferred<{
       results: Array<{ source: string; destination: string; code: "moved" }>;
       affectedDirectories: string[];
     }>();
     api.setExecutePromise(held.promise);
-    renderBrowser();
+    const onPreviewPathChange = vi.fn();
+    renderBrowser({ onPreviewPathChange });
     const note = await screen.findByRole("button", { name: "Open note.md" });
     fireEvent.click(note);
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for note.md" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Choose Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    await startArchiveMove("note.md");
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("button", { name: "Open note.md", hidden: true }).hasAttribute("disabled")).toBe(true);
 
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open Archive", hidden: true }));
+    expect(screen.queryByText("Preparing move…")).toBeNull();
+    expect(await screen.findByRole("button", { name: "Open Nested" })).not.toBeNull();
     act(() => useConnection.setState({ authGeneration: 2 }));
     held.resolve({
       results: [{ source: "note.md", destination: "Archive/note.md", code: "moved" }],
@@ -436,7 +400,63 @@ describe("Files move UI", () => {
     });
     await act(async () => { await held.promise; await Promise.resolve(); });
     expect(api.post).toHaveBeenCalledTimes(2);
-    expect((await screen.findByRole("button", { name: "Open note.md" })).getAttribute("aria-pressed")).toBe("false");
+    expect((await screen.findByRole("button", { name: "Open note.md" })).getAttribute("aria-selected")).not.toBe("true");
+    expect(onPreviewPathChange).toHaveBeenLastCalledWith(null);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("does not dismiss an executing move with Escape or an outside pointer", async () => {
+    const held = deferred<{
+      results: Array<{ source: string; destination: string; code: "moved" }>;
+      affectedDirectories: string[];
+    }>();
+    api.setExecutePromise(held.promise);
+    const onPreviewPathChange = vi.fn();
+    renderBrowser({ onPreviewPathChange });
+    const note = await screen.findByRole("button", { name: "Open note.md" });
+    fireEvent.click(note);
+    await startArchiveMove("note.md");
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.pointerDown(document.body);
+    expect(screen.getByText("Preparing move…")).not.toBeNull();
+
+    api.settleListing("note.md", "Archive");
+    held.resolve({
+      results: [{ source: "note.md", destination: "Archive/note.md", code: "moved" }],
+      affectedDirectories: ["", "Archive"],
+    });
+    await act(async () => { await held.promise; await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: "Open note.md" })).toBeNull();
+    expect(onPreviewPathChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("shows allowlisted invalid reasons in source order and retains those rows", async () => {
+    api.setInvalid([
+      { source: "note.md", code: "source_missing" },
+      { source: "todo.md", code: "protected" },
+    ]);
+    api.setResultCodes({ "note.md": "source_missing", "todo.md": "protected" });
+    const onPreviewPathChange = vi.fn();
+    renderBrowser({ selectionPlatform: "mac", onPreviewPathChange });
+    fireEvent.click(await screen.findByRole("button", { name: "Open note.md" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open todo.md" }), { metaKey: true });
+    await startArchiveMove("todo.md");
+
+    expect(await screen.findByRole("heading", { name: "Resolve move conflicts" })).not.toBeNull();
+    expect(screen.getAllByTestId("move-invalid-source").map((row) => row.textContent)).toEqual([
+      "note.md", "todo.md",
+    ]);
+    expect(screen.getByText("This item is no longer available.")).not.toBeNull();
+    expect(screen.getByText("This item is protected and cannot be moved.")).not.toBeNull();
+    expect(screen.queryByText(/^(source_missing|protected|invalid_destination)$/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Move selected items" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "Open note.md" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Open todo.md" }).getAttribute("aria-pressed")).toBe("true");
+    expect(onPreviewPathChange).toHaveBeenLastCalledWith("note.md");
   });
 });

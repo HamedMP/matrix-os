@@ -75,6 +75,22 @@ describe("internal Files drag payload", () => {
     });
   });
 
+  it("accepts the exact path-count, UTF-8 path, and serialized payload boundaries", () => {
+    const exactPath = `projects/${"é".repeat(2_043)}x`;
+    expect(new TextEncoder().encode(exactPath).byteLength).toBe(4_096);
+    expect(writeFileDragData(dragTransfer(), [exactPath], scope)).toBe(true);
+
+    const paths = Array.from({ length: 100 }, (_, index) =>
+      `projects/${String(index).padStart(2, "0")}-${"x".repeat(index === 99 ? 1_367 : 1_294)}`,
+    );
+    expect(paths).toHaveLength(100);
+    expect(new TextEncoder().encode(JSON.stringify({ version: 1, paths, scope })).byteLength)
+      .toBe(MAX_FILE_DRAG_BYTES);
+    const transfer = dragTransfer();
+    expect(writeFileDragData(transfer, paths, scope)).toBe(true);
+    expect(readFileDragData(transfer, scope)?.paths).toEqual(paths);
+  });
+
   it("rejects path count, path bytes, duplicates, mixed parents, scope, and total bytes", () => {
     expect(writeFileDragData(dragTransfer(), Array.from({ length: 101 }, (_, index) => `projects/${index}`), scope)).toBe(false);
     expect(writeFileDragData(dragTransfer(), [`projects/${"é".repeat(2_050)}`], scope)).toBe(false);

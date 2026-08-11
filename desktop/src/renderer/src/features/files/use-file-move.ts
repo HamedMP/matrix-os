@@ -3,6 +3,7 @@ import type { ApiClient } from "../../lib/api";
 import type { FileConflictChoice } from "./file-management-api";
 import {
   createFileDragSession,
+  hasOnlyInternalFileMoveType,
   isValidFileDropTarget,
   mountFileDragPreview,
   readFileDragData,
@@ -121,7 +122,7 @@ export function useFileMove(options: MoveOwner & {
       return;
     }
     const prepared = { ...base, destination, preflight };
-    if (preflight.conflicts.length === 0) {
+    if (preflight.conflicts.length === 0 && preflight.invalid.length === 0) {
       await finishExecute(prepared, preflight, [], owner, epoch);
       return;
     }
@@ -167,10 +168,15 @@ export function useFileMove(options: MoveOwner & {
   const dragOverTarget = useCallback((destination: string, transfer: DataTransfer) => {
     const owner = dragOwnerRef.current;
     const expected = owner && sameOwner(owner, currentRef.current) ? owner : null;
-    if (!expected) return false;
-    const scope = { directory: expected.directory, runtimeSlot: expected.runtimeSlot, authGeneration: expected.authGeneration };
-    const payload = readFileDragData(transfer, scope);
-    if (!payload || !samePayload(payload, dragPayloadRef.current) || !isValidFileDropTarget(payload, destination)) return false;
+    if (!expected) {
+      setStoredDropTarget(null);
+      return false;
+    }
+    const payload = dragPayloadRef.current;
+    if (!payload || !hasOnlyInternalFileMoveType(transfer) || !isValidFileDropTarget(payload, destination)) {
+      setStoredDropTarget(null);
+      return false;
+    }
     transfer.dropEffect = "move";
     setStoredDropTarget(destination);
     return true;
@@ -231,6 +237,12 @@ export function useFileMove(options: MoveOwner & {
     void beginPreflight(session, destination);
   }, [beginPreflight, session]);
 
+  const chooseCandidate = useCallback((destination: string) => {
+    setStoredSession((current) => current?.stage === "picking"
+      ? { ...current, destination }
+      : current);
+  }, []);
+
   const setApplyToRemaining = useCallback((apply: boolean) => {
     setStoredSession((current) => current?.stage === "resolving"
       ? { ...current, applyToRemaining: apply }
@@ -266,14 +278,15 @@ export function useFileMove(options: MoveOwner & {
   }, [finishExecute, session]);
 
   const cancelMove = useCallback(() => {
+    if (session?.stage === "executing") return;
     epochRef.current += 1;
-    if (session?.preflight && session.stage !== "executing") options.controller.cancelMove(session.preflight);
+    if (session?.preflight) options.controller.cancelMove(session.preflight);
     setStoredSession(null);
     ownerRef.current = null;
   }, [options.controller, session]);
 
   return {
-    session, requestMenuMove, chooseDestination, setApplyToRemaining,
+    session, requestMenuMove, chooseCandidate, chooseDestination, setApplyToRemaining,
     chooseConflict, confirmMove, cancelMove, dropTarget,
     beginDrag, dragOverTarget, leaveDropTarget, dropOnTarget,
     endDrag: cleanupDrag, entryDragProps,

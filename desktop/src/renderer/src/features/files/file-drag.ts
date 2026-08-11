@@ -93,7 +93,7 @@ export function readFileDragData(
   transfer: DataTransfer,
   expectedScope: FileDragPayload["scope"],
 ): FileDragPayload | null {
-  if (transfer.files.length > 0 || transfer.types.length !== 1 || transfer.types[0] !== FILE_MOVE_MIME) return null;
+  if (!hasOnlyInternalFileMoveType(transfer)) return null;
   const serialized = transfer.getData(FILE_MOVE_MIME);
   if (!serialized || new TextEncoder().encode(serialized).byteLength > MAX_FILE_DRAG_BYTES) return null;
   let value: unknown;
@@ -106,6 +106,12 @@ export function readFileDragData(
   const parsed = FileDragPayloadSchema.safeParse(value);
   if (!parsed.success || !sameScope(parsed.data.scope, expectedScope)) return null;
   return parsed.data;
+}
+
+export function hasOnlyInternalFileMoveType(transfer: DataTransfer): boolean {
+  return transfer.files.length === 0
+    && transfer.types.length === 1
+    && transfer.types[0] === FILE_MOVE_MIME;
 }
 
 export function isValidFileDropTarget(payload: FileDragPayload, destination: string): boolean {
