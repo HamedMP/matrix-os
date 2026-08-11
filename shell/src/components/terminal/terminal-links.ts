@@ -30,6 +30,23 @@ export interface TerminalLinksState {
   activeUrl: string | null;
 }
 
+export interface TerminalCellPosition {
+  bufferLineNumber: number;
+  column: number;
+}
+
+interface TerminalLinkMatch {
+  entry: TerminalLinkEntry;
+  startIndex: number;
+  length: number;
+}
+
+interface WrappedLineInfo {
+  text: string;
+  startRow: number;
+  lineLengths: number[];
+}
+
 export type TerminalLinksEvent =
   | { type: "linksDetected"; entries: TerminalLinkEntry[] }
   | { type: "collapse" }
@@ -123,9 +140,9 @@ export function mayContainTerminalLink(raw: string): boolean {
   return raw.includes("http://") || raw.includes("https://");
 }
 
-export function extractTerminalLinks(raw: string): TerminalLinkEntry[] {
+function extractTerminalLinkMatches(raw: string): TerminalLinkMatch[] {
   const output = stripTerminalControlSequences(raw);
-  const entries: TerminalLinkEntry[] = [];
+  const matches: TerminalLinkMatch[] = [];
   TERMINAL_URL_PATTERN.lastIndex = 0;
 
   for (const match of output.matchAll(TERMINAL_URL_PATTERN)) {
@@ -139,12 +156,128 @@ export function extractTerminalLinks(raw: string): TerminalLinkEntry[] {
     }
     if (!hasSafeUrlEnvelope(parsed)) continue;
     const entry = toTerminalLinkEntry(parsed);
-    if (!entries.some((existing) => existing.url === entry.url)) {
-      entries.push(entry);
-    }
+    matches.push({ entry, startIndex: match.index ?? 0, length: candidate.length });
+  }
+
+  return matches;
+}
+
+export function extractTerminalLinks(raw: string): TerminalLinkEntry[] {
+  const entries: TerminalLinkEntry[] = [];
+  for (const { entry } of extractTerminalLinkMatches(raw)) {
+    if (!entries.some((existing) => existing.url === entry.url)) entries.push(entry);
   }
 
   return entries;
+}
+
+function getWrappedLine(
+  terminal: Pick<Terminal, "buffer">,
+  bufferRow: number,
+): WrappedLineInfo | null {
+  const buffer = terminal.buffer.active;
+  if (!buffer.getLine(bufferRow)) return null;
+
+  let startRow = bufferRow;
+  while (startRow > 0) {
+    const current = buffer.getLine(startRow);
+    if (!current?.isWrapped) break;
+    startRow -= 1;
+  }
+
+  const parts: string[] = [];
+  const lineLengths: number[] = [];
+  for (let row = startRow; row < buffer.length; row += 1) {
+    const line = buffer.getLine(row);
+    if (!line || (row > startRow && !line.isWrapped)) break;
+    const text = line.translateToString();
+    parts.push(text);
+    lineLengths.push(text.length);
+  }
+
+  return { text: parts.join(""), startRow, lineLengths };
+}
+
+function offsetToCell(
+  lineLengths: number[],
+  startRow: number,
+  offset: number,
+): TerminalCellPosition {
+  let remaining = offset;
+  for (let index = 0; index < lineLengths.length; index += 1) {
+    if (remaining < lineLengths[index]!) {
+      return {
+        bufferLineNumber: startRow + index + 1,
+        column: remaining + 1,
+      };
+    }
+    remaining -= lineLengths[index]!;
+  }
+  const lastIndex = Math.max(0, lineLengths.length - 1);
+  return {
+    bufferLineNumber: startRow + lastIndex + 1,
+    column: Math.max(1, lineLengths[lastIndex] ?? 1),
+  };
+}
+
+function cellIsWithinRange(
+  cell: TerminalCellPosition,
+  start: TerminalCellPosition,
+  end: TerminalCellPosition,
+): boolean {
+  const afterStart =
+    cell.bufferLineNumber > start.bufferLineNumber ||
+    (cell.bufferLineNumber === start.bufferLineNumber && cell.column >= start.column);
+  const beforeEnd =
+    cell.bufferLineNumber < end.bufferLineNumber ||
+    (cell.bufferLineNumber === end.bufferLineNumber && cell.column <= end.column);
+  return afterStart && beforeEnd;
+}
+
+export function terminalCellFromPointer(
+  terminal: Pick<Terminal, "cols" | "rows" | "element" | "buffer">,
+  clientX: number,
+  clientY: number,
+): TerminalCellPosition | null {
+  const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen");
+  if (!screen || terminal.cols <= 0 || terminal.rows <= 0) return null;
+  const rect = screen.getBoundingClientRect();
+  if (
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    clientX < rect.left ||
+    clientX >= rect.right ||
+    clientY < rect.top ||
+    clientY >= rect.bottom
+  ) {
+    return null;
+  }
+
+  const column = Math.floor(((clientX - rect.left) / rect.width) * terminal.cols) + 1;
+  const viewportRow = Math.floor(((clientY - rect.top) / rect.height) * terminal.rows) + 1;
+  return {
+    column,
+    bufferLineNumber: terminal.buffer.active.viewportY + viewportRow,
+  };
+}
+
+export function findTerminalLinkAtCell(
+  terminal: Pick<Terminal, "buffer">,
+  cell: TerminalCellPosition,
+): TerminalLinkEntry | null {
+  const wrapped = getWrappedLine(terminal, cell.bufferLineNumber - 1);
+  if (!wrapped) return null;
+
+  for (const match of extractTerminalLinkMatches(wrapped.text)) {
+    const start = offsetToCell(wrapped.lineLengths, wrapped.startRow, match.startIndex);
+    const end = offsetToCell(
+      wrapped.lineLengths,
+      wrapped.startRow,
+      match.startIndex + match.length - 1,
+    );
+    if (cellIsWithinRange(cell, start, end)) return match.entry;
+  }
+  return null;
 }
 
 export function mayContainTerminalAuthLink(raw: string): boolean {
@@ -211,3 +344,4 @@ export function terminalLinksReducer(
       return INITIAL_TERMINAL_LINKS_STATE;
   }
 }
+import type { Terminal } from "@xterm/xterm";

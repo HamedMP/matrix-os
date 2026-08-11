@@ -4,7 +4,9 @@ import {
   INITIAL_TERMINAL_LINKS_STATE,
   MAX_TERMINAL_LINKS,
   extractTerminalLinks,
+  findTerminalLinkAtCell,
   mayContainTerminalLink,
+  terminalCellFromPointer,
   terminalLinksReducer,
   type TerminalLinkEntry,
 } from "../../shell/src/components/terminal/terminal-links.js";
@@ -145,5 +147,67 @@ describe("terminal links", () => {
     expect(state.entries).toHaveLength(MAX_TERMINAL_LINKS);
     expect(state.entries[0]?.url).toBe("https://example.com/20");
     expect(state.entries.at(-1)?.url).toBe("https://example.com/1");
+  });
+
+  it("maps a pointer to the public xterm viewport cell grid", () => {
+    const screen = {
+      getBoundingClientRect: () => ({
+        left: 100,
+        top: 50,
+        width: 800,
+        height: 480,
+        right: 900,
+        bottom: 530,
+        x: 100,
+        y: 50,
+        toJSON: () => ({}),
+      }),
+    };
+    const terminal = {
+      cols: 80,
+      rows: 24,
+      element: { querySelector: () => screen },
+      buffer: { active: { viewportY: 5 } },
+    };
+
+    expect(terminalCellFromPointer(terminal as never, 250, 90)).toEqual({
+      column: 16,
+      bufferLineNumber: 8,
+    });
+    expect(terminalCellFromPointer(terminal as never, 99, 90)).toBeNull();
+    expect(terminalCellFromPointer(terminal as never, 250, 531)).toBeNull();
+  });
+
+  it("finds a wrapped URL only when the target cell is inside its range", () => {
+    const lines = [
+      { isWrapped: false, translateToString: () => "Go https://example.c" },
+      { isWrapped: true, translateToString: () => "om/docs rest" },
+      { isWrapped: false, translateToString: () => "No URL here" },
+    ];
+    const terminal = {
+      buffer: {
+        active: {
+          length: lines.length,
+          getLine: (index: number) => lines[index],
+        },
+      },
+    };
+
+    expect(findTerminalLinkAtCell(terminal as never, {
+      bufferLineNumber: 1,
+      column: 15,
+    })).toEqual(web("https://example.com/docs"));
+    expect(findTerminalLinkAtCell(terminal as never, {
+      bufferLineNumber: 2,
+      column: 3,
+    })).toEqual(web("https://example.com/docs"));
+    expect(findTerminalLinkAtCell(terminal as never, {
+      bufferLineNumber: 2,
+      column: 8,
+    })).toBeNull();
+    expect(findTerminalLinkAtCell(terminal as never, {
+      bufferLineNumber: 3,
+      column: 2,
+    })).toBeNull();
   });
 });
