@@ -20,10 +20,10 @@ import { TerminalLinkContextMenu, type TerminalLinkMenuState } from "./TerminalL
 import {
   INITIAL_TERMINAL_LINKS_STATE,
   copyTerminalLink,
-  extractTerminalLinks,
   findTerminalLinkAtCell,
   mayContainTerminalLink,
   openTerminalLink,
+  scanTerminalLinkOutput,
   terminalCellFromPointer,
   terminalLinksReducer,
 } from "./terminal-links";
@@ -1555,10 +1555,10 @@ export function TerminalPane({
                     outputBufferRef.current = "";
                     return;
                   }
-                  const entries = extractTerminalLinks(outputBufferRef.current);
-                  outputBufferRef.current = "";
-                  if (entries.length > 0) {
-                    dispatchTerminalLinks({ type: "linksDetected", entries });
+                  const scan = scanTerminalLinkOutput(outputBufferRef.current);
+                  outputBufferRef.current = scan.bufferedOutput;
+                  if (scan.entries.length > 0) {
+                    dispatchTerminalLinks({ type: "linksDetected", entries: scan.entries });
                   }
                 }, 300);
               }

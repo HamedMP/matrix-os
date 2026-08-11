@@ -117,6 +117,16 @@ function isTrustedCodexDeviceUrl(url: URL): boolean {
   );
 }
 
+function isProviderAuthSurface(url: URL): boolean {
+  const isClaudeAuth =
+    (url.origin === "https://claude.ai" || url.origin === "https://claude.com") &&
+    (url.pathname.startsWith("/oauth/") || url.pathname.startsWith("/cai/oauth/"));
+  const isOpenAiAuth =
+    url.origin === "https://auth.openai.com" &&
+    (url.pathname.startsWith("/oauth/") || url.pathname.startsWith("/codex/"));
+  return isClaudeAuth || isOpenAiAuth;
+}
+
 function trimUrlCandidate(raw: string): string {
   return raw.replace(/[.,;:!?]+$/, "");
 }
@@ -155,6 +165,13 @@ export function extractTerminalLinkMatches(raw: string): TerminalLinkMatch[] {
       continue;
     }
     if (!hasSafeUrlEnvelope(parsed)) continue;
+    if (
+      isProviderAuthSurface(parsed) &&
+      !isTrustedClaudeAuthUrl(parsed) &&
+      !isTrustedCodexDeviceUrl(parsed)
+    ) {
+      continue;
+    }
     const entry = toTerminalLinkEntry(parsed);
     matches.push({ entry, text: candidate, startIndex: match.index ?? 0 });
   }
@@ -169,6 +186,17 @@ export function extractTerminalLinks(raw: string): TerminalLinkEntry[] {
   }
 
   return entries;
+}
+
+export function scanTerminalLinkOutput(raw: string): {
+  entries: TerminalLinkEntry[];
+  bufferedOutput: string;
+} {
+  const entries = extractTerminalLinks(raw);
+  return {
+    entries,
+    bufferedOutput: entries.length > 0 ? "" : raw,
+  };
 }
 
 function getWrappedLine(

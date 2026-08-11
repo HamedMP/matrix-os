@@ -119,7 +119,7 @@ describe("TerminalPane terminal-link wiring", () => {
   it("uses the bounded reducer and both approved link action surfaces", () => {
     expect(source).toContain("useReducer(");
     expect(source).toContain("terminalLinksReducer");
-    expect(source).toContain("extractTerminalLinks");
+    expect(source).toContain("scanTerminalLinkOutput");
     expect(source).toContain("<TerminalLinksTray");
     expect(source).toContain("<TerminalLinkContextMenu");
     expect(source).not.toContain("TerminalAuthBanner");

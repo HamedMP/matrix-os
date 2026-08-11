@@ -6,6 +6,7 @@ import {
   extractTerminalLinks,
   findTerminalLinkAtCell,
   mayContainTerminalLink,
+  scanTerminalLinkOutput,
   terminalCellFromPointer,
   terminalLinksReducer,
   type TerminalLinkEntry,
@@ -74,10 +75,10 @@ describe("terminal links", () => {
       "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
       `&code_challenge=${challenge}&code_challenge_method=S256&state=state_456`,
     ].join("");
-    const invalidProviderShape =
+    const rejectedProviderShape =
       "https://claude.com/cai/oauth/authorize?response_type=code&client_id=x&state=y";
 
-    expect(extractTerminalLinks(`${claude} ${invalidProviderShape} https://auth.openai.com/codex/device`))
+    expect(extractTerminalLinks(`${claude} ${rejectedProviderShape} https://auth.openai.com/codex/device`))
       .toEqual([
         {
           url: claude,
@@ -87,12 +88,6 @@ describe("terminal links", () => {
           providerLabel: "Claude Code",
         },
         {
-          url: invalidProviderShape,
-          hostname: "claude.com",
-          displayPath: "/cai/oauth/authorize",
-          kind: "web",
-        },
-        {
           url: "https://auth.openai.com/codex/device",
           hostname: "auth.openai.com",
           displayPath: "/codex/device",
@@ -100,6 +95,34 @@ describe("terminal links", () => {
           providerLabel: "Codex",
         },
       ]);
+  });
+
+  it("does not expose rejected provider OAuth URLs as generic links", () => {
+    const unboundCodex = [
+      "https://auth.openai.com/oauth/authorize?response_type=code",
+      "&client_id=codex&state=state_123",
+      "&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback",
+      `&code_challenge=${"A".repeat(43)}&code_challenge_method=S256`,
+    ].join("");
+
+    expect(extractTerminalLinks(unboundCodex)).toEqual([]);
+  });
+
+  it("retains rejected incomplete provider URLs until a later PTY scan completes them", () => {
+    const firstChunk = "Go to https://auth.openai.com/codex/";
+    const firstScan = scanTerminalLinkOutput(firstChunk);
+
+    expect(firstScan).toEqual({ entries: [], bufferedOutput: firstChunk });
+    expect(scanTerminalLinkOutput(`${firstScan.bufferedOutput}device`)).toEqual({
+      entries: [{
+        url: "https://auth.openai.com/codex/device",
+        hostname: "auth.openai.com",
+        displayPath: "/codex/device",
+        kind: "codex-auth",
+        providerLabel: "Codex",
+      }],
+      bufferedOutput: "",
+    });
   });
 
   it("cheaply detects output worth scanning for generic links", () => {
