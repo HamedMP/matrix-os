@@ -61,8 +61,10 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
 const OFFLINE_AFTER_FAILURES = 3;
 const MAX_FRAME_CHARS = 1_000_000;
+const MAX_FRAME_BYTES = 1_000_000;
 const FILE_DIRECTORY_CAP = 8;
 const FILE_HANDLER_CAP = 64;
+const UTF8_ENCODER = new TextEncoder();
 
 const RevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const FileDirectoryClientMessageSchema = z.discriminatedUnion("type", [
@@ -350,6 +352,7 @@ export class KernelSocket {
     if (typeof data !== "string" || data.length === 0 || data.length > MAX_FRAME_CHARS) {
       return;
     }
+    if (UTF8_ENCODER.encode(data).byteLength > MAX_FRAME_BYTES) return;
     let parsed: unknown;
     try {
       parsed = JSON.parse(data);

@@ -4,13 +4,36 @@ import type {
   FileManagementApi,
   FileMovePreflight,
 } from "./file-management-api";
+import {
+  MAX_OPERATION_ROWS,
+  boundedPaths,
+  completedOutcome,
+  failedOutcome,
+  firstSeen,
+  joinPath,
+  nextRequestId,
+  noticeForError,
+  parentDirectory,
+  pendingPaths,
+  reconcileAuthoritative,
+  sameOrderedPaths,
+  samePreflight,
+  sameScope,
+  sanitizeScope,
+  staleOutcome,
+  typedFailureCode,
+  validCreateInput,
+  validChoices,
+  validMoveDestination,
+  validRenameInput,
+  validScope,
+  validScopedSources,
+  type ReconciliationPlan,
+} from "./file-operation-reconciliation";
 
 const LISTENER_CAP = 32;
 const ACTIVE_OPERATION_CAP = 8;
 const STORED_PREFLIGHT_CAP = 16;
-const RECENT_REQUEST_ID_CAP = 512;
-const MAX_ROWS = 100;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface FileOperationScope {
   directory: string;
@@ -27,6 +50,7 @@ export type FileOperationNotice =
 
 export type FileOperationFailureCode =
   | "failed"
+  | "cleanup_failed"
   | "skipped"
   | "source_missing"
   | "destination_conflict"
@@ -97,14 +121,9 @@ export interface FileOperationController {
 }
 
 interface OperationToken { requestId: string; scope: FileOperationScope; epoch: number }
-type ReconciliationPlan =
-  | { kind: "create"; target: string }
-  | { kind: "rename"; target: string }
-  | { kind: "move"; destinationDirectory: string; ambiguousSources: string[] }
-  | { kind: "trash" };
 
 export function createFileOperationController(options: FileOperationControllerOptions): FileOperationController {
-  let snapshot = emptySnapshot(options.getScope());
+  let snapshot = emptySnapshot(sanitizeScope(options.getScope()));
   let epoch = 0;
   let closed = false;
   const listeners = new Map<number, (snapshot: FileOperationSnapshot) => void>();
@@ -126,28 +145,31 @@ export function createFileOperationController(options: FileOperationControllerOp
   const syncScope = () => {
     if (closed) return;
     const current = options.getScope();
-    if (sameScope(snapshot.scope, current)) return;
+    const safeCurrent = sanitizeScope(current);
+    const predicateCurrent = validScope(current) && (options.isScopeCurrent?.(current) ?? true);
+    if (sameScope(snapshot.scope, safeCurrent) && predicateCurrent) return;
     epoch++;
     active.clear();
     preflights.clear();
-    publish(emptySnapshot(current));
+    publish(emptySnapshot(safeCurrent));
+  };
+
+  const entryScopeCurrent = () => {
+    const current = options.getScope();
+    return validScope(current) && sameScope(snapshot.scope, current)
+      && (options.isScopeCurrent?.(current) ?? true);
   };
 
   const isCurrent = (token: OperationToken) => {
+    syncScope();
     const current = options.getScope();
-    if (!sameScope(snapshot.scope, current)) syncScope();
     const predicateCurrent = options.isScopeCurrent?.(token.scope) ?? true;
-    if (!predicateCurrent && !closed) {
-      epoch++;
-      active.clear();
-      preflights.clear();
-      publish(emptySnapshot(current));
-    }
     return !closed && token.epoch === epoch && sameScope(token.scope, current) && predicateCurrent;
   };
 
   const begin = (paths: readonly string[]): OperationToken | FileOperationOutcome => {
     syncScope();
+    if (!entryScopeCurrent()) return staleOutcome("");
     if (closed || active.size >= ACTIVE_OPERATION_CAP) {
       return failedOutcome("", paths, "operation_unavailable");
     }
@@ -185,41 +207,73 @@ export function createFileOperationController(options: FileOperationControllerOp
     return listings;
   };
 
+  const captureBaseline = async (directory: string, token: OperationToken) => {
+    try {
+      const listings = await load([directory], token);
+      return listings?.[directory] ?? null;
+    } catch (error: unknown) {
+      console.warn(
+        "[file-operation-controller] pre-operation reload failed:",
+        error instanceof Error ? error.name : typeof error,
+      );
+      return null;
+    }
+  };
+
   async function create(input: { parentDirectory: string; name: string; kind: "file" | "directory" }) {
+    syncScope();
+    if (!entryScopeCurrent()) return staleOutcome("");
+    if (!validCreateInput(input, snapshot.scope)) return failedOutcome("", [], "request_mismatch");
     const expectedPath = joinPath(input.parentDirectory, input.name);
     const started = begin([expectedPath]);
     if (!("scope" in started)) return started;
     const api = options.getApi();
     if (!api) return finish(started, failedOutcome(started.requestId, [expectedPath], "operation_unavailable"));
+    const baseline = await captureBaseline(input.parentDirectory, started);
+    if (!isCurrent(started)) return staleOutcome(started.requestId);
     try {
       const result = await api.create({ requestId: started.requestId, ...input });
       if (!isCurrent(started)) return staleOutcome(started.requestId);
       if (!await load([input.parentDirectory], started)) return staleOutcome(started.requestId);
       return finish(started, completedOutcome(started.requestId, [result.path], [input.parentDirectory]));
     } catch (error: unknown) {
-      return handleUncertain(started, [expectedPath], [input.parentDirectory], { kind: "create", target: expectedPath }, error);
+      return handleUncertain(started, [expectedPath], [input.parentDirectory], {
+        kind: "create", target: expectedPath, baseline,
+      }, error);
     }
   }
 
   async function rename(input: { path: string; name: string }) {
+    syncScope();
+    if (!entryScopeCurrent()) return staleOutcome("");
+    if (!validRenameInput(input, snapshot.scope)) return failedOutcome("", [], "request_mismatch");
     const parent = parentDirectory(input.path);
     const expectedPath = joinPath(parent, input.name);
     const started = begin([input.path]);
     if (!("scope" in started)) return started;
     const api = options.getApi();
     if (!api) return finish(started, failedOutcome(started.requestId, [input.path], "operation_unavailable"));
+    const baseline = await captureBaseline(parent, started);
+    if (!isCurrent(started)) return staleOutcome(started.requestId);
     try {
       const result = await api.rename({ requestId: started.requestId, ...input });
       if (!isCurrent(started)) return staleOutcome(started.requestId);
       if (!await load([parent], started)) return staleOutcome(started.requestId);
       return finish(started, completedOutcome(started.requestId, [result.path], [parent]));
     } catch (error: unknown) {
-      return handleUncertain(started, [input.path], [parent], { kind: "rename", target: expectedPath }, error);
+      return handleUncertain(started, [input.path], [parent], {
+        kind: "rename", target: expectedPath, baseline,
+      }, error);
     }
   }
 
   async function preflightMove(input: { sources: string[]; destinationDirectory: string }) {
-    if (!validBatchSources(input.sources)) return failedOutcome("", input.sources, "request_mismatch");
+    syncScope();
+    if (!entryScopeCurrent()) return staleOutcome("");
+    if (!validScopedSources(input.sources, snapshot.scope)
+      || !validMoveDestination(input.destinationDirectory, input.sources, snapshot.scope)) {
+      return failedOutcome("", [], "request_mismatch");
+    }
     const sources = boundedPaths(input.sources);
     const started = begin(sources);
     if (!("scope" in started)) return started;
@@ -248,6 +302,14 @@ export function createFileOperationController(options: FileOperationControllerOp
 
   async function executeMove(input: { preflight: ControllerMovePreflight; conflictChoices: FileConflictChoice[] }) {
     syncScope();
+    if (!entryScopeCurrent()) return staleOutcome(input.preflight.requestId);
+    if (!validScopedSources(input.preflight.sources, snapshot.scope)
+      || !validMoveDestination(input.preflight.destinationDirectory, input.preflight.sources, snapshot.scope)) {
+      return failedOutcome(input.preflight.requestId, [], "request_mismatch");
+    }
+    if (active.has(input.preflight.requestId)) {
+      return failedOutcome(input.preflight.requestId, input.preflight.sources, "operation_unavailable");
+    }
     const stored = preflights.get(input.preflight.requestId);
     if (!stored || !samePreflight(stored, input.preflight) || !validChoices(stored, input.conflictChoices)) {
       return failedOutcome(input.preflight.requestId, input.preflight.sources, "request_mismatch");
@@ -255,6 +317,7 @@ export function createFileOperationController(options: FileOperationControllerOp
     if (active.size >= ACTIVE_OPERATION_CAP) return failedOutcome(stored.requestId, stored.sources, "operation_unavailable");
     const token = { requestId: stored.requestId, scope: { ...snapshot.scope }, epoch };
     active.set(token.requestId, boundedPaths(stored.sources));
+    preflights.delete(token.requestId);
     publish({ ...snapshot, status: "pending", pendingPaths: pendingPaths(active), notice: null });
     const api = options.getApi();
     if (!api) return finish(token, failedOutcome(token.requestId, stored.sources, "operation_unavailable"));
@@ -263,12 +326,13 @@ export function createFileOperationController(options: FileOperationControllerOp
       const result = await api.executeMove({
         requestId: token.requestId,
         sources: stored.sources,
+        destinationDirectory: stored.destinationDirectory,
         preflightFingerprint: stored.preflightFingerprint,
         ...(input.conflictChoices.length ? { conflictChoices: input.conflictChoices } : {}),
       });
       if (!isCurrent(token)) return staleOutcome(token.requestId);
       if (!sameOrderedPaths(result.results.map((item) => item.source), stored.sources)) throw new AppError("server");
-      const affected = firstSeen([...directories, ...result.affectedDirectories]);
+      const affected = directories;
       if (!await load(affected, token)) return staleOutcome(token.requestId);
       const failures = result.results
         .filter((item) => item.code !== "moved")
@@ -277,7 +341,7 @@ export function createFileOperationController(options: FileOperationControllerOp
       preflights.delete(token.requestId);
       return finish(token, {
         status: "completed", requestId: token.requestId, succeededPaths: boundedPaths(succeeded),
-        retainedPaths: failures.map((item) => item.source), failures: failures.slice(0, MAX_ROWS),
+        retainedPaths: failures.map((item) => item.source), failures: failures.slice(0, MAX_OPERATION_ROWS),
         affectedDirectories: affected, notice: null,
       });
     } catch (error: unknown) {
@@ -291,6 +355,14 @@ export function createFileOperationController(options: FileOperationControllerOp
 
   function cancelMove(preflight: ControllerMovePreflight): FileOperationOutcome {
     syncScope();
+    if (!entryScopeCurrent()) return staleOutcome(preflight.requestId);
+    if (!validScopedSources(preflight.sources, snapshot.scope)
+      || !validMoveDestination(preflight.destinationDirectory, preflight.sources, snapshot.scope)) {
+      return failedOutcome(preflight.requestId, [], "request_mismatch");
+    }
+    if (active.has(preflight.requestId)) {
+      return failedOutcome(preflight.requestId, preflight.sources, "operation_unavailable");
+    }
     const stored = preflights.get(preflight.requestId);
     if (!stored || !samePreflight(stored, preflight)) return failedOutcome(preflight.requestId, preflight.sources, "request_mismatch");
     preflights.delete(preflight.requestId);
@@ -303,7 +375,9 @@ export function createFileOperationController(options: FileOperationControllerOp
   }
 
   async function trash(input: { sources: string[] }) {
-    if (!validBatchSources(input.sources)) return failedOutcome("", input.sources, "request_mismatch");
+    syncScope();
+    if (!entryScopeCurrent()) return staleOutcome("");
+    if (!validScopedSources(input.sources, snapshot.scope)) return failedOutcome("", [], "request_mismatch");
     const sources = boundedPaths(input.sources);
     const started = begin(sources);
     if (!("scope" in started)) return started;
@@ -336,6 +410,10 @@ export function createFileOperationController(options: FileOperationControllerOp
     error: unknown,
   ): Promise<FileOperationOutcome> {
     if (!isCurrent(token)) return staleOutcome(token.requestId);
+    const notice = noticeForError(error);
+    if (notice === "request_conflict") return finish(token, failedOutcome(token.requestId, sources, notice));
+    const typedFailure = typedFailureCode(error);
+    if (typedFailure) return finish(token, failedOutcome(token.requestId, sources, "operation_failed", typedFailure));
     let listings: Record<string, string[]> | null = null;
     try {
       listings = await load(directories, token);
@@ -347,28 +425,7 @@ export function createFileOperationController(options: FileOperationControllerOp
       listings = null;
     }
     if (!isCurrent(token)) return staleOutcome(token.requestId);
-    const notice = noticeForError(error);
-    if (notice === "request_conflict") return finish(token, failedOutcome(token.requestId, sources, notice));
-    const succeeded: string[] = [];
-    const retained: string[] = [];
-    for (const source of boundedPaths(sources)) {
-      if (listings === null || (plan.kind === "move" && plan.ambiguousSources.includes(source))) {
-        retained.push(source);
-        continue;
-      }
-      const sourcePresent = listings?.[parentDirectory(source)]?.includes(source) ?? false;
-      const target = plan.kind === "move"
-        ? joinPath(plan.destinationDirectory, basename(source))
-        : plan.kind === "create" || plan.kind === "rename" ? plan.target : null;
-      const targetPresent = target
-        ? listings?.[parentDirectory(target)]?.includes(target) ?? false
-        : false;
-      const safelySucceeded = plan.kind === "create"
-        ? targetPresent
-        : plan.kind === "trash" ? !sourcePresent : !sourcePresent && targetPresent;
-      if (safelySucceeded) succeeded.push(source);
-      else retained.push(source);
-    }
+    const { succeeded, retained } = reconcileAuthoritative(sources, listings, plan);
     const failures = retained.map((source) => ({ source, code: "failed" as const }));
     return finish(token, {
       status: "uncertain", requestId: token.requestId, succeededPaths: succeeded,
@@ -400,59 +457,11 @@ export function createFileOperationController(options: FileOperationControllerOp
       active.clear();
       preflights.clear();
       listeners.clear();
-      snapshot = emptySnapshot(options.getScope());
+      snapshot = emptySnapshot(sanitizeScope(options.getScope()));
     },
   };
 }
 
 function emptySnapshot(scope: FileOperationScope): FileOperationSnapshot {
   return { scope: { ...scope }, status: "idle", pendingPaths: [], retainedPaths: [], failures: [], notice: null, preflight: null };
-}
-function boundedPaths(paths: readonly string[], max = MAX_ROWS): string[] { return [...new Set(paths)].slice(0, max); }
-function pendingPaths(active: Map<string, string[]>): string[] { return boundedPaths([...active.values()].flat()); }
-function firstSeen(values: readonly string[]): string[] { return [...new Set(values)].slice(0, MAX_ROWS); }
-function validBatchSources(paths: readonly string[]): boolean {
-  if (paths.length < 1 || paths.length > MAX_ROWS || new Set(paths).size !== paths.length) return false;
-  return paths.every((path) => parentDirectory(path) === parentDirectory(paths[0]!));
-}
-function parentDirectory(path: string): string { const at = path.lastIndexOf("/"); return at < 0 ? "" : path.slice(0, at); }
-function basename(path: string): string { return path.slice(path.lastIndexOf("/") + 1); }
-function joinPath(parent: string, name: string): string { return parent ? `${parent}/${name}` : name; }
-function sameScope(a: FileOperationScope, b: FileOperationScope): boolean { return a.directory === b.directory && a.runtimeSlot === b.runtimeSlot && a.authGeneration === b.authGeneration; }
-function sameOrderedPaths(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((path, index) => path === b[index]);
-}
-function samePreflight(a: ControllerMovePreflight, b: ControllerMovePreflight): boolean {
-  return a.requestId === b.requestId && a.preflightFingerprint === b.preflightFingerprint
-    && a.destinationDirectory === b.destinationDirectory && a.sources.join("\0") === b.sources.join("\0");
-}
-function validChoices(preflight: ControllerMovePreflight, choices: FileConflictChoice[]): boolean {
-  return choices.length === preflight.conflicts.length
-    && choices.every((choice, index) => choice.source === preflight.conflicts[index]?.source);
-}
-function nextRequestId(generate: () => string, recent: string[]): string | null {
-  for (let attempt = 0; attempt < 16; attempt++) {
-    const id = generate();
-    if (!UUID.test(id) || recent.includes(id)) continue;
-    recent.push(id);
-    if (recent.length > RECENT_REQUEST_ID_CAP) recent.shift();
-    return id;
-  }
-  return null;
-}
-function noticeForError(error: unknown): FileOperationNotice {
-  if (error instanceof AppError && error.detail === "request_id_conflict") return "request_conflict";
-  if (error instanceof AppError && error.detail === "operation_unavailable") return "authoritative_reconciliation_required";
-  return error instanceof AppError ? "authoritative_reconciliation_required" : "operation_failed";
-}
-function staleOutcome(requestId: string): FileOperationOutcome {
-  return { status: "stale", requestId, succeededPaths: [], retainedPaths: [], failures: [], affectedDirectories: [], notice: null };
-}
-function failedOutcome(requestId: string, paths: readonly string[], notice: FileOperationNotice): FileOperationOutcome {
-  const retainedPaths = boundedPaths(paths);
-  return { status: "failed", requestId, succeededPaths: [], retainedPaths,
-    failures: retainedPaths.map((source) => ({ source, code: "failed" })), affectedDirectories: [], notice };
-}
-function completedOutcome(requestId: string, succeededPaths: string[], affectedDirectories: string[]): FileOperationOutcome {
-  return { status: "completed", requestId, succeededPaths: boundedPaths(succeededPaths), retainedPaths: [], failures: [], affectedDirectories: firstSeen(affectedDirectories), notice: null };
 }

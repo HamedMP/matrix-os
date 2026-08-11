@@ -81,8 +81,11 @@ describe("createApiClient", () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
-  it("preserves a safe top-level Gateway error code without surfacing raw detail", async () => {
+  it("preserves safe Gateway error codes in nested, top-level, legacy, then scalar order", async () => {
     const fetchFn = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(409, { error: { code: "protected" }, code: "destination_conflict" }))
+      .mockResolvedValueOnce(jsonResponse(409, { error: {}, code: "destination_conflict" }))
+      .mockResolvedValueOnce(jsonResponse(400, { errorCode: "invalid_path" }))
       .mockResolvedValueOnce(jsonResponse(409, { error: "Request conflict", code: "request_id_conflict" }))
       .mockResolvedValueOnce(jsonResponse(500, { error: "/private/provider raw", code: "/private/provider raw" }));
     const client = createApiClient({
@@ -91,10 +94,9 @@ describe("createApiClient", () => {
       fetchFn,
     });
 
-    await expect(client.post("/api/files/batch/move", {})).rejects.toMatchObject({
-      category: "server",
-      detail: "request_id_conflict",
-    });
+    for (const detail of ["protected", "destination_conflict", "invalid_path", "request_id_conflict"]) {
+      await expect(client.post("/api/files/batch/move", {})).rejects.toMatchObject({ category: "server", detail });
+    }
     await expect(client.post("/api/files/batch/move", {})).rejects.toMatchObject({
       category: "server",
       detail: undefined,
