@@ -15,19 +15,21 @@ import {
 } from "../path-security.js";
 import { listDirectory } from "../files-tree.js";
 import { getMissingFileFallback } from "../file-fallbacks.js";
-import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "../file-ops.js";
+import { fileStat, fileMkdir, fileTouch, fileCopy, fileDuplicate } from "../file-ops.js";
 import { createFileBlobRoutes } from "../file-blob-routes.js";
 import { fileSearch } from "../file-search.js";
-import { fileDelete, trashList, trashRestore, trashEmpty } from "../trash.js";
+import type { FileBatchTrashRouteService } from "./file-management-routes.js";
 import { listProjects } from "../projects.js";
 
 export interface FileRouteDeps {
   homePath: string;
+  trashService: FileBatchTrashRouteService;
 }
 
 export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
-  const { homePath } = deps;
+  const { homePath, trashService } = deps;
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
+  const trashBodyLimit = bodyLimit({ maxSize: 128 * 1024 });
 
   app.get("/api/files/tree", async (c) => {
     const pathParam = c.req.query("path") ?? "";
@@ -96,13 +98,6 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
-  app.post("/api/files/rename", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ from: string; to: string }>(c);
-    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
   app.post("/api/files/copy", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
@@ -110,28 +105,43 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
-  app.post("/api/files/delete", fileBodyLimit, async (c) => {
+  app.post("/api/files/delete", trashBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDelete(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    try {
+      const result = await trashService.delete(homePath, body.path);
+      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    } catch (error: unknown) {
+      return legacyTrashError(c, error);
+    }
   });
 
   app.get("/api/files/trash", async (c) => {
-    const result = await trashList(homePath);
-    return c.json(result);
+    try {
+      return c.json(await trashService.list(homePath));
+    } catch (error: unknown) {
+      return legacyTrashError(c, error);
+    }
   });
 
-  app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
+  app.post("/api/files/trash/restore", trashBodyLimit, async (c) => {
     const body = await parseJson<{ trashPath: string }>(c);
     if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
-    const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    try {
+      const result = await trashService.restore(homePath, body.trashPath);
+      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    } catch (error: unknown) {
+      return legacyTrashError(c, error);
+    }
   });
 
-  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
-    const result = await trashEmpty(homePath);
-    return c.json(result);
+  app.post("/api/files/trash/empty", trashBodyLimit, async (c) => {
+    await consumeOptionalBody(c);
+    try {
+      return c.json(await trashService.empty(homePath));
+    } catch (error: unknown) {
+      return legacyTrashError(c, error);
+    }
   });
 
   app.get("/api/projects", async (c) => {
@@ -265,4 +275,13 @@ function resolveServedFilePath(homePath: string, filePath: string): string | nul
 
 function toStatusCode(status: number): ContentfulStatusCode {
   return status as ContentfulStatusCode;
+}
+
+async function consumeOptionalBody(c: Parameters<MiddlewareHandler>[0]): Promise<void> {
+  if (c.req.raw.body) await c.req.arrayBuffer();
+}
+
+function legacyTrashError(c: Parameters<MiddlewareHandler>[0], error: unknown) {
+  console.error("[gateway] Legacy Trash operation failed:", error instanceof Error ? error.message : String(error));
+  return c.json({ error: "Trash operation failed" }, 500);
 }

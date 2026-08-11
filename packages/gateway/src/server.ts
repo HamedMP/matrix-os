@@ -233,6 +233,7 @@ import {
 } from "./server/symphony-origin.js";
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
+import { registerFileManagementRoutes } from "./server/file-management-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import {
   metricsRegistry,
@@ -2846,7 +2847,14 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  registerFileRoutes(app, { homePath });
+  const fileManagementRoutes = registerFileManagementRoutes(app, {
+    homePath,
+    getOwnerId: (c) => requireRequestPrincipal(c).userId,
+  });
+  registerFileRoutes(app, {
+    homePath,
+    trashService: fileManagementRoutes.trashService,
+  });
 
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -4271,6 +4279,7 @@ export async function createGateway(config: GatewayConfig) {
       shellSessionReaper.stop();
       await zellijShellWs.dispose();
       await sessionRegistry.shutdown();
+      await fileManagementRoutes.close();
       await watcher.close();
       await homeMirror?.stop();
       await homeMirrorStart?.catch((err: unknown) => {
