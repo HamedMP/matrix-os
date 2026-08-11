@@ -37,6 +37,8 @@ export interface WatcherIgnoredOptions {
 export interface CreateWatcherOptions {
   watchFactory?: WatcherFactory;
   validateDirectoryScope?: (directory: string, absolutePath: string) => Promise<string>;
+  rootCorrelationWindowMs?: number;
+  now?: () => number;
 }
 
 interface ScopedReferenceState {
@@ -61,6 +63,8 @@ const ROOT_GLOBAL_OVERLAP = new Set([
   ...WATCHED_HOME_DIRECTORIES,
   ...WATCHED_HOME_FILES,
 ]);
+const ROOT_CORRELATION_WINDOW_MS = 5_000;
+const ROOT_CORRELATION_MAX_ENTRIES = ROOT_GLOBAL_OVERLAP.size * 3;
 
 export function createWatcherIgnored(
   options: WatcherIgnoredOptions = {},
@@ -95,8 +99,16 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
   const listeners: Array<(event: FileChangeEvent) => void> = [];
   const scopedReferences = new Map<string, ScopedReferenceState>();
   const scopeAcquisitions = new Map<string, Promise<void>>();
+  const rootCorrelations = new Map<
+    string,
+    { source: "global" | "scoped"; expiresAt: number }
+  >();
+  const now = options.now ?? Date.now;
+  const rootCorrelationWindowMs = options.rootCorrelationWindowMs
+    ?? ROOT_CORRELATION_WINDOW_MS;
   let scopedWatcher: WatcherBackend | null = null;
   let closed = false;
+  let closePromise: Promise<void> | null = null;
 
   const globalWatcher = watchFactory(createWatcherPaths(basePath), {
     ignoreInitial: true,
@@ -106,12 +118,39 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
     ignored: createWatcherIgnored(),
   });
 
+  const isCorrelatedRootDuplicate = (
+    source: "global" | "scoped",
+    path: string,
+    event: FileEvent,
+  ): boolean => {
+    if (!scopedReferences.has(basePath) || !ROOT_GLOBAL_OVERLAP.has(path)) return false;
+    const timestamp = now();
+    for (const [key, correlation] of rootCorrelations) {
+      if (correlation.expiresAt < timestamp) rootCorrelations.delete(key);
+    }
+    const key = `${event}\u0000${path}`;
+    const existing = rootCorrelations.get(key);
+    if (existing && existing.source !== source) {
+      rootCorrelations.delete(key);
+      return true;
+    }
+    if (!existing && rootCorrelations.size >= ROOT_CORRELATION_MAX_ENTRIES) {
+      const oldestKey = rootCorrelations.keys().next().value;
+      if (oldestKey !== undefined) rootCorrelations.delete(oldestKey);
+    }
+    rootCorrelations.set(key, {
+      source,
+      expiresAt: timestamp + rootCorrelationWindowMs,
+    });
+    return false;
+  };
+
   const emit = (source: "global" | "scoped", event: FileEvent, absolutePath: string) => {
     const homeRelative = relative(basePath, resolve(absolutePath));
     if (homeRelative === "" || homeRelative.startsWith("..") || homeRelative.startsWith(sep)) return;
     const normalizedPath = homeRelative.split(sep).join("/");
-    if (source === "scoped" && !normalizedPath.includes("/")
-      && ROOT_GLOBAL_OVERLAP.has(normalizedPath)) return;
+    if (!normalizedPath.includes("/")
+      && isCorrelatedRootDuplicate(source, normalizedPath, event)) return;
     const change: FileChangeEvent = {
       type: "file:change",
       path: normalizedPath,
@@ -250,6 +289,7 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
             if (scopedReferences.get(absolutePath) === scopeState) {
               scopedReferences.delete(absolutePath);
             }
+            if (absolutePath === basePath) rootCorrelations.clear();
             scopeState.removePromise = null;
           }
         })();
@@ -258,20 +298,24 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
       };
     },
 
-    async close() {
-      if (closed) return;
+    close() {
+      if (closePromise) return closePromise;
       closed = true;
-      const pendingAcquisitions = [...scopeAcquisitions.values()];
-      await Promise.allSettled(pendingAcquisitions);
-      const pendingUnwatches = [...scopedReferences.values()]
-        .flatMap((state) => state.removePromise ? [state.removePromise] : []);
-      await Promise.allSettled(pendingUnwatches);
-      scopedReferences.clear();
-      const scopedClose = scopedWatcher?.close();
-      scopedWatcher = null;
-      await scopedClose;
-      await globalWatcher.close();
-      listeners.length = 0;
+      closePromise = (async () => {
+        const pendingAcquisitions = [...scopeAcquisitions.values()];
+        await Promise.allSettled(pendingAcquisitions);
+        const pendingUnwatches = [...scopedReferences.values()]
+          .flatMap((state) => state.removePromise ? [state.removePromise] : []);
+        await Promise.allSettled(pendingUnwatches);
+        scopedReferences.clear();
+        rootCorrelations.clear();
+        const scopedClose = scopedWatcher?.close();
+        scopedWatcher = null;
+        await scopedClose;
+        await globalWatcher.close();
+        listeners.length = 0;
+      })();
+      return closePromise;
     },
   };
 }

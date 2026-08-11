@@ -27,6 +27,10 @@ export interface FileDirectoryWsConnection {
   close(): Promise<void>;
 }
 
+export interface FileDirectoryWsLifecycle {
+  onClose(): Promise<void>;
+}
+
 export type AuthenticatedFileDirectoryWsConnectionOptions = Omit<
   FileDirectoryWsConnectionOptions,
   "ownerId"
@@ -135,10 +139,11 @@ export function createFileDirectoryWsConnection(
     close() {
       if (closePromise) return closePromise;
       closing = true;
-      closePromise = tail.then(() => options.hub.removeConnection(
+      const cleanup = options.hub.removeConnection(
         options.ownerId,
         options.connectionId,
-      ));
+      );
+      closePromise = Promise.all([tail, cleanup]).then(() => undefined);
       return closePromise;
     },
   };
@@ -152,6 +157,22 @@ export function createAuthenticatedFileDirectoryWsConnection(
     ...options,
     ownerId: requireRequestPrincipal(context).userId,
   });
+}
+
+export function createFileDirectoryWsLifecycle(
+  connection: Pick<FileDirectoryWsConnection, "close">,
+): FileDirectoryWsLifecycle {
+  return {
+    async onClose() {
+      try {
+        await connection.close();
+      } catch (error: unknown) {
+        console.error("[files/realtime] Connection cleanup failed", {
+          errorKind: error instanceof Error ? error.name : typeof error,
+        });
+      }
+    },
+  };
 }
 
 export function isFileDirectoryFrameCandidate(frame: unknown): boolean {

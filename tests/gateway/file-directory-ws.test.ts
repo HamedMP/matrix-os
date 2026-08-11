@@ -269,13 +269,81 @@ describe("main websocket file-directory behavior", () => {
     authorization.resolve(true);
     await connection.close();
     expect(hub.subscriberCount).toBe(0);
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("cancels pending authorization synchronously when socket close begins", async () => {
+    const authorization = deferred<boolean>();
+    const acquireScope = vi.fn(async () => vi.fn());
+    const hub = new FileDirectorySubscriptionHub({
+      authorize: async () => authorization.promise,
+      acquireScope,
+    });
+    const removeConnection = vi.spyOn(hub, "removeConnection");
+    const connection = createFileDirectoryWsConnection({
+      ownerId: "owner",
+      connectionId: "connection",
+      hub,
+      send: vi.fn(),
+      closeSocket: vi.fn(),
+    });
+    connection.enqueue({ type: "files:subscribe", directory: "projects" });
+    await flushAsyncWork();
+
+    const closePromise = connection.close();
+    expect(removeConnection).toHaveBeenCalledOnce();
+    expect(hub.touch("owner", "connection", "projects")).toBe(false);
+    expect(hub.subscriberCount).toBe(1);
+    authorization.resolve(true);
+    await closePromise;
+    expect(acquireScope).not.toHaveBeenCalled();
+    expect(hub.subscriberCount).toBe(0);
+    await hub.close();
+  });
+
+  it("releases an acquisition that commits after socket close begins", async () => {
+    const acquisition = deferred<() => void>();
+    const release = vi.fn();
+    const hub = new FileDirectorySubscriptionHub({
+      acquireScope: async () => acquisition.promise,
+    });
+    const connection = createFileDirectoryWsConnection({
+      ownerId: "owner",
+      connectionId: "connection",
+      hub,
+      send: vi.fn(),
+      closeSocket: vi.fn(),
+    });
+    connection.enqueue({ type: "files:subscribe", directory: "projects" });
+    await flushAsyncWork();
+
+    const closePromise = connection.close();
+    expect(hub.touch("owner", "connection", "projects")).toBe(false);
+    acquisition.resolve(release);
+    await closePromise;
     expect(release).toHaveBeenCalledOnce();
+    expect(hub.subscriberCount).toBe(0);
+    await hub.close();
   });
 
   it("detects only files-prefixed malformed frames for generic-close handling", () => {
     expect(isFileDirectoryFrameCandidate({ type: "files:subscribe", directory: "/bad" })).toBe(true);
     expect(isFileDirectoryFrameCandidate({ type: "ping", extra: true })).toBe(false);
     expect(isFileDirectoryFrameCandidate(null)).toBe(false);
+  });
+
+  it("exposes the onClose lifecycle callback used by the websocket route", async () => {
+    const createLifecycle = Reflect.get(fileDirectoryWs, "createFileDirectoryWsLifecycle");
+    expect(createLifecycle).toBeTypeOf("function");
+    if (typeof createLifecycle !== "function") return;
+    const closeGate = deferred<void>();
+    const close = vi.fn(async () => closeGate.promise);
+    const lifecycle = createLifecycle({ close });
+
+    const closeResult = lifecycle.onClose();
+    expect(close).toHaveBeenCalledOnce();
+    closeGate.resolve();
+    await closeResult;
   });
 
   it("binds one watcher listener and shuts the hub down before the shared watcher", async () => {

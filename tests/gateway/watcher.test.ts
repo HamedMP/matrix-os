@@ -243,12 +243,15 @@ describe("gateway home watcher", () => {
     await vi.waitFor(() => expect(validateDirectoryScope).toHaveBeenCalledOnce());
 
     let closeSettled = false;
-    const closePromise = watcher.close().then(() => { closeSettled = true; });
+    const closeDrain = watcher.close();
+    const closePromise = closeDrain.then(() => { closeSettled = true; });
+    const sharedClosePromise = watcher.close();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closeSettled).toBe(false);
+    expect(sharedClosePromise).toBe(closeDrain);
     validationGate.resolve(join(homePath, "projects"));
 
-    await closePromise;
+    await Promise.all([closePromise, sharedClosePromise]);
     await expect(acquisition).rejects.toThrow("closed");
     await expect(duplicateAcquisition).rejects.toThrow("closed");
     expect(validateDirectoryScope).toHaveBeenCalledOnce();
@@ -270,12 +273,63 @@ describe("gateway home watcher", () => {
     fake.backends[1].emit("add", join(homePath, "notes.txt"));
     fake.backends[1].emit("addDir", join(homePath, "projects"));
     fake.backends[1].emit("unlinkDir", join(homePath, "projects"));
+    fake.backends[0].emit("unlinkDir", join(homePath, "apps"));
+    fake.backends[1].emit("unlinkDir", join(homePath, "apps"));
+    fake.backends[1].emit("addDir", join(homePath, "apps"));
+    fake.backends[0].emit("addDir", join(homePath, "apps"));
     expect(listener.mock.calls.map(([event]) => event)).toEqual([
       { type: "file:change", path: "CLAUDE.md", event: "change" },
       { type: "file:change", path: "notes.txt", event: "add" },
       { type: "file:change", path: "projects", event: "add" },
       { type: "file:change", path: "projects", event: "unlink" },
+      { type: "file:change", path: "apps", event: "unlink" },
+      { type: "file:change", path: "apps", event: "add" },
     ]);
+
+    await release();
+    await watcher.close();
+    await rm(homePath, { recursive: true });
+  });
+
+  it("keeps unmatched, same-source, and different-event root hints", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-watcher-"));
+    const fake = createFakeWatcherFactory();
+    const watcher = createWatcher(homePath, { watchFactory: fake.factory });
+    const listener = vi.fn();
+    watcher.on(listener);
+    const release = await watcher.acquireDirectoryScope("");
+
+    fake.backends[1].emit("change", join(homePath, "CLAUDE.md"));
+    fake.backends[1].emit("change", join(homePath, "CLAUDE.md"));
+    fake.backends[1].emit("unlink", join(homePath, "CLAUDE.md"));
+    expect(listener.mock.calls.map(([event]) => event)).toEqual([
+      { type: "file:change", path: "CLAUDE.md", event: "change" },
+      { type: "file:change", path: "CLAUDE.md", event: "change" },
+      { type: "file:change", path: "CLAUDE.md", event: "unlink" },
+    ]);
+
+    await release();
+    await watcher.close();
+    await rm(homePath, { recursive: true });
+  });
+
+  it("does not correlate opposite-source root hints after the bounded window", async () => {
+    let now = 0;
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-watcher-"));
+    const fake = createFakeWatcherFactory();
+    const watcher = createWatcher(homePath, {
+      watchFactory: fake.factory,
+      now: () => now,
+      rootCorrelationWindowMs: 100,
+    });
+    const listener = vi.fn();
+    watcher.on(listener);
+    const release = await watcher.acquireDirectoryScope("");
+
+    fake.backends[0].emit("change", join(homePath, "CLAUDE.md"));
+    now = 101;
+    fake.backends[1].emit("change", join(homePath, "CLAUDE.md"));
+    expect(listener).toHaveBeenCalledTimes(2);
 
     await release();
     await watcher.close();

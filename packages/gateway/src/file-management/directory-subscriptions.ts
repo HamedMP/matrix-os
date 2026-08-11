@@ -40,6 +40,7 @@ interface SubscriptionState extends FileDirectorySubscriber {
   canceled: boolean;
   release: (() => void | Promise<void>) | null;
   scopeReady: Promise<void> | null;
+  cleanupPromise: Promise<void> | null;
 }
 
 function subscriptionKey(ownerId: string, connectionId: string, directory: string): string {
@@ -66,11 +67,6 @@ async function releaseScope(subscription: SubscriptionState): Promise<void> {
   }
 }
 
-async function awaitAndReleaseScope(subscription: SubscriptionState): Promise<void> {
-  if (subscription.scopeReady) await Promise.allSettled([subscription.scopeReady]);
-  await releaseScope(subscription);
-}
-
 export async function authorizeFileDirectory(
   homePath: string,
   directory: string,
@@ -94,13 +90,6 @@ export async function authorizeFileDirectory(
 
 export class FileDirectorySubscriptionHub {
   private readonly subscriptions = new Map<string, SubscriptionState>();
-  // One acquisition per reserved subscription, so this set is hard-capped by
-  // maxSubscriptions and is drained explicitly during shutdown.
-  private readonly pendingScopeAcquisitions = new Set<Promise<void>>();
-  // Released subscriptions continue to consume a bounded scope slot until
-  // their asynchronous watcher cleanup settles. This also gives close() a
-  // complete drain set after a record has left the active registry.
-  private readonly pendingScopeReleases = new Set<Promise<void>>();
   private readonly acquireScope: FileDirectorySubscriptionHubOptions["acquireScope"];
   private readonly authorize?: FileDirectorySubscriptionHubOptions["authorize"];
   private readonly maxSubscriptions: number;
@@ -142,32 +131,27 @@ export class FileDirectorySubscriptionHub {
     if (!parsed.success) throw new Error("Invalid directory subscription");
     const normalizedSubscriber = { ...subscriber, directory: parsed.data };
     const key = subscriptionKey(subscriber.ownerId, subscriber.connectionId, parsed.data);
-    const existing = this.subscriptions.get(key);
-    if (existing) {
-      if (existing.canceled) throw new Error("Directory subscription is no longer active");
-      const wasActive = existing.release !== null;
-      existing.lastTouched = this.now();
-      existing.send = subscriber.send;
-      if (existing.scopeReady) await existing.scopeReady;
-      this.assertCurrent(key, existing);
-      if (wasActive && this.authorize) {
-        const authorized = await this.authorize({
-          ownerId: existing.ownerId,
-          directory: existing.directory,
-        });
-        this.assertCurrent(key, existing);
-        if (!authorized) throw new Error("Directory subscription is not authorized");
-      }
-      return existing.revision;
+    const existingBeforeSweep = this.subscriptions.get(key);
+    if (existingBeforeSweep && !existingBeforeSweep.canceled) {
+      return this.resumeSubscription(key, existingBeforeSweep, subscriber.send);
     }
 
-    const staleCleanup = this.sweepStale(false);
-    try {
-      this.assertCapacity(normalizedSubscriber);
-    } catch (error: unknown) {
-      this.trackRelease(staleCleanup);
-      throw error;
+    await this.sweepStale();
+    if (this.closed) throw new Error("Directory subscription hub is closed");
+    const existing = this.subscriptions.get(key);
+    if (existing) {
+      if (!existing.canceled) return this.resumeSubscription(key, existing, subscriber.send);
+      await this.cleanupSubscription(existing);
+      if (this.closed) throw new Error("Directory subscription hub is closed");
+      const replacement = this.subscriptions.get(key);
+      if (replacement) {
+        if (!replacement.canceled) {
+          return this.resumeSubscription(key, replacement, subscriber.send);
+        }
+        return this.subscribe(normalizedSubscriber);
+      }
     }
+    this.assertCapacity(normalizedSubscriber);
     const state: SubscriptionState = {
       ...normalizedSubscriber,
       revision: 0,
@@ -175,24 +159,18 @@ export class FileDirectorySubscriptionHub {
       canceled: false,
       release: null,
       scopeReady: null,
+      cleanupPromise: null,
     };
     this.subscriptions.set(key, state);
-    if (this.pendingScopeAcquisitions.size >= this.maxSubscriptions) {
-      this.subscriptions.delete(key);
-      throw new Error("Directory scope acquisition limit reached");
-    }
-    const scopeReady = this.initializeSubscription(key, state, staleCleanup);
+    const scopeReady = this.initializeSubscription(key, state);
     state.scopeReady = scopeReady;
-    this.pendingScopeAcquisitions.add(scopeReady);
     try {
       await scopeReady;
       this.assertCurrent(key, state);
       return state.revision;
     } catch (error: unknown) {
-      if (this.subscriptions.get(key) === state) this.subscriptions.delete(key);
+      await this.cleanupSubscription(state);
       throw error;
-    } finally {
-      this.pendingScopeAcquisitions.delete(scopeReady);
     }
   }
 
@@ -208,9 +186,7 @@ export class FileDirectorySubscriptionHub {
     const key = subscriptionKey(ownerId, connectionId, directory);
     const subscription = this.subscriptions.get(key);
     if (!subscription) return false;
-    subscription.canceled = true;
-    await this.releaseSubscription(subscription);
-    if (this.subscriptions.get(key) === subscription) this.subscriptions.delete(key);
+    await this.cleanupSubscription(subscription);
     return true;
   }
 
@@ -218,15 +194,10 @@ export class FileDirectorySubscriptionHub {
     const removed: SubscriptionState[] = [];
     for (const [key, subscription] of this.subscriptions) {
       if (subscription.ownerId === ownerId && subscription.connectionId === connectionId) {
-        subscription.canceled = true;
         removed.push(subscription);
       }
     }
-    await Promise.all(removed.map((subscription) => this.releaseSubscription(subscription)));
-    for (const subscription of removed) {
-      const key = subscriptionKey(subscription.ownerId, subscription.connectionId, subscription.directory);
-      if (this.subscriptions.get(key) === subscription) this.subscriptions.delete(key);
-    }
+    await Promise.all(removed.map((subscription) => this.cleanupSubscription(subscription)));
   }
 
   async broadcast(change: FileChangeEvent): Promise<void> {
@@ -262,22 +233,9 @@ export class FileDirectorySubscriptionHub {
     }
 
     for (const subscription of failed) {
-      const key = subscriptionKey(
-        subscription.ownerId,
-        subscription.connectionId,
-        subscription.directory,
-      );
       subscription.canceled = true;
     }
-    await Promise.all(failed.map((subscription) => this.releaseSubscription(subscription)));
-    for (const subscription of failed) {
-      const key = subscriptionKey(
-        subscription.ownerId,
-        subscription.connectionId,
-        subscription.directory,
-      );
-      if (this.subscriptions.get(key) === subscription) this.subscriptions.delete(key);
-    }
+    await Promise.all(failed.map((subscription) => this.cleanupSubscription(subscription)));
   }
 
   close(): Promise<void> {
@@ -285,10 +243,7 @@ export class FileDirectorySubscriptionHub {
     this.closed = true;
     clearInterval(this.sweepTimer);
     const subscriptions = [...this.subscriptions.values()];
-    const pendingScopeAcquisitions = [...this.pendingScopeAcquisitions];
-    const pendingScopeReleases = [...this.pendingScopeReleases];
-    for (const subscription of subscriptions) subscription.canceled = true;
-    this.subscriptions.clear();
+    const cleanups = subscriptions.map((subscription) => this.cleanupSubscription(subscription));
     this.closePromise = (async () => {
       for (const subscription of subscriptions) {
         try {
@@ -302,15 +257,13 @@ export class FileDirectorySubscriptionHub {
           });
         }
       }
-      await Promise.allSettled(pendingScopeAcquisitions);
-      await Promise.allSettled(pendingScopeReleases);
-      await Promise.all(subscriptions.map(releaseScope));
+      await Promise.allSettled(cleanups);
     })();
     return this.closePromise;
   }
 
   private assertCapacity(subscriber: FileDirectorySubscriber): void {
-    if (this.subscriptions.size + this.pendingScopeReleases.size >= this.maxSubscriptions) {
+    if (this.subscriptions.size >= this.maxSubscriptions) {
       throw new Error("Directory subscription limit reached");
     }
     let connectionDirectories = 0;
@@ -332,32 +285,32 @@ export class FileDirectorySubscriptionHub {
     }
   }
 
-  private async sweepStale(track = true): Promise<void> {
+  private async sweepStale(): Promise<void> {
     if (this.closed) return;
     const cutoff = this.now() - this.staleTtlMs;
     const stale: SubscriptionState[] = [];
-    for (const [key, subscription] of this.subscriptions) {
+    for (const subscription of this.subscriptions.values()) {
       if (subscription.lastTouched <= cutoff) {
-        this.subscriptions.delete(key);
-        subscription.canceled = true;
         stale.push(subscription);
       }
     }
-    const cleanup = Promise.all(stale.map((subscription) => awaitAndReleaseScope(subscription)))
-      .then(() => undefined);
-    if (track) this.trackRelease(cleanup);
-    await cleanup;
+    await Promise.all(stale.map((subscription) => this.cleanupSubscription(subscription)));
   }
 
-  private releaseSubscription(subscription: SubscriptionState): Promise<void> {
-    const releasePromise = awaitAndReleaseScope(subscription);
-    this.trackRelease(releasePromise);
-    return releasePromise;
-  }
-
-  private trackRelease(releasePromise: Promise<void>): void {
-    this.pendingScopeReleases.add(releasePromise);
-    void releasePromise.finally(() => this.pendingScopeReleases.delete(releasePromise));
+  private cleanupSubscription(subscription: SubscriptionState): Promise<void> {
+    subscription.canceled = true;
+    if (subscription.cleanupPromise) return subscription.cleanupPromise;
+    const key = subscriptionKey(
+      subscription.ownerId,
+      subscription.connectionId,
+      subscription.directory,
+    );
+    subscription.cleanupPromise = (async () => {
+      if (subscription.scopeReady) await Promise.allSettled([subscription.scopeReady]);
+      await releaseScope(subscription);
+      if (this.subscriptions.get(key) === subscription) this.subscriptions.delete(key);
+    })();
+    return subscription.cleanupPromise;
   }
 
   private assertCurrent(key: string, state: SubscriptionState): void {
@@ -370,10 +323,7 @@ export class FileDirectorySubscriptionHub {
   private async initializeSubscription(
     key: string,
     state: SubscriptionState,
-    staleCleanup: Promise<void>,
   ): Promise<void> {
-    await staleCleanup;
-    this.assertCurrent(key, state);
     if (this.authorize) {
       const authorized = await this.authorize({
         ownerId: state.ownerId,
@@ -390,5 +340,26 @@ export class FileDirectorySubscriptionHub {
       await releaseScope(state);
       throw error;
     }
+  }
+
+  private async resumeSubscription(
+    key: string,
+    existing: SubscriptionState,
+    send: FileDirectorySubscriber["send"],
+  ): Promise<number> {
+    const wasActive = existing.release !== null;
+    existing.lastTouched = this.now();
+    existing.send = send;
+    if (existing.scopeReady) await existing.scopeReady;
+    this.assertCurrent(key, existing);
+    if (wasActive && this.authorize) {
+      const authorized = await this.authorize({
+        ownerId: existing.ownerId,
+        directory: existing.directory,
+      });
+      this.assertCurrent(key, existing);
+      if (!authorized) throw new Error("Directory subscription is not authorized");
+    }
+    return existing.revision;
   }
 }
