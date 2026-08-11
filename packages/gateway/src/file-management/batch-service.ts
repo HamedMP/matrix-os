@@ -101,6 +101,15 @@ export class FileBatchStalePreflightError extends Error {
   }
 }
 
+export class FileBatchMoveUnavailableError extends Error {
+  readonly code = "operation_unavailable";
+
+  constructor() {
+    super("Batch move is unavailable");
+    this.name = "FileBatchMoveUnavailableError";
+  }
+}
+
 export class FileBatchTrashInvalidRequestError extends Error {
   readonly code = "invalid_destination";
 
@@ -126,6 +135,9 @@ export class FileBatchMoveService {
   private readonly ownsExecuteResultCache: boolean;
   private readonly moveCapability: NoReplaceFileMoveCapability | undefined;
   private readonly preflights = new Map<string, StoredPreflight>();
+  private readonly active = new Set<Promise<unknown>>();
+  private closed = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(options: FileBatchMoveServiceOptions = {}) {
     this.preflightResultCache = options.preflightResultCache
@@ -141,7 +153,12 @@ export class FileBatchMoveService {
     this.moveCapability = options.moveCapability;
   }
 
-  async preflight(input: FileBatchMovePreflightInput): Promise<BatchMovePreflightResult> {
+  preflight(input: FileBatchMovePreflightInput): Promise<BatchMovePreflightResult> {
+    if (this.closed) return Promise.reject(new FileBatchMoveUnavailableError());
+    return this.track(this.runPreflight(input));
+  }
+
+  private async runPreflight(input: FileBatchMovePreflightInput): Promise<BatchMovePreflightResult> {
     const parsed = BatchMovePreflightRequestSchema.safeParse({
       requestId: input.requestId,
       phase: "preflight",
@@ -167,7 +184,12 @@ export class FileBatchMoveService {
     return result;
   }
 
-  async execute(input: FileBatchMoveExecuteInput): Promise<FileBatchMoveExecutionResult> {
+  execute(input: FileBatchMoveExecuteInput): Promise<FileBatchMoveExecutionResult> {
+    if (this.closed) return Promise.reject(new FileBatchMoveUnavailableError());
+    return this.track(this.runExecute(input));
+  }
+
+  private async runExecute(input: FileBatchMoveExecuteInput): Promise<FileBatchMoveExecutionResult> {
     const parsed = BatchMoveExecuteRequestSchema.safeParse({
       requestId: input.requestId,
       phase: "execute",
@@ -214,7 +236,26 @@ export class FileBatchMoveService {
     });
   }
 
-  close(): void {
+  close(): Promise<void> {
+    if (!this.closePromise) {
+      this.closed = true;
+      this.closePromise = this.closeOwnedResources();
+    }
+    return this.closePromise;
+  }
+
+  private track<T>(operation: Promise<T>): Promise<T> {
+    this.active.add(operation);
+    void operation.then(
+      () => this.active.delete(operation),
+      () => this.active.delete(operation),
+    );
+    return operation;
+  }
+
+  private async closeOwnedResources(): Promise<void> {
+    await Promise.allSettled([...this.active]);
+    this.active.clear();
     this.preflights.clear();
     if (this.ownsPreflightResultCache) this.preflightResultCache.close();
     if (this.ownsExecuteResultCache) this.executeResultCache.close();
