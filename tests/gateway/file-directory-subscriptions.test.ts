@@ -187,6 +187,66 @@ describe("FileDirectorySubscriptionHub", () => {
     await hub.close();
   });
 
+  it("memoizes exact cleanup across repeated unsubscribe and cap rejection", async () => {
+    const releaseGate = deferred<void>();
+    const release = vi.fn(async () => releaseGate.promise);
+    const hub = new FileDirectorySubscriptionHub({
+      maxSubscriptions: 1,
+      acquireScope: async () => release,
+    });
+    await hub.subscribe(subscriber("owner", "connection", "projects"));
+
+    const repeatedCleanup = Array.from({ length: 100 }, () => (
+      hub.unsubscribe("owner", "connection", "projects")
+    ));
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+    expect(hub.subscriberCount).toBe(1);
+    const rejected = await Promise.allSettled(Array.from({ length: 1_000 }, (_, index) => (
+      hub.subscribe(subscriber(`owner-${index}`, `connection-${index}`, "projects"))
+    )));
+    expect(rejected.every((result) => result.status === "rejected")).toBe(true);
+    expect(release).toHaveBeenCalledOnce();
+    expect(hub.subscriberCount).toBe(1);
+
+    releaseGate.resolve();
+    await expect(Promise.all(repeatedCleanup)).resolves.toEqual(Array(100).fill(true));
+    expect(hub.subscriberCount).toBe(0);
+    await hub.close();
+  });
+
+  it("keeps stale releasing scopes counted until replacements acquire", async () => {
+    let now = 0;
+    let liveScopes = 0;
+    let peakLiveScopes = 0;
+    const releaseGate = deferred<void>();
+    const hub = new FileDirectorySubscriptionHub({
+      maxSubscriptions: 2,
+      now: () => now,
+      acquireScope: async () => {
+        liveScopes += 1;
+        peakLiveScopes = Math.max(peakLiveScopes, liveScopes);
+        return async () => {
+          await releaseGate.promise;
+          liveScopes -= 1;
+        };
+      },
+    });
+    await hub.subscribe(subscriber("owner-a", "connection-a", "projects"));
+    await hub.subscribe(subscriber("owner-b", "connection-b", "projects"));
+
+    now = FILE_DIRECTORY_STALE_TTL_MS;
+    const firstReplacement = hub.subscribe(subscriber("owner-c", "connection-c", "projects"));
+    const secondReplacement = hub.subscribe(subscriber("owner-d", "connection-d", "projects"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(peakLiveScopes).toBe(2);
+    expect(liveScopes).toBe(2);
+
+    releaseGate.resolve();
+    await Promise.all([firstReplacement, secondReplacement]);
+    expect(peakLiveScopes).toBe(2);
+    await hub.close();
+  });
+
   it("drains a pending scope acquisition during close", async () => {
     const acquisitionGate = deferred<() => void>();
     const release = vi.fn();
@@ -289,6 +349,24 @@ describe("FileDirectorySubscriptionHub", () => {
     authorizationGate.resolve(true);
     await expect(Promise.all([first, second])).resolves.toEqual([0, 0]);
     expect(acquireScope).toHaveBeenCalledOnce();
+    expect(hub.subscriberCount).toBe(1);
+    await hub.close();
+  });
+
+  it("shares one replacement after concurrent exact-key cleanup waiters", async () => {
+    const releaseGate = deferred<void>();
+    const acquireScope = vi.fn()
+      .mockResolvedValueOnce(async () => releaseGate.promise)
+      .mockResolvedValue(async () => vi.fn());
+    const hub = new FileDirectorySubscriptionHub({ acquireScope });
+    await hub.subscribe(subscriber("owner", "connection", "projects"));
+    const cleanup = hub.unsubscribe("owner", "connection", "projects");
+    const first = hub.subscribe(subscriber("owner", "connection", "projects"));
+    const second = hub.subscribe(subscriber("owner", "connection", "projects"));
+
+    releaseGate.resolve();
+    await Promise.all([cleanup, first, second]);
+    expect(acquireScope).toHaveBeenCalledTimes(2);
     expect(hub.subscriberCount).toBe(1);
     await hub.close();
   });

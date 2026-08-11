@@ -242,6 +242,7 @@ import {
   bindFileDirectoryWatcher,
   closeFileDirectoryResources,
   createAuthenticatedFileDirectoryWsConnection,
+  createFileDirectoryWsLifecycle,
   isFileDirectoryFrameCandidate,
 } from "./server/file-directory-ws.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
@@ -1869,6 +1870,7 @@ export async function createGateway(config: GatewayConfig) {
         },
         closeSocket: () => mainWsSocket?.close(1008, "File subscription closed"),
       });
+      const fileDirectoryLifecycle = createFileDirectoryWsLifecycle(fileDirectoryConnection);
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
@@ -2206,11 +2208,7 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose(_evt, ws) {
-          void fileDirectoryConnection.close().catch((err: unknown) => {
-            console.error("[files/realtime] Connection cleanup failed", {
-              errorKind: err instanceof Error ? err.name : typeof err,
-            });
-          });
+          void fileDirectoryLifecycle.onClose();
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
           syncPeerSocket = null;
