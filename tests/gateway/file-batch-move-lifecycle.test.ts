@@ -20,6 +20,7 @@ const preflightResult: BatchMovePreflightResult = {
 
 class DeferredResultCache extends FileOperationResultCache {
   closeCalls = 0;
+  runCalls = 0;
   private resolvePending!: (value: unknown) => void;
   private readonly pending = new Promise<unknown>((resolve) => {
     this.resolvePending = resolve;
@@ -29,6 +30,7 @@ class DeferredResultCache extends FileOperationResultCache {
     _input: FileOperationCacheInput,
     _operation: () => Promise<T>,
   ): Promise<T> {
+    this.runCalls += 1;
     return this.pending as Promise<T>;
   }
 
@@ -43,6 +45,72 @@ class DeferredResultCache extends FileOperationResultCache {
 }
 
 describe("FileBatchMoveService lifecycle", () => {
+  it("shares one tracked operation for a large identical pending replay", async () => {
+    const resultCache = new DeferredResultCache();
+    const service = new FileBatchMoveService({ resultCache });
+    const operations = Array.from({ length: 5_000 }, () => service.preflight({
+      ownerId: "owner-a",
+      homePath: "/owner/home",
+      requestId,
+      sources: ["projects/a.md"],
+      destinationDirectory: "archive",
+    }));
+    const allShared = operations.every((operation) => operation === operations[0]);
+    const runCallsWhilePending = resultCache.runCalls;
+    const close = service.close();
+    let closeSettled = false;
+    void close.then(() => { closeSettled = true; });
+    await Promise.resolve();
+    const closeSettledWhilePending = closeSettled;
+
+    resultCache.resolve(preflightResult);
+    await Promise.all(operations);
+    await close;
+    resultCache.close();
+
+    expect(allShared).toBe(true);
+    expect(runCallsWhilePending).toBe(1);
+    expect(closeSettledWhilePending).toBe(false);
+  });
+
+  it("rejects a distinct operation beyond capacity without evicting pending work", async () => {
+    const resultCache = new DeferredResultCache();
+    const service = new FileBatchMoveService({ resultCache });
+    const input = (index: number) => ({
+      ownerId: "owner-a",
+      homePath: "/owner/home",
+      requestId: `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+      sources: ["projects/a.md"],
+      destinationDirectory: "archive",
+    });
+    const accepted = Array.from({ length: 512 }, (_, index) => service.preflight(input(index)));
+    const duplicate = service.preflight(input(0));
+    let overflowError: unknown;
+    let overflowState: "pending" | "resolved" | "rejected" = "pending";
+    const overflow = service.preflight(input(512)).then(
+      (result) => { overflowState = "resolved"; return result; },
+      (error: unknown) => { overflowState = "rejected"; overflowError = error; },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    const duplicateShared = duplicate === accepted[0];
+    const overflowStateWhileFull: string = overflowState;
+    const runCallsWhileFull = resultCache.runCalls;
+
+    resultCache.resolve(preflightResult);
+    await Promise.all([...accepted, duplicate, overflow]);
+    const afterRelease = service.preflight(input(512));
+    await expect(afterRelease).resolves.toEqual(preflightResult);
+    await service.close();
+    resultCache.close();
+
+    expect(duplicateShared).toBe(true);
+    expect(overflowStateWhileFull).toBe("rejected");
+    expect(overflowError).toBeInstanceOf(FileBatchMoveUnavailableError);
+    expect(runCallsWhileFull).toBe(512);
+    expect(resultCache.runCalls).toBe(513);
+  });
+
   it("drains accepted work, shares concurrent close, and rejects work after close", async () => {
     const resultCache = new DeferredResultCache();
     const service = new FileBatchMoveService({ resultCache });

@@ -5,6 +5,7 @@ import {
   BatchMovePreflightRequestSchema,
   BatchTrashRequestSchema,
   type BatchMoveExecuteRequest,
+  type BatchMovePreflightRequest,
 } from "./contracts.js";
 import {
   FileBatchPreflightError,
@@ -32,6 +33,7 @@ import {
 
 const PREFLIGHT_RECORD_LIMIT = 512;
 const PREFLIGHT_TTL_MS = 10 * 60 * 1_000;
+const ACTIVE_MOVE_LIMIT = 512;
 
 export interface FileBatchMovePreflightInput {
   ownerId: string;
@@ -130,7 +132,7 @@ export class FileBatchMoveService {
   private readonly ownsResultCache: boolean;
   private readonly moveCapability: NoReplaceFileMoveCapability | undefined;
   private readonly preflights = new Map<string, StoredPreflight>();
-  private readonly active = new Set<Promise<unknown>>();
+  private readonly active = new Map<string, Promise<unknown>>();
   private closed = false;
   private closePromise: Promise<void> | undefined;
 
@@ -142,10 +144,6 @@ export class FileBatchMoveService {
 
   preflight(input: FileBatchMovePreflightInput): Promise<BatchMovePreflightResult> {
     if (this.closed) return Promise.reject(new FileBatchMoveUnavailableError());
-    return this.track(this.runPreflight(input));
-  }
-
-  private async runPreflight(input: FileBatchMovePreflightInput): Promise<BatchMovePreflightResult> {
     const parsed = BatchMovePreflightRequestSchema.safeParse({
       requestId: input.requestId,
       phase: "preflight",
@@ -153,18 +151,29 @@ export class FileBatchMoveService {
       destinationDirectory: input.destinationDirectory,
     });
     if (!parsed.success || !isServiceIdentityValid(input.ownerId, input.homePath)) {
-      throw new FileBatchPreflightError();
+      return Promise.reject(new FileBatchPreflightError());
     }
+    const payloadHash = hashBatchMovePreflightPayload(parsed.data);
+    return this.track(
+      activeMoveKey(input.ownerId, "move:preflight", input.requestId, payloadHash),
+      () => this.runPreflight(input, parsed.data, payloadHash),
+    );
+  }
 
+  private async runPreflight(
+    input: FileBatchMovePreflightInput,
+    request: BatchMovePreflightRequest,
+    payloadHash: string,
+  ): Promise<BatchMovePreflightResult> {
     const result = await this.resultCache.run({
       ownerId: input.ownerId,
       namespace: "move:preflight",
       requestId: input.requestId,
-      payloadHash: hashBatchMovePreflightPayload(parsed.data),
+      payloadHash,
     }, () => preflightBatchMove({
       homePath: input.homePath,
-      sources: parsed.data.sources,
-      destinationDirectory: parsed.data.destinationDirectory,
+      sources: request.sources,
+      destinationDirectory: request.destinationDirectory,
     }));
 
     this.rememberPreflight(input.ownerId, input.requestId, input.homePath, result);
@@ -173,10 +182,6 @@ export class FileBatchMoveService {
 
   execute(input: FileBatchMoveExecuteInput): Promise<FileBatchMoveExecutionResult> {
     if (this.closed) return Promise.reject(new FileBatchMoveUnavailableError());
-    return this.track(this.runExecute(input));
-  }
-
-  private async runExecute(input: FileBatchMoveExecuteInput): Promise<FileBatchMoveExecutionResult> {
     const parsed = BatchMoveExecuteRequestSchema.safeParse({
       requestId: input.requestId,
       phase: "execute",
@@ -184,24 +189,35 @@ export class FileBatchMoveService {
       ...(input.conflictChoices ? { conflictChoices: input.conflictChoices } : {}),
     });
     if (!parsed.success || !isServiceIdentityValid(input.ownerId, input.homePath)) {
-      throw new FileBatchStalePreflightError();
+      return Promise.reject(new FileBatchStalePreflightError());
     }
+    const payloadHash = hashBatchMoveExecutePayload(parsed.data);
+    return this.track(
+      activeMoveKey(input.ownerId, "move:execute", input.requestId, payloadHash),
+      () => this.runExecute(input, parsed.data, payloadHash),
+    );
+  }
 
+  private async runExecute(
+    input: FileBatchMoveExecuteInput,
+    request: BatchMoveExecuteRequest,
+    payloadHash: string,
+  ): Promise<FileBatchMoveExecutionResult> {
     return this.resultCache.run({
       ownerId: input.ownerId,
       namespace: "move:execute",
       requestId: input.requestId,
-      payloadHash: hashBatchMoveExecutePayload(parsed.data),
+      payloadHash,
     }, async () => {
       const preflight = this.getPreflight(input.ownerId, input.requestId);
       if (
         !preflight
         || preflight.homePath !== resolve(input.homePath)
-        || preflight.result.preflightFingerprint !== parsed.data.preflightFingerprint
+        || preflight.result.preflightFingerprint !== request.preflightFingerprint
       ) {
         throw new FileBatchStalePreflightError();
       }
-      const choices = validateConflictChoices(preflight.result, parsed.data.conflictChoices);
+      const choices = validateConflictChoices(preflight.result, request.conflictChoices);
       const results: MoveItemResult[] = [];
       for (const source of preflight.result.sources) {
         results.push(await moveFileItem({
@@ -231,17 +247,27 @@ export class FileBatchMoveService {
     return this.closePromise;
   }
 
-  private track<T>(operation: Promise<T>): Promise<T> {
-    this.active.add(operation);
+  private track<T>(key: string, start: () => Promise<T>): Promise<T> {
+    const existing = this.active.get(key);
+    if (existing) return existing as Promise<T>;
+    if (this.active.size >= ACTIVE_MOVE_LIMIT) {
+      return Promise.reject(new FileBatchMoveUnavailableError());
+    }
+    const operation = start();
+    this.active.set(key, operation);
     void operation.then(
-      () => this.active.delete(operation),
-      () => this.active.delete(operation),
+      () => this.releaseActive(key, operation),
+      () => this.releaseActive(key, operation),
     );
     return operation;
   }
 
+  private releaseActive(key: string, operation: Promise<unknown>): void {
+    if (this.active.get(key) === operation) this.active.delete(key);
+  }
+
   private async closeOwnedResources(): Promise<void> {
-    await Promise.allSettled([...this.active]);
+    await Promise.allSettled([...this.active.values()]);
     this.active.clear();
     this.preflights.clear();
     if (this.ownsResultCache) this.resultCache.close();
@@ -428,6 +454,15 @@ function validateConflictChoices(
 
 function preflightKey(ownerId: string, requestId: string): string {
   return JSON.stringify([ownerId, requestId]);
+}
+
+function activeMoveKey(
+  ownerId: string,
+  namespace: "move:preflight" | "move:execute",
+  requestId: string,
+  payloadHash: string,
+): string {
+  return JSON.stringify([ownerId, namespace, requestId, payloadHash]);
 }
 
 function isServiceIdentityValid(ownerId: string, homePath: string): boolean {
