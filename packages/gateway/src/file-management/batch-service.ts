@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { posix, resolve } from "node:path";
 import {
   BatchMoveExecuteRequestSchema,
   BatchMovePreflightRequestSchema,
+  BatchTrashRequestSchema,
   type BatchMoveExecuteRequest,
 } from "./contracts.js";
 import {
@@ -20,6 +22,13 @@ import {
   type MoveItemResult,
 } from "./move.js";
 import type { NoReplaceFileMoveCapability } from "../file-ops.js";
+import {
+  fileDelete,
+  TrashManifestQueue,
+  trashEmpty,
+  trashList,
+  trashRestore,
+} from "../trash.js";
 
 const PREFLIGHT_RECORD_LIMIT = 512;
 const PREFLIGHT_TTL_MS = 10 * 60 * 1_000;
@@ -45,6 +54,28 @@ export interface FileBatchMoveExecutionResult {
   affectedDirectories: string[];
 }
 
+export interface FileBatchTrashInput {
+  ownerId: string;
+  homePath: string;
+  requestId: string;
+  sources: string[];
+}
+
+export interface TrashItemResult {
+  source: string;
+  code: "trashed" | "source_missing" | "protected" | "invalid_destination" | "failed";
+}
+
+export interface FileBatchTrashResult {
+  results: TrashItemResult[];
+  sourceDirectory: string;
+}
+
+export interface FileBatchTrashServiceOptions {
+  resultCache?: FileOperationResultCache;
+  manifestQueue?: TrashManifestQueue;
+}
+
 export interface FileBatchMoveServiceOptions {
   resultCache?: FileOperationResultCache;
   preflightResultCache?: FileOperationResultCache;
@@ -64,6 +95,24 @@ export class FileBatchStalePreflightError extends Error {
   constructor() {
     super("Batch move preflight is stale or unavailable");
     this.name = "FileBatchStalePreflightError";
+  }
+}
+
+export class FileBatchTrashInvalidRequestError extends Error {
+  readonly code = "invalid_destination";
+
+  constructor() {
+    super("Batch Trash request is invalid");
+    this.name = "FileBatchTrashInvalidRequestError";
+  }
+}
+
+export class FileBatchTrashUnavailableError extends Error {
+  readonly code = "operation_unavailable";
+
+  constructor() {
+    super("Batch Trash is unavailable");
+    this.name = "FileBatchTrashUnavailableError";
   }
 }
 
@@ -214,6 +263,90 @@ export class FileBatchMoveService {
   }
 }
 
+export class FileBatchTrashService {
+  private readonly resultCache: FileOperationResultCache;
+  private readonly ownsResultCache: boolean;
+  private readonly manifestQueue: TrashManifestQueue;
+  private readonly ownsManifestQueue: boolean;
+  private readonly active = new Set<Promise<unknown>>();
+  private closed = false;
+
+  constructor(options: FileBatchTrashServiceOptions = {}) {
+    this.resultCache = options.resultCache ?? new FileOperationResultCache();
+    this.ownsResultCache = options.resultCache === undefined;
+    this.manifestQueue = options.manifestQueue ?? new TrashManifestQueue();
+    this.ownsManifestQueue = options.manifestQueue === undefined;
+  }
+
+  delete(homePath: string, requestedPath: string) {
+    if (this.closed) return Promise.reject(new FileBatchTrashUnavailableError());
+    return fileDelete(homePath, requestedPath, this.manifestQueue);
+  }
+
+  list(homePath: string) {
+    if (this.closed) return Promise.reject(new FileBatchTrashUnavailableError());
+    return trashList(homePath, this.manifestQueue);
+  }
+
+  restore(homePath: string, trashPath: string) {
+    if (this.closed) return Promise.reject(new FileBatchTrashUnavailableError());
+    return trashRestore(homePath, trashPath, this.manifestQueue);
+  }
+
+  empty(homePath: string) {
+    if (this.closed) return Promise.reject(new FileBatchTrashUnavailableError());
+    return trashEmpty(homePath, this.manifestQueue);
+  }
+
+  trash(input: FileBatchTrashInput): Promise<FileBatchTrashResult> {
+    if (this.closed) return Promise.reject(new FileBatchTrashUnavailableError());
+    const parsed = BatchTrashRequestSchema.safeParse({
+      requestId: input.requestId,
+      sources: input.sources,
+    });
+    if (!parsed.success || !isServiceIdentityValid(input.ownerId, input.homePath)) {
+      return Promise.reject(new FileBatchTrashInvalidRequestError());
+    }
+
+    const operation = this.resultCache.run({
+      ownerId: input.ownerId,
+      namespace: "trash",
+      requestId: input.requestId,
+      payloadHash: hashBatchTrashPayload(parsed.data.sources),
+    }, async () => {
+      const results: TrashItemResult[] = [];
+      for (const source of parsed.data.sources) {
+        const result = await fileDelete(
+          input.homePath,
+          source,
+          this.manifestQueue,
+          input.requestId,
+        );
+        results.push(toTrashItemResult(source, result));
+      }
+      return {
+        results,
+        sourceDirectory: posix.dirname(parsed.data.sources[0]),
+      };
+    });
+    this.active.add(operation);
+    void operation.then(
+      () => this.active.delete(operation),
+      () => this.active.delete(operation),
+    );
+    return operation;
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await Promise.allSettled([...this.active]);
+    this.active.clear();
+    if (this.ownsManifestQueue) await this.manifestQueue.close();
+    if (this.ownsResultCache) this.resultCache.close();
+  }
+}
+
 export function collectAffectedDirectories(
   sources: readonly string[],
   destinationDirectory: string,
@@ -248,4 +381,21 @@ function preflightKey(ownerId: string, requestId: string): string {
 
 function isServiceIdentityValid(ownerId: string, homePath: string): boolean {
   return ownerId.length > 0 && homePath.length > 0;
+}
+
+function hashBatchTrashPayload(sources: readonly string[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ sources }))
+    .digest("base64url");
+}
+
+function toTrashItemResult(
+  source: string,
+  result: { ok: boolean; error?: string; status?: number },
+): TrashItemResult {
+  if (result.ok) return { source, code: "trashed" };
+  if (result.status === 404) return { source, code: "source_missing" };
+  if (result.status === 403) return { source, code: "protected" };
+  if (result.error === "Invalid path") return { source, code: "invalid_destination" };
+  return { source, code: "failed" };
 }
