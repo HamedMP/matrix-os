@@ -37,6 +37,14 @@ export class GoldenSnapshotEnqueueError extends Error {
 
 const SAFE_FAILURE_CATEGORIES = new Set(['disabled', 'unauthorized', 'conflict', 'unavailable']);
 
+class EnqueueResponseReadError extends Error {
+  constructor(reason) {
+    super('Snapshot build enqueue response unavailable');
+    this.name = 'EnqueueResponseReadError';
+    this.reason = reason;
+  }
+}
+
 export function formatGoldenSnapshotEnqueueFailure(error) {
   const category = error instanceof GoldenSnapshotEnqueueError
     && SAFE_FAILURE_CATEGORIES.has(error.category)
@@ -55,7 +63,7 @@ export function isEligibleSnapshotRelease(input) {
 }
 
 async function readBoundedJson(response) {
-  if (!response.body) throw new Error('Snapshot build enqueue failed');
+  if (!response.body) throw new EnqueueResponseReadError('missing_body');
   const reader = response.body.getReader();
   const chunks = [];
   let total = 0;
@@ -64,7 +72,7 @@ async function readBoundedJson(response) {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > MAX_RESPONSE_BYTES) throw new Error('Snapshot build enqueue failed');
+      if (total > MAX_RESPONSE_BYTES) throw new EnqueueResponseReadError('response_too_large');
       chunks.push(value);
     }
   } finally {
@@ -72,8 +80,9 @@ async function readBoundedJson(response) {
   }
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    throw new Error('Snapshot build enqueue failed');
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new EnqueueResponseReadError('invalid_json');
+    throw new EnqueueResponseReadError('unreadable');
   }
 }
 
@@ -84,7 +93,9 @@ async function classifyFailure(response) {
   try {
     const body = await readBoundedJson(response);
     return body?.error === 'Snapshot builds disabled' ? 'disabled' : 'unavailable';
-  } catch {
+  } catch (error) {
+    const reason = error instanceof EnqueueResponseReadError ? error.reason : 'unreadable';
+    console.warn(`[golden-snapshot-enqueue] Response classification failed (${reason}).`);
     return 'unavailable';
   }
 }

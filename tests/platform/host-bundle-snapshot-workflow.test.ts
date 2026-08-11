@@ -97,6 +97,26 @@ describe('host bundle golden snapshot release hook', () => {
     expect(String(failure)).not.toContain('must not escape');
   });
 
+  it('records a coarse diagnostic when a disabled response cannot be classified', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const failure = await enqueueGoldenSnapshot({
+      platformUrl: 'https://app.matrix-os.com',
+      platformSecret: 'test-secret',
+      bundleVersion: 'v2026.07.19-1053',
+      fetchImpl: vi.fn(async () => new Response('provider secret: malformed', { status: 503 })),
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      message: 'Snapshot build enqueue failed',
+      category: 'unavailable',
+    });
+    expect(warn).toHaveBeenCalledWith(
+      '[golden-snapshot-enqueue] Response classification failed (invalid_json).',
+    );
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('provider secret');
+  });
+
   it('formats only allowlisted enqueue diagnostics for CI', () => {
     expect(formatGoldenSnapshotEnqueueFailure(new GoldenSnapshotEnqueueError('disabled')))
       .toBe('Golden snapshot build enqueue failed (disabled). Host bundle publication and fleet deployment are unaffected.');
