@@ -7,6 +7,8 @@ import { dirname, join, relative } from "node:path";
 import type { Hono, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { z } from "zod/v4";
+import { FileManagementPathSchema } from "../file-management/contracts.js";
 import {
   isDeniedFileApiPath,
   resolveExistingFileApiPath,
@@ -20,6 +22,14 @@ import { createFileBlobRoutes } from "../file-blob-routes.js";
 import { fileSearch } from "../file-search.js";
 import type { FileBatchTrashRouteService } from "./file-management-routes.js";
 import { listProjects } from "../projects.js";
+
+const LegacyTrashDeleteRequestSchema = z.object({
+  path: FileManagementPathSchema,
+}).strict();
+const LegacyTrashRestoreRequestSchema = z.object({
+  trashPath: FileManagementPathSchema,
+}).strict();
+const LegacyTrashEmptyRequestSchema = z.object({}).strict();
 
 export interface FileRouteDeps {
   homePath: string;
@@ -106,10 +116,10 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   });
 
   app.post("/api/files/delete", trashBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
+    const parsed = LegacyTrashDeleteRequestSchema.safeParse(await parseJson<unknown>(c));
+    if (!parsed.success) return invalidLegacyTrashRequest(c);
     try {
-      const result = await trashService.delete(homePath, body.path);
+      const result = await trashService.delete(homePath, parsed.data.path);
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
     } catch (error: unknown) {
       return legacyTrashError(c, error);
@@ -125,10 +135,10 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   });
 
   app.post("/api/files/trash/restore", trashBodyLimit, async (c) => {
-    const body = await parseJson<{ trashPath: string }>(c);
-    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
+    const parsed = LegacyTrashRestoreRequestSchema.safeParse(await parseJson<unknown>(c));
+    if (!parsed.success) return invalidLegacyTrashRequest(c);
     try {
-      const result = await trashService.restore(homePath, body.trashPath);
+      const result = await trashService.restore(homePath, parsed.data.trashPath);
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
     } catch (error: unknown) {
       return legacyTrashError(c, error);
@@ -136,7 +146,8 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   });
 
   app.post("/api/files/trash/empty", trashBodyLimit, async (c) => {
-    await consumeOptionalBody(c);
+    const parsed = LegacyTrashEmptyRequestSchema.safeParse(await parseOptionalJson(c));
+    if (!parsed.success) return invalidLegacyTrashRequest(c);
     try {
       return c.json(await trashService.empty(homePath));
     } catch (error: unknown) {
@@ -277,8 +288,20 @@ function toStatusCode(status: number): ContentfulStatusCode {
   return status as ContentfulStatusCode;
 }
 
-async function consumeOptionalBody(c: Parameters<MiddlewareHandler>[0]): Promise<void> {
-  if (c.req.raw.body) await c.req.arrayBuffer();
+async function parseOptionalJson(c: Parameters<MiddlewareHandler>[0]): Promise<unknown> {
+  if (!c.req.raw.body) return {};
+  const body = await c.req.text();
+  if (body.length === 0) return {};
+  try {
+    return JSON.parse(body) as unknown;
+  } catch (error: unknown) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
+function invalidLegacyTrashRequest(c: Parameters<MiddlewareHandler>[0]) {
+  return c.json({ error: "Invalid request" }, 400);
 }
 
 function legacyTrashError(c: Parameters<MiddlewareHandler>[0], error: unknown) {

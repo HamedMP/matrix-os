@@ -10,6 +10,7 @@ import {
 } from "../file-management/contracts.js";
 import {
   FileBatchMoveService,
+  FileBatchMoveUnavailableError,
   FileBatchStalePreflightError,
   FileBatchTrashInvalidRequestError,
   FileBatchTrashService,
@@ -175,7 +176,7 @@ export function registerFileManagementRoutes(
     close() {
       closePromise ??= Promise.resolve().then(async () => {
         if (ownsTrashService) await trashService.close();
-        if (ownsMoveService) moveService.close();
+        if (ownsMoveService) await moveService.close();
       });
       return closePromise;
     },
@@ -233,6 +234,7 @@ function routeError(c: Context, error: unknown, operation: string, requestId: st
   }
   if (
     error instanceof FileOperationCacheCapacityError
+    || error instanceof FileBatchMoveUnavailableError
     || error instanceof FileBatchTrashUnavailableError
   ) {
     console.error(`[file-management] ${operation} unavailable for request ${requestId}:`, safeLogError(error));
