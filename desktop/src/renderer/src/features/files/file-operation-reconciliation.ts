@@ -1,5 +1,7 @@
 import { AppError } from "../../../../shared/app-error";
-import type { FileConflictChoice } from "./file-management-api";
+import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
+import { z } from "zod/v4";
+import { FileConflictChoicesSchema, type FileConflictChoice } from "./file-management-api";
 import type {
   ControllerMovePreflight,
   FileOperationFailureCode,
@@ -16,6 +18,17 @@ import {
 export const MAX_OPERATION_ROWS = 100;
 const RECENT_REQUEST_ID_CAP = 512;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ControllerCreateInputSchema = z.object({
+  parentDirectory: OwnerDirectoryPathSchema,
+  name: FileMutationNameSchema,
+  kind: z.enum(["file", "directory"]),
+}).strict();
+const AuthGenerationSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const ControllerScopeSchema = z.object({
+  directory: OwnerDirectoryPathSchema,
+  runtimeSlot: MatrixComputerRuntimeSlotSchema,
+  authGeneration: AuthGenerationSchema,
+}).strict();
 
 export type ReconciliationPlan =
   | { kind: "create"; target: string; baseline: readonly string[] | null }
@@ -69,20 +82,27 @@ export function validBatchSources(paths: readonly string[]): boolean {
     && parentDirectory(path) === parentDirectory(paths[0]!));
 }
 export function sanitizeScope(scope: FileOperationScope): FileOperationScope {
-  return OwnerDirectoryPathSchema.safeParse(scope.directory).success
-    ? { ...scope }
-    : { ...scope, directory: "" };
+  const candidate = typeof scope === "object" && scope !== null
+    ? scope as unknown as Record<string, unknown>
+    : {};
+  const directory = OwnerDirectoryPathSchema.safeParse(candidate.directory);
+  const runtimeSlot = MatrixComputerRuntimeSlotSchema.safeParse(candidate.runtimeSlot);
+  const authGeneration = AuthGenerationSchema.safeParse(candidate.authGeneration);
+  return {
+    directory: directory.success ? directory.data : "",
+    runtimeSlot: runtimeSlot.success ? runtimeSlot.data : "",
+    authGeneration: authGeneration.success ? authGeneration.data : 0,
+  };
 }
 export function validScope(scope: FileOperationScope): boolean {
-  return OwnerDirectoryPathSchema.safeParse(scope.directory).success;
+  return ControllerScopeSchema.safeParse(scope).success;
 }
 export function validCreateInput(
-  input: { parentDirectory: string; name: string },
+  input: { parentDirectory: string; name: string; kind: "file" | "directory" },
   scope: FileOperationScope,
 ): boolean {
-  return OwnerDirectoryPathSchema.safeParse(input.parentDirectory).success
-    && FileMutationNameSchema.safeParse(input.name).success
-    && input.parentDirectory === scope.directory;
+  const parsed = ControllerCreateInputSchema.safeParse(input);
+  return parsed.success && parsed.data.parentDirectory === scope.directory;
 }
 export function validRenameInput(
   input: { path: string; name: string },
@@ -117,8 +137,9 @@ export function samePreflight(a: ControllerMovePreflight, b: ControllerMovePrefl
     && a.destinationDirectory === b.destinationDirectory && a.sources.join("\0") === b.sources.join("\0");
 }
 export function validChoices(preflight: ControllerMovePreflight, choices: FileConflictChoice[]): boolean {
-  return choices.length === preflight.conflicts.length
-    && choices.every((choice, index) => choice.source === preflight.conflicts[index]?.source);
+  const parsed = FileConflictChoicesSchema.safeParse(choices);
+  return parsed.success && parsed.data.length === preflight.conflicts.length
+    && parsed.data.every((choice, index) => choice.source === preflight.conflicts[index]?.source);
 }
 export function nextRequestId(generate: () => string, recent: string[]): string | null {
   for (let attempt = 0; attempt < 16; attempt++) {
