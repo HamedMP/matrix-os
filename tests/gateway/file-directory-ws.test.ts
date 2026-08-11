@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
-import { FileDirectorySubscriptionHub } from "../../packages/gateway/src/file-management/directory-subscriptions.js";
+import {
+  FILE_DIRECTORY_STALE_TTL_MS,
+  FileDirectorySubscriptionHub,
+} from "../../packages/gateway/src/file-management/directory-subscriptions.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as fileDirectoryWs from "../../packages/gateway/src/server/file-directory-ws.js";
 import {
@@ -322,6 +325,45 @@ describe("main websocket file-directory behavior", () => {
     acquisition.resolve(release);
     await closePromise;
     expect(release).toHaveBeenCalledOnce();
+    expect(hub.subscriberCount).toBe(0);
+    await hub.close();
+  });
+
+  it("cleans a subscription reserved after close waits on a stale sweep", async () => {
+    let now = 0;
+    const staleReleaseGate = deferred<void>();
+    const staleRelease = vi.fn(async () => staleReleaseGate.promise);
+    const lateRelease = vi.fn();
+    const acquireScope = vi.fn()
+      .mockResolvedValueOnce(staleRelease)
+      .mockResolvedValueOnce(lateRelease);
+    const hub = new FileDirectorySubscriptionHub({
+      maxSubscriptions: 1,
+      now: () => now,
+      acquireScope,
+    });
+    await hub.subscribe({
+      ownerId: "stale-owner",
+      connectionId: "stale-connection",
+      directory: "projects",
+      send: vi.fn(),
+    });
+    now = FILE_DIRECTORY_STALE_TTL_MS;
+    const connection = createFileDirectoryWsConnection({
+      ownerId: "owner",
+      connectionId: "connection",
+      hub,
+      send: vi.fn(),
+      closeSocket: vi.fn(),
+    });
+    connection.enqueue({ type: "files:subscribe", directory: "projects" });
+    await vi.waitFor(() => expect(staleRelease).toHaveBeenCalledOnce());
+
+    const closePromise = connection.close();
+    staleReleaseGate.resolve();
+    await closePromise;
+    expect(acquireScope).toHaveBeenCalledTimes(2);
+    expect(lateRelease).toHaveBeenCalledOnce();
     expect(hub.subscriberCount).toBe(0);
     await hub.close();
   });

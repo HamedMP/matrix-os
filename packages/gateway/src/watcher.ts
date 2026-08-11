@@ -65,6 +65,14 @@ const ROOT_GLOBAL_OVERLAP = new Set([
 ]);
 const ROOT_CORRELATION_WINDOW_MS = 5_000;
 const ROOT_CORRELATION_MAX_ENTRIES = ROOT_GLOBAL_OVERLAP.size * 3;
+const ROOT_CORRELATION_MAX_TOKENS_PER_SOURCE = 8;
+
+type WatcherSource = "global" | "scoped";
+
+interface RootCorrelationTokens {
+  global: number[];
+  scoped: number[];
+}
 
 export function createWatcherIgnored(
   options: WatcherIgnoredOptions = {},
@@ -99,10 +107,7 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
   const listeners: Array<(event: FileChangeEvent) => void> = [];
   const scopedReferences = new Map<string, ScopedReferenceState>();
   const scopeAcquisitions = new Map<string, Promise<void>>();
-  const rootCorrelations = new Map<
-    string,
-    { source: "global" | "scoped"; expiresAt: number }
-  >();
+  const rootCorrelations = new Map<string, RootCorrelationTokens>();
   const now = options.now ?? Date.now;
   const rootCorrelationWindowMs = options.rootCorrelationWindowMs
     ?? ROOT_CORRELATION_WINDOW_MS;
@@ -119,33 +124,45 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
   });
 
   const isCorrelatedRootDuplicate = (
-    source: "global" | "scoped",
+    source: WatcherSource,
     path: string,
     event: FileEvent,
   ): boolean => {
     if (!scopedReferences.has(basePath) || !ROOT_GLOBAL_OVERLAP.has(path)) return false;
     const timestamp = now();
-    for (const [key, correlation] of rootCorrelations) {
-      if (correlation.expiresAt < timestamp) rootCorrelations.delete(key);
+    for (const [correlationKey, tokens] of rootCorrelations) {
+      tokens.global = tokens.global.filter((expiresAt) => expiresAt > timestamp);
+      tokens.scoped = tokens.scoped.filter((expiresAt) => expiresAt > timestamp);
+      if (tokens.global.length === 0 && tokens.scoped.length === 0) {
+        rootCorrelations.delete(correlationKey);
+      }
     }
     const key = `${event}\u0000${path}`;
-    const existing = rootCorrelations.get(key);
-    if (existing && existing.source !== source) {
-      rootCorrelations.delete(key);
+    let tokens = rootCorrelations.get(key);
+    const oppositeSource = source === "global" ? "scoped" : "global";
+    const oppositeTokens = tokens?.[oppositeSource];
+    if (tokens && oppositeTokens && oppositeTokens.length > 0) {
+      oppositeTokens.shift();
+      if (tokens.global.length === 0 && tokens.scoped.length === 0) {
+        rootCorrelations.delete(key);
+      }
       return true;
     }
-    if (!existing && rootCorrelations.size >= ROOT_CORRELATION_MAX_ENTRIES) {
+    if (!tokens && rootCorrelations.size >= ROOT_CORRELATION_MAX_ENTRIES) {
       const oldestKey = rootCorrelations.keys().next().value;
       if (oldestKey !== undefined) rootCorrelations.delete(oldestKey);
     }
-    rootCorrelations.set(key, {
-      source,
-      expiresAt: timestamp + rootCorrelationWindowMs,
-    });
+    tokens ??= { global: [], scoped: [] };
+    const sourceTokens = tokens[source];
+    if (sourceTokens.length >= ROOT_CORRELATION_MAX_TOKENS_PER_SOURCE) {
+      sourceTokens.shift();
+    }
+    sourceTokens.push(timestamp + rootCorrelationWindowMs);
+    rootCorrelations.set(key, tokens);
     return false;
   };
 
-  const emit = (source: "global" | "scoped", event: FileEvent, absolutePath: string) => {
+  const emit = (source: WatcherSource, event: FileEvent, absolutePath: string) => {
     const homeRelative = relative(basePath, resolve(absolutePath));
     if (homeRelative === "" || homeRelative.startsWith("..") || homeRelative.startsWith(sep)) return;
     const normalizedPath = homeRelative.split(sep).join("/");
@@ -159,7 +176,7 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
     for (const listener of listeners) listener(change);
   };
 
-  const bindEvents = (backend: WatcherBackend, source: "global" | "scoped") => {
+  const bindEvents = (backend: WatcherBackend, source: WatcherSource) => {
     backend.on("add", (path) => emit(source, "add", path));
     backend.on("change", (path) => emit(source, "change", path));
     backend.on("unlink", (path) => emit(source, "unlink", path));

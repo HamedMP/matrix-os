@@ -313,6 +313,32 @@ describe("gateway home watcher", () => {
     await rm(homePath, { recursive: true });
   });
 
+  it("correlates every opposite-source token in both source orders", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-watcher-"));
+    const fake = createFakeWatcherFactory();
+    const watcher = createWatcher(homePath, { watchFactory: fake.factory });
+    const listener = vi.fn();
+    watcher.on(listener);
+    const release = await watcher.acquireDirectoryScope("");
+    const claudePath = join(homePath, "CLAUDE.md");
+
+    fake.backends[0].emit("change", claudePath);
+    fake.backends[0].emit("change", claudePath);
+    fake.backends[1].emit("change", claudePath);
+    fake.backends[1].emit("change", claudePath);
+    fake.backends[1].emit("unlink", claudePath);
+    fake.backends[1].emit("unlink", claudePath);
+    fake.backends[0].emit("unlink", claudePath);
+    fake.backends[0].emit("unlink", claudePath);
+    expect(listener.mock.calls.map(([event]) => event.event)).toEqual([
+      "change", "change", "unlink", "unlink",
+    ]);
+
+    await release();
+    await watcher.close();
+    await rm(homePath, { recursive: true });
+  });
+
   it("does not correlate opposite-source root hints after the bounded window", async () => {
     let now = 0;
     const homePath = await mkdtemp(join(tmpdir(), "matrix-watcher-"));
