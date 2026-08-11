@@ -14,6 +14,7 @@ import {
 } from "./preflight.js";
 import {
   FileOperationResultCache,
+  FileOperationRequestIdConflictError,
   hashBatchMoveExecutePayload,
   hashBatchMovePreflightPayload,
 } from "./result-cache.js";
@@ -91,6 +92,11 @@ interface StoredPreflight {
   expiresAt: number;
 }
 
+interface ActiveMoveEntry {
+  payloadHash: string;
+  promise: Promise<unknown>;
+}
+
 export class FileBatchStalePreflightError extends Error {
   readonly code = "invalid_destination";
 
@@ -132,7 +138,7 @@ export class FileBatchMoveService {
   private readonly ownsResultCache: boolean;
   private readonly moveCapability: NoReplaceFileMoveCapability | undefined;
   private readonly preflights = new Map<string, StoredPreflight>();
-  private readonly active = new Map<string, Promise<unknown>>();
+  private readonly active = new Map<string, ActiveMoveEntry>();
   private closed = false;
   private closePromise: Promise<void> | undefined;
 
@@ -155,7 +161,8 @@ export class FileBatchMoveService {
     }
     const payloadHash = hashBatchMovePreflightPayload(parsed.data);
     return this.track(
-      activeMoveKey(input.ownerId, "move:preflight", input.requestId, payloadHash),
+      activeMoveKey(input.ownerId, "move:preflight", input.requestId),
+      payloadHash,
       () => this.runPreflight(input, parsed.data, payloadHash),
     );
   }
@@ -193,7 +200,8 @@ export class FileBatchMoveService {
     }
     const payloadHash = hashBatchMoveExecutePayload(parsed.data);
     return this.track(
-      activeMoveKey(input.ownerId, "move:execute", input.requestId, payloadHash),
+      activeMoveKey(input.ownerId, "move:execute", input.requestId),
+      payloadHash,
       () => this.runExecute(input, parsed.data, payloadHash),
     );
   }
@@ -247,27 +255,33 @@ export class FileBatchMoveService {
     return this.closePromise;
   }
 
-  private track<T>(key: string, start: () => Promise<T>): Promise<T> {
+  private track<T>(key: string, payloadHash: string, start: () => Promise<T>): Promise<T> {
     const existing = this.active.get(key);
-    if (existing) return existing as Promise<T>;
+    if (existing) {
+      if (existing.payloadHash !== payloadHash) {
+        return Promise.reject(new FileOperationRequestIdConflictError());
+      }
+      return existing.promise as Promise<T>;
+    }
     if (this.active.size >= ACTIVE_MOVE_LIMIT) {
       return Promise.reject(new FileBatchMoveUnavailableError());
     }
-    const operation = start();
-    this.active.set(key, operation);
-    void operation.then(
-      () => this.releaseActive(key, operation),
-      () => this.releaseActive(key, operation),
+    const promise = start();
+    const entry: ActiveMoveEntry = { payloadHash, promise };
+    this.active.set(key, entry);
+    void promise.then(
+      () => this.releaseActive(key, entry),
+      () => this.releaseActive(key, entry),
     );
-    return operation;
+    return promise;
   }
 
-  private releaseActive(key: string, operation: Promise<unknown>): void {
-    if (this.active.get(key) === operation) this.active.delete(key);
+  private releaseActive(key: string, entry: ActiveMoveEntry): void {
+    if (this.active.get(key) === entry) this.active.delete(key);
   }
 
   private async closeOwnedResources(): Promise<void> {
-    await Promise.allSettled([...this.active.values()]);
+    await Promise.allSettled([...this.active.values()].map((entry) => entry.promise));
     this.active.clear();
     this.preflights.clear();
     if (this.ownsResultCache) this.resultCache.close();
@@ -456,13 +470,8 @@ function preflightKey(ownerId: string, requestId: string): string {
   return JSON.stringify([ownerId, requestId]);
 }
 
-function activeMoveKey(
-  ownerId: string,
-  namespace: "move:preflight" | "move:execute",
-  requestId: string,
-  payloadHash: string,
-): string {
-  return JSON.stringify([ownerId, namespace, requestId, payloadHash]);
+function activeMoveKey(ownerId: string, namespace: "move:preflight" | "move:execute", requestId: string): string {
+  return JSON.stringify([ownerId, namespace, requestId]);
 }
 
 function isServiceIdentityValid(ownerId: string, homePath: string): boolean {
