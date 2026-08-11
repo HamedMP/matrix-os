@@ -19,12 +19,19 @@ import {
   type BrowserSortKey,
 } from "./browser-entries";
 import { useBrowserViewPreference } from "./browser-view-preference";
+import { InlineNameEditor } from "./InlineNameEditor";
+import { FileCreationContextMenu, ManagedFileActionMenu } from "./FileActionMenu";
+import { FileOperationNotice, MoveToTrashDialog } from "./FileOperationNotice";
 import {
   BrowserToolbar,
+  BrowserListing,
   EntryButton,
   measureGridColumns,
-  SortHeader,
 } from "./browser-views";
+import { useFileManagement } from "./use-file-management";
+import type { FileSelectionPlatform } from "./file-selection";
+import { getKernelSocket } from "../../lib/kernel-wiring";
+import type { DirectorySyncSocket } from "./use-directory-sync";
 
 type BrowserStatus = "loading" | "ready" | "error";
 
@@ -43,7 +50,11 @@ export default function ComputerFileBrowser({
   framed = true,
   mode = "browse",
   onOpenFile,
+  onPreviewPathChange,
   onChooseFolder,
+  onOpenInEditor,
+  directorySocket = getKernelSocket(),
+  selectionPlatform = defaultSelectionPlatform(),
 }: {
   compact?: boolean;
   // framed renders the browser as its own bordered card (dialogs, pickers).
@@ -54,7 +65,11 @@ export default function ComputerFileBrowser({
   // competes with files. The default "browse" mode is unchanged.
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
+  onPreviewPathChange?: (path: string | null) => void;
   onChooseFolder?: (path: string) => void;
+  onOpenInEditor?: (path: string) => void;
+  directorySocket?: DirectorySyncSocket | null;
+  selectionPlatform?: FileSelectionPlatform;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -76,6 +91,21 @@ export default function ComputerFileBrowser({
   // <body>, arrow keys stop working, and a keyboard user is stranded outside
   // the listing with no way back in except the mouse.
   const restoreFocusRef = useRef(false);
+
+  const applyAuthoritativeEntries = useCallback((next: BrowserEntry[]) => {
+    setEntries(next);
+    setStatus("ready");
+    setError(null);
+  }, []);
+  const management = useFileManagement({
+    api,
+    directory: currentPath,
+    runtimeSlot,
+    authGeneration,
+    socket: directorySocket,
+    onFocusedPathChange: onPreviewPathChange,
+    onAuthoritativeEntries: applyAuthoritativeEntries,
+  });
 
   const markFocusForRestore = useCallback(() => {
     const active = document.activeElement;
@@ -108,6 +138,15 @@ export default function ComputerFileBrowser({
     () => sortBrowserEntries(viewEntries, sortKey, sortDirection),
     [viewEntries, sortKey, sortDirection],
   );
+  const renderedPaths = useMemo(
+    () => sortedEntries.map((entry) => joinPath(viewCurrentPath, entry.name)),
+    [sortedEntries, viewCurrentPath],
+  );
+  const entriesByPath = useMemo(
+    () => new Map(sortedEntries.map((entry) => [joinPath(viewCurrentPath, entry.name), entry])),
+    [sortedEntries, viewCurrentPath],
+  );
+  useEffect(() => management.reconcilePaths(renderedPaths), [management.reconcilePaths, renderedPaths]);
 
   const load = useCallback(async (path: string) => {
     if (!api) return;
@@ -143,8 +182,9 @@ export default function ComputerFileBrowser({
     setCurrentPath(path);
     setCandidatePath(path);
     setSelectedPath(null);
+    onPreviewPathChange?.(null);
     void load(path);
-  }, [load, markFocusForRestore]);
+  }, [load, markFocusForRestore, onPreviewPathChange]);
 
   const goUp = useCallback(() => {
     if (viewCurrentPath) navigate(parentPath(viewCurrentPath));
@@ -152,11 +192,15 @@ export default function ComputerFileBrowser({
 
   // Single click selects; files also open their preview immediately so the
   // browser/preview split behaves like a Finder column with Quick Look.
-  const selectEntry = useCallback((entry: BrowserEntry, path: string) => {
+  const selectEntry = useCallback((entry: BrowserEntry, path: string, modifiers: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean }) => {
     setSelectedPath(path);
+    management.selectPath(renderedPaths, path, modifiers, selectionPlatform);
     if (entry.type === "directory") setCandidatePath(path);
-    else onOpenFile?.(path);
-  }, [onOpenFile]);
+    else {
+      onOpenFile?.(path);
+      onPreviewPathChange?.(path);
+    }
+  }, [management, onOpenFile, onPreviewPathChange, renderedPaths, selectionPlatform]);
 
   // Double-click or Enter "opens": directories navigate, files preview.
   const activateEntry = useCallback((entry: BrowserEntry, path: string) => {
@@ -249,7 +293,7 @@ export default function ComputerFileBrowser({
         <Button variant="subtle" onClick={() => void load(viewCurrentPath)}>Try again</Button>
       </div>
     );
-  } else if (sortedEntries.length === 0) {
+  } else if (sortedEntries.length === 0 && management.draft?.mode !== "create") {
     content = (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-sm" style={{ color: "var(--text-tertiary)" }}>
         <FolderOpen size={22} aria-hidden />
@@ -260,67 +304,93 @@ export default function ComputerFileBrowser({
     const buttons = sortedEntries.map((entry, index) => {
       const path = joinPath(viewCurrentPath, entry.name);
       const isCandidate = entry.type === "directory" && viewCandidatePath === path;
-      return (
+      if (management.draft?.mode === "rename" && management.draft.path === path) {
+        return (
+          <InlineNameEditor
+            key={`rename:${path}`}
+            mode="rename"
+            originalName={entry.name}
+            kind={entry.type}
+            value={management.draft.name}
+            error={management.draftError}
+            disabled={management.draftSubmitting}
+            onChange={management.updateDraftName}
+            onSubmit={() => void management.submitDraft()}
+            onCancel={management.cancelDraft}
+          />
+        );
+      }
+      const entryButton = (
         <EntryButton
           key={`${entry.type}:${path}`}
           entry={entry}
           grid={view === "grid"}
           listColumns={listColumns}
-          selected={viewSelectedPath === path || isCandidate}
-          pressed={mode === "folder-picker" && entry.type === "directory" ? isCandidate : undefined}
+          selected={mode === "folder-picker" ? viewSelectedPath === path || isCandidate : management.selection.selectedPaths.includes(path)}
+          pressed={mode === "folder-picker" && entry.type === "directory"
+            ? isCandidate
+            : mode === "browse" ? management.selection.selectedPaths.includes(path) : undefined}
           buttonRef={(el) => {
             entryRefs.current[index] = el;
           }}
-          onSelect={() => selectEntry(entry, path)}
+          onSelect={(event) => selectEntry(entry, path, event)}
+          disabled={management.snapshot.pendingPaths.includes(path)}
           onNavigate={() => {
             if (entry.type === "directory") navigate(path);
           }}
           onKeyDown={(event) => onEntryKeyDown(event, entry, path, index)}
         />
       );
-    });
-    content =
-      view === "grid" ? (
-        <div ref={gridRef} className="flex flex-wrap content-start gap-1">
-          {buttons}
-        </div>
-      ) : (
-        <div>
-          <div
-            className="sticky top-0 z-10 grid items-center gap-2 border-b px-2 pb-1 text-[11px] font-medium"
-            style={{
-              gridTemplateColumns: listColumns,
-              borderColor: "var(--border-subtle)",
-              background: "var(--bg-surface)",
-            }}
-          >
-            <SortHeader
-              label="Name"
-              sortLabel="Sort by name"
-              active={sortKey === "name"}
-              direction={sortDirection}
-              onClick={() => toggleSort("name")}
-            />
-            <SortHeader
-              label="Size"
-              sortLabel="Sort by size"
-              active={sortKey === "size"}
-              direction={sortDirection}
-              alignEnd
-              onClick={() => toggleSort("size")}
-            />
-            <SortHeader
-              label="Modified"
-              sortLabel="Sort by modified"
-              active={sortKey === "modified"}
-              direction={sortDirection}
-              alignEnd
-              onClick={() => toggleSort("modified")}
-            />
-          </div>
-          <div className="grid grid-cols-1 gap-0.5 pt-0.5">{buttons}</div>
-        </div>
+      if (mode === "folder-picker") return entryButton;
+      const pending = management.snapshot.pendingPaths.includes(path);
+      const selectedForAction = management.selection.selectedPaths.includes(path)
+        ? management.selection.selectedPaths
+        : [path];
+      const trashDisabled = selectedForAction.some((selected) =>
+        management.snapshot.pendingPaths.includes(selected) || !entriesByPath.get(selected)?.capabilities.canTrash);
+      return (
+        <ManagedFileActionMenu
+          key={`${entry.type}:${path}`}
+          label={entry.name}
+          disabled={pending}
+          selectedCount={management.selection.selectedPaths.length}
+          canRename={entry.capabilities.canRename}
+          canTrash={!trashDisabled}
+          onOpen={() => activateEntry(entry, path)}
+          onOpenInEditor={onOpenInEditor && entry.type === "file" ? () => onOpenInEditor(path) : undefined}
+          onRename={() => management.startRename(path, entry.name)}
+          onTrash={() => management.requestTrash(selectedForAction)}
+          onMenuOpen={() => {
+            if (!management.selection.selectedPaths.includes(path)) {
+              management.selectPath(
+                renderedPaths,
+                path, {}, selectionPlatform,
+              );
+            }
+          }}
+        >
+          {entryButton}
+        </ManagedFileActionMenu>
       );
+    });
+    const draftRow = management.draft?.mode === "create" ? (
+      <InlineNameEditor
+        kind={management.draft.kind}
+        value={management.draft.name}
+        error={management.draftError}
+        disabled={management.draftSubmitting}
+        onChange={management.updateDraftName}
+        onSubmit={() => void management.submitDraft()}
+        onCancel={management.cancelDraft}
+      />
+    ) : null;
+    content = (
+      <BrowserListing
+        grid={view === "grid"} gridRef={gridRef} listColumns={listColumns}
+        draftRow={draftRow} buttons={buttons} sortKey={sortKey}
+        sortDirection={sortDirection} onSort={toggleSort}
+      />
+    );
   }
 
   return (
@@ -340,9 +410,22 @@ export default function ComputerFileBrowser({
         onUp={goUp}
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
+        onNewFile={mode === "browse" ? () => management.startCreate("file") : undefined}
+        onNewFolder={mode === "browse" ? () => management.startCreate("directory") : undefined}
       />
 
-      <div className={`${compact ? "h-52" : "min-h-0 flex-1"} overflow-y-auto p-1.5`}>{content}</div>
+      <FileOperationNotice snapshot={management.snapshot} localNotice={management.localNotice} />
+
+      {mode === "browse" ? (
+        <FileCreationContextMenu
+          onNewFile={() => management.startCreate("file")}
+          onNewFolder={() => management.startCreate("directory")}
+        >
+          <div data-testid="files-listing" className={`${compact ? "h-52" : "min-h-0 flex-1"} overflow-y-auto p-1.5`}>{content}</div>
+        </FileCreationContextMenu>
+      ) : (
+        <div className={`${compact ? "h-52" : "min-h-0 flex-1"} overflow-y-auto p-1.5`}>{content}</div>
+      )}
 
       {onChooseFolder ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
@@ -354,6 +437,19 @@ export default function ComputerFileBrowser({
           </Button>
         </div>
       ) : null}
+      <MoveToTrashDialog
+        paths={management.trashPaths}
+        pending={management.snapshot.status === "pending"}
+        onCancel={management.cancelTrash}
+        onConfirm={() => void management.confirmTrash()}
+      />
     </div>
   );
+}
+
+function defaultSelectionPlatform(): FileSelectionPlatform {
+  const platform = globalThis.navigator?.platform ?? "";
+  if (/mac/i.test(platform)) return "mac";
+  if (/win/i.test(platform)) return "windows";
+  return "linux";
 }

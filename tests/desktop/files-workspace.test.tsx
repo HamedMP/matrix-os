@@ -28,6 +28,7 @@ const LIST: Record<string, { entries: Array<{ name: string; type: string }> }> =
 };
 
 interface ApiOverrides {
+  listFor?: (path: string) => unknown;
   statFor?: (path: string) => { size?: number };
   statImpl?: (path: string) => Promise<{ size?: number }>;
   textFor?: (path: string) => string;
@@ -35,7 +36,7 @@ interface ApiOverrides {
 
 function makeApi(overrides?: ApiOverrides) {
   const get = vi.fn(async (path: string) => {
-    if (path.startsWith("/api/files/list?path=")) return LIST[path] ?? { entries: [] };
+    if (path.startsWith("/api/files/list?path=")) return overrides?.listFor?.(path) ?? LIST[path] ?? { entries: [] };
     if (path.startsWith("/api/files/stat?path=")) {
       if (overrides?.statImpl) return overrides.statImpl(path);
       return overrides?.statFor ? overrides.statFor(path) : { size: 128 };
@@ -122,6 +123,20 @@ describe("Files workspace", () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces"));
     expect(screen.getByRole("button", { name: "Matrix home" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "workspaces" })).not.toBeNull();
+  });
+
+  it("clears the focused preview when an authoritative refresh removes its row", async () => {
+    let entries = [{ name: "README.md", type: "file", capabilities: { canRename: true, canMove: true, canTrash: true } }];
+    api = makeApi({ listFor: () => ({ path: "", entries }) });
+    useConnection.setState({ api: api as never });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open README.md" }));
+    expect(await screen.findByRole("heading", { name: "Matrix files" })).not.toBeNull();
+
+    entries = [];
+    fireEvent.click(screen.getByRole("button", { name: "Refresh folder" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull());
+    expect(screen.getByText("Preview")).not.toBeNull();
   });
 
   it("previews bounded code as selectable text", async () => {

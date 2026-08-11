@@ -9,11 +9,13 @@ import {
   Home,
   LayoutGrid,
   List,
+  FilePlus,
+  FolderPlus,
   RefreshCw,
 } from "lucide-react";
-import type { KeyboardEvent } from "react";
-import { IconButton } from "../../design/primitives";
-import type { BrowserEntry, BrowserSortDirection } from "./browser-entries";
+import type { KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
+import { Button, IconButton } from "../../design/primitives";
+import type { BrowserEntry, BrowserSortDirection, BrowserSortKey } from "./browser-entries";
 import type { BrowserViewMode } from "./browser-view-preference";
 import { FileGlyph, kindForEntry } from "./file-kind";
 import { formatEntrySize, formatModified } from "./format";
@@ -128,6 +130,7 @@ export function EntryButton({
   onSelect,
   onNavigate,
   onKeyDown,
+  disabled = false,
 }: {
   entry: BrowserEntry;
   grid: boolean;
@@ -135,9 +138,10 @@ export function EntryButton({
   selected: boolean;
   pressed: boolean | undefined;
   buttonRef: (el: HTMLButtonElement | null) => void;
-  onSelect: () => void;
+  onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
   onNavigate: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  disabled?: boolean;
 }) {
   const kind = kindForEntry(entry);
   const glyphColor = entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)";
@@ -147,6 +151,7 @@ export function EntryButton({
       <button
         ref={buttonRef}
         type="button"
+        disabled={disabled}
         aria-label={`Open ${entry.name}`}
         aria-pressed={pressed}
         data-grid-tile
@@ -174,6 +179,7 @@ export function EntryButton({
     <button
       ref={buttonRef}
       type="button"
+      disabled={disabled}
       aria-label={`Open ${entry.name}`}
       aria-pressed={pressed}
       className="grid h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
@@ -211,6 +217,8 @@ export function BrowserToolbar({
   onUp,
   onNavigate,
   onRefresh,
+  onNewFile,
+  onNewFolder,
 }: {
   compact: boolean;
   currentPath: string;
@@ -220,6 +228,8 @@ export function BrowserToolbar({
   onUp: () => void;
   onNavigate: (path: string) => void;
   onRefresh: () => void;
+  onNewFile?: () => void;
+  onNewFolder?: () => void;
 }) {
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
@@ -256,10 +266,50 @@ export function BrowserToolbar({
           </span>
         ))}
       </div>
+      {onNewFile ? (
+        <Button variant="ghost" className="shrink-0 text-xs" onClick={onNewFile}>
+          <FilePlus size={13} aria-hidden />New File
+        </Button>
+      ) : null}
+      {onNewFolder ? (
+        <Button variant="ghost" className="shrink-0 text-xs" onClick={onNewFolder}>
+          <FolderPlus size={13} aria-hidden />New Folder
+        </Button>
+      ) : null}
       <ViewSwitcher view={view} onChange={onViewChange} />
       <IconButton label="Refresh folder" className="shrink-0" onClick={onRefresh}>
         <RefreshCw size={13} />
       </IconButton>
+    </div>
+  );
+}
+
+export function BrowserListing({
+  grid, gridRef, listColumns, draftRow, buttons, sortKey, sortDirection, onSort,
+}: {
+  grid: boolean;
+  gridRef: RefObject<HTMLDivElement | null>;
+  listColumns: string;
+  draftRow: ReactNode;
+  buttons: ReactNode;
+  sortKey: BrowserSortKey;
+  sortDirection: BrowserSortDirection;
+  onSort: (key: BrowserSortKey) => void;
+}) {
+  if (grid) {
+    return <div ref={gridRef} className="flex flex-wrap content-start gap-1">{draftRow}{buttons}</div>;
+  }
+  return (
+    <div>
+      <div
+        className="sticky top-0 z-10 grid items-center gap-2 border-b px-2 pb-1 text-[11px] font-medium"
+        style={{ gridTemplateColumns: listColumns, borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      >
+        <SortHeader label="Name" sortLabel="Sort by name" active={sortKey === "name"} direction={sortDirection} onClick={() => onSort("name")} />
+        <SortHeader label="Size" sortLabel="Sort by size" active={sortKey === "size"} direction={sortDirection} alignEnd onClick={() => onSort("size")} />
+        <SortHeader label="Modified" sortLabel="Sort by modified" active={sortKey === "modified"} direction={sortDirection} alignEnd onClick={() => onSort("modified")} />
+      </div>
+      <div className="grid grid-cols-1 gap-0.5 pt-0.5">{draftRow}{buttons}</div>
     </div>
   );
 }
