@@ -44,6 +44,12 @@ describe("terminal links", () => {
     ]);
   });
 
+  it("stops links before source-level escape sequences", () => {
+    expect(extractTerminalLinks(
+      String.raw`https://example.com/docs\nnext`,
+    )).toEqual([web("https://example.com/docs")]);
+  });
+
   it("rejects credentials, unsupported schemes, malformed URLs, and oversized URLs", () => {
     const oversized = `https://example.com/${"a".repeat(2050)}`;
     expect(extractTerminalLinks([

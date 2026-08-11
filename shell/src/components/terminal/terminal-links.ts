@@ -2,7 +2,7 @@ const MAX_URL_LENGTH = 2048;
 const OAUTH_STATE_PATTERN = /^[A-Za-z0-9_-]+$/;
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const CLAUDE_CODE_CALLBACK_URL = "https://platform.claude.com/oauth/code/callback";
-const TERMINAL_URL_PATTERN = /https?:\/\/[^\s<>"')\]}]+/g;
+const TERMINAL_URL_PATTERN = /https?:\/\/[^\s\\<>"')\]}]+/g;
 
 export const MAX_TERMINAL_LINKS = 20;
 
