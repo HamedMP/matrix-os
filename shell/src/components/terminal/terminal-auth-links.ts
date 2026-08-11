@@ -1,5 +1,7 @@
 const MAX_AUTH_URL_LENGTH = 2048;
 const OAUTH_STATE_PATTERN = /^[A-Za-z0-9_-]+$/;
+const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
+const CLAUDE_CODE_CALLBACK_URL = "https://platform.claude.com/oauth/code/callback";
 const TRUSTED_AUTH_URL_PATTERN = /https:\/\/(?:claude\.ai|auth\.openai\.com)\/[^\s"'<>)}\]]{0,2048}/g;
 
 export type TerminalAuthProvider = "claude" | "codex";
@@ -37,12 +39,21 @@ function hasValidOAuthParams(url: URL): boolean {
 }
 
 function isTrustedClaudeAuthUrl(url: URL): boolean {
-  return (
+  const hasTrustedEnvelope =
     hasSafeUrlEnvelope(url) &&
     url.origin === "https://claude.ai" &&
-    url.pathname === "/oauth/authorize" &&
     hasValidOAuthParams(url) &&
-    !url.searchParams.has("redirect")
+    !url.searchParams.has("redirect");
+  if (!hasTrustedEnvelope) return false;
+
+  if (url.pathname === "/oauth/authorize") return true;
+  const codeChallenge = url.searchParams.get("code_challenge");
+  return (
+    url.pathname === "/cai/oauth/authorize" &&
+    url.searchParams.get("code") === "true" &&
+    url.searchParams.get("redirect_uri") === CLAUDE_CODE_CALLBACK_URL &&
+    url.searchParams.get("code_challenge_method") === "S256" &&
+    Boolean(codeChallenge && PKCE_CHALLENGE_PATTERN.test(codeChallenge))
   );
 }
 
@@ -56,7 +67,11 @@ function isTrustedCodexDeviceUrl(url: URL): boolean {
 }
 
 export function mayContainTerminalAuthLink(raw: string): boolean {
-  return raw.includes("claude.ai/oauth/authorize") || raw.includes("auth.openai.com/codex/");
+  return (
+    raw.includes("claude.ai/oauth/authorize") ||
+    raw.includes("claude.ai/cai/oauth/authorize") ||
+    raw.includes("auth.openai.com/codex/")
+  );
 }
 
 export function extractTrustedTerminalAuthLink(raw: string): TerminalAuthLink | null {

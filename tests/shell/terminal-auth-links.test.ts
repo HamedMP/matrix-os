@@ -20,6 +20,38 @@ describe("terminal auth links", () => {
     });
   });
 
+  it("extracts the current Claude Code PKCE login URL", () => {
+    const challenge = "A".repeat(43);
+    const raw = [
+      "https://claude.ai/cai/oauth/authorize?code=true",
+      "&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+      "&response_type=code",
+      "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
+      `&code_challenge=${challenge}&code_challenge_method=S256`,
+      "&state=state_456",
+    ].join("");
+
+    expect(mayContainTerminalAuthLink(raw)).toBe(true);
+    expect(extractTrustedTerminalAuthLink(raw)).toEqual({
+      provider: "claude",
+      providerLabel: "Claude Code",
+      url: raw,
+    });
+  });
+
+  it("rejects a current Claude Code URL with an untrusted callback", () => {
+    const raw = [
+      "https://claude.ai/cai/oauth/authorize?code=true",
+      "&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+      "&response_type=code",
+      "&redirect_uri=https%3A%2F%2Fevil.example%2Fcallback",
+      `&code_challenge=${"A".repeat(43)}&code_challenge_method=S256`,
+      "&state=state_456",
+    ].join("");
+
+    expect(extractTrustedTerminalAuthLink(raw)).toBeNull();
+  });
+
   it("extracts the Codex device login URL", () => {
     const raw = "Go to https://auth.openai.com/codex/device and enter the code shown below.";
 
