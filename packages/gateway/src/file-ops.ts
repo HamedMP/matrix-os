@@ -1,11 +1,9 @@
 import {
   stat as fsStat,
-  mkdir,
-  writeFile,
   access,
   readdir,
 } from "node:fs/promises";
-import { basename, dirname, extname, posix } from "node:path";
+import { basename, extname, posix } from "node:path";
 import { existsSync } from "node:fs";
 import {
   containsDeniedFileApiPath,
@@ -28,18 +26,10 @@ import {
   isFileManagementParentAllowed,
 } from "./file-management/policy.js";
 import {
-  captureSourceIdentity,
-  copyToExclusiveDestination,
-  isDirectorySelfOrDescendant,
-  isExclusiveDestinationConflict,
-  PartialDirectoryCopyError,
-  removeVerifiedSource,
-  type FileCopyDependencies,
-  type SafeSourceCleanupDependencies,
-  type SourceIdentity,
-} from "./file-management/exclusive-copy.js";
-
-export type { FileCopyDependencies } from "./file-management/exclusive-copy.js";
+  getNativeFileCapability,
+  NativeFileCapabilityUnavailableError,
+  type NativeFileCapabilityResult,
+} from "./file-management/native-file-capability.js";
 
 type ErrnoException = NodeJS.ErrnoException;
 
@@ -63,8 +53,25 @@ export interface FileManagementMutationResult {
   errorCode?: "invalid_path" | "protected" | "destination_conflict" | "source_missing" | "cleanup_failed" | "failed";
 }
 
-export interface FileRenameDependencies extends FileCopyDependencies, SafeSourceCleanupDependencies {
-  beforeCleanup?: (path: string) => Promise<void>;
+export interface FileCopyDependencies {
+  beforeNativeMutation?: () => Promise<void>;
+}
+
+function isSameOrDescendantPath(source: string, target: string): boolean {
+  return target === source || target.startsWith(`${source}/`);
+}
+
+async function runNativeMutation(
+  operation: () => Promise<NativeFileCapabilityResult>,
+): Promise<NativeFileCapabilityResult> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (!(error instanceof NativeFileCapabilityUnavailableError)) {
+      console.warn("[file-ops] Native file-management operation failed:", error instanceof Error ? error.message : String(error));
+    }
+    return { ok: false, code: "unsupported_platform" };
+  }
 }
 
 export async function createFile(
@@ -99,10 +106,11 @@ export async function createFile(
   }
 
   try {
-    if (kind === "directory") {
-      await mkdir(target);
-    } else {
-      await writeFile(target, "", { flag: "wx" });
+    const nativeResult = await runNativeMutation(() =>
+      getNativeFileCapability().create(homePath, requestedPath, kind, "", false, false));
+    if (!nativeResult.ok) {
+      if (nativeResult.code === "destination_conflict") return { ok: false, errorCode: "destination_conflict" };
+      return { ok: false, errorCode: nativeResult.code === "invalid_path" ? "invalid_path" : "failed" };
     }
     const path = normalizeHomeRelativePath(homePath, target);
     if (!path) return { ok: false, errorCode: "failed" };
@@ -113,9 +121,6 @@ export async function createFile(
       capabilities: getFileEntryCapabilities(homePath, path),
     };
   } catch (err: unknown) {
-    if ((err as ErrnoException).code === "EEXIST") {
-      return { ok: false, errorCode: "destination_conflict" };
-    }
     console.warn("[file-ops] Typed create failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, errorCode: "failed" };
   }
@@ -124,7 +129,6 @@ export async function createFile(
 export async function renameFile(
   homePath: string,
   input: unknown,
-  dependencies: FileRenameDependencies = {},
 ): Promise<FileManagementMutationResult> {
   const parsed = RenameFileRequestSchema.safeParse(input);
   if (!parsed.success) return { ok: false, errorCode: "invalid_path" };
@@ -153,71 +157,29 @@ export async function renameFile(
   ) {
     return { ok: false, errorCode: "protected" };
   }
-  if (await isDirectorySelfOrDescendant(reauthorizedSource, reauthorizedTarget)) {
+  if (isSameOrDescendantPath(sourcePath, targetPath)) {
     return { ok: false, errorCode: "invalid_path" };
   }
-  let path: string;
-  let sourceIdentity: SourceIdentity;
   try {
-    sourceIdentity = await captureSourceIdentity(reauthorizedSource);
-    await copyToExclusiveDestination(homePath, reauthorizedSource, reauthorizedTarget, dependencies);
+    const nativeResult = await runNativeMutation(() =>
+      getNativeFileCapability().move(homePath, sourcePath, targetPath, false));
+    if (!nativeResult.ok) {
+      if (nativeResult.code === "destination_conflict") return { ok: false, errorCode: "destination_conflict" };
+      if (nativeResult.code === "source_missing") return { ok: false, errorCode: "source_missing" };
+      return { ok: false, errorCode: nativeResult.code === "invalid_path" ? "invalid_path" : "failed" };
+    }
     const normalizedPath = normalizeHomeRelativePath(homePath, reauthorizedTarget);
     if (!normalizedPath) return { ok: false, errorCode: "failed" };
-    path = normalizedPath;
+    return {
+      ok: true,
+      path: normalizedPath,
+      resultCode: "renamed",
+      capabilities: getFileEntryCapabilities(homePath, normalizedPath),
+    };
   } catch (err: unknown) {
-    if (err instanceof PartialDirectoryCopyError) {
-      const partialPath = normalizeHomeRelativePath(homePath, err.target);
-      return partialPath
-        ? { ok: false, errorCode: "failed", partialPath }
-        : { ok: false, errorCode: "failed" };
-    }
-    if (isExclusiveDestinationConflict(err)) {
-      return { ok: false, errorCode: "destination_conflict" };
-    }
     console.warn("[file-ops] Typed rename failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, errorCode: "failed" };
   }
-
-  try {
-    await dependencies.beforeCleanup?.(reauthorizedSource);
-    const cleanupSource = resolveExistingFileApiPath(homePath, sourcePath);
-    if (
-      cleanupSource !== reauthorizedSource
-      || !isFileManagementMutationAllowed(homePath, sourcePath)
-    ) {
-      throw new Error("Source authorization or identity changed before cleanup");
-    }
-    const cleanupResult = await removeVerifiedSource(cleanupSource, sourceIdentity, dependencies);
-    if (!cleanupResult.ok) {
-      const recoveryPath = cleanupResult.recoveryPath
-        ? normalizeHomeRelativePath(homePath, cleanupResult.recoveryPath) ?? undefined
-        : undefined;
-      return {
-        ok: false,
-        path,
-        resultCode: "cleanup_failed",
-        errorCode: "cleanup_failed",
-        capabilities: getFileEntryCapabilities(homePath, path),
-        ...(recoveryPath ? { recoveryPath } : {}),
-      };
-    }
-  } catch (err: unknown) {
-    console.warn("[file-ops] Typed rename cleanup failed:", err instanceof Error ? err.message : String(err));
-    return {
-      ok: false,
-      path,
-      resultCode: "cleanup_failed",
-      errorCode: "cleanup_failed",
-      capabilities: getFileEntryCapabilities(homePath, path),
-    };
-  }
-
-  return {
-    ok: true,
-    path,
-    resultCode: "renamed",
-    capabilities: getFileEntryCapabilities(homePath, path),
-  };
 }
 
 export async function fileStat(
@@ -256,7 +218,9 @@ export async function fileMkdir(
 
   try {
     if (!isFileManagementMutationAllowed(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
-    await mkdir(resolved, { recursive: true });
+    const nativeResult = await runNativeMutation(() =>
+      getNativeFileCapability().create(homePath, requestedPath, "directory", "", true, true));
+    if (!nativeResult.ok) return { ok: false, error: "Failed to create directory" };
     return { ok: true, path: requestedPath };
   } catch (err: unknown) {
     console.warn("[file-ops] Mkdir failed:", err instanceof Error ? err.message : String(err));
@@ -274,14 +238,14 @@ export async function fileTouch(
 
   try {
     if (!isFileManagementMutationAllowed(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
-    const dir = dirname(resolved);
-    await mkdir(dir, { recursive: true });
-    await writeFile(resolved, content, { flag: "wx" });
+    const nativeResult = await runNativeMutation(() =>
+      getNativeFileCapability().create(homePath, requestedPath, "file", content, true, false));
+    if (!nativeResult.ok) {
+      if (nativeResult.code === "destination_conflict") return { ok: false, error: "File already exists", status: 409 };
+      return { ok: false, error: "Failed to create file" };
+    }
     return { ok: true, path: requestedPath };
   } catch (err: unknown) {
-    if ((err as ErrnoException).code === "EEXIST") {
-      return { ok: false, error: "File already exists", status: 409 };
-    }
     return { ok: false, error: "Failed to create file" };
   }
 }
@@ -290,7 +254,6 @@ export async function fileRename(
   homePath: string,
   from: string,
   to: string,
-  dependencies: FileRenameDependencies = {},
 ): Promise<{ ok: boolean; error?: string; status?: number; recoveryPath?: string; partialPath?: string }> {
   const lexicalFrom = resolveWithinHome(homePath, from);
   const resolvedTo = resolveWritableFileApiPath(homePath, to);
@@ -305,51 +268,24 @@ export async function fileRename(
 
   try {
     if (!isFileManagementMutationAllowed(homePath, from) || !isFileManagementMutationAllowed(homePath, to)) return { ok: false, error: "Invalid path" };
-    const dir = dirname(resolvedTo);
-    await mkdir(dir, { recursive: true });
     const reauthorizedFrom = resolveExistingFileApiPath(homePath, from);
     const reauthorizedTo = resolveWritableFileApiPath(homePath, to);
     if (!reauthorizedFrom || !reauthorizedTo || !isFileManagementMutationAllowed(homePath, from) || !isFileManagementMutationAllowed(homePath, to)) {
       return { ok: false, error: "Invalid path" };
     }
-    if (await isDirectorySelfOrDescendant(reauthorizedFrom, reauthorizedTo)) {
+    if (isSameOrDescendantPath(from, to)) {
       return { ok: false, error: "Invalid path" };
     }
-    const sourceIdentity = await captureSourceIdentity(reauthorizedFrom);
-    await copyToExclusiveDestination(homePath, reauthorizedFrom, reauthorizedTo, dependencies);
-    try {
-      await dependencies.beforeCleanup?.(reauthorizedFrom);
-      const cleanupSource = resolveExistingFileApiPath(homePath, from);
-      if (
-        cleanupSource !== reauthorizedFrom
-        || !isFileManagementMutationAllowed(homePath, from)
-      ) {
-        throw new Error("Source authorization or identity changed before cleanup");
-      }
-      const cleanupResult = await removeVerifiedSource(cleanupSource, sourceIdentity, dependencies);
-      if (!cleanupResult.ok) {
-        const recoveryPath = cleanupResult.recoveryPath
-          ? normalizeHomeRelativePath(homePath, cleanupResult.recoveryPath) ?? undefined
-          : undefined;
-        return recoveryPath
-          ? { ok: false, error: "Failed to rename", recoveryPath }
-          : { ok: false, error: "Failed to rename" };
-      }
-    } catch (err: unknown) {
-      console.warn("[file-ops] Rename cleanup failed:", err instanceof Error ? err.message : String(err));
+    const nativeResult = await runNativeMutation(() =>
+      getNativeFileCapability().move(homePath, from, to, true));
+    if (!nativeResult.ok) {
+      if (nativeResult.code === "destination_conflict") return { ok: false, error: "Destination already exists", status: 409 };
+      if (nativeResult.code === "source_missing") return { ok: false, error: "Source not found", status: 404 };
+      if (nativeResult.code === "invalid_path") return { ok: false, error: "Invalid path" };
       return { ok: false, error: "Failed to rename" };
     }
     return { ok: true };
   } catch (err: unknown) {
-    if (err instanceof PartialDirectoryCopyError) {
-      const partialPath = normalizeHomeRelativePath(homePath, err.target);
-      return partialPath
-        ? { ok: false, error: "Failed to rename", partialPath }
-        : { ok: false, error: "Failed to rename" };
-    }
-    if (isExclusiveDestinationConflict(err)) {
-      return { ok: false, error: "Destination already exists", status: 409 };
-    }
     console.warn("[file-ops] Rename failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, error: "Failed to rename" };
   }
@@ -374,29 +310,26 @@ export async function fileCopy(
 
   try {
     if (!isFileManagementMutationAllowed(homePath, to)) return { ok: false, error: "Invalid path" };
-    const dir = dirname(resolvedTo);
-    await mkdir(dir, { recursive: true });
     const reauthorizedFrom = resolveExistingFileApiPath(homePath, from);
     const reauthorizedTo = resolveWritableFileApiPath(homePath, to);
     if (!reauthorizedFrom || containsDeniedFileApiPath(homePath, reauthorizedFrom) || !reauthorizedTo || !isFileManagementMutationAllowed(homePath, to)) {
       return { ok: false, error: "Invalid path" };
     }
-    if (await isDirectorySelfOrDescendant(reauthorizedFrom, reauthorizedTo)) {
+    if (isSameOrDescendantPath(from, to)) {
       return { ok: false, error: "Invalid path" };
     }
-    await copyToExclusiveDestination(homePath, reauthorizedFrom, reauthorizedTo, dependencies);
+    await dependencies.beforeNativeMutation?.();
+    const nativeResult = await runNativeMutation(() =>
+      getNativeFileCapability().copy(homePath, from, to, true));
+    if (!nativeResult.ok) {
+      if (nativeResult.code === "destination_conflict") return { ok: false, error: "Destination already exists", status: 409 };
+      if (nativeResult.code === "source_missing") return { ok: false, error: "Source not found", status: 404 };
+      if (nativeResult.code === "invalid_path") return { ok: false, error: "Invalid path" };
+      if (nativeResult.code === "partial") return { ok: false, error: "Failed to copy", partialPath: to };
+      return { ok: false, error: "Failed to copy" };
+    }
     return { ok: true };
   } catch (err: unknown) {
-    if (err instanceof PartialDirectoryCopyError) {
-      console.warn("[file-ops] Copy left a partial destination:", err.message);
-      const partialPath = normalizeHomeRelativePath(homePath, err.target);
-      return partialPath
-        ? { ok: false, error: "Failed to copy", partialPath }
-        : { ok: false, error: "Failed to copy" };
-    }
-    if (isExclusiveDestinationConflict(err)) {
-      return { ok: false, error: "Destination already exists", status: 409 };
-    }
     console.warn("[file-ops] Copy failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, error: "Failed to copy" };
   }
@@ -405,7 +338,6 @@ export async function fileCopy(
 export async function fileDuplicate(
   homePath: string,
   requestedPath: string,
-  dependencies: FileCopyDependencies = {},
 ): Promise<{ ok: boolean; newPath?: string; error?: string; status?: number }> {
   const lexicalSource = resolveWithinHome(homePath, requestedPath);
   if (!lexicalSource || containsDeniedFileApiPath(homePath, lexicalSource) || isDeniedFileApiPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
@@ -439,19 +371,19 @@ export async function fileDuplicate(
       if (!reauthorizedSource || containsDeniedFileApiPath(homePath, reauthorizedSource) || !reauthorizedTarget || !isFileManagementMutationAllowed(homePath, requestedNewPath)) {
         return { ok: false, error: "Invalid path" };
       }
-      await copyToExclusiveDestination(homePath, reauthorizedSource, reauthorizedTarget, dependencies);
+      const nativeResult = await runNativeMutation(() =>
+        getNativeFileCapability().copy(homePath, requestedPath, requestedNewPath, false));
+      if (!nativeResult.ok) {
+        if (nativeResult.code === "destination_conflict") continue;
+        if (nativeResult.code === "partial") {
+          return { ok: false, newPath: requestedNewPath, error: "Failed to duplicate" };
+        }
+        return { ok: false, error: "Failed to duplicate" };
+      }
       const newPath = normalizeHomeRelativePath(homePath, reauthorizedTarget);
       if (!newPath) return { ok: false, error: "Failed to duplicate" };
       return { ok: true, newPath };
     } catch (err: unknown) {
-      if (err instanceof PartialDirectoryCopyError) {
-        console.warn("[file-ops] Duplicate left a partial destination:", err.message);
-        const newPath = normalizeHomeRelativePath(homePath, err.target);
-        return newPath
-          ? { ok: false, newPath, error: "Failed to duplicate" }
-          : { ok: false, error: "Failed to duplicate" };
-      }
-      if (isExclusiveDestinationConflict(err)) continue;
       console.warn("[file-ops] Duplicate failed:", err instanceof Error ? err.message : String(err));
       return { ok: false, error: "Failed to duplicate" };
     }

@@ -4,9 +4,9 @@
 
 **Goal:** Deliver MAT-268 as a production-grade Desktop Files workflow for structural CRUD, current-directory multi-selection, safe batch move/Trash, and authoritative realtime reconciliation.
 
-**Architecture:** Add shared Zod contracts and focused file-management services beside the existing Gateway file routes. The Gateway owns capabilities, path policy, idempotency, conflict resolution, and per-item outcomes. A bounded directory-subscription hub converts watcher events into authenticated current-directory hints. Desktop keeps serializable selection/operation state, calls the public contracts through `ApiClient`, and always reconciles via authoritative listings. Existing Shell behavior is reference UX only; MAT-268 does not reuse its unsafe independent request fan-out.
+**Architecture:** Add shared Zod contracts and focused file-management services beside the existing Gateway file routes. The Gateway owns capabilities, path policy, idempotency, conflict resolution, and per-item outcomes. Production structural mutations run through a Gateway-only asynchronous Node-API capability compiled into the Linux x64 glibc host bundle; unsupported platforms and cross-device moves fail closed. A bounded directory-subscription hub converts watcher events into authenticated current-directory hints. Desktop keeps serializable selection/operation state, calls the public contracts through `ApiClient`, and always reconciles via authoritative listings. Existing Shell behavior is reference UX only; MAT-268 does not reuse its unsafe independent request fan-out.
 
-**Tech Stack:** Node.js 24 `fs/promises`, TypeScript strict ES modules, Hono, Zod 4, React 19, Electron, Vitest, React Testing Library, Flox, pnpm 10, Bun scripts.
+**Tech Stack:** Node.js 24, TypeScript strict ES modules, dependency-free Node-API C++, Linux `openat2`/`renameat2`, Hono, Zod 4, React 19, Electron, Vitest, React Testing Library, Flox, pnpm 10, Bun scripts.
 
 **Global Constraints:** Work only in the manual MAT-268 worktree; preserve the dirty root checkout. Red → Green → Refactor for every slice. Never overwrite a destination or permanently delete content. All online PR/issue/docs text is English. Do not merge. Public docs ship as a separate `FinnaAI/matrix-os-site` PR after implementation behavior stabilizes.
 
@@ -44,7 +44,13 @@
 **Files:**
 
 - Create: `packages/gateway/src/file-management/contracts.ts`
-- Create: `packages/gateway/src/file-management/exclusive-copy.ts`
+- Delete: `packages/gateway/src/file-management/exclusive-copy.ts` after replacing its pathname-based implementation with the native boundary
+- Create: `packages/gateway/src/file-management/native-file-capability.ts`
+- Create: `packages/gateway/native/linux-x64-glibc/addon.cc`
+- Create: `packages/gateway/native/linux-x64-glibc/fs-ops.{h,cc}`
+- Create: `scripts/build-gateway-native-fs.sh`
+- Modify: `scripts/build-host-bundle.sh`
+- Modify: `.github/workflows/ci.yml`
 - Create: `packages/gateway/src/file-management/policy.ts`
 - Modify: `packages/gateway/src/files-tree.ts`
 - Modify: `packages/gateway/src/path-security.ts`
@@ -54,13 +60,15 @@
 - Test: `tests/gateway/file-ops.test.ts`
 - Test: `tests/gateway/file-management-copy-safety.test.ts`
 - Test: `tests/gateway/file-management-typed-ops.test.ts`
+- Test: `tests/gateway/native-file-capability.test.ts`
+- Test: `tests/gateway/native-file-capability-boundaries.test.ts`
 
 - [ ] Write failing schema tests for UUID request IDs, 1–100 unique same-parent sources, 4,096-byte paths, 255-byte names, typed create/rename payloads, discriminated preflight/execute requests with an execution fingerprint, bounded conflict choices, and stable result codes.
 - [ ] Write failing public listing tests showing top-level dot roots remain omitted; visible protected roots (`system`, `agents`) and denied-subtree ancestors expose `canRename: false`, `canMove: false`, `canTrash: false`; ordinary owner files expose all three capabilities. Independently test that mutations targeting hidden dot roots are rejected.
 - [ ] Run the focused tests and confirm RED because contracts/capabilities do not exist.
 - [ ] Implement exported Zod schemas and inferred types using `zod/v4`.
 - [ ] Implement one normalized mutation policy used by both listing and execution. Reject traversal, absolute paths, denied roots, symlink escapes, home root mutation, separators/control characters, and platform-reserved names.
-- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, reject exact denied sources and ancestors containing denied content while preserving protected-source copy compatibility, use exclusive destination creation/copy, and reject occupied rename targets. Reject directory self/descendant targets before claiming them. During traversal, repeatedly validate source and claimed-target identities with `lstat`/`realpath`, never dereference source symlinks, and fail closed if an entry or target changes. Capture a bounded recursive source snapshot (maximum 10,000 entries and depth 128), atomically detach a matching source into an exclusive same-parent recovery directory after copy success, verify the detached snapshot, and remove only that verified detached source. Surface cleanup failures with one normalized recovery path; never overwrite a replacement while restoring. Claim directory targets at the top level, retain/report one bounded partial target after nested failure (including rename), and never fan out Keep Both names for nested conflicts. Return only normalized relative paths plus safe capability/result data.
+- [ ] Harden the existing create/rename service seam for typed Desktop contracts: re-authorize the complete source and target paths immediately before the filesystem operation, reject exact denied sources and ancestors containing denied content while preserving protected-source copy compatibility, and reject directory self/descendant targets before any target-parent creation. On Linux x64 glibc, load a Gateway-only asynchronous Node-API capability that pins every parent beneath owner home with `openat2`, uses descriptor-relative no-replace creates/copies, and makes direct `renameat2(RENAME_NOREPLACE)` the move linearization point. Fail closed for missing/unsupported addon, kernel/filesystem support, and `EXDEV`; never use a pathname-based JavaScript fallback. Bound recursive copy to 10,000 entries/depth 128, preserve supported modes, copy symlinks without dereferencing, retain/report one claimed partial target after nested failure, and never fan out Keep Both names after a nested conflict.
 - [ ] Extend directory listings with the capability object without breaking existing fields.
 - [ ] Run focused tests and confirm GREEN, then refactor duplicate path checks into pure helpers.
 
@@ -90,12 +98,12 @@
 - Modify: `packages/gateway/src/file-ops.ts`
 - Test: `tests/gateway/file-batch-move.test.ts`
 
-- [ ] Write failing tests for file and directory move, Finder-style Keep Both names, atomic target-name conflicts, skip, cancel-before-execute, no overwrite, source removal only after copy success, removal-failure duplicate reporting, 100-item cap, and ordered partial results.
+- [ ] Write failing tests for file and directory move, Finder-style Keep Both names, atomic target-name conflicts, skip, cancel-before-execute, no overwrite, fail-closed cross-device behavior, 100-item cap, and ordered partial results.
 - [ ] Add concurrent tests where two requests claim the same Keep Both name and both preserve content under distinct names.
 - [ ] Add symlink, traversal, protected-root, self/descendant, and stale-preflight tests.
 - [ ] Run the focused test and confirm RED.
-- [ ] Implement an exclusive top-level directory claim followed by native exclusive per-entry copy, retrying bounded Keep Both candidates only when the top-level claim returns `EEXIST`; retain/report one normalized partial target on nested failure and remove the source only after a confirmed copy plus stable identity recheck.
-- [ ] Return stable per-item codes such as `moved`, `skipped`, `source_missing`, `destination_conflict`, `protected`, `invalid_destination`, and `cleanup_failed`; log raw errors only on the server.
+- [ ] Implement batch moves through the native direct no-replace move primitive, retrying bounded Keep Both candidates only when the atomic target claim reports a conflict. Reject self/descendant targets before parent creation and fail closed on cross-device moves.
+- [ ] Return stable per-item codes such as `moved`, `skipped`, `source_missing`, `destination_conflict`, `protected`, `invalid_destination`, and `failed`; log raw errors only on the server.
 - [ ] Compose deterministic sequential execution through the result cache. Do not add a batch-wide rollback.
 - [ ] Run focused tests and confirm GREEN.
 

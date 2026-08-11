@@ -1,10 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFile, renameFile } from "../../packages/gateway/src/file-ops.js";
+import { isNativeFileCapabilityTarget } from "../../packages/gateway/src/file-management/native-file-capability.js";
 
-describe("Desktop typed file mutations", () => {
+const describeNative = isNativeFileCapabilityTarget() ? describe : describe.skip;
+
+describeNative("Desktop typed file mutations", () => {
   let testDir: string;
   const requestId = "a9d9d1d8-8e5d-45d0-8d17-2c85f4e19a11";
 
@@ -194,115 +197,6 @@ describe("Desktop typed file mutations", () => {
     expect(readFileSync(join(testDir, losingSource), "utf8")).toBe(
       losingSource === "first.md" ? "first" : "second",
     );
-  });
-
-  it("keeps a recoverable source when typed rename cleanup fails", async () => {
-    writeFileSync(join(testDir, "source.md"), "source");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await renameFile(
-      testDir,
-      { requestId, path: "source.md", name: "destination.md" },
-      { removeSource: async () => { throw new Error("simulated cleanup failure"); } },
-    );
-    warn.mockRestore();
-
-    expect(result).toMatchObject({
-      ok: false,
-      path: "destination.md",
-      resultCode: "cleanup_failed",
-      errorCode: "cleanup_failed",
-      recoveryPath: expect.stringMatching(/^\.matrix-rename-recovery-/),
-    });
-    expect(readFileSync(join(testDir, result.recoveryPath!), "utf8")).toBe("source");
-    expect(readFileSync(join(testDir, "destination.md"), "utf8")).toBe("source");
-  });
-
-  it("preserves a modified typed rename source instead of cleaning it up", async () => {
-    writeFileSync(join(testDir, "source.md"), "source");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await renameFile(
-      testDir,
-      { requestId, path: "source.md", name: "destination.md" },
-      { beforeCleanup: async (source) => { writeFileSync(source, "replacement"); } },
-    );
-    warn.mockRestore();
-
-    expect(result).toMatchObject({
-      ok: false,
-      path: "destination.md",
-      resultCode: "cleanup_failed",
-      errorCode: "cleanup_failed",
-    });
-    expect(readFileSync(join(testDir, "source.md"), "utf8")).toBe("replacement");
-    expect(readFileSync(join(testDir, "destination.md"), "utf8")).toBe("source");
-  });
-
-  it("preserves a typed directory when a descendant changes after copy", async () => {
-    mkdirSync(join(testDir, "projects", "folder"));
-    writeFileSync(join(testDir, "projects", "folder", "child.md"), "source");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await renameFile(
-      testDir,
-      { requestId, path: "projects/folder", name: "renamed" },
-      { beforeCleanup: async (source) => { writeFileSync(join(source, "child.md"), "replacement"); } },
-    );
-    warn.mockRestore();
-
-    expect(result).toMatchObject({
-      ok: false,
-      path: "projects/renamed",
-      resultCode: "cleanup_failed",
-      errorCode: "cleanup_failed",
-    });
-    expect(readFileSync(join(testDir, "projects", "folder", "child.md"), "utf8")).toBe("replacement");
-    expect(readFileSync(join(testDir, "projects", "renamed", "child.md"), "utf8")).toBe("source");
-  });
-
-  it("quarantines a typed replacement that appears after cleanup verification", async () => {
-    writeFileSync(join(testDir, "projects", "source.md"), "source");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await renameFile(
-      testDir,
-      { requestId, path: "projects/source.md", name: "destination.md" },
-      {
-        beforeDetach: async (source) => {
-          rmSync(source);
-          writeFileSync(source, "replacement");
-        },
-      },
-    );
-    warn.mockRestore();
-
-    expect(result).toMatchObject({
-      ok: false,
-      path: "projects/destination.md",
-      resultCode: "cleanup_failed",
-      errorCode: "cleanup_failed",
-      recoveryPath: expect.stringMatching(/^projects\/\.matrix-rename-recovery-/),
-    });
-    expect(existsSync(join(testDir, "projects", "source.md"))).toBe(false);
-    expect(readFileSync(join(testDir, result.recoveryPath!), "utf8")).toBe("replacement");
-    expect(readFileSync(join(testDir, "projects", "destination.md"), "utf8")).toBe("source");
-  });
-
-  it("surfaces a typed partial directory destination without removing its source", async () => {
-    mkdirSync(join(testDir, "projects", "folder", "nested"), { recursive: true });
-    writeFileSync(join(testDir, "projects", "folder", "nested", "file.md"), "source");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await renameFile(
-      testDir,
-      { requestId, path: "projects/folder", name: "renamed" },
-      { afterDirectoryClaim: async (target) => { mkdirSync(join(target, "nested")); } },
-    );
-    warn.mockRestore();
-
-    expect(result).toEqual({
-      ok: false,
-      errorCode: "failed",
-      partialPath: "projects/renamed",
-    });
-    expect(readFileSync(join(testDir, "projects", "folder", "nested", "file.md"), "utf8")).toBe("source");
-    expect(existsSync(join(testDir, "projects", "renamed"))).toBe(true);
   });
 
   it("rejects a typed directory rename to itself before copying", async () => {
