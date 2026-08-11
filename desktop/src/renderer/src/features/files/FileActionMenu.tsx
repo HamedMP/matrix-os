@@ -61,19 +61,21 @@ export function FileActionMenu({
 }
 
 export function ManagedFileActionMenu({
-  label, selected, disabled, selectedCount, canRename, canTrash,
-  onMenuOpen, onOpen, onOpenInEditor, onRename, onTrash, children,
+  label, selected, disabled, selectedCount, canRename, canMove, canTrash,
+  onMenuOpen, onOpen, onOpenInEditor, onRename, onMove, onTrash, children,
 }: {
   label: string;
   selected: boolean;
   disabled: boolean;
   selectedCount: number;
   canRename: boolean;
+  canMove: boolean;
   canTrash: boolean;
   onMenuOpen: () => void;
   onOpen: () => void;
   onOpenInEditor?: () => void;
   onRename: () => void;
+  onMove: () => void;
   onTrash: () => void;
   children: ReactNode;
 }) {
@@ -81,6 +83,7 @@ export function ManagedFileActionMenu({
     { label: "Open", onSelect: onOpen },
     ...(onOpenInEditor ? [{ label: "Open in Editor", onSelect: onOpenInEditor }] : []),
     { label: "Rename", disabled: selectedCount > 1 || disabled || !canRename, onSelect: onRename },
+    { label: "Move to…", disabled: !canMove, onSelect: onMove },
     { label: "Move to Trash", danger: true, disabled: !canTrash, onSelect: onTrash },
   ];
   return (

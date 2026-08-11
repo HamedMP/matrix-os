@@ -13,7 +13,7 @@ import {
   FolderPlus,
   RefreshCw,
 } from "lucide-react";
-import type { KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
+import type { DragEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
 import { Button, IconButton } from "../../design/primitives";
 import type { BrowserEntry, BrowserSortDirection, BrowserSortKey } from "./browser-entries";
 import type { BrowserViewMode } from "./browser-view-preference";
@@ -137,6 +137,13 @@ export function EntryButton({
   onNavigate,
   onKeyDown,
   disabled = false,
+  draggable = false,
+  dropTarget = false,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: {
   entry: BrowserEntry;
   grid: boolean;
@@ -148,6 +155,13 @@ export function EntryButton({
   onNavigate: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
+  draggable?: boolean;
+  dropTarget?: boolean;
+  onDragStart?: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragEnd?: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragOver?: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragLeave?: (event: DragEvent<HTMLButtonElement>) => void;
+  onDrop?: (event: DragEvent<HTMLButtonElement>) => void;
 }) {
   const kind = kindForEntry(entry);
   const glyphColor = entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)";
@@ -161,11 +175,18 @@ export function EntryButton({
         aria-label={`Open ${entry.name}`}
         aria-pressed={pressed}
         data-grid-tile
+        data-file-drop-target={dropTarget}
+        draggable={draggable}
         className="flex w-24 flex-col items-center gap-1.5 rounded-lg px-1.5 py-2.5 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-        style={{ background: selected ? "var(--bg-selected)" : "transparent" }}
+        style={{ background: dropTarget ? "var(--accent-muted)" : selected ? "var(--bg-selected)" : "transparent" }}
         onClick={onSelect}
         onDoubleClick={onNavigate}
         onKeyDown={onKeyDown}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
       >
         <span style={{ color: glyphColor }}>
           <FileGlyph kind={kind} size={34} />
@@ -188,15 +209,22 @@ export function EntryButton({
       disabled={disabled}
       aria-label={`Open ${entry.name}`}
       aria-pressed={pressed}
+      data-file-drop-target={dropTarget}
+      draggable={draggable}
       className="grid h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
       style={{
         gridTemplateColumns: listColumns,
-        background: selected ? "var(--bg-selected)" : "transparent",
+        background: dropTarget ? "var(--accent-muted)" : selected ? "var(--bg-selected)" : "transparent",
         color: "var(--text-primary)",
       }}
       onClick={onSelect}
       onDoubleClick={onNavigate}
       onKeyDown={onKeyDown}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <span className="flex min-w-0 items-center gap-2">
         <span className="shrink-0" style={{ color: glyphColor }}>
@@ -226,6 +254,7 @@ export function BrowserToolbar({
   onRefresh,
   onNewFile,
   onNewFolder,
+  dropHandlers,
 }: {
   compact: boolean;
   currentPath: string;
@@ -237,7 +266,23 @@ export function BrowserToolbar({
   onRefresh: () => void;
   onNewFile?: () => void;
   onNewFolder?: () => void;
+  dropHandlers?: {
+    activePath: string | null;
+    onDragOver(path: string, transfer: DataTransfer): boolean;
+    onDragLeave(path: string): void;
+    onDrop(path: string, transfer: DataTransfer): boolean;
+  };
 }) {
+  const dropProps = (path: string) => !dropHandlers ? {} : {
+    "data-file-drop-target": dropHandlers.activePath === path,
+    onDragOver: (event: DragEvent<HTMLButtonElement>) => {
+      if (dropHandlers.onDragOver(path, event.dataTransfer)) event.preventDefault();
+    },
+    onDragLeave: () => dropHandlers.onDragLeave(path),
+    onDrop: (event: DragEvent<HTMLButtonElement>) => {
+      if (dropHandlers.onDrop(path, event.dataTransfer)) event.preventDefault();
+    },
+  };
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
       <IconButton
@@ -255,6 +300,7 @@ export function BrowserToolbar({
           className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--bg-hover)]"
           style={{ color: currentPath ? "var(--text-secondary)" : "var(--text-primary)" }}
           onClick={() => onNavigate("")}
+          {...dropProps("")}
         >
           <Home size={13} />
           {!compact ? "Matrix home" : "Home"}
@@ -267,6 +313,7 @@ export function BrowserToolbar({
               className="max-w-[150px] truncate rounded px-1.5 py-1 text-xs hover:bg-[var(--bg-hover)]"
               style={{ color: crumb.path === currentPath ? "var(--text-primary)" : "var(--text-secondary)" }}
               onClick={() => onNavigate(crumb.path)}
+              {...dropProps(crumb.path)}
             >
               {crumb.label}
             </button>
