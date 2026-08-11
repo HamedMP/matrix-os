@@ -45,7 +45,7 @@ suite("desktop update experience", () => {
     gateway = await startStubGateway();
     app = await _electron.launch({
       executablePath: ELECTRON_PATH,
-      args: [DESKTOP_MAIN, "--remote-debugging-port=9226"],
+      args: [DESKTOP_MAIN],
       env: {
         ...process.env,
         OPERATOR_GATEWAY_URL: gateway.url,
