@@ -17,6 +17,8 @@ import {
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import {
   enqueueGoldenSnapshot,
+  formatGoldenSnapshotEnqueueFailure,
+  GoldenSnapshotEnqueueError,
   isEligibleSnapshotRelease,
 } from '../../scripts/enqueue-golden-snapshot.mjs';
 import { resolveReleaseSnapshotEligibility } from '../../scripts/release-snapshot-eligibility.mjs';
@@ -74,6 +76,54 @@ describe('host bundle golden snapshot release hook', () => {
     })).rejects.toThrow('Snapshot build enqueue failed');
   });
 
+  it('reports a safe disabled category without exposing response details', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      error: 'Snapshot builds disabled',
+      providerError: 'must not escape',
+    }), { status: 503, headers: { 'content-type': 'application/json' } }));
+
+    const failure = await enqueueGoldenSnapshot({
+      platformUrl: 'https://app.matrix-os.com',
+      platformSecret: 'test-secret',
+      bundleVersion: 'v2026.07.19-1053',
+      fetchImpl,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(GoldenSnapshotEnqueueError);
+    expect(failure).toMatchObject({
+      message: 'Snapshot build enqueue failed',
+      category: 'disabled',
+    });
+    expect(String(failure)).not.toContain('must not escape');
+  });
+
+  it('formats only allowlisted enqueue diagnostics for CI', () => {
+    expect(formatGoldenSnapshotEnqueueFailure(new GoldenSnapshotEnqueueError('disabled')))
+      .toBe('Golden snapshot build enqueue failed (disabled). Host bundle publication and fleet deployment are unaffected.');
+    expect(formatGoldenSnapshotEnqueueFailure(new Error('provider quota secret')))
+      .toBe('Golden snapshot build enqueue failed (unavailable). Host bundle publication and fleet deployment are unaffected.');
+  });
+
+  it.each([
+    [401, 'unauthorized'],
+    [403, 'unauthorized'],
+    [409, 'conflict'],
+    [500, 'unavailable'],
+  ])('maps HTTP %i to the safe %s category', async (status, category) => {
+    const failure = await enqueueGoldenSnapshot({
+      platformUrl: 'https://app.matrix-os.com',
+      platformSecret: 'test-secret',
+      bundleVersion: 'v2026.07.19-1053',
+      fetchImpl: vi.fn(async () => new Response('provider details must not escape', { status })),
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      message: 'Snapshot build enqueue failed',
+      category,
+    });
+    expect(String(failure)).not.toContain('provider details');
+  });
+
   it('keeps snapshot enqueue failure isolated from existing fleet deployment', () => {
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
     const enqueueJob = workflow.slice(
@@ -84,6 +134,7 @@ describe('host bundle golden snapshot release hook', () => {
 
     expect(enqueueJob).toContain('needs: [dev-bundle-gate, build, publish]');
     expect(enqueueJob).toContain('continue-on-error: true');
+    expect(enqueueJob).toContain("vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED == 'true'");
     expect(enqueueJob).toContain("github.event_name == 'push'");
     expect(enqueueJob).toContain("(github.event_name == 'workflow_dispatch' && inputs.channel != '')");
     expect(enqueueJob).toContain("github.ref_name == 'main'");
@@ -94,6 +145,28 @@ describe('host bundle golden snapshot release hook', () => {
     expect(enqueueJob).not.toContain('--version "${{ needs.build.outputs.version }}"');
     expect(deployJob).toContain('needs: [dev-bundle-gate, build, publish]');
     expect(deployJob).not.toContain('enqueue-golden-snapshot');
+  });
+
+  it('deploys an explicit disabled-by-default golden build contract without enabling selection', () => {
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const candidateDeploy = workflow.slice(
+      workflow.indexOf('      - name: Deploy tagged revision'),
+      workflow.indexOf('      - name: Smoke candidate revision'),
+    );
+    const productionDeploy = workflow.slice(
+      workflow.indexOf('      - name: Deploy production-role revision'),
+      workflow.indexOf('      - name: Promote revision'),
+    );
+
+    expect(workflow).toContain(
+      "GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}",
+    );
+    expect(candidateDeploy).toContain('GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}');
+    expect(candidateDeploy).toContain('GOLDEN_SNAPSHOTS_ENABLED=false');
+    expect(candidateDeploy).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0');
+    expect(productionDeploy).toContain('GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}');
+    expect(productionDeploy).toContain('GOLDEN_SNAPSHOTS_ENABLED=false');
+    expect(productionDeploy).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0');
   });
 
   it('uses the same manual-channel eligibility rule for durable release registration', () => {
