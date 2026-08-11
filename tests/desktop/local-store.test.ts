@@ -18,6 +18,24 @@ describe("local store", () => {
     expect(await store.get("lastProjectSlug")).toBe("matrix-os");
   });
 
+  it("persists bounded desktop release notes for the post-update What's New dialog", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const release = {
+      version: "1.2.3",
+      releaseDate: "2026-08-11T09:00:00.000Z",
+      notes: "## Improved\n\n- Faster project loading",
+      shown: false,
+    };
+
+    await store.set("desktopUpdateRelease", release);
+
+    expect(await store.get("desktopUpdateRelease")).toEqual(release);
+    await expect(store.setUnknown("desktopUpdateRelease", {
+      ...release,
+      notes: "x".repeat(40_000),
+    })).rejects.toThrow();
+  });
+
   it("returns null for unset keys", async () => {
     const store = createLocalStore({ dir: await makeDir() });
     expect(await store.get("lastProjectSlug")).toBeNull();

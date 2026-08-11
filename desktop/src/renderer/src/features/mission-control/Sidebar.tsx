@@ -24,6 +24,7 @@ import { useThreads } from "../../stores/threads";
 import { kernelThreadAttentionCount } from "../../stores/unified-threads";
 import { useUi } from "../../stores/ui";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
+import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 
 function NavRow({
   icon,
@@ -244,6 +245,7 @@ export default function Sidebar() {
               avatarInitial
             )}
           </button>
+          <DesktopUpdateButton />
           {collapsed ? (
             // Collapsed: the expand toggle lives here too (same place as the
             // collapse toggle when open), so open/close is one consistent spot.

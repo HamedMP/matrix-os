@@ -75,11 +75,13 @@ export function Dialog({
   onClose,
   children,
   width = 480,
+  top = "18vh",
 }: {
   open: boolean;
   onClose: () => void;
   children: ReactNode;
   width?: number;
+  top?: string;
 }) {
   return (
     <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
@@ -88,7 +90,7 @@ export function Dialog({
         <RadixDialog.Content
           aria-describedby={undefined}
           className="fade-in fixed top-[18vh] left-1/2 z-50 -translate-x-1/2 rounded-xl border focus:outline-none"
-          style={{ width, background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-3)" }}
+          style={{ width, maxWidth: "calc(100vw - 32px)", top, background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-3)" }}
         >
           <RadixDialog.Title className="sr-only">Dialog</RadixDialog.Title>
           {children}

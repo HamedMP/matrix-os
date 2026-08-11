@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
 import { ProjectViewsStateSchema } from "../../shared/project-views";
+import { DesktopReleaseNotesSchema } from "../../shared/desktop-update";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -61,6 +62,10 @@ const ProfileSchema = z
   })
   .strict();
 
+const DesktopUpdateReleaseSchema = DesktopReleaseNotesSchema.extend({
+  shown: z.boolean(),
+}).strict();
+
 const KEY_SCHEMAS = {
   profile: ProfileSchema,
   windowBounds: WindowBoundsSchema,
@@ -70,6 +75,7 @@ const KEY_SCHEMAS = {
   recents: RecentsSchema,
   projectViews: ProjectViewsStateSchema,
   providerPreferences: ProviderPreferencesSchema,
+  desktopUpdateRelease: DesktopUpdateReleaseSchema,
 } as const;
 
 export type LocalStoreKey = keyof typeof KEY_SCHEMAS;

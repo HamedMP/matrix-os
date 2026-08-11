@@ -43,6 +43,10 @@ describe("IPC contract", () => {
       "badge:set",
       "shell:open-external",
       "update:check",
+      "update:get-state",
+      "update:install",
+      "update:get-whats-new",
+      "update:acknowledge-whats-new",
       "app:get-zoom",
       "app:set-zoom",
     ];
@@ -862,6 +866,7 @@ describe("IPC contract", () => {
       "notification:clicked",
       "update:available",
       "update:ready",
+      "update:state-changed",
       "window:focus-changed",
     ] as const) {
       expect(EVENT_CHANNELS[ch], ch).toBeDefined();
@@ -873,5 +878,43 @@ describe("IPC contract", () => {
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "project" }).success).toBe(true);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "agents" }).success).toBe(false);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "terminals" }).success).toBe(true);
+  });
+
+  it("bounds desktop update state and changelog payloads", () => {
+    const state = {
+      status: "ready",
+      version: "1.2.3",
+      progress: 100,
+    };
+    const release = {
+      version: "1.2.3",
+      releaseDate: "2026-08-11T09:00:00.000Z",
+      notes: "## Fixed\n\n- Terminal focus",
+    };
+
+    expect(INVOKE_CHANNELS["update:get-state"].response.safeParse(state).success).toBe(true);
+    expect(
+      INVOKE_CHANNELS["update:acknowledge-whats-new"].request.safeParse({
+        version: "1.2.3-beta.1+arm64.7",
+      }).success,
+    ).toBe(true);
+    expect(EVENT_CHANNELS["update:state-changed"].safeParse(state).success).toBe(true);
+    expect(
+      INVOKE_CHANNELS["update:get-whats-new"].response.safeParse({
+        release,
+        shouldOpen: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      INVOKE_CHANNELS["update:get-whats-new"].response.safeParse({
+        release: { ...release, notes: "x".repeat(40_000) },
+        shouldOpen: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      INVOKE_CHANNELS["update:acknowledge-whats-new"].request.safeParse({
+        version: "../../private",
+      }).success,
+    ).toBe(false);
   });
 });

@@ -76,17 +76,25 @@ the DMG; and launches the copied app in an isolated profile.
 ## Updates
 
 Packaged desktop builds default to GitHub releases as the update feed. The app
-checks on launch and then hourly. Downloads happen in the background and install
-only after the user quits and reopens the app.
+checks on launch and then hourly. Downloads happen in the background. Once a
+download is ready, a blue **Update** control appears beside the account avatar;
+selecting it immediately restarts the app and installs the downloaded version.
+Quitting normally also installs a ready update.
+
+Release notes from the downloaded artifact are bounded and persisted in the
+desktop's local recreatable state before restart. On the first launch of that
+exact version, the signed-in desktop opens **What's New** once and renders those
+notes as sanitized Markdown. Remote images are never loaded from release notes,
+and external links only open through the trusted HTTPS shell boundary.
 
 Environment overrides:
 
-- `MATRIX_DESKTOP_UPDATE_CHANNEL=stable|beta|canary`
+- `MATRIX_DESKTOP_UPDATE_CHANNEL=dev|canary|beta|stable`
 - `OPERATOR_UPDATE_FEED=https://...` for a generic-provider break-glass feed
 - `MATRIX_DESKTOP_RELEASE_OWNER` / `MATRIX_DESKTOP_RELEASE_REPO` for forks
 
-Never force-restart the app for an update; attached terminal/session work must
-survive until the user intentionally relaunches.
+Never restart automatically for an update; attached terminal/session work must
+survive until the user explicitly selects **Update** or quits the app.
 
 ## Verification
 
@@ -100,4 +108,6 @@ gh release download desktop-v0.1.0 --pattern SHA256SUMS.txt --pattern desktop-re
 Install the DMG on a clean macOS user, confirm Gatekeeper opens it without an
 unidentified-developer warning, sign in, then leave it running long enough to
 observe the update check in logs. For a canary smoke, install the canary DMG and
-confirm `MATRIX_DESKTOP_UPDATE_CHANNEL=canary` allows prerelease updates.
+confirm `MATRIX_DESKTOP_UPDATE_CHANNEL=canary` allows prerelease updates. Publish
+a newer canary, wait for the blue **Update** control, select it, verify the app
+relaunches on the new version, and confirm **What's New** opens exactly once.

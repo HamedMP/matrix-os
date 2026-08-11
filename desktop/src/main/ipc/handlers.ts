@@ -6,6 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
+import type { DesktopReleaseNotes, DesktopUpdateSnapshot } from "../../shared/desktop-update";
 import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
 import type { z } from "zod/v4";
@@ -28,6 +29,13 @@ export interface HandlerContext {
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
   getUpdateStatus: () => UpdateStatus;
+  getUpdateSnapshot: () => DesktopUpdateSnapshot;
+  installUpdate: () => Promise<boolean> | boolean;
+  getWhatsNew: () => Promise<{
+    release: DesktopReleaseNotes | null;
+    shouldOpen: boolean;
+  }>;
+  acknowledgeWhatsNew: (version: string) => Promise<void>;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
   fetchProjectWorkspace: (
     request: CodingAgentProjectWorkspaceRequest,
@@ -262,4 +270,11 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
 
   handle("update:check", () => ({ status: ctx.getUpdateStatus() }));
+  handle("update:get-state", () => ctx.getUpdateSnapshot());
+  handle("update:install", async () => ({ ok: await ctx.installUpdate() }));
+  handle("update:get-whats-new", () => ctx.getWhatsNew());
+  handle("update:acknowledge-whats-new", async ({ version }) => {
+    await ctx.acknowledgeWhatsNew(version);
+    return { ok: true };
+  });
 }

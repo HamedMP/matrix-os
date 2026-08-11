@@ -36,6 +36,10 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
     getUpdateStatus: vi.fn(() => "disabled"),
+    getUpdateSnapshot: vi.fn(() => ({ status: "disabled" })),
+    installUpdate: vi.fn(() => false),
+    getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
+    acknowledgeWhatsNew: vi.fn(async () => undefined),
     fetchRuntimeSummary: vi.fn(),
     fetchProjectWorkspace: vi.fn(),
     fetchReviewSummaries: vi.fn(),
@@ -122,6 +126,42 @@ describe("registerIpcHandlers", () => {
     const harness = makeHarness({ getUpdateStatus: vi.fn(() => "ready") });
 
     await expect(harness.invoke("update:check")).resolves.toEqual({ status: "ready" });
+  });
+
+  it("exposes typed update state and performs the user-authorized install", async () => {
+    const getUpdateSnapshot = vi.fn(() => ({
+      status: "ready" as const,
+      version: "1.2.3",
+      progress: 100,
+    }));
+    const installUpdate = vi.fn(() => true);
+    const harness = makeHarness({ getUpdateSnapshot, installUpdate });
+
+    await expect(harness.invoke("update:get-state")).resolves.toEqual({
+      status: "ready",
+      version: "1.2.3",
+      progress: 100,
+    });
+    await expect(harness.invoke("update:install")).resolves.toEqual({ ok: true });
+  });
+
+  it("returns the current release once and acknowledges it through a bounded version", async () => {
+    const release = {
+      version: "1.2.3",
+      releaseDate: "2026-08-11T09:00:00.000Z",
+      notes: "## New\n\n- Automatic desktop updates",
+    };
+    const getWhatsNew = vi.fn(async () => ({ release, shouldOpen: true }));
+    const acknowledgeWhatsNew = vi.fn(async () => undefined);
+    const harness = makeHarness({ getWhatsNew, acknowledgeWhatsNew });
+
+    await expect(harness.invoke("update:get-whats-new")).resolves.toEqual({
+      release,
+      shouldOpen: true,
+    });
+    await expect(
+      harness.invoke("update:acknowledge-whats-new", { version: "1.2.3" }),
+    ).resolves.toEqual({ ok: true });
   });
 
   it("returns the runtime summary through a strict trusted-core IPC channel", async () => {
