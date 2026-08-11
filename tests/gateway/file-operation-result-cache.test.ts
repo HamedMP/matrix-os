@@ -95,6 +95,34 @@ describe("FileOperationResultCache", () => {
     await expect(Promise.all([first, second])).resolves.toEqual(["moved", "moved"]);
   });
 
+  it("retains all 512 pending identities instead of evicting one for a 513th request", async () => {
+    const resolvers: Array<(value: number) => void> = [];
+    let executions = 0;
+    const inputs = Array.from({ length: 512 }, (_, index) => ({
+      ownerId: "owner-a",
+      namespace: "move:execute",
+      requestId: `pending-${index}`,
+      payloadHash: `payload-${index}`,
+    }));
+    const pending = inputs.map((input, index) => cache.run(input, () => new Promise<number>((resolve) => {
+      executions += 1;
+      resolvers[index] = resolve;
+    })));
+
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(cache.run({
+      ownerId: "owner-a",
+      namespace: "move:execute",
+      requestId: "pending-512",
+      payloadHash: "payload-512",
+    }, async () => ++executions)).rejects.toMatchObject({ code: "operation_unavailable" });
+
+    expect(cache.run(inputs[0]!, async () => ++executions)).toBe(pending[0]);
+    expect(executions).toBe(512);
+    for (const [index, resolve] of resolvers.entries()) resolve(index);
+    await expect(Promise.all(pending)).resolves.toHaveLength(512);
+  });
+
   it("rejects a reused request identifier whose canonical payload differs", async () => {
     await cache.run({
       ownerId: "owner-a",

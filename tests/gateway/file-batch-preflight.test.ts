@@ -1,8 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { preflightBatchMove } from "../../packages/gateway/src/file-management/preflight.js";
+
+const { lstatMock } = vi.hoisted(() => ({ lstatMock: vi.fn() }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  lstatMock.mockImplementation(actual.lstat);
+  return { ...actual, lstat: lstatMock };
+});
+
+import {
+  FileBatchPreflightUnavailableError,
+  preflightBatchMove,
+} from "../../packages/gateway/src/file-management/preflight.js";
 
 describe("preflightBatchMove", () => {
   let homePath: string;
@@ -16,6 +28,7 @@ describe("preflightBatchMove", () => {
   });
 
   afterEach(() => {
+    lstatMock.mockClear();
     rmSync(homePath, { recursive: true, force: true });
   });
 
@@ -99,5 +112,19 @@ describe("preflightBatchMove", () => {
     })).resolves.toMatchObject({
       invalid: [{ source: "projects/inbox/folder", code: "invalid_destination" }],
     });
+  });
+
+  it("surfaces a typed generic error when a destination filesystem read fails", async () => {
+    const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    lstatMock.mockRejectedValueOnce(error);
+
+    await expect(preflightBatchMove({
+      homePath,
+      sources: ["projects/inbox/a.md"],
+      destinationDirectory: "projects/archive",
+    })).rejects.toBeInstanceOf(FileBatchPreflightUnavailableError);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

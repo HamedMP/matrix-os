@@ -41,6 +41,15 @@ export class FileOperationRequestIdConflictError extends Error {
   }
 }
 
+export class FileOperationCacheCapacityError extends Error {
+  readonly code = "operation_unavailable";
+
+  constructor() {
+    super("File operation is temporarily unavailable");
+    this.name = "FileOperationCacheCapacityError";
+  }
+}
+
 /**
  * A process-local, owner-scoped idempotency cache. Cache keys deliberately do
  * not contain request payloads, credentials, or filesystem paths.
@@ -63,6 +72,10 @@ export class FileOperationResultCache {
       }
       return existing.promise as Promise<T>;
     }
+    this.removeExpired();
+    if (!this.makeSpaceForNewEntry()) {
+      return Promise.reject(new FileOperationCacheCapacityError());
+    }
 
     let entry: CacheEntry<T>;
     const promise = Promise.resolve()
@@ -79,7 +92,6 @@ export class FileOperationResultCache {
       );
     entry = { payloadHash: input.payloadHash, promise, expiresAt: undefined };
     this.entries.set(key, entry as CacheEntry<unknown>);
-    this.evictLeastRecentlyUsed();
     return promise;
   }
 
@@ -100,12 +112,15 @@ export class FileOperationResultCache {
     return entry;
   }
 
-  private evictLeastRecentlyUsed(): void {
-    while (this.entries.size > MAX_ENTRIES) {
-      const oldestKey = this.entries.keys().next().value;
-      if (oldestKey === undefined) return;
-      this.entries.delete(oldestKey);
+  private makeSpaceForNewEntry(): boolean {
+    if (this.entries.size < MAX_ENTRIES) return true;
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt !== undefined) {
+        this.entries.delete(key);
+        return true;
+      }
     }
+    return false;
   }
 
   private removeExpired(): void {

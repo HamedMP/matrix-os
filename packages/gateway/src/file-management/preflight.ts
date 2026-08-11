@@ -41,6 +41,15 @@ export class FileBatchPreflightError extends Error {
   }
 }
 
+export class FileBatchPreflightUnavailableError extends Error {
+  readonly code = "failed";
+
+  constructor() {
+    super("File operation preflight failed");
+    this.name = "FileBatchPreflightUnavailableError";
+  }
+}
+
 /**
  * Reads current owner-home state to prepare a batch move. This is advisory:
  * execute must repeat policy and filesystem checks before every mutation.
@@ -99,12 +108,13 @@ function validateInput(sources: string[], destinationDirectory: string): void {
 async function inspectDestination(homePath: string, destinationDirectory: string): Promise<{ available: boolean }> {
   const capabilities = getFileEntryCapabilities(homePath, destinationDirectory);
   if (!capabilities.canMove) return { available: false };
-  const resolved = resolveExistingFileApiPath(homePath, destinationDirectory);
+  const resolved = resolveExistingOrThrow(homePath, destinationDirectory);
   if (!resolved) return { available: false };
   try {
     return { available: (await lstat(resolved)).isDirectory() };
-  } catch {
-    return { available: false };
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) return { available: false };
+    throw preflightFilesystemFailure(error);
   }
 }
 
@@ -116,24 +126,43 @@ async function inspectSource(
   if (!capabilities.canMove) {
     return { code: capabilities.readOnlyReason === "protected" ? "protected" : "invalid_destination", isDirectory: false };
   }
-  const resolved = resolveExistingFileApiPath(homePath, source);
+  const resolved = resolveExistingOrThrow(homePath, source);
   if (!resolved) return { code: "source_missing", isDirectory: false };
   try {
     return { isDirectory: (await lstat(resolved)).isDirectory() };
-  } catch {
-    return { code: "source_missing", isDirectory: false };
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) return { code: "source_missing", isDirectory: false };
+    throw preflightFilesystemFailure(error);
   }
 }
 
 async function existsInOwnerHome(homePath: string, path: string): Promise<boolean> {
-  const resolved = resolveExistingFileApiPath(homePath, path);
+  const resolved = resolveExistingOrThrow(homePath, path);
   if (!resolved) return false;
   try {
     await lstat(resolved);
     return true;
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) return false;
+    throw preflightFilesystemFailure(error);
   }
+}
+
+function resolveExistingOrThrow(homePath: string, path: string): string | null {
+  try {
+    return resolveExistingFileApiPath(homePath, path);
+  } catch (error: unknown) {
+    throw preflightFilesystemFailure(error);
+  }
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function preflightFilesystemFailure(error: unknown): FileBatchPreflightUnavailableError {
+  console.error("[file-management] Batch move preflight filesystem inspection failed", error);
+  return new FileBatchPreflightUnavailableError();
 }
 
 function isSameOrDescendant(destinationDirectory: string, source: string): boolean {
