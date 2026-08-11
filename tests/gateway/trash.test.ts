@@ -1,15 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   mkdirSync,
   writeFileSync,
   rmSync,
   existsSync,
   readFileSync,
+  symlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   fileDelete,
+  TrashManifestQueue,
+  TrashManifestQueueCapacityError,
+  TrashManifestQueueClosedError,
+  TrashManifestUnavailableError,
   trashList,
   trashRestore,
   trashEmpty,
@@ -250,13 +255,16 @@ describe("trashEmpty", () => {
 
 describe("concurrent operations", () => {
   let testDir: string;
+  let manifestQueue: TrashManifestQueue;
 
   beforeEach(() => {
     testDir = join(tmpdir(), `trash-concurrent-test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
+    manifestQueue = new TrashManifestQueue();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await manifestQueue.close();
     rmSync(testDir, { recursive: true, force: true });
   });
 
@@ -266,10 +274,170 @@ describe("concurrent operations", () => {
     }
 
     await Promise.all(
-      Array.from({ length: 5 }, (_, i) => fileDelete(testDir, `file${i}.md`)),
+      Array.from({ length: 5 }, (_, i) => fileDelete(testDir, `file${i}.md`, manifestQueue)),
     );
 
-    const list = await trashList(testDir);
+    const list = await trashList(testDir, manifestQueue);
     expect(list.entries).toHaveLength(5);
   });
+});
+
+describe("Trash manifest serialization", () => {
+  const roots: string[] = [];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  it("bounds active home queues and removes an entry when that home becomes idle", async () => {
+    const queue = new TrashManifestQueue({ maxHomes: 1 });
+    const firstHome = makeRoot("trash-queue-first");
+    const secondHome = makeRoot("trash-queue-second");
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = queue.run(firstHome, () => gate);
+
+    await expect(queue.run(secondHome, async () => "never"))
+      .rejects.toBeInstanceOf(TrashManifestQueueCapacityError);
+
+    releaseFirst();
+    await first;
+    await expect(queue.run(secondHome, async () => "admitted"))
+      .resolves.toBe("admitted");
+    await queue.close();
+  });
+
+  it("drains accepted work and rejects new work after shutdown begins", async () => {
+    const queue = new TrashManifestQueue({ maxHomes: 1 });
+    const home = makeRoot("trash-queue-close");
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = queue.run(home, async () => {
+      events.push("first-start");
+      await gate;
+      events.push("first-end");
+    });
+    const second = queue.run(home, async () => {
+      events.push("second");
+    });
+    await Promise.resolve();
+
+    const closing = queue.close();
+    await expect(queue.run(home, async () => undefined))
+      .rejects.toBeInstanceOf(TrashManifestQueueClosedError);
+    releaseFirst();
+    await closing;
+    await Promise.all([first, second]);
+
+    expect(events).toEqual(["first-start", "first-end", "second"]);
+  });
+
+  it("bounds pending operations even when they all target one home", async () => {
+    const queue = new TrashManifestQueue({ maxHomes: 1, maxPending: 2 });
+    const home = makeRoot("trash-queue-pending");
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = queue.run(home, () => gate);
+    const second = queue.run(home, async () => "second");
+    const third = queue.run(home, async () => "third");
+
+    const admission = await Promise.race([
+      third.then(
+        () => "resolved",
+        (error: unknown) => error instanceof TrashManifestQueueCapacityError ? "rejected" : "wrong-error",
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 0)),
+    ]);
+    releaseFirst();
+    await Promise.allSettled([first, second, third]);
+    expect(admission).toBe("rejected");
+    await expect(queue.run(home, async () => "after-idle"))
+      .resolves.toBe("after-idle");
+    await queue.close();
+  });
+
+  it("does not treat malformed manifest JSON as empty Trash", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const home = makeRoot("trash-malformed-manifest");
+    const trashDir = join(home, ".trash");
+    mkdirSync(trashDir);
+    writeFileSync(join(trashDir, ".manifest.json"), "{not-json");
+    writeFileSync(join(home, "keep.md"), "keep");
+
+    await expect(trashList(home)).rejects.toBeInstanceOf(TrashManifestUnavailableError);
+    const result = await fileDelete(home, "keep.md");
+
+    expect(result).toEqual({ ok: false, error: "Trash operation failed", status: 500 });
+    expect(readFileSync(join(home, "keep.md"), "utf8")).toBe("keep");
+    expect(readFileSync(join(trashDir, ".manifest.json"), "utf8")).toBe("{not-json");
+  });
+
+  it("distinguishes an unreadable manifest from a missing manifest", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const home = makeRoot("trash-unreadable-manifest");
+    const manifestPath = join(home, ".trash", ".manifest.json");
+    mkdirSync(manifestPath, { recursive: true });
+
+    await expect(trashList(home)).rejects.toMatchObject({
+      code: "failed",
+      message: "Trash manifest is unavailable",
+    });
+  });
+
+  it("rejects manifest entries whose trash path is outside the Trash namespace", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const home = makeRoot("trash-invalid-entry-path");
+    const trashDir = join(home, ".trash");
+    mkdirSync(trashDir);
+    writeFileSync(join(trashDir, ".manifest.json"), JSON.stringify([{
+      name: "outside.md",
+      originalPath: "projects/outside.md",
+      deletedAt: "2026-08-11T00:00:00.000Z",
+      trashPath: "projects/outside.md",
+    }]));
+
+    await expect(trashList(home)).rejects.toBeInstanceOf(TrashManifestUnavailableError);
+  });
+
+  it.runIf(process.platform !== "win32")("preserves existing portable-path names that typed create would not admit", async () => {
+    const home = makeRoot("trash-existing-name");
+    writeFileSync(join(home, "legacy:name.md"), "legacy");
+
+    await fileDelete(home, "legacy:name.md");
+
+    await expect(trashList(home)).resolves.toMatchObject({
+      entries: [{ name: "legacy:name.md", originalPath: "legacy:name.md" }],
+    });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects a manifest symlink instead of reading through it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const home = makeRoot("trash-manifest-symlink");
+    const trashDir = join(home, ".trash");
+    mkdirSync(trashDir);
+    writeFileSync(join(home, "outside-manifest.json"), "[]");
+    symlinkSync(join(home, "outside-manifest.json"), join(trashDir, ".manifest.json"));
+    writeFileSync(join(home, "stay.md"), "stay");
+
+    const result = await fileDelete(home, "stay.md");
+
+    expect(result).toEqual({ ok: false, error: "Trash operation failed", status: 500 });
+    expect(readFileSync(join(home, "stay.md"), "utf8")).toBe("stay");
+    expect(readFileSync(join(home, "outside-manifest.json"), "utf8")).toBe("[]");
+  });
+
+  function makeRoot(prefix: string): string {
+    const root = join(tmpdir(), `${prefix}-${process.pid}-${Date.now()}-${Math.random()}`);
+    mkdirSync(root, { recursive: true });
+    roots.push(root);
+    return root;
+  }
 });
