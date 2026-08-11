@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractTrustedTerminalAuthLink,
   mayContainTerminalAuthLink,
+  scanTerminalAuthOutput,
 } from "../../shell/src/components/terminal/terminal-auth-links.js";
 
 describe("terminal auth links", () => {
@@ -29,7 +30,7 @@ describe("terminal auth links", () => {
     });
   });
 
-  it("extracts a trusted Codex browser OAuth URL", () => {
+  it("rejects an unbound Codex browser OAuth URL", () => {
     const raw = [
       "https://auth.openai.com/oauth/authorize?response_type=code",
       "&client_id=app_EMoamEEZ73f0CkXaXp7hrann&state=state_456",
@@ -37,11 +38,7 @@ describe("terminal auth links", () => {
       `&code_challenge=${"A".repeat(43)}&code_challenge_method=S256`,
     ].join("");
 
-    expect(extractTrustedTerminalAuthLink(raw)).toEqual({
-      provider: "codex",
-      providerLabel: "Codex",
-      url: raw,
-    });
+    expect(extractTrustedTerminalAuthLink(raw)).toBeNull();
   });
 
   it("rejects lookalike hosts, credentials, fragments, and untrusted Codex paths", () => {
@@ -77,5 +74,22 @@ describe("terminal auth links", () => {
       .toBe(true);
     expect(mayContainTerminalAuthLink("Open https://example.com/docs"))
       .toBe(false);
+  });
+
+  it("retains an incomplete auth URL until a later PTY chunk completes it", () => {
+    const firstChunk = "Go to https://auth.openai.com/codex/";
+    const firstScan = scanTerminalAuthOutput(firstChunk);
+
+    expect(firstScan).toEqual({ link: null, bufferedOutput: firstChunk });
+
+    const secondScan = scanTerminalAuthOutput(`${firstScan.bufferedOutput}device`);
+    expect(secondScan).toEqual({
+      link: {
+        provider: "codex",
+        providerLabel: "Codex",
+        url: "https://auth.openai.com/codex/device",
+      },
+      bufferedOutput: "",
+    });
   });
 });

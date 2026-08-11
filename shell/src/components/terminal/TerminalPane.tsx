@@ -17,8 +17,8 @@ import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-the
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { TerminalAuthBanner } from "./TerminalAuthBanner";
 import {
-  extractTrustedTerminalAuthLink,
   mayContainTerminalAuthLink,
+  scanTerminalAuthOutput,
   type TerminalAuthLink,
 } from "./terminal-auth-links";
 import { WebLinkProvider } from "./web-link-provider";
@@ -1536,11 +1536,11 @@ export function TerminalPane({
                     outputBufferRef.current = "";
                     return;
                   }
-                  const nextAuthLink = extractTrustedTerminalAuthLink(outputBufferRef.current);
-                  if (nextAuthLink) {
-                    setAuthLink(nextAuthLink);
+                  const scan = scanTerminalAuthOutput(outputBufferRef.current);
+                  outputBufferRef.current = scan.bufferedOutput;
+                  if (scan.link) {
+                    setAuthLink(scan.link);
                   }
-                  outputBufferRef.current = "";
                 }, 300);
               }
               if (activeCommandBlockRef.current) {

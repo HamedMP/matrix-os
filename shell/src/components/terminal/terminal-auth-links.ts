@@ -1,7 +1,5 @@
 const MAX_AUTH_URL_LENGTH = 2048;
-const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OAUTH_STATE_PATTERN = /^[A-Za-z0-9_-]+$/;
-const PKCE_SHA256_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const TRUSTED_AUTH_URL_PATTERN = /https:\/\/(?:claude\.ai|auth\.openai\.com)\/[^\s"'<>)}\]]{0,2048}/g;
 
 export type TerminalAuthProvider = "claude" | "codex";
@@ -57,45 +55,8 @@ function isTrustedCodexDeviceUrl(url: URL): boolean {
   );
 }
 
-function isTrustedCodexOAuthUrl(url: URL): boolean {
-  if (
-    !hasSafeUrlEnvelope(url) ||
-    url.origin !== "https://auth.openai.com" ||
-    url.pathname !== "/oauth/authorize" ||
-    !hasValidOAuthParams(url) ||
-    url.searchParams.get("client_id") !== CODEX_OAUTH_CLIENT_ID
-  ) {
-    return false;
-  }
-
-  const redirect = url.searchParams.get("redirect_uri");
-  const codeChallenge = url.searchParams.get("code_challenge");
-  if (
-    !redirect ||
-    url.searchParams.get("code_challenge_method") !== "S256" ||
-    !codeChallenge ||
-    !PKCE_SHA256_CHALLENGE_PATTERN.test(codeChallenge)
-  ) {
-    return false;
-  }
-
-  try {
-    const redirectUrl = new URL(redirect);
-    return (
-      redirectUrl.protocol === "http:" &&
-      redirectUrl.hostname === "localhost" &&
-      (redirectUrl.port === "1455" || redirectUrl.port === "1457") &&
-      redirectUrl.pathname === "/auth/callback" &&
-      redirectUrl.search === "" &&
-      redirectUrl.hash === ""
-    );
-  } catch (_err: unknown) {
-    return false;
-  }
-}
-
 export function mayContainTerminalAuthLink(raw: string): boolean {
-  return raw.includes("claude.ai/oauth/authorize") || raw.includes("auth.openai.com/");
+  return raw.includes("claude.ai/oauth/authorize") || raw.includes("auth.openai.com/codex/");
 }
 
 export function extractTrustedTerminalAuthLink(raw: string): TerminalAuthLink | null {
@@ -114,10 +75,21 @@ export function extractTrustedTerminalAuthLink(raw: string): TerminalAuthLink | 
     if (isTrustedClaudeAuthUrl(url)) {
       return { provider: "claude", providerLabel: "Claude Code", url: url.toString() };
     }
-    if (isTrustedCodexDeviceUrl(url) || isTrustedCodexOAuthUrl(url)) {
+    if (isTrustedCodexDeviceUrl(url)) {
       return { provider: "codex", providerLabel: "Codex", url: url.toString() };
     }
   }
 
   return null;
+}
+
+export function scanTerminalAuthOutput(raw: string): {
+  link: TerminalAuthLink | null;
+  bufferedOutput: string;
+} {
+  const link = extractTrustedTerminalAuthLink(raw);
+  return {
+    link,
+    bufferedOutput: link ? "" : raw,
+  };
 }
