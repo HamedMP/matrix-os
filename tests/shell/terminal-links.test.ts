@@ -125,6 +125,29 @@ describe("terminal links", () => {
     });
   });
 
+  it("retains a trailing provider URL fragment when the same scan finds a complete link", () => {
+    const firstChunk = [
+      "Docs: https://example.com/help",
+      "Sign in: https://auth.openai.com/codex/",
+    ].join("\n");
+    const firstScan = scanTerminalLinkOutput(firstChunk);
+
+    expect(firstScan).toEqual({
+      entries: [web("https://example.com/help")],
+      bufferedOutput: "https://auth.openai.com/codex/",
+    });
+    expect(scanTerminalLinkOutput(`${firstScan.bufferedOutput}device`)).toEqual({
+      entries: [{
+        url: "https://auth.openai.com/codex/device",
+        hostname: "auth.openai.com",
+        displayPath: "/codex/device",
+        kind: "codex-auth",
+        providerLabel: "Codex",
+      }],
+      bufferedOutput: "",
+    });
+  });
+
   it("cheaply detects output worth scanning for generic links", () => {
     expect(mayContainTerminalLink("Visit https://example.com/docs")).toBe(true);
     expect(mayContainTerminalLink("Visit http://localhost:3000")).toBe(true);

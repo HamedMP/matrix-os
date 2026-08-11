@@ -188,6 +188,31 @@ export function extractTerminalLinks(raw: string): TerminalLinkEntry[] {
   return entries;
 }
 
+function trailingRejectedProviderAuthCandidate(raw: string): string {
+  const output = stripTerminalControlSequences(raw).trimEnd();
+  TERMINAL_URL_PATTERN.lastIndex = 0;
+
+  for (const match of output.matchAll(TERMINAL_URL_PATTERN)) {
+    if ((match.index ?? 0) + match[0].length !== output.length) continue;
+    const candidate = trimUrlCandidate(match[0]);
+    let parsed: URL;
+    try {
+      parsed = new URL(candidate);
+    } catch (_err: unknown) {
+      continue;
+    }
+    if (
+      isProviderAuthSurface(parsed) &&
+      !isTrustedClaudeAuthUrl(parsed) &&
+      !isTrustedCodexDeviceUrl(parsed)
+    ) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
 export function scanTerminalLinkOutput(raw: string): {
   entries: TerminalLinkEntry[];
   bufferedOutput: string;
@@ -195,7 +220,8 @@ export function scanTerminalLinkOutput(raw: string): {
   const entries = extractTerminalLinks(raw);
   return {
     entries,
-    bufferedOutput: entries.length > 0 ? "" : raw,
+    bufferedOutput:
+      entries.length > 0 ? trailingRejectedProviderAuthCandidate(raw) : raw,
   };
 }
 
