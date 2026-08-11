@@ -5,14 +5,19 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { copyFile, link, lstat, mkdir, rename, rmdir, unlink } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  collectAffectedDirectories,
   FileBatchMoveService,
   FileBatchStalePreflightError,
 } from "../../packages/gateway/src/file-management/batch-service.js";
@@ -119,6 +124,37 @@ describe("FileBatchMoveService", () => {
     });
     expect(readFileSync(join(homePath, "projects", "archive", "notes.md"), "utf8")).toBe("notes");
     expect(readFileSync(join(homePath, "projects", "archive", "folder", "nested.txt"), "utf8")).toBe("nested");
+  });
+
+  it.runIf(process.platform !== "win32")("rejects FIFO and socket sources as invalid destinations", async () => {
+    const fifoSource = "projects/inbox/events.fifo";
+    const socketSource = "projects/inbox/events.sock";
+    expect(spawnSync("mkfifo", [join(homePath, fifoSource)]).status).toBe(0);
+    const server = createServer();
+    const shortSocketPath = join(tmpdir(), `fbm-${process.pid}-${requestCounter}.sock`);
+    server.listen(shortSocketPath);
+    await once(server, "listening");
+    renameSync(shortSocketPath, join(homePath, socketSource));
+    try {
+      const result = await preflightAndExecute(service, homePath, nextRequestId(), [fifoSource, socketSource]);
+      expect(result.results).toEqual([
+        { source: fifoSource, code: "invalid_destination" },
+        { source: socketSource, code: "invalid_destination" },
+      ]);
+      expect(existsSync(join(homePath, "projects", "archive", "events.fifo"))).toBe(false);
+      expect(existsSync(join(homePath, "projects", "archive", "events.sock"))).toBe(false);
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("collects every source parent in first-seen order before the destination", () => {
+    expect(collectAffectedDirectories(
+      ["projects/one/a.md", "downloads/b.md", "projects/one/c.md"],
+      "projects/archive",
+    ))
+      .toEqual(["projects/one", "downloads", "projects/archive"]);
   });
 
   it("uses Finder-style Keep Both names for files and directories", async () => {
