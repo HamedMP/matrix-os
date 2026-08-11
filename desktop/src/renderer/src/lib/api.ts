@@ -67,10 +67,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       // callers can surface a specific reason instead of only the generic copy.
       let detail: string | undefined;
       try {
-        const body = (await response.clone().json()) as { error?: unknown; code?: unknown };
+        const body = (await response.clone().json()) as {
+          error?: unknown;
+          code?: unknown;
+          errorCode?: unknown;
+        };
         const err = body.error;
         detail = safeErrorDetail(
-          typeof err === "object" && err ? (err as { code?: unknown }).code : body.code ?? err,
+          (typeof err === "object" && err ? (err as { code?: unknown }).code : undefined)
+            ?? body.code
+            ?? body.errorCode
+            ?? (typeof err !== "object" ? err : undefined),
         );
       } catch {
         // Non-JSON / empty body — no detail to surface.

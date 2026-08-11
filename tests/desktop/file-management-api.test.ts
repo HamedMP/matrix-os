@@ -138,6 +138,7 @@ describe("FileManagementApi", () => {
     await api.executeMove({
       requestId: REQUEST_ID,
       sources: ["projects/a.md"],
+      destinationDirectory: "archive",
       preflightFingerprint: preflight.preflightFingerprint,
       conflictChoices: [{ source: "projects/a.md", resolution: "keep-both" }],
     });
@@ -177,7 +178,10 @@ describe("FileManagementApi", () => {
     await expect(api.list("projects")).rejects.toMatchObject({ category: "server" });
     await expect(api.preflightMove({ requestId: REQUEST_ID, sources: ["projects/a"], destinationDirectory: "archive" }))
       .rejects.toMatchObject({ category: "server" });
-    await expect(api.executeMove({ requestId: REQUEST_ID, sources: ["projects/a", "projects/b"], preflightFingerprint: "fp", conflictChoices: [] }))
+    await expect(api.executeMove({
+      requestId: REQUEST_ID, sources: ["projects/a", "projects/b"], destinationDirectory: "archive",
+      preflightFingerprint: "fp", conflictChoices: [],
+    }))
       .rejects.toMatchObject({ category: "server" });
     await expect(api.trash({ requestId: REQUEST_ID, sources: ["projects/a"] }))
       .rejects.toMatchObject({ category: "server" });
@@ -219,6 +223,31 @@ describe("FileManagementApi", () => {
       requestId: REQUEST_ID,
       sources: ["projects/a.md", "projects/b.md"],
     }, { timeoutMs: FILE_MUTATION_TIMEOUT_MS });
+  });
+
+  it("rejects foreign move destinations, non-moved destinations, and affected directories", async () => {
+    const post = vi.fn()
+      .mockResolvedValueOnce({
+        results: [{ source: "projects/a", destination: "foreign/a", code: "moved" }],
+        affectedDirectories: ["projects", "archive"],
+      })
+      .mockResolvedValueOnce({
+        results: [{ source: "projects/a", destination: "archive/a", code: "failed" }],
+        affectedDirectories: ["projects", "archive"],
+      })
+      .mockResolvedValueOnce({
+        results: [{ source: "projects/a", destination: "archive/a", code: "moved" }],
+        affectedDirectories: ["projects", "foreign"],
+      });
+    const api = createFileManagementApi(makeClient({ post }));
+    const execute = () => api.executeMove({
+      requestId: REQUEST_ID, sources: ["projects/a"], destinationDirectory: "archive",
+      preflightFingerprint: "fp", conflictChoices: [],
+    });
+
+    await expect(execute()).rejects.toMatchObject({ category: "server" });
+    await expect(execute()).rejects.toMatchObject({ category: "server" });
+    await expect(execute()).rejects.toMatchObject({ category: "server" });
   });
 
   it.each([

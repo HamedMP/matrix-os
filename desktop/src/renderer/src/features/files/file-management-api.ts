@@ -94,6 +94,7 @@ export interface FileManagementApi {
   executeMove(input: {
     requestId: string;
     sources: string[];
+    destinationDirectory: string;
     preflightFingerprint: string;
     conflictChoices?: FileConflictChoice[];
   }): Promise<FileMoveExecution>;
@@ -155,14 +156,22 @@ export function createFileManagementApi(client: ApiClient): FileManagementApi {
       const body = parseInput(z.object({
         requestId: RequestIdSchema,
         sources: SourcesSchema,
+        destinationDirectory: OwnerRelativePathSchema,
         preflightFingerprint: z.string().min(1).max(SMALL_STRING_MAX),
         conflictChoices: ConflictChoicesSchema.optional(),
       }).strict(), input);
-      const { sources, ...wireBody } = body;
+      const { sources, destinationDirectory, ...wireBody } = body;
       const response = parseResponse(ExecuteSchema, await client.post(
         "/api/files/batch/move", { ...wireBody, phase: "execute" }, { timeoutMs: FILE_MUTATION_TIMEOUT_MS },
       ));
-      if (!sameOrderedPaths(response.results.map((item) => item.source), sources)) throw new AppError("server");
+      const expectedDirectories = firstSeen([...sources.map(parentDirectory), destinationDirectory]);
+      if (!sameOrderedPaths(response.results.map((item) => item.source), sources)
+        || !sameOrderedPaths(response.affectedDirectories, expectedDirectories)
+        || response.results.some((item) => item.code === "moved"
+          ? item.destination === undefined || parentDirectory(item.destination) !== destinationDirectory
+          : item.destination !== undefined)) {
+        throw new AppError("server");
+      }
       return response;
     },
     async trash(input) {
@@ -218,3 +227,4 @@ function orderedSubset(candidate: readonly string[], source: readonly string[]):
   }
   return true;
 }
+function firstSeen(values: readonly string[]): string[] { return [...new Set(values)]; }
