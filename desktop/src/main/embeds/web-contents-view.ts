@@ -6,6 +6,23 @@ import { WebContentsView, shell, type BaseWindow } from "electron";
 import { isNavigationAllowed } from "./origin-policy";
 import type { Bounds, EmbedViewLike } from "./embed-manager";
 
+function safeExternalHttpUrl(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch (_err: unknown) {
+    return null;
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    return null;
+  }
+  return parsed.toString();
+}
+
 export function createWebContentsView(options: {
   window: BaseWindow;
   partition: string;
@@ -34,13 +51,15 @@ export function createWebContentsView(options: {
     if (!url || typeof preventDefault !== "function") return;
     if (!isNavigationAllowed(url, options.allowedOrigins)) {
       preventDefault.call(event);
-      if (url.startsWith("https://")) void shell.openExternal(url);
+      const externalUrl = safeExternalHttpUrl(url);
+      if (externalUrl) void shell.openExternal(externalUrl);
     }
   };
   contents.on("will-navigate", blockExternalNavigation);
   contents.on("will-redirect", blockExternalNavigation);
   contents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https://")) void shell.openExternal(url);
+    const externalUrl = safeExternalHttpUrl(url);
+    if (externalUrl) void shell.openExternal(externalUrl);
     return { action: "deny" };
   });
   contents.on("did-start-loading", () => options.onState("loading"));

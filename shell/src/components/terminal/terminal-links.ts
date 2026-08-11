@@ -35,10 +35,10 @@ export interface TerminalCellPosition {
   column: number;
 }
 
-interface TerminalLinkMatch {
+export interface TerminalLinkMatch {
   entry: TerminalLinkEntry;
+  text: string;
   startIndex: number;
-  length: number;
 }
 
 interface WrappedLineInfo {
@@ -140,7 +140,7 @@ export function mayContainTerminalLink(raw: string): boolean {
   return raw.includes("http://") || raw.includes("https://");
 }
 
-function extractTerminalLinkMatches(raw: string): TerminalLinkMatch[] {
+export function extractTerminalLinkMatches(raw: string): TerminalLinkMatch[] {
   const output = stripTerminalControlSequences(raw);
   const matches: TerminalLinkMatch[] = [];
   TERMINAL_URL_PATTERN.lastIndex = 0;
@@ -156,7 +156,7 @@ function extractTerminalLinkMatches(raw: string): TerminalLinkMatch[] {
     }
     if (!hasSafeUrlEnvelope(parsed)) continue;
     const entry = toTerminalLinkEntry(parsed);
-    matches.push({ entry, startIndex: match.index ?? 0, length: candidate.length });
+    matches.push({ entry, text: candidate, startIndex: match.index ?? 0 });
   }
 
   return matches;
@@ -273,11 +273,54 @@ export function findTerminalLinkAtCell(
     const end = offsetToCell(
       wrapped.lineLengths,
       wrapped.startRow,
-      match.startIndex + match.length - 1,
+      match.startIndex + match.text.length - 1,
     );
     if (cellIsWithinRange(cell, start, end)) return match.entry;
   }
   return null;
+}
+
+function fallbackCopy(text: string): void {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  try {
+    textarea.select();
+    document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
+function tryFallbackCopy(text: string): void {
+  try {
+    fallbackCopy(text);
+  } catch (err: unknown) {
+    console.warn(
+      "Terminal link fallback copy failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+export function copyTerminalLink(link: TerminalLinkEntry): void {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(link.url).catch((err: unknown) => {
+      console.warn(
+        "Terminal link clipboard write failed, using fallback:",
+        err instanceof Error ? err.message : err,
+      );
+      tryFallbackCopy(link.url);
+    });
+    return;
+  }
+  tryFallbackCopy(link.url);
+}
+
+export function openTerminalLink(link: TerminalLinkEntry): void {
+  window.open(link.url, "_blank", "noopener,noreferrer");
 }
 
 export function mayContainTerminalAuthLink(raw: string): boolean {

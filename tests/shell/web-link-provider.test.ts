@@ -59,6 +59,10 @@ describe("Web Link Provider", () => {
       const matches = detectUrls(`https://example.com/${"a".repeat(2050)}`);
       expect(matches).toHaveLength(0);
     });
+
+    it("rejects credential-bearing URLs consistently with the terminal links tray", () => {
+      expect(detectUrls("https://user:pass@example.com/private")).toEqual([]);
+    });
   });
 
   describe("File path detection", () => {

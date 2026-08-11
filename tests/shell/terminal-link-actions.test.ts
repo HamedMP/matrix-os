@@ -1,21 +1,24 @@
 // @vitest-environment jsdom
 
-import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { TerminalAuthBanner } from "../../shell/src/components/terminal/TerminalAuthBanner.js";
+import {
+  copyTerminalLink,
+  openTerminalLink,
+  type TerminalLinkEntry,
+} from "../../shell/src/components/terminal/terminal-links.js";
+
+const LINK: TerminalLinkEntry = {
+  url: "https://example.com/docs",
+  hostname: "example.com",
+  displayPath: "/docs",
+  kind: "web",
+};
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const originalExecCommandDescriptor = Object.getOwnPropertyDescriptor(document, "execCommand");
 
-const CODEX_DEVICE_LINK = {
-  provider: "codex" as const,
-  providerLabel: "Codex" as const,
-  url: "https://auth.openai.com/codex/device",
-};
-
-describe("TerminalAuthBanner", () => {
+describe("terminal link actions", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     if (originalClipboardDescriptor) {
@@ -30,31 +33,24 @@ describe("TerminalAuthBanner", () => {
     }
   });
 
-  it("opens a detected login URL outside the terminal", () => {
+  it("opens a safe link in a separate browser target", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
-    render(<TerminalAuthBanner link={CODEX_DEVICE_LINK} color="#c2703a" onDismiss={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Open login" }));
-
-    expect(screen.getByText("Codex login required")).toBeTruthy();
+    openTerminalLink(LINK);
     expect(open).toHaveBeenCalledWith(
-      "https://auth.openai.com/codex/device",
+      "https://example.com/docs",
       "_blank",
       "noopener,noreferrer",
     );
   });
 
-  it("copies a detected login URL without selecting TUI output", () => {
+  it("copies a link with the Clipboard API", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
-    render(<TerminalAuthBanner link={CODEX_DEVICE_LINK} color="#c2703a" onDismiss={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Copy URL" }));
-
-    expect(writeText).toHaveBeenCalledWith("https://auth.openai.com/codex/device");
+    copyTerminalLink(LINK);
+    expect(writeText).toHaveBeenCalledWith("https://example.com/docs");
   });
 
   it("falls back to document copy when the Clipboard API rejects", async () => {
@@ -69,9 +65,8 @@ describe("TerminalAuthBanner", () => {
       value: execCommand,
     });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    render(<TerminalAuthBanner link={CODEX_DEVICE_LINK} color="#c2703a" onDismiss={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy URL" }));
+    copyTerminalLink(LINK);
     await Promise.resolve();
 
     expect(execCommand).toHaveBeenCalledWith("copy");

@@ -80,4 +80,26 @@ describe("createWebContentsView", () => {
       "https://auth.openai.com/codex/device",
     );
   });
+
+  it("opens an HTTP link requested by the hosted Shell without allowing unsafe schemes", () => {
+    createWebContentsView({
+      window: {
+        contentView: {
+          addChildView: vi.fn(),
+          removeChildView: vi.fn(),
+        },
+      } as never,
+      partition: "persist:home",
+      allowedOrigins: ["https://app.matrix-os.com"],
+      onState: vi.fn(),
+    });
+
+    const openHandler = electronMock.webContents.setWindowOpenHandler.mock.calls[0]?.[0];
+    expect(openHandler?.({ url: "http://localhost:3000/status" })).toEqual({ action: "deny" });
+    expect(openHandler?.({ url: "javascript:alert(1)" })).toEqual({ action: "deny" });
+    expect(openHandler?.({ url: "https://user:pass@example.com/private" })).toEqual({ action: "deny" });
+
+    expect(electronMock.shell.openExternal).toHaveBeenCalledTimes(1);
+    expect(electronMock.shell.openExternal).toHaveBeenCalledWith("http://localhost:3000/status");
+  });
 });

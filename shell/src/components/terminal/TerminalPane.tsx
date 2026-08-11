@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
@@ -15,12 +15,18 @@ import type { Terminal } from "@xterm/xterm";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
-import { TerminalAuthBanner } from "./TerminalAuthBanner";
+import { TerminalLinksTray } from "./TerminalLinksTray";
+import { TerminalLinkContextMenu, type TerminalLinkMenuState } from "./TerminalLinkContextMenu";
 import {
-  mayContainTerminalAuthLink,
-  scanTerminalAuthOutput,
-  type TerminalAuthLink,
-} from "./terminal-auth-links";
+  INITIAL_TERMINAL_LINKS_STATE,
+  copyTerminalLink,
+  extractTerminalLinks,
+  findTerminalLinkAtCell,
+  mayContainTerminalLink,
+  openTerminalLink,
+  terminalCellFromPointer,
+  terminalLinksReducer,
+} from "./terminal-links";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, removeCached, takeCached, type CachedTerminal } from "./terminal-cache";
 import {
@@ -373,13 +379,17 @@ export function TerminalPane({
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [authLink, setAuthLink] = useState<TerminalAuthLink | null>(null);
+  const [terminalLinks, dispatchTerminalLinks] = useReducer(
+    terminalLinksReducer,
+    INITIAL_TERMINAL_LINKS_STATE,
+  );
+  const [linkContextMenu, setLinkContextMenu] = useState<TerminalLinkMenuState | null>(null);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | null>(null);
   const outputBufferRef = useRef("");
   const commandBlockBufferRef = useRef("");
   const activeCommandBlockRef = useRef(false);
-  const authDetectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const linkDetectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClosingRef = useRef(false);
   const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
   const isFocusedRef = useRef(isFocused);
@@ -390,6 +400,15 @@ export function TerminalPane({
   const softGridLayoutRef = useRef<(() => void) | null>(null);
   const hardGridMeasureRef = useRef<(() => void) | null>(null);
   const terminalFontSizeRef = useRef(terminalFontSize);
+  const collapseTerminalLinks = useCallback(() => {
+    dispatchTerminalLinks({ type: "collapse" });
+  }, []);
+  const dismissTerminalLinks = useCallback(() => {
+    dispatchTerminalLinks({ type: "dismiss" });
+  }, []);
+  const closeLinkContextMenu = useCallback(() => {
+    setLinkContextMenu(null);
+  }, []);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
   // (and the cleanup it returns) read current prop values without re-running and
@@ -729,10 +748,10 @@ export function TerminalPane({
 
       const webglDisabled = shouldDisableWebglRenderer(suppressNativeKeyboard);
 
-      const clearAuthDetectTimer = () => {
-        if (authDetectTimerRef.current) {
-          clearTimeout(authDetectTimerRef.current);
-          authDetectTimerRef.current = null;
+      const clearLinkDetectTimer = () => {
+        if (linkDetectTimerRef.current) {
+          clearTimeout(linkDetectTimerRef.current);
+          linkDetectTimerRef.current = null;
         }
       };
 
@@ -1528,18 +1547,18 @@ export function TerminalPane({
               if (outputBufferRef.current.length > 8192) {
                 outputBufferRef.current = outputBufferRef.current.slice(-4096);
               }
-              if (mayContainTerminalAuthLink(outputBufferRef.current)) {
-                clearAuthDetectTimer();
-                authDetectTimerRef.current = setTimeout(() => {
-                  authDetectTimerRef.current = null;
+              if (mayContainTerminalLink(outputBufferRef.current)) {
+                clearLinkDetectTimer();
+                linkDetectTimerRef.current = setTimeout(() => {
+                  linkDetectTimerRef.current = null;
                   if (disposed) {
                     outputBufferRef.current = "";
                     return;
                   }
-                  const scan = scanTerminalAuthOutput(outputBufferRef.current);
-                  outputBufferRef.current = scan.bufferedOutput;
-                  if (scan.link) {
-                    setAuthLink(scan.link);
+                  const entries = extractTerminalLinks(outputBufferRef.current);
+                  outputBufferRef.current = "";
+                  if (entries.length > 0) {
+                    dispatchTerminalLinks({ type: "linksDetected", entries });
                   }
                 }, 300);
               }
@@ -1565,7 +1584,7 @@ export function TerminalPane({
               break;
 
             case "replay-start":
-              clearAuthDetectTimer();
+              clearLinkDetectTimer();
               outputBufferRef.current = "";
               break;
             case "replay-end":
@@ -1764,6 +1783,17 @@ export function TerminalPane({
 
       document.addEventListener("visibilitychange", onVisibilityChange);
 
+      const onLinkContextMenu = (event: MouseEvent) => {
+        const cell = terminalCellFromPointer(term, event.clientX, event.clientY);
+        if (!cell) return;
+        const link = findTerminalLinkAtCell(term, cell);
+        if (!link) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
+      };
+      container.addEventListener("contextmenu", onLinkContextMenu);
+
       onDataDisposableRef.current?.dispose();
       onDataDisposableRef.current = term.onData((data: string) => {
         const ws = wsRef.current;
@@ -1886,6 +1916,7 @@ export function TerminalPane({
 
       return () => {
         document.removeEventListener("visibilitychange", onVisibilityChange);
+        container.removeEventListener("contextmenu", onLinkContextMenu);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
         if (softGridLayoutFrame !== null) {
@@ -1903,7 +1934,7 @@ export function TerminalPane({
           hardGridMeasureRef.current = null;
         }
         softGridScaleRef.current = 1;
-        clearAuthDetectTimer();
+        clearLinkDetectTimer();
         clearReconnectTimer();
         clearPendingReconnectBanner();
         coldReplayVisibility?.dispose();
@@ -2114,7 +2145,7 @@ export function TerminalPane({
           aria-live="polite"
           style={{
             ...TERMINAL_OVERLAY_BASE_STYLE,
-            top: authLink ? 76 : 8,
+            top: terminalLinks.presentation === "expanded" ? 76 : 8,
             background: "rgba(127, 29, 29, 0.95)",
           }}
         >
@@ -2142,7 +2173,7 @@ export function TerminalPane({
           aria-live="polite"
           style={{
             ...TERMINAL_OVERLAY_BASE_STYLE,
-            top: authLink ? 76 : 8,
+            top: terminalLinks.presentation === "expanded" ? 76 : 8,
             left: "50%",
             right: "auto",
             transform: "translateX(-50%)",
@@ -2156,13 +2187,19 @@ export function TerminalPane({
           {connectionNotice === "reconnecting" ? "Reconnecting terminal..." : "Terminal disconnected"}
         </div>
       )}
-      {authLink && (
-        <TerminalAuthBanner
-          link={authLink}
-          color={theme.colors.primary || "#c2703a"}
-          onDismiss={() => setAuthLink(null)}
-        />
-      )}
+      <TerminalLinksTray
+        state={terminalLinks}
+        onCollapse={collapseTerminalLinks}
+        onDismiss={dismissTerminalLinks}
+        onOpen={openTerminalLink}
+        onCopy={copyTerminalLink}
+      />
+      <TerminalLinkContextMenu
+        menu={linkContextMenu}
+        onClose={closeLinkContextMenu}
+        onOpen={openTerminalLink}
+        onCopy={copyTerminalLink}
+      />
       {/* Reading the imperative xterm search-addon handle during render is
           intentional: the addon is created inside the init effect and is stable
           thereafter; searchOpen state (not the ref) drives re-render, so these
