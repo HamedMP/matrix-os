@@ -112,7 +112,10 @@ describe("terminal links", () => {
     const firstChunk = "Go to https://auth.openai.com/codex/";
     const firstScan = scanTerminalLinkOutput(firstChunk);
 
-    expect(firstScan).toEqual({ entries: [], bufferedOutput: firstChunk });
+    expect(firstScan).toEqual({
+      entries: [],
+      bufferedOutput: "https://auth.openai.com/codex/",
+    });
     expect(scanTerminalLinkOutput(`${firstScan.bufferedOutput}device`)).toEqual({
       entries: [{
         url: "https://auth.openai.com/codex/device",
@@ -146,6 +149,41 @@ describe("terminal links", () => {
       }],
       bufferedOutput: "",
     });
+  });
+
+  it("retains a provider fragment across an intervening complete-link scan", () => {
+    const fragment = "https://auth.openai.com/codex/";
+    const firstScan = scanTerminalLinkOutput(fragment);
+    const interveningScan = scanTerminalLinkOutput([
+      firstScan.bufferedOutput,
+      "Docs: https://example.com/help",
+    ].join("\n"));
+
+    expect(interveningScan).toEqual({
+      entries: [web("https://example.com/help")],
+      bufferedOutput: fragment,
+    });
+    expect(scanTerminalLinkOutput(`${interveningScan.bufferedOutput}device`).entries)
+      .toEqual([{
+        url: "https://auth.openai.com/codex/device",
+        hostname: "auth.openai.com",
+        displayPath: "/codex/device",
+        kind: "codex-auth",
+        providerLabel: "Codex",
+      }]);
+  });
+
+  it("keeps only the provider fragment when unrelated output intervenes", () => {
+    const fragment = "https://auth.openai.com/codex/";
+    const firstScan = scanTerminalLinkOutput(`Sign in: ${fragment}`);
+    const interveningScan = scanTerminalLinkOutput(
+      `${firstScan.bufferedOutput}\nStill working...`,
+    );
+
+    expect(firstScan.bufferedOutput).toBe(fragment);
+    expect(interveningScan).toEqual({ entries: [], bufferedOutput: fragment });
+    expect(scanTerminalLinkOutput(`${interveningScan.bufferedOutput}device`).entries[0]?.kind)
+      .toBe("codex-auth");
   });
 
   it("cheaply detects output worth scanning for generic links", () => {
