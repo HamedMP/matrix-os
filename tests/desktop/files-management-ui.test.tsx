@@ -186,7 +186,8 @@ describe("Files management UI", () => {
 
   it("confirms one visible-order Trash batch and retains a partial failed selection with a safe notice", async () => {
     api.setTrashCodes({ "todo.md": "protected" });
-    renderBrowser({ selectionPlatform: "mac" });
+    const onPreviewPathChange = vi.fn();
+    renderBrowser({ selectionPlatform: "mac", onPreviewPathChange });
     const note = await screen.findByRole("button", { name: "Open note.md" });
     const todo = screen.getByRole("button", { name: "Open todo.md" });
     fireEvent.click(note);
@@ -195,6 +196,7 @@ describe("Files management UI", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for todo.md" }), { button: 0 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Move to Trash" }));
     expect(screen.getByRole("heading", { name: "Move 2 items to Trash?" })).not.toBeNull();
+    onPreviewPathChange.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Move to Trash" }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
@@ -204,6 +206,7 @@ describe("Files management UI", () => {
     ));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open note.md" })).toBeNull());
     expect(screen.getByRole("button", { name: "Open todo.md" }).getAttribute("aria-pressed")).toBe("true");
+    expect(onPreviewPathChange).toHaveBeenLastCalledWith("todo.md");
     expect(screen.getByRole("status").textContent).toMatch(/protected/i);
     expect(screen.getByRole("status").textContent).not.toMatch(/provider|\/home|todo\.md/i);
   });
@@ -444,13 +447,16 @@ describe("Files management UI", () => {
 
   it("keeps the internal selection ref aligned after successful Trash reconciliation", async () => {
     api.post.mockResolvedValueOnce({ results: [{ source: "note.md", code: "trashed" }], sourceDirectory: "" });
-    renderBrowser({ selectionPlatform: "mac" });
+    const onPreviewPathChange = vi.fn();
+    renderBrowser({ selectionPlatform: "mac", onPreviewPathChange });
     const note = await screen.findByRole("button", { name: "Open note.md" });
     fireEvent.click(note);
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for note.md" }), { button: 0 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Move to Trash" }));
+    onPreviewPathChange.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Move to Trash" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open note.md" }).getAttribute("aria-pressed")).toBe("false"));
+    expect(onPreviewPathChange).toHaveBeenLastCalledWith(null);
     fireEvent.click(screen.getByRole("button", { name: "Open todo.md" }), { metaKey: true });
     expect(screen.getByRole("button", { name: "Open note.md" }).getAttribute("aria-pressed")).toBe("false");
   });
