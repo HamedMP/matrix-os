@@ -15,6 +15,12 @@ import type { Terminal } from "@xterm/xterm";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
+import { TerminalAuthBanner } from "./TerminalAuthBanner";
+import {
+  extractTrustedTerminalAuthLink,
+  mayContainTerminalAuthLink,
+  type TerminalAuthLink,
+} from "./terminal-auth-links";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, removeCached, takeCached, type CachedTerminal } from "./terminal-cache";
 import {
@@ -52,6 +58,21 @@ const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_C
 const MAX_TERMINAL_INPUT = 65_536;
 const SUPPORTED_TERMINAL_PASTE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
+const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
+  position: "absolute",
+  top: 8,
+  left: 8,
+  right: 8,
+  zIndex: 20,
+  color: "#fff",
+  borderRadius: 8,
+  padding: "8px 12px",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  fontSize: 13,
+  boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+};
 const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -148,65 +169,6 @@ function splitBracketedPastePayload(parts: string[]): string[] {
 
 function scrollTerminalViewportToBottom(term: Terminal | null): void {
   term?.scrollToBottom();
-}
-
-const AUTH_BANNER_BASE_STYLE: CSSProperties = {
-  position: "absolute",
-  top: 8,
-  left: 8,
-  right: 8,
-  zIndex: 20,
-  color: "#fff",
-  borderRadius: 8,
-  padding: "8px 12px",
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  fontSize: 13,
-  boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-};
-
-const AUTH_BANNER_ACTION_STYLE: CSSProperties = {
-  background: "rgba(255,255,255,0.2)",
-  border: "1px solid rgba(255,255,255,0.3)",
-  color: "#fff",
-  borderRadius: 6,
-  padding: "4px 12px",
-  cursor: "pointer",
-  fontSize: 13,
-  whiteSpace: "nowrap",
-};
-
-function extractTrustedClaudeAuthUrl(raw: string): string | null {
-  const stripped = raw
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-    .replace(/[\x00-\x20\x7f-\x9f]/g, "");
-  const match = stripped.match(/https:\/\/claude\.ai\/oauth\/authorize[^"'<>)]{0,2048}?state=[A-Za-z0-9_-]+/);
-  if (!match) {
-    return null;
-  }
-
-  try {
-    const url = new URL(match[0]);
-    const state = url.searchParams.get("state");
-    const responseType = url.searchParams.get("response_type");
-    const clientId = url.searchParams.get("client_id");
-    if (
-      url.origin !== "https://claude.ai" ||
-      url.pathname !== "/oauth/authorize" ||
-      responseType !== "code" ||
-      !clientId ||
-      !state ||
-      !/^[A-Za-z0-9_-]+$/.test(state) ||
-      url.searchParams.has("redirect")
-    ) {
-      return null;
-    }
-    return url.toString();
-  } catch (_err: unknown) {
-    return null;
-  }
 }
 
 function terminalDebug(event: string, details: Record<string, unknown>): void {
@@ -411,7 +373,7 @@ export function TerminalPane({
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [authUrl, setAuthUrl] = useState<string | null>(null);
+  const [authLink, setAuthLink] = useState<TerminalAuthLink | null>(null);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | null>(null);
   const outputBufferRef = useRef("");
@@ -1566,7 +1528,7 @@ export function TerminalPane({
               if (outputBufferRef.current.length > 8192) {
                 outputBufferRef.current = outputBufferRef.current.slice(-4096);
               }
-              if (outputBufferRef.current.includes("claude.ai/oauth/authorize")) {
+              if (mayContainTerminalAuthLink(outputBufferRef.current)) {
                 clearAuthDetectTimer();
                 authDetectTimerRef.current = setTimeout(() => {
                   authDetectTimerRef.current = null;
@@ -1574,9 +1536,9 @@ export function TerminalPane({
                     outputBufferRef.current = "";
                     return;
                   }
-                  const nextAuthUrl = extractTrustedClaudeAuthUrl(outputBufferRef.current);
-                  if (nextAuthUrl) {
-                    setAuthUrl(nextAuthUrl);
+                  const nextAuthLink = extractTrustedTerminalAuthLink(outputBufferRef.current);
+                  if (nextAuthLink) {
+                    setAuthLink(nextAuthLink);
                   }
                   outputBufferRef.current = "";
                 }, 300);
@@ -2151,8 +2113,8 @@ export function TerminalPane({
           role="status"
           aria-live="polite"
           style={{
-            ...AUTH_BANNER_BASE_STYLE,
-            top: authUrl ? 76 : 8,
+            ...TERMINAL_OVERLAY_BASE_STYLE,
+            top: authLink ? 76 : 8,
             background: "rgba(127, 29, 29, 0.95)",
           }}
         >
@@ -2179,8 +2141,8 @@ export function TerminalPane({
           role="status"
           aria-live="polite"
           style={{
-            ...AUTH_BANNER_BASE_STYLE,
-            top: authUrl ? 76 : 8,
+            ...TERMINAL_OVERLAY_BASE_STYLE,
+            top: authLink ? 76 : 8,
             left: "50%",
             right: "auto",
             transform: "translateX(-50%)",
@@ -2194,75 +2156,12 @@ export function TerminalPane({
           {connectionNotice === "reconnecting" ? "Reconnecting terminal..." : "Terminal disconnected"}
         </div>
       )}
-      {authUrl && (
-        <div
-          style={{
-            ...AUTH_BANNER_BASE_STYLE,
-            background: theme.colors.primary || "#c2703a",
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div>Claude Code login required</div>
-            <div style={{ fontSize: 12, opacity: 0.85 }}>
-              Detected from terminal output. Terminal apps can spoof this. Only continue if you initiated Claude Code login.
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                opacity: 0.9,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-              title={authUrl}
-            >
-              {authUrl}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              window.open(authUrl, "_blank", "noopener,noreferrer");
-            }}
-            style={AUTH_BANNER_ACTION_STYLE}
-          >
-            Open login
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard.writeText(authUrl).catch((_err: unknown) => {
-                // Fallback for insecure contexts / iframe restrictions
-                const ta = document.createElement("textarea");
-                ta.value = authUrl;
-                ta.style.position = "fixed";
-                ta.style.opacity = "0";
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand("copy");
-                document.body.removeChild(ta);
-              });
-            }}
-            style={AUTH_BANNER_ACTION_STYLE}
-          >
-            Copy URL
-          </button>
-          <button
-            type="button"
-            onClick={() => setAuthUrl(null)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "rgba(255,255,255,0.7)",
-              cursor: "pointer",
-              fontSize: 16,
-              padding: "0 4px",
-              lineHeight: 1,
-            }}
-          >
-            x
-          </button>
-        </div>
+      {authLink && (
+        <TerminalAuthBanner
+          link={authLink}
+          color={theme.colors.primary || "#c2703a"}
+          onDismiss={() => setAuthLink(null)}
+        />
       )}
       {/* Reading the imperative xterm search-addon handle during render is
           intentional: the addon is created inside the init effect and is stable

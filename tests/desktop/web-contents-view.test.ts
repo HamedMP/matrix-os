@@ -31,6 +31,7 @@ vi.mock("electron", () => electronMock);
 beforeEach(() => {
   electronMock.handlers.clear();
   electronMock.shell.openExternal.mockClear();
+  electronMock.webContents.setWindowOpenHandler.mockClear();
 });
 
 describe("createWebContentsView", () => {
@@ -56,5 +57,27 @@ describe("createWebContentsView", () => {
 
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(electronMock.shell.openExternal).toHaveBeenCalledWith("https://evil.test/phish");
+  });
+
+  it("opens HTTPS links requested by the hosted Shell in the system browser", () => {
+    createWebContentsView({
+      window: {
+        contentView: {
+          addChildView: vi.fn(),
+          removeChildView: vi.fn(),
+        },
+      } as never,
+      partition: "persist:home",
+      allowedOrigins: ["https://app.matrix-os.com"],
+      onState: vi.fn(),
+    });
+
+    const openHandler = electronMock.webContents.setWindowOpenHandler.mock.calls[0]?.[0];
+    expect(openHandler).toBeTypeOf("function");
+    expect(openHandler?.({ url: "https://auth.openai.com/codex/device" })).toEqual({ action: "deny" });
+
+    expect(electronMock.shell.openExternal).toHaveBeenCalledWith(
+      "https://auth.openai.com/codex/device",
+    );
   });
 });
