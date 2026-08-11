@@ -45,7 +45,7 @@ describe("websocket upgrade path helpers", () => {
 
   it("strips the websocket query token before proxying upstream", () => {
     expect(stripWebSocketUpgradeToken("/ws?token=abc123&cwd=projects")).toBe("/ws?cwd=projects");
-    expect(stripWebSocketUpgradeToken("/ws/terminal?token=abc123")).toBe("/ws/terminal");
+    expect(stripWebSocketUpgradeToken("/ws/terminal/tab?token=abc123&workspaceId=tws_00000000000000000000000000000001")).toBe("/ws/terminal/tab?workspaceId=tws_00000000000000000000000000000001");
     expect(stripWebSocketUpgradeToken("/ws?runtime=staging&token=abc123&cwd=projects")).toBe("/ws?cwd=projects");
   });
 

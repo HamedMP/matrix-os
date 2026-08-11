@@ -646,9 +646,9 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("button", { name: "Open matrix-main" })).toBeNull();
     const input = screen.getByRole("textbox", { name: /shell name/i });
     expect(input.closest("[data-shell-rename-editor]")?.className).not.toContain("absolute");
-    fireEvent.change(input, { target: { value: "Bad Name" } });
+    fireEvent.change(input, { target: { value: "Bad\u0000Name" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(await screen.findByText(/use lowercase letters, numbers, and hyphens/i)).toBeTruthy();
+    expect(await screen.findByText(/use 1 to 120 printable characters/i)).toBeTruthy();
     expect(rename).not.toHaveBeenCalled();
 
     fireEvent.change(input, { target: { value: "matrix-dev" } });
@@ -707,7 +707,7 @@ describe("TerminalsTab", () => {
     await waitFor(() => expect(rename).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", "matrix-dev"));
     expect(useTabs.getState().tabs[0]).toMatchObject({
       title: "matrix-dev",
-      sessionName: "matrix-dev",
+      sessionName: "matrix-main",
     });
   });
 

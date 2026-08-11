@@ -8,6 +8,9 @@ import { useProviderPreferences } from "../../desktop/src/renderer/src/features/
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
+const TERMINAL_WORKSPACE_ID = `tws_${"c".repeat(32)}`;
+const TERMINAL_TAB_ID = `tt_${"d".repeat(32)}`;
+
 function runtimeSummary(providers: unknown[]) {
   return {
     runtime: { id: "rt_primary", label: "Primary", status: "available" },
@@ -16,7 +19,7 @@ function runtimeSummary(providers: unknown[]) {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: {
       maxPromptBytes: 16384,
@@ -75,7 +78,11 @@ describe("ProvidersSection", () => {
     api = {
       get: vi.fn(),
       getText: vi.fn(),
-      post: vi.fn().mockResolvedValue({ name: "matrix-setup-codex" }),
+      post: vi.fn((path: string) => Promise.resolve(
+        path === "/api/terminal/workspaces/ensure"
+          ? { workspace: { id: TERMINAL_WORKSPACE_ID } }
+          : { tab: { id: TERMINAL_TAB_ID } },
+      )),
       put: vi.fn(),
       putText: vi.fn(),
     };
@@ -126,8 +133,8 @@ describe("ProvidersSection", () => {
 
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith(
-        "/api/terminal/sessions",
-        expect.objectContaining({ cmd: "codex login", cwd: "projects" }),
+        `/api/terminal/workspaces/${TERMINAL_WORKSPACE_ID}/tabs`,
+        expect.objectContaining({ command: ["sh", "-lc", "codex login"], cwd: "projects" }),
       ),
     );
     expect(

@@ -79,7 +79,7 @@ function summaryFixture() {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: {
       maxPromptBytes: 16384,
@@ -223,7 +223,7 @@ describe("ProvidersScreen", () => {
   });
 
   it("runs a foreground_terminal setup action in a bounded terminal session and hands off by name", async () => {
-    const createProviderSetupSession = jest.fn().mockResolvedValue("matrix-setup-abc123");
+    const createProviderSetupSession = jest.fn().mockResolvedValue("tws_00000000000000000000000000000001:tt_00000000000000000000000000000001");
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
         ok: true,
@@ -250,7 +250,7 @@ describe("ProvidersScreen", () => {
     // The session name is handed off through shell state; the command is not.
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       MOBILE_SHELL_STATE_STORAGE_KEY,
-      expect.stringContaining("\"terminalHandoffSessionId\":\"matrix-setup-abc123\""),
+      expect.stringContaining("\"terminalHandoffRef\":\"tws_00000000000000000000000000000001:tt_00000000000000000000000000000001\""),
     );
     const persistedPayloads = jest.mocked(AsyncStorage.setItem).mock.calls.map((call) => String(call[1]));
     for (const payload of persistedPayloads) {

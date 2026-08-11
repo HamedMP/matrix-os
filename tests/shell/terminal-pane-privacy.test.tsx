@@ -3,6 +3,11 @@ import React from "react";
 import { render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TAB_ID = `tt_${"b".repeat(32)}`;
+const TERMINAL_REF_KEY = `${WORKSPACE_ID}:${TAB_ID}`;
+const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
+
 const stubTerminal = vi.hoisted(() => ({
   element: null as HTMLElement | null,
   focus: vi.fn(),
@@ -29,7 +34,7 @@ const stubWs = vi.hoisted(() => ({
   onerror: null as (() => void) | null,
 }));
 const wsAuth = vi.hoisted(() => ({
-  buildAuthenticatedWebSocketUrl: vi.fn(async () => "ws://gateway.test/ws/terminal/session?session=main&token=ws-token"),
+  buildAuthenticatedWebSocketUrl: vi.fn(async () => "ws://gateway.test/ws/terminal/tab?workspaceId=tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&tabId=tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&client=browser&token=ws-token"),
   getWebSocketAuthToken: vi.fn(async () => "ws-token"),
 }));
 const BRACKETED_PASTE_OPEN = "\u001b[200~";
@@ -53,11 +58,11 @@ vi.mock("../../shell/src/components/terminal/terminal-restore.js", () => ({
       ws: stubWs,
       lastSeq: 0,
       hasReplayCursor: false,
-      sessionId: "main",
+      sessionId: "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     },
     reuseTerminal: true,
     reuseSocket: true,
-    sessionId: "main",
+    sessionId: "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     lastSeq: 0,
     hasReplayCursor: false,
   })),
@@ -110,10 +115,12 @@ describe("TerminalPane session replay privacy", () => {
     wsAuth.getWebSocketAuthToken.mockClear();
     wsAuth.getWebSocketAuthToken.mockResolvedValue("ws-token");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      path: "projects/.matrix-terminal-pastes/2026-07-07/upload.png",
-      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png",
-      size: 12,
-      mimeType: "image/png",
+      assets: [{
+        path: "projects/.matrix-terminal-pastes/2026-07-07/upload.png",
+        terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png",
+        size: 12,
+        mimeType: "image/png",
+      }],
     }))));
     globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
     if (typeof globalThis.requestAnimationFrame !== "function") {
@@ -129,7 +136,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd=""
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -156,7 +163,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd="projects"
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -183,12 +190,12 @@ describe("TerminalPane session replay privacy", () => {
     expect(bubbleSpy).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/terminal/sessions/main/paste-assets"),
+        expect.stringContaining("/api/terminal/workspaces/tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/tabs/tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/paste-assets"),
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
             Authorization: "Bearer ws-token",
-            "Content-Type": "image/png",
+            "Content-Type": "application/json",
             "X-Matrix-Filename": "screen shot.png",
           }),
           credentials: "same-origin",
@@ -200,6 +207,7 @@ describe("TerminalPane session replay privacy", () => {
     await waitFor(() => {
       expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
         type: "input",
+        terminalRef: TERMINAL_REF,
         data: `${BRACKETED_PASTE_OPEN}/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png${BRACKETED_PASTE_CLOSE}`,
       }));
     });
@@ -214,7 +222,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd="projects"
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -244,18 +252,18 @@ describe("TerminalPane session replay privacy", () => {
     const longA = `/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/${"a".repeat(40_000)}.png`;
     const longB = `/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/${"b".repeat(40_000)}.png`;
     vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+      .mockResolvedValueOnce(new Response(JSON.stringify({ assets: [{
         path: "projects/.matrix-terminal-pastes/2026-07-07/a.png",
         terminalPath: longA,
         size: 12,
         mimeType: "image/png",
-      })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+      }] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ assets: [{
         path: "projects/.matrix-terminal-pastes/2026-07-07/b.png",
         terminalPath: longB,
         size: 12,
         mimeType: "image/png",
-      }))));
+      }] }))));
     const files = [
       new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47])], "a.png", { type: "image/png" }),
       new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47])], "b.png", { type: "image/png" }),
@@ -266,7 +274,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd="projects"
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}
@@ -317,7 +325,7 @@ describe("TerminalPane session replay privacy", () => {
         cwd="projects"
         theme={theme}
         isFocused={false}
-        sessionId="main"
+        sessionId={TERMINAL_REF_KEY}
         isClosing={false}
         shouldCacheOnUnmount={() => true}
         shouldDestroyOnUnmount={() => false}

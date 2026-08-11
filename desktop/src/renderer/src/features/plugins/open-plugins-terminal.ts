@@ -8,8 +8,6 @@ import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import type { useTabs } from "../../stores/tabs";
 
-const SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
-
 export const PLUGINS_TERMINAL_CWD = "projects";
 
 export async function openPluginsTerminal(
@@ -20,7 +18,10 @@ export async function openPluginsTerminal(
   // The request URL is resolved against the runtime selected right now.
   const { runtimeSlot, authGeneration } = useConnection.getState();
   try {
-    const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
+    const ensured = await api.post<{ workspace?: { id?: unknown } }>("/api/terminal/workspaces/ensure", {});
+    const workspaceId = typeof ensured.workspace?.id === "string" ? ensured.workspace.id : "";
+    if (!/^tws_[0-9a-f]{32}$/.test(workspaceId)) return "failed";
+    const response = await api.post<{ tab?: { id?: unknown } }>(`/api/terminal/workspaces/${workspaceId}/tabs`, {
       name: options.sessionName,
       cwd: PLUGINS_TERMINAL_CWD,
     });
@@ -38,11 +39,9 @@ export async function openPluginsTerminal(
       );
       return "runtime-changed";
     }
-    const sessionName =
-      typeof response.name === "string" && SESSION_NAME_PATTERN.test(response.name)
-        ? response.name
-        : options.sessionName;
-    openTab({ kind: "terminal", sessionName, title: options.title });
+    const tabId = typeof response.tab?.id === "string" ? response.tab.id : "";
+    if (!/^tt_[0-9a-f]{32}$/.test(tabId)) return "failed";
+    openTab({ kind: "terminal", sessionName: `${workspaceId}:${tabId}`, title: options.title });
     return "opened";
   } catch (err: unknown) {
     console.error(

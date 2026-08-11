@@ -51,7 +51,7 @@ function threadSnapshotFixture() {
       title: "Repair mobile route",
       status: "running",
       attention: "none",
-      terminalSessionId: "matrix-abc1234",
+      terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
       createdAt: "2026-07-06T00:00:00.000Z",
       updatedAt: "2026-07-06T00:01:00.000Z",
     },
@@ -68,7 +68,7 @@ function threadSnapshotFixture() {
           eventId: "evt_mobile_2",
           threadId: "thread_mobile",
           type: "terminal.bound",
-          terminalSessionId: "matrix-abc1234",
+          terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
           occurredAt: "2026-07-06T00:01:30.000Z",
         },
       ],
@@ -312,7 +312,7 @@ describe("AgentThreadRoute", () => {
     expect(await screen.findByText("Repair mobile route")).toBeTruthy();
     expect(screen.getAllByText("running").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("codex")).toBeTruthy();
-    expect(screen.getAllByText("matrix-abc1234").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("tws_00000000000000000000000000000001/tt_00000000000000000000000000000001").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("2 events")).toBeTruthy();
     expect(client.getCodingAgentThreadSnapshot).toHaveBeenCalledWith({ threadId: "thread_mobile" });
   });
@@ -389,7 +389,7 @@ describe("AgentThreadRoute", () => {
         eventId: "evt_mobile_terminal_stream",
         threadId: "thread_mobile",
         type: "terminal.bound",
-        terminalSessionId: "matrix-new5678",
+        terminalRef: { workspaceId: "tws_00000000000000000000000000000002", tabId: "tt_00000000000000000000000000000002" },
         occurredAt: "2026-07-06T00:02:00.000Z",
       });
       streamOptions?.onEvent({
@@ -402,7 +402,7 @@ describe("AgentThreadRoute", () => {
     });
 
     expect(screen.getAllByText("completed").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("matrix-new5678").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("tws_00000000000000000000000000000002/tt_00000000000000000000000000000002").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("2026-07-06T00:03:00.000Z")).toBeTruthy();
   });
 
@@ -633,11 +633,11 @@ describe("AgentThreadRoute", () => {
 
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       MOBILE_SHELL_STATE_STORAGE_KEY,
-      expect.stringContaining('"lastActiveTerminalSessionId":"matrix-abc1234"'),
+      expect.stringContaining('"lastActiveTerminalRef":"tws_00000000000000000000000000000001:tt_00000000000000000000000000000001"'),
     );
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       MOBILE_SHELL_STATE_STORAGE_KEY,
-      expect.stringContaining('"terminalHandoffSessionId":"matrix-abc1234"'),
+      expect.stringContaining('"terminalHandoffRef":"tws_00000000000000000000000000000001:tt_00000000000000000000000000000001"'),
     );
     expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
   });
@@ -1627,7 +1627,7 @@ describe("AgentThreadRoute", () => {
 
   it("does not open terminal fallback when the bound session id is not attachable", async () => {
     const snapshot = threadSnapshotFixture();
-    snapshot.thread.terminalSessionId = "term_sess_workspace_1";
+    snapshot.thread.terminalRef = { workspaceId: "legacy", tabId: "unavailable" };
     const client = {
       getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
         ok: true,

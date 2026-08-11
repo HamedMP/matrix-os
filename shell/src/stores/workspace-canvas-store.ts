@@ -48,7 +48,13 @@ export interface WorkspaceCanvasNode {
   zIndex: number;
   collapsed?: boolean;
   displayState: "normal" | "minimized" | "summary" | "stale" | "missing" | "unauthorized" | "failed" | "recoverable";
-  sourceRef: { kind: string; id: string; projectId?: string; external?: Record<string, unknown> } | null;
+  sourceRef: {
+    kind: string;
+    id?: string;
+    terminalRef?: { workspaceId: string; tabId: string };
+    projectId?: string;
+    external?: Record<string, unknown>;
+  } | null;
   metadata: Record<string, unknown>;
   createdAt?: string;
   updatedAt?: string;

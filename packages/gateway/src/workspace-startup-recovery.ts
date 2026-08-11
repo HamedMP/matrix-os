@@ -8,9 +8,9 @@ import { createReviewStore } from "./review-store.js";
 import { createSessionTranscriptManager } from "./session-transcript.js";
 import { createStateOps } from "./state-ops.js";
 import { createWorktreeManager } from "./worktree-manager.js";
-import { createZellijRuntime } from "./zellij-runtime.js";
 import { createProjectLifecycleService } from "./project-lifecycle.js";
 import type { CodingAgentThreadStore } from "./coding-agents/thread-store.js";
+import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 
 type StepName =
   | "stateOps"
@@ -232,19 +232,20 @@ export function createWorkspaceStartupRecovery(options: {
   homePath: string;
   eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "deleteProjectThreads">;
-  zellijRuntime?: Parameters<typeof createAgentSessionManager>[0]["zellijRuntime"];
 }) {
   const homePath = resolve(options.homePath);
   const stateOps = createStateOps({ homePath });
   const projectManager = createProjectManager({ homePath });
   const worktreeManager = createWorktreeManager({ homePath });
   const agentLauncher = createAgentLauncher({ cwd: homePath });
-  const zellijRuntime = options.zellijRuntime ?? createZellijRuntime({ homePath });
+  const terminalRuntime = new TerminalRuntimeSocketClient({
+    socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
+  });
   const agentSessionManager = createAgentSessionManager({
     homePath,
     worktreeManager,
     agentLauncher,
-    zellijRuntime,
+    terminalRuntime,
   });
   const reviewStore = createReviewStore({ homePath });
   const projectLifecycleRecovery = createProjectLifecycleService({
@@ -261,6 +262,11 @@ export function createWorkspaceStartupRecovery(options: {
       if (options.codingAgentThreadStore) {
         const threads = await options.codingAgentThreadStore.deleteProjectThreads(principal, project.slug);
         if (!threads.ok) throw new Error("coding-agent cleanup blocked");
+      }
+      const workspace = (await terminalRuntime.listWorkspaces())
+        .find((candidate) => candidate.scope === "project" && candidate.projectId === project.id);
+      if (workspace) {
+        await terminalRuntime.deleteWorkspace(workspace.id, { confirmTerminate: true });
       }
     },
   });

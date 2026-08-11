@@ -4,7 +4,7 @@ import {
   CODEX_VERIFIED_NPM_PACKAGE,
   ProviderIdSchema,
   SafeSetupActionSchema,
-  TerminalSessionIdSchema,
+  TerminalRefSchema,
   type AgentProviderSummary,
   type AgentThreadEvent,
   type AgentThreadSummary,
@@ -119,21 +119,9 @@ function providerSetupActions(agent: SupportedAgent): SafeSetupAction[] {
   ]);
 }
 
-function terminalSessionIdFor(session: {
-  runtime?: { zellijSession?: unknown } | null;
-  terminalSessionId?: unknown;
-  id?: unknown;
-}): string {
-  const candidates = [
-    session.runtime?.zellijSession,
-    session.terminalSessionId,
-    session.id,
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && TerminalSessionIdSchema.safeParse(candidate).success) {
-      return candidate;
-    }
-  }
+function terminalRefFor(session: { terminalRef?: unknown }) {
+  const parsed = TerminalRefSchema.safeParse(session.terminalRef);
+  if (parsed.success) return parsed.data;
   throw new Error("Workspace provider terminal binding failed");
 }
 
@@ -263,7 +251,7 @@ export function createWorkspaceCodingAgentProvider(
         throw new Error("Workspace provider start failed");
       }
 
-      const terminalSessionId = terminalSessionIdFor(result.session);
+      const terminalRef = terminalRefFor(result.session);
       return {
         events: [statusEvent({
           threadId: thread.id,
@@ -276,7 +264,7 @@ export function createWorkspaceCodingAgentProvider(
           eventId: nextEventId(),
           threadId: thread.id,
           occurredAt: now().toISOString(),
-          terminalSessionId,
+          terminalRef,
         })],
         resumeState: { conversationId: sessionId },
       };

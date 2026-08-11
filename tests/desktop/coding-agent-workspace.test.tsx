@@ -44,18 +44,20 @@ function summaryFixture({
   sameThreadTurns = true,
   files = false,
   sourceControl = false,
-  threadTerminalSessionId,
-  terminalSessionName = "matrix-abc1234",
+  threadTerminalRef,
+  terminalTabName = "matrix-abc1234",
   providers,
 }: {
   threadCreate?: boolean;
   sameThreadTurns?: boolean;
   files?: boolean;
   sourceControl?: boolean;
-  threadTerminalSessionId?: string;
-  terminalSessionName?: string;
+  threadTerminalRef?: { workspaceId: string; tabId: string };
+  terminalTabName?: string;
   providers?: RuntimeSummary["providers"];
 } = {}) {
+  const workspaceId = "tws_00000000000000000000000000000001";
+  const tabId = "tt_00000000000000000000000000000001";
   return {
     runtime: {
       id: "rt_primary",
@@ -120,7 +122,7 @@ function summaryFixture({
           title: "Fix settings route",
           status: "running",
           projectId: "matrix-os",
-          ...(threadTerminalSessionId ? { terminalSessionId: threadTerminalSessionId } : {}),
+          ...(threadTerminalRef ? { terminalRef: threadTerminalRef } : {}),
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:01:00.000Z",
         },
@@ -133,15 +135,28 @@ function summaryFixture({
       hasMore: false,
       limit: 20,
     },
-    terminalSessions: {
+    terminalWorkspaces: {
       items: [
         {
-          id: "matrix-abc1234",
-          name: terminalSessionName,
+          id: workspaceId,
+          scope: "project",
+          projectId: "matrix-os",
+          canonicalSize: { cols: 120, rows: 36 },
           status: "running",
-          attachable: true,
+          revision: 1,
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:02:00.000Z",
+          tabs: [{
+            id: tabId,
+            workspaceId,
+            name: terminalTabName,
+            cwd: "projects/matrix-os",
+            status: "running",
+            revision: 1,
+            order: 0,
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:02:00.000Z",
+          }],
         },
       ],
       hasMore: false,
@@ -364,7 +379,7 @@ function threadSnapshotFixture() {
       status: "waiting_for_approval",
       attention: "approval_required",
       projectId: "matrix-os",
-      terminalSessionId: "matrix-abc1234",
+      terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
       createdAt: "2026-07-06T00:00:00.000Z",
       updatedAt: "2026-07-06T00:04:00.000Z",
     },
@@ -433,7 +448,7 @@ function attentionThreadSnapshotFixture() {
       title: "Repair failed run",
       status: "failed",
       attention: "failed",
-      terminalSessionId: undefined,
+      terminalRef: undefined,
       updatedAt: "2026-07-06T00:06:00.000Z",
     },
     events: {
@@ -480,7 +495,7 @@ function resolvedAttentionApprovalSnapshotFixture() {
       title: "Approve deployment",
       status: "running",
       attention: "none",
-      terminalSessionId: undefined,
+      terminalRef: undefined,
       updatedAt: "2026-07-06T00:07:00.000Z",
     },
   };
@@ -574,7 +589,7 @@ function inputRequestedThreadSnapshotFixture() {
       title: "Fix settings route",
       status: "waiting_for_input",
       attention: "input_required",
-      terminalSessionId: "matrix-abc1234",
+      terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
       createdAt: "2026-07-06T00:00:00.000Z",
       updatedAt: "2026-07-06T00:06:00.000Z",
     },
@@ -638,7 +653,7 @@ function resolvedAttentionInputSnapshotFixture() {
       title: "Approve deployment",
       status: "running",
       attention: "none",
-      terminalSessionId: undefined,
+      terminalRef: undefined,
       updatedAt: "2026-07-06T00:08:00.000Z",
     },
   };
@@ -2427,7 +2442,7 @@ describe("ProjectChatsView", () => {
     useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
-        return Promise.resolve(summaryFixture({ threadTerminalSessionId: "matrix-abc1234" }));
+        return Promise.resolve(summaryFixture({ threadTerminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" } }));
       }
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
@@ -2446,8 +2461,8 @@ describe("ProjectChatsView", () => {
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
         return Promise.resolve(summaryFixture({
-          threadTerminalSessionId: "matrix-abc1234",
-          terminalSessionName: "friendly-shell",
+          threadTerminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
+          terminalTabName: "friendly-shell",
         }));
       }
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
@@ -2466,13 +2481,19 @@ describe("ProjectChatsView", () => {
     useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
-        return Promise.resolve(summaryFixture({ threadTerminalSessionId: "matrix-missing" }));
+        return Promise.resolve(summaryFixture({ threadTerminalRef: { workspaceId: "tws_00000000000000000000000000000002", tabId: "tt_00000000000000000000000000000002" } }));
       }
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:get-thread-snapshot") {
         return Promise.resolve({
           ...threadSnapshotFixture(),
-          thread: { ...threadSnapshotFixture().thread, terminalSessionId: "matrix-missing" },
+          thread: {
+            ...threadSnapshotFixture().thread,
+            terminalRef: {
+              workspaceId: "tws_00000000000000000000000000000002",
+              tabId: "tt_00000000000000000000000000000002",
+            },
+          },
         });
       }
       return Promise.reject(new Error("unexpected channel"));
@@ -4295,7 +4316,7 @@ describe("ProjectChatsView", () => {
       },
       activeThreads: { items: [], hasMore: false, limit: 20 },
       attentionThreads: { items: [], hasMore: false, limit: 20 },
-      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       previewSessions: { items: [], hasMore: false, limit: 50 },
       recentActivity: { items: [], hasMore: false, limit: 20 },
       limits: { maxPromptBytes: 16384, maxAttachmentCount: 8, maxTerminalInputBytes: 8192, maxListItems: 20 },

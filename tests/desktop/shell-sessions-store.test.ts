@@ -1,15 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
-import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { isValidShellSessionName, useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
+import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 
-const TWO_WORD_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+$/;
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TAB_ONE = `tt_${"1".repeat(32)}`;
+const TAB_TWO = `tt_${"2".repeat(32)}`;
+const REF_ONE = `${WORKSPACE_ID}:${TAB_ONE}`;
+const REF_TWO = `${WORKSPACE_ID}:${TAB_TWO}`;
+
+function tab(id: string, name: string, revision = 3) {
+  return { id, name, cwd: "projects/matrix-os", status: "active", revision, placement: "active", lastSeenSeq: 2, latestSeq: 5 };
+}
+
+function workspaces(tabs = [tab(TAB_ONE, "build")], revision = 7) {
+  return { workspaces: [{ id: WORKSPACE_ID, projectId: "project_matrix", revision, tabs }] };
+}
 
 function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     baseUrl: "https://x.test",
-    get: vi.fn().mockResolvedValue({ sessions: [] }),
+    get: vi.fn().mockResolvedValue(workspaces()),
     getText: vi.fn().mockResolvedValue(""),
     post: vi.fn().mockResolvedValue({}),
     patch: vi.fn().mockResolvedValue({}),
@@ -22,10 +34,10 @@ function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((promiseResolve, promiseReject) => {
-    resolve = promiseResolve;
-    reject = promiseReject;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
   });
   return { promise, resolve, reject };
 }
@@ -35,339 +47,135 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+afterEach(() => vi.restoreAllMocks());
 
-describe("useShellSessions", () => {
-  it("validates shell names with gateway-compatible boundaries", () => {
-    expect(isValidShellSessionName("m")).toBe(true);
-    expect(isValidShellSessionName("matrix-1")).toBe(true);
-    expect(isValidShellSessionName("matrix-")).toBe(false);
-    expect(isValidShellSessionName("-matrix")).toBe(false);
-    expect(isValidShellSessionName("Matrix")).toBe(false);
-    expect(isValidShellSessionName("matrix_shell")).toBe(false);
-    expect(isValidShellSessionName("a".repeat(31))).toBe(true);
-    expect(isValidShellSessionName("a".repeat(32))).toBe(false);
+describe("useShellSessions workspace/tab contract", () => {
+  it("accepts only stable terminal ref keys", () => {
+    expect(isValidShellSessionName(REF_ONE)).toBe(true);
+    expect(isValidShellSessionName("main")).toBe(false);
+    expect(isValidShellSessionName(`${WORKSPACE_ID}:legacy`)).toBe(false);
   });
 
-  it("loads only canonical shell sessions from /api/terminal/sessions", async () => {
-    const get = vi.fn(async (path: string) => {
-      if (path === "/api/terminal/sessions") {
-        return {
-          sessions: [
-            {
-              name: "matrix-main",
-              status: "active",
-              placement: "active",
-              createdAt: "2026-06-23T11:00:00.000Z",
-              updatedAt: "2026-06-23T12:00:00.000Z",
-              attachedClients: 1,
-              latestSeq: 3,
-              lastSeenSeq: 2,
-              unread: true,
-              visualStatus: "running",
-              agent: "codex",
-              subtitle: "Implement agent-aware terminal sessions",
-              lastAction: "Edited registry.ts",
-              agentUpdatedAt: "2026-07-18T10:00:00.000Z",
-              model: "gpt-5.4",
-              strength: "high",
-              project: "Matrix OS",
-              repository: "HamedMP/matrix-os",
-              branch: "codex/session-context",
-              pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
-              attachCommand: "matrix shell connect matrix-main",
-              tabs: [{ idx: 0, name: "main", focused: true }],
-            },
-          ],
-        };
-      }
-      if (path === "/api/sessions") {
-        return { sessions: [{ id: "workspace-only", runtime: { zellijSession: "matrix-agent-1" } }] };
-      }
-      return { sessions: [] };
-    });
+  it("loads tabs from project workspaces with stable refs and unread state", async () => {
+    const get = vi.fn().mockResolvedValue(workspaces([
+      tab(TAB_ONE, "build"),
+      { id: "legacy", name: "ignored" },
+    ]));
+    await useShellSessions.getState().load(makeApi({ get }));
 
-    const accepted = await useShellSessions.getState().load(makeApi({ get }));
-
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(get).toHaveBeenCalledWith("/api/terminal/sessions");
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-main"]);
-    expect(useShellSessions.getState().sessions[0]?.tabs).toEqual([{ idx: 0, name: "main", focused: true }]);
-    expect(useShellSessions.getState().sessions[0]).toMatchObject({
-      createdAt: "2026-06-23T11:00:00.000Z",
-      agent: "codex",
-      subtitle: "Implement agent-aware terminal sessions",
-      lastAction: "Edited registry.ts",
-      agentUpdatedAt: "2026-07-18T10:00:00.000Z",
-      model: "gpt-5.4",
-      strength: "high",
-      project: "Matrix OS",
-      repository: "HamedMP/matrix-os",
-      branch: "codex/session-context",
-      pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
-    });
-    expect(accepted?.map((session) => session.name)).toEqual(["matrix-main"]);
-  });
-
-  it("preserves the last authoritative snapshot when the sessions payload is malformed", async () => {
-    const previous = [{ name: "matrix-existing", status: "active" as const }];
-    useShellSessions.setState({ sessions: previous });
-
-    const accepted = await useShellSessions.getState().load(makeApi({
-      get: vi.fn().mockResolvedValue({ sessions: null }),
-    }));
-
-    expect(accepted).toBeNull();
-    expect(useShellSessions.getState()).toMatchObject({
-      sessions: previous,
-      loading: false,
-      error: "server",
-    });
-  });
-
-  it("preserves the last authoritative snapshot when loading fails", async () => {
-    const previous = [{ name: "matrix-existing", status: "active" as const }];
-    useShellSessions.setState({ sessions: previous });
-
-    const accepted = await useShellSessions.getState().load(makeApi({
-      get: vi.fn().mockRejectedValue(new AppError("offline")),
-    }));
-
-    expect(accepted).toBeNull();
-    expect(useShellSessions.getState()).toMatchObject({
-      sessions: previous,
-      loading: false,
-      error: "offline",
-    });
-  });
-
-  it("ignores stale load results with a resettable store sequence", async () => {
-    const staleResponse = deferred<{ sessions: Array<{ name: string }> }>();
-    const get = vi
-      .fn()
-      .mockReturnValueOnce(staleResponse.promise)
-      .mockResolvedValueOnce({ sessions: [{ name: "matrix-fresh" }] });
-
-    const staleLoad = useShellSessions.getState().load(makeApi({ get }));
-    const freshResult = await useShellSessions.getState().load(makeApi({ get }));
-    staleResponse.resolve({ sessions: [{ name: "matrix-stale" }] });
-    const staleResult = await staleLoad;
-
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-fresh"]);
-    expect(freshResult?.map((session) => session.name)).toEqual(["matrix-fresh"]);
-    expect(staleResult).toBeNull();
-
-    useShellSessions.setState(useShellSessions.getInitialState(), true);
-    await useShellSessions.getState().load(makeApi({
-      get: vi.fn().mockResolvedValue({ sessions: [{ name: "matrix-reset" }] }),
-    }));
-
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-reset"]);
-  });
-
-  it("drops an in-flight load from the previous runtime without clearing the current snapshot", async () => {
-    const oldRuntimeResponse = deferred<{ sessions: Array<{ name: string }> }>();
-    const pending = useShellSessions.getState().load(makeApi({
-      get: vi.fn().mockReturnValue(oldRuntimeResponse.promise),
-    }));
-
-    advanceRuntimeGeneration();
-    useShellSessions.setState({
-      sessions: [{ name: "matrix-current", status: "active" }],
-      loading: false,
-      error: null,
-    });
-    oldRuntimeResponse.resolve({ sessions: [{ name: "matrix-old" }] });
-
-    expect(await pending).toBeNull();
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-current"]);
-  });
-
-  it("creates shell sessions with two-word names, projects cwd, and retries one 409 conflict", async () => {
-    const post = vi
-      .fn()
-      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
-      .mockResolvedValueOnce({ name: "matrix-created" });
-    const get = vi.fn().mockResolvedValue({ sessions: [{ name: "matrix-created", status: "active" }] });
-
-    const created = await useShellSessions.getState().create(makeApi({ post, get }));
-
-    expect(created?.name).toBe("matrix-created");
-    expect(post).toHaveBeenCalledTimes(2);
-    expect(post).toHaveBeenNthCalledWith(1, "/api/terminal/sessions", {
-      name: expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      cwd: "projects",
-    });
-    expect(post).toHaveBeenNthCalledWith(2, "/api/terminal/sessions", {
-      name: expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      cwd: "projects",
-    });
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-created"]);
-  });
-
-  it("uses fresh two-word shell names only after repeated collisions", async () => {
-    const post = vi
-      .fn()
-      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
-      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
-      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
-      .mockResolvedValueOnce({ name: "matrix-created" });
-    const get = vi.fn().mockResolvedValue({ sessions: [{ name: "matrix-created", status: "active" }] });
-
-    const created = await useShellSessions.getState().create(makeApi({ post, get }));
-
-    expect(created?.name).toBe("matrix-created");
-    expect(post).toHaveBeenCalledTimes(4);
-    const bodies = post.mock.calls.map(([, body]) => body as { name: string; cwd: string });
-    expect(bodies.map((body) => body.name)).toEqual([
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+    expect(get).toHaveBeenCalledWith("/api/terminal/workspaces");
+    expect(useShellSessions.getState().sessions).toEqual([
+      expect.objectContaining({
+        name: REF_ONE,
+        workspaceId: WORKSPACE_ID,
+        tabId: TAB_ONE,
+        subtitle: "build",
+        projectId: "project_matrix",
+        revision: 3,
+        workspaceRevision: 7,
+        unread: true,
+        attachCommand: `matrix shell connect --project project_matrix --tab ${TAB_ONE}`,
+      }),
     ]);
-    expect(bodies.every((body) => body.name.split("-").length === 2)).toBe(true);
   });
 
-  it("keeps a created shell when an older load resolves after create refresh", async () => {
-    const staleLoad = deferred<{ sessions: Array<{ name: string }> }>();
-    const get = vi
-      .fn()
-      .mockReturnValueOnce(staleLoad.promise)
-      .mockResolvedValueOnce({ sessions: [{ name: "matrix-created", status: "active" }] });
-    const post = vi.fn().mockResolvedValue({ name: "matrix-created" });
-
-    const initialLoad = useShellSessions.getState().load(makeApi({ get }));
-    const created = await useShellSessions.getState().create(makeApi({ get, post }));
-    staleLoad.resolve({ sessions: [{ name: "matrix-stale", status: "active" }] });
-    await initialLoad;
-
-    expect(created?.name).toBe("matrix-created");
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-created"]);
+  it("ignores a stale load that resolves after a newer workspace list", async () => {
+    const slow = deferred<ReturnType<typeof workspaces>>();
+    const get = vi.fn()
+      .mockImplementationOnce(() => slow.promise)
+      .mockResolvedValueOnce(workspaces([tab(TAB_TWO, "fresh")]));
+    const api = makeApi({ get });
+    const first = useShellSessions.getState().load(api);
+    await useShellSessions.getState().load(api);
+    slow.resolve(workspaces([tab(TAB_ONE, "stale")]));
+    await first;
+    expect(useShellSessions.getState().sessions.map((entry) => entry.name)).toEqual([REF_TWO]);
   });
 
-  it("deletes shell sessions with force and rolls back when deletion fails", async () => {
-    useShellSessions.setState({
-      sessions: [
-        { name: "matrix-main", status: "active" },
-        { name: "matrix-build", status: "active" },
-      ],
-    });
+  it("creates one tab in the ensured workspace and refreshes it", async () => {
+    const post = vi.fn(async (path: string) => path.endsWith("/ensure")
+      ? { workspace: { id: WORKSPACE_ID, revision: 7 } }
+      : { tab: tab(TAB_TWO, "swift-falcon") });
+    const get = vi.fn().mockResolvedValue(workspaces([tab(TAB_TWO, "swift-falcon")]));
+
+    const created = await useShellSessions.getState().create(makeApi({ post, get }));
+
+    expect(post).toHaveBeenNthCalledWith(1, "/api/terminal/workspaces/ensure", {});
+    expect(post).toHaveBeenNthCalledWith(2, `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`, expect.objectContaining({ cwd: "projects" }));
+    expect(created).toMatchObject({ name: REF_TWO, tabId: TAB_TWO, workspaceId: WORKSPACE_ID });
+  });
+
+  it("terminates only the selected tab and restores it on failure", async () => {
+    useShellSessions.setState({ sessions: [{
+      name: REF_ONE, workspaceId: WORKSPACE_ID, tabId: TAB_ONE, revision: 3, workspaceRevision: 7, cwd: "projects", subtitle: "build",
+    }] });
     const del = vi.fn().mockRejectedValue(new AppError("offline"));
 
-    const ok = await useShellSessions.getState().deleteSession(makeApi({ delete: del }), "matrix-main");
-
-    expect(ok).toBe(false);
-    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-main?force=1");
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-main", "matrix-build"]);
+    await expect(useShellSessions.getState().deleteSession(makeApi({ delete: del }), REF_ONE)).resolves.toBe(false);
+    expect(del).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ONE}`);
+    expect(useShellSessions.getState().sessions.map((entry) => entry.name)).toEqual([REF_ONE]);
+    expect(useShellSessions.getState().error).toBe("offline");
   });
 
-  it("renames via /rename and rolls back optimistic state on failure", async () => {
-    useShellSessions.setState({
-      sessions: [
-        { name: "matrix-main", status: "active", attachCommand: "matrix shell connect matrix-main" },
-      ],
-    });
-    const put = vi.fn().mockRejectedValue(new AppError("server"));
+  it("renames by stable IDs with optimistic-concurrency revision and rolls back", async () => {
+    useShellSessions.setState({ sessions: [{
+      name: REF_ONE, workspaceId: WORKSPACE_ID, tabId: TAB_ONE, revision: 3, workspaceRevision: 7, cwd: "projects", subtitle: "build",
+    }] });
+    const patch = vi.fn().mockRejectedValue(new AppError("timeout"));
 
-    const ok = await useShellSessions.getState().rename(makeApi({ put }), "matrix-main", "matrix-dev");
-
-    expect(ok).toBe(false);
-    expect(put).toHaveBeenCalledWith("/api/terminal/sessions/matrix-main/rename", { name: "matrix-dev" });
-    expect(useShellSessions.getState().sessions[0]).toMatchObject({
-      name: "matrix-main",
-      attachCommand: "matrix shell connect matrix-main",
+    await expect(useShellSessions.getState().rename(makeApi({ patch }), REF_ONE, "compile")).resolves.toBe(false);
+    expect(patch).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ONE}`, {
+      name: "compile",
+      baseRevision: 3,
     });
+    expect(useShellSessions.getState().sessions[0]?.subtitle).toBe("build");
   });
 
-  it("reorders through /order and rolls back optimistic order on failure", async () => {
-    useShellSessions.setState({
-      sessions: [
-        { name: "matrix-one", status: "active", placement: "active" },
-        { name: "matrix-two", status: "active", placement: "active" },
-      ],
+  it("reorders tabs within one workspace using tab IDs and workspace revision", async () => {
+    useShellSessions.setState({ sessions: [
+      { name: REF_ONE, workspaceId: WORKSPACE_ID, tabId: TAB_ONE, revision: 3, workspaceRevision: 7, cwd: "projects" },
+      { name: REF_TWO, workspaceId: WORKSPACE_ID, tabId: TAB_TWO, revision: 4, workspaceRevision: 7, cwd: "projects" },
+    ] });
+    const put = vi.fn().mockResolvedValue({ workspace: {} });
+
+    await expect(useShellSessions.getState().reorder(makeApi({ put }), REF_ONE, REF_TWO)).resolves.toBe(true);
+    expect(put).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/order`, {
+      tabIds: [TAB_TWO, TAB_ONE],
+      baseRevision: 7,
     });
-    const put = vi.fn().mockRejectedValue(new AppError("offline"));
-
-    const ok = await useShellSessions.getState().reorder(makeApi({ put }), "matrix-one", "matrix-two");
-
-    expect(ok).toBe(false);
-    expect(put).toHaveBeenCalledWith("/api/terminal/sessions/order", { order: ["matrix-two", "matrix-one"] });
-    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-one", "matrix-two"]);
+    expect(useShellSessions.getState().sessions.map((entry) => entry.name)).toEqual([REF_TWO, REF_ONE]);
   });
 
   it("drops a reorder response that settles after a runtime switch", async () => {
-    useShellSessions.setState({
-      sessions: [
-        { name: "matrix-one", status: "active", placement: "active" },
-        { name: "matrix-two", status: "active", placement: "active" },
-      ],
-    });
-    let resolvePut: (value: unknown) => void = () => undefined;
-    const put = vi.fn(() => new Promise((resolve) => { resolvePut = resolve; }));
-
-    const pending = useShellSessions.getState().reorder(makeApi({ put }), "matrix-one", "matrix-two");
-    advanceRuntimeGeneration();
-    useShellSessions.setState({ sessions: [] });
-    resolvePut({ sessions: [
-      { name: "matrix-one", status: "active" },
-      { name: "matrix-two", status: "active" },
+    useShellSessions.setState({ sessions: [
+      { name: REF_ONE, workspaceId: WORKSPACE_ID, tabId: TAB_ONE, revision: 3, workspaceRevision: 7, cwd: "projects" },
+      { name: REF_TWO, workspaceId: WORKSPACE_ID, tabId: TAB_TWO, revision: 4, workspaceRevision: 7, cwd: "projects" },
     ] });
-    await pending;
+    const pending = deferred<{ workspace: unknown }>();
+    const reorder = useShellSessions.getState().reorder(makeApi({
+      put: vi.fn(() => pending.promise),
+    }), REF_ONE, REF_TWO);
 
+    advanceRuntimeGeneration();
+    useShellSessions.setState(useShellSessions.getInitialState(), true);
+    pending.reject(new AppError("offline"));
+
+    await expect(reorder).resolves.toBe(false);
     expect(useShellSessions.getState().sessions).toEqual([]);
+    expect(useShellSessions.getState().error).toBeNull();
   });
 
-  it("patches /ui-state and rolls back optimistic placement on failure", async () => {
-    useShellSessions.setState({
-      sessions: [{ name: "matrix-main", status: "active", placement: "active", latestSeq: 5, lastSeenSeq: 1 }],
-    });
+  it("patches tab UI state by stable IDs and rolls back an optimistic failure", async () => {
+    useShellSessions.setState({ sessions: [{
+      name: REF_ONE, workspaceId: WORKSPACE_ID, tabId: TAB_ONE, revision: 3, workspaceRevision: 7, cwd: "projects", placement: "active",
+    }] });
     const patch = vi.fn().mockRejectedValue(new AppError("timeout"));
 
-    const ok = await useShellSessions.getState().patchUiState(makeApi({ patch }), "matrix-main", {
+    await expect(useShellSessions.getState().patchUiState(makeApi({ patch }), REF_ONE, { placement: "background" })).resolves.toBe(false);
+    expect(patch).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ONE}/ui-state`, {
       placement: "background",
-      lastSeenSeq: 5,
+      baseRevision: 3,
     });
-
-    expect(ok).toBe(false);
-    expect(patch).toHaveBeenCalledWith("/api/terminal/sessions/matrix-main/ui-state", {
-      placement: "background",
-      lastSeenSeq: 5,
-    });
-    expect(useShellSessions.getState().sessions[0]).toMatchObject({
-      placement: "active",
-      lastSeenSeq: 1,
-    });
-  });
-
-  it("does not undo another shell's successful placement when one placement rollback fails", async () => {
-    useShellSessions.setState({
-      sessions: [
-        { name: "matrix-one", status: "active", placement: "active" },
-        { name: "matrix-two", status: "active", placement: "active" },
-      ],
-    });
-    const firstPatch = deferred<{ session?: unknown }>();
-    const patch = vi.fn((path: string) => {
-      if (path === "/api/terminal/sessions/matrix-one/ui-state") return firstPatch.promise;
-      return Promise.resolve({ session: { name: "matrix-two", status: "active", placement: "background" } });
-    });
-
-    const firstMove = useShellSessions.getState().patchUiState(makeApi({ patch }), "matrix-one", {
-      placement: "background",
-    });
-    const secondMove = await useShellSessions.getState().patchUiState(makeApi({ patch }), "matrix-two", {
-      placement: "background",
-    });
-    firstPatch.reject(new AppError("timeout"));
-    const firstOk = await firstMove;
-
-    expect(firstOk).toBe(false);
-    expect(secondMove).toBe(true);
-    expect(useShellSessions.getState().sessions).toEqual([
-      { name: "matrix-one", status: "active", placement: "active" },
-      { name: "matrix-two", status: "active", placement: "background" },
-    ]);
+    expect(useShellSessions.getState().sessions[0]?.placement).toBe("active");
   });
 });

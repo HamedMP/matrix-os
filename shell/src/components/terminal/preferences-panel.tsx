@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
 import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type ShellThemeId, type TerminalCursorStyle, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
-import { getGatewayUrl } from "@/lib/gateway";
 import { TERMINAL_THEME_OPTIONS } from "./terminal-themes";
 
 const CURSOR_OPTIONS: TerminalCursorStyle[] = ["block", "bar", "underline"];
@@ -33,70 +31,11 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
   const setSmoothScroll = useTerminalSettings((s) => s.setSmoothScroll);
   const selectedShellThemeId = mapLegacyThemeId(themeId) ?? "dark";
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-effect-event-handler, react-doctor/no-fetch-in-effect -- guarded preferences load: runs only when `sessionName` is set, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. The setters hydrate the terminal-settings store from one server response (not a synchronous render cascade), and the load is render-driven, not a user event. A data-fetching library is unnecessary for this one-shot session read.
-  useEffect(() => {
-    if (!sessionName || typeof fetch !== "function") {
-      return;
-    }
-    let cancelled = false;
-    void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
-      signal: AbortSignal.timeout(10_000),
-    })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data: unknown) => {
-        if (cancelled || !data || typeof data !== "object" || !("preferences" in data)) {
-          return;
-        }
-        const preferences = (data as { preferences: Partial<{
-          shellThemeId: ShellThemeId;
-          themeId: TerminalThemeId;
-          fontFamily: TerminalFontFamily;
-          ligatures: boolean;
-          cursorStyle: TerminalCursorStyle;
-          smoothScroll: boolean;
-        }> }).preferences;
-        const nextTheme = preferences.shellThemeId ?? mapLegacyThemeId(preferences.themeId);
-        if (nextTheme) setThemeId(nextTheme);
-        if (preferences.fontFamily) setFontFamily(preferences.fontFamily);
-        if (typeof preferences.ligatures === "boolean") setLigatures(preferences.ligatures);
-        if (preferences.cursorStyle) setCursorStyle(preferences.cursorStyle);
-        if (typeof preferences.smoothScroll === "boolean") setSmoothScroll(preferences.smoothScroll);
-      })
-      .catch((err: unknown) => {
-        console.warn("Failed to load terminal preferences:", err instanceof Error ? err.message : err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionName, setCursorStyle, setFontFamily, setLigatures, setSmoothScroll, setThemeId]);
-
-  const persist = (patch: Partial<{
-    shellThemeId: ShellThemeId;
-    fontFamily: TerminalFontFamily;
-    ligatures: boolean;
-    cursorStyle: TerminalCursorStyle;
-    smoothScroll: boolean;
-  }>) => {
-    if (!sessionName || typeof fetch !== "function") {
-      return;
-    }
-    const state = useTerminalSettings.getState();
-    void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        shellThemeId: mapLegacyThemeId(state.themeId) ?? "dark",
-        fontFamily: state.fontFamily,
-        ligatures: state.ligatures,
-        cursorStyle: state.cursorStyle,
-        smoothScroll: state.smoothScroll,
-        ...patch,
-      }),
-      signal: AbortSignal.timeout(10_000),
-    }).catch((err: unknown) => {
-      console.warn("Failed to save terminal preferences:", err instanceof Error ? err.message : err);
-    });
-  };
+  // Terminal chrome preferences are device-local Zustand state. Only the
+  // global shell theme uses the gateway-wide terminal preferences endpoint;
+  // a tab ref is never used to revive the retired per-session routes.
+  void sessionName;
+  const persist = (_patch: unknown) => undefined;
 
   return (
     <div

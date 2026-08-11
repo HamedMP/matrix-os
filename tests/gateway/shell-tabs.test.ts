@@ -12,7 +12,7 @@ describe("gateway shell tab routes", () => {
     return app;
   }
 
-  it("lists, creates, switches, and closes tabs with validated inputs", async () => {
+  it("rejects legacy session-indexed tab actions", async () => {
     const workspace = {
       listTabs: vi.fn(async () => [{ idx: 0, name: "main", focused: true }]),
       createTab: vi.fn(async () => ({ idx: 1, name: "api" })),
@@ -21,31 +21,26 @@ describe("gateway shell tab routes", () => {
     };
     const app = appWithWorkspace(workspace);
 
-    await expect((await app.request("/api/sessions/main/tabs")).json()).resolves.toEqual({
-      tabs: [{ idx: 0, name: "main", focused: true }],
-    });
-    await expect((await app.request("/api/sessions/main/tabs", {
+    const list = await app.request("/api/sessions/main/tabs");
+    const create = await app.request("/api/sessions/main/tabs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "api", cwd: "~/repo", cmd: "pnpm dev" }),
-    })).json()).resolves.toEqual({ tab: { idx: 1, name: "api" } });
-    await expect((await app.request("/api/sessions/main/tabs/1/go", {
-      method: "POST",
-    })).json()).resolves.toEqual({ ok: true });
-    await expect((await app.request("/api/sessions/main/tabs/1", {
-      method: "DELETE",
-    })).json()).resolves.toEqual({ ok: true });
-
-    expect(workspace.createTab).toHaveBeenCalledWith("main", {
-      name: "api",
-      cwd: "~/repo",
-      cmd: "pnpm dev",
     });
-    expect(workspace.switchTab).toHaveBeenCalledWith("main", 1);
-    expect(workspace.closeTab).toHaveBeenCalledWith("main", 1);
+    const switchTab = await app.request("/api/sessions/main/tabs/1/go", {
+      method: "POST",
+    });
+    const close = await app.request("/api/sessions/main/tabs/1", {
+      method: "DELETE",
+    });
+
+    expect([list.status, create.status, switchTab.status, close.status]).toEqual([426, 426, 426, 426]);
+    expect(workspace.createTab).not.toHaveBeenCalled();
+    expect(workspace.switchTab).not.toHaveBeenCalled();
+    expect(workspace.closeTab).not.toHaveBeenCalled();
   });
 
-  it("rejects malformed tab requests with generic errors", async () => {
+  it("rejects legacy tab routes before evaluating malformed requests", async () => {
     const app = appWithWorkspace({
       listTabs: vi.fn(),
       createTab: vi.fn(),
@@ -59,9 +54,10 @@ describe("gateway shell tab routes", () => {
       body: JSON.stringify({ name: "../bad" }),
     });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(426);
     await expect(res.json()).resolves.toEqual({
-      error: { code: "invalid_request", message: "Invalid request" },
+      error: "client_upgrade_required",
+      message: "Upgrade Matrix OS to use terminal workspaces.",
     });
   });
 });

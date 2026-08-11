@@ -747,7 +747,7 @@ function AppSwitcher({
               drag="x"
               dragConstraints={{ left: 0, right: 0 }}
               dragElastic={0.12}
-              onDragEnd={(_, info: PanInfo) => {
+              onDragEnd={(_: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
                 if (Math.abs(info.offset.x) > 96) onClose(o.id);
               }}
               whileDrag={{ scale: 0.98, cursor: "grabbing" }}

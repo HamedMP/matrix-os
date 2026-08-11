@@ -1,16 +1,15 @@
-// Attachable session list: zellij sessions (GET /api/terminal/sessions ->
-// { sessions: [{ name, status, ... }] }) merged with workspace records
+// Attachable terminal-tab list merged with coding workspace records.
 // (GET /api/sessions -> { sessions: [{ id, runtime: { zellijSession? } }], nextCursor }).
 // Only entries with a real zellij attach name exist here (L6).
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
-import { SHELL_SESSION_CREATE_ATTEMPTS, twoWordShellSessionName } from "../lib/shell-session-names";
+import { twoWordShellSessionName } from "../lib/shell-session-names";
 import {
   mergeAttachableSessions,
   type AttachableSession,
   type WorkspaceSessionDTO,
-  type ZellijSessionDTO,
+  type TerminalWorkspaceDTO,
 } from "../lib/session-merge";
 import { useBoard } from "./board";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
@@ -84,25 +83,33 @@ function nextSessionName(): string {
   return twoWordShellSessionName();
 }
 
-function isSessionExistsError(err: unknown): boolean {
-  return err instanceof AppError && err.detail === "session_exists";
+function parseAttachRef(value: string): { workspaceId: string; tabId: string } | null {
+  const [workspaceId, tabId, extra] = value.split(":");
+  if (extra !== undefined || !/^tws_[0-9a-f]{32}$/.test(workspaceId ?? "") || !/^tt_[0-9a-f]{32}$/.test(tabId ?? "")) return null;
+  return { workspaceId: workspaceId!, tabId: tabId! };
 }
 
-async function createTerminalSessionWithRetries(api: ApiClient): Promise<{ name: string; response: { name?: unknown } }> {
-  for (let attempt = 0; ; attempt += 1) {
-    const name = nextSessionName();
-    try {
-      const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
-      return { name, response };
-    } catch (err: unknown) {
-      if (isSessionExistsError(err) && attempt < SHELL_SESSION_CREATE_ATTEMPTS - 1) continue;
-      throw err;
-    }
+async function createTerminalTab(api: ApiClient, workspaceId?: string): Promise<{ name: string; attachName: string }> {
+  const displayName = nextSessionName();
+  let resolvedWorkspaceId = workspaceId;
+  if (!resolvedWorkspaceId) {
+    const ensured = await api.post<{ workspace?: { id?: unknown } }>("/api/terminal/workspaces/ensure", {});
+    resolvedWorkspaceId = typeof ensured.workspace?.id === "string" ? ensured.workspace.id : "";
   }
+  if (!/^tws_[0-9a-f]{32}$/.test(resolvedWorkspaceId)) throw new Error("Invalid terminal workspace response");
+  const response = await api.post<{ tab?: { id?: unknown } }>(`/api/terminal/workspaces/${resolvedWorkspaceId}/tabs`, {
+    name: displayName,
+    cwd: "projects",
+  });
+  const tabId = typeof response.tab?.id === "string" ? response.tab.id : "";
+  if (!/^tt_[0-9a-f]{32}$/.test(tabId)) throw new Error("Invalid terminal tab response");
+  return { name: displayName, attachName: `${resolvedWorkspaceId}:${tabId}` };
 }
 
 async function deleteAttachableSession(api: ApiClient, attachName: string): Promise<void> {
-  await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
+  const ref = parseAttachRef(attachName);
+  if (!ref) throw new Error("Invalid terminal reference");
+  await api.delete(`/api/terminal/workspaces/${ref.workspaceId}/tabs/${ref.tabId}`);
 }
 
 async function deleteWorkspaceSession(api: ApiClient, sessionId: string): Promise<void> {
@@ -113,12 +120,12 @@ async function fetchMergedSessions(api: ApiClient): Promise<{
   sessions: AttachableSession[];
   aliasMap: Record<string, string>;
 }> {
-  const [zellijResponse, workspaceResponse] = await Promise.all([
-    api.get<{ sessions: unknown }>("/api/terminal/sessions"),
+  const [terminalResponse, workspaceResponse] = await Promise.all([
+    api.get<{ workspaces: unknown }>("/api/terminal/workspaces"),
     api.get<{ sessions: unknown; nextCursor: string | null }>("/api/sessions"),
   ]);
   return mergeAttachableSessions(
-    asArray<ZellijSessionDTO>(zellijResponse.sessions),
+    asArray<TerminalWorkspaceDTO>(terminalResponse.workspaces),
     asArray<WorkspaceSessionDTO>(workspaceResponse.sessions),
   );
 }
@@ -185,9 +192,8 @@ export const useSessions = create<SessionsState>()((set, get) => ({
     set({ creating: true, error: null, createError: null });
     try {
       if (!input) {
-        const { name, response } = await createTerminalSessionWithRetries(api);
+        const { name, attachName } = await createTerminalTab(api);
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
-        const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
         const refreshSequence = loadSequence + 1;
         await get().load(api);
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
@@ -196,7 +202,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           name: attachName,
           attachName,
           status: "active" as const,
-          source: "zellij" as const,
+          source: "terminal-tab" as const,
         };
         set((state) => {
           const loadingPatch = refreshSequence === loadSequence && state.loading ? { loading: false } : {};
@@ -208,14 +214,14 @@ export const useSessions = create<SessionsState>()((set, get) => ({
       }
 
       const res = await api.post<{
-        session?: { id?: unknown; runtime?: { zellijSession?: unknown } | null };
+        session?: { id?: unknown; runtime?: { terminalRef?: { workspaceId?: unknown; tabId?: unknown } } | null };
       }>("/api/sessions", input);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       const sessionId = typeof res.session?.id === "string" ? res.session.id : null;
-      const directAttachName =
-        typeof res.session?.runtime?.zellijSession === "string"
-          ? res.session.runtime.zellijSession
-          : null;
+      const directRef = res.session?.runtime?.terminalRef;
+      const directAttachName = typeof directRef?.workspaceId === "string" && typeof directRef.tabId === "string"
+        ? `${directRef.workspaceId}:${directRef.tabId}`
+        : null;
       // Reload so the merged aliasMap resolves the new session's zellij name
       // (the attach target). Keep this snapshot local so a concurrent external
       // load cannot preempt the return value for the just-created session.
@@ -325,14 +331,14 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         if (existing.taskId) input.taskId = existing.taskId;
         if (existing.worktreeId) input.worktreeId = existing.worktreeId;
         const res = await api.post<{
-          session?: { id?: unknown; runtime?: { zellijSession?: unknown } | null };
+          session?: { id?: unknown; runtime?: { terminalRef?: { workspaceId?: unknown; tabId?: unknown } } | null };
         }>("/api/sessions", input);
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const sessionId = typeof res.session?.id === "string" ? res.session.id : null;
-        const directAttachName =
-          typeof res.session?.runtime?.zellijSession === "string"
-            ? res.session.runtime.zellijSession
-            : null;
+        const directRef = res.session?.runtime?.terminalRef;
+        const directAttachName = typeof directRef?.workspaceId === "string" && typeof directRef.tabId === "string"
+          ? `${directRef.workspaceId}:${directRef.tabId}`
+          : null;
         if (!sessionId) {
           set({ creating: false, error: null });
           return null;
@@ -408,9 +414,10 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         set({ creating: false, error: null });
         return { sessionId, attachName: nextAttachName };
       }
-      const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name: attachName });
+      const oldRef = parseAttachRef(attachName);
+      const response = await createTerminalTab(api, oldRef?.workspaceId);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
-      const restarted = typeof response.name === "string" && response.name.trim() ? response.name.trim() : attachName;
+      const restarted = response.attachName;
       await get().load(api);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       set({ creating: false, error: null });
