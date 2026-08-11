@@ -164,7 +164,8 @@ export function createFileOperationController(options: FileOperationControllerOp
     syncScope();
     const current = options.getScope();
     const predicateCurrent = options.isScopeCurrent?.(token.scope) ?? true;
-    return !closed && token.epoch === epoch && sameScope(token.scope, current) && predicateCurrent;
+    return !closed && token.epoch === epoch && validScope(current)
+      && sameScope(token.scope, current) && predicateCurrent;
   };
 
   const begin = (paths: readonly string[]): OperationToken | FileOperationOutcome => {

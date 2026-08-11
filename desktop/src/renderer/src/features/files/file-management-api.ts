@@ -75,7 +75,7 @@ const TrashSchema = z.object({
 const SourcesSchema = z.array(OwnerRelativePathSchema).min(1).max(100).refine(
   (sources) => new Set(sources).size === sources.length,
 ).refine((sources) => sources.every((source) => parentDirectory(source) === parentDirectory(sources[0]!)));
-const ConflictChoicesSchema = z.array(z.object({
+export const FileConflictChoicesSchema = z.array(z.object({
   source: OwnerRelativePathSchema,
   resolution: z.enum(["keep-both", "skip"]),
 }).strict()).max(100);
@@ -84,7 +84,7 @@ export type FileMutationResult = z.infer<typeof MutationResultSchema>;
 export type FileMovePreflight = z.infer<typeof PreflightSchema>;
 export type FileMoveExecution = z.infer<typeof ExecuteSchema>;
 export type FileTrashExecution = z.infer<typeof TrashSchema>;
-export type FileConflictChoice = z.infer<typeof ConflictChoicesSchema>[number];
+export type FileConflictChoice = z.infer<typeof FileConflictChoicesSchema>[number];
 
 export interface FileManagementApi {
   list(directory: string): Promise<{ path: string; entries: BrowserEntry[] }>;
@@ -158,7 +158,7 @@ export function createFileManagementApi(client: ApiClient): FileManagementApi {
         sources: SourcesSchema,
         destinationDirectory: OwnerRelativePathSchema,
         preflightFingerprint: z.string().min(1).max(SMALL_STRING_MAX),
-        conflictChoices: ConflictChoicesSchema.optional(),
+        conflictChoices: FileConflictChoicesSchema.optional(),
       }).strict(), input);
       const { sources, destinationDirectory, ...wireBody } = body;
       const response = parseResponse(ExecuteSchema, await client.post(
