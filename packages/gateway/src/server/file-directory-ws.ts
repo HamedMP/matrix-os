@@ -143,7 +143,10 @@ export function createFileDirectoryWsConnection(
         options.ownerId,
         options.connectionId,
       );
-      closePromise = Promise.all([tail, cleanup]).then(() => undefined);
+      closePromise = Promise.all([tail, cleanup]).then(() => options.hub.removeConnection(
+        options.ownerId,
+        options.connectionId,
+      ));
       return closePromise;
     },
   };
