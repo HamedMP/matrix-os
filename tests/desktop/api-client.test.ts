@@ -81,6 +81,26 @@ describe("createApiClient", () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
+  it("preserves a safe top-level Gateway error code without surfacing raw detail", async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(409, { error: "Request conflict", code: "request_id_conflict" }))
+      .mockResolvedValueOnce(jsonResponse(500, { error: "/private/provider raw", code: "/private/provider raw" }));
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+
+    await expect(client.post("/api/files/batch/move", {})).rejects.toMatchObject({
+      category: "server",
+      detail: "request_id_conflict",
+    });
+    await expect(client.post("/api/files/batch/move", {})).rejects.toMatchObject({
+      category: "server",
+      detail: undefined,
+    });
+  });
+
   it("maps network failure to offline", async () => {
     const fetchFn = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
     const client = createApiClient({
