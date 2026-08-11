@@ -1,5 +1,28 @@
 import { z } from "zod/v4";
 import { KernelEffortSchema, KernelModelSchema } from "./kernel-settings.js";
+import { FileManagementDirectoryPathSchema } from "./file-management/contracts.js";
+
+const FileDirectoryPathSchema = FileManagementDirectoryPathSchema.refine(
+  (directory) => !/^[a-zA-Z]:\//.test(directory),
+  "Directory must not be an absolute Windows path",
+);
+
+export const FileDirectoryClientMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("files:subscribe"),
+    directory: FileDirectoryPathSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("files:unsubscribe"),
+    directory: FileDirectoryPathSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("files:touch"),
+    directory: FileDirectoryPathSchema,
+  }).strict(),
+]);
+
+export type FileDirectoryClientMessage = z.infer<typeof FileDirectoryClientMessageSchema>;
 
 export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
   z.object({
@@ -34,6 +57,7 @@ export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("abort"),
     requestId: z.string().min(1).max(256),
   }),
+  ...FileDirectoryClientMessageSchema.options,
 ]);
 
 export type MainWsClientMessage = z.infer<typeof MainWsClientMessageSchema>;

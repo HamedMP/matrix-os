@@ -9,6 +9,11 @@ export interface GatewayConfig {
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
 
+export type FileDirectoryServerMessage =
+  | { type: "files:subscribed"; directory: string; revision: number }
+  | { type: "files:change"; directory: string; entry: string; event: "add" | "change" | "unlink"; revision: number }
+  | { type: "files:shutdown" };
+
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
   | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
@@ -18,6 +23,7 @@ export type ServerMessage =
   | { type: "kernel:error"; message: string; requestId?: string; eventId?: string }
   | { type: "kernel:aborted"; requestId?: string; eventId?: string }
   | { type: "file:change"; path: string; event: string }
+  | FileDirectoryServerMessage
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
   | { type: "provision:start"; appCount: number }
