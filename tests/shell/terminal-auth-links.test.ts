@@ -4,7 +4,7 @@ import {
   extractTrustedTerminalAuthLink,
   mayContainTerminalAuthLink,
   scanTerminalAuthOutput,
-} from "../../shell/src/components/terminal/terminal-auth-links.js";
+} from "../../shell/src/components/terminal/terminal-links.js";
 
 describe("terminal auth links", () => {
   it("extracts a trusted Claude Code OAuth URL from ANSI terminal output", () => {
