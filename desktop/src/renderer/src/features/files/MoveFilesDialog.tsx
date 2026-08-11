@@ -9,10 +9,17 @@ import { isValidFileDropTarget } from "./file-drag";
 import type { FileMoveSession } from "./use-file-move";
 
 const NO_DIRECTORIES: BrowserEntry[] = [];
+const IGNORE_CLOSE = () => {};
+const INVALID_MOVE_REASON = {
+  source_missing: "This item is no longer available.",
+  protected: "This item is protected and cannot be moved.",
+  invalid_destination: "This item cannot be moved to that destination.",
+} as const;
 
 interface MoveDialogControls {
   session: FileMoveSession | null;
   cancelMove: () => void;
+  chooseCandidate: (destination: string) => void;
   chooseDestination: (destination: string) => void;
   setApplyToRemaining: (apply: boolean) => void;
   chooseConflict: (source: string, resolution: "keep-both" | "skip") => void;
@@ -32,6 +39,7 @@ function ActiveMoveFilesDialog({
   const {
     session,
     cancelMove: onCancel,
+    chooseCandidate: onChooseCandidate,
     chooseDestination: onMove,
     setApplyToRemaining: onApplyToRemaining,
     chooseConflict: onChooseConflict,
@@ -41,17 +49,20 @@ function ActiveMoveFilesDialog({
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const [directory, setDirectory] = useState("");
-  const [candidate, setCandidate] = useState<string | null>(null);
   const [directories, setDirectories] = useState<BrowserEntry[]>(NO_DIRECTORIES);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const loadGeneration = useRef(0);
+  const requestedDirectory = useRef("");
   const picking = session?.stage === "picking";
   const fileApi = useMemo(() => api ? createFileManagementApi(api) : null, [api]);
 
   const load = useCallback(async (nextDirectory: string) => {
     if (!fileApi || !picking) return;
     const generation = ++loadGeneration.current;
+    requestedDirectory.current = nextDirectory;
     setLoading(true);
+    setLoadError(false);
     try {
       const response = await fileApi.list(nextDirectory);
       if (generation !== loadGeneration.current) return;
@@ -61,6 +72,7 @@ function ActiveMoveFilesDialog({
       if (generation !== loadGeneration.current) return;
       console.warn("[move-files-dialog] folder listing failed:", diagnosticErrorKind(error));
       setDirectories(NO_DIRECTORIES);
+      setLoadError(true);
     } finally {
       if (generation === loadGeneration.current) setLoading(false);
     }
@@ -69,8 +81,8 @@ function ActiveMoveFilesDialog({
   useEffect(() => {
     loadGeneration.current += 1;
     setDirectory("");
-    setCandidate(null);
     setDirectories(NO_DIRECTORIES);
+    setLoadError(false);
     if (picking) void load("");
     return () => { loadGeneration.current += 1; };
   }, [api, runtimeSlot, authGeneration, picking, session?.sources, load]);
@@ -82,6 +94,14 @@ function ActiveMoveFilesDialog({
         <div className="flex max-h-[64vh] flex-col gap-3 p-4">
           <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Resolve move conflicts</h2>
           <div className="min-h-0 space-y-2 overflow-y-auto">
+            {session.preflight?.invalid.map((item) => (
+              <div key={item.source} className="rounded-md border p-2" style={{ borderColor: "var(--border-subtle)" }}>
+                <span data-testid="move-invalid-source" className="block truncate text-sm">{item.source}</span>
+                <span className="block text-xs" style={{ color: "var(--text-secondary)" }}>
+                  {INVALID_MOVE_REASON[item.code]}
+                </span>
+              </div>
+            ))}
             {session.choices.map((choice) => (
               <div key={choice.source} className="flex items-center justify-between gap-3 rounded-md border p-2" style={{ borderColor: "var(--border-subtle)" }}>
                 <span data-testid="move-conflict-source" className="min-w-0 truncate text-sm">{choice.source}</span>
@@ -120,11 +140,12 @@ function ActiveMoveFilesDialog({
   }
   if (!picking) {
     return (
-      <Dialog open onClose={onCancel} width={360}>
+      <Dialog open onClose={session.stage === "executing" ? IGNORE_CLOSE : onCancel} width={360}>
         <div className="p-4 text-sm" role="status">Preparing move…</div>
       </Dialog>
     );
   }
+  const candidate = session.destination;
   const scope = { directory: parentDirectory(session.sources[0]!), runtimeSlot, authGeneration };
   const candidateValid = candidate !== null && isValidFileDropTarget({
     version: 1,
@@ -158,7 +179,12 @@ function ActiveMoveFilesDialog({
           ))}
         </div>
         <div className="min-h-40 overflow-y-auto p-2">
-          {loading ? <p className="p-2 text-xs">Loading folders…</p> : directories.length === 0 ? (
+          {loading ? <p className="p-2 text-xs">Loading folders…</p> : loadError ? (
+            <div className="flex flex-col items-center gap-2 p-3 text-xs">
+              <span role="alert">Folders could not be loaded.</span>
+              <Button variant="subtle" aria-label="Retry folders" onClick={() => void load(requestedDirectory.current)}>Retry</Button>
+            </div>
+          ) : directories.length === 0 ? (
             <p className="p-2 text-xs" style={{ color: "var(--text-tertiary)" }}>No subfolders here.</p>
           ) : directories.map((entry) => {
             const path = joinPath(directory, entry.name);
@@ -170,7 +196,7 @@ function ActiveMoveFilesDialog({
                 aria-pressed={candidate === path}
                 className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm"
                 style={{ background: candidate === path ? "var(--bg-selected)" : "transparent" }}
-                onClick={() => setCandidate(path)}
+                onClick={() => onChooseCandidate(path)}
                 onDoubleClick={() => void load(path)}
               >
                 <Folder size={16} aria-hidden />{entry.name}
