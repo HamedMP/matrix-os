@@ -339,6 +339,25 @@ describe("Files workspace", () => {
     expect(await screen.findByRole("button", { name: "Open app.ts" })).not.toBeNull();
   });
 
+  it("previews a file activated with Enter", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const readme = await screen.findByRole("button", { name: "Open README.md" });
+
+    fireEvent.keyDown(readme, { key: "Enter" });
+
+    expect(await screen.findByRole("heading", { name: "Matrix files" })).not.toBeNull();
+  });
+
+  it("previews a file activated from its Open menu action", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open README.md" });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for README.md" }), { button: 0 });
+
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open" }));
+
+    expect(await screen.findByRole("heading", { name: "Matrix files" })).not.toBeNull();
+  });
+
   it("hides browser entries loaded under a previous session scope", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).toBeTruthy());

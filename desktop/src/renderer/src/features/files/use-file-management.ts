@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import type { BrowserEntry } from "./browser-entries";
@@ -37,7 +37,10 @@ export function useFileManagement(options: {
   authGeneration: number;
   socket: DirectorySyncSocket | null;
   onFocusedPathChange?(path: string | null): void;
-  onAuthoritativeEntries(entries: BrowserEntry[]): void;
+  loadAuthoritativeDirectory(
+    directory: string,
+    fetchEntries: () => Promise<BrowserEntry[]>,
+  ): Promise<BrowserEntry[]>;
 }) {
   const [draft, setDraft] = useState<FileNameDraft | null>(null);
   const [draftSubmitting, setDraftSubmitting] = useState(false);
@@ -58,18 +61,20 @@ export function useFileManagement(options: {
     runtimeSlot: options.runtimeSlot,
     authGeneration: options.authGeneration,
   });
-  const onEntriesRef = useRef(options.onAuthoritativeEntries);
   const onFocusRef = useRef(options.onFocusedPathChange);
   const selectionRef = useRef(storedSelection);
   const nextSubmissionRef = useRef(0);
   const activeSubmissionRef = useRef<number | null>(null);
-  scopeRef.current = {
-    directory: options.directory,
-    runtimeSlot: options.runtimeSlot,
-    authGeneration: options.authGeneration,
-  };
-  onEntriesRef.current = options.onAuthoritativeEntries;
-  onFocusRef.current = options.onFocusedPathChange;
+  useLayoutEffect(() => {
+    scopeRef.current = {
+      directory: options.directory,
+      runtimeSlot: options.runtimeSlot,
+      authGeneration: options.authGeneration,
+    };
+  }, [options.directory, options.runtimeSlot, options.authGeneration]);
+  useLayoutEffect(() => {
+    onFocusRef.current = options.onFocusedPathChange;
+  }, [options.onFocusedPathChange]);
 
   const managementApi = useMemo(
     () => options.api ? createFileManagementApi(options.api) : null,
@@ -92,17 +97,13 @@ export function useFileManagement(options: {
         && connection.authGeneration === scope.authGeneration;
     },
     loadDirectory: async (directory, operationScope) => {
-      const entries = await fetchEntries(directory);
-      const connection = useConnection.getState();
-      if (sameScope(scopeRef.current, operationScope)
-        && connection.api === options.api
-        && connection.runtimeSlot === operationScope.runtimeSlot
-        && connection.authGeneration === operationScope.authGeneration) {
-        onEntriesRef.current(entries);
-      }
+      const entries = await options.loadAuthoritativeDirectory(
+        directory,
+        () => fetchEntries(directory),
+      );
       return entries.map((entry) => directory ? `${directory}/${entry.name}` : entry.name);
     },
-  }), [managementApi, options.api, options.runtimeSlot, options.authGeneration, fetchEntries]);
+  }), [managementApi, options.api, options.runtimeSlot, options.authGeneration, options.loadAuthoritativeDirectory, fetchEntries]);
   const [snapshot, setSnapshot] = useState<FileOperationSnapshot>(controller.snapshot);
 
   useEffect(() => {
@@ -129,10 +130,10 @@ export function useFileManagement(options: {
     onFocusRef.current?.(null);
   }, [controller, options.directory, options.runtimeSlot, options.authGeneration]);
 
-  const loadSyncEntries = useCallback((directory: string) => fetchEntries(directory), [fetchEntries]);
-  const applySyncEntries = useCallback((entries: BrowserEntry[]) => {
-    onEntriesRef.current(entries);
-  }, []);
+  const loadSyncEntries = useCallback((directory: string) =>
+    options.loadAuthoritativeDirectory(directory, () => fetchEntries(directory)),
+  [fetchEntries, options.loadAuthoritativeDirectory]);
+  const applySyncEntries = useCallback(() => {}, []);
   useDirectorySync({
     socket: options.socket ?? NO_DIRECTORY_SOCKET,
     directory: options.directory,
@@ -177,7 +178,8 @@ export function useFileManagement(options: {
       const outcome = draft.mode === "create"
         ? await controller.create({ parentDirectory: options.directory, name: draft.name, kind: draft.kind })
         : await controller.rename({ path: draft.path, name: draft.name });
-      if (outcome.status === "completed" || outcome.succeededPaths.includes(expectedPath)) {
+      const reconciledIdentity = draft.mode === "rename" ? draft.path : expectedPath;
+      if (outcome.status === "completed" || outcome.succeededPaths.includes(reconciledIdentity)) {
         setDraft(null);
         setDraftError(null);
         return;
@@ -251,6 +253,7 @@ export function useFileManagement(options: {
     };
     selectionRef.current = nextSelection;
     setStoredSelection(nextSelection);
+    onFocusRef.current?.(nextSelection.focusedPath);
   }, [controller, trashPaths]);
 
   return {

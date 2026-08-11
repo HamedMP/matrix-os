@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "../../design/primitives";
-import { toUserMessage } from "../../lib/errors";
+import { diagnosticErrorKind } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import {
   parseBrowserEntries,
@@ -29,11 +29,10 @@ import {
   measureGridColumns,
 } from "./browser-views";
 import { useFileManagement } from "./use-file-management";
+import { useAuthoritativeListing, type BrowserListingStatus } from "./use-authoritative-listing";
 import type { FileSelectionPlatform } from "./file-selection";
 import { getKernelSocket } from "../../lib/kernel-wiring";
 import type { DirectorySyncSocket } from "./use-directory-sync";
-
-type BrowserStatus = "loading" | "ready" | "error";
 
 const NO_ENTRIES: BrowserEntry[] = [];
 
@@ -79,12 +78,8 @@ export default function ComputerFileBrowser({
   const [currentPath, setCurrentPath] = useState("");
   const [candidatePath, setCandidatePath] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [entries, setEntries] = useState<BrowserEntry[]>([]);
-  const [status, setStatus] = useState<BrowserStatus>("loading");
-  const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<BrowserSortKey>("name");
   const [sortDirection, setSortDirection] = useState<BrowserSortDirection>("asc");
-  const requestGeneration = useRef(0);
   const entryRefs = useRef<Array<HTMLButtonElement | null>>([]);
   // Navigating into a directory or switching between the grid and list
   // branches unmounts the focused row. Without restoring focus it falls to
@@ -92,11 +87,11 @@ export default function ComputerFileBrowser({
   // the listing with no way back in except the mouse.
   const restoreFocusRef = useRef(false);
 
-  const applyAuthoritativeEntries = useCallback((next: BrowserEntry[]) => {
-    setEntries(next);
-    setStatus("ready");
-    setError(null);
-  }, []);
+  const listing = useAuthoritativeListing({ api, runtimeSlot, authGeneration, directory: currentPath });
+  const loadAuthoritativeDirectory = useCallback((
+    directory: string,
+    fetchEntries: () => Promise<BrowserEntry[]>,
+  ) => listing.run(directory, fetchEntries, false), [listing.run]);
   const management = useFileManagement({
     api,
     directory: currentPath,
@@ -104,7 +99,7 @@ export default function ComputerFileBrowser({
     authGeneration,
     socket: directorySocket,
     onFocusedPathChange: onPreviewPathChange,
-    onAuthoritativeEntries: applyAuthoritativeEntries,
+    loadAuthoritativeDirectory,
   });
 
   const markFocusForRestore = useCallback(() => {
@@ -116,14 +111,13 @@ export default function ComputerFileBrowser({
   // synchronously from the scope they were loaded under, so a runtime switch
   // or replacement session never shows the previous owner's directory names or
   // lets stale rows fire onOpenFile/onChooseFolder against the new API.
-  const browserScope = `${runtimeSlot}|${authGeneration}`;
-  const [loadedScope, setLoadedScope] = useState(browserScope);
-  const scoped = loadedScope === browserScope;
+  const { entries, status, error, scoped } = listing;
   const viewCurrentPath = scoped ? currentPath : "";
   const viewCandidatePath = scoped ? candidatePath : "";
   const viewSelectedPath = scoped ? selectedPath : null;
-  const viewStatus: BrowserStatus = scoped ? status : "loading";
+  const viewStatus: BrowserListingStatus = scoped ? status : "loading";
   const viewError = scoped ? error : null;
+  const managementEnabled = scoped && status === "ready";
   const viewEntries = useMemo(
     () =>
       scoped
@@ -148,34 +142,25 @@ export default function ComputerFileBrowser({
   );
   useEffect(() => management.reconcilePaths(renderedPaths), [management.reconcilePaths, renderedPaths]);
 
-  const load = useCallback(async (path: string) => {
+  const load = useCallback((path: string) => {
     if (!api) return;
-    const generation = ++requestGeneration.current;
-    setStatus("loading");
-    setError(null);
-    try {
+    void listing.run(path, async () => {
       const response = await api.get<{ entries: unknown }>(`/api/files/list?path=${encodeURIComponent(path)}`);
-      if (generation !== requestGeneration.current) return;
-      setEntries(parseBrowserEntries(response.entries));
-      setStatus("ready");
-    } catch (err: unknown) {
-      if (generation !== requestGeneration.current) return;
-      setEntries([]);
-      setStatus("error");
-      setError(toUserMessage(err));
-    }
-  }, [api]);
+      return parseBrowserEntries(response.entries);
+    }, true).catch((caught: unknown) => {
+      console.warn("[computer-file-browser] authoritative listing failed:", diagnosticErrorKind(caught));
+    });
+  }, [api, listing.run]);
 
   useEffect(() => {
-    setLoadedScope(browserScope);
     setCurrentPath("");
     setCandidatePath("");
     setSelectedPath(null);
     void load("");
     return () => {
-      requestGeneration.current += 1;
+      listing.invalidate();
     };
-  }, [browserScope, load]);
+  }, [api, runtimeSlot, authGeneration, load, listing.invalidate]);
 
   const navigate = useCallback((path: string) => {
     markFocusForRestore();
@@ -190,23 +175,25 @@ export default function ComputerFileBrowser({
     if (viewCurrentPath) navigate(parentPath(viewCurrentPath));
   }, [navigate, viewCurrentPath]);
 
+  const previewFile = useCallback((path: string) => {
+    onOpenFile?.(path);
+    onPreviewPathChange?.(path);
+  }, [onOpenFile, onPreviewPathChange]);
+
   // Single click selects; files also open their preview immediately so the
   // browser/preview split behaves like a Finder column with Quick Look.
   const selectEntry = useCallback((entry: BrowserEntry, path: string, modifiers: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean }) => {
     setSelectedPath(path);
     management.selectPath(renderedPaths, path, modifiers, selectionPlatform);
     if (entry.type === "directory") setCandidatePath(path);
-    else {
-      onOpenFile?.(path);
-      onPreviewPathChange?.(path);
-    }
-  }, [management, onOpenFile, onPreviewPathChange, renderedPaths, selectionPlatform]);
+    else previewFile(path);
+  }, [management, previewFile, renderedPaths, selectionPlatform]);
 
   // Double-click or Enter "opens": directories navigate, files preview.
   const activateEntry = useCallback((entry: BrowserEntry, path: string) => {
     if (entry.type === "directory") navigate(path);
-    else onOpenFile?.(path);
-  }, [navigate, onOpenFile]);
+    else previewFile(path);
+  }, [navigate, previewFile]);
 
   // Grid and list render distinct entry branches, so a view switch remounts
   // every row; this restores focus once the new rows exist.
@@ -410,13 +397,13 @@ export default function ComputerFileBrowser({
         onUp={goUp}
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
-        onNewFile={mode === "browse" ? () => management.startCreate("file") : undefined}
-        onNewFolder={mode === "browse" ? () => management.startCreate("directory") : undefined}
+        onNewFile={mode === "browse" && managementEnabled ? () => management.startCreate("file") : undefined}
+        onNewFolder={mode === "browse" && managementEnabled ? () => management.startCreate("directory") : undefined}
       />
 
       <FileOperationNotice snapshot={management.snapshot} localNotice={management.localNotice} />
 
-      {mode === "browse" ? (
+      {mode === "browse" && managementEnabled ? (
         <FileCreationContextMenu
           onNewFile={() => management.startCreate("file")}
           onNewFolder={() => management.startCreate("directory")}
