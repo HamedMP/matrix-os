@@ -234,6 +234,16 @@ import {
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
 import { registerFileManagementRoutes } from "./server/file-management-routes.js";
+import {
+  authorizeFileDirectory,
+  FileDirectorySubscriptionHub,
+} from "./file-management/directory-subscriptions.js";
+import {
+  bindFileDirectoryWatcher,
+  closeFileDirectoryResources,
+  createFileDirectoryWsConnection,
+  isFileDirectoryFrameCandidate,
+} from "./server/file-directory-ws.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import {
   metricsRegistry,
@@ -432,6 +442,11 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const watcher: Watcher = createWatcher(homePath);
+  const fileDirectorySubscriptionHub = new FileDirectorySubscriptionHub({
+    authorize: ({ directory }) => authorizeFileDirectory(homePath, directory),
+    acquireScope: (directory) => watcher.acquireDirectoryScope(directory),
+  });
+  bindFileDirectoryWatcher(fileDirectorySubscriptionHub, watcher);
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
   const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
@@ -1833,24 +1848,28 @@ export async function createGateway(config: GatewayConfig) {
       // sync:subscribe branch below keys peers off the same principal as the
       // HTTP sync routes. authMiddleware ran on the upgrade request and
       // stashed claims if a JWT was presented.
+      const wsOwnerId = requireRequestPrincipal(c).userId;
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
-      try {
-        const wsSyncUserId = requireRequestPrincipal(c).userId;
-        syncPeerLifecycle = syncPeerRegistry
-          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
-              send: (data: string) => syncPeerSocket?.send(data),
-              get readyState() {
-                return syncPeerSocket?.readyState ?? 3;
-              },
-            })
-          : null;
-      } catch (err) {
-        if (!isRequestPrincipalError(err)) {
-          throw err;
-        }
-        console.warn("[sync/ws] Missing or invalid sync request principal on websocket upgrade");
-      }
+      syncPeerLifecycle = syncPeerRegistry
+        ? createSyncPeerLifecycle(syncPeerRegistry, wsOwnerId, {
+            send: (data: string) => syncPeerSocket?.send(data),
+            get readyState() {
+              return syncPeerSocket?.readyState ?? 3;
+            },
+          })
+        : null;
+      let mainWsSocket: WSContext | null = null;
+      const fileDirectoryConnection = createFileDirectoryWsConnection({
+        ownerId: wsOwnerId,
+        connectionId: randomUUID(),
+        hub: fileDirectorySubscriptionHub,
+        send: (message) => {
+          if (!mainWsSocket) throw new Error("Main WebSocket is not open");
+          mainWsSocket.send(message);
+        },
+        closeSocket: () => mainWsSocket?.close(1008, "File subscription closed"),
+      });
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
@@ -1920,6 +1939,7 @@ export async function createGateway(config: GatewayConfig) {
 
       return {
         onOpen(_evt, ws) {
+          mainWsSocket = ws;
           syncPeerSocket = ws;
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
@@ -1961,11 +1981,22 @@ export async function createGateway(config: GatewayConfig) {
           const parsedResult = MainWsClientMessageSchema.safeParse(rawMessage);
           if (!parsedResult.success) {
             captureGatewayProductEvent("shell_ws_invalid_message");
+            if (isFileDirectoryFrameCandidate(rawMessage)) {
+              fileDirectoryConnection.rejectInvalidFrame();
+              return;
+            }
             send(ws, { type: "kernel:error", message: "Invalid message format" });
             return;
           }
 
           const parsed: MainWsClientMessage = parsedResult.data;
+
+          if (parsed.type === "files:subscribe"
+            || parsed.type === "files:unsubscribe"
+            || parsed.type === "files:touch") {
+            fileDirectoryConnection.enqueue(parsed);
+            return;
+          }
 
           if (parsed.type === "ping") {
             send(ws, { type: "pong" } as ServerMessage);
@@ -2176,9 +2207,15 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose(_evt, ws) {
+          void fileDirectoryConnection.close().catch((err: unknown) => {
+            console.error("[files/realtime] Connection cleanup failed", {
+              errorKind: err instanceof Error ? err.name : typeof err,
+            });
+          });
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
           syncPeerSocket = null;
+          mainWsSocket = null;
           // Abort inactive in-flight runs so the kernel doesn't keep burning
           // tokens forever, while still allowing short browser reconnects to
           // replay and reattach runs that still have an active subscriber.
@@ -4280,7 +4317,11 @@ export async function createGateway(config: GatewayConfig) {
       await zellijShellWs.dispose();
       await sessionRegistry.shutdown();
       await fileManagementRoutes.close();
-      await watcher.close();
+      await closeFileDirectoryResources(fileDirectorySubscriptionHub, {
+        close: async () => {
+          await watcher.close();
+        },
+      });
       await homeMirror?.stop();
       await homeMirrorStart?.catch((err: unknown) => {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
