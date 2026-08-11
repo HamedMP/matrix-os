@@ -198,7 +198,8 @@ function isUntouchedDefaultDraft(current: AgentThreadComposerDraft, defaultDraft
     current.prompt === defaultDraft.prompt &&
     current.projectId === defaultDraft.projectId &&
     current.taskId === defaultDraft.taskId &&
-    current.terminalSessionId === defaultDraft.terminalSessionId &&
+    current.terminalRef?.workspaceId === defaultDraft.terminalRef?.workspaceId &&
+    current.terminalRef?.tabId === defaultDraft.terminalRef?.tabId &&
     current.worktreeId === defaultDraft.worktreeId &&
     current.mode === defaultDraft.mode &&
     current.approvalPolicy === defaultDraft.approvalPolicy &&
@@ -231,7 +232,7 @@ function mergeSeededDraft(
     projectId: seededDraft.projectId ?? current.projectId,
     worktreeId: seededDraft.worktreeId ?? current.worktreeId,
     taskId: seededDraft.taskId ?? current.taskId,
-    terminalSessionId: seededDraft.terminalSessionId ?? current.terminalSessionId,
+    terminalRef: seededDraft.terminalRef ?? current.terminalRef,
     attachments: seededDraft.attachments,
   };
 }

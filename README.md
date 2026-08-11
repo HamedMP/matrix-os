@@ -115,21 +115,20 @@ Install the skill locally if your agent runtime supports file skills:
 npx skills add HamedMP/matrix-os --skill matrix-os
 ```
 
-Then use Matrix shell sessions for remote work:
+Then use project-scoped Matrix terminal tabs for remote work:
 
 ```bash
 # Bring your own terminal agent.
 matrix run -it -- claude
 matrix run -it -- codex
 
-# Use a named setup session so the web terminal and local CLI can reattach.
-matrix run -it --session setup -- gh auth login
-matrix run -it --session setup -- claude
-matrix run -it --session setup -- codex
-matrix shell attach setup
+# Outside a known project, interactive commands use the reserved main workspace.
+matrix run -it --project main -- gh auth login
+matrix shell list
+matrix shell connect --project main --tab <tab-id>
 ```
 
-Detach from an interactive session with `Ctrl-\ Ctrl-\`. The remote zellij session stays alive and can be reattached from the Matrix web terminal or CLI. This is the same computer the hosted browser shell shows.
+Detach from an interactive tab with `Ctrl-\ Ctrl-\`. The remote process stays alive and can be reattached from the Matrix web terminal or CLI. This is the same computer the hosted browser shell shows.
 
 ### From Source
 

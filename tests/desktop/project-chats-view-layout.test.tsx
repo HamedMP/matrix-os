@@ -86,7 +86,7 @@ function summaryFixture(): RuntimeSummary {
     },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     previewSessions: { items: [], hasMore: false, limit: 50 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
@@ -344,14 +344,27 @@ describe("ProjectChatsView hero layout", () => {
       if (channel === "runtime:get-summary") {
         return {
           ...summaryFixture(),
-          terminalSessions: {
+          terminalWorkspaces: {
             items: [{
-              id: "term_cached",
-              name: "cached-shell",
+              id: "tws_00000000000000000000000000000001",
+              scope: "project",
+              projectId: "matrix-os",
+              canonicalSize: { cols: 120, rows: 36 },
               status: "running",
-              attachable: true,
+              revision: 1,
               createdAt: NOW,
               updatedAt: NOW,
+              tabs: [{
+                id: "tt_00000000000000000000000000000001",
+                workspaceId: "tws_00000000000000000000000000000001",
+                name: "cached-shell",
+                cwd: "projects/matrix-os",
+                status: "running",
+                revision: 1,
+                order: 0,
+                createdAt: NOW,
+                updatedAt: NOW,
+              }],
             }],
             hasMore: false,
             limit: 20,
@@ -366,7 +379,10 @@ describe("ProjectChatsView hero layout", () => {
             ...workspace.projectThreads,
             items: workspace.projectThreads.items.map((thread) => ({
               ...thread,
-              terminalSessionId: "term_cached",
+              terminalRef: {
+                workspaceId: "tws_00000000000000000000000000000001",
+                tabId: "tt_00000000000000000000000000000001",
+              },
             })),
           },
         };

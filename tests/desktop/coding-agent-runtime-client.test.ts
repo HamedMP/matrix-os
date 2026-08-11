@@ -179,7 +179,7 @@ function threadSnapshotBody() {
       title: "Fix desktop notifications",
       status: "waiting_for_approval",
       attention: "approval_required",
-      terminalSessionId: "matrix-abc1234",
+      terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
       createdAt: "2026-07-06T00:00:00.000Z",
       updatedAt: "2026-07-06T00:01:00.000Z",
     },

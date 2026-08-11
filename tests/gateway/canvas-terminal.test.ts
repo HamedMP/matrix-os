@@ -4,15 +4,19 @@ import { CanvasActionSchema } from "../../packages/gateway/src/canvas/contracts.
 describe("canvas terminal actions", () => {
   it("validates create, attach, observe, write, takeover, and kill payloads", () => {
     expect(CanvasActionSchema.parse({ nodeId: "node_terminal", type: "terminal.create", payload: { cwd: "projects" } }).type).toBe("terminal.create");
+    const terminalRef = {
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    };
     for (const type of ["terminal.attach", "terminal.observe", "terminal.write", "terminal.takeover", "terminal.kill"] as const) {
       const payload = type === "terminal.write"
-        ? { sessionId: "550e8400-e29b-41d4-a716-446655440000", input: "ls\n" }
-        : { sessionId: "550e8400-e29b-41d4-a716-446655440000" };
+        ? { terminalRef, input: "ls\n" }
+        : { terminalRef };
       expect(CanvasActionSchema.safeParse({ nodeId: "node_terminal", type, payload }).success).toBe(true);
     }
   });
 
-  it("rejects invalid terminal sessions before action execution", () => {
+  it("rejects legacy session IDs before action execution", () => {
     expect(CanvasActionSchema.safeParse({
       nodeId: "node_terminal",
       type: "terminal.attach",

@@ -106,14 +106,14 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(combined).toMatch(/claude --version/);
     expect(combined).toMatch(/claude auth status/);
     expect(readSkill("matrix-github-project")).toMatch(/gh auth status/);
-    expect(combined).toMatch(/auth-codex-<suffix>/);
-    expect(combined).toMatch(/auth-github-<suffix>/);
+    expect(combined).toMatch(/codex login/);
+    expect(combined).toMatch(/gh auth login/);
     expect(combined).toMatch(/browser\/device/i);
     expect(combined).toMatch(/Never (?:scan|read|upload)[^\n]*credential files/i);
     expect(combined).toMatch(/ask before installing/i);
   });
 
-  it("requires observable named sessions, prohibits tabs, and sandboxes coding agents", () => {
+  it("requires observable project tabs and sandboxes coding agents", () => {
     const skill = readSkill("matrix-cloud-run");
     const workflows = [
       readSkill("matrix-onboarding"),
@@ -127,11 +127,10 @@ describe("Matrix OS Codex marketplace plugin", () => {
     expect(skill).toMatch(/mkdir[^\n]*apps\/<slug>/);
     expect(skill).toMatch(/-C[^\n]*existing directory/i);
     for (const workflow of workflows) {
-      expect(workflow).toMatch(/matrix run -it --session/);
+      expect(workflow).toMatch(/matrix run -it --project/);
       expect(workflow).not.toMatch(/matrix run --json/);
-      expect(workflow).toMatch(/never (?:create or use|use)[^\n]*tabs/i);
-      expect(workflow).toMatch(/separate[^\n]*session/i);
-      expect(workflow).toMatch(/matrix shell connect/);
+      expect(workflow).toMatch(/separate[^\n]*tab/i);
+      expect(workflow).toMatch(/matrix shell connect --project/);
     }
     expect(skill).toMatch(/prompt[^\n]*argument/i);
     expect(skill).toMatch(/--sandbox workspace-write/);
@@ -168,7 +167,7 @@ describe("Matrix OS Codex marketplace plugin", () => {
 
     expect(standalone).toContain("# Matrix OS");
     expect(standalone).toMatch(/^author: Matrix OS$/m);
-    expect(standalone).toMatch(/matrix run -it --session/);
+    expect(standalone).toMatch(/matrix run -it --project/);
     expect(standalone).toMatch(/gh repo clone/);
     expect(standalone).toMatch(/--sandbox workspace-write/);
     expect(standalone).toMatch(/claude[^\n]*--permission-mode auto/i);

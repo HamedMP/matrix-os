@@ -1,6 +1,6 @@
 import { Command } from "cmdk";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import type { AgentThreadSummary, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
@@ -15,13 +15,13 @@ import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../
 import { openProjectOverview } from "../../lib/project-navigation";
 import { handleNewAgentRunShortcut } from "../mission-control/shortcuts";
 import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../coding-agents/provider-setup-terminal";
+import { runtimeTerminalTabs, type RuntimeTerminalTab } from "../../lib/terminal-workspaces";
 
 const EMPTY_REVIEWS: ReviewSummary[] = [];
 const MAX_PALETTE_REVIEWS = 10;
 const MAX_PALETTE_THREADS = 20;
 const MAX_PALETTE_TERMINALS = 20;
 const TERMINAL_REVIEW_STATUSES: ReviewSummary["status"][] = ["approved", "converged", "stopped"];
-const SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
 const SETUP_DISCONNECTED_ERROR = "Connect to your Matrix computer before opening setup.";
 const SETUP_TERMINAL_ERROR = "Could not open setup terminal. Try again from Terminal.";
 
@@ -62,21 +62,20 @@ function paletteThreadCommands(summary: { activeThreads: { items: AgentThreadSum
 }
 
 function paletteTerminalCommands(
-  summary: { terminalSessions?: { items: TerminalSessionSummary[] } } | null,
+  summary: RuntimeSummary | null,
   shellSessions: Array<{ name: string }>,
-): TerminalSessionSummary[] {
-  if (!summary?.terminalSessions) return [];
+): RuntimeTerminalTab[] {
+  if (!summary) return [];
   const shellSessionNames = new Set(shellSessions.map((session) => session.name));
-  const commands: TerminalSessionSummary[] = [];
+  const commands: RuntimeTerminalTab[] = [];
   const seen = new Set<string>();
-  for (const session of summary.terminalSessions.items) {
+  for (const session of runtimeTerminalTabs(summary)) {
     if (
       !session.attachable
-      || !SESSION_NAME_PATTERN.test(session.name)
-      || shellSessionNames.has(session.name)
-      || seen.has(session.name)
+      || shellSessionNames.has(session.refKey)
+      || seen.has(session.refKey)
     ) continue;
-    seen.add(session.name);
+    seen.add(session.refKey);
     commands.push(session);
     if (commands.length >= MAX_PALETTE_TERMINALS) break;
   }
@@ -334,7 +333,7 @@ export default function CommandPalette() {
                   icon={<SquareTerminal size={14} />}
                   label={`Open terminal ${session.name}`}
                   onSelect={() =>
-                    run(() => openTab({ kind: "terminal", sessionName: session.name, title: session.name }))
+                    run(() => openTab({ kind: "terminal", sessionName: session.refKey, title: session.name }))
                   }
                 />
               ))}

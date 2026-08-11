@@ -4,6 +4,7 @@ import { Button } from "../../design/primitives";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
+import { runtimeTerminalTabs, terminalRefKey } from "../../lib/terminal-workspaces";
 
 export function ThreadList({
   summary,
@@ -15,17 +16,16 @@ export function ThreadList({
   const openTab = useTabs((s) => s.openTab);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
-  const findAttachableSessionName = (sessionId: string): string | null =>
-    summary.terminalSessions.items.find((session) => session.id === sessionId && session.attachable)?.name ?? null;
+  const terminalTabs = runtimeTerminalTabs(summary);
+  const findAttachableTab = (ref: AgentThreadSummary["terminalRef"]) =>
+    ref ? terminalTabs.find((tab) => tab.refKey === terminalRefKey(ref) && tab.attachable) ?? null : null;
   const openThread = onOpenThread ?? ((thread: AgentThreadSummary) => void loadThreadSnapshot(thread.id));
 
   return (
     <Section title="Active Threads" count={summary.activeThreads.items.length}>
       <div className="grid gap-2">
         {summary.activeThreads.items.map((thread) => {
-          const terminalSessionName = thread.terminalSessionId
-            ? findAttachableSessionName(thread.terminalSessionId)
-            : null;
+          const terminalTab = findAttachableTab(thread.terminalRef);
           const active = activeThreadId === thread.id;
 
           return (
@@ -51,12 +51,12 @@ export function ThreadList({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {terminalSessionName ? (
+                {terminalTab ? (
                   <Button
                     variant="ghost"
                     aria-label={`Open terminal for ${thread.title}`}
                     title={`Open terminal for ${thread.title}`}
-                    onClick={() => openTab({ kind: "terminal", sessionName: thread.terminalSessionId, title: terminalSessionName })}
+                    onClick={() => openTab({ kind: "terminal", sessionName: terminalTab.refKey, title: terminalTab.name })}
                   >
                     <SquareTerminal size={14} />
                   </Button>

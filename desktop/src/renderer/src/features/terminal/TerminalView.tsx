@@ -14,6 +14,7 @@ import {
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
+import { parseTerminalRefKey } from "../../lib/terminal-workspaces";
 import { getAttachManager } from "./terminal-runtime";
 import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./TerminalLinkContextMenu";
 import {
@@ -90,8 +91,6 @@ export default function TerminalView({
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
-  const [leaseRevoked, setLeaseRevoked] = useState(false);
-  const [leaseAttempt, setLeaseAttempt] = useState(0);
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
   const closeTerminalContextMenu = useCallback(() => setTerminalContextMenu(null), []);
   const [pasteError, setPasteError] = useState<string | null>(null);
@@ -101,7 +100,6 @@ export default function TerminalView({
     endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
-    setLeaseRevoked(false);
   }
 
   // xterm lifecycle — mount once, dispose only on real unmount (tab close).
@@ -264,14 +262,6 @@ export default function TerminalView({
           terminal.resize(size.cols, size.rows);
         }
       },
-      onLeaseRevoked: () => {
-        endedRef.current = true;
-        setLeaseRevoked(true);
-        setSocketState("ended");
-      },
-      onPresentationReset: () => {
-        terminal.reset();
-      },
       onGap: () => {
         terminal.clear();
         terminal.write(GAP_MARKER);
@@ -301,7 +291,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, active, closeTerminalContextMenu, leaseAttempt]);
+  }, [sessionName, active, closeTerminalContextMenu]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -331,9 +321,11 @@ export default function TerminalView({
         return;
       }
       try {
+        const terminalRef = parseTerminalRefKey(sessionName);
+        if (!terminalRef) throw new Error("invalid terminal reference");
         const paths = await Promise.all(files.map(async ({ file, mimeType }) => {
           const response = await api.postBytes<{ terminalPath?: unknown }>(
-            `/api/terminal/sessions/${encodeURIComponent(sessionName)}/paste-assets`,
+            `/api/terminal/workspaces/${encodeURIComponent(terminalRef.workspaceId)}/tabs/${encodeURIComponent(terminalRef.tabId)}/paste-assets`,
             file,
             {
               "Content-Type": mimeType,
@@ -387,17 +379,6 @@ export default function TerminalView({
   }, [active, api, sessionName]);
 
   const banner = (() => {
-    if (leaseRevoked) {
-      return {
-        text: "Live on another device.",
-        action: <Button variant="primary" onClick={() => {
-          endedRef.current = false;
-          setLeaseRevoked(false);
-          setSocketState("connecting");
-          setLeaseAttempt((attempt) => attempt + 1);
-        }}>Resume here</Button>,
-      };
-    }
     if (socketState === "fatal") {
       return { text: "This session has ended on your computer.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }

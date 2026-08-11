@@ -75,12 +75,6 @@ export class AttachManager {
       onCanonicalSize: (size) => {
         if (this.isLive(generation)) events.onCanonicalSize?.(size);
       },
-      onLeaseRevoked: () => {
-        if (this.isLive(generation)) events.onLeaseRevoked?.();
-      },
-      onPresentationReset: () => {
-        if (this.isLive(generation)) events.onPresentationReset?.();
-      },
       onGap: () => {
         if (this.isLive(generation)) events.onGap();
       },

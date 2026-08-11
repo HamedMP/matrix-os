@@ -1,7 +1,7 @@
 [Unit]
 Description=Matrix OS customer gateway
-After=matrix-restore.service docker.service
-Requires=matrix-restore.service docker.service
+After=matrix-restore.service matrix-terminal-runtime.service docker.service
+Requires=matrix-restore.service matrix-terminal-runtime.service docker.service
 ConditionPathExists=/opt/matrix/restore-complete
 ConditionPathExists=/opt/matrix/bin/matrix-gateway
 
@@ -11,6 +11,7 @@ Group=matrix
 EnvironmentFile=/opt/matrix/env/host.env
 Environment=SYMPHONY_PORT=4766
 Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1
+Environment=MATRIX_TERMINAL_RUNTIME_SOCKET=/run/matrix/terminal-runtime.sock
 WorkingDirectory=/opt/matrix
 ExecStartPre=+/opt/matrix/bin/matrix-install-developer-tools --sandbox-only
 ExecStart=/opt/matrix/bin/matrix-gateway

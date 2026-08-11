@@ -18,13 +18,16 @@ import {
   type TerminalLayout,
 } from "@/components/terminal/terminal-layout";
 
+const MAIN_REF = "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const CODEX_REF = "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tt_cccccccccccccccccccccccccccccccc";
+
 const splitTree: PaneNode = {
   type: "split",
   direction: "horizontal",
   ratio: 0.5,
   children: [
-    { type: "pane", id: "left", cwd: "projects/app", sessionId: "shell-main" },
-    { type: "pane", id: "right", cwd: DEFAULT_CWD, sessionId: "codex-build" },
+    { type: "pane", id: "left", cwd: "projects/app", sessionId: MAIN_REF },
+    { type: "pane", id: "right", cwd: DEFAULT_CWD, sessionId: CODEX_REF },
   ],
 };
 
@@ -37,10 +40,10 @@ describe("terminal layout helpers", () => {
       type: "pane",
       id: "left",
       cwd: "projects/app",
-      sessionId: "shell-main",
+      sessionId: MAIN_REF,
     });
     expect(getFirstPaneId(split)).toBe("left");
-    expect(getPaneSessionId(split, "left")).toBe("shell-main");
+    expect(getPaneSessionId(split, "left")).toBe(MAIN_REF);
 
     const leftBranch = split.type === "split" ? split.children[0] : null;
     expect(leftBranch?.type).toBe("split");
@@ -54,7 +57,7 @@ describe("terminal layout helpers", () => {
 
     const closed = closePaneInTree(split, "right");
     expect(closed).not.toBeNull();
-    expect(getSessionIds(closed!)).toEqual(["shell-main"]);
+    expect(getSessionIds(closed!)).toEqual([MAIN_REF]);
 
     const nestedClosed = closePaneInTree(split, newPane.id);
     expect(nestedClosed).not.toBeNull();
@@ -63,14 +66,14 @@ describe("terminal layout helpers", () => {
       type: "pane",
       id: "left",
       cwd: "projects/app",
-      sessionId: "shell-main",
+      sessionId: MAIN_REF,
     });
 
     expect(closePaneInTree(splitTree, "missing-pane")).toBe(splitTree);
   });
 
   it("renames and removes shell sessions across pane trees", () => {
-    const renamed = renameSessionInTree(splitTree, "codex-build", "codex-run");
+    const renamed = renameSessionInTree(splitTree, CODEX_REF, "codex-run");
     expect(getPaneSessionId(renamed, "right")).toBe("codex-run");
     expect(getPaneIdsForSession(renamed, "codex-run")).toEqual(["right"]);
 
@@ -101,7 +104,7 @@ describe("terminal layout helpers", () => {
     };
 
     expect(layoutUsesOnlyCanonicalShellSessions(layout)).toBe(false);
-    expect(getCanonicalShellSessionIds(layout)).toEqual(["shell-main", "codex-build"]);
+    expect(getCanonicalShellSessionIds(layout)).toEqual([MAIN_REF, CODEX_REF]);
     expect(formatCwd(DEFAULT_CWD)).toBe("~/projects");
     expect(formatCwd("projects/matrix-os")).toBe("~/projects/matrix-os");
     expect(formatCwd("/tmp")).toBe("/tmp");
@@ -109,8 +112,8 @@ describe("terminal layout helpers", () => {
     expect(applyCompatModeToTabs(layout.tabs ?? [])[0]?.paneTree).toEqual({
       ...splitTree,
       children: [
-        { type: "pane", id: "left", cwd: "projects/app", sessionId: "shell-main", compatMode: undefined },
-        { type: "pane", id: "right", cwd: DEFAULT_CWD, sessionId: "codex-build", compatMode: "codex-tui" },
+        { type: "pane", id: "left", cwd: "projects/app", sessionId: MAIN_REF, compatMode: undefined },
+        { type: "pane", id: "right", cwd: DEFAULT_CWD, sessionId: CODEX_REF, compatMode: undefined },
       ],
     });
   });
