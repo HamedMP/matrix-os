@@ -13,6 +13,11 @@ interface ListingScope {
   directory: string;
 }
 
+interface AuthoritativeSnapshot {
+  scope: ListingScope;
+  entries: BrowserEntry[];
+}
+
 export function useAuthoritativeListing(options: ListingScope) {
   const { api, runtimeSlot, authGeneration, directory: currentDirectory } = options;
   const [entries, setEntries] = useState<BrowserEntry[]>([]);
@@ -24,6 +29,7 @@ export function useAuthoritativeListing(options: ListingScope) {
   const committedScopeRef = useRef<ListingScope>({
     api, runtimeSlot, authGeneration, directory: currentDirectory,
   });
+  const authoritativeSnapshotRef = useRef<AuthoritativeSnapshot | null>(null);
   const requestGeneration = useRef(0);
 
   useLayoutEffect(() => {
@@ -54,6 +60,7 @@ export function useAuthoritativeListing(options: ListingScope) {
         && connection.api === requestScope.api
         && connection.runtimeSlot === requestScope.runtimeSlot
         && connection.authGeneration === requestScope.authGeneration) {
+        authoritativeSnapshotRef.current = { scope: requestScope, entries: next };
         setEntries(next);
         setLoadedScope(requestScope);
         setStatus("ready");
@@ -61,12 +68,24 @@ export function useAuthoritativeListing(options: ListingScope) {
       }
       return next;
     } catch (caught: unknown) {
-      if (surfaceStatus && generation === requestGeneration.current
-        && sameScope(committedScopeRef.current, requestScope)) {
-        setEntries([]);
-        setLoadedScope(requestScope);
-        setStatus("error");
-        setError(toUserMessage(caught));
+      const connection = useConnection.getState();
+      if (generation === requestGeneration.current
+        && sameScope(committedScopeRef.current, requestScope)
+        && connection.api === requestScope.api
+        && connection.runtimeSlot === requestScope.runtimeSlot
+        && connection.authGeneration === requestScope.authGeneration) {
+        const snapshot = authoritativeSnapshotRef.current;
+        if (snapshot && sameScope(snapshot.scope, requestScope)) {
+          setEntries(snapshot.entries);
+          setLoadedScope(snapshot.scope);
+          setStatus("ready");
+          setError(null);
+        } else {
+          setEntries([]);
+          setLoadedScope(requestScope);
+          setStatus("error");
+          setError(toUserMessage(caught));
+        }
       }
       throw caught;
     }

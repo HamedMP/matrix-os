@@ -69,6 +69,40 @@ describe("Files listing publication ordering", () => {
     expect(screen.getByRole("button", { name: "Open socket-new.md" })).not.toBeNull();
   });
 
+  it("settles a held Refresh when the newer socket reconciliation fails", async () => {
+    let resolveRefresh!: (value: Listing) => void;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn()
+        .mockResolvedValueOnce(listing("initial.md"))
+        .mockImplementationOnce(() => new Promise<Listing>((resolve) => { resolveRefresh = resolve; }))
+        .mockRejectedValueOnce(new Error("provider failed at /home/operator")),
+      post: vi.fn(),
+    };
+    const socket = new FakeDirectorySocket();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useConnection.setState({
+      status: "signed-in",
+      runtimeSlot: "primary",
+      authGeneration: 1,
+      api: api as never,
+    });
+    render(<Tooltip.Provider><ComputerFileBrowser directorySocket={socket} /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open initial.md" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh folder" }));
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Loading folder…")).not.toBeNull();
+    act(() => socket.emit({ type: "files:subscribed", directory: "", revision: 2 }));
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
+
+    await act(async () => resolveRefresh(listing("refresh-old.md")));
+    expect(screen.queryByText("Loading folder…")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open initial.md" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Open refresh-old.md" })).toBeNull();
+    expect(warn.mock.calls.flat().join(" ")).not.toMatch(/provider|\/home\/operator/);
+  });
+
   it("forgets an authoritatively successful uncertain rename even if the old path returns later", async () => {
     let current = listing("note.md");
     const api = {
