@@ -127,7 +127,9 @@ describe('customer VPS host bundle', () => {
       'timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"',
     );
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/zellij"');
-    expect(script).toContain('tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd release.json incremental-manifest.json');
+    expect(script).toContain(
+      'tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json',
+    );
     expect(smoke).toContain('import { spawn } from "node-pty"');
     expect(smoke).toContain('const TEST_TIMEOUT_MS = 10_000');
     expect(smoke).toContain('const OLD_HOST_QUERY_TIMEOUT_MS = 500');
@@ -961,7 +963,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow.indexOf('if [ "$TEARDOWN_PREVIEW" = "true" ]; then'))
       .toBeLessThan(workflow.indexOf('if [ "$VERIFY_INVENTORY" = "true" ]; then'));
     expect(workflow).toContain("if: needs.gate.outputs.action == 'teardown'");
-    expect(workflow).toContain('select(.handle == $h and .status != "deleted")');
+    expect(workflow).toContain(
+      'select(.handle == $h and .status != "deleted" and .deletedAt == null)',
+    );
   });
 
   it('manual preview verification uses a short-lived token from an active QA session', () => {
