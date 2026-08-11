@@ -23,7 +23,7 @@ describe("terminal auth links", () => {
   it("extracts the current Claude Code PKCE login URL", () => {
     const challenge = "A".repeat(43);
     const raw = [
-      "https://claude.ai/cai/oauth/authorize?code=true",
+      "https://claude.com/cai/oauth/authorize?code=true",
       "&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e",
       "&response_type=code",
       "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
@@ -41,7 +41,7 @@ describe("terminal auth links", () => {
 
   it("rejects a current Claude Code URL with an untrusted callback", () => {
     const raw = [
-      "https://claude.ai/cai/oauth/authorize?code=true",
+      "https://claude.com/cai/oauth/authorize?code=true",
       "&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e",
       "&response_type=code",
       "&redirect_uri=https%3A%2F%2Fevil.example%2Fcallback",
@@ -76,6 +76,7 @@ describe("terminal auth links", () => {
   it("rejects lookalike hosts, credentials, fragments, and untrusted Codex paths", () => {
     const unsafe = [
       "https://claude.ai.evil.example/oauth/authorize?response_type=code&client_id=x&state=y",
+      "https://claude.com.evil.example/cai/oauth/authorize?response_type=code&client_id=x&state=y",
       "https://auth.openai.com.evil.example/codex/device",
       "https://user:pass@auth.openai.com/codex/device",
       "https://auth.openai.com/codex/device#token",

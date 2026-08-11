@@ -2,7 +2,7 @@ const MAX_AUTH_URL_LENGTH = 2048;
 const OAUTH_STATE_PATTERN = /^[A-Za-z0-9_-]+$/;
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const CLAUDE_CODE_CALLBACK_URL = "https://platform.claude.com/oauth/code/callback";
-const TRUSTED_AUTH_URL_PATTERN = /https:\/\/(?:claude\.ai|auth\.openai\.com)\/[^\s"'<>)}\]]{0,2048}/g;
+const TRUSTED_AUTH_URL_PATTERN = /https:\/\/(?:claude\.ai|claude\.com|auth\.openai\.com)\/[^\s"'<>)}\]]{0,2048}/g;
 
 export type TerminalAuthProvider = "claude" | "codex";
 
@@ -41,7 +41,7 @@ function hasValidOAuthParams(url: URL): boolean {
 function isTrustedClaudeAuthUrl(url: URL): boolean {
   const hasTrustedEnvelope =
     hasSafeUrlEnvelope(url) &&
-    url.origin === "https://claude.ai" &&
+    (url.origin === "https://claude.ai" || url.origin === "https://claude.com") &&
     hasValidOAuthParams(url) &&
     !url.searchParams.has("redirect");
   if (!hasTrustedEnvelope) return false;
@@ -70,6 +70,7 @@ export function mayContainTerminalAuthLink(raw: string): boolean {
   return (
     raw.includes("claude.ai/oauth/authorize") ||
     raw.includes("claude.ai/cai/oauth/authorize") ||
+    raw.includes("claude.com/cai/oauth/authorize") ||
     raw.includes("auth.openai.com/codex/")
   );
 }
