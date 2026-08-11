@@ -28,6 +28,7 @@ import {
 import {
   getNativeFileCapability,
   NativeFileCapabilityUnavailableError,
+  type NativeFileCapability,
   type NativeFileCapabilityResult,
 } from "./file-management/native-file-capability.js";
 
@@ -57,21 +58,50 @@ export interface FileCopyDependencies {
   beforeNativeMutation?: () => Promise<void>;
 }
 
-function isSameOrDescendantPath(source: string, target: string): boolean {
+export type NoReplaceFileMoveCapability = Pick<NativeFileCapability, "move">;
+
+export interface NoReplaceFileMoveDependencies {
+  moveCapability?: NoReplaceFileMoveCapability;
+  requestId?: string;
+}
+
+export function isSameOrDescendantPath(source: string, target: string): boolean {
   return target === source || target.startsWith(`${source}/`);
 }
 
 async function runNativeMutation(
   operation: () => Promise<NativeFileCapabilityResult>,
+  requestId?: string,
 ): Promise<NativeFileCapabilityResult> {
   try {
     return await operation();
   } catch (error: unknown) {
     if (!(error instanceof NativeFileCapabilityUnavailableError)) {
-      console.warn("[file-ops] Native file-management operation failed:", error instanceof Error ? error.message : String(error));
+      const requestContext = requestId ? ` for request ${requestId}` : "";
+      console.warn(`[file-ops] Native file-management operation failed${requestContext}:`, error instanceof Error ? error.message : String(error));
     }
     return { ok: false, code: "unsupported_platform" };
   }
+}
+
+/**
+ * The narrow native boundary used by batch moves. Production callers get the
+ * Linux no-replace capability; tests may inject the same move contract on
+ * platforms where the addon cannot load. There is deliberately no JS fallback.
+ */
+export async function moveFileNoReplace(
+  homePath: string,
+  sourcePath: string,
+  targetPath: string,
+  dependencies: NoReplaceFileMoveDependencies = {},
+): Promise<NativeFileCapabilityResult> {
+  return runNativeMutation(() =>
+    (dependencies.moveCapability ?? getNativeFileCapability()).move(
+      homePath,
+      sourcePath,
+      targetPath,
+      false,
+    ), dependencies.requestId);
 }
 
 export async function createFile(
