@@ -10,7 +10,7 @@ case "$operation" in
   launch|status|diagnose|reboot|resume|pack|cancel|phase1|phase2) ;;
   *) echo "production_acceptance_invalid_request" >&2; exit 2 ;;
 esac
-readonly root_parent=/var/lib/matrix-terminal-acceptance; readonly state_root="${root_parent}/${head_sha}-${run_nonce}"
+readonly root_parent=/var/lib/matrix-terminal-acceptance; readonly state_root="${root_parent}/${head_sha}-${run_nonce}"; readonly boot_id_file="${state_root}/boot-id"; readonly boot_id_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 readonly evidence_root="${state_root}/evidence"; readonly checks_root="${evidence_root}/checks"
 readonly state_file="${state_root}/state"; readonly probe=/opt/matrix/libexec/terminal-runtime/current/spikes/production-probe.mjs
 readonly verifier=/opt/matrix/libexec/terminal-runtime/current/spikes/verify-production-evidence.mjs; readonly version_a="v0.0.0-accept-${head_sha:0:7}-${run_nonce}-a"
@@ -30,15 +30,11 @@ command_bounded() {
   local timeout_seconds="$1" operation_pid deadline_pid completed_pid completed_status; shift
   [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,2}$ ]] || return 2
   /usr/bin/setsid "$@" </dev/null & operation_pid=$!; /usr/bin/sleep "$timeout_seconds" & deadline_pid=$!
-  completed_pid=""
-  if wait -n -p completed_pid "$operation_pid" "$deadline_pid"; then completed_status=0; else completed_status=$?; fi
+  completed_pid=""; if wait -n -p completed_pid "$operation_pid" "$deadline_pid"; then completed_status=0; else completed_status=$?; fi
   if [ "$completed_pid" = "$operation_pid" ]; then
-    kill "$deadline_pid" 2>/dev/null || true; wait "$deadline_pid" 2>/dev/null || true
-    kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.05; kill -KILL -- "-$operation_pid" 2>/dev/null || true
-    wait "$operation_pid" 2>/dev/null || true; return "$completed_status"
-  fi
-  kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.2; kill -KILL -- "-$operation_pid" 2>/dev/null || true
-  wait "$operation_pid" 2>/dev/null || true; return 124
+    kill "$deadline_pid" 2>/dev/null || true; wait "$deadline_pid" 2>/dev/null || true; kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.05; kill -KILL -- "-$operation_pid" 2>/dev/null || true
+    wait "$operation_pid" 2>/dev/null || true; return "$completed_status"; fi
+  kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.2; kill -KILL -- "-$operation_pid" 2>/dev/null || true; wait "$operation_pid" 2>/dev/null || true; return 124
 }
 stop_process_group() { local operation_pid="$1"; kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.2; kill -KILL -- "-$operation_pid" 2>/dev/null || true; wait "$operation_pid" 2>/dev/null || true; }
 systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }
@@ -95,15 +91,12 @@ phase1() {
   install -d -o root -g root -m 0700 "$checks_root"
   write_state phase1-running
   local created runtime_id unit session_name agent_created agent_runtime_id agent_unit output_result last_output_bytes=0
-  write_phase creating_runtime
-  created="$(owner_probe create "$head_sha" "$run_nonce")"; runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
+  write_phase creating_runtime; created="$(owner_probe create "$head_sha" "$run_nonce")"; runtime_id="$(printf '%s' "$created" | json_field runtimeId)"
   [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]
   printf '%s\n' "$runtime_id" >"$state_root/runtime-id"; chmod 0600 "$state_root/runtime-id"
   unit="${unit_prefix}${runtime_id}.service"; session_name="matrix-t-${runtime_id}"
-  write_phase waiting_runtime
-  wait_active "$unit"; mark runtimeLive
-  write_phase seeding_output
-  output_result="$(zellij --session "$session_name" run --in-place --close-replaced-pane --name matrix-accept-output -- /bin/bash -lc 'counter=0; while true; do counter=$((counter + 1)); printf "MATRIX_ACCEPT_LOOP:%010d\n" "$counter"; read -r -t 1 _ || true; done')"; [ "${#output_result}" -le 64 ] && [[ "$output_result" =~ terminal_[0-9]{1,10} ]]
+  write_phase waiting_runtime; wait_active "$unit"; mark runtimeLive
+  write_phase seeding_output; output_result="$(zellij --session "$session_name" run --in-place --close-replaced-pane --name matrix-accept-output -- /bin/bash -lc 'counter=0; while true; do counter=$((counter + 1)); printf "MATRIX_ACCEPT_LOOP:%010d\n" "$counter"; read -r -t 1 _ || true; done')"; [ "${#output_result}" -le 64 ] && [[ "$output_result" =~ terminal_[0-9]{1,10} ]]
   write_phase starting_agent; wait_pi_ready
   agent_created="$(owner_probe create-agent "$head_sha" "$run_nonce")"
   agent_runtime_id="$(printf '%s' "$agent_created" | json_field runtimeId)"
@@ -128,11 +121,9 @@ phase1() {
     else role_failure=output_unavailable; fi
     sleep 1
   done
-  failure_hint="$role_failure"; runtime_continues "$runtime_id" "$agent_runtime_id"
-  failure_hint=""
+  failure_hint="$role_failure"; runtime_continues "$runtime_id" "$agent_runtime_id"; failure_hint=""
   mark continuousOutput; mark codingAgentPreserved
-  write_phase runtime_created
-  local runtime_cgroup; runtime_cgroup="$(systemctl_read show "$unit" -p ControlGroup --value)"
+  write_phase runtime_created; local runtime_cgroup; runtime_cgroup="$(systemctl_read show "$unit" -p ControlGroup --value)"
   local attach_one="/run/user/${uid}/matrix-terminal-accept-${head_sha}-1.json" attach_two="/run/user/${uid}/matrix-terminal-accept-${head_sha}-2.json"
   rm -f -- "$attach_one" "$attach_two"
   /usr/bin/setsid runuser -u matrix -- /opt/matrix/runtime/node/bin/node "$probe" attach "$runtime_id" "$head_sha" 1 &
@@ -147,10 +138,8 @@ phase1() {
   runtime_continues "$runtime_id" "$agent_runtime_id"; mark detachPreservesRuntime
   local renamed; renamed="$(owner_probe rename "$runtime_id" "renamed-${head_sha:0:12}")"; [ "$(printf '%s' "$renamed" | json_field runtimeId)" = "$runtime_id" ]
   runtime_continues "$runtime_id" "$agent_runtime_id"; mark renamePreservesIdentity; local supervisor_pid; supervisor_pid="$(systemctl_read show matrix-terminal-runtime.service -p MainPID --value)"; printf '%s\n' "$supervisor_pid" >"$state_root/supervisor-pid"
-  write_phase bundle_one
-  request_update "$version_a"; wait_update "$version_a"; runtime_continues "$runtime_id" "$agent_runtime_id"; mark bundleOnePreservesRuntime
-  write_phase bundle_two
-  request_update "$version_b"; wait_update "$version_b"; runtime_continues "$runtime_id" "$agent_runtime_id"; mark bundleTwoPreservesRuntime
+  write_phase bundle_one; request_update "$version_a"; wait_update "$version_a"; runtime_continues "$runtime_id" "$agent_runtime_id"; mark bundleOnePreservesRuntime
+  write_phase bundle_two; request_update "$version_b"; wait_update "$version_b"; runtime_continues "$runtime_id" "$agent_runtime_id"; mark bundleTwoPreservesRuntime
   [ "$(systemctl_read show matrix-terminal-runtime.service -p MainPID --value)" = "$supervisor_pid" ]
   mark supervisorPreserved
   install -d -o root -g root -m 0755 /etc/systemd/system/matrix-gateway.service.d
@@ -160,21 +149,17 @@ ExecStart=
 ExecStart=/bin/false
 EOF
   systemctl_change daemon-reload
-  write_phase forced_failure
-  request_update "$version_a"
+  write_phase forced_failure; request_update "$version_a"
   wait_failed_update
   rm -f -- /etc/systemd/system/matrix-gateway.service.d/zz-terminal-acceptance.conf
   systemctl_change daemon-reload
   systemctl_change start matrix-gateway.service matrix-shell.service
   [ "$(cat /opt/matrix/app/BUNDLE_VERSION)" = "$version_b" ]
   runtime_continues "$runtime_id" "$agent_runtime_id"; mark failedUpdatePreservesRuntime
-  write_phase reapply_one
-  request_update "$version_a"; wait_update "$version_a"
-  write_phase rollback_two
-  request_update rollback; wait_update "$version_b"
+  write_phase reapply_one; request_update "$version_a"; wait_update "$version_a"
+  write_phase rollback_two; request_update rollback; wait_update "$version_b"
   runtime_continues "$runtime_id" "$agent_runtime_id"; mark explicitRollbackPreservesRuntime
-  write_phase final_checks
-  systemctl_change daemon-reload; runtime_continues "$runtime_id" "$agent_runtime_id"; mark daemonReloadPreservesRuntime
+  write_phase final_checks; systemctl_change daemon-reload; runtime_continues "$runtime_id" "$agent_runtime_id"; mark daemonReloadPreservesRuntime
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null; then
     mark forceRunAbsent
   fi
@@ -185,17 +170,14 @@ EOF
   write_state phase1-ready
 }
 phase2() {
-  current_phase=phase2
-  trap fail_phase ERR TERM INT HUP; trap 'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"' EXIT
+  current_phase=phase2; trap fail_phase ERR TERM INT HUP; trap 'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"' EXIT
   [ "$(cat "$state_file")" = reboot-scheduled ]
   write_state phase2-running
   local runtime_id unit agent_runtime_id agent_unit inspected agent_inspected recovered recovery_mode
   runtime_id="$(cat "$state_root/runtime-id")"
   [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]
   unit="${unit_prefix}${runtime_id}.service"
-  agent_runtime_id="$(cat "$state_root/agent-runtime-id")"
-  [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]
-  agent_unit="${unit_prefix}${agent_runtime_id}.service"
+  agent_runtime_id="$(cat "$state_root/agent-runtime-id")"; [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]; agent_unit="${unit_prefix}${agent_runtime_id}.service"
   wait_absent "$unit"; wait_absent "$agent_unit"
   if ! systemctl_read list-units "${unit_prefix}*.service" --state=active --no-legend |
     grep -q .; then mark rebootStartsNoRuntime; fi
@@ -278,7 +260,7 @@ case "$operation" in
     echo production_acceptance_started
     ;;
   status)
-    [ -f "$state_file" ] || { echo unavailable; exit 3; }; cat "$state_file"
+    [ -f "$state_file" ] || { echo unavailable; exit 3; }; state="$(cat "$state_file")"; if [ "$state" = reboot-scheduled ]; then [ -f "$boot_id_file" ] && [ ! -L "$boot_id_file" ] || exit 3; IFS= read -r prior_boot_id <"$boot_id_file"; IFS= read -r current_boot_id </proc/sys/kernel/random/boot_id; [[ "$prior_boot_id" =~ $boot_id_pattern ]] && [[ "$current_boot_id" =~ $boot_id_pattern ]] || exit 3; [ "$current_boot_id" != "$prior_boot_id" ] || { echo reboot-pending; exit 0; }; fi; printf '%s\n' "$state"
     ;;
   diagnose)
     diagnostic="$(owner_probe find-shell "$head_sha" "$run_nonce" 2>/dev/null || true)"
@@ -327,20 +309,22 @@ case "$operation" in
     [[ "$agent_roles_status" =~ ^([0-9]|[1-9][0-9]{1,2})$ ]] || agent_roles_status=unavailable; [[ "$agent_roles_bytes" =~ ^([0-9]|[1-9][0-9]{1,5})$ ]] || agent_roles_bytes=unavailable; printf 'production_acceptance_agent_roles=%s\n' "$agent_roles"; printf 'production_acceptance_agent_role_values=%s\n' "$agent_role_values"; printf 'production_acceptance_agent_roles_error=%s\n' "$agent_roles_error"; printf 'production_acceptance_agent_roles_command=%s,%s\n' "$agent_roles_status" "$agent_roles_bytes"; printf 'production_acceptance_shell_role_values=%s\n' "$shell_role_values"; printf 'production_acceptance_agent_cgroup=%s,%s,%s\n' "$agent_active" "$agent_populated" "$agent_processes"
     ;;
   reboot)
-    [ "$(cat "$state_file")" = phase1-ready ]
-    write_state reboot-scheduled
+    [ "$(cat "$state_file")" = phase1-ready ]; IFS= read -r current_boot_id </proc/sys/kernel/random/boot_id; [[ "$current_boot_id" =~ $boot_id_pattern ]]
+    printf '%s\n' "$current_boot_id" >"$boot_id_file"; chmod 0600 "$boot_id_file"; write_state reboot-scheduled
     systemd-run --unit="matrix-terminal-production-${head_sha}-${run_nonce}-reboot" \
       --collect --on-active=5 -- /usr/bin/systemctl reboot >/dev/null
     echo production_acceptance_reboot_scheduled
     ;;
   resume)
-    [ "$(cat "$state_file")" = reboot-scheduled ]
-    systemd-run --unit="matrix-terminal-production-${head_sha}-${run_nonce}-phase2" \
-      --collect --no-block --property=Type=exec --property=KillMode=control-group \
-      --property=RuntimeMaxSec=600 \
-      --property=TimeoutStopSec=45 \
-      --property=StandardOutput=null --property=StandardError=null \
-      -- "$0" phase2 "$head_sha" "$run_nonce" >/dev/null
+    case "$(cat "$state_file")" in
+      reboot-scheduled) systemd-run --unit="matrix-terminal-production-${head_sha}-${run_nonce}-phase2" \
+        --collect --no-block --property=Type=exec --property=KillMode=control-group \
+        --property=RuntimeMaxSec=600 --property=TimeoutStopSec=45 \
+        --property=StandardOutput=null --property=StandardError=null \
+        -- "$0" phase2 "$head_sha" "$run_nonce" >/dev/null ;;
+      phase2-running|complete) ;;
+      *) exit 1 ;;
+    esac
     echo production_acceptance_resumed
     ;;
   pack)

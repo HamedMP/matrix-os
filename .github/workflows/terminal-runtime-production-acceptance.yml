@@ -304,13 +304,9 @@ jobs:
             jq -er 'select(.exitCode==0 and .timedOut==false and
               .truncated==false and .signal==null) | .stdout' "$RUNNER_TEMP/helper.json"
           }
-          sleep 20
-          deadline=$((SECONDS + 900))
-          until call_helper acceptance-status >/dev/null 2>&1; do
-            [ "$SECONDS" -lt "$deadline" ] || exit 1
-            sleep 15
-          done
-          call_helper acceptance-resume
+          deadline=$((SECONDS + 900)); state=""; while [ "$SECONDS" -lt "$deadline" ]; do if state="$(call_helper acceptance-status 2>/dev/null)"; then state="${state%$'\n'}"; [ "$state" = reboot-scheduled ] && break; [[ "$state" =~ ^failed(_|$) ]] && exit 1; fi; sleep 15; done
+          [ "$state" = reboot-scheduled ] || exit 1; while [ "$SECONDS" -lt "$deadline" ]; do if call_helper acceptance-resume 2>/dev/null; then state=phase2-running; break; fi; if state="$(call_helper acceptance-status 2>/dev/null)"; then [[ "$state" =~ ^phase2-running$|^complete$ ]] && break; [[ "$state" =~ ^failed(_|$) ]] && exit 1; fi; sleep 10; done
+          [[ "$state" =~ ^phase2-running$|^complete$ ]] || exit 1
           deadline=$((SECONDS + 900))
           while [ "$SECONDS" -lt "$deadline" ]; do
             if state="$(call_helper acceptance-status 2>/dev/null)" &&

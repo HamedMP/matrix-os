@@ -475,7 +475,7 @@ describe('terminal runtime spike evidence', () => {
     expectAll(workflow, ["github.event.label.name == 'terminal-production-acceptance'", 'timeout-minutes: 360', 'deadline=$((SECONDS + 11400))',
       'call_helper acceptance-launch', 'call_helper acceptance-reboot', 'call_helper acceptance-resume',
       'call_helper acceptance-pack', 'call_helper acceptance-cancel', 'call_helper acceptance-diagnose',
-      'production_acceptance_state=${state}', 'Validate the complete production matrix']);
+      'production_acceptance_state=${state}', 'Validate the complete production matrix', "[ \"$state\" = reboot-scheduled ]", 'call_helper acceptance-resume 2>/dev/null']);
     expect(workflow).toContain("group: terminal-runtime-production-${{ github.event.label.name == 'terminal-production-acceptance' && github.event.pull_request.number || github.run_id }}");
     expect(workflow).not.toContain('group: terminal-runtime-production-${{ github.event.pull_request.number }}\n');
     const cancellationCleanup = workflow.slice(workflow.indexOf('- name: Cancel incomplete production acceptance'));
@@ -493,7 +493,7 @@ describe('terminal runtime spike evidence', () => {
     expectNone(runner, ['grep -aqF \'MATRIX_ACCEPT_LOOP\' "/proc/${shell_pid}/cmdline"', 'action write-chars --', 'action dump-screen', 'production_acceptance_shell_marker=']);
     expect(runner).not.toContain('for _ in $(seq 1 4500)');
     expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
-    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-diagnose | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']);
+    expectAll(helper, ['acceptance-launch | acceptance-status | acceptance-diagnose | acceptance-reboot | acceptance-resume | acceptance-pack | acceptance-cancel', 'exec /usr/bin/bash "$target"']); expectAll(runner, ['readonly boot_id_file="${state_root}/boot-id"', 'echo reboot-pending', 'phase2-running|complete']);
     expect(helper).not.toContain('[ ! -x "$target" ]');
     for (const check of `bundleOnePreservesRuntime bundleTwoPreservesRuntime failedUpdatePreservesRuntime explicitRollbackPreservesRuntime rebootStartsNoRuntime
 explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingleUnit recoverDeleteCannotResurrect corruptionFallsBackFresh deleteWaitsForEmptyCgroup`.split(/\s+/)) {
