@@ -8,6 +8,7 @@ import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sid
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useDesktopUpdate } from "../../desktop/src/renderer/src/stores/desktop-update";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads, type AgentThread } from "../../desktop/src/renderer/src/stores/threads";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
@@ -72,6 +73,10 @@ describe("Sidebar attention badges", () => {
     useTabs.setState({ tabs: [], activeTabId: null });
     useThreads.setState({ threads: [], activeThreadId: null });
     useCodingAgentWorkspace.setState({ summary: null, activeThreadId: null });
+    useDesktopUpdate.setState({
+      snapshot: { status: "disabled" },
+      installing: false,
+    });
     useUi.setState({ sidebarCollapsed: false });
   });
 
@@ -133,5 +138,25 @@ describe("Sidebar attention badges", () => {
 
     expect(screen.getByRole("button", { name: "Chat" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Matrix OS$/ })).toBeTruthy();
+  });
+
+  it("places a ready update after Settings and outside the account row", () => {
+    useDesktopUpdate.setState({
+      snapshot: { status: "ready", version: "1.2.3", progress: 100 },
+    });
+
+    render(
+      <Tooltip.Provider>
+        <Sidebar />
+      </Tooltip.Provider>,
+    );
+
+    const settings = screen.getByRole("button", { name: "Settings" });
+    const update = screen.getByRole("button", { name: "Update Matrix OS to 1.2.3" });
+    const account = screen.getByTitle("Manage account");
+
+    expect(settings.compareDocumentPosition(update) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(update.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(update.parentElement).not.toBe(account.parentElement);
   });
 });

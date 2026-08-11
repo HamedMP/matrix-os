@@ -225,6 +225,7 @@ export default function Sidebar() {
         <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"} px-2 pt-1`}>
           <NavRow icon={<Settings size={15} />} label="Settings" collapsed={collapsed} active={activeTab?.kind === "settings"} onClick={() => openTab({ kind: "settings", title: "Settings" })} />
         </div>
+        <DesktopUpdateButton collapsed={collapsed} />
         <div className={`flex gap-2 p-2 ${collapsed ? "flex-col items-center" : "items-center"}`}>
           <button
             type="button"
@@ -245,7 +246,6 @@ export default function Sidebar() {
               avatarInitial
             )}
           </button>
-          <DesktopUpdateButton />
           {collapsed ? (
             // Collapsed: the expand toggle lives here too (same place as the
             // collapse toggle when open), so open/close is one consistent spot.
