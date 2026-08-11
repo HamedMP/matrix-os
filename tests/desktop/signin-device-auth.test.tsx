@@ -24,6 +24,7 @@ describe("desktop device authorization sign-in", () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
   it("presents one browser approval action instead of provider-specific authentication", async () => {
@@ -52,6 +53,34 @@ describe("desktop device authorization sign-in", () => {
         url: "https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH",
       });
     });
+    expect(await screen.findByText("ABCD-EFGH")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open approval page" })).toBeTruthy();
+  });
+
+  it("records a sanitized diagnostic when the approval page cannot open", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.mocked(invoke)
+      .mockResolvedValue(undefined as never)
+      .mockResolvedValueOnce({
+        userCode: "ABCD-EFGH",
+        verificationUri: "https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH",
+        expiresIn: 2700,
+      } as never)
+      .mockRejectedValueOnce(new Error("sensitive operating-system details"));
+
+    render(<SignIn />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue in browser" }));
+
+    await waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        "[signin] browser approval open failed",
+        "Error",
+      );
+    });
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("sensitive operating-system details"),
+    );
     expect(await screen.findByText("ABCD-EFGH")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open approval page" })).toBeTruthy();
   });

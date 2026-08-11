@@ -32,7 +32,12 @@ export default function SignIn() {
       setPhase("waiting");
       // Browser launch is best-effort. The verification code and reopen action
       // remain available if the OS blocks the first attempt.
-      void invoke("shell:open-external", { url: code.verificationUri }).catch(() => undefined);
+      void invoke("shell:open-external", { url: code.verificationUri }).catch((error: unknown) => {
+        console.warn(
+          "[signin] browser approval open failed",
+          error instanceof Error ? error.name : "Unknown error",
+        );
+      });
       stopPolling();
       pollTimer.current = setInterval(() => {
         void invoke("auth:poll", {})
