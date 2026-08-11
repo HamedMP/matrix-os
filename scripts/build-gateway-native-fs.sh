@@ -29,6 +29,8 @@ mkdir -p "$OUTPUT_DIR"
   -DNODE_GYP_MODULE_NAME=matrix_fs \
   -I "$NODE_INCLUDE_DIR" \
   "$ROOT_DIR/packages/gateway/native/linux-x64-glibc/addon.cc" \
+  "$ROOT_DIR/packages/gateway/native/linux-x64-glibc/copy-staging.cc" \
+  "$ROOT_DIR/packages/gateway/native/linux-x64-glibc/copy-test-hooks.cc" \
   "$ROOT_DIR/packages/gateway/native/linux-x64-glibc/fs-ops.cc" \
   -o "$OUTPUT_DIR/matrix-fs.node"
 

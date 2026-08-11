@@ -100,7 +100,9 @@ describe.runIf(isRequiredLinuxTarget)("Gateway native file capability on Linux x
     const result = await capability.copy(home, "source", "target", false);
 
     expect(result).toMatchObject({ ok: false, code: "partial" });
-    expect(statSync(join(home, "target")).isDirectory()).toBe(true);
+    expect(result.partialPath).toMatch(/^\.matrix-copy-stage-[a-f0-9]{32}$/);
+    expect(statSync(join(home, result.partialPath!)).isDirectory()).toBe(true);
+    expect(existsSync(join(home, "target"))).toBe(false);
     expect(existsSync(join(home, "target copy"))).toBe(false);
   });
 

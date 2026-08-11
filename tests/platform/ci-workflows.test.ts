@@ -496,6 +496,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('native-file-capability:');
     expect(workflow).toContain("pnpm --filter '@matrix-os/gateway' run build:native");
     expect(workflow).toContain('tests/gateway/native-file-capability.test.ts');
+    expect(workflow).toContain('tests/gateway/native-file-capability-races.test.ts');
     expect(workflow).toContain('native-file-capability, unit');
   });
 });

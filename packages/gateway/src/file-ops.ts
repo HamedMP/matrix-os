@@ -322,10 +322,21 @@ export async function fileCopy(
     const nativeResult = await runNativeMutation(() =>
       getNativeFileCapability().copy(homePath, from, to, true));
     if (!nativeResult.ok) {
-      if (nativeResult.code === "destination_conflict") return { ok: false, error: "Destination already exists", status: 409 };
+      if (nativeResult.code === "destination_conflict") {
+        return {
+          ok: false,
+          error: "Destination already exists",
+          status: 409,
+          ...(nativeResult.partialPath ? { partialPath: nativeResult.partialPath } : {}),
+        };
+      }
       if (nativeResult.code === "source_missing") return { ok: false, error: "Source not found", status: 404 };
       if (nativeResult.code === "invalid_path") return { ok: false, error: "Invalid path" };
-      if (nativeResult.code === "partial") return { ok: false, error: "Failed to copy", partialPath: to };
+      if (nativeResult.code === "partial") {
+        return nativeResult.partialPath
+          ? { ok: false, error: "Failed to copy", partialPath: nativeResult.partialPath }
+          : { ok: false, error: "Failed to copy" };
+      }
       return { ok: false, error: "Failed to copy" };
     }
     return { ok: true };
@@ -374,9 +385,18 @@ export async function fileDuplicate(
       const nativeResult = await runNativeMutation(() =>
         getNativeFileCapability().copy(homePath, requestedPath, requestedNewPath, false));
       if (!nativeResult.ok) {
-        if (nativeResult.code === "destination_conflict") continue;
+        if (nativeResult.code === "destination_conflict") {
+          if (nativeResult.partialPath) {
+            return { ok: false, newPath: nativeResult.partialPath, error: "Failed to duplicate" };
+          }
+          continue;
+        }
         if (nativeResult.code === "partial") {
-          return { ok: false, newPath: requestedNewPath, error: "Failed to duplicate" };
+          return {
+            ok: false,
+            newPath: nativeResult.partialPath ?? requestedNewPath,
+            error: "Failed to duplicate",
+          };
         }
         return { ok: false, error: "Failed to duplicate" };
       }
