@@ -36,6 +36,7 @@ export interface WatcherIgnoredOptions {
 
 export interface CreateWatcherOptions {
   watchFactory?: WatcherFactory;
+  validateDirectoryScope?: (directory: string, absolutePath: string) => Promise<string>;
 }
 
 interface ScopedReferenceState {
@@ -56,6 +57,10 @@ const WATCHED_HOME_DIRECTORIES = [
 const WATCHED_HOME_FILES = [
   ".matrix-version", ".syncignore", ".template-manifest.json", "CLAUDE.md",
 ];
+const ROOT_GLOBAL_OVERLAP = new Set([
+  ...WATCHED_HOME_DIRECTORIES,
+  ...WATCHED_HOME_FILES,
+]);
 
 export function createWatcherIgnored(
   options: WatcherIgnoredOptions = {},
@@ -89,6 +94,7 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
     ?? ((paths, watchOptions) => watch(paths, watchOptions) as FSWatcher);
   const listeners: Array<(event: FileChangeEvent) => void> = [];
   const scopedReferences = new Map<string, ScopedReferenceState>();
+  const scopeAcquisitions = new Map<string, Promise<void>>();
   let scopedWatcher: WatcherBackend | null = null;
   let closed = false;
 
@@ -100,25 +106,47 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
     ignored: createWatcherIgnored(),
   });
 
-  const emit = (event: FileEvent, absolutePath: string) => {
+  const emit = (source: "global" | "scoped", event: FileEvent, absolutePath: string) => {
     const homeRelative = relative(basePath, resolve(absolutePath));
     if (homeRelative === "" || homeRelative.startsWith("..") || homeRelative.startsWith(sep)) return;
+    const normalizedPath = homeRelative.split(sep).join("/");
+    if (source === "scoped" && !normalizedPath.includes("/")
+      && ROOT_GLOBAL_OVERLAP.has(normalizedPath)) return;
     const change: FileChangeEvent = {
       type: "file:change",
-      path: homeRelative.split(sep).join("/"),
+      path: normalizedPath,
       event,
     };
     for (const listener of listeners) listener(change);
   };
 
-  const bindEvents = (backend: WatcherBackend) => {
-    backend.on("add", (path) => emit("add", path));
-    backend.on("change", (path) => emit("change", path));
-    backend.on("unlink", (path) => emit("unlink", path));
-    backend.on("addDir", (path) => emit("add", path));
-    backend.on("unlinkDir", (path) => emit("unlink", path));
+  const bindEvents = (backend: WatcherBackend, source: "global" | "scoped") => {
+    backend.on("add", (path) => emit(source, "add", path));
+    backend.on("change", (path) => emit(source, "change", path));
+    backend.on("unlink", (path) => emit(source, "unlink", path));
+    backend.on("addDir", (path) => emit(source, "add", path));
+    backend.on("unlinkDir", (path) => emit(source, "unlink", path));
   };
-  bindEvents(globalWatcher);
+  bindEvents(globalWatcher, "global");
+
+  const validateDirectoryScope = options.validateDirectoryScope ?? (async (
+    _directory: string,
+    absolutePath: string,
+  ) => {
+    const scopeStats = await lstat(absolutePath);
+    if (scopeStats.isSymbolicLink() || !scopeStats.isDirectory()) {
+      throw new Error("Scope is not a concrete directory");
+    }
+    const [baseRealPath, scopeRealPath] = await Promise.all([
+      realpath(basePath),
+      realpath(absolutePath),
+    ]);
+    const scopeRelative = relative(baseRealPath, scopeRealPath);
+    if (scopeRelative.startsWith("..") || scopeRelative.startsWith(sep)) {
+      throw new Error("Scope resolves outside owner home");
+    }
+    return absolutePath;
+  });
 
   return {
     on(listener) {
@@ -132,26 +160,33 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
       if (!parsed.success) throw new Error("Invalid directory scope");
       const absolutePath = resolveWithinHome(basePath, parsed.data);
       if (!absolutePath) throw new Error("Invalid directory scope");
+      let acquisition = scopeAcquisitions.get(absolutePath);
+      if (!acquisition) {
+        if (!scopedReferences.has(absolutePath)
+          && scopedReferences.size + scopeAcquisitions.size >= MAX_SCOPED_DIRECTORIES) {
+          throw new Error("Scoped watcher limit reached");
+        }
+        acquisition = (async () => {
+          await validateDirectoryScope(parsed.data, absolutePath);
+          if (closed) throw new Error("Watcher is closed");
+        })();
+        scopeAcquisitions.set(absolutePath, acquisition);
+        void acquisition.then(
+          () => scopeAcquisitions.delete(absolutePath),
+          () => scopeAcquisitions.delete(absolutePath),
+        );
+      }
       try {
-        const scopeStats = await lstat(absolutePath);
-        if (scopeStats.isSymbolicLink() || !scopeStats.isDirectory()) {
-          throw new Error("Scope is not a concrete directory");
-        }
-        const [baseRealPath, scopeRealPath] = await Promise.all([
-          realpath(basePath),
-          realpath(absolutePath),
-        ]);
-        const scopeRelative = relative(baseRealPath, scopeRealPath);
-        if (scopeRelative.startsWith("..") || scopeRelative.startsWith(sep)) {
-          throw new Error("Scope resolves outside owner home");
-        }
+        await acquisition;
       } catch (error: unknown) {
+        if (closed && error instanceof Error && error.message === "Watcher is closed") throw error;
         console.error("[watcher] Directory scope validation failed", {
           directory: parsed.data,
           error: error instanceof Error ? error.message : String(error),
         });
         throw new Error("Invalid directory scope");
       }
+      if (closed) throw new Error("Watcher is closed");
 
       if (isCoveredByGlobalWatcher(parsed.data)) {
         let released = false;
@@ -168,8 +203,9 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
         if (scopedReferences.size >= MAX_SCOPED_DIRECTORIES) {
           throw new Error("Scoped watcher limit reached");
         }
+        if (closed) throw new Error("Watcher is closed");
         if (!scopedWatcher) {
-          scopedWatcher = watchFactory(absolutePath, {
+          const createdWatcher = watchFactory(absolutePath, {
             depth: 0,
             ignoreInitial: true,
             followSymlinks: false,
@@ -178,9 +214,15 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
             binaryInterval: 5_000,
             ignored: createWatcherIgnored({ watchProjects: true }),
           });
-          bindEvents(scopedWatcher);
+          bindEvents(createdWatcher, "scoped");
+          if (closed) {
+            await createdWatcher.close();
+            throw new Error("Watcher is closed");
+          }
+          scopedWatcher = createdWatcher;
         } else {
           scopedWatcher.add(absolutePath);
+          if (closed) throw new Error("Watcher is closed");
         }
         scopeState = { count: 0, removePromise: null };
         scopedReferences.set(absolutePath, scopeState);
@@ -219,6 +261,8 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
     async close() {
       if (closed) return;
       closed = true;
+      const pendingAcquisitions = [...scopeAcquisitions.values()];
+      await Promise.allSettled(pendingAcquisitions);
       const pendingUnwatches = [...scopedReferences.values()]
         .flatMap((state) => state.removePromise ? [state.removePromise] : []);
       await Promise.allSettled(pendingUnwatches);

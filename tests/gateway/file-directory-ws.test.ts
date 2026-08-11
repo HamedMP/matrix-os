@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { FileDirectorySubscriptionHub } from "../../packages/gateway/src/file-management/directory-subscriptions.js";
+import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
+import * as fileDirectoryWs from "../../packages/gateway/src/server/file-directory-ws.js";
 import {
   bindFileDirectoryWatcher,
   closeFileDirectoryResources,
@@ -19,9 +23,75 @@ async function flushAsyncWork(): Promise<void> {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("main websocket file-directory behavior", () => {
+  it("derives the websocket owner from real JWT middleware and removes it on close", async () => {
+    const createAuthenticatedConnection = Reflect.get(
+      fileDirectoryWs,
+      "createAuthenticatedFileDirectoryWsConnection",
+    );
+    expect(createAuthenticatedConnection).toBeTypeOf("function");
+    if (typeof createAuthenticatedConnection !== "function") return;
+
+    const jwtSecret = "file-directory-ws-test-secret-32-chars";
+    vi.stubEnv("PLATFORM_JWT_SECRET", jwtSecret);
+    vi.stubEnv("MATRIX_HANDLE", "alice");
+    vi.stubEnv("MATRIX_RUNTIME_SLOT", "primary");
+    const issued = await issueSyncJwt({
+      secret: jwtSecret,
+      clerkUserId: "canonical-owner",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com/vm/alice",
+      runtimeSlot: "primary",
+    });
+    const authorize = vi.fn(async ({ ownerId }: { ownerId: string }) => ownerId === "canonical-owner");
+    const hub = new FileDirectorySubscriptionHub({
+      authorize,
+      acquireScope: async () => () => {},
+    });
+    const removeConnection = vi.spyOn(hub, "removeConnection");
+    const sent: string[] = [];
+    let routeCalls = 0;
+    const app = new Hono();
+    app.use("*", authMiddleware("legacy-shared-secret"));
+    app.get("/ws", async (c) => {
+      routeCalls += 1;
+      const connection = createAuthenticatedConnection(c, {
+        connectionId: "server-connection",
+        hub,
+        send: (message: string) => { sent.push(message); },
+        closeSocket: vi.fn(),
+      });
+      connection.enqueue({ type: "files:subscribe", directory: "projects" });
+      await connection.idle();
+      await connection.close();
+      return c.json({ ok: true });
+    });
+
+    const unauthenticated = await app.request("/ws?ownerId=forged-owner");
+    expect(unauthenticated.status).toBe(401);
+    expect(routeCalls).toBe(0);
+
+    const authenticated = await app.request(
+      `/ws?token=${encodeURIComponent(issued.token)}&ownerId=forged-owner`,
+    );
+    expect(authenticated.status).toBe(200);
+    expect(routeCalls).toBe(1);
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: "canonical-owner",
+    }));
+    expect(authorize).not.toHaveBeenCalledWith(expect.objectContaining({ ownerId: "forged-owner" }));
+    expect(removeConnection).toHaveBeenCalledWith("canonical-owner", "server-connection");
+    expect(sent.map((message) => JSON.parse(message))).toContainEqual({
+      type: "files:subscribed",
+      directory: "projects",
+      revision: 0,
+    });
+    await hub.close();
+  });
+
   it("binds subscriptions to the canonical principal and awaits authorization before ack", async () => {
     const authorization = deferred<boolean>();
     const send = vi.fn();

@@ -241,7 +241,7 @@ import {
 import {
   bindFileDirectoryWatcher,
   closeFileDirectoryResources,
-  createFileDirectoryWsConnection,
+  createAuthenticatedFileDirectoryWsConnection,
   isFileDirectoryFrameCandidate,
 } from "./server/file-directory-ws.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
@@ -1860,8 +1860,7 @@ export async function createGateway(config: GatewayConfig) {
           })
         : null;
       let mainWsSocket: WSContext | null = null;
-      const fileDirectoryConnection = createFileDirectoryWsConnection({
-        ownerId: wsOwnerId,
+      const fileDirectoryConnection = createAuthenticatedFileDirectoryWsConnection(c, {
         connectionId: randomUUID(),
         hub: fileDirectorySubscriptionHub,
         send: (message) => {
