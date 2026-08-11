@@ -155,7 +155,7 @@ EOF
 phase2() {
   current_phase=phase2; trap fail_phase ERR TERM INT HUP; trap 'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"' EXIT
   [ "$(cat "$state_file")" = reboot-scheduled ]
-  write_state phase2-running
+  write_state phase2-running; current_phase=phase2_inspect
   local runtime_id unit agent_runtime_id agent_unit inspected agent_inspected recovered recovery_mode
   runtime_id="$(cat "$state_root/runtime-id")"
   [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]
@@ -169,7 +169,7 @@ phase2() {
     interrupted:interrupted|interrupted:recoverable|recoverable:interrupted|recoverable:recoverable) mark rebootShowsInterrupted ;;
     *) return 1 ;;
   esac
-  recovered="$(owner_probe concurrent-recover "$runtime_id")"
+  current_phase=phase2_serialized_recover; recovered="$(owner_probe concurrent-recover "$runtime_id")"
   wait_active "$unit"
   [ "$(systemctl_read list-units "$unit" --state=active --no-legend | wc -l)" -eq 1 ]
   recovery_mode="$(printf '%s' "$recovered" |
@@ -180,7 +180,7 @@ phase2() {
       });')"
   [ "$recovery_mode" = serialized ]
   mark explicitRecoverRestoresRuntime; mark concurrentRecoverSingleUnit
-  wait_absent "$agent_unit"; mark recoveryDoesNotResumeAgent
+  current_phase=phase2_corruption_fallback; wait_absent "$agent_unit"; mark recoveryDoesNotResumeAgent
   systemctl_change stop "$unit"
   wait_absent "$unit"
   local corrupt_target
@@ -193,7 +193,7 @@ phase2() {
   [ "$(printf '%s' "$recovered" | json_field recoveryMode)" = fresh-shell ]
   [ "$(printf '%s' "$recovered" | json_field recoveryReason)" = history_unavailable ]
   wait_active "$unit"; mark corruptionFallsBackFresh
-  local race_created race_id race_unit
+  current_phase=phase2_race; local race_created race_id race_unit
   race_created="$(owner_probe create-race "$head_sha" "$run_nonce")"
   race_id="$(printf '%s' "$race_created" | json_field runtimeId)"
   race_unit="${unit_prefix}${race_id}.service"
@@ -206,7 +206,7 @@ phase2() {
   [ ! -e "$home/system/terminal-runtime/receipts/${race_id}.json" ]
   sleep 2
   wait_absent "$race_unit"; mark recoverDeleteCannotResurrect
-  local control_group cgroup_path
+  current_phase=phase2_delete; local control_group cgroup_path
   control_group="$(systemctl_read show "$unit" -p ControlGroup --value)"
   cgroup_path="/sys/fs/cgroup${control_group}"
   exec {events_fd}<"$cgroup_path/cgroup.events"
@@ -246,8 +246,8 @@ case "$operation" in
     [ -f "$state_file" ] || { echo unavailable; exit 3; }; state="$(cat "$state_file")"; if [ "$state" = reboot-scheduled ]; then [ -f "$boot_id_file" ] && [ ! -L "$boot_id_file" ] || exit 3; IFS= read -r prior_boot_id <"$boot_id_file"; IFS= read -r current_boot_id </proc/sys/kernel/random/boot_id; [[ "$prior_boot_id" =~ $boot_id_pattern ]] && [[ "$current_boot_id" =~ $boot_id_pattern ]] || exit 3; [ "$current_boot_id" != "$prior_boot_id" ] || { echo reboot-pending; exit 0; }; fi; printf '%s\n' "$state"
     ;;
   diagnose)
-    diagnostic="$(owner_probe find-shell "$head_sha" "$run_nonce" 2>/dev/null || true)"
-    runtime_id="$(printf '%s' "$diagnostic" | json_field runtimeId 2>/dev/null || true)"
+    runtime_id=""; if [ -f "$state_root/runtime-id" ] && [ ! -L "$state_root/runtime-id" ] && [ "$(stat -c %s "$state_root/runtime-id" 2>/dev/null || true)" = 33 ]; then IFS= read -r runtime_id <"$state_root/runtime-id" || true; fi
+    if [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]; then diagnostic="$(owner_probe inspect "$runtime_id" 2>/dev/null || true)"; else diagnostic="$(owner_probe find-shell "$head_sha" "$run_nonce" 2>/dev/null || true)"; runtime_id="$(printf '%s' "$diagnostic" | json_field runtimeId 2>/dev/null || true)"; fi
     lifecycle="$(printf '%s' "$diagnostic" | json_field lifecycleState 2>/dev/null || true)"
     result=unavailable; main_code=unavailable; main_status=unavailable; keeper_code=unavailable
     if [[ "$runtime_id" =~ ^[0-9a-f]{32}$ ]]; then

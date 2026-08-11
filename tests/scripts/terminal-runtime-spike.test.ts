@@ -488,7 +488,7 @@ describe('terminal runtime spike evidence', () => {
       'write_phase forced_failure', 'write_phase reapply_one', 'write_phase rollback_two', 'write_phase final_checks', 'write_phase creating_runtime',
       'write_phase waiting_runtime', 'write_phase seeding_output', 'write_phase starting_agent', 'write_phase waiting_roles',
       'owner_probe() { command_bounded 70 runuser -u matrix --', 'trap \'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"\' EXIT',
-      'output_bytes() {', 'output_advanced() {', 'runtime_continues() {', 'run --in-place --close-replaced-pane --name matrix-accept-output -- /bin/bash -lc', 'output_advanced "$runtime_id"', 'runtime_continues "$runtime_id" "$agent_runtime_id"',
+      'output_bytes() {', 'output_advanced() {', 'runtime_continues() {', 'run --in-place --close-replaced-pane --name matrix-accept-output -- /bin/bash -lc', 'output_advanced "$runtime_id"', 'runtime_continues "$runtime_id" "$agent_runtime_id"', 'current_phase=phase2_inspect', 'current_phase=phase2_serialized_recover', 'current_phase=phase2_corruption_fallback', 'current_phase=phase2_race', 'current_phase=phase2_delete',
     ]);
     expectNone(runner, ['grep -aqF \'MATRIX_ACCEPT_LOOP\' "/proc/${shell_pid}/cmdline"', 'action write-chars --', 'action dump-screen', 'production_acceptance_shell_marker=']);
     expect(runner).not.toContain('for _ in $(seq 1 4500)');
@@ -516,7 +516,7 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     ]);
     expectNone(probe, ["prompt:", "argument.includes('MATRIX_ACCEPT_LOOP')", '/proc/${pid}/status', 'processCount: processes.length']);
     expect(workflow).not.toContain('VPS_SSH_KEY');
-    expectAll(runner, ['diagnose)', 'production_acceptance_diagnostic=', "grep -E '^terminal_keeper_[a-z0-9_]{1,96}$'"]);
+    expectAll(runner, ['diagnose)', 'production_acceptance_diagnostic=', "grep -E '^terminal_keeper_[a-z0-9_]{1,96}$'", '[ -f "$state_root/runtime-id" ]', 'IFS= read -r runtime_id <"$state_root/runtime-id"']); expect(workflow).toContain('if [[ "${state:-}" =~ ^failed(_|$) ]]; then call_helper acceptance-diagnose || true; exit 1; fi');
     expectAll(runner, ['agent-runtime-id', "grep -E '^terminal_pane_agent_exit_[0-9]{1,3}$'", 'production_acceptance_agent_diagnostic=', 'production_acceptance_agent_roles=', 'production_acceptance_agent_role_values=', 'production_acceptance_agent_roles_error=', 'production_acceptance_agent_roles_command=', 'production_acceptance_shell_role_values=', 'cgroup.events', '/matrix.slice/matrix-terminal.slice/${agent_unit}']);
     expectNone(runner, ['roles() { command_bounded 8 runuser', 'journalctl -u "$unit" --no-pager', 'attach_one=/run/matrix-terminal-accept-']);
     expectAll(probe, ["operation === 'attach'", 'process.getuid()', 'matrix-terminal-accept-${extra}-${slot}.json', 'child.onData', 'child.onExit', 'setTimeout']);

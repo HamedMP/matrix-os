@@ -274,9 +274,7 @@ jobs:
             sleep 15
           done
           if [ "${state:-}" != phase1-ready ]; then
-            call_helper acceptance-cancel >/dev/null 2>&1 || true
-            echo "Production acceptance phase one did not complete before its bounded deadline." >&2
-            exit 1
+            call_helper acceptance-cancel >/dev/null 2>&1 || true; echo "Production acceptance phase one did not complete before its bounded deadline." >&2; exit 1
           fi
           call_helper acceptance-reboot
       - name: Wait for reboot and resume explicit recovery
@@ -311,13 +309,11 @@ jobs:
           while [ "$SECONDS" -lt "$deadline" ]; do
             if state="$(call_helper acceptance-status 2>/dev/null)" &&
               grep -q '^complete$' <<<"$state"; then break; fi
-            if [[ "${state:-}" =~ ^failed(_|$) ]]; then exit 1; fi
+            if [[ "${state:-}" =~ ^failed(_|$) ]]; then call_helper acceptance-diagnose || true; exit 1; fi
             sleep 10
           done
           if [ "${state:-}" != complete ]; then
-            call_helper acceptance-cancel >/dev/null 2>&1 || true
-            echo "Production acceptance phase two did not complete before its bounded deadline." >&2
-            exit 1
+            call_helper acceptance-cancel >/dev/null 2>&1 || true; echo "Production acceptance phase two did not complete before its bounded deadline." >&2; exit 1
           fi
           call_helper acceptance-pack | base64 --decode >"$RUNNER_TEMP/evidence.json"
           output="$RUNNER_TEMP/terminal-production-evidence"
