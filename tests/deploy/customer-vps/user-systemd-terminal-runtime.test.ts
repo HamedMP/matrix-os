@@ -69,6 +69,14 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(cloudInit).toContain("loginctl enable-linger matrix");
   });
 
+  it("makes the restore database directory writable by the matrix service user", () => {
+    const cloudInit = readFileSync(join(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
+
+    expect(cloudInit).toContain(
+      "/var/lib/matrix/db /var/lib/matrix/db/snapshots",
+    );
+  });
+
   it("derives terminal generation IDs from bytes rather than staging paths", () => {
     const generationId = readFileSync(
       join(root, "distro/customer-vps/host-bin/matrix-terminal-generation-id"),

@@ -530,7 +530,7 @@ runcmd:
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
     usermod -d /home/matrix/home matrix
-    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/home/projects /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/home/projects /home/matrix/projects /var/lib/matrix/db /var/lib/matrix/db/snapshots /var/lib/matrix/logs
     ensure_owner_link() {
       local name="$1" mode="$2" legacy="/home/matrix/$1" target="/home/matrix/home/$1"
       install -d -o matrix -g matrix -m "$mode" "$target"
