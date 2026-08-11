@@ -5,6 +5,7 @@ import {
 } from "../../packages/gateway/src/file-management/batch-service.js";
 import {
   FileOperationResultCache,
+  FileOperationRequestIdConflictError,
   type FileOperationCacheInput,
 } from "../../packages/gateway/src/file-management/result-cache.js";
 import type { BatchMovePreflightResult } from "../../packages/gateway/src/file-management/preflight.js";
@@ -44,6 +45,18 @@ class DeferredResultCache extends FileOperationResultCache {
   }
 }
 
+class NamespaceResultCache extends FileOperationResultCache {
+  override run<T>(
+    input: FileOperationCacheInput,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    if (input.namespace === "move:preflight") {
+      return Promise.resolve({ ...preflightResult, sources: [] }) as Promise<T>;
+    }
+    return operation();
+  }
+}
+
 describe("FileBatchMoveService lifecycle", () => {
   it("shares one tracked operation for a large identical pending replay", async () => {
     const resultCache = new DeferredResultCache();
@@ -73,7 +86,7 @@ describe("FileBatchMoveService lifecycle", () => {
     expect(closeSettledWhilePending).toBe(false);
   });
 
-  it("rejects a distinct operation beyond capacity without evicting pending work", async () => {
+  it("preserves payload conflicts at capacity and rejects only new identities", async () => {
     const resultCache = new DeferredResultCache();
     const service = new FileBatchMoveService({ resultCache });
     const input = (index: number) => ({
@@ -85,6 +98,11 @@ describe("FileBatchMoveService lifecycle", () => {
     });
     const accepted = Array.from({ length: 512 }, (_, index) => service.preflight(input(index)));
     const duplicate = service.preflight(input(0));
+    let conflictError: unknown;
+    const conflict = service.preflight({
+      ...input(0),
+      destinationDirectory: "other",
+    }).catch((error: unknown) => { conflictError = error; });
     let overflowError: unknown;
     let overflowState: "pending" | "resolved" | "rejected" = "pending";
     const overflow = service.preflight(input(512)).then(
@@ -98,17 +116,42 @@ describe("FileBatchMoveService lifecycle", () => {
     const runCallsWhileFull = resultCache.runCalls;
 
     resultCache.resolve(preflightResult);
-    await Promise.all([...accepted, duplicate, overflow]);
+    await Promise.all([...accepted, duplicate, conflict, overflow]);
     const afterRelease = service.preflight(input(512));
     await expect(afterRelease).resolves.toEqual(preflightResult);
     await service.close();
     resultCache.close();
 
     expect(duplicateShared).toBe(true);
+    expect(conflictError).toBeInstanceOf(FileOperationRequestIdConflictError);
     expect(overflowStateWhileFull).toBe("rejected");
     expect(overflowError).toBeInstanceOf(FileBatchMoveUnavailableError);
     expect(runCallsWhileFull).toBe(512);
     expect(resultCache.runCalls).toBe(513);
+  });
+
+  it("separates preflight and execute identities for the same request ID", async () => {
+    const resultCache = new NamespaceResultCache();
+    const service = new FileBatchMoveService({ resultCache });
+    await service.preflight({
+      ownerId: "owner-a",
+      homePath: "/owner/home",
+      requestId,
+      sources: ["projects/a.md"],
+      destinationDirectory: "archive",
+    });
+
+    await expect(service.execute({
+      ownerId: "owner-a",
+      homePath: "/owner/home",
+      requestId,
+      preflightFingerprint: "fingerprint-a",
+    })).resolves.toEqual({
+      results: [],
+      affectedDirectories: ["archive"],
+    });
+    await service.close();
+    resultCache.close();
   });
 
   it("drains accepted work, shares concurrent close, and rejects work after close", async () => {
