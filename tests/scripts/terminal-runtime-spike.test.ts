@@ -945,9 +945,10 @@ explicitRecoverRestoresRuntime recoveryDoesNotResumeAgent concurrentRecoverSingl
     const stablePaneName = runner.indexOf(
       'action rename-pane --pane-id "$serialized_pane_id" MATRIX_SCROLL_PROBE',
     );
-    const recoveredPaneResolution = runner.indexOf('p.title==="MATRIX_SCROLL_PROBE"');
+    const recoveredPaneResolution = runner.indexOf('v.title==="MATRIX_SCROLL_PROBE"');
+    expect(runner).toContain('for _ in $(seq 1 100); do\n      panes_json=');
     const safeDismiss = runner.indexOf('action write --pane-id "$serialized_pane_id" 27');
-    const heldViewport = runner.indexOf('held_viewport_anchor=');
+    const heldViewport = runner.indexOf('held_viewport_anchor="$(grep');
     expect(gateProof).toBeGreaterThan(-1);
     expect(stablePaneName).toBeGreaterThan(-1);
     expect(recoveredPaneResolution).toBeGreaterThan(gateProof);

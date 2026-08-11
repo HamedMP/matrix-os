@@ -27,15 +27,10 @@ readonly -a zellij_env=(
 write_state() { install -d -o root -g root -m 0700 "$state_root"; local next="${state_file}.next"; printf '%s\n' "$1" >"$next"; chmod 0600 "$next"; mv -f -- "$next" "$state_file"; }
 write_phase() { case "$1" in creating_runtime|waiting_runtime|seeding_output|starting_agent|waiting_roles|runtime_created|bundle_one|bundle_two|forced_failure|reapply_one|rollback_two|final_checks) ;; *) return 1 ;; esac; current_phase="$1"; write_state "phase1-running_${current_phase}"; }
 command_bounded() {
-  local timeout_seconds="$1" operation_pid deadline_pid completed_pid completed_status; shift
-  [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,2}$ ]] || return 2
-  /usr/bin/setsid "$@" </dev/null & operation_pid=$!; /usr/bin/sleep "$timeout_seconds" & deadline_pid=$!
+  local timeout_seconds="$1" operation_pid deadline_pid completed_pid completed_status; shift; [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,2}$ ]] || return 2; /usr/bin/setsid "$@" </dev/null & operation_pid=$!; /usr/bin/sleep "$timeout_seconds" & deadline_pid=$!
   completed_pid=""; if wait -n -p completed_pid "$operation_pid" "$deadline_pid"; then completed_status=0; else completed_status=$?; fi
-  if [ "$completed_pid" = "$operation_pid" ]; then
-    kill "$deadline_pid" 2>/dev/null || true; wait "$deadline_pid" 2>/dev/null || true; kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.05; kill -KILL -- "-$operation_pid" 2>/dev/null || true
-    wait "$operation_pid" 2>/dev/null || true; return "$completed_status"; fi
-  kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.2; kill -KILL -- "-$operation_pid" 2>/dev/null || true; wait "$operation_pid" 2>/dev/null || true; return 124
-}
+  if [ "$completed_pid" = "$operation_pid" ]; then kill "$deadline_pid" 2>/dev/null || true; wait "$deadline_pid" 2>/dev/null || true; kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.05; kill -KILL -- "-$operation_pid" 2>/dev/null || true; wait "$operation_pid" 2>/dev/null || true; return "$completed_status"; fi
+  kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.2; kill -KILL -- "-$operation_pid" 2>/dev/null || true; wait "$operation_pid" 2>/dev/null || true; return 124; }
 stop_process_group() { local operation_pid="$1"; kill -TERM -- "-$operation_pid" 2>/dev/null || true; /usr/bin/sleep 0.2; kill -KILL -- "-$operation_pid" 2>/dev/null || true; wait "$operation_pid" 2>/dev/null || true; }
 systemctl_read() { command_bounded 8 /usr/bin/systemctl "$@"; }
 systemctl_change() { command_bounded 40 /usr/bin/systemctl "$@"; }
@@ -64,24 +59,15 @@ wait_update() {
     sleep 1
   done; return 1; }
 wait_failed_update() { for _ in $(seq 1 "$update_wait_seconds"); do [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] && return 0; sleep 1; done; return 1; }
-wait_pi_ready() {
-  local installed=/var/lib/matrix-developer-tools/installed-tools; for _ in $(seq 1 "$update_wait_seconds"); do
-    if grep -qxF pi "$installed" 2>/dev/null && [ -x "$pi" ] &&
-      command_bounded 30 runuser -u matrix -- env HOME="$home" PATH="/opt/matrix/runtime/node/bin:/usr/bin:/bin" "$pi" --version >/dev/null 2>&1; then
-      return 0; fi
-    sleep 1
-  done; return 1; }
+wait_pi_ready() { local installed=/var/lib/matrix-developer-tools/installed-tools; for _ in $(seq 1 "$update_wait_seconds"); do if grep -qxF pi "$installed" 2>/dev/null && [ -x "$pi" ] && command_bounded 30 runuser -u matrix -- env HOME="$home" PATH="/opt/matrix/runtime/node/bin:/usr/bin:/bin" "$pi" --version >/dev/null 2>&1; then return 0; fi; sleep 1; done; return 1; }
 zellij() { command_bounded 30 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"; }
 fail_phase() {
   local exit_status="${1:-$?}" failure_code; trap - EXIT ERR TERM INT HUP
   if [ "$exit_status" -eq 124 ] || [ "$exit_status" -eq 137 ] || [ "$exit_status" -eq 143 ]; then failure_code=command_timeout
   elif [[ "$failure_hint" =~ ^[a-z0-9_]{1,64}$ ]]; then failure_code="$failure_hint"
-  else
-    failure_code="$(cat /run/matrix-update-runtime/last-failure-code 2>/dev/null || true)"; [[ "$failure_code" =~ ^[a-z0-9_]{1,64}$ ]] || failure_code=operation_failed
-  fi
+  else failure_code="$(cat /run/matrix-update-runtime/last-failure-code 2>/dev/null || true)"; [[ "$failure_code" =~ ^[a-z0-9_]{1,64}$ ]] || failure_code=operation_failed; fi
   write_state "failed_${current_phase}_${failure_code}"; rm -f -- /etc/systemd/system/matrix-gateway.service.d/zz-terminal-acceptance.conf
-  systemctl_change daemon-reload >/dev/null 2>&1 || true; systemctl_change start matrix-gateway.service matrix-shell.service >/dev/null 2>&1 || true
-  exit 1
+  systemctl_change daemon-reload >/dev/null 2>&1 || true; systemctl_change start matrix-gateway.service matrix-shell.service >/dev/null 2>&1 || true; exit 1
 }
 phase1() {
   trap fail_phase ERR TERM INT HUP; trap 'status=$?; trap - EXIT; [ "$status" -eq 0 ] || fail_phase "$status"' EXIT
@@ -98,17 +84,14 @@ phase1() {
   write_phase waiting_runtime; wait_active "$unit"; mark runtimeLive
   write_phase seeding_output; output_result="$(zellij --session "$session_name" run --in-place --close-replaced-pane --name matrix-accept-output -- /bin/bash -lc 'counter=0; while true; do counter=$((counter + 1)); printf "MATRIX_ACCEPT_LOOP:%010d\n" "$counter"; read -r -t 1 _ || true; done')"; [ "${#output_result}" -le 64 ] && [[ "$output_result" =~ terminal_[0-9]{1,10} ]]
   write_phase starting_agent; wait_pi_ready
-  agent_created="$(owner_probe create-agent "$head_sha" "$run_nonce")"
-  agent_runtime_id="$(printf '%s' "$agent_created" | json_field runtimeId)"
-  [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]
+  agent_created="$(owner_probe create-agent "$head_sha" "$run_nonce")"; agent_runtime_id="$(printf '%s' "$agent_created" | json_field runtimeId)"; [[ "$agent_runtime_id" =~ ^[0-9a-f]{32}$ ]]
   printf '%s\n' "$agent_runtime_id" >"$state_root/agent-runtime-id"; chmod 0600 "$state_root/agent-runtime-id"
   agent_unit="${unit_prefix}${agent_runtime_id}.service"; wait_active "$agent_unit"
   write_phase waiting_roles; local baseline="" agent_baseline="" shell_pid="" output_pid="" output_candidates="" pane_pid="" agent_pid="" role_failure=roles_unavailable
   for _ in $(seq 1 120); do
     baseline="$(roles "$runtime_id" 2>/dev/null || true)"; agent_baseline="$(roles "$agent_runtime_id" 2>/dev/null || true)"
     shell_pid="$(printf '%s' "$baseline" | json_field shell 2>/dev/null || true)"; output_pid="$(printf '%s' "$baseline" | json_field output 2>/dev/null || true)"; output_candidates="$(printf '%s' "$baseline" | json_field outputCandidates 2>/dev/null || true)"
-    pane_pid="$(printf '%s' "$agent_baseline" | json_field pane 2>/dev/null || true)"
-    agent_pid="$(printf '%s' "$agent_baseline" | json_field agent 2>/dev/null || true)"
+    pane_pid="$(printf '%s' "$agent_baseline" | json_field pane 2>/dev/null || true)"; agent_pid="$(printf '%s' "$agent_baseline" | json_field agent 2>/dev/null || true)"
     if [[ "$shell_pid" =~ ^[1-9][0-9]*$ ]] && [[ "$output_pid" =~ ^[1-9][0-9]*$ ]] && [ "$output_candidates" = 1 ] && [[ "$pane_pid" =~ ^[1-9][0-9]*$ ]] &&
       [[ "$agent_pid" =~ ^[1-9][0-9]*$ ]] && output_advanced "$runtime_id"; then
       role_values "$baseline" >"$state_root/roles.json"; role_values "$agent_baseline" >"$state_root/agent-roles.json"

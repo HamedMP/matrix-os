@@ -754,28 +754,27 @@ if wait_state "$recovery_unit" active; then
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
   if wait_state "$recovery_unit" active 300; then
     write_progress s2_recover_ready
-    panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
-    pane_count="$(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const v=JSON.parse(s);process.stdout.write(String(Array.isArray(v)?v.filter(p=>!p.is_plugin).length:0))}catch(error){process.stdout.write("0")}})' )"
-    if [ "$pane_count" -ge 2 ]; then mark_pass s2 layoutRestored; fi
     dump_file="/tmp/matrix-terminal-dump-${run_key}.txt"
     viewport_after="/tmp/matrix-terminal-viewport-after-${run_key}.txt"
     original_serialized_pane_id="$serialized_pane_id"
-    serialized_pane_id="$(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e '
-      let s=""; process.stdin.on("data",d=>s+=d); process.stdin.on("end",()=>{
-        try {
-          const panes=JSON.parse(s).filter((p)=>!p.is_plugin && p.title==="MATRIX_SCROLL_PROBE");
-          if(panes.length===1) process.stdout.write(String(panes[0].id));
-        } catch(error) {}
-      });
-    ')"
+    pane_count=0; serialized_pane_id=""; held_viewport_anchor=""
+    for _ in $(seq 1 100); do
+      panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
+      read -r pane_count serialized_pane_id < <(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const p=JSON.parse(s).filter(v=>!v.is_plugin),m=p.filter(v=>v.title==="MATRIX_SCROLL_PROBE");process.stdout.write(`${p.length} ${m.length===1?m[0].id:""}`)}catch(error){process.stdout.write("0 ")}})')
+      if [ -n "$serialized_pane_id" ]; then
+        zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$viewport_after" >/dev/null 2>&1 || true
+        held_viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_after" 2>/dev/null || true)"
+      fi
+      if [ "$pane_count" -ge 2 ] && [ -n "$viewport_anchor" ] && [ "$held_viewport_anchor" = "$viewport_anchor" ]; then break; fi
+      sleep 0.1
+    done
+    if [ "$pane_count" -ge 2 ]; then mark_pass s2 layoutRestored; fi
+    if [ -n "$viewport_anchor" ] && [ "$held_viewport_anchor" = "$viewport_anchor" ]; then mark_pass s2 viewportRestored; fi
+    rm -f -- "$viewport_after"
     held_pane_count="$(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const v=JSON.parse(s);process.stdout.write(String(Array.isArray(v)?v.filter(p=>!p.is_plugin&&p.is_held).length:0))}catch(error){process.stdout.write("0")}})' )"
     safe_drop_status=1
     post_drop_markers=0
     if [ -n "$serialized_pane_id" ]; then
-      zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$viewport_after" >/dev/null 2>&1 || true
-      held_viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_after" 2>/dev/null || true)"
-      if [ -n "$viewport_anchor" ] && [ "$held_viewport_anchor" = "$viewport_anchor" ]; then mark_pass s2 viewportRestored; fi
-      rm -f -- "$viewport_after"
       if zellij_cmd --session "$recovery_session" action write --pane-id "$serialized_pane_id" 27 >/dev/null 2>&1; then safe_drop_status=0; fi
       for _ in $(seq 1 100); do
         zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
