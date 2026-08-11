@@ -474,6 +474,19 @@ export function createUserSystemdTerminalRuntime(options: {
         throw err;
       }
     }
+    const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
+    try {
+      await runCommand(zellijPath, ["delete-session", descriptor.sessionName, "--force"], {
+        cwd: descriptor.cwd,
+        env: systemdEnv,
+        timeoutMs: SYSTEMCTL_TIMEOUT_MS,
+      });
+    } catch (err: unknown) {
+      const code: unknown = err instanceof Error && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+      if (code !== 2 && code !== "2") throw new TerminalRuntimeUnavailableError(err);
+    }
     await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
     await runSystemctl(["start", unitName(descriptor.runtimeId)]);
     await waitUntilReady(descriptor);

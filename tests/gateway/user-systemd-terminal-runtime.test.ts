@@ -276,7 +276,7 @@ describe("user-systemd terminal runtime", () => {
     );
   });
 
-  it("retries explicit recovery once when the first unit exits before becoming ready", async () => {
+  it("removes the exact stale session before retrying inactive explicit recovery", async () => {
     let recovery = false;
     let readinessChecks = 0;
     const runCommand = vi.fn<UserSystemdCommandRunner>(async (_command, args) => {
@@ -314,8 +314,15 @@ describe("user-systemd terminal runtime", () => {
     expect(runCommand.mock.calls.map(([, args]) => args.slice(1))).toEqual([
       ["start", `matrix-zellij@${RUNTIME_ID}.service`],
       ["is-active", `matrix-zellij@${RUNTIME_ID}.service`],
+      [`matrix-${RUNTIME_ID}`, "--force"],
       ["start", `matrix-zellij@${RUNTIME_ID}.service`],
     ]);
+    expect(runCommand).toHaveBeenNthCalledWith(
+      3,
+      `/opt/matrix/terminal-runtime/generations/${GENERATION}/zellij`,
+      ["delete-session", `matrix-${RUNTIME_ID}`, "--force"],
+      expect.any(Object),
+    );
   });
 
   it("does not retry explicit recovery while the original unit remains active", async () => {
