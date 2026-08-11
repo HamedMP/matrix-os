@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { watch as chokidarWatch } from "chokidar";
 import {
   createWatcher,
   createWatcherIgnored,
@@ -224,6 +225,85 @@ describe("gateway home watcher", () => {
     await Promise.all([releasePromise, closePromise]);
     expect(fake.backends[1].close).toHaveBeenCalledOnce();
     expect(fake.backends[0].close).toHaveBeenCalledOnce();
+    await rm(homePath, { recursive: true });
+  });
+
+  it("drains gated scope validation and prevents a late backend after close", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-watcher-"));
+    await mkdir(join(homePath, "projects"));
+    const fake = createFakeWatcherFactory();
+    const validationGate = deferred<string>();
+    const validateDirectoryScope = vi.fn(async () => validationGate.promise);
+    const watcher = createWatcher(homePath, {
+      watchFactory: fake.factory,
+      validateDirectoryScope,
+    } as never);
+    const acquisition = watcher.acquireDirectoryScope("projects");
+    const duplicateAcquisition = watcher.acquireDirectoryScope("projects");
+    await vi.waitFor(() => expect(validateDirectoryScope).toHaveBeenCalledOnce());
+
+    let closeSettled = false;
+    const closePromise = watcher.close().then(() => { closeSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closeSettled).toBe(false);
+    validationGate.resolve(join(homePath, "projects"));
+
+    await closePromise;
+    await expect(acquisition).rejects.toThrow("closed");
+    await expect(duplicateAcquisition).rejects.toThrow("closed");
+    expect(validateDirectoryScope).toHaveBeenCalledOnce();
+    expect(fake.backends).toHaveLength(1);
+    expect(fake.backends[0].close).toHaveBeenCalledOnce();
+    await rm(homePath, { recursive: true });
+  });
+
+  it("suppresses only exact root overlap emitted by global and scoped backends", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-watcher-"));
+    const fake = createFakeWatcherFactory();
+    const watcher = createWatcher(homePath, { watchFactory: fake.factory });
+    const listener = vi.fn();
+    watcher.on(listener);
+    const release = await watcher.acquireDirectoryScope("");
+
+    fake.backends[0].emit("change", join(homePath, "CLAUDE.md"));
+    fake.backends[1].emit("change", join(homePath, "CLAUDE.md"));
+    fake.backends[1].emit("add", join(homePath, "notes.txt"));
+    fake.backends[1].emit("addDir", join(homePath, "projects"));
+    fake.backends[1].emit("unlinkDir", join(homePath, "projects"));
+    expect(listener.mock.calls.map(([event]) => event)).toEqual([
+      { type: "file:change", path: "CLAUDE.md", event: "change" },
+      { type: "file:change", path: "notes.txt", event: "add" },
+      { type: "file:change", path: "projects", event: "add" },
+      { type: "file:change", path: "projects", event: "unlink" },
+    ]);
+
+    await release();
+    await watcher.close();
+    await rm(homePath, { recursive: true });
+  });
+
+  it("emits one real hint for a root file covered by both watcher backends", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-watcher-real-"));
+    await writeFile(join(homePath, "CLAUDE.md"), "one");
+    const ready: Array<Promise<void>> = [];
+    const realFactory: WatcherFactory = (paths, options) => {
+      const backend = chokidarWatch(paths, { ...options, usePolling: false });
+      ready.push(new Promise<void>((resolve) => { backend.once("ready", () => resolve()); }));
+      return backend as WatcherBackend;
+    };
+    const watcher = createWatcher(homePath, { watchFactory: realFactory });
+    const listener = vi.fn();
+    watcher.on(listener);
+    const release = await watcher.acquireDirectoryScope("");
+    await Promise.all(ready);
+
+    await writeFile(join(homePath, "CLAUDE.md"), "two");
+    await vi.waitFor(() => {
+      expect(listener.mock.calls.filter(([event]) => event.path === "CLAUDE.md")).toHaveLength(1);
+    }, { timeout: 2_000 });
+
+    await release();
+    await watcher.close();
     await rm(homePath, { recursive: true });
   });
 

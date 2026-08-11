@@ -37,6 +37,8 @@ describe("FileDirectorySubscriptionHub", () => {
     const outsidePath = await mkdtemp(join(tmpdir(), "matrix-directory-outside-"));
     try {
       await mkdir(join(homePath, "projects"));
+      await mkdir(join(homePath, "projects", ".secret"));
+      await mkdir(join(homePath, "projects", "visible", ".hidden"), { recursive: true });
       await mkdir(join(homePath, "system"));
       await mkdir(join(homePath, "data", "browser-profiles"), { recursive: true });
       await writeFile(join(homePath, "readme.md"), "file");
@@ -44,6 +46,11 @@ describe("FileDirectorySubscriptionHub", () => {
 
       await expect(authorizeFileDirectory(homePath, "")).resolves.toBe(true);
       await expect(authorizeFileDirectory(homePath, "projects")).resolves.toBe(true);
+      await expect(authorizeFileDirectory(homePath, ".secret")).resolves.toBe(false);
+      await expect(authorizeFileDirectory(homePath, "projects/.secret")).resolves.toBe(false);
+      await expect(authorizeFileDirectory(homePath, "projects/visible/.hidden")).resolves.toBe(false);
+      await expect(authorizeFileDirectory(homePath, "projects\\.secret")).resolves.toBe(false);
+      await expect(authorizeFileDirectory(homePath, "C:/projects")).resolves.toBe(false);
       await expect(authorizeFileDirectory(homePath, "system")).resolves.toBe(false);
       await expect(authorizeFileDirectory(homePath, "data")).resolves.toBe(false);
       await expect(authorizeFileDirectory(homePath, "readme.md")).resolves.toBe(false);
@@ -199,6 +206,111 @@ describe("FileDirectorySubscriptionHub", () => {
     await expect(subscribePromise).rejects.toThrow(/closed|no longer active/);
     expect(release).toHaveBeenCalledOnce();
     expect(hub.subscriberCount).toBe(0);
+  });
+
+  it("reserves before authorization so connection removal cancels pending work", async () => {
+    const authorizationGate = deferred<boolean>();
+    const acquireScope = vi.fn(async () => vi.fn());
+    const hub = new FileDirectorySubscriptionHub({
+      authorize: async () => authorizationGate.promise,
+      acquireScope,
+    });
+    const pending = hub.subscribe(subscriber("owner", "connection", "projects"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const removal = hub.removeConnection("owner", "connection");
+    authorizationGate.resolve(true);
+    await removal;
+    await expect(pending).rejects.toThrow(/no longer active|cancel/i);
+    expect(acquireScope).not.toHaveBeenCalled();
+    expect(hub.subscriberCount).toBe(0);
+    await hub.close();
+  });
+
+  it("lets exact unsubscribe cancel a pending authorization atomically", async () => {
+    const authorizationGate = deferred<boolean>();
+    const acquireScope = vi.fn(async () => vi.fn());
+    const hub = new FileDirectorySubscriptionHub({
+      authorize: async () => authorizationGate.promise,
+      acquireScope,
+    });
+    const pending = hub.subscribe(subscriber("owner", "connection", "projects"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const unsubscribe = hub.unsubscribe("owner", "connection", "projects");
+    authorizationGate.resolve(true);
+    await expect(unsubscribe).resolves.toBe(true);
+    await expect(pending).rejects.toThrow(/no longer active|cancel/i);
+    expect(acquireScope).not.toHaveBeenCalled();
+    await hub.close();
+  });
+
+  it("counts pending authorizations against global, connection, and owner caps", async () => {
+    const authorizationGate = deferred<boolean>();
+    const authorize = vi.fn(async ({ directory }: { directory: string }) => (
+      directory === "projects" ? authorizationGate.promise : true
+    ));
+    const hub = new FileDirectorySubscriptionHub({
+      authorize,
+      acquireScope: async () => vi.fn(),
+      maxSubscriptions: 3,
+      maxDirectoriesPerConnection: 1,
+      maxConnectionsPerOwner: 1,
+    });
+    const pending = hub.subscribe(subscriber("owner", "connection", "projects"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await expect(hub.subscribe(subscriber("owner", "connection", "other")))
+      .rejects.toThrow(/directory limit/i);
+    await expect(hub.subscribe(subscriber("owner", "other-connection", "other")))
+      .rejects.toThrow(/connection limit/i);
+    await expect(hub.subscribe(subscriber("other-owner", "other-connection", "other")))
+      .resolves.toBe(0);
+    await expect(hub.subscribe(subscriber("third-owner", "third-connection", "other")))
+      .resolves.toBe(0);
+    await expect(hub.subscribe(subscriber("overflow-owner", "overflow-connection", "other")))
+      .rejects.toThrow(/subscription limit/i);
+
+    authorizationGate.resolve(true);
+    await pending;
+    await hub.close();
+  });
+
+  it("shares one pending initialization for concurrent exact-key subscribes", async () => {
+    const authorizationGate = deferred<boolean>();
+    const authorize = vi.fn(async () => authorizationGate.promise);
+    const acquireScope = vi.fn(async () => vi.fn());
+    const hub = new FileDirectorySubscriptionHub({ authorize, acquireScope });
+    const first = hub.subscribe(subscriber("owner", "connection", "projects"));
+    const second = hub.subscribe(subscriber("owner", "connection", "projects"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(authorize).toHaveBeenCalledOnce();
+    authorizationGate.resolve(true);
+    await expect(Promise.all([first, second])).resolves.toEqual([0, 0]);
+    expect(acquireScope).toHaveBeenCalledOnce();
+    expect(hub.subscriberCount).toBe(1);
+    await hub.close();
+  });
+
+  it("waits for and cancels authorization when close begins", async () => {
+    const authorizationGate = deferred<boolean>();
+    const acquireScope = vi.fn(async () => vi.fn());
+    const hub = new FileDirectorySubscriptionHub({
+      authorize: async () => authorizationGate.promise,
+      acquireScope,
+    });
+    const pending = hub.subscribe(subscriber("owner", "connection", "projects"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    let closeSettled = false;
+    const closePromise = hub.close().then(() => { closeSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closeSettled).toBe(false);
+
+    authorizationGate.resolve(true);
+    await closePromise;
+    await expect(pending).rejects.toThrow(/closed|no longer active|cancel/i);
+    expect(acquireScope).not.toHaveBeenCalled();
   });
 
   it("authorizes before scope installation and resubscribes idempotently", async () => {

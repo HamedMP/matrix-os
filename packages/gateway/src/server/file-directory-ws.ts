@@ -1,7 +1,9 @@
+import type { Context } from "hono";
 import type {
   FileDirectoryClientMessage,
 } from "../ws-message-schema.js";
 import type { Watcher } from "../watcher.js";
+import { requireRequestPrincipal } from "../request-principal.js";
 import type {
   FileDirectorySubscriptionHub,
 } from "../file-management/directory-subscriptions.js";
@@ -24,6 +26,11 @@ export interface FileDirectoryWsConnection {
   idle(): Promise<void>;
   close(): Promise<void>;
 }
+
+export type AuthenticatedFileDirectoryWsConnectionOptions = Omit<
+  FileDirectoryWsConnectionOptions,
+  "ownerId"
+>;
 
 function safeSend(
   send: FileDirectoryWsConnectionOptions["send"],
@@ -135,6 +142,16 @@ export function createFileDirectoryWsConnection(
       return closePromise;
     },
   };
+}
+
+export function createAuthenticatedFileDirectoryWsConnection(
+  context: Context,
+  options: AuthenticatedFileDirectoryWsConnectionOptions,
+): FileDirectoryWsConnection {
+  return createFileDirectoryWsConnection({
+    ...options,
+    ownerId: requireRequestPrincipal(context).userId,
+  });
 }
 
 export function isFileDirectoryFrameCandidate(frame: unknown): boolean {

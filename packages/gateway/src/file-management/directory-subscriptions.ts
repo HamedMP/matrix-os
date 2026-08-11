@@ -37,6 +37,7 @@ export interface FileDirectorySubscriptionHubOptions {
 interface SubscriptionState extends FileDirectorySubscriber {
   revision: number;
   lastTouched: number;
+  canceled: boolean;
   release: (() => void | Promise<void>) | null;
   scopeReady: Promise<void> | null;
 }
@@ -50,9 +51,11 @@ function safeErrorKind(error: unknown): string {
 }
 
 async function releaseScope(subscription: SubscriptionState): Promise<void> {
-  if (!subscription.release) return;
+  const release = subscription.release;
+  if (!release) return;
+  subscription.release = null;
   try {
-    await subscription.release();
+    await release();
   } catch (error: unknown) {
     console.error("[files/realtime] Directory scope release failed", {
       ownerId: subscription.ownerId,
@@ -73,7 +76,10 @@ export async function authorizeFileDirectory(
   directory: string,
 ): Promise<boolean> {
   const parsed = FileManagementDirectoryPathSchema.safeParse(directory);
-  if (!parsed.success || !isFileManagementParentAllowed(homePath, parsed.data)) return false;
+  if (!parsed.success
+    || /^[a-zA-Z]:\//.test(parsed.data)
+    || parsed.data.split("/").some((segment) => segment.startsWith("."))
+    || !isFileManagementParentAllowed(homePath, parsed.data)) return false;
   const resolved = resolveWithinHome(homePath, parsed.data);
   if (!resolved) return false;
   const stats = await lstat(resolved);
@@ -135,29 +141,38 @@ export class FileDirectorySubscriptionHub {
     const parsed = FileManagementDirectoryPathSchema.safeParse(subscriber.directory);
     if (!parsed.success) throw new Error("Invalid directory subscription");
     const normalizedSubscriber = { ...subscriber, directory: parsed.data };
-    if (this.authorize && !await this.authorize({
-      ownerId: subscriber.ownerId,
-      directory: parsed.data,
-    })) {
-      throw new Error("Directory subscription is not authorized");
-    }
-    if (this.closed) throw new Error("Directory subscription hub is closed");
-    await this.sweepStale();
-    if (this.closed) throw new Error("Directory subscription hub is closed");
-
     const key = subscriptionKey(subscriber.ownerId, subscriber.connectionId, parsed.data);
     const existing = this.subscriptions.get(key);
     if (existing) {
+      if (existing.canceled) throw new Error("Directory subscription is no longer active");
+      const wasActive = existing.release !== null;
       existing.lastTouched = this.now();
       existing.send = subscriber.send;
+      if (existing.scopeReady) await existing.scopeReady;
+      this.assertCurrent(key, existing);
+      if (wasActive && this.authorize) {
+        const authorized = await this.authorize({
+          ownerId: existing.ownerId,
+          directory: existing.directory,
+        });
+        this.assertCurrent(key, existing);
+        if (!authorized) throw new Error("Directory subscription is not authorized");
+      }
       return existing.revision;
     }
 
-    this.assertCapacity(normalizedSubscriber);
+    const staleCleanup = this.sweepStale(false);
+    try {
+      this.assertCapacity(normalizedSubscriber);
+    } catch (error: unknown) {
+      this.trackRelease(staleCleanup);
+      throw error;
+    }
     const state: SubscriptionState = {
       ...normalizedSubscriber,
       revision: 0,
       lastTouched: this.now(),
+      canceled: false,
       release: null,
       scopeReady: null,
     };
@@ -166,19 +181,12 @@ export class FileDirectorySubscriptionHub {
       this.subscriptions.delete(key);
       throw new Error("Directory scope acquisition limit reached");
     }
-    const scopeReady = (async () => {
-      const release = await this.acquireScope(parsed.data);
-      if (this.closed || this.subscriptions.get(key) !== state) {
-        await release();
-        return;
-      }
-      state.release = release;
-    })();
+    const scopeReady = this.initializeSubscription(key, state, staleCleanup);
     state.scopeReady = scopeReady;
     this.pendingScopeAcquisitions.add(scopeReady);
     try {
       await scopeReady;
-      if (!state.release) throw new Error("Directory subscription is no longer active");
+      this.assertCurrent(key, state);
       return state.revision;
     } catch (error: unknown) {
       if (this.subscriptions.get(key) === state) this.subscriptions.delete(key);
@@ -191,7 +199,7 @@ export class FileDirectorySubscriptionHub {
   touch(ownerId: string, connectionId: string, directory: string): boolean {
     if (this.closed) return false;
     const subscription = this.subscriptions.get(subscriptionKey(ownerId, connectionId, directory));
-    if (!subscription || !subscription.release) return false;
+    if (!subscription || subscription.canceled || !subscription.release) return false;
     subscription.lastTouched = this.now();
     return true;
   }
@@ -200,8 +208,9 @@ export class FileDirectorySubscriptionHub {
     const key = subscriptionKey(ownerId, connectionId, directory);
     const subscription = this.subscriptions.get(key);
     if (!subscription) return false;
-    this.subscriptions.delete(key);
+    subscription.canceled = true;
     await this.releaseSubscription(subscription);
+    if (this.subscriptions.get(key) === subscription) this.subscriptions.delete(key);
     return true;
   }
 
@@ -209,11 +218,15 @@ export class FileDirectorySubscriptionHub {
     const removed: SubscriptionState[] = [];
     for (const [key, subscription] of this.subscriptions) {
       if (subscription.ownerId === ownerId && subscription.connectionId === connectionId) {
-        this.subscriptions.delete(key);
+        subscription.canceled = true;
         removed.push(subscription);
       }
     }
     await Promise.all(removed.map((subscription) => this.releaseSubscription(subscription)));
+    for (const subscription of removed) {
+      const key = subscriptionKey(subscription.ownerId, subscription.connectionId, subscription.directory);
+      if (this.subscriptions.get(key) === subscription) this.subscriptions.delete(key);
+    }
   }
 
   async broadcast(change: FileChangeEvent): Promise<void> {
@@ -224,7 +237,7 @@ export class FileDirectorySubscriptionHub {
     const failed: SubscriptionState[] = [];
 
     for (const subscription of this.subscriptions.values()) {
-      if (!subscription.release || subscription.directory !== directory) continue;
+      if (subscription.canceled || !subscription.release || subscription.directory !== directory) continue;
       const revision = subscription.revision + 1;
       try {
         const sent = subscription.send(JSON.stringify({
@@ -254,9 +267,17 @@ export class FileDirectorySubscriptionHub {
         subscription.connectionId,
         subscription.directory,
       );
-      if (this.subscriptions.get(key) === subscription) this.subscriptions.delete(key);
+      subscription.canceled = true;
     }
     await Promise.all(failed.map((subscription) => this.releaseSubscription(subscription)));
+    for (const subscription of failed) {
+      const key = subscriptionKey(
+        subscription.ownerId,
+        subscription.connectionId,
+        subscription.directory,
+      );
+      if (this.subscriptions.get(key) === subscription) this.subscriptions.delete(key);
+    }
   }
 
   close(): Promise<void> {
@@ -266,6 +287,7 @@ export class FileDirectorySubscriptionHub {
     const subscriptions = [...this.subscriptions.values()];
     const pendingScopeAcquisitions = [...this.pendingScopeAcquisitions];
     const pendingScopeReleases = [...this.pendingScopeReleases];
+    for (const subscription of subscriptions) subscription.canceled = true;
     this.subscriptions.clear();
     this.closePromise = (async () => {
       for (const subscription of subscriptions) {
@@ -310,25 +332,63 @@ export class FileDirectorySubscriptionHub {
     }
   }
 
-  private async sweepStale(): Promise<void> {
+  private async sweepStale(track = true): Promise<void> {
     if (this.closed) return;
     const cutoff = this.now() - this.staleTtlMs;
     const stale: SubscriptionState[] = [];
     for (const [key, subscription] of this.subscriptions) {
       if (subscription.lastTouched <= cutoff) {
         this.subscriptions.delete(key);
+        subscription.canceled = true;
         stale.push(subscription);
       }
     }
-    await Promise.all(stale.map((subscription) => this.releaseSubscription(subscription)));
+    const cleanup = Promise.all(stale.map((subscription) => awaitAndReleaseScope(subscription)))
+      .then(() => undefined);
+    if (track) this.trackRelease(cleanup);
+    await cleanup;
   }
 
   private releaseSubscription(subscription: SubscriptionState): Promise<void> {
     const releasePromise = awaitAndReleaseScope(subscription);
-    this.pendingScopeReleases.add(releasePromise);
-    void releasePromise.finally(() => {
-      this.pendingScopeReleases.delete(releasePromise);
-    });
+    this.trackRelease(releasePromise);
     return releasePromise;
+  }
+
+  private trackRelease(releasePromise: Promise<void>): void {
+    this.pendingScopeReleases.add(releasePromise);
+    void releasePromise.finally(() => this.pendingScopeReleases.delete(releasePromise));
+  }
+
+  private assertCurrent(key: string, state: SubscriptionState): void {
+    if (this.closed) throw new Error("Directory subscription hub is closed");
+    if (state.canceled || this.subscriptions.get(key) !== state) {
+      throw new Error("Directory subscription is no longer active");
+    }
+  }
+
+  private async initializeSubscription(
+    key: string,
+    state: SubscriptionState,
+    staleCleanup: Promise<void>,
+  ): Promise<void> {
+    await staleCleanup;
+    this.assertCurrent(key, state);
+    if (this.authorize) {
+      const authorized = await this.authorize({
+        ownerId: state.ownerId,
+        directory: state.directory,
+      });
+      this.assertCurrent(key, state);
+      if (!authorized) throw new Error("Directory subscription is not authorized");
+    }
+    const release = await this.acquireScope(state.directory);
+    state.release = release;
+    try {
+      this.assertCurrent(key, state);
+    } catch (error: unknown) {
+      await releaseScope(state);
+      throw error;
+    }
   }
 }
