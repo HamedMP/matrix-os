@@ -120,6 +120,26 @@ describe("FileBatchTrashService", () => {
     expect(readFileSync(join(homePath, listed.entries[0].trashPath), "utf8")).toBe("owner bytes");
   });
 
+  it.each([
+    ["exact", ".manifest.json.00000000-0000-4000-8000-000000000000.tmp"],
+    ["case variant", ".MANIFEST.JSON.00000000-0000-4000-8000-000000000000.TMP"],
+    ["255-byte boundary", `.manifest.json.${"a".repeat(236)}.tmp`],
+  ])("trashes a temp-looking user basename: %s", async (_description, sourceName) => {
+    expect(Buffer.byteLength(sourceName, "utf8")).toBeLessThanOrEqual(255);
+    writeFileSync(join(homePath, "projects", sourceName), "owner temp-looking bytes");
+
+    const result = await service.trash(input(nextRequestId(), [`projects/${sourceName}`]));
+    const listed = await service.list(homePath);
+
+    expect(result.results).toEqual([{ source: `projects/${sourceName}`, code: "trashed" }]);
+    expect(listed.entries).toHaveLength(1);
+    expect(listed.entries[0].trashPath).not.toBe(`.trash/${sourceName}`);
+    expect(Buffer.byteLength(listed.entries[0].trashPath.split("/").at(-1)!, "utf8"))
+      .toBeLessThanOrEqual(255);
+    expect(readFileSync(join(homePath, listed.entries[0].trashPath), "utf8"))
+      .toBe("owner temp-looking bytes");
+  });
+
   it("preserves a late claimant and retries a bounded no-replace Trash name", async () => {
     writeFileSync(join(homePath, "projects", "inbox", "race.md"), "source");
     let installedClaimant = false;
