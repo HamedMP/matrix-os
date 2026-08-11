@@ -7,6 +7,7 @@ import {
   readFileSync,
   symlinkSync,
 } from "node:fs";
+import { link, lstat, mkdir, rename, rmdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -19,6 +20,8 @@ import {
   trashRestore,
   trashEmpty,
 } from "../../packages/gateway/src/trash.js";
+import type { NativeFileCapabilityResult } from "../../packages/gateway/src/file-management/native-file-capability.js";
+import type { NoReplaceFileMoveCapability } from "../../packages/gateway/src/file-ops.js";
 
 describe("fileDelete", () => {
   let testDir: string;
@@ -34,7 +37,7 @@ describe("fileDelete", () => {
 
   it("moves a file to .trash", async () => {
     writeFileSync(join(testDir, "doomed.md"), "goodbye");
-    const result = await fileDelete(testDir, "doomed.md");
+    const result = await fileDelete(testDir, "doomed.md", { moveCapability });
     expect(result.ok).toBe(true);
     expect(result.trashPath).toBeDefined();
     expect(existsSync(join(testDir, "doomed.md"))).toBe(false);
@@ -44,7 +47,7 @@ describe("fileDelete", () => {
   it("moves a directory to .trash", async () => {
     mkdirSync(join(testDir, "folder"));
     writeFileSync(join(testDir, "folder", "a.txt"), "a");
-    const result = await fileDelete(testDir, "folder");
+    const result = await fileDelete(testDir, "folder", { moveCapability });
     expect(result.ok).toBe(true);
     expect(existsSync(join(testDir, "folder"))).toBe(false);
     expect(existsSync(join(testDir, ".trash", "folder", "a.txt"))).toBe(true);
@@ -52,7 +55,7 @@ describe("fileDelete", () => {
 
   it("records entry in manifest", async () => {
     writeFileSync(join(testDir, "logged.md"), "content");
-    await fileDelete(testDir, "logged.md");
+    await fileDelete(testDir, "logged.md", { moveCapability });
     const manifest = JSON.parse(
       readFileSync(join(testDir, ".trash", ".manifest.json"), "utf-8"),
     );
@@ -64,9 +67,9 @@ describe("fileDelete", () => {
 
   it("handles name collision by appending timestamp", async () => {
     writeFileSync(join(testDir, "dup.md"), "first");
-    await fileDelete(testDir, "dup.md");
+    await fileDelete(testDir, "dup.md", { moveCapability });
     writeFileSync(join(testDir, "dup.md"), "second");
-    const result = await fileDelete(testDir, "dup.md");
+    const result = await fileDelete(testDir, "dup.md", { moveCapability });
     expect(result.ok).toBe(true);
     // Both should exist in trash
     const manifest = JSON.parse(
@@ -116,8 +119,8 @@ describe("trashList", () => {
   it("lists trashed items with metadata", async () => {
     writeFileSync(join(testDir, "a.md"), "aaa");
     writeFileSync(join(testDir, "b.txt"), "bb");
-    await fileDelete(testDir, "a.md");
-    await fileDelete(testDir, "b.txt");
+    await fileDelete(testDir, "a.md", { moveCapability });
+    await fileDelete(testDir, "b.txt", { moveCapability });
     const result = await trashList(testDir);
     expect(result.entries).toHaveLength(2);
     const names = result.entries.map((e) => e.name);
@@ -143,7 +146,7 @@ describe("trashRestore", () => {
 
   it("restores a file to its original location", async () => {
     writeFileSync(join(testDir, "restore-me.md"), "content");
-    const deleteResult = await fileDelete(testDir, "restore-me.md");
+    const deleteResult = await fileDelete(testDir, "restore-me.md", { moveCapability });
     expect(existsSync(join(testDir, "restore-me.md"))).toBe(false);
 
     const result = await trashRestore(testDir, deleteResult.trashPath!);
@@ -157,8 +160,8 @@ describe("trashRestore", () => {
   it("removes entry from manifest after restore", async () => {
     writeFileSync(join(testDir, "a.md"), "a");
     writeFileSync(join(testDir, "b.md"), "b");
-    await fileDelete(testDir, "a.md");
-    const bResult = await fileDelete(testDir, "b.md");
+    await fileDelete(testDir, "a.md", { moveCapability });
+    const bResult = await fileDelete(testDir, "b.md", { moveCapability });
 
     await trashRestore(testDir, bResult.trashPath!);
     const list = await trashList(testDir);
@@ -168,7 +171,7 @@ describe("trashRestore", () => {
 
   it("returns 409 if original location is occupied", async () => {
     writeFileSync(join(testDir, "conflict.md"), "original");
-    const deleteResult = await fileDelete(testDir, "conflict.md");
+    const deleteResult = await fileDelete(testDir, "conflict.md", { moveCapability });
     writeFileSync(join(testDir, "conflict.md"), "new content");
 
     const result = await trashRestore(testDir, deleteResult.trashPath!);
@@ -237,9 +240,9 @@ describe("trashEmpty", () => {
     writeFileSync(join(testDir, "a.md"), "a");
     writeFileSync(join(testDir, "b.md"), "b");
     writeFileSync(join(testDir, "c.md"), "c");
-    await fileDelete(testDir, "a.md");
-    await fileDelete(testDir, "b.md");
-    await fileDelete(testDir, "c.md");
+    await fileDelete(testDir, "a.md", { moveCapability });
+    await fileDelete(testDir, "b.md", { moveCapability });
+    await fileDelete(testDir, "c.md", { moveCapability });
 
     const result = await trashEmpty(testDir);
     expect(result).toEqual({ ok: true, deleted: 3 });
@@ -274,7 +277,8 @@ describe("concurrent operations", () => {
     }
 
     await Promise.all(
-      Array.from({ length: 5 }, (_, i) => fileDelete(testDir, `file${i}.md`, manifestQueue)),
+      Array.from({ length: 5 }, (_, i) =>
+        fileDelete(testDir, `file${i}.md`, { manifestQueue, moveCapability })),
     );
 
     const list = await trashList(testDir, manifestQueue);
@@ -373,7 +377,7 @@ describe("Trash manifest serialization", () => {
     writeFileSync(join(home, "keep.md"), "keep");
 
     await expect(trashList(home)).rejects.toBeInstanceOf(TrashManifestUnavailableError);
-    const result = await fileDelete(home, "keep.md");
+    const result = await fileDelete(home, "keep.md", { moveCapability });
 
     expect(result).toEqual({ ok: false, error: "Trash operation failed", status: 500 });
     expect(readFileSync(join(home, "keep.md"), "utf8")).toBe("keep");
@@ -411,7 +415,7 @@ describe("Trash manifest serialization", () => {
     const home = makeRoot("trash-existing-name");
     writeFileSync(join(home, "legacy:name.md"), "legacy");
 
-    await fileDelete(home, "legacy:name.md");
+    await fileDelete(home, "legacy:name.md", { moveCapability });
 
     await expect(trashList(home)).resolves.toMatchObject({
       entries: [{ name: "legacy:name.md", originalPath: "legacy:name.md" }],
@@ -427,7 +431,7 @@ describe("Trash manifest serialization", () => {
     symlinkSync(join(home, "outside-manifest.json"), join(trashDir, ".manifest.json"));
     writeFileSync(join(home, "stay.md"), "stay");
 
-    const result = await fileDelete(home, "stay.md");
+    const result = await fileDelete(home, "stay.md", { moveCapability });
 
     expect(result).toEqual({ ok: false, error: "Trash operation failed", status: 500 });
     expect(readFileSync(join(home, "stay.md"), "utf8")).toBe("stay");
@@ -441,3 +445,40 @@ describe("Trash manifest serialization", () => {
     return root;
   }
 });
+
+class FilesystemNoReplaceMoveCapability implements NoReplaceFileMoveCapability {
+  async move(
+    homePath: string,
+    sourcePath: string,
+    targetPath: string,
+    createParents: boolean,
+  ): Promise<NativeFileCapabilityResult> {
+    if (createParents) return { ok: false, code: "invalid_path" };
+    const source = join(homePath, sourcePath);
+    const target = join(homePath, targetPath);
+    try {
+      const stats = await lstat(source);
+      if (stats.isDirectory()) {
+        await mkdir(target);
+        await rmdir(target);
+        await rename(source, target);
+      } else {
+        await link(source, target);
+        await unlink(source);
+      }
+      return { ok: true, code: "ok" };
+    } catch (error: unknown) {
+      if (isErrno(error, "ENOENT")) return { ok: false, code: "source_missing" };
+      if (isErrno(error, "EEXIST") || isErrno(error, "ENOTEMPTY")) {
+        return { ok: false, code: "destination_conflict" };
+      }
+      return { ok: false, code: "failed" };
+    }
+  }
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
+const moveCapability = new FilesystemNoReplaceMoveCapability();
