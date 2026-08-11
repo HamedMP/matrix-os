@@ -370,6 +370,8 @@ describe("ComputerFileBrowser view options", () => {
 
     // Files never appear as pick targets.
     expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New File" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New Folder" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Open assets" }));
     expect(
