@@ -62,9 +62,9 @@ export const INITIAL_TERMINAL_LINKS_STATE: TerminalLinksState = {
 
 export function stripTerminalControlSequences(raw: string): string {
   return raw
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, " ")
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, " ")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, " ");
 }
 
 function hasSafeUrlEnvelope(url: URL): boolean {

@@ -50,6 +50,12 @@ describe("terminal links", () => {
     )).toEqual([web("https://example.com/docs")]);
   });
 
+  it("keeps terminal control sequences as URL boundaries", () => {
+    expect(extractTerminalLinks(
+      "http://localhost:3000\u001b]133;A\u0007/pr-1187:~/projects%",
+    )).toEqual([web("http://localhost:3000/")]);
+  });
+
   it("rejects credentials, unsupported schemes, malformed URLs, and oversized URLs", () => {
     const oversized = `https://example.com/${"a".repeat(2050)}`;
     expect(extractTerminalLinks([
