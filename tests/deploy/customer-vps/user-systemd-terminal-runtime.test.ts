@@ -88,10 +88,14 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(generationId).not.toContain("sha256sum \"$@\"");
   });
 
-  it("keeps the production adapter dormant behind one exact activation flag", () => {
+  it("activates the production adapter from the rollback-scoped bundle marker", () => {
     const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf8");
+    const build = readFileSync(join(root, "scripts/build-host-bundle.sh"), "utf8");
 
-    expect(server).toContain('process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED === "1"');
+    expect(server).toContain("resolveUserSystemdTerminalActivation");
+    expect(server).toContain("process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED");
+    expect(build).toContain('TERMINAL_USER_SYSTEMD_ENABLED');
+    expect(build).toContain('printf \'1\\n\' > "$STAGE_DIR/app/TERMINAL_USER_SYSTEMD_ENABLED"');
     expect(server).toContain('const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)');
     expect(server).toContain('process.env.MATRIX_RUNTIME_SLOT === runtimeHandle');
     expect(server).toContain("loadInstalledTerminalRuntimeGeneration");

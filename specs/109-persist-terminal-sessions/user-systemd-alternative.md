@@ -1,9 +1,11 @@
 # User-systemd terminal runtime alternative
 
-Status: production candidate; fully wired but dormant unless the exact
-`MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1` activation flag is set. Production
-activation, legacy migration, and public documentation remain a separate final
-layer. This document does not replace the accepted terminal persistence
+Status: accepted production architecture. Host bundles built from the activation
+layer carry `/opt/matrix/app/TERMINAL_USER_SYSTEMD_ENABLED` with the exact contents
+`1\n`; earlier bundles remain dormant. `MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1`
+remains the exact acceptance override and `MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=0`
+is the emergency disable override. Legacy migration and reboot recovery are not
+required. This document does not replace the accepted terminal persistence
 specification.
 
 ## Decision being tested
@@ -95,6 +97,19 @@ directories. The helper rejects symlinked or non-regular inputs.
 Rollback switches `current` to the generation recorded by the restored app.
 No update or rollback stops `matrix-zellij@*`, `matrix-terminal.slice`, or
 `user@<uid>.service`.
+
+Activation is app-payload-scoped rather than system-unit-scoped. The updater
+backs up and restores `/opt/matrix/app` as its rollback boundary, while systemd
+unit installation is forward-only. Keeping the exact activation marker inside
+the app payload therefore makes rollback to a pre-activation bundle remove the
+marker before the old gateway starts. The gateway opens the marker with
+`O_NOFOLLOW`, requires a two-byte regular file containing exactly `1\n`, and
+fails closed for missing, malformed, or symlinked state. A bundle must be
+explicitly deployed to a canary or channel before this activation reaches a VPS.
+The activation layer does not adopt a live legacy Zellij process into a user
+unit. Initial rollout is therefore limited to fresh/disposable hosts or canaries
+whose legacy sessions have been deliberately drained; an automatic customer
+fleet rollout is not implied by merging the activation code.
 
 The first bundle that introduces this installer can be applied by an older,
 already-running sync-agent process that does not yet know about terminal
