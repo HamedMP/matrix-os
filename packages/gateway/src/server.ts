@@ -196,7 +196,7 @@ import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
 import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
-import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
+import { createSyncPeerLifecycle, subscribeSyncPeerOrReject } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
 import { sanitizePeerId } from "./sync/peer-id.js";
 import {
@@ -241,7 +241,7 @@ import {
 import {
   bindFileDirectoryWatcher,
   closeFileDirectoryResources,
-  createOptionalAuthenticatedFileDirectoryWsConnection,
+  createMainWsFileDirectoryRouter,
   createFileDirectoryWsLifecycle,
   isFileDirectoryFrameCandidate,
 } from "./server/file-directory-ws.js";
@@ -1861,7 +1861,7 @@ export async function createGateway(config: GatewayConfig) {
           })
         : null;
       let mainWsSocket: WSContext | null = null;
-      const fileDirectoryConnection = createOptionalAuthenticatedFileDirectoryWsConnection(c, {
+      const fileDirectoryRouter = createMainWsFileDirectoryRouter(c, {
         connectionId: randomUUID(),
         hub: fileDirectorySubscriptionHub,
         send: (message) => {
@@ -1870,9 +1870,7 @@ export async function createGateway(config: GatewayConfig) {
         },
         closeSocket: () => mainWsSocket?.close(1008, "File subscription closed"),
       });
-      const fileDirectoryLifecycle = fileDirectoryConnection
-        ? createFileDirectoryWsLifecycle(fileDirectoryConnection)
-        : null;
+      const fileDirectoryLifecycle = createFileDirectoryWsLifecycle(fileDirectoryRouter);
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
@@ -1985,8 +1983,7 @@ export async function createGateway(config: GatewayConfig) {
           if (!parsedResult.success) {
             captureGatewayProductEvent("shell_ws_invalid_message");
             if (isFileDirectoryFrameCandidate(rawMessage)) {
-              if (fileDirectoryConnection) fileDirectoryConnection.rejectInvalidFrame();
-              else send(ws, { type: "kernel:error", message: "File directory subscription failed" });
+              fileDirectoryRouter.rejectInvalidFrame();
               return;
             }
             send(ws, { type: "kernel:error", message: "Invalid message format" });
@@ -1998,8 +1995,7 @@ export async function createGateway(config: GatewayConfig) {
           if (parsed.type === "files:subscribe"
             || parsed.type === "files:unsubscribe"
             || parsed.type === "files:touch") {
-            if (fileDirectoryConnection) fileDirectoryConnection.enqueue(parsed);
-            else send(ws, { type: "kernel:error", message: "File directory subscription failed" });
+            fileDirectoryRouter.handleFrame(parsed);
             return;
           }
 
@@ -2055,16 +2051,21 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
 
-          if (parsed.type === "sync:subscribe" && syncPeerRegistry) {
+          if (parsed.type === "sync:subscribe") {
+            const subscribed = subscribeSyncPeerOrReject(
+              syncPeerLifecycle,
+              {
+                peerId: parsed.peerId,
+                hostname: parsed.hostname,
+                platform: parsed.platform,
+                clientVersion: parsed.clientVersion,
+              },
+              () => send(ws, { type: "kernel:error", message: "Sync subscription failed" }),
+            );
+            if (!subscribed) return;
             captureGatewayProductEvent("sync_peer_subscribe", {
               shell_surface: "gateway_ws",
               client_version_present: Boolean(parsed.clientVersion),
-            });
-            syncPeerLifecycle?.subscribe({
-              peerId: parsed.peerId,
-              hostname: parsed.hostname,
-              platform: parsed.platform,
-              clientVersion: parsed.clientVersion,
             });
             return;
           }
@@ -2212,7 +2213,7 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose(_evt, ws) {
-          if (fileDirectoryLifecycle) void fileDirectoryLifecycle.onClose();
+          void fileDirectoryLifecycle.onClose();
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
           syncPeerSocket = null;

@@ -31,6 +31,12 @@ export interface FileDirectoryWsLifecycle {
   onClose(): Promise<void>;
 }
 
+export interface MainWsFileDirectoryRouter {
+  handleFrame(frame: FileDirectoryClientMessage): void;
+  rejectInvalidFrame(): void;
+  close(): Promise<void>;
+}
+
 export type AuthenticatedFileDirectoryWsConnectionOptions = Omit<
   FileDirectoryWsConnectionOptions,
   "ownerId"
@@ -168,6 +174,32 @@ export function createOptionalAuthenticatedFileDirectoryWsConnection(
 ): FileDirectoryWsConnection | null {
   const principal = getOptionalRequestPrincipal(context);
   return principal ? createFileDirectoryWsConnection({ ...options, ownerId: principal.userId }) : null;
+}
+
+export function createMainWsFileDirectoryRouter(
+  context: Context,
+  options: AuthenticatedFileDirectoryWsConnectionOptions,
+): MainWsFileDirectoryRouter {
+  const connection = createOptionalAuthenticatedFileDirectoryWsConnection(context, options);
+  const rejectUnavailable = () => {
+    safeSend(options.send, {
+      type: "kernel:error",
+      message: GENERIC_FILE_SUBSCRIPTION_ERROR,
+    });
+  };
+  return {
+    handleFrame(frame) {
+      if (connection) connection.enqueue(frame);
+      else rejectUnavailable();
+    },
+    rejectInvalidFrame() {
+      if (connection) connection.rejectInvalidFrame();
+      else rejectUnavailable();
+    },
+    close() {
+      return connection ? connection.close() : Promise.resolve();
+    },
+  };
 }
 
 export function createFileDirectoryWsLifecycle(

@@ -9,6 +9,36 @@ export interface SyncPeerLifecycle {
   close(): void;
 }
 
+export function subscribeSyncPeerOrReject(
+  lifecycle: SyncPeerLifecycle | null,
+  params: PeerParams,
+  reject: () => void,
+): boolean {
+  const rejectSubscription = () => {
+    try {
+      reject();
+    } catch (error: unknown) {
+      console.error("[sync/realtime] Subscription error response failed", {
+        errorKind: error instanceof Error ? error.name : typeof error,
+      });
+    }
+  };
+  if (!lifecycle) {
+    rejectSubscription();
+    return false;
+  }
+  try {
+    lifecycle.subscribe(params);
+    return true;
+  } catch (error: unknown) {
+    console.error("[sync/realtime] Peer subscription failed", {
+      errorKind: error instanceof Error ? error.name : typeof error,
+    });
+    rejectSubscription();
+    return false;
+  }
+}
+
 export function createSyncPeerLifecycle(
   registry: PeerRegistry,
   userId: string,
