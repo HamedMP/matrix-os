@@ -168,6 +168,13 @@ export const AgentRuntimeDescriptorSchema = z.object({
   if (new Set(runtime.capabilities).size !== runtime.capabilities.length) {
     ctx.addIssue({ code: "custom", path: ["capabilities"], message: "Duplicate capability" });
   }
+  if (runtime.selectionState === "active" && runtime.installState !== "installed") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["selectionState"],
+      message: "Only an installed runtime can be active",
+    });
+  }
 });
 
 export const AgentRuntimeTransitionStateSchema = z.enum([
@@ -197,11 +204,11 @@ export const AgentRuntimeSelectionSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["options"], message: "Both runtimes are required" });
   }
   const active = selection.options.filter((runtime) => runtime.selectionState === "active");
-  if (active.length !== 1 || active[0]?.id !== selection.selected) {
+  if (active.length > 1 || (active.length === 1 && active[0]?.id !== selection.selected)) {
     ctx.addIssue({
       code: "custom",
       path: ["selected"],
-      message: "Selected runtime must be the only active runtime",
+      message: "Only the selected runtime can be active",
     });
   }
 });

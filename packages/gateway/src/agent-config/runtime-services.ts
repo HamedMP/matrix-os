@@ -250,13 +250,15 @@ function baseDescriptor(
     displayName: runtime === "hermes" ? "Hermes" : "OpenClaw",
     installState: installed === undefined ? "unknown" : installed ? "installed" : "missing",
     health: status?.running ? "degraded" : status === undefined ? "unknown" : "stopped",
-    selectionState: isSelected
-      ? "active"
-      : installed === true
-        ? "available"
-        : installed === false
-          ? "unavailable"
-          : "action_required",
+    selectionState: installed === false
+      ? "unavailable"
+      : installed === undefined
+        ? "action_required"
+        : isSelected && status?.running === true
+          ? "active"
+          : isSelected
+            ? "action_required"
+            : "available",
     configured: false,
     capabilities: installed === false ? ["install"] : capabilities(runtime),
     ...(installed === false ? { setupAction: "install" as const } : {}),

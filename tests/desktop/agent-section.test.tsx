@@ -379,6 +379,44 @@ describe("AgentSection", () => {
     expect(screen.queryByRole("button", { name: "Use OpenClaw" })).toBeNull();
   });
 
+  it("offers installation instead of calling a selected but missing Hermes runtime active", async () => {
+    const current = currentAgentSettings();
+    current.runtime.options[0] = {
+      id: "hermes",
+      displayName: "Hermes",
+      installState: "missing",
+      health: "stopped",
+      selectionState: "unavailable",
+      configured: false,
+      capabilities: ["install"],
+      setupAction: "install",
+    };
+    current.providers = current.providers.filter((provider) => provider.runtime !== "hermes");
+    current.currentSelection.messaging = {
+      runtime: "hermes",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(current)
+      : Promise.resolve({}));
+    api.post.mockResolvedValue({ name: "matrix-install-hermes" });
+
+    render(<AgentSection />);
+
+    const install = await screen.findByRole("button", { name: "Install Hermes" });
+    expect(screen.queryByText("Hermes is active")).toBeNull();
+    fireEvent.click(install);
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({
+        cmd: "/opt/matrix/bin/matrix-agent-runtime-control install hermes",
+        cwd: "projects",
+      }),
+    ));
+  });
+
   it("submits the visible fallback when the saved messaging model is unavailable", async () => {
     const current = currentAgentSettings();
     const messagingProvider = current.providers.find((provider) => provider.id === "openrouter");
@@ -607,6 +645,45 @@ describe("AgentSection", () => {
 
     expect(await screen.findByText("OpenClaw is active")).toBeTruthy();
     expect(screen.queryByText("The request timed out. Please try again.")).toBeNull();
+    expect(settingsReads).toBe(3);
+  });
+
+  it("does not reconcile a timed-out switch from selection alone when the target is missing", async () => {
+    const current = currentAgentSettings();
+    const selectedButMissing = structuredClone(current);
+    selectedButMissing.revision = 8;
+    selectedButMissing.runtime.selected = "openclaw";
+    selectedButMissing.runtime.options[0].selectionState = "available";
+    selectedButMissing.runtime.options[0].health = "stopped";
+    selectedButMissing.runtime.options[1] = {
+      id: "openclaw",
+      displayName: "OpenClaw",
+      installState: "missing",
+      health: "stopped",
+      selectionState: "unavailable",
+      configured: false,
+      capabilities: ["install"],
+      setupAction: "install",
+    };
+    selectedButMissing.currentSelection.messaging = {
+      runtime: "openclaw",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+    let settingsReads = 0;
+    api.get.mockImplementation((path: string) => {
+      if (path !== "/api/settings/agent") return Promise.resolve({});
+      settingsReads += 1;
+      return Promise.resolve(settingsReads <= 2 ? current : selectedButMissing);
+    });
+    api.put.mockRejectedValue(new AppError("timeout"));
+    render(<AgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
+
+    expect(await screen.findByText("The request timed out. Please try again.")).toBeTruthy();
+    expect(screen.getByText("Hermes is active")).toBeTruthy();
     expect(settingsReads).toBe(3);
   });
 

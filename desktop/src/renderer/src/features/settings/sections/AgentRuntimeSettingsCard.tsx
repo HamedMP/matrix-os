@@ -104,6 +104,9 @@ function RuntimeOptions({
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
       {view.runtime.options.map((runtime) => {
         const selected = runtime.id === view.runtime.selected;
+        const active = selected
+          && runtime.installState === "installed"
+          && runtime.selectionState === "active";
         const usable = runtime.installState === "installed"
           && runtime.selectionState !== "unavailable";
         const canInstall = runtime.installState !== "installed"
@@ -132,7 +135,7 @@ function RuntimeOptions({
               </span>
             </div>
             <div className="mt-3">
-              {selected ? (
+              {active ? (
                 <span className="text-xs font-medium" style={{ color: "var(--success)" }}>
                   {runtime.displayName} is active
                 </span>
@@ -145,6 +148,10 @@ function RuntimeOptions({
                 >
                   <SquareTerminal size={13} />Install {runtime.displayName}
                 </Button>
+              ) : selected ? (
+                <span className="text-xs font-medium" style={{ color: "var(--warning)" }}>
+                  {runtime.displayName} is selected · {statusLabel(runtime.selectionState)}
+                </span>
               ) : (
                 <Button
                   variant="subtle"
@@ -385,7 +392,11 @@ export default function AgentRuntimeSettingsCard() {
         if (targetRuntime && mutationError instanceof AppError && mutationError.category === "timeout") {
           try {
             const config = normalizeAgentConfig(await api.get<unknown>(AGENT_PATH));
-            if (config.extended?.runtime.selected === targetRuntime) {
+            const target = config.extended?.runtime.options.find((runtime) =>
+              runtime.id === targetRuntime);
+            if (config.extended?.runtime.selected === targetRuntime
+              && target?.installState === "installed"
+              && target.selectionState === "active") {
               setView(config.extended);
               setLegacy(config.runtimeUpdateRequired);
               return;

@@ -307,7 +307,7 @@ function unavailableHermesRuntimeSnapshot(): AgentRuntimeSettingsSnapshot {
           displayName: "Hermes",
           installState: "unknown",
           health: "unreachable",
-          selectionState: "active",
+          selectionState: "action_required",
           configured: false,
           capabilities: [
             "provider_catalog",
