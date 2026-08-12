@@ -10,6 +10,7 @@ import {
   type BatchMovePreflightResult,
 } from "./preflight.js";
 import {
+  FileOperationCacheCapacityError,
   FileOperationResultCache,
   hashBatchMoveExecutePayload,
   hashBatchMovePreflightPayload,
@@ -169,10 +170,8 @@ export class FileBatchMoveService {
     }
     this.removeExpiredPreflights();
     this.preflights.delete(key);
-    while (this.preflights.size >= PREFLIGHT_RECORD_LIMIT) {
-      const oldest = this.preflights.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      this.preflights.delete(oldest);
+    if (this.preflights.size >= PREFLIGHT_RECORD_LIMIT) {
+      throw new FileOperationCacheCapacityError();
     }
     this.preflights.set(key, {
       homePath: resolve(homePath),

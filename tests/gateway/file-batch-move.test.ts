@@ -27,6 +27,10 @@ import type {
 import type {
   NoReplaceFileMoveCapability,
 } from "../../packages/gateway/src/file-ops.js";
+import {
+  FileOperationCacheCapacityError,
+  type FileOperationResultCache,
+} from "../../packages/gateway/src/file-management/result-cache.js";
 
 const OWNER_ID = "owner-a";
 
@@ -378,6 +382,34 @@ describe("FileBatchMoveService", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("rejects a new preflight instead of evicting an accepted live preflight", async () => {
+    const passthroughCache = {
+      run: <T>(_input: unknown, operation: () => Promise<T>) => operation(),
+      close: vi.fn(),
+    } as unknown as FileOperationResultCache;
+    const boundedService = new FileBatchMoveService({
+      resultCache: passthroughCache,
+      moveCapability: capability,
+    });
+    writeFileSync(join(homePath, "projects", "inbox", "retained.md"), "retained");
+    const firstId = nextRequestId();
+    const first = await boundedService.preflight(
+      batchInput(homePath, firstId, ["projects/inbox/retained.md"]),
+    );
+    for (let index = 1; index < 512; index += 1) {
+      await boundedService.preflight(
+        batchInput(homePath, nextRequestId(), ["projects/inbox/retained.md"]),
+      );
+    }
+
+    await expect(boundedService.preflight(
+      batchInput(homePath, nextRequestId(), ["projects/inbox/retained.md"]),
+    )).rejects.toBeInstanceOf(FileOperationCacheCapacityError);
+    await expect(boundedService.execute(
+      executeInput(homePath, firstId, first.preflightFingerprint),
+    )).resolves.toMatchObject({ results: [{ code: "moved" }] });
   });
 
   it("re-authorizes symlinks and stale source state immediately before execution", async () => {
