@@ -8,6 +8,7 @@ import {
 import { z } from "zod/v4";
 import { codexAppServerContractStatus } from "./codex-app-server-version.js";
 import { CodexExecutableSchema } from "./codex-executable.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
 
 const VERSION_TIMEOUT_MS = 5_000;
 const APP_SERVER_TIMEOUT_MS = 5_000;
@@ -209,7 +210,8 @@ async function readRateLimitsFromAppServer(input: {
         env: input.env,
         stdio: ["pipe", "pipe", "pipe"],
       });
-    } catch {
+    } catch (err) {
+      logCodingAgentWarning("Codex usage process spawn failed", err);
       reject(genericError());
       return;
     }
@@ -249,7 +251,8 @@ async function readRateLimitsFromAppServer(input: {
         let json: unknown;
         try {
           json = JSON.parse(line);
-        } catch {
+        } catch (err) {
+          logCodingAgentWarning("Codex usage response parse failed", err);
           fail();
           return;
         }
@@ -303,7 +306,8 @@ export function createCodexUsageProbe(options: CodexUsageProbeOptions): CodexUsa
         ? await options.readRateLimits(signal)
         : await readRateLimitsFromAppServer({ command, cwd, env, signal });
       return [normalizeCodexRateLimits(raw, now())];
-    } catch {
+    } catch (err) {
+      logCodingAgentWarning("Codex usage probe failed", err);
       throw genericError();
     }
   };
