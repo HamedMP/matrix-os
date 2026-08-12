@@ -20,7 +20,7 @@ export function normalizeHomeRelativePath(homePath: string, resolvedPath: string
   const base = resolve(homePath);
   const target = resolve(resolvedPath);
   const rel = relative(base, target);
-  if (rel.startsWith("..") || isAbsolute(rel)) return null;
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
   return rel.split(sep).join("/");
 }
 

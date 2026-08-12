@@ -34,6 +34,22 @@ describe("Desktop typed file mutations", () => {
     expect(readFileSync(join(testDir, "projects", "notes.md"), "utf8")).toBe("");
   });
 
+  it("creates and reports a contained file whose name begins with two dots", async () => {
+    const result = await createFile(testDir, {
+      requestId,
+      parentDirectory: "projects",
+      name: "..notes.md",
+      kind: "file",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      path: "projects/..notes.md",
+      resultCode: "created",
+    });
+    expect(readFileSync(join(testDir, "projects", "..notes.md"), "utf8")).toBe("");
+  });
+
   it("renames a typed file without allowing an occupied target", async () => {
     writeFileSync(join(testDir, "projects", "old.md"), "content");
     const result = await renameFile(testDir, {
@@ -50,6 +66,23 @@ describe("Desktop typed file mutations", () => {
     });
     expect(existsSync(join(testDir, "projects", "old.md"))).toBe(false);
     expect(readFileSync(join(testDir, "projects", "new.md"), "utf8")).toBe("content");
+  });
+
+  it("renames and reports a contained file whose name begins with two dots", async () => {
+    writeFileSync(join(testDir, "projects", "old.md"), "content");
+    const result = await renameFile(testDir, {
+      requestId,
+      path: "projects/old.md",
+      name: "..new.md",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      path: "projects/..new.md",
+      resultCode: "renamed",
+    });
+    expect(existsSync(join(testDir, "projects", "old.md"))).toBe(false);
+    expect(readFileSync(join(testDir, "projects", "..new.md"), "utf8")).toBe("content");
   });
 
   it("rejects an occupied typed rename target without overwriting it", async () => {
