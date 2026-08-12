@@ -88,6 +88,7 @@ export interface CodingAgentRuntimeSummaryOptions {
     preview?: boolean;
     files?: boolean;
     sourceControl?: boolean;
+    providerUsage?: boolean;
   };
   projectSummaryTimeoutMs?: number;
   providerIds?: readonly string[];
@@ -412,6 +413,12 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsFiles", enabled: filesEnabled }),
           capability({ id: "codingAgentsSourceControl", enabled: sourceControlEnabled }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
+          ...(options.capabilities?.providerUsage === undefined
+            ? []
+            : [capability({
+                id: "codingAgentsUsageSummary",
+                enabled: options.capabilities.providerUsage,
+              })]),
           ...(projectWorkspaceConfigured
             ? [
                 capability({

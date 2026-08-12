@@ -1,4 +1,4 @@
-import type { AgentProviderSummary, SafeSetupAction } from "@matrix-os/contracts";
+import type { SafeSetupAction } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
 import type { useTabs } from "../../stores/tabs";
 
@@ -12,6 +12,11 @@ export type ProviderSetupCommand = {
   label: string;
   command: string;
   sessionName: string;
+};
+
+type ProviderSetupSource = {
+  id: string;
+  setupActions: SafeSetupAction[];
 };
 
 function safeSessionSegment(value: string): string {
@@ -41,7 +46,7 @@ function setupSessionName(providerId: string, actionId: string): string {
   return `${prefix}${segment || "agent"}-${suffix}`;
 }
 
-export function providerSetupCommands(providers: AgentProviderSummary[]): ProviderSetupCommand[] {
+export function providerSetupCommands(providers: ProviderSetupSource[]): ProviderSetupCommand[] {
   const commands: ProviderSetupCommand[] = [];
   for (const provider of providers) {
     for (const action of provider.setupActions) {

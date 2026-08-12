@@ -24,6 +24,7 @@ import { useThreads } from "../../stores/threads";
 import { kernelThreadAttentionCount } from "../../stores/unified-threads";
 import { useUi } from "../../stores/ui";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
+import ProviderUsageMenu from "./ProviderUsageMenu";
 
 function NavRow({
   icon,
@@ -220,6 +221,7 @@ export default function Sidebar() {
       </div>
 
       <div className="flex flex-col border-t" style={{ borderColor: "var(--border-subtle)" }}>
+        <ProviderUsageMenu collapsed={collapsed} />
         <RuntimeComputerMenu collapsed={collapsed} />
         <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"} px-2 pt-1`}>
           <NavRow icon={<Settings size={15} />} label="Settings" collapsed={collapsed} active={activeTab?.kind === "settings"} onClick={() => openTab({ kind: "settings", title: "Settings" })} />

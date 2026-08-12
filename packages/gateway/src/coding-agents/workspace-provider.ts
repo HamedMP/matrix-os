@@ -16,6 +16,7 @@ import { createPiCodingAgentProvider, type PiCodingAgentProviderOptions } from "
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
+import type { CodexUsageProbe } from "./codex-usage-probe.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &
   Partial<Pick<WorkspaceSessionOrchestrator, "sendInput">>;
@@ -39,6 +40,7 @@ export interface WorkspaceCodingAgentProviderOptions {
   runnable?: boolean;
   codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
   codexControl?: CodexControlClient;
+  codexUsageProbe?: CodexUsageProbe;
 }
 
 export interface WorkspaceCodingAgentProviderSetOptions {
@@ -46,6 +48,7 @@ export interface WorkspaceCodingAgentProviderSetOptions {
   runtime: WorkspaceRuntime;
   codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
   codexControl?: CodexControlClient;
+  codexUsageProbe?: CodexUsageProbe;
   homePath?: string;
   pi?: Omit<PiCodingAgentProviderOptions, "homePath">;
 }
@@ -196,6 +199,11 @@ export function createWorkspaceCodingAgentProvider(
 
   return {
     providerId,
+    ...(agent === "codex" && options.codexUsageProbe
+      ? {
+          getUsageSources: ({ now, signal }) => options.codexUsageProbe!({ now, signal }),
+        }
+      : {}),
     async getSummary({ now, signal }) {
       const executable = runnable && (
         agent !== "codex" || !options.codexEvents || (await options.codexEvents.healthCheck(signal)).ok
@@ -365,6 +373,7 @@ export function createWorkspaceCodingAgentProviderSet(
     runnable: agent === "codex" || agent === "claude",
     codexEvents: agent === "codex" ? options.codexEvents : undefined,
     codexControl: agent === "codex" ? options.codexControl : undefined,
+    codexUsageProbe: agent === "codex" ? options.codexUsageProbe : undefined,
     });
   });
   return {

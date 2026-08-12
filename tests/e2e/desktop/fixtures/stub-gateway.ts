@@ -7,6 +7,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import {
   AgentThreadSnapshotSchema,
   ProjectAgentWorkspaceSchema,
+  ProviderUsageResponseSchema,
   RuntimeSummarySchema,
   type AgentThreadSnapshot,
   type ProjectAgentWorkspace,
@@ -25,6 +26,8 @@ export interface StubGateway {
     codingAgentCreates: Array<Record<string, unknown>>;
     taskUpdates: Array<Record<string, unknown>>;
     runtimeSelections: string[];
+    providerUsageRequests: number;
+    providerUsageMode: "fresh" | "stale" | "unavailable";
   };
 }
 
@@ -350,6 +353,7 @@ export function codingAgentSummary(): RuntimeSummary {
       { id: "codingAgentsSourceControl", enabled: true },
       { id: "codingAgentsPreview", enabled: true },
       { id: "codingAgentsNativeMobileTerminal", enabled: true },
+      { id: "codingAgentsUsageSummary", enabled: true },
     ],
     providers: [
       {
@@ -441,6 +445,59 @@ export function codingAgentSummary(): RuntimeSummary {
   });
 }
 
+function providerUsageResponse(mode: StubGateway["state"]["providerUsageMode"]) {
+  const codex = mode === "unavailable"
+    ? {
+        id: "openai-chatgpt",
+        displayName: "OpenAI / ChatGPT",
+        linkedAgentProviderIds: ["codex"],
+        state: "unavailable" as const,
+        windows: [],
+        setupActions: [],
+      }
+    : {
+        id: "openai-chatgpt",
+        displayName: "OpenAI / ChatGPT",
+        linkedAgentProviderIds: ["codex"],
+        state: mode === "stale" ? "stale" as const : "available" as const,
+        accuracy: "provider_reported" as const,
+        windows: [
+          {
+            id: "five-hour",
+            label: "5-hour window",
+            remainingPercent: 72,
+            resetsAt: "2026-07-08T04:00:00.000Z",
+            windowMinutes: 300,
+          },
+          {
+            id: "seven-day",
+            label: "7-day window",
+            remainingPercent: 41,
+            resetsAt: "2026-07-14T00:00:00.000Z",
+            windowMinutes: 10_080,
+          },
+        ],
+        credits: { remaining: 12.5, unit: "USD" },
+        observedAt: NOW,
+        expiresAt: "2026-07-08T00:05:00.000Z",
+        setupActions: [],
+      };
+  return ProviderUsageResponseSchema.parse({
+    usageSources: [
+      codex,
+      {
+        id: "pi",
+        displayName: "Pi",
+        linkedAgentProviderIds: ["pi"],
+        state: "unsupported",
+        windows: [],
+        setupActions: [],
+      },
+    ],
+    serverTime: NOW,
+  });
+}
+
 export async function startStubGateway(): Promise<StubGateway> {
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   const state: StubGateway["state"] = {
@@ -451,6 +508,8 @@ export async function startStubGateway(): Promise<StubGateway> {
     codingAgentCreates: [],
     taskUpdates: [],
     runtimeSelections: [],
+    providerUsageRequests: 0,
+    providerUsageMode: "fresh",
   };
   let currentToken = TOKEN;
 
@@ -686,6 +745,11 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
     if (req.method === "GET" && path === "/api/coding-agents/summary") {
       json(res, 200, codingAgentSummary());
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/usage") {
+      state.providerUsageRequests += 1;
+      json(res, 200, providerUsageResponse(state.providerUsageMode));
       return;
     }
     if (

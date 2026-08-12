@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TabContent, { TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
+import { useUi } from "@desktop/renderer/src/stores/ui";
 
 const taskWorkspaceMock = vi.hoisted(() =>
   vi.fn(({ taskId, projectSlug }: { taskId: string; projectSlug?: string }) => (
@@ -14,6 +15,7 @@ const taskWorkspaceMock = vi.hoisted(() =>
     </button>
   )),
 );
+const embedHostMock = vi.hoisted(() => vi.fn(() => <div data-testid="embed-host" />));
 
 vi.mock("@desktop/renderer/src/features/project/ProjectTab", () => ({
   default: ({ projectSlug }: { projectSlug: string }) => (
@@ -26,6 +28,9 @@ vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
   default: () => <button type="button">Terminal body</button>,
 }));
+vi.mock("@desktop/renderer/src/features/embeds/EmbedHost", () => ({
+  default: embedHostMock,
+}));
 
 describe("TabContent", () => {
   beforeEach(() => {
@@ -37,6 +42,8 @@ describe("TabContent", () => {
       api: null,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useUi.setState(useUi.getInitialState(), true);
+    embedHostMock.mockClear();
   });
 
   afterEach(() => {
@@ -85,6 +92,21 @@ describe("TabContent", () => {
     render(<TabContent />);
 
     expect(screen.getByRole("heading", { name: /^(Apps|Loading apps)$/ })).toBeTruthy();
+  });
+
+  it("detaches a native Home embed while provider usage overlays it", () => {
+    useTabs.setState({
+      activeTabId: "home",
+      tabs: [{ id: "home", kind: "home", title: "Home", closable: false }],
+    });
+    useUi.setState({ providerUsageOpen: true });
+
+    render(<TabContent />);
+
+    expect(embedHostMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: "hosted-shell", active: false }),
+      undefined,
+    );
   });
 
   it("contains a task panel exception without blanking the desktop renderer", () => {

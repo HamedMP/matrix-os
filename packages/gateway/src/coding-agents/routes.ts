@@ -22,6 +22,7 @@ import {
   FileWriteResponseSchema,
   ProjectIdSchema,
   ProjectAgentWorkspaceSchema,
+  ProviderUsageResponseSchema,
   RequestIdSchema,
   ThreadIdSchema,
   TaskIdSchema,
@@ -48,6 +49,7 @@ import {
   type RequestPrincipal,
 } from "../request-principal.js";
 import type { CodingAgentRuntimeSummaryService } from "./runtime-summary.js";
+import type { CodingAgentProviderUsageService } from "./provider-usage.js";
 import {
   CodingAgentTurnError,
   CodingAgentThreadError,
@@ -79,6 +81,7 @@ import {
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
+  usage?: Pick<CodingAgentProviderUsageService, "getUsage">;
   projectWorkspaces?: {
     getProjectWorkspace(
       principal: RequestPrincipal,
@@ -118,6 +121,12 @@ const SummaryQuerySchema = z.object({
     message: "Invalid project id",
   }).optional(),
 }).strict();
+const UsageRawQuerySchema = z.object({
+  refresh: z.array(z.string()).length(1).transform((values) => values[0]!).optional(),
+}).strict();
+const UsageQuerySchema = z.object({
+  refresh: z.literal("1").optional(),
+}).strict();
 const ProjectWorkspaceProjectIdSchema = ProjectIdSchema.refine(
   (value) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(value),
   { message: "Invalid project id" },
@@ -146,6 +155,15 @@ function summaryUnavailable() {
   return SafeClientErrorSchema.parse({
     code: "summary_unavailable",
     safeMessage: "Runtime summary is temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function usageUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "usage_unavailable",
+    safeMessage: "Provider usage is temporarily unavailable. Try again.",
     retryable: true,
     recoveryActions: ["retry"],
   });
@@ -400,6 +418,28 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
       return c.json({ error: summaryUnavailable() }, 503);
     }
   });
+
+  if (deps.usage) {
+    app.get("/usage", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const query = UsageQuerySchema.parse(UsageRawQuerySchema.parse(c.req.queries()));
+        return c.json(ProviderUsageResponseSchema.parse(
+          await deps.usage!.getUsage(principal, { forceRefresh: query.refresh === "1" }),
+        ));
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        logCodingAgentWarning("provider usage route failed", err);
+        return c.json({ error: usageUnavailable() }, 503);
+      }
+    });
+  }
 
   if (deps.projectWorkspaces) {
     app.get("/projects/:projectId/workspace", async (c) => {

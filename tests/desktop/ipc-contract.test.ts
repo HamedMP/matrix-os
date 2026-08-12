@@ -30,6 +30,7 @@ describe("IPC contract", () => {
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
+      "runtime:get-provider-usage",
       "runtime:get-project-workspace",
       "runtime:list-computers",
       "runtime:select",
@@ -49,6 +50,29 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("validates provider usage IPC without allowing credential fields", () => {
+    const channel = INVOKE_CHANNELS["runtime:get-provider-usage"];
+    const response = {
+      usageSources: [{
+        id: "openai-chatgpt",
+        displayName: "OpenAI / ChatGPT",
+        linkedAgentProviderIds: ["codex"],
+        state: "available",
+        accuracy: "provider_reported",
+        windows: [{ id: "primary", label: "5-hour window", remainingPercent: 72 }],
+        observedAt: "2026-08-10T12:00:00.000Z",
+        setupActions: [],
+      }],
+      serverTime: "2026-08-10T12:00:00.000Z",
+    };
+
+    expect(channel.request.safeParse({}).success).toBe(true);
+    expect(channel.request.safeParse({ forceRefresh: true }).success).toBe(true);
+    expect(channel.request.safeParse({ forceRefresh: true, accessToken: "secret" }).success).toBe(false);
+    expect(channel.response.safeParse(response).success).toBe(true);
+    expect(channel.response.safeParse({ ...response, providerSecret: "secret" }).success).toBe(false);
   });
 
   it("validates trusted desktop thread stream IPC without credential fields", () => {

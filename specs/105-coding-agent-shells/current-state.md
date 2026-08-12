@@ -1,12 +1,42 @@
 # Current State: Coding Agent Shells
 
 **Branch stack**: implementation checkpoint merged to `main` through PR #869 (`056b3da668ed6d1753712120316d2d5accfafdcf`)
-**Updated**: 2026-07-13
+**Updated**: 2026-08-10
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 For the evidence-based checkpoint audit, see [completion-audit.md](./completion-audit.md).
 
 ## Summary
+
+### Provider Usage Remaining (MAT-265)
+
+The current branch adds a provider-neutral, owner-scoped usage summary without
+reclassifying Matrix token telemetry as subscription quota:
+
+- `GET /api/coding-agents/usage` is an authenticated Gateway route backed by
+  strict shared contracts, bounded probes, owner/runtime-scoped Postgres
+  last-good snapshots, generic public errors, and explicit available, stale,
+  setup-required, unavailable, and unsupported states.
+- Codex is the first exact adapter. The Gateway uses the version-pinned Codex
+  app-server `account/rateLimits/read` JSON-RPC contract and normalizes its
+  provider-reported five-hour/weekly windows and optional credit balance. A
+  version or payload mismatch fails closed.
+- Claude Code and Pi remain truthful status-only sources. Matrix OS does not
+  display an exact remaining percentage for them until a stable,
+  machine-readable provider quota contract is independently verified.
+- Electron main owns authenticated transport and strict response validation;
+  the renderer receives only normalized safe fields through
+  `runtime:get-provider-usage`.
+- Desktop renders one compact Usage Remaining control immediately above the
+  computer menu. It follows the active coding thread, then the configured
+  default provider, then the first ready provider; its popover lists all account
+  sources, windows, resets, credits, freshness, and safe setup actions without
+  changing provider preference.
+- Five-minute visible refresh, foreground refresh, one-minute open refresh,
+  runtime-generation guards, and synchronous runtime/sign-out clearing prevent
+  previous-owner or previous-computer usage from appearing in the new scope.
+  Retained values are explicitly labelled `Last known` and never use a filled
+  current-progress ring.
 
 ### Clarified Final-Version Gap
 

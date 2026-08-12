@@ -7,6 +7,7 @@ import { clearInspectorLayoutRuntime } from "../features/panels/inspector-layout
 import { clearPluginsRuntime } from "../features/plugins/plugins-store";
 import { clearProjectViewRuntime } from "./project-view";
 import { clearProjectWorkspaces } from "./project-workspaces";
+import { useProviderUsage } from "./provider-usage";
 import { clearCodingAgentRuntimeSelection } from "./coding-agent-workspace";
 import { clearDraftChats } from "./draft-chat";
 import { useFileTree } from "./file-tree";
@@ -85,6 +86,7 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
   clearCodingAgentRuntimeSelection();
   clearDraftChats();
   clearProjectWorkspaces();
+  useProviderUsage.getState().clear();
   clearProjectViewRuntime();
   clearInspectorLayoutRuntime();
   clearPluginsRuntime();
@@ -95,5 +97,6 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     composerOpen: false,
     paletteOpen: false,
     quickOpenOpen: false,
+    providerUsageOpen: false,
   });
 }

@@ -1,5 +1,7 @@
 export { createGateway } from "./server.js";
 export type { GatewayConfig, ServerMessage } from "./server.js";
+export { createGatewayCodingAgentProviderUsageService } from "./coding-agents/provider-usage-wiring.js";
+export type { GatewayCodingAgentProviderUsageOptions } from "./coding-agents/provider-usage-wiring.js";
 export { createProvisioner } from "./provisioner.js";
 export { createDispatcher } from "./dispatcher.js";
 export type {

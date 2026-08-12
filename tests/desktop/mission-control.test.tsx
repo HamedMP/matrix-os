@@ -8,6 +8,7 @@ import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-p
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useBoard, type Project } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useProviderUsage } from "../../desktop/src/renderer/src/stores/provider-usage";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 vi.mock("../../desktop/src/renderer/src/features/mission-control/Sidebar", () => ({
@@ -51,11 +52,18 @@ vi.mock("../../desktop/src/renderer/src/lib/kernel-wiring", () => ({
 }));
 
 describe("MissionControl", () => {
+  const providerUsageActions = {
+    ensureRuntimeScope: useProviderUsage.getState().ensureRuntimeScope,
+    refresh: useProviderUsage.getState().refresh,
+    clear: useProviderUsage.getState().clear,
+  };
+
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -79,6 +87,13 @@ describe("MissionControl", () => {
       createTaskOpen: false,
       composerOpen: false,
       paletteOpen: false,
+    });
+    useProviderUsage.setState({
+      status: "idle",
+      response: null,
+      runtimeScope: null,
+      error: null,
+      ...providerUsageActions,
     });
   });
 
@@ -183,5 +198,79 @@ describe("MissionControl", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
     expect(ensureRuntimeScope).toHaveBeenCalledWith(codingAgentRuntimeScope(useConnection.getState()));
     expect(ensureRuntimeScope.mock.invocationCallOrder[0]).toBeLessThan(refresh.mock.invocationCallOrder[0]!);
+  });
+
+  it("initializes provider usage for the authenticated runtime and refreshes while visible", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const api = { get: vi.fn() };
+    const ensureRuntimeScope = vi.fn();
+    const refresh = vi.fn(async () => undefined);
+    const clear = vi.fn();
+    useProviderUsage.setState({ ensureRuntimeScope, refresh, clear });
+    useBoard.setState({ loadProjects: vi.fn(async () => undefined) });
+    useCodingAgentWorkspace.setState({
+      summary: {
+        runtime: { id: "rt_primary", label: "Primary", status: "available" },
+        capabilities: [{ id: "codingAgentsUsageSummary", enabled: true }],
+        providers: [],
+        projects: { items: [], hasMore: false, limit: 20 },
+        activeThreads: { items: [], hasMore: false, limit: 20 },
+        attentionThreads: { items: [], hasMore: false, limit: 20 },
+        terminalSessions: { items: [], hasMore: false, limit: 20 },
+        previewSessions: { items: [], hasMore: false, limit: 50 },
+        recentActivity: { items: [], hasMore: false, limit: 20 },
+        limits: { maxPromptBytes: 16_384, maxAttachmentCount: 8, maxTerminalInputBytes: 8_192, maxListItems: 20 },
+        serverTime: "2026-08-10T12:00:00.000Z",
+      },
+      refresh: vi.fn(async () => undefined),
+      notificationPreferencesStatus: "ready",
+    });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: api as never,
+    });
+
+    render(<MissionControl />);
+    const scope = codingAgentRuntimeScope(useConnection.getState());
+    expect(ensureRuntimeScope).toHaveBeenCalledWith(scope);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(refresh).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+  });
+
+  it("clears provider usage at the sign-out boundary", async () => {
+    const clear = vi.fn();
+    useProviderUsage.setState({ clear });
+    useBoard.setState({ loadProjects: vi.fn(async () => undefined) });
+    useCodingAgentWorkspace.setState({ summary: null });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: { get: vi.fn() } as never,
+    });
+
+    render(<MissionControl />);
+    act(() => {
+      useConnection.setState({ status: "signed-out", api: null, handle: null });
+    });
+
+    expect(clear).toHaveBeenCalled();
   });
 });

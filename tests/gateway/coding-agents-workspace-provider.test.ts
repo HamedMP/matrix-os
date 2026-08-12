@@ -138,6 +138,9 @@ describe("coding agent workspace provider", () => {
 printf 'connect-args=%s\\n' "$*" >> "$MATRIX_TEST_TRACE"
 exit 130
 `);
+      await writeFile(join(runtimeBin, "sh"), `#!/bin/sh
+exec /bin/sh "$@"
+`);
       await writeFile(join(runtimeBin, "bash"), `#!/bin/sh
 printf 'bash-args=%s\\n' "$*" >> "$MATRIX_TEST_TRACE"
 printf 'bash-prompt=%s\\n' "\${MATRIX_TERMINAL_PROMPT:-}" >> "$MATRIX_TEST_TRACE"
@@ -146,6 +149,7 @@ exit 0
       await Promise.all([
         chmod(wrapperPath, 0o700),
         chmod(join(runtimeBin, "codex"), 0o700),
+        chmod(join(runtimeBin, "sh"), 0o700),
         chmod(join(runtimeBin, "bash"), 0o700),
       ]);
 
@@ -160,6 +164,7 @@ exit 0
           MATRIX_NODE_PREFIX: join(testDir, "runtime"),
           MATRIX_TERMINAL_PROMPT: "owner-handle:\\w$ ",
           MATRIX_TEST_TRACE: tracePath,
+          PATH: runtimeBin,
           SHELL: join(runtimeBin, "bash"),
         },
       });
@@ -274,6 +279,38 @@ exit 0
     ]));
     expect(runtime.startSession).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({ agent: "claude" }),
+    }));
+  });
+
+  it("exposes account usage only through the Codex adapter", async () => {
+    const codexUsageProbe = vi.fn(async () => [{
+      id: "openai-chatgpt",
+      displayName: "OpenAI / ChatGPT",
+      linkedAgentProviderIds: ["codex"],
+      state: "available" as const,
+      accuracy: "provider_reported" as const,
+      windows: [{ id: "primary", label: "5-hour window", remainingPercent: 72 }],
+      observedAt: baseNow.toISOString(),
+      setupActions: [],
+    }]);
+    const providers = createWorkspaceCodingAgentProviderSet({
+      agents: ["claude", "codex"],
+      runtime: { startSession: vi.fn(), stopSession: vi.fn() },
+      codexUsageProbe,
+    });
+    const [claude, codex] = providers.registryProviders;
+
+    expect(claude?.getUsageSources).toBeUndefined();
+    await expect(codex?.getUsageSources?.({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "openai-chatgpt", state: "available" }),
+    ]));
+    expect(codexUsageProbe).toHaveBeenCalledWith(expect.objectContaining({
+      now: expect.any(Function),
+      signal: expect.any(AbortSignal),
     }));
   });
 

@@ -94,6 +94,7 @@ describe("coding-agent provider registry", () => {
 
   it.each([
     ["missing", "setup_required", "missing", "missing"],
+    ["auth_required", "auth_required", "installed", "missing"],
     ["expired", "auth_required", "installed", "expired"],
     ["revoked", "auth_required", "installed", "expired"],
     ["failed", "unavailable", "failed", "unknown"],
