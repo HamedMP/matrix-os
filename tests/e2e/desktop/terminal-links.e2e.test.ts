@@ -73,7 +73,7 @@ suite("native Desktop Terminal links", () => {
     });
 
     const plainUrl = `https://example.org/desktop-terminal/${"segment/".repeat(12)}final-check`;
-    const plainLinkTarget = "final-check";
+    const plainLinkTarget = "https://example.org/desktop-terminal/";
     gateway.sendTerminalOutput(`\r\n${plainUrl}\r\n`);
     await page.evaluate(() => {
       Object.defineProperty(window, "__openedTerminalLinks", {

@@ -7,6 +7,7 @@ import {
   activateDesktopTerminalLink,
   copyDesktopTerminalLink,
   findDesktopTerminalLinkAtCell,
+  findDesktopTerminalLinkAtPointer,
   resolveDesktopTerminalLink,
 } from "@desktop/renderer/src/features/terminal/terminal-link-actions";
 
@@ -141,5 +142,46 @@ describe("desktop terminal link actions", () => {
       bufferLineNumber: 1,
       column: 2,
     })).toBeNull();
+  });
+
+  it("prefers the complete wrapped buffer URL over a truncated OSC hover URL", () => {
+    const element = document.createElement("div");
+    const screen = document.createElement("div");
+    screen.className = "xterm-screen";
+    screen.getBoundingClientRect = () => ({
+      bottom: 40,
+      height: 40,
+      left: 0,
+      right: 200,
+      top: 0,
+      width: 200,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    element.appendChild(screen);
+    const lines = [
+      { isWrapped: false, translateToString: () => "https://example.org/" },
+      { isWrapped: true, translateToString: () => "desktop-terminal" },
+    ];
+    const terminal = {
+      cols: 20,
+      rows: 2,
+      element,
+      buffer: {
+        active: {
+          viewportY: 0,
+          length: lines.length,
+          getLine: (index: number) => lines[index],
+        },
+      },
+    } as never;
+    const truncatedHover = resolveDesktopTerminalLink("https://example.org/");
+
+    expect(findDesktopTerminalLinkAtPointer(terminal, 25, 10, truncatedHover)).toEqual({
+      ...LINK,
+      url: "https://example.org/desktop-terminal",
+      displayPath: "/desktop-terminal",
+    });
   });
 });

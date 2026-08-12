@@ -185,6 +185,16 @@ export function findDesktopTerminalLinkAtCell(
   return null;
 }
 
+export function findDesktopTerminalLinkAtPointer(
+  terminal: Pick<Terminal, "cols" | "rows" | "element" | "buffer">,
+  clientX: number,
+  clientY: number,
+  fallbackLink: TerminalLinkEntry | null = null,
+): TerminalLinkEntry | null {
+  const cell = desktopTerminalCellFromPointer(terminal, clientX, clientY);
+  return (cell ? findDesktopTerminalLinkAtCell(terminal, cell) : null) ?? fallbackLink;
+}
+
 export class DesktopWebLinkProvider implements ILinkProvider {
   constructor(
     private readonly terminal: Pick<Terminal, "buffer">,

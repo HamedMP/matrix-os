@@ -17,8 +17,7 @@ import {
   DesktopWebLinkProvider,
   activateDesktopTerminalLink,
   copyDesktopTerminalLink,
-  desktopTerminalCellFromPointer,
-  findDesktopTerminalLinkAtCell,
+  findDesktopTerminalLinkAtPointer,
   openDesktopTerminalLink,
   resolveDesktopTerminalLink,
   type TerminalLinkEntry,
@@ -93,9 +92,12 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       }),
     );
     const linkAtPointer = (event: MouseEvent): TerminalLinkEntry | null => {
-      const cell = desktopTerminalCellFromPointer(terminal, event.clientX, event.clientY);
-      return hoveredLinkRef.current
-        ?? (cell ? findDesktopTerminalLinkAtCell(terminal, cell) : null);
+      return findDesktopTerminalLinkAtPointer(
+        terminal,
+        event.clientX,
+        event.clientY,
+        hoveredLinkRef.current,
+      );
     };
     const onLinkMouseUp = (event: MouseEvent) => {
       if (event.button !== 0 && event.button !== 2) return;
