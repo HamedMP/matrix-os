@@ -8,6 +8,10 @@ import { registerFileRoutes } from "../../packages/gateway/src/server/file-route
 import { FileBatchMoveService } from "../../packages/gateway/src/file-management/batch-service.js";
 import { FileBatchPreflightUnavailableError } from "../../packages/gateway/src/file-management/preflight.js";
 import {
+  TrashManifestQueueCapacityError,
+  TrashManifestQueueClosedError,
+} from "../../packages/gateway/src/trash.js";
+import {
   MissingRequestPrincipalError,
   RequestPrincipalMisconfiguredError,
 } from "../../packages/gateway/src/request-principal.js";
@@ -197,6 +201,83 @@ describe("file-management HTTP routes", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(legacyRenameFile).toHaveBeenCalledWith("/owner/home", "projects/old.md", "projects/new.md");
     expect(typedRenameFile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { from: "../outside.md", to: "projects/new.md" },
+    { from: "/absolute.md", to: "projects/new.md" },
+    { from: "projects/old.md", to: "projects\\new.md" },
+  ])("rejects unsafe legacy rename paths at the route boundary", async (body) => {
+    const legacyRenameFile = vi.fn();
+    const app = new Hono();
+    registerFileManagementRoutes(app, {
+      homePath: "/owner/home",
+      getOwnerId: () => "owner-a",
+      legacyRenameFile,
+    });
+
+    const response = await app.request(jsonRequest("/api/files/rename", body));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid request", code: "invalid_request" });
+    expect(legacyRenameFile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    new TrashManifestQueueCapacityError(),
+    new TrashManifestQueueClosedError(),
+  ])("maps typed Trash queue admission failures to temporary unavailability", async (queueError) => {
+    const trashService = {
+      trash: vi.fn().mockRejectedValue(queueError),
+      delete: vi.fn(),
+      list: vi.fn(),
+      restore: vi.fn(),
+      empty: vi.fn(),
+      close: vi.fn(),
+    };
+    const app = new Hono();
+    registerFileManagementRoutes(app, {
+      homePath: "/owner/home",
+      getOwnerId: () => "owner-a",
+      trashService,
+    });
+
+    const response = await app.request(jsonRequest("/api/files/batch/trash", {
+      requestId,
+      sources: ["projects/old.md"],
+    }));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "File operation unavailable",
+      code: "operation_unavailable",
+    });
+  });
+
+  it.each([
+    new TrashManifestQueueCapacityError(),
+    new TrashManifestQueueClosedError(),
+  ])("maps legacy Trash queue admission failures to temporary unavailability", async (queueError) => {
+    const trashService = {
+      trash: vi.fn(),
+      delete: vi.fn().mockRejectedValue(queueError),
+      list: vi.fn(),
+      restore: vi.fn(),
+      empty: vi.fn(),
+      close: vi.fn(),
+    };
+    const app = new Hono();
+    registerFileRoutes(app, { homePath: "/owner/home", trashService });
+
+    const response = await app.request(jsonRequest("/api/files/delete", {
+      path: "projects/legacy.md",
+    }));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "File operation unavailable",
+      code: "operation_unavailable",
+    });
   });
 
   it("routes move preflight and execute through one service and requires the fingerprint", async () => {

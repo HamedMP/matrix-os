@@ -304,6 +304,32 @@ describe("FileBatchTrashService", () => {
       .rejects.toBeInstanceOf(FileBatchTrashUnavailableError);
   });
 
+  it.each(["capacity", "closed"] as const)(
+    "surfaces manifest queue %s as operation unavailable instead of an item failure",
+    async (scenario) => {
+      const manifestQueue = new TrashManifestQueue({ maxPending: 1 });
+      let release: (() => void) | undefined;
+      let blocked: Promise<void> | undefined;
+      if (scenario === "capacity") {
+        blocked = manifestQueue.run(homePath, () => new Promise<void>((resolve) => {
+          release = resolve;
+        }));
+        await Promise.resolve();
+      } else {
+        await manifestQueue.close();
+      }
+      const constrained = new FileBatchTrashService({ manifestQueue, moveCapability: capability });
+
+      await expect(constrained.trash(input(nextRequestId(), ["projects/inbox/later.md"])))
+        .rejects.toMatchObject({ code: "operation_unavailable" });
+
+      release?.();
+      if (blocked) await blocked;
+      await constrained.close();
+      if (scenario === "capacity") await manifestQueue.close();
+    },
+  );
+
   it("shares one close promise and does not resolve a concurrent close before active Trash drains", async () => {
     writeFileSync(join(homePath, "projects", "inbox", "drain.md"), "drain");
     let releaseMove!: () => void;

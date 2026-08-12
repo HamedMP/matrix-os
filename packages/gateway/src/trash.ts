@@ -176,6 +176,10 @@ export async function fileDelete(
       return { ok: false, error: "Trash operation failed", status: 409 };
     });
   } catch (error: unknown) {
+    if (error instanceof TrashManifestQueueCapacityError
+        || error instanceof TrashManifestQueueClosedError) {
+      throw error;
+    }
     const requestContext = dependencies.requestId ? ` for request ${dependencies.requestId}` : "";
     console.error(`[trash] Delete failed${requestContext}:`, safeLogError(error));
     return { ok: false, error: "Trash operation failed", status: 500 };

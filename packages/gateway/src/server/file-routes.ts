@@ -22,6 +22,10 @@ import { createFileBlobRoutes } from "../file-blob-routes.js";
 import { fileSearch } from "../file-search.js";
 import type { FileBatchTrashRouteService } from "./file-management-routes.js";
 import { listProjects } from "../projects.js";
+import {
+  TrashManifestQueueCapacityError,
+  TrashManifestQueueClosedError,
+} from "../trash.js";
 
 const LegacyTrashDeleteRequestSchema = z.object({
   path: FileManagementPathSchema,
@@ -305,6 +309,14 @@ function invalidLegacyTrashRequest(c: Parameters<MiddlewareHandler>[0]) {
 }
 
 function legacyTrashError(c: Parameters<MiddlewareHandler>[0], error: unknown) {
+  if (error instanceof TrashManifestQueueCapacityError
+      || error instanceof TrashManifestQueueClosedError) {
+    console.error("[gateway] Legacy Trash operation unavailable:", error.message);
+    return c.json({
+      error: "File operation unavailable",
+      code: "operation_unavailable",
+    }, 503);
+  }
   console.error("[gateway] Legacy Trash operation failed:", error instanceof Error ? error.message : String(error));
   return c.json({ error: "Trash operation failed" }, 500);
 }

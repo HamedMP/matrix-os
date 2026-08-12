@@ -6,6 +6,7 @@ import {
   BatchMoveRequestSchema,
   BatchTrashRequestSchema,
   CreateFileRequestSchema,
+  FileManagementPathSchema,
   RenameFileRequestSchema,
 } from "../file-management/contracts.js";
 import {
@@ -25,6 +26,10 @@ import {
   FileOperationRequestIdConflictError,
 } from "../file-management/result-cache.js";
 import {
+  TrashManifestQueueCapacityError,
+  TrashManifestQueueClosedError,
+} from "../trash.js";
+import {
   createFile as createTypedFile,
   fileRename as renameLegacyFile,
   renameFile as renameTypedFile,
@@ -37,8 +42,8 @@ import {
 
 const FILE_MANAGEMENT_BODY_LIMIT_BYTES = 128 * 1024;
 const LegacyRenameRequestSchema = z.object({
-  from: z.string().min(1).max(4_096),
-  to: z.string().min(1).max(4_096),
+  from: FileManagementPathSchema,
+  to: FileManagementPathSchema,
 }).strict();
 const RenameRouteRequestSchema = z.union([
   RenameFileRequestSchema,
@@ -236,6 +241,8 @@ function routeError(c: Context, error: unknown, operation: string, requestId: st
     error instanceof FileOperationCacheCapacityError
     || error instanceof FileBatchMoveUnavailableError
     || error instanceof FileBatchTrashUnavailableError
+    || error instanceof TrashManifestQueueCapacityError
+    || error instanceof TrashManifestQueueClosedError
   ) {
     console.error(`[file-management] ${operation} unavailable for request ${requestId}:`, safeLogError(error));
     return c.json({ error: "File operation unavailable", code: "operation_unavailable" }, 503);
