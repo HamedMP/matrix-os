@@ -247,6 +247,10 @@ export async function trashRestore(
       return { ok: true, restoredTo: entry.originalPath };
     });
   } catch (error: unknown) {
+    if (error instanceof TrashManifestQueueCapacityError
+        || error instanceof TrashManifestQueueClosedError) {
+      throw error;
+    }
     console.error("[trash] Restore failed:", safeLogError(error));
     return { ok: false, error: "Trash operation failed", status: 500 };
   }

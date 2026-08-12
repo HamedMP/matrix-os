@@ -182,6 +182,16 @@ describe("trashRestore", () => {
     });
   });
 
+  it("propagates queue shutdown so legacy routes can return retryable unavailability", async () => {
+    writeFileSync(join(testDir, "closed.md"), "content");
+    const deleted = await fileDelete(testDir, "closed.md", { moveCapability });
+    const queue = new TrashManifestQueue();
+    await queue.close();
+
+    await expect(trashRestore(testDir, deleted.trashPath!, queue))
+      .rejects.toBeInstanceOf(TrashManifestQueueClosedError);
+  });
+
   it("returns 404 for non-existent trash path", async () => {
     const result = await trashRestore(testDir, ".trash/nonexistent.md");
     expect(result).toEqual({ ok: false, error: "Not found in trash", status: 404 });
