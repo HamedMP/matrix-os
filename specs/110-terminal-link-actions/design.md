@@ -57,6 +57,9 @@ Its state model also causes three behavioral defects:
 - Continue strict Claude/Codex classification. A provider-shaped URL that fails
   strict auth validation is rejected rather than downgraded to an ordinary web
   link.
+- Bind Claude sign-in classification to the known Claude Code OAuth client and,
+  for the current PKCE flow, the platform callback. An arbitrary non-empty
+  `client_id` is not sufficient for trusted provider presentation.
 
 ### 2. Compact Links Tray
 
@@ -253,8 +256,8 @@ Write failing tests before implementation for:
 - **Source of truth:** bounded normalized PTY link entries in pane-local reducer
   state; raw terminal output remains untrusted input.
 - **Auth source of truth:** provider auth URLs receive trusted sign-in treatment
-  only after strict provider-specific validation; Matrix never completes or
-  accepts the OAuth callback itself.
+  only after strict provider-specific host, path, client, callback, state, and
+  PKCE validation; Matrix never completes or accepts the OAuth callback itself.
 - **Open boundary:** every URL requires an explicit user action and opens through
   the existing browser handoff; detection never triggers navigation.
 - **Persistence:** links are ephemeral per terminal pane and are not written to

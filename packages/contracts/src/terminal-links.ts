@@ -1,6 +1,8 @@
 const MAX_URL_LENGTH = 2048;
 const OAUTH_STATE_PATTERN = /^[A-Za-z0-9_-]+$/;
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
+const LEGACY_CLAUDE_CODE_CLIENT_ID = "claude-cli";
+const CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_CODE_CALLBACK_URL = "https://platform.claude.com/oauth/code/callback";
 const TERMINAL_URL_PATTERN = /https?:\/\/[^\s\\<>"')\]}]+/g;
 
@@ -56,10 +58,18 @@ function isTrustedClaudeAuthUrl(url: URL): boolean {
     && !url.searchParams.has("redirect");
   if (!hasTrustedEnvelope) return false;
 
-  if (url.pathname === "/oauth/authorize") return true;
+  if (url.pathname === "/oauth/authorize") {
+    return (
+      url.origin === "https://claude.ai"
+      && url.searchParams.get("client_id") === LEGACY_CLAUDE_CODE_CLIENT_ID
+      && !url.searchParams.has("redirect_uri")
+    );
+  }
   const codeChallenge = url.searchParams.get("code_challenge");
   return (
-    url.pathname === "/cai/oauth/authorize"
+    url.origin === "https://claude.com"
+    && url.pathname === "/cai/oauth/authorize"
+    && url.searchParams.get("client_id") === CLAUDE_CODE_CLIENT_ID
     && url.searchParams.get("code") === "true"
     && url.searchParams.get("redirect_uri") === CLAUDE_CODE_CALLBACK_URL
     && url.searchParams.get("code_challenge_method") === "S256"

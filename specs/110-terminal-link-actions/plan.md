@@ -19,7 +19,7 @@ deferred to [MAT-295](https://linear.app/matrix-os/issue/MAT-295/add-a-first-cla
 - Use TDD for every behavior change: failing test, observed red result, minimal implementation, green result, refactor.
 - Accept only normalized `http:` and `https:` URLs without credentials, capped at 2,048 characters.
 - Retain at most 20 unique links per terminal pane; do not introduce an unbounded `Map` or `Set`.
-- Provider-shaped URLs receive trusted Claude/Codex labels only when the strict existing validator accepts them.
+- Provider-shaped URLs receive trusted Claude/Codex labels only when the strict existing validator accepts them, including the known OAuth client and callback binding for Claude Code.
 - Never open a URL automatically; every navigation requires an explicit user action.
 - Do not expose full OAuth query parameters visually, in logs, screenshots, or online evidence.
 - Use shell design tokens and existing Lucide icons; do not add dependencies or ad-hoc assets.

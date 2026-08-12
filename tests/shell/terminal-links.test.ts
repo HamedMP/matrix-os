@@ -71,7 +71,7 @@ describe("terminal links", () => {
     const challenge = "A".repeat(43);
     const claude = [
       "https://claude.com/cai/oauth/authorize?code=true",
-      "&client_id=claude-cli&response_type=code",
+      "&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code",
       "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
       `&code_challenge=${challenge}&code_challenge_method=S256&state=state_456`,
     ].join("");

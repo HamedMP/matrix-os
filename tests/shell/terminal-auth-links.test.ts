@@ -20,6 +20,15 @@ describe("terminal auth links", () => {
     });
   });
 
+  it("rejects legacy Claude OAuth URLs for an unexpected client or callback", () => {
+    expect(extractTrustedTerminalAuthLink(
+      "https://claude.ai/oauth/authorize?response_type=code&client_id=attacker-client&state=state_123",
+    )).toBeNull();
+    expect(extractTrustedTerminalAuthLink(
+      "https://claude.ai/oauth/authorize?response_type=code&client_id=claude-cli&state=state_123&redirect_uri=https%3A%2F%2Fevil.example%2Fcallback",
+    )).toBeNull();
+  });
+
   it("extracts the current Claude Code PKCE login URL", () => {
     const challenge = "A".repeat(43);
     const raw = [
@@ -45,6 +54,19 @@ describe("terminal auth links", () => {
       "&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e",
       "&response_type=code",
       "&redirect_uri=https%3A%2F%2Fevil.example%2Fcallback",
+      `&code_challenge=${"A".repeat(43)}&code_challenge_method=S256`,
+      "&state=state_456",
+    ].join("");
+
+    expect(extractTrustedTerminalAuthLink(raw)).toBeNull();
+  });
+
+  it("rejects a current Claude Code URL with an unexpected OAuth client", () => {
+    const raw = [
+      "https://claude.com/cai/oauth/authorize?code=true",
+      "&client_id=attacker-client",
+      "&response_type=code",
+      "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
       `&code_challenge=${"A".repeat(43)}&code_challenge_method=S256`,
       "&state=state_456",
     ].join("");
