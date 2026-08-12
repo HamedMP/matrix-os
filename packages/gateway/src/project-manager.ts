@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type Dirent } from "node:fs";
 import { access, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
+import { atomicCreateJson, atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
 import { containsDeniedFileApiPath, resolveExistingFileApiPath } from "./path-security.js";
 
 export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -108,6 +108,7 @@ function createRequestFingerprint(input: {
   mode: CreateProjectMode;
   slug: string;
   name?: string;
+  localPath?: string;
   repositoryUrl?: string;
   branch?: string;
   ownerScope: OwnerScope;
@@ -208,6 +209,14 @@ function projectPath(homePath: string, slug: string): string {
   return join(homePath, "projects", slug);
 }
 
+function projectDeletionTombstoneDir(homePath: string): string {
+  return join(homePath, "projects", ".deleting");
+}
+
+function projectDeletionTombstonePath(homePath: string, slug: string): string {
+  return join(projectDeletionTombstoneDir(homePath), `${slug}.json`);
+}
+
 // OS-owned subtrees that must never become an agent-accessible project root.
 // A folder project's localPath is handed to shells and coding-agent sandboxes
 // as a workspace cwd, so granting these would expose kernel/agent state.
@@ -247,6 +256,20 @@ async function readProjectConfig(homePath: string, slug: string): Promise<Projec
   try {
     const config = await readJsonFile<ProjectConfig | Omit<ProjectConfig, "kind">>(
       join(projectPath(homePath, slug), "config.json"),
+    );
+    return normalizeProjectConfig(homePath, config);
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function readProjectDeletionTombstone(homePath: string, slug: string): Promise<ProjectConfig | null> {
+  try {
+    const config = await readJsonFile<ProjectConfig | Omit<ProjectConfig, "kind">>(
+      projectDeletionTombstonePath(homePath, slug),
     );
     return normalizeProjectConfig(homePath, config);
   } catch (err: unknown) {
@@ -363,8 +386,10 @@ export function createProjectManager(options: {
           }
         }
         const metadataPath = projectPath(homePath, slug);
+        const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+        const fingerprint = createRequestFingerprint({ mode, slug, name, localPath: realLocalPath, ownerScope });
         return withProjectLock(slug, async () => {
-          if (await pathExists(metadataPath)) {
+          if (await pathExists(projectDeletionTombstonePath(homePath, slug))) {
             return genericError(409, "slug_conflict", "Project slug already exists");
           }
           await mkdir(metadataPath, { recursive: true });
@@ -381,9 +406,23 @@ export function createProjectManager(options: {
             localPath: realLocalPath,
             addedAt: timestamp,
             updatedAt: timestamp,
-            ownerScope: input.ownerScope ?? { type: "user", id: "local" },
+            ownerScope,
+            createRequestId: input.clientRequestId,
+            createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           };
-          await atomicWriteJson(join(metadataPath, "config.json"), project);
+          const created = await atomicCreateJson(join(metadataPath, "config.json"), project);
+          if (!created) {
+            const existing = await readProjectConfig(homePath, slug);
+            const idempotentProject = isIdempotentProjectRetry({
+              existing,
+              clientRequestId: input.clientRequestId,
+              fingerprint,
+            });
+            if (idempotentProject) {
+              return { ok: true, status: 200, project: idempotentProject };
+            }
+            return genericError(409, "slug_conflict", "Project slug already exists");
+          }
           return { ok: true, status: 201, project };
         });
       }
@@ -400,7 +439,10 @@ export function createProjectManager(options: {
         const fingerprint = createRequestFingerprint({ mode, slug, name, ownerScope });
         return withProjectLock(slug, async () => {
           const targetProjectPath = projectPath(homePath, slug);
-          if (await pathExists(targetProjectPath)) {
+          if (
+            await pathExists(targetProjectPath)
+            || await pathExists(projectDeletionTombstonePath(homePath, slug))
+          ) {
             const existing = await readProjectConfig(homePath, slug);
             const idempotentProject = isIdempotentProjectRetry({
               existing,
@@ -453,7 +495,10 @@ export function createProjectManager(options: {
       });
       return withProjectLock(slug, async () => {
         const targetProjectPath = projectPath(homePath, slug);
-        if (await pathExists(targetProjectPath)) {
+        if (
+          await pathExists(targetProjectPath)
+          || await pathExists(projectDeletionTombstonePath(homePath, slug))
+        ) {
           const existing = await readProjectConfig(homePath, slug);
           const idempotentProject = isIdempotentProjectRetry({
             existing,
@@ -575,6 +620,25 @@ export function createProjectManager(options: {
         const project = await readProjectConfig(homePath, entry.name);
         if (project?.deletingAt) projects.push(project);
       }
+      let tombstoneEntries: Dirent[];
+      try {
+        tombstoneEntries = await readdir(projectDeletionTombstoneDir(homePath), { withFileTypes: true });
+      } catch (err: unknown) {
+        if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+          throw err;
+        }
+        tombstoneEntries = [];
+      }
+      for (const entry of tombstoneEntries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        const slug = entry.name.slice(0, -".json".length);
+        if (!PROJECT_SLUG_REGEX.test(slug)) continue;
+        const project = await readProjectDeletionTombstone(homePath, slug);
+        if (!project?.deletingAt) continue;
+        const duplicateIndex = projects.findIndex((candidate) => candidate.slug === project.slug);
+        if (duplicateIndex >= 0) projects[duplicateIndex] = project;
+        else projects.push(project);
+      }
       projects.sort((a, b) => a.deletingAt!.localeCompare(b.deletingAt!));
       return { projects, nextCursor: null };
     },
@@ -597,7 +661,8 @@ export function createProjectManager(options: {
       if (!SlugSchema.safeParse(input.slug).success) {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
-      const project = await readProjectConfig(homePath, input.slug);
+      const project = await readProjectConfig(homePath, input.slug)
+        ?? await readProjectDeletionTombstone(homePath, input.slug);
       if (!project || !ownerScopeMatches(project.ownerScope, input.ownerScope)) {
         return genericError(404, "not_found", "Project was not found");
       }
@@ -625,6 +690,11 @@ export function createProjectManager(options: {
         else updated.deletingAt = input.deletingAt;
       }
       await atomicWriteJson(join(projectPath(homePath, input.slug), "config.json"), updated);
+      if (updated.deletingAt) {
+        await atomicWriteJson(projectDeletionTombstonePath(homePath, input.slug), updated);
+      } else {
+        await rm(projectDeletionTombstonePath(homePath, input.slug), { force: true });
+      }
       return { ok: true, project: updated };
     },
 
@@ -634,7 +704,14 @@ export function createProjectManager(options: {
     }): Promise<{ ok: true } | Failure> {
       const current = await this.getProjectForLifecycle(input);
       if (!current.ok) return current;
+      if (current.project.deletingAt) {
+        await atomicWriteJson(
+          projectDeletionTombstonePath(homePath, input.slug),
+          current.project,
+        );
+      }
       await rm(projectPath(homePath, input.slug), { recursive: true, force: true });
+      await rm(projectDeletionTombstonePath(homePath, input.slug), { force: true });
       return { ok: true };
     },
 

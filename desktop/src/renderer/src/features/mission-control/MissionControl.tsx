@@ -17,6 +17,7 @@ import { useGlobalShortcuts } from "./shortcuts";
 import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
+import DesktopUpdateExperience from "../updates/DesktopUpdateExperience";
 
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
@@ -126,6 +127,7 @@ export default function MissionControl() {
       <CommandPalette />
       <QuickOpen />
       <CreateProjectDialog open={createProjectOpen} onClose={() => setCreateProjectOpen(false)} />
+      <DesktopUpdateExperience />
     </div>
   );
 }

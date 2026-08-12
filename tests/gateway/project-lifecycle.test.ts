@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -184,6 +184,34 @@ describe("project lifecycle", () => {
     await expect(service.recoverDeletingProjects()).resolves.toEqual({ recovered: 1, failed: 0 });
     expect(cleanupRelatedState).toHaveBeenCalledWith(
       expect.objectContaining({ slug: "customer-app" }),
+      expect.objectContaining({ userId: principal.userId }),
+    );
+    await expect(stat(join(homePath, "projects", "customer-app"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("recovers deletion after a partial removal erases the managed config", async () => {
+    const projectManager = await createScratch();
+    await projectManager.setProjectLifecycleState({
+      slug: "customer-app",
+      ownerScope: { type: "user", id: principal.userId },
+      deletingAt: "2026-08-06T13:00:00.000Z",
+    });
+    await writeFile(
+      join(homePath, "projects", "customer-app", "repo", "residual.txt"),
+      "partial deletion residue",
+    );
+    await rm(join(homePath, "projects", "customer-app", "config.json"));
+
+    const cleanupRelatedState = vi.fn(async () => undefined);
+    const service = createProjectLifecycleService({
+      projectManager,
+      findBlockers: async () => [],
+      cleanupRelatedState,
+    });
+
+    await expect(service.recoverDeletingProjects()).resolves.toEqual({ recovered: 1, failed: 0 });
+    expect(cleanupRelatedState).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: "customer-app", deletingAt: "2026-08-06T13:00:00.000Z" }),
       expect.objectContaining({ userId: principal.userId }),
     );
     await expect(stat(join(homePath, "projects", "customer-app"))).rejects.toMatchObject({ code: "ENOENT" });

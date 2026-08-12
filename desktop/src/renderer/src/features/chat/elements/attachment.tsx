@@ -146,7 +146,7 @@ function AttachmentAction({ className, type = "button", ...props }: React.Compon
       data-slot="attachment-action"
       type={type}
       className={cn(
-        "flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]",
+        "flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--text-tertiary)]",
         className,
       )}
       {...props}

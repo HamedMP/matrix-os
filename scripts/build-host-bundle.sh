@@ -33,7 +33,7 @@ GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE
 UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.sh}"
 
 rm -rf "$DIST_DIR"
-mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd"
+mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd" "$STAGE_DIR/user-systemd"
 
 pnpm install --frozen-lockfile
 pnpm rebuild node-pty
@@ -92,6 +92,23 @@ ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
   exit 1
 }
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
+TERMINAL_RUNTIME_GENERATION="$(
+  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
+    "$STAGE_DIR/bin/zellij" \
+    "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs" \
+    "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-attach.mjs"
+)"
+TERMINAL_RUNTIME_GENERATION_DIR="$STAGE_DIR/terminal-runtime/generations/$TERMINAL_RUNTIME_GENERATION"
+mkdir -p "$TERMINAL_RUNTIME_GENERATION_DIR"
+install -m 0755 "$STAGE_DIR/bin/zellij" "$TERMINAL_RUNTIME_GENERATION_DIR/zellij"
+install -m 0755 \
+  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs" \
+  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-user-keeper.mjs"
+install -m 0755 \
+  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-attach.mjs" \
+  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-attach.mjs"
+printf '%s\n' "$TERMINAL_RUNTIME_GENERATION" > "$TERMINAL_RUNTIME_GENERATION_DIR/GENERATION"
+ln -s "generations/$TERMINAL_RUNTIME_GENERATION" "$STAGE_DIR/terminal-runtime/current"
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
 tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"
@@ -104,6 +121,7 @@ find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -t
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
+cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
 chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-openclaw" "$STAGE_DIR/bin/matrix-openclaw-gateway" "$STAGE_DIR/bin/matrix-agent-runtime-control" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-golden-snapshot-activate" "$STAGE_DIR/bin/matrix-golden-snapshot-sanitize" "$STAGE_DIR/bin/matrix-golden-snapshot-validate" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
@@ -122,6 +140,7 @@ cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/script
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
+printf '%s\n' "$TERMINAL_RUNTIME_GENERATION" > "$STAGE_DIR/app/TERMINAL_RUNTIME_GENERATION"
 if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"
 fi
@@ -138,7 +157,7 @@ node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
 HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
   node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
-tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd release.json incremental-manifest.json
+tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

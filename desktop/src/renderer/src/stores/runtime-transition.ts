@@ -6,6 +6,7 @@ import { useHermesChat } from "./hermes-chat";
 import { clearInspectorLayoutRuntime } from "../features/panels/inspector-layout-store";
 import { clearPluginsRuntime } from "../features/plugins/plugins-store";
 import { clearProjectViewRuntime } from "./project-view";
+import { useProjectLifecycle } from "./project-lifecycle";
 import { clearProjectWorkspaces } from "./project-workspaces";
 import { clearCodingAgentRuntimeSelection } from "./coding-agent-workspace";
 import { clearDraftChats } from "./draft-chat";
@@ -37,6 +38,12 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     cardsByProject: {},
     firstLoadByProject: {},
     refreshing: false,
+    error: null,
+  });
+  useProjectLifecycle.setState({
+    archivedProjects: [],
+    loading: false,
+    pendingProjectSlug: null,
     error: null,
   });
   useTabs.setState({ tabs: [], activeTabId: null });

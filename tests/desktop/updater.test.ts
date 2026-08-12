@@ -6,7 +6,7 @@ const electronMock = vi.hoisted(() => ({
 }));
 
 const updaterMock = vi.hoisted(() => {
-  type UpdateHandler = (info: { version: string } | Error) => void;
+  type UpdateHandler = (info: unknown) => void;
   const handlers = new Map<string, UpdateHandler>();
   const autoUpdater = {
     autoDownload: false,
@@ -20,7 +20,12 @@ const updaterMock = vi.hoisted(() => {
       handlers.set(eventName, handler);
       return autoUpdater;
     }),
+    on: vi.fn((eventName: string, handler: UpdateHandler) => {
+      handlers.set(eventName, handler);
+      return autoUpdater;
+    }),
     checkForUpdates: vi.fn(),
+    quitAndInstall: vi.fn(),
   };
   return { autoUpdater, handlers };
 });
@@ -38,7 +43,9 @@ beforeEach(() => {
   updaterMock.autoUpdater.setFeedURL.mockClear();
   updaterMock.autoUpdater.removeAllListeners.mockClear();
   updaterMock.autoUpdater.once.mockClear();
+  updaterMock.autoUpdater.on.mockClear();
   updaterMock.autoUpdater.checkForUpdates.mockReset().mockResolvedValue({});
+  updaterMock.autoUpdater.quitAndInstall.mockReset();
 });
 
 describe("createUpdater", () => {
@@ -175,5 +182,62 @@ describe("createUpdater", () => {
 
     expect(updater.status()).toBe("disabled");
     expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it("publishes bounded download progress and release metadata in its snapshot", async () => {
+    const onStateChanged = vi.fn();
+    const updater = createUpdater({
+      onAvailable: vi.fn(),
+      onReady: vi.fn(),
+      onStateChanged,
+    });
+
+    await updater.check();
+    updaterMock.handlers.get("update-available")?.({
+      version: "1.2.3",
+      releaseDate: "2026-08-11T09:00:00.000Z",
+      releaseNotes: "## Improved\n\n- Faster project loading",
+    });
+    updaterMock.handlers.get("download-progress")?.({ percent: 42.75 });
+
+    expect(updater.snapshot()).toEqual({
+      status: "downloading",
+      version: "1.2.3",
+      progress: 42.75,
+    });
+
+    updaterMock.handlers.get("download-progress")?.({ percent: 250 });
+    expect(updater.snapshot().progress).toBe(100);
+
+    updaterMock.handlers.get("update-downloaded")?.({
+      version: "1.2.3",
+      releaseDate: "2026-08-11T09:00:00.000Z",
+      releaseNotes: "## Improved\n\n- Faster project loading",
+    });
+
+    expect(updater.snapshot()).toEqual({
+      status: "ready",
+      version: "1.2.3",
+      progress: 100,
+    });
+    expect(onStateChanged).toHaveBeenLastCalledWith({
+      status: "ready",
+      version: "1.2.3",
+      progress: 100,
+    });
+  });
+
+  it("installs immediately only after the background download is ready", async () => {
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    expect(await updater.install()).toBe(false);
+    expect(updaterMock.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+
+    await updater.check();
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
+
+    expect(await updater.install()).toBe(true);
+    expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
+    expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
   });
 });

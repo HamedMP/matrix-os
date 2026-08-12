@@ -259,6 +259,7 @@ describe("Hermes configuration dialog", () => {
     await waitFor(() => expect(resolveSave).toBeDefined());
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard and close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Open Hermes configuration" }));
     expect(await screen.findByRole("button", { name: "Fresh, 1 setting" })).toBeVisible();
@@ -411,7 +412,7 @@ describe("Hermes configuration dialog", () => {
     expect(screen.queryByText("Credential could not be saved.")).not.toBeInTheDocument();
   });
 
-  it("preserves unsaved invalid text when the dialog closes and reopens", async () => {
+  it("confirms before closing with invalid text and preserves it when close is cancelled", async () => {
     const listConfiguration = {
       ...configuration,
       config: { ...configuration.config, tools: { allowed: ["bash"] } },
@@ -441,12 +442,54 @@ describe("Hermes configuration dialog", () => {
     fireEvent.change(search, { target: { value: "allowed tools" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Allowed tools" }), { target: { value: '["bash"' } });
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Discard unsaved changes and close?");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("textbox", { name: "Allowed tools" })).toHaveValue('["bash"');
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard and close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Open Hermes configuration" }));
 
-    expect(await screen.findByRole("textbox", { name: "Allowed tools" })).toHaveValue('["bash"');
-    expect(screen.getByText("Enter a valid JSON list before saving.")).toBeVisible();
+    expect(JSON.parse((await screen.findByRole("textbox", { name: "Allowed tools" }) as HTMLTextAreaElement).value))
+      .toEqual(["bash"]);
+    expect(screen.queryByText("Enter a valid JSON list before saving.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Hermes settings" })).toBeDisabled();
+  });
+
+  it("confirms dirty refresh and reloads settings plus credential metadata", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).endsWith("/api/hermes/env") ? response(environment) : response(configuration)
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    render(<HermesConfigurationDialog open onOpenChange={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Agent, 1 setting" }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Maximum turns" }), { target: { value: "120" } });
+    expect(screen.getByText("1 unsaved change")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Hermes configuration" }));
+
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Discard unsaved changes and refresh?");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Discard and refresh" }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(4));
+    expect(screen.getByRole("spinbutton", { name: "Maximum turns" })).toHaveValue(90);
+  });
+
+  it("keeps the last good content when an explicit refresh fails", async () => {
+    let failRefresh = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (failRefresh) throw new Error("private upstream detail");
+      return String(input).endsWith("/api/hermes/env") ? response(environment) : response(configuration);
+    }));
+    render(<HermesConfigurationDialog open onOpenChange={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Agent, 1 setting" }));
+    failRefresh = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Hermes configuration" }));
+
+    expect(await screen.findByText("Hermes configuration is unavailable.")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Maximum turns" })).toHaveValue(90);
+    expect(screen.queryByText("private upstream detail")).not.toBeInTheDocument();
   });
 
   it("ignores an older credential refresh that resolves after a newer mutation", async () => {

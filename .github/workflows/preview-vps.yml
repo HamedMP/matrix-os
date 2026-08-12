@@ -4,10 +4,10 @@
 # running that PR's host bundle, reachable at app.matrix-os.com/vm/pr-<N>.
 #
 # Flow:
-#   deploy   — on label / push while labeled: build bundle v<date>-pr<N>-<sha7>,
+#   deploy   — on label / push while labeled: build a unique exact-head bundle,
 #              publish register-only (--channel none, never promoted),
 #              provision pr-<N> if absent, deploy the exact version, comment.
-#   teardown — on PR close: delete the pr-<N> VPS.
+#   teardown — on PR close or explicit manual dispatch: delete the pr-<N> VPS.
 #   reaper   — daily: delete any pr-* VPS whose PR is closed or older than 72h,
 #              so orphans cannot accumulate Hetzner cost.
 #
@@ -37,13 +37,18 @@ on:
         required: false
         default: false
         type: boolean
+      teardown_preview:
+        description: "Delete only this PR's disposable preview VPS"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}
+  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.run_id || 'active' }}
   cancel-in-progress: ${{ github.event.action != 'closed' && github.event_name != 'schedule' }}
 
 env:
@@ -75,6 +80,7 @@ jobs:
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
+          TEARDOWN_PREVIEW: ${{ inputs.teardown_preview }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -96,12 +102,16 @@ jobs:
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ "$VERIFY_INVENTORY" = "true" ]; then
-              action="verify"
-            elif [ -n "$REQUESTED_VERSION" ]; then
-              action="deploy_existing"
+            if [ "$TEARDOWN_PREVIEW" = "true" ]; then
+              action="teardown"
             else
-              action="deploy"
+              if [ "$VERIFY_INVENTORY" = "true" ]; then
+                action="verify"
+              elif [ -n "$REQUESTED_VERSION" ]; then
+                action="deploy_existing"
+              else
+                action="deploy"
+              fi
             fi
           elif [ "$EVENT_ACTION" = "closed" ]; then
             if [ "$HAS_LABEL" = "true" ]; then action="teardown"; fi
@@ -116,7 +126,7 @@ jobs:
           fi
           if [ "$action" = "deploy_existing" ]; then
             if ! printf '%s' "$REQUESTED_VERSION" |
-              grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-[0-9a-f]{7}$" ||
+              grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}(-[0-9]+-[0-9]+)?-[0-9a-f]{7}$" ||
               [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then
               echo "Invalid pinned preview version" >&2
               exit 1
@@ -185,7 +195,7 @@ jobs:
           REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}
         run: |
           set -euo pipefail
-          VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"
+          VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Preview version: $VERSION"
 
@@ -274,7 +284,7 @@ jobs:
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -c --arg h "$HANDLE" \
               '[.machines[]
-                | select(.handle == $h and .status != "deleted")
+                | select(.handle == $h and .status != "deleted" and .deletedAt == null)
                 | . + { _preview_rank:
                     (if .status == "running" then 0
                      elif .status == "provisioning" then 1
@@ -336,7 +346,7 @@ jobs:
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
-              '[.machines[] | select(.handle == $h and .machineId == $id and .runtimeSlot == $h)] | .[0].status // "absent"')"
+              '[.machines[] | select(.handle == $h and .machineId == $id and .runtimeSlot == $h and .deletedAt == null)] | .[0].status // "absent"')"
           echo "Immediate fleet visibility for ${HANDLE}: ${status}"
           if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then
             echo "Accepted preview machine is not durably visible in the fleet." >&2
@@ -352,7 +362,7 @@ jobs:
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet" |
                 jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
-                  '[.machines[] | select(.handle == $h and .machineId == $id)] | .[0].status // "absent"')"
+                  '[.machines[] | select(.handle == $h and .machineId == $id and .deletedAt == null)] | .[0].status // "absent"')"
               [ "$status" = "running" ] && break
               if [ "$status" = "failed" ]; then
                 echo "Provisioning failed for ${HANDLE}" >&2
@@ -397,7 +407,7 @@ jobs:
               "${PLATFORM_PUBLIC_URL}/vps/fleet" |
               jq -c --arg h "$HANDLE" \
                 '[.machines[]
-                  | select(.handle == $h and .runtimeSlot == $h and .status != "deleted")
+                  | select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)
                   | . + { _preview_rank:
                       (if .status == "running" then 0
                        elif .status == "provisioning" then 1
@@ -551,7 +561,7 @@ jobs:
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -r --arg h "$HANDLE" \
-              '[.machines[] | select(.handle == $h and .status != "deleted")] | .[0].machineId // ""')"
+              '[.machines[] | select(.handle == $h and .status != "deleted" and .deletedAt == null)] | .[0].machineId // ""')"
           if [ -z "$machine_id" ]; then
             echo "No active VPS for ${HANDLE}; nothing to tear down."
             exit 0
@@ -588,7 +598,7 @@ jobs:
           curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-            jq -c '.machines[] | select((.handle | test("^pr-[0-9]+$")) and .status != "deleted")' |
+            jq -c '.machines[] | select((.handle | test("^pr-[0-9]+$")) and .status != "deleted" and .deletedAt == null)' |
             while IFS= read -r machine; do
               handle="$(jq -r .handle <<< "$machine")"
               machine_id="$(jq -r .machineId <<< "$machine")"

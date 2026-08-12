@@ -1,7 +1,8 @@
 // Single source of truth for the renderer ↔ trusted-core IPC contract
 // (specs/094-electron-macos-shell/contracts/ipc-contract.md). Both main and
 // preload import this module; every channel is validated on both sides
-// (FR-081). The credential never appears in any schema.
+// (FR-081). The bearer credential never appears in any schema; Hermes provider
+// credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
 import {
   ApprovalDecisionRequestSchema,
@@ -23,6 +24,11 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  HermesConfigurationChangeRequestSchema,
+  HermesConfigurationSchema,
+  HermesCredentialRemoveRequestSchema,
+  HermesCredentialSetRequestSchema,
+  HermesEnvironmentSchema,
   ProjectAgentWorkspaceSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -40,10 +46,17 @@ import {
   boundedListSchema,
 } from "@matrix-os/contracts";
 import { CodingAgentProjectWorkspaceRequestSchema } from "./coding-agent-project-workspace";
+import {
+  DesktopReleaseNotesSchema,
+  DesktopUpdateSnapshotSchema,
+  DesktopUpdateStatusSchema,
+  DesktopUpdateVersionSchema,
+} from "./desktop-update";
 
 const Empty = z.object({}).strict();
 
 const Ok = z.object({ ok: z.boolean() }).strict();
+const HermesOk = z.object({ ok: z.literal(true) }).strict();
 const CodingAgentCreateTurnRequestSchema = CreateAgentTurnRequestSchema.extend({
   threadId: ThreadIdSchema,
 }).strict();
@@ -166,6 +179,26 @@ export const INVOKE_CHANNELS = {
   "runtime:update-notification-preferences": {
     request: CodingAgentNotificationPreferencesUpdateSchema,
     response: CodingAgentNotificationPreferencesSchema,
+  },
+  "runtime:get-hermes-configuration": {
+    request: Empty,
+    response: HermesConfigurationSchema,
+  },
+  "runtime:get-hermes-environment": {
+    request: Empty,
+    response: HermesEnvironmentSchema,
+  },
+  "runtime:update-hermes-configuration": {
+    request: HermesConfigurationChangeRequestSchema,
+    response: HermesOk,
+  },
+  "runtime:set-hermes-credential": {
+    request: HermesCredentialSetRequestSchema,
+    response: HermesOk,
+  },
+  "runtime:remove-hermes-credential": {
+    request: HermesCredentialRemoveRequestSchema,
+    response: HermesOk,
   },
   "runtime:get-reviews": {
     request: z.object({ cursor: CursorSchema.optional() }).strict(),
@@ -331,9 +364,28 @@ export const INVOKE_CHANNELS = {
   },
   "update:check": {
     request: Empty,
+    response: z.object({ status: DesktopUpdateStatusSchema }).strict(),
+  },
+  "update:get-state": {
+    request: Empty,
+    response: DesktopUpdateSnapshotSchema,
+  },
+  "update:install": {
+    request: Empty,
+    response: Ok,
+  },
+  "update:get-whats-new": {
+    request: Empty,
     response: z
-      .object({ status: z.enum(["disabled", "checking", "up-to-date", "downloading", "ready", "error"]) })
+      .object({
+        release: DesktopReleaseNotesSchema.nullable(),
+        shouldOpen: z.boolean(),
+      })
       .strict(),
+  },
+  "update:acknowledge-whats-new": {
+    request: z.object({ version: DesktopUpdateVersionSchema }).strict(),
+    response: Ok,
   },
 } as const;
 
@@ -364,6 +416,7 @@ export const EVENT_CHANNELS = {
   }).strict(),
   "update:available": z.object({ version: z.string().max(64) }).strict(),
   "update:ready": z.object({ version: z.string().max(64) }).strict(),
+  "update:state-changed": DesktopUpdateSnapshotSchema,
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
   "app:zoom-changed": ZoomFactorResultSchema,
   "menu:action": z

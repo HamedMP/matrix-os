@@ -119,6 +119,29 @@ describe("project-manager", () => {
     expect(changedPayload).toMatchObject({ ok: false, status: 409 });
   });
 
+  it("publishes folder project config exclusively across manager instances", async () => {
+    await mkdir(join(homePath, "workspaces", "shared"), { recursive: true });
+    const firstManager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const secondManager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const input = {
+      mode: "folder" as const,
+      name: "Shared",
+      path: "workspaces/shared",
+      ownerScope: { type: "user" as const, id: "user_123" },
+      clientRequestId: "req_folder_shared_1",
+    };
+
+    const [first, second] = await Promise.all([
+      firstManager.createProject(input),
+      secondManager.createProject(input),
+    ]);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) throw new Error("expected idempotent project creation");
+    expect(second.project.id).toBe(first.project.id);
+  });
+
   it("treats Git and GitHub as optional capabilities for folder projects", async () => {
     const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === "git" && args[0] === "rev-parse") {

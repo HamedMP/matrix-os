@@ -25,6 +25,13 @@ import {
   updateCodingAgentNotificationPreferences,
 } from "./coding-agents/runtime-summary-client";
 import { createCodingAgentThreadEventStreamer } from "./coding-agents/thread-event-stream";
+import {
+  fetchHermesConfiguration,
+  fetchHermesEnvironment,
+  removeHermesCredential,
+  setHermesCredential,
+  updateHermesConfiguration,
+} from "./hermes/configuration-client";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
@@ -216,11 +223,18 @@ if (!gotLock) {
         onAvailable: (version) => {
           console.info(`[updates] downloading Matrix OS ${version}`);
         },
+        onStateChanged: (snapshot) => {
+          sendEvent("update:state-changed", snapshot);
+        },
+        onReleaseReady: (release) => store.set("desktopUpdateRelease", {
+          ...release,
+          shown: false,
+        }),
         onReady: (version) => {
           if (!Notification.isSupported()) return;
           new Notification({
             title: "Matrix OS update ready",
-            body: `Version ${version} will install after you quit and reopen the app.`,
+            body: `Use Update in the sidebar to restart and install version ${version}.`,
             silent: false,
           }).show();
         },
@@ -257,10 +271,29 @@ if (!gotLock) {
           sendEvent("runtime:changed", { slot });
         },
         getUpdateStatus: () => updater.status(),
+        getUpdateSnapshot: () => updater.snapshot(),
+        installUpdate: () => updater.install(),
+        getWhatsNew: async () => {
+          const stored = await store.get("desktopUpdateRelease");
+          if (!stored || stored.version !== app.getVersion()) {
+            return { release: null, shouldOpen: false };
+          }
+          const { shown, ...release } = stored;
+          return { release, shouldOpen: !shown };
+        },
+        acknowledgeWhatsNew: async (version) => {
+          if (version !== app.getVersion()) return;
+          await store.acknowledgeDesktopUpdateRelease(version);
+        },
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
         fetchProjectWorkspace: (request) => fetchCodingAgentProjectWorkspace(auth, request),
         fetchNotificationPreferences: () => fetchCodingAgentNotificationPreferences(auth),
         updateNotificationPreferences: (request) => updateCodingAgentNotificationPreferences(auth, request),
+        fetchHermesConfiguration: () => fetchHermesConfiguration(auth),
+        fetchHermesEnvironment: () => fetchHermesEnvironment(auth),
+        updateHermesConfiguration: (request) => updateHermesConfiguration(auth, request),
+        setHermesCredential: (request) => setHermesCredential(auth, request),
+        removeHermesCredential: (request) => removeHermesCredential(auth, request),
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
         fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
         fetchFileBrowse: (request) => fetchCodingAgentFileBrowse(auth, request),

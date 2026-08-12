@@ -24,6 +24,7 @@ import { useThreads } from "../../stores/threads";
 import { kernelThreadAttentionCount } from "../../stores/unified-threads";
 import { useUi } from "../../stores/ui";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
+import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import ProjectSidebarRow from "./ProjectSidebarRow";
 
 function NavRow({
@@ -223,6 +224,7 @@ export default function Sidebar() {
         <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"} px-2 pt-1`}>
           <NavRow icon={<Settings size={15} />} label="Settings" collapsed={collapsed} active={activeTab?.kind === "settings"} onClick={() => openTab({ kind: "settings", title: "Settings" })} />
         </div>
+        <DesktopUpdateButton collapsed={collapsed} />
         <div className={`flex gap-2 p-2 ${collapsed ? "flex-col items-center" : "items-center"}`}>
           <button
             type="button"

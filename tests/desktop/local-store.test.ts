@@ -18,6 +18,51 @@ describe("local store", () => {
     expect(await store.get("lastProjectSlug")).toBe("matrix-os");
   });
 
+  it("persists bounded desktop release notes for the post-update What's New dialog", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const release = {
+      version: "1.2.3",
+      releaseDate: "2026-08-11T09:00:00.000Z",
+      notes: "## Improved\n\n- Faster project loading",
+      shown: false,
+    };
+
+    await store.set("desktopUpdateRelease", release);
+
+    expect(await store.get("desktopUpdateRelease")).toEqual(release);
+    await expect(store.setUnknown("desktopUpdateRelease", {
+      ...release,
+      notes: "x".repeat(40_000),
+    })).rejects.toThrow();
+  });
+
+  it("acknowledges only the matching release inside the serialized mutation", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const currentRelease = {
+      version: "1.2.3",
+      notes: "## Fixed\n\n- Current release",
+      shown: false,
+    };
+    const newerRelease = {
+      version: "1.2.4",
+      notes: "## New\n\n- Newer downloaded release",
+      shown: false,
+    };
+    await store.set("desktopUpdateRelease", currentRelease);
+
+    const replaceWithNewer = store.set("desktopUpdateRelease", newerRelease);
+    const staleAcknowledgement = store.acknowledgeDesktopUpdateRelease("1.2.3");
+
+    await expect(staleAcknowledgement).resolves.toBe(false);
+    await replaceWithNewer;
+    expect(await store.get("desktopUpdateRelease")).toEqual(newerRelease);
+    await expect(store.acknowledgeDesktopUpdateRelease("1.2.4")).resolves.toBe(true);
+    expect(await store.get("desktopUpdateRelease")).toEqual({
+      ...newerRelease,
+      shown: true,
+    });
+  });
+
   it("returns null for unset keys", async () => {
     const store = createLocalStore({ dir: await makeDir() });
     expect(await store.get("lastProjectSlug")).toBeNull();

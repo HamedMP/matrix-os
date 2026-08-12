@@ -6,6 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
+import type { DesktopReleaseNotes, DesktopUpdateSnapshot } from "../../shared/desktop-update";
 import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
 import type { z } from "zod/v4";
@@ -28,6 +29,13 @@ export interface HandlerContext {
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
   getUpdateStatus: () => UpdateStatus;
+  getUpdateSnapshot: () => DesktopUpdateSnapshot;
+  installUpdate: () => Promise<boolean> | boolean;
+  getWhatsNew: () => Promise<{
+    release: DesktopReleaseNotes | null;
+    shouldOpen: boolean;
+  }>;
+  acknowledgeWhatsNew: (version: string) => Promise<void>;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
   fetchProjectWorkspace: (
     request: CodingAgentProjectWorkspaceRequest,
@@ -36,6 +44,17 @@ export interface HandlerContext {
   updateNotificationPreferences: (
     request: CodingAgentNotificationPreferencesUpdate,
   ) => Promise<CodingAgentNotificationPreferences>;
+  fetchHermesConfiguration: () => Promise<InvokeResponse<"runtime:get-hermes-configuration">>;
+  fetchHermesEnvironment: () => Promise<InvokeResponse<"runtime:get-hermes-environment">>;
+  updateHermesConfiguration: (
+    request: InvokeRequest<"runtime:update-hermes-configuration">,
+  ) => Promise<InvokeResponse<"runtime:update-hermes-configuration">>;
+  setHermesCredential: (
+    request: InvokeRequest<"runtime:set-hermes-credential">,
+  ) => Promise<InvokeResponse<"runtime:set-hermes-credential">>;
+  removeHermesCredential: (
+    request: InvokeRequest<"runtime:remove-hermes-credential">,
+  ) => Promise<InvokeResponse<"runtime:remove-hermes-credential">>;
   fetchReviewSummaries: (
     options: { cursor?: string },
   ) => Promise<{ items: ReviewSummary[]; hasMore: boolean; limit: number; nextCursor?: string }>;
@@ -154,6 +173,11 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:get-project-workspace", (request) => ctx.fetchProjectWorkspace(request));
   handle("runtime:get-notification-preferences", () => ctx.fetchNotificationPreferences());
   handle("runtime:update-notification-preferences", (request) => ctx.updateNotificationPreferences(request));
+  handle("runtime:get-hermes-configuration", () => ctx.fetchHermesConfiguration());
+  handle("runtime:get-hermes-environment", () => ctx.fetchHermesEnvironment());
+  handle("runtime:update-hermes-configuration", (request) => ctx.updateHermesConfiguration(request));
+  handle("runtime:set-hermes-credential", (request) => ctx.setHermesCredential(request));
+  handle("runtime:remove-hermes-credential", (request) => ctx.removeHermesCredential(request));
   handle("runtime:get-reviews", (request) => ctx.fetchReviewSummaries(request));
   handle("runtime:get-review-snapshot", (request) => ctx.fetchReviewSnapshot(request));
   handle("runtime:browse-files", (request) => ctx.fetchFileBrowse(request));
@@ -262,4 +286,11 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
 
   handle("update:check", () => ({ status: ctx.getUpdateStatus() }));
+  handle("update:get-state", () => ctx.getUpdateSnapshot());
+  handle("update:install", async () => ({ ok: await ctx.installUpdate() }));
+  handle("update:get-whats-new", () => ctx.getWhatsNew());
+  handle("update:acknowledge-whats-new", async ({ version }) => {
+    await ctx.acknowledgeWhatsNew(version);
+    return { ok: true };
+  });
 }

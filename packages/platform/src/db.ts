@@ -3296,6 +3296,7 @@ export async function listAllUserMachines(
     .selectFrom('user_machines')
     .selectAll()
     .where('status', '!=', 'deleted')
+    .where('deleted_at', 'is', null)
     .orderBy('last_seen_at', 'desc')
     .limit(limit)
     .execute();

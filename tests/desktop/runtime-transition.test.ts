@@ -3,6 +3,7 @@ import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/st
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useProjectLifecycle } from "../../desktop/src/renderer/src/stores/project-lifecycle";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
@@ -81,6 +82,29 @@ describe("desktop runtime transition", () => {
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
 
     expect(useDraftChat.getState().entries).toEqual({});
+  });
+
+  it("clears project lifecycle requests owned by the previous computer", () => {
+    useProjectLifecycle.setState({
+      archivedProjects: [{
+        slug: "old-project",
+        name: "Old project",
+        kind: "scratch",
+        archivedAt: "2026-08-10T00:00:00.000Z",
+      }],
+      loading: true,
+      pendingProjectSlug: "old-project",
+      error: "old runtime error",
+    });
+
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+
+    expect(useProjectLifecycle.getState()).toMatchObject({
+      archivedProjects: [],
+      loading: false,
+      pendingProjectSlug: null,
+      error: null,
+    });
   });
 
   it("reopens the Home tab so the desktop is never left blank after a switch", () => {

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getActiveUserMachineByClerkId,
   getUserMachine,
+  listAllUserMachines,
   listUserMachines,
   listPendingProviderDeletions,
   retireUserMachine,
@@ -165,6 +166,23 @@ describe('platform/customer-vps reliability', () => {
 
     const pending = await listPendingProviderDeletions(db, '2099-01-01T00:00:00.000Z', 50);
     expect(pending.some((d) => d.reason === 'failed_retry_retire' && d.providerServerId === 123456)).toBe(true);
+  });
+
+  it('excludes soft-retired failed attempts from the operator fleet', async () => {
+    const { service } = createHarness();
+    const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await updateUserMachine(db, first.machineId, {
+      status: 'failed',
+      failureCode: 'registration_timeout',
+      failureAt: '2026-04-26T12:05:00.000Z',
+    });
+
+    const retry = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    expect((await getUserMachine(db, first.machineId))?.status).toBe('failed');
+    expect((await getUserMachine(db, first.machineId))?.deletedAt).not.toBeNull();
+
+    const fleet = await listAllUserMachines(db, 50);
+    expect(fleet.map((machine) => machine.machineId)).toEqual([retry.machineId]);
   });
 
   it('converges concurrent retries on a failed row to a single live machine', async () => {
