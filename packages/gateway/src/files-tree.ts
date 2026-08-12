@@ -129,7 +129,8 @@ export async function listDirectory(
   const dirs: FileTreeEntry[] = [];
   const files: FileTreeEntry[] = [];
 
-  const visible = entries.filter((e) => !e.name.startsWith("."));
+  const isVisibleOwnerEntry = (name: string) => !name.startsWith(".") || name.startsWith("..");
+  const visible = entries.filter((entry) => isVisibleOwnerEntry(entry.name));
 
   const dirEntries = visible.filter((e) => e.isDirectory());
   const fileEntries = visible.filter((e) => e.isFile());
@@ -149,7 +150,7 @@ export async function listDirectory(
           readdir(fullPath, { encoding: "utf8" }),
         ]);
         modified = new Date(dirStat.mtimeMs).toISOString();
-        children = childEntries.filter((c) => !c.startsWith(".")).length;
+        children = childEntries.filter(isVisibleOwnerEntry).length;
       } catch (err: unknown) {
         console.warn(
           `[files-tree] Failed to inspect directory ${entry.name}:`,

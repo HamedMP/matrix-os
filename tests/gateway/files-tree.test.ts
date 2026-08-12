@@ -98,6 +98,20 @@ describe("listDirectory", () => {
     expect(hidden).toBeUndefined();
   });
 
+  it("lists valid double-dot owner files while hiding single-dot state", async () => {
+    writeFileSync(join(TEST_HOME, "projects", "myapp", "..notes.md"), "owned");
+    writeFileSync(join(TEST_HOME, "projects", "myapp", ".hidden"), "secret");
+
+    const result = (await listDirectory(TEST_HOME, "projects/myapp"))!;
+
+    expect(result.find((entry) => entry.name === "..notes.md")).toMatchObject({
+      name: "..notes.md",
+      type: "file",
+      capabilities: { canRename: true, canMove: true, canTrash: true },
+    });
+    expect(result.find((entry) => entry.name === ".hidden")).toBeUndefined();
+  });
+
   it("lists root directory", async () => {
     const result = await listDirectory(TEST_HOME, "");
     expect(result).not.toBeNull();
