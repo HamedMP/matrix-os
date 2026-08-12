@@ -3,7 +3,7 @@ import type {
   FileDirectoryClientMessage,
 } from "../ws-message-schema.js";
 import type { Watcher } from "../watcher.js";
-import { requireRequestPrincipal } from "../request-principal.js";
+import { getOptionalRequestPrincipal, requireRequestPrincipal } from "../request-principal.js";
 import type {
   FileDirectorySubscriptionHub,
 } from "../file-management/directory-subscriptions.js";
@@ -160,6 +160,14 @@ export function createAuthenticatedFileDirectoryWsConnection(
     ...options,
     ownerId: requireRequestPrincipal(context).userId,
   });
+}
+
+export function createOptionalAuthenticatedFileDirectoryWsConnection(
+  context: Context,
+  options: AuthenticatedFileDirectoryWsConnectionOptions,
+): FileDirectoryWsConnection | null {
+  const principal = getOptionalRequestPrincipal(context);
+  return principal ? createFileDirectoryWsConnection({ ...options, ownerId: principal.userId }) : null;
 }
 
 export function createFileDirectoryWsLifecycle(

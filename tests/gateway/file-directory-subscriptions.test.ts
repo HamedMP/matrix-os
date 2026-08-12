@@ -41,6 +41,7 @@ describe("FileDirectorySubscriptionHub", () => {
       await mkdir(join(homePath, "projects", "visible", ".hidden"), { recursive: true });
       await mkdir(join(homePath, "system"));
       await mkdir(join(homePath, "data", "browser-profiles"), { recursive: true });
+      await symlink(join(homePath, "data"), join(homePath, "projects", "data-link"));
       await writeFile(join(homePath, "readme.md"), "file");
       await symlink(outsidePath, join(homePath, "escaped"));
 
@@ -55,6 +56,7 @@ describe("FileDirectorySubscriptionHub", () => {
       await expect(authorizeFileDirectory(homePath, "data")).resolves.toBe(false);
       await expect(authorizeFileDirectory(homePath, "readme.md")).resolves.toBe(false);
       await expect(authorizeFileDirectory(homePath, "escaped")).resolves.toBe(false);
+      await expect(authorizeFileDirectory(homePath, "projects/data-link/browser-profiles")).resolves.toBe(false);
     } finally {
       await rm(homePath, { recursive: true });
       await rm(outsidePath, { recursive: true });

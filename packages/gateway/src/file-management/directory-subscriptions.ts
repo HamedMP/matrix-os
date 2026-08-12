@@ -85,7 +85,11 @@ export async function authorizeFileDirectory(
     realpath(resolved),
   ]);
   const realRelative = relative(homeReal, directoryReal);
-  return realRelative === "" || (!realRelative.startsWith("..") && !isAbsolute(realRelative));
+  if (realRelative === "") return true;
+  if (realRelative.startsWith("..") || isAbsolute(realRelative)) return false;
+  const normalizedRealRelative = realRelative.split(sep).join(posix.sep);
+  return !normalizedRealRelative.split("/").some((segment) => segment.startsWith("."))
+    && isFileManagementParentAllowed(homePath, normalizedRealRelative);
 }
 
 export class FileDirectorySubscriptionHub {

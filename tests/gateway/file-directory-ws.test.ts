@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import {
   FILE_DIRECTORY_STALE_TTL_MS,
@@ -11,6 +13,7 @@ import {
   bindFileDirectoryWatcher,
   closeFileDirectoryResources,
   createFileDirectoryWsConnection,
+  createOptionalAuthenticatedFileDirectoryWsConnection,
   isFileDirectoryFrameCandidate,
 } from "../../packages/gateway/src/server/file-directory-ws.js";
 
@@ -30,6 +33,33 @@ afterEach(() => {
 });
 
 describe("main websocket file-directory behavior", () => {
+  it("keeps a legacy static-token websocket usable without granting file subscriptions", async () => {
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "legacy-static-token");
+    const hub = new FileDirectorySubscriptionHub({ acquireScope: async () => () => {} });
+    const app = new Hono();
+    app.use("*", authMiddleware("legacy-static-token"));
+    app.get("/ws", (c) => c.json({
+      hasFileConnection: createOptionalAuthenticatedFileDirectoryWsConnection(c, {
+        connectionId: "connection",
+        hub,
+        send: vi.fn(),
+        closeSocket: vi.fn(),
+      }) !== null,
+    }));
+
+    const response = await app.request("/ws?token=legacy-static-token");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ hasFileConnection: false });
+    await hub.close();
+  });
+
+  it("wires the optional principal seam into the production main websocket", () => {
+    const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
+    expect(source).toContain("createOptionalAuthenticatedFileDirectoryWsConnection(c");
+    expect(source).not.toContain("const wsOwnerId = requireRequestPrincipal(c).userId");
+  });
+
   it("derives the websocket owner from real JWT middleware and removes it on close", async () => {
     const createAuthenticatedConnection = Reflect.get(
       fileDirectoryWs,

@@ -87,7 +87,7 @@ import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
 } from "./auth.js";
-import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
+import { getOptionalRequestPrincipal, isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
@@ -241,7 +241,7 @@ import {
 import {
   bindFileDirectoryWatcher,
   closeFileDirectoryResources,
-  createAuthenticatedFileDirectoryWsConnection,
+  createOptionalAuthenticatedFileDirectoryWsConnection,
   createFileDirectoryWsLifecycle,
   isFileDirectoryFrameCandidate,
 } from "./server/file-directory-ws.js";
@@ -1849,10 +1849,10 @@ export async function createGateway(config: GatewayConfig) {
       // sync:subscribe branch below keys peers off the same principal as the
       // HTTP sync routes. authMiddleware ran on the upgrade request and
       // stashed claims if a JWT was presented.
-      const wsOwnerId = requireRequestPrincipal(c).userId;
+      const wsOwnerId = getOptionalRequestPrincipal(c)?.userId;
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
-      syncPeerLifecycle = syncPeerRegistry
+      syncPeerLifecycle = syncPeerRegistry && wsOwnerId
         ? createSyncPeerLifecycle(syncPeerRegistry, wsOwnerId, {
             send: (data: string) => syncPeerSocket?.send(data),
             get readyState() {
@@ -1861,7 +1861,7 @@ export async function createGateway(config: GatewayConfig) {
           })
         : null;
       let mainWsSocket: WSContext | null = null;
-      const fileDirectoryConnection = createAuthenticatedFileDirectoryWsConnection(c, {
+      const fileDirectoryConnection = createOptionalAuthenticatedFileDirectoryWsConnection(c, {
         connectionId: randomUUID(),
         hub: fileDirectorySubscriptionHub,
         send: (message) => {
@@ -1870,7 +1870,9 @@ export async function createGateway(config: GatewayConfig) {
         },
         closeSocket: () => mainWsSocket?.close(1008, "File subscription closed"),
       });
-      const fileDirectoryLifecycle = createFileDirectoryWsLifecycle(fileDirectoryConnection);
+      const fileDirectoryLifecycle = fileDirectoryConnection
+        ? createFileDirectoryWsLifecycle(fileDirectoryConnection)
+        : null;
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
@@ -1983,7 +1985,8 @@ export async function createGateway(config: GatewayConfig) {
           if (!parsedResult.success) {
             captureGatewayProductEvent("shell_ws_invalid_message");
             if (isFileDirectoryFrameCandidate(rawMessage)) {
-              fileDirectoryConnection.rejectInvalidFrame();
+              if (fileDirectoryConnection) fileDirectoryConnection.rejectInvalidFrame();
+              else send(ws, { type: "kernel:error", message: "File directory subscription failed" });
               return;
             }
             send(ws, { type: "kernel:error", message: "Invalid message format" });
@@ -1995,7 +1998,8 @@ export async function createGateway(config: GatewayConfig) {
           if (parsed.type === "files:subscribe"
             || parsed.type === "files:unsubscribe"
             || parsed.type === "files:touch") {
-            fileDirectoryConnection.enqueue(parsed);
+            if (fileDirectoryConnection) fileDirectoryConnection.enqueue(parsed);
+            else send(ws, { type: "kernel:error", message: "File directory subscription failed" });
             return;
           }
 
@@ -2208,7 +2212,7 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose(_evt, ws) {
-          void fileDirectoryLifecycle.onClose();
+          if (fileDirectoryLifecycle) void fileDirectoryLifecycle.onClose();
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
           syncPeerSocket = null;
