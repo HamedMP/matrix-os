@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { parseGoldenSnapshotReconciliationInterval } from '../../packages/platform/src/platform-startup.js';
 
 describe('golden snapshot worker wiring', () => {
+  it('starts no recurring platform workers when background workers are disabled', async () => {
+    const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
+    expect(source).toContain("process.env.PLATFORM_BACKGROUND_WORKERS_ENABLED !== 'false'");
+    expect(source).toMatch(/if \(backgroundWorkersEnabled && intervalMs !== undefined\)/);
+    expect(source).toMatch(/if \(backgroundWorkersEnabled && reconciliationIntervalMs > 0\)/);
+  });
+
   it('bounds the reconciliation timer to a safe interval', () => {
     expect(parseGoldenSnapshotReconciliationInterval(undefined)).toBe(15_000);
     expect(parseGoldenSnapshotReconciliationInterval('1000')).toBe(1_000);

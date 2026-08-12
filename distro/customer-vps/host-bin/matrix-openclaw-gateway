@@ -15,6 +15,8 @@ OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$MATRIX_RUNTIME_HOME/.openclaw}"
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$OPENCLAW_STATE_DIR/openclaw.json}"
 OPENCLAW_ENV_FILE="${OPENCLAW_ENV_FILE:-$MATRIX_RUNTIME_HOME/system/agent-runtime/openclaw.env}"
 OPENCLAW_BIN="${OPENCLAW_BIN:-$MATRIX_NODE_PREFIX/bin/openclaw}"
+# ProtectHome=read-only blocks ~/.npm; PrivateTmp keeps plugin repair cache writable and ephemeral.
+OPENCLAW_NPM_CACHE_DIR="${TMPDIR:-/tmp}/matrix-openclaw/npm-cache"
 
 if [ ! -x "$OPENCLAW_BIN" ]; then
   echo "matrix-openclaw-gateway: runtime is not installed" >&2
@@ -32,7 +34,7 @@ fi
 OPENCLAW_GATEWAY_TOKEN="${token_line#OPENCLAW_GATEWAY_TOKEN=}"
 : "${OPENCLAW_GATEWAY_TOKEN:?matrix-openclaw-gateway: runtime authentication is unavailable}"
 
-install -d -m 0700 "$OPENCLAW_STATE_DIR"
+install -d -m 0700 "$OPENCLAW_STATE_DIR" "$OPENCLAW_NPM_CACHE_DIR"
 if [ ! -e "$OPENCLAW_CONFIG_PATH" ]; then
   config_tmp="$(mktemp "$OPENCLAW_STATE_DIR/.openclaw.json.XXXXXX")"
   cleanup() { rm -f "$config_tmp"; }
@@ -84,4 +86,5 @@ fi
 # gateway.auth.mode token, plugins.allow, and tools.deny at bootstrap.
 export HOME="$MATRIX_RUNTIME_HOME"
 export OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_GATEWAY_TOKEN
+export npm_config_cache="$OPENCLAW_NPM_CACHE_DIR"
 exec "$OPENCLAW_BIN" gateway run --bind loopback --port 18789 --auth token

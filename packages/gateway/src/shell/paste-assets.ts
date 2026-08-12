@@ -50,7 +50,7 @@ export async function saveTerminalPasteAsset(input: TerminalPasteAssetInput): Pr
   }
 
   const date = formatPasteAssetDate(input.now ?? new Date());
-  const relativeDir = join(input.cwd, ".matrix-terminal-pastes", date);
+  const relativeDir = join("temporary", "terminal-pastes", date);
   const filename = `${Date.now()}-${randomUUID()}${kind.extension}`;
   const relativePath = join(relativeDir, filename);
   const absolutePath = resolveWritableFileApiPath(input.homePath, relativePath);

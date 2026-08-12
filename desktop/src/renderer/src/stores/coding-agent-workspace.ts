@@ -1,6 +1,7 @@
 import {
   buildCreateAgentThreadRequestFromComposer,
   type AgentThreadSummary,
+  type AgentAttachment,
   type ApprovalDecisionRequest,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
@@ -43,7 +44,7 @@ type CreateStatus = "idle" | "submitting";
 type TurnStatus = "idle" | "submitting" | "error";
 type ActionStatus = "idle" | "submitting";
 type AttentionPushPreferences = CodingAgentNotificationPreferences["attentionPush"];
-type TurnRetry = { threadId: string; message: string; clientRequestId: string };
+type TurnRetry = { threadId: string; message: string; attachments?: AgentAttachment[]; clientRequestId: string };
 type ReviewSummaryList = {
   items: ReviewSummary[];
   hasMore: boolean;
@@ -135,7 +136,7 @@ interface CodingAgentWorkspaceState {
   requestComposerFocus: () => void;
   consumeReviewFocusRequest: (requestId: number) => void;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
-  sendThreadMessage: (input: { threadId: string; message: string }) => Promise<boolean>;
+  sendThreadMessage: (input: { threadId: string; message: string; attachments?: AgentAttachment[] }) => Promise<boolean>;
 }
 
 let refreshSeq = 0;
@@ -1007,7 +1008,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     }
   },
 
-  sendThreadMessage: async ({ threadId, message }) => {
+  sendThreadMessage: async ({ threadId, message, attachments }) => {
     const initial = useCodingAgentWorkspace.getState();
     if (
       initial.turnStatus === "submitting"
@@ -1016,9 +1017,11 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     ) {
       return false;
     }
-    const retry = initial.turnRetry?.threadId === threadId && initial.turnRetry.message === message
+    const retry = initial.turnRetry?.threadId === threadId
+      && initial.turnRetry.message === message
+      && JSON.stringify(initial.turnRetry.attachments ?? []) === JSON.stringify(attachments ?? [])
       ? initial.turnRetry
-      : { threadId, message, clientRequestId: nextActionRequestId() };
+      : { threadId, message, ...(attachments?.length ? { attachments } : {}), clientRequestId: nextActionRequestId() };
     const selectionSeq = threadSnapshotSeq;
     set({
       turnStatus: "submitting",

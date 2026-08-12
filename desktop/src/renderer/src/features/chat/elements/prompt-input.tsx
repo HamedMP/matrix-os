@@ -17,6 +17,8 @@ export function PromptInput({
   ariaLabel,
   footer,
   controls,
+  attachments,
+  canSubmit,
   focusRequestId,
 }: {
   value: string;
@@ -30,6 +32,8 @@ export function PromptInput({
   placeholder?: string;
   ariaLabel?: string;
   footer?: ReactNode;
+  attachments?: ReactNode;
+  canSubmit?: boolean;
   // Left side of the bottom row: compact pickers (provider, mode) rendered
   // Codex-style next to the send/stop control. Purely presentational slot.
   controls?: ReactNode;
@@ -37,6 +41,7 @@ export function PromptInput({
   focusRequestId?: number;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const submissionReady = canSubmit ?? value.trim().length > 0;
 
   useEffect(() => {
     if (!focusRequestId || focusRequestId <= 0) return;
@@ -47,7 +52,9 @@ export function PromptInput({
     const el = ref.current;
     if (!el) return;
     el.style.height = "0px";
-    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+    const contentHeight = el.scrollHeight;
+    el.style.height = `${Math.min(contentHeight, 220)}px`;
+    el.style.overflowY = contentHeight > 220 ? "auto" : "hidden";
   }, [value]);
 
   return (
@@ -55,6 +62,7 @@ export function PromptInput({
       className="prompt-card flex flex-col overflow-hidden rounded-[var(--radius-xl)] border"
       style={{ background: "var(--bg-surface)" }}
     >
+      {attachments}
       <textarea
         ref={ref}
         autoFocus={autoFocus}
@@ -93,10 +101,10 @@ export function PromptInput({
             <button
               type="button"
               aria-label="Send"
-              disabled={disabled || value.trim().length === 0}
+              disabled={disabled || !submissionReady}
               onClick={onSubmit}
               className="flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-40"
-              style={{ background: value.trim().length ? "var(--accent)" : "var(--bg-active)", color: value.trim().length ? "var(--text-on-accent)" : "var(--text-tertiary)" }}
+              style={{ background: submissionReady ? "var(--accent)" : "var(--bg-active)", color: submissionReady ? "var(--text-on-accent)" : "var(--text-tertiary)" }}
             >
               <ArrowUp size={16} />
             </button>

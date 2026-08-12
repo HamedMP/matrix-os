@@ -35,4 +35,18 @@ describe("PromptInput actions", () => {
     expect(onAbort).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
   });
+
+  it("hides the textarea scrollbar until the composer reaches its height cap", () => {
+    const view = render(
+      <PromptInput value="short" onChange={() => {}} onSubmit={() => {}} busy={false} />,
+    );
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(textarea.style.overflowY).toBe("hidden");
+
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 300 });
+    view.rerender(
+      <PromptInput value="a longer draft" onChange={() => {}} onSubmit={() => {}} busy={false} />,
+    );
+    expect(textarea.style.overflowY).toBe("auto");
+  });
 });

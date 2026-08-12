@@ -59,7 +59,7 @@ describe("RuntimeIdentityBanner", () => {
     });
   });
 
-  it("hides the primary VM banner for stable releases", async () => {
+  it("hides the primary VM banner for stable subscribers with a dev-built bundle", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/system/info")) {
@@ -69,7 +69,8 @@ describe("RuntimeIdentityBanner", () => {
             machineId: "11111111-2222-3333-4444-555555555556",
             runtimeSlot: "primary",
           },
-          release: { version: "v082-test", channel: "stable" },
+          updateChannel: "stable",
+          release: { version: "v082-test", channel: "dev" },
         }));
       }
       if (url.endsWith("/api/identity")) {
@@ -95,7 +96,8 @@ describe("RuntimeIdentityBanner", () => {
             machineId: "11111111-2222-3333-4444-555555555557",
             runtimeSlot: "primary",
           },
-          release: { version: "v2026.05.28-151", channel: "dev" },
+          updateChannel: "dev",
+          release: { version: "v2026.05.28-151", channel: "stable" },
         }));
       }
       if (url.endsWith("/api/identity")) {

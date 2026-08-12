@@ -40,6 +40,11 @@ import { backfillFirstRunRecords } from './journey.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
+import {
+  createR2CapabilityGate,
+  createStorageGatedHetznerClient,
+  type R2CapabilityGate,
+} from './r2-capability.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -119,7 +124,11 @@ interface GatewayR2Client {
     body: string | Uint8Array | ReadableStream<Uint8Array>,
     options?: { signal?: AbortSignal },
   ): Promise<{ etag?: string }>;
-  deleteObject(key: string): Promise<void>;
+  headObject(
+    key: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ exists: boolean; etag?: string }>;
+  deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
   destroy(): void;
 }
 
@@ -150,6 +159,7 @@ type CreatePlatformApp = (deps: {
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
   hostBundleObjectStore?: CustomerVpsObjectStore;
+  assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -162,6 +172,7 @@ export interface StartPlatformServerOptions {
   customerVpsProxyDispatcher: Agent;
   createApp: CreatePlatformApp;
   checkUnsafeDefaultSecrets(): string[];
+  checkCustomerVpsPrimaryStorageEnv(): string[];
   checkHomeMirrorS3Env(): string[];
   checkHostBundleStorageEnv(): string[];
   collectTenantPublicTelemetryEnv(): string[];
@@ -197,6 +208,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     customerVpsProxyDispatcher,
     createApp: createPlatformApp,
     checkUnsafeDefaultSecrets,
+    checkCustomerVpsPrimaryStorageEnv,
     checkHomeMirrorS3Env,
     checkHostBundleStorageEnv,
     collectTenantPublicTelemetryEnv,
@@ -209,6 +221,10 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   if (checkUnsafeDefaultSecrets().length > 0) {
     process.exit(1);
   }
+  if (checkCustomerVpsPrimaryStorageEnv().length > 0) {
+    process.exit(1);
+  }
+  const backgroundWorkersEnabled = process.env.PLATFORM_BACKGROUND_WORKERS_ENABLED !== 'false';
   let runtimeConfig;
   try {
     runtimeConfig = loadPlatformRuntimeConfig();
@@ -258,7 +274,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
 
     const maxRunning = Number(process.env.MAX_RUNNING_CONTAINERS) || 20;
     const lifecycle = createLifecycleManager({ db, orchestrator, maxRunning });
-    lifecycle.start();
+    if (backgroundWorkersEnabled) lifecycle.start();
 
     const statsCollector = createStatsCollector({
       docker,
@@ -267,7 +283,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         await updateContainerStatus(db, handle, 'running', containerId);
       },
     });
-    statsCollector.start();
+    if (backgroundWorkersEnabled) statsCollector.start();
   } else {
     const { createDisabledOrchestrator } = await import('./orchestrator.js');
     orchestrator = createDisabledOrchestrator({
@@ -378,6 +394,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   let internalSyncRoutes: Hono | undefined;
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
+  let primaryStorageGate: R2CapabilityGate | undefined;
   const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
   const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
   const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
@@ -406,6 +423,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     });
     customerVpsObjectStore = r2;
     hostBundleObjectStore = r2;
+    primaryStorageGate = createR2CapabilityGate({ storage: r2 });
   }
 
   const bundleS3Bucket = process.env.S3_BUNDLES_BUCKET ?? process.env.R2_BUNDLES_BUCKET;
@@ -449,7 +467,11 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     ]);
     const customerVpsConfig = loadCustomerVpsConfig();
     const cloudInitTemplate = await loadCustomerVpsCloudInitTemplate();
-    const hetzner = createHetznerClient(customerVpsConfig);
+    const baseHetzner = createHetznerClient(customerVpsConfig);
+    const hetzner = createStorageGatedHetznerClient(baseHetzner, async () => {
+      if (!primaryStorageGate) throw new Error('Primary storage unavailable');
+      await primaryStorageGate.assertReady();
+    });
     customerVpsService = createCustomerVpsService({
       db,
       config: customerVpsConfig,
@@ -614,14 +636,14 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
       const intervalMs = parseGoldenSnapshotReconciliationInterval(
         process.env.GOLDEN_SNAPSHOT_RECONCILIATION_INTERVAL_MS,
       );
-      if (intervalMs !== undefined) {
+      if (backgroundWorkersEnabled && intervalMs !== undefined) {
         void runGoldenSnapshotWorker();
         goldenSnapshotInterval = setInterval(runGoldenSnapshotWorker, intervalMs);
         goldenSnapshotInterval.unref();
       }
     }
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
-    if (reconciliationIntervalMs > 0) {
+    if (backgroundWorkersEnabled && reconciliationIntervalMs > 0) {
       let reconciliationRunning = false;
       const runCustomerVpsReconciliation = async () => {
         if (reconciliationRunning || !customerVpsService) return;
@@ -709,6 +731,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     goldenSnapshotConfig,
     customerVpsObjectStore,
     hostBundleObjectStore,
+    assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({

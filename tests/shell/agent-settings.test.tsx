@@ -239,6 +239,49 @@ describe("Canvas Agent runtime settings", () => {
     expect(await screen.findByText("OpenClaw is active")).toBeVisible();
   });
 
+  it("disables provider configuration while a runtime switch is pending", async () => {
+    const initial = makeView();
+    initial.runtime.options[1] = {
+      id: "openclaw",
+      displayName: "OpenClaw",
+      installState: "installed",
+      health: "stopped",
+      selectionState: "available",
+      configured: false,
+      capabilities: ["provider_catalog", "model_selection", "authentication"],
+    };
+    const updated = structuredClone(initial);
+    updated.runtime.selected = "openclaw";
+    updated.runtime.options[0].selectionState = "available";
+    updated.runtime.options[1].selectionState = "active";
+    updated.runtime.options[1].health = "healthy";
+    updated.currentSelection.messaging = {
+      runtime: "openclaw",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+    let resolveSwitch!: (value: Response) => void;
+    const switchResponse = new Promise<Response>((resolve) => {
+      resolveSwitch = resolve;
+    });
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => (
+      init?.method === "PUT" ? switchResponse : response(initial)
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel onOpenTerminal={vi.fn()} />);
+
+    const configureHermes = await screen.findByRole("button", { name: "Configure Hermes provider" });
+    expect(configureHermes).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use OpenClaw" }));
+
+    await waitFor(() => expect(configureHermes).toBeDisabled());
+
+    resolveSwitch(response(updated));
+    expect(await screen.findByRole("button", { name: "Configure Openclaw provider" })).toBeEnabled();
+  });
+
   it("never falls back to an unavailable messaging model", async () => {
     const initial = makeView();
     initial.providers[1].models = [

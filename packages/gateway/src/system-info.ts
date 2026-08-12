@@ -136,6 +136,7 @@ export function getVersion(release?: HostBundleRelease): string {
 export interface SystemInfo {
   version: string;
   channel?: string;
+  updateChannel: string;
   model: string;
   effort: string;
   image: string;
@@ -190,6 +191,25 @@ function readReleaseInfo(): HostBundleRelease | undefined {
     }
   }
   return undefined;
+}
+
+function readPersistentUpdateChannel(): string | undefined {
+  const hostEnvFile = process.env.MATRIX_HOST_ENV_FILE ?? "/opt/matrix/env/host.env";
+  try {
+    return readCachedSystemInfoFile(`host-env:${hostEnvFile}`, () => {
+      const raw = readBoundedTextFile(hostEnvFile);
+      for (const line of raw.split(/\r?\n/)) {
+        const match = line.match(/^MATRIX_UPDATE_CHANNEL=(stable|canary|beta|dev)$/);
+        if (match) return match[1];
+      }
+      return undefined;
+    });
+  } catch (err) {
+    if (!isMissingFileError(err)) {
+      logSystemInfoReadFailure("Failed to read persistent update channel", err);
+    }
+    return undefined;
+  }
 }
 
 function readDiskUsage(path: string): { totalBytes: number; freeBytes: number } | null {
@@ -270,10 +290,15 @@ export function getSystemInfo(
   const [load1 = 0, load5 = 0, load15 = 0] = loadavg();
   const release = readReleaseInfo();
   const channel = parseReleaseChannel(release?.channel);
+  const updateChannel = readPersistentUpdateChannel()
+    ?? parseReleaseChannel(process.env.MATRIX_UPDATE_CHANNEL)
+    ?? channel
+    ?? "stable";
 
   return {
     version: getVersion(release),
     ...(channel ? { channel } : {}),
+    updateChannel,
     model: kernelOverrides.model ?? kernel.model,
     effort: kernel.effort,
     image: process.env.MATRIX_IMAGE ?? "unknown",

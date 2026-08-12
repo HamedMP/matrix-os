@@ -15,6 +15,7 @@ import {
   type ProviderSetupCommand,
 } from "../../coding-agents/provider-setup-terminal";
 import { Card, Empty } from "./section-kit";
+import { HermesConfigurationDialog } from "../hermes/HermesConfigurationDialog";
 
 const AGENT_PATH = "/api/settings/agent";
 const API_KEY_PATH = "/api/settings/api-key";
@@ -230,12 +231,12 @@ function MessagingProvider({
   view,
   busy,
   onSave,
-  onOpenSetup,
+  onConfigure,
 }: {
   view: AgentSettingsView;
   busy: boolean;
   onSave: (provider: string, model: string) => void;
-  onOpenSetup: (setup: ProviderSetupCommand) => Promise<void>;
+  onConfigure: (runtime: AgentRuntimeId) => void;
 }) {
   const providers = useMemo(() => view.providers.filter((candidate) =>
     candidate.runtime === view.runtime.selected && candidate.scopes.includes("messaging")), [view]);
@@ -297,7 +298,7 @@ function MessagingProvider({
         <Button
           variant="subtle"
           aria-label={`Configure ${statusLabel(view.runtime.selected)} provider`}
-          onClick={() => void onOpenSetup(RUNTIME_SETUP[view.runtime.selected])}
+          onClick={() => onConfigure(view.runtime.selected)}
         >
           <SquareTerminal size={13} />Configure
         </Button>
@@ -315,12 +316,19 @@ function MessagingProvider({
 
 export default function AgentRuntimeSettingsCard() {
   const api = useConnection((state) => state.api);
+  const handle = useConnection((state) => state.handle);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const openTab = useTabs((state) => state.openTab);
   const [view, setView] = useState<AgentSettingsView | null>(null);
   const [legacy, setLegacy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hermesOpen, setHermesOpen] = useState(false);
+
+  useEffect(() => {
+    setHermesOpen(false);
+  }, [handle, runtimeSlot]);
 
   const load = async () => {
     if (!api) return;
@@ -452,6 +460,7 @@ export default function AgentRuntimeSettingsCard() {
   if (!view) return <Card><Empty text={error ?? LOAD_ERROR} /></Card>;
 
   return (
+    <>
     <Card>
       <div className="flex items-start gap-2">
         <Radio size={15} style={{ color: "var(--accent)" }} />
@@ -479,7 +488,10 @@ export default function AgentRuntimeSettingsCard() {
           key={`${view.revision}:${view.runtime.selected}`}
           view={view}
           busy={busy}
-          onOpenSetup={openSetup}
+          onConfigure={(runtime) => {
+            if (runtime === "hermes") setHermesOpen(true);
+            else void openSetup(RUNTIME_SETUP[runtime]);
+          }}
           onSave={(provider, messagingModel) => void mutate({
             provider,
             messagingModel,
@@ -488,5 +500,22 @@ export default function AgentRuntimeSettingsCard() {
         />
       </div>
     </Card>
+    <HermesConfigurationDialog
+      key={`${handle ?? "signed-out"}:${runtimeSlot}`}
+      open={hermesOpen}
+      version={view.runtime.options.find((runtime) => runtime.id === "hermes")?.version}
+      onClose={() => setHermesOpen(false)}
+      onOpenSetupTerminal={() => {
+        setHermesOpen(false);
+        return openSetup(RUNTIME_SETUP.hermes);
+      }}
+      onConfigurationChanged={() => {
+        void load().catch((loadError: unknown) => {
+          console.warn("Hermes provider status refresh failed", loadError instanceof Error ? loadError.name : "UnknownError");
+          setError(LOAD_ERROR);
+        });
+      }}
+    />
+    </>
   );
 }

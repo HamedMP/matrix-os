@@ -24,6 +24,15 @@ describe("PostHog fleet log shipping", () => {
     expect(installer).toContain('forward_to = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]');
   });
 
+  it("keeps the Symphony terminal dashboard out of PostHog while retaining it in Loki", () => {
+    const installer = readRepoFile("distro/customer-vps/host-bin/matrix-install-logship");
+    const symphonySource = installer.match(/loki\.source\.journal "matrix_symphony" \{[\s\S]*?\n\}/)?.[0];
+
+    expect(symphonySource).toBeDefined();
+    expect(symphonySource).toContain("forward_to    = [loki.write.central.receiver]");
+    expect(symphonySource).not.toContain("otelcol.receiver.loki.posthog.receiver");
+  });
+
   it("threads the PostHog project token through logship enrollment without argv exposure", () => {
     const helper = readRepoFile("scripts/enable-vps-logship.sh");
 

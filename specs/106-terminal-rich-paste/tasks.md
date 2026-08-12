@@ -57,7 +57,9 @@
 
 - [X] T012 [US1] Implement local image path tokenization for quoted and unquoted embedded paths in `packages/sync-client/src/cli/rich-paste.ts`
 - [X] T013 [US1] Implement per-transaction dedupe and prompt rewrite output preserving text order and line breaks in `packages/sync-client/src/cli/rich-paste.ts`
-- [X] T014 [US1] Implement gateway paste asset storage with server-generated owner-scoped paths under `projects/.matrix-terminal-pastes/` in `packages/gateway/src/shell/paste-assets.ts`
+- [X] T014 [US1] Implement gateway paste asset storage with server-generated
+  owner-scoped paths, now consolidated under `temporary/terminal-pastes/`, in
+  `packages/gateway/src/shell/paste-assets.ts`
 - [X] T015 [US1] Wire `POST /api/terminal/sessions/:name/paste-assets` into terminal routes with session-name validation in `packages/gateway/src/shell/routes.ts`
 - [X] T016 [US1] Implement CLI multipart upload and response parsing for terminal paste assets in `packages/sync-client/src/cli/rich-paste.ts`
 - [X] T017 [US1] Integrate rich paste rewriting into the attached-session input path before WebSocket input frames in `packages/sync-client/src/cli/shell-client.ts`

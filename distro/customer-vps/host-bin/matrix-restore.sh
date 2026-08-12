@@ -24,7 +24,7 @@ fi
 mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
 rm -f "$restore_flag"
 
-check_r2_exists_or_skip_restore() {
+check_r2_exists() {
   local key="$1"
   local label="$2"
   local status
@@ -33,16 +33,29 @@ check_r2_exists_or_skip_restore() {
   else
     status="$?"
   fi
-  if [ "$status" -eq 1 ]; then
-    touch "$restore_flag"
-    exit 0
+  if [ "$status" -eq 44 ]; then
+    return 44
   fi
   echo "matrix-restore: failed to check ${label}" >&2
   exit 1
 }
 
-check_r2_exists_or_skip_restore system/vps-meta.json "VPS metadata"
-check_r2_exists_or_skip_restore "$latest_pointer_key" "latest snapshot pointer"
+vps_meta_status=0
+latest_pointer_status=0
+check_r2_exists system/vps-meta.json "VPS metadata" || vps_meta_status="$?"
+check_r2_exists "$latest_pointer_key" "latest snapshot pointer" || latest_pointer_status="$?"
+
+if [ "$vps_meta_status" -eq 44 ] && [ "$latest_pointer_status" -eq 44 ]; then
+  # First installation: neither registration metadata nor a backup exists.
+  touch "$restore_flag"
+  exit 0
+fi
+if [ "$vps_meta_status" -eq 0 ] && [ "$latest_pointer_status" -eq 44 ]; then
+  # A registered host may reboot before its first scheduled backup. Its local
+  # Postgres volume remains authoritative until the first pointer is written.
+  touch "$restore_flag"
+  exit 0
+fi
 
 if ! /opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"; then
   echo "matrix-restore: failed to fetch latest pointer" >&2

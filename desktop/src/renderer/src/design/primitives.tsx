@@ -75,22 +75,41 @@ export function Dialog({
   onClose,
   children,
   width = 480,
+  title = "Dialog",
+  role = "dialog",
+  placement = "top",
 }: {
   open: boolean;
   onClose: () => void;
   children: ReactNode;
   width?: number;
+  title?: string;
+  role?: "dialog" | "alertdialog";
+  placement?: "top" | "center";
 }) {
   return (
     <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="fixed inset-0 z-50" style={{ background: "var(--overlay-dim)" }} />
         <RadixDialog.Content
+          role={role}
           aria-describedby={undefined}
-          className="fade-in fixed top-[18vh] left-1/2 z-50 -translate-x-1/2 rounded-xl border focus:outline-none"
-          style={{ width, background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-3)" }}
+          className={`fade-in fixed left-1/2 z-50 rounded-xl border focus:outline-none ${
+            placement === "center" ? "" : "top-[18vh] -translate-x-1/2"
+          }`}
+          style={{
+            width,
+            background: "var(--bg-overlay)",
+            borderColor: "var(--border-default)",
+            boxShadow: "var(--shadow-3)",
+            ...(placement === "center" ? {
+              top: "50%",
+              transform: "translate(-50%, -50%)",
+              maxHeight: "calc(100vh - 32px)",
+            } : {}),
+          }}
         >
-          <RadixDialog.Title className="sr-only">Dialog</RadixDialog.Title>
+          <RadixDialog.Title className="sr-only">{title}</RadixDialog.Title>
           {children}
         </RadixDialog.Content>
       </RadixDialog.Portal>

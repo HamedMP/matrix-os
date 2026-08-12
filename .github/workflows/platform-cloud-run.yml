@@ -54,6 +54,7 @@ jobs:
       MATRIX_APP_DOMAIN_HOSTS: ${{ vars.MATRIX_APP_DOMAIN_HOSTS }}
       MATRIX_CODE_DOMAIN_HOSTS: ${{ vars.MATRIX_CODE_DOMAIN_HOSTS }}
       CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}
+      GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}
       POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
@@ -85,6 +86,13 @@ jobs:
             printf 'Missing required GitHub environment variable(s): %s\n' "${missing[*]}" >&2
             exit 1
           fi
+          case "$GOLDEN_SNAPSHOT_BUILDS_ENABLED" in
+            true|false) ;;
+            *)
+              echo "GOLDEN_SNAPSHOT_BUILDS_ENABLED must be true or false." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Authenticate to Google Cloud
         # google-github-actions v4 tags are not published yet; v3 is the latest
@@ -305,6 +313,38 @@ jobs:
             fi
           done
 
+      - name: Verify primary R2 endpoint secret
+        run: |
+          set -euo pipefail
+          secret_name=r2-endpoint
+          gcloud secrets describe "$secret_name" \
+            --project "$GCP_PROJECT_ID" >/dev/null
+          endpoint_tmpfile="$(mktemp)"
+          trap 'rm -f "$endpoint_tmpfile"' EXIT
+          chmod 600 "$endpoint_tmpfile"
+          if ! gcloud secrets versions access latest \
+            --secret "$secret_name" \
+            --project "$GCP_PROJECT_ID" >"$endpoint_tmpfile"; then
+            echo "$secret_name must have an accessible latest version." >&2
+            exit 1
+          fi
+          if [ ! -s "$endpoint_tmpfile" ]; then
+            echo "$secret_name must have a non-empty latest version." >&2
+            exit 1
+          fi
+          accessor_member="$(
+            gcloud secrets get-iam-policy "$secret_name" \
+              --project "$GCP_PROJECT_ID" \
+              --flatten='bindings[].members' \
+              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+              --format='value(bindings.members)' \
+              | head -1
+          )"
+          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+            echo "$secret_name must grant roles/secretmanager.secretAccessor to the Cloud Run runtime identity." >&2
+            exit 1
+          fi
+
       - name: Build platform image
         run: |
           set -euo pipefail
@@ -357,7 +397,7 @@ jobs:
               --format 'value(status)')
             case "$status" in
               SUCCESS)
-                exit 0
+                break
                 ;;
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "Cloud Build $build_id ended with status $status" >&2
@@ -366,9 +406,18 @@ jobs:
             esac
             sleep 5
           done
-
-          echo "Timed out waiting for Cloud Build $build_id" >&2
-          exit 1
+          if [ "$status" != "SUCCESS" ]; then
+            echo "Timed out waiting for Cloud Build $build_id" >&2
+            exit 1
+          fi
+          digest="$(gcloud artifacts docker images describe "$image" \
+            --project "$GCP_PROJECT_ID" \
+            --format='value(image_summary.digest)')"
+          if [ -z "$digest" ]; then
+            echo "Could not resolve the immutable platform image digest." >&2
+            exit 1
+          fi
+          echo "IMAGE_DIGEST=${image%:*}@${digest}" >> "$GITHUB_ENV"
 
       - name: Deploy tagged revision
         run: |
@@ -389,16 +438,11 @@ jobs:
             traffic_flags+=(--no-traffic)
           fi
 
-          min_instances=0
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            min_instances=1
-          fi
-
           # TODO(#410): flip CUSTOMER_VPS_TLS_VERIFY back to true once customer VPS origins present trusted certs.
           if ! deploy_json=$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
-            --image "$IMAGE" \
+            --image "$IMAGE_DIGEST" \
             --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
             --platform managed \
             --port 8080 \
@@ -406,13 +450,13 @@ jobs:
             --memory 1Gi \
             --concurrency 30 \
             --timeout 300 \
-            --min-instances "$min_instances" \
+            --min-instances 0 \
             --max-instances 10 \
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
-            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest" \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_BACKGROUND_WORKERS_ENABLED=false,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync,GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=false,GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest" \
             --format=json); then
             exit 1
           fi
@@ -512,19 +556,55 @@ jobs:
             exit 1
           fi
           curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url" >/dev/null
+          platform_secret="$(gcloud secrets versions access latest \
+            --secret platform-secret \
+            --project "$GCP_PROJECT_ID" | tr -d '\r\n')"
+          if [ -z "$platform_secret" ]; then
+            echo "Could not read the platform smoke-test credential." >&2
+            exit 1
+          fi
+          echo "::add-mask::$platform_secret"
+          curl --fail --silent --show-error --max-time 45 \
+            --request POST \
+            --header "Authorization: Bearer ${platform_secret}" \
+            "$CANDIDATE_URL/vps/storage-check" >/dev/null
+
+      - name: Deploy production-role revision
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        run: |
+          set -euo pipefail
+          min_instances=0
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+            min_instances=1
+          fi
+          deploy_json="$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE_DIGEST" \
+            --tag production-candidate \
+            --no-traffic \
+            --min-instances "$min_instances" \
+            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=true,GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=false,GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0" \
+            --format=json)"
+          production_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "production-candidate") | .revisionName // empty' | head -1)"
+          if [ -z "$production_revision" ]; then
+            echo "Could not resolve the production-role revision." >&2
+            exit 1
+          fi
+          echo "PRODUCTION_REVISION=$production_revision" >> "$GITHUB_ENV"
 
       - name: Promote revision
         if: ${{ github.event_name == 'push' || inputs.promote }}
         run: |
           set -euo pipefail
-          if [ -z "${CANDIDATE_REVISION:-}" ]; then
-            echo "No candidate revision found" >&2
+          if [ -z "${PRODUCTION_REVISION:-}" ]; then
+            echo "No production-role revision found" >&2
             exit 1
           fi
           gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
-            --to-revisions "$CANDIDATE_REVISION=100"
+            --to-revisions "$PRODUCTION_REVISION=100"
 
       - name: Verify promoted revision traffic
         if: ${{ github.event_name == 'push' || inputs.promote }}
@@ -534,12 +614,12 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json)"
-          candidate_percent="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName == env.CANDIDATE_REVISION) | .percent) // empty' | head -1)"
-          if [ "$candidate_percent" != "100" ]; then
-            echo "Candidate revision ${CANDIDATE_REVISION} does not have 100% traffic." >&2
+          production_percent="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName == env.PRODUCTION_REVISION) | .percent) // empty' | head -1)"
+          if [ "$production_percent" != "100" ]; then
+            echo "Production revision ${PRODUCTION_REVISION} does not have 100% traffic." >&2
             exit 1
           fi
-          stale_revision="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName != env.CANDIDATE_REVISION and (.percent // 0) > 0) | "\(.revisionName)=\(.percent)") // empty' | head -1)"
+          stale_revision="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName != env.PRODUCTION_REVISION and (.percent // 0) > 0) | "\(.revisionName)=\(.percent)") // empty' | head -1)"
           if [ -n "$stale_revision" ]; then
             echo "Stale Cloud Run revision is still receiving traffic: $stale_revision" >&2
             exit 1
