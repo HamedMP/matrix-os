@@ -89,6 +89,15 @@ bool StableEntry(const struct stat& left, const struct stat& right) {
     && left.st_ctim.tv_nsec == right.st_ctim.tv_nsec;
 }
 
+bool StableAcrossRename(const struct stat& left, const struct stat& right) {
+  return left.st_dev == right.st_dev
+    && left.st_ino == right.st_ino
+    && left.st_mode == right.st_mode
+    && left.st_size == right.st_size
+    && left.st_mtim.tv_sec == right.st_mtim.tv_sec
+    && left.st_mtim.tv_nsec == right.st_mtim.tv_nsec;
+}
+
 bool RandomName(const char* prefix, std::string* output) {
   static constexpr char kHex[] = "0123456789abcdef";
   std::array<unsigned char, kStageRandomBytes> random = {};
@@ -180,6 +189,10 @@ bool QuarantineAndRemoveLeaf(
   int directory,
   const char* name,
   const struct stat& expected) {
+  ScopedFd pinned(openat(directory, name, O_PATH | O_NOFOLLOW | O_CLOEXEC));
+  struct stat before_rename = {};
+  if (!pinned || fstat(pinned.get(), &before_rename) != 0) return false;
+  const bool changed_before_quarantine = !StableEntry(expected, before_rename);
   for (size_t attempt = 0; attempt < kMaxLeafQuarantineClaims; ++attempt) {
     std::string quarantine;
     if (!RandomName(kLeafQuarantinePrefix, &quarantine)) return false;
@@ -193,11 +206,18 @@ bool QuarantineAndRemoveLeaf(
       if (errno == EEXIST) continue;
       return false;
     }
+    struct stat pinned_after_rename = {};
     struct stat quarantined = {};
-    if (fstatat(directory, quarantine.c_str(), &quarantined, AT_SYMLINK_NOFOLLOW) != 0) {
+    if (fstat(pinned.get(), &pinned_after_rename) != 0
+        || fstatat(directory, quarantine.c_str(), &quarantined, AT_SYMLINK_NOFOLLOW) != 0) {
       return false;
     }
-    if (!StableEntry(expected, quarantined)) { errno = ESTALE; return false; }
+    if (changed_before_quarantine
+        || !StableAcrossRename(before_rename, pinned_after_rename)
+        || !StableEntry(pinned_after_rename, quarantined)) {
+      errno = ESTALE;
+      return false;
+    }
     return unlinkat(directory, quarantine.c_str(), 0) == 0;
   }
   errno = EEXIST;
