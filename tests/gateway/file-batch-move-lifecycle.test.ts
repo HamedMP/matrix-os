@@ -4,6 +4,7 @@ import {
   FileBatchMoveUnavailableError,
 } from "../../packages/gateway/src/file-management/batch-service.js";
 import {
+  FileOperationCacheCapacityError,
   FileOperationResultCache,
   FileOperationRequestIdConflictError,
   type FileOperationCacheInput,
@@ -118,7 +119,7 @@ describe("FileBatchMoveService lifecycle", () => {
     resultCache.resolve(preflightResult);
     await Promise.all([...accepted, duplicate, conflict, overflow]);
     const afterRelease = service.preflight(input(512));
-    await expect(afterRelease).resolves.toEqual(preflightResult);
+    await expect(afterRelease).rejects.toBeInstanceOf(FileOperationCacheCapacityError);
     await service.close();
     resultCache.close();
 
