@@ -1,10 +1,13 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
+  ArrowLeft,
   Check,
   Clipboard,
   Edit3,
+  ExternalLink,
   GripVertical,
   Layers,
-  Play,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
@@ -25,13 +28,14 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import TerminalView from "./TerminalView";
 
-interface ShellGroup {
-  key: ShellSessionPlacement;
-  label: string;
-  shells: ShellSessionSummary[];
-}
-
 const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
+const SESSION_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 function attachCommand(shell: ShellSessionSummary): string {
   return shell.attachCommand ?? `matrix shell connect ${shell.name}`;
@@ -45,14 +49,36 @@ function statusColor(shell: ShellSessionSummary): string {
 }
 
 function shellStatusLabel(shell: ShellSessionSummary): string {
-  if (shell.status === "exited") return "ended";
-  if (shell.visualStatus) return shell.visualStatus;
-  return shell.status ?? "active";
+  if (shell.status === "exited" || shell.visualStatus === "finished") return "Closed";
+  if (shell.status === "degraded" || shell.visualStatus === "waiting") return "Waiting";
+  return "Active";
 }
 
-function tabSummary(shell: ShellSessionSummary): string {
-  if (!shell.tabs || shell.tabs.length === 0) return "tabs unknown";
-  return `${shell.tabs.length} tab${shell.tabs.length === 1 ? "" : "s"}`;
+function shellTitle(shell: ShellSessionSummary): string {
+  return shell.subtitle?.trim() || shell.lastAction?.trim() || shell.name;
+}
+
+function relativeActivity(updatedAt: string | undefined, now = Date.now()): string {
+  if (!updatedAt) return "Activity unknown";
+  const timestamp = Date.parse(updatedAt);
+  if (!Number.isFinite(timestamp)) return "Activity unknown";
+  const elapsed = Math.max(0, now - timestamp);
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  return SESSION_DAY_FORMATTER.format(timestamp);
+}
+
+function sessionStart(createdAt: string | undefined): string {
+  if (!createdAt) return "an unknown time";
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) return "an unknown time";
+  return SESSION_START_FORMATTER.format(timestamp);
 }
 
 function placementFor(shell: ShellSessionSummary, openShellNames: Set<string>): ShellSessionPlacement {
@@ -66,6 +92,7 @@ function normalizeBusyNames(names: string[]): string[] {
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- TerminalsTab is the cohesive shell-session workspace: network load/create, selection, rename, delete confirmation, search, and drag refs are independent UI concerns. A reducer would couple unrelated state transitions without reducing render risk; extracting subcomponents below keeps the row/empty states isolated.
 export default function TerminalsTab() {
   const api = useConnection((s) => s.api);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const shells = useShellSessions((s) => s.sessions);
   const loading = useShellSessions((s) => s.loading);
   const creating = useShellSessions((s) => s.creating);
@@ -80,6 +107,9 @@ export default function TerminalsTab() {
   const openTab = useTabs((s) => s.openTab);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
+  const [openedSessionNames, setOpenedSessionNames] = useState<string[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [busyNames, setBusyNames] = useState<string[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -95,8 +125,11 @@ export default function TerminalsTab() {
   }, [api, load]);
 
   const openShellNames = useMemo(
-    () => new Set(tabs.flatMap((tab) => (tab.kind === "terminal" && tab.sessionName ? [tab.sessionName] : []))),
-    [tabs],
+    () => new Set([
+      ...tabs.flatMap((tab) => (tab.kind === "terminal" && tab.sessionName ? [tab.sessionName] : [])),
+      ...(liveSessionName ? [liveSessionName] : []),
+    ]),
+    [liveSessionName, tabs],
   );
 
   const filteredShells = useMemo(() => {
@@ -107,27 +140,16 @@ export default function TerminalsTab() {
         shell.name,
         shell.status,
         shell.visualStatus,
+        shell.subtitle,
+        shell.lastAction,
         shell.attachCommand,
         shell.tabs?.map((tab) => tab.name).join(" "),
       ].filter(Boolean).join(" ").toLowerCase().includes(normalized),
     );
   }, [query, shells]);
 
-  const groups = useMemo<ShellGroup[]>(() => {
-    const active: ShellSessionSummary[] = [];
-    const background: ShellSessionSummary[] = [];
-    for (const shell of filteredShells) {
-      if (placementFor(shell, openShellNames) === "active") active.push(shell);
-      else background.push(shell);
-    }
-    return [
-      { key: "active", label: "Active", shells: active },
-      { key: "background", label: "Background", shells: background },
-    ];
-  }, [filteredShells, openShellNames]);
-
-  const selectedShell = shells.find((shell) => shell.name === selectedName) ?? shells[0] ?? null;
-  const selected = selectedShell?.name ?? null;
+  const selectedShell = selectedName ? shells.find((shell) => shell.name === selectedName) ?? null : null;
+  const selected = selectedShell?.name ?? selectedName;
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
   const renamingNameRef = useRef<string | null>(null);
@@ -164,11 +186,19 @@ export default function TerminalsTab() {
       setActionError("Could not create shell");
       return;
     }
-    setSelectedName(created.name);
+    showShellDetail(created);
   };
 
-  const openShell = (shell: ShellSessionSummary) => {
+  const showShellDetail = (shell: ShellSessionSummary) => {
+    setOpenedSessionNames((current) => current.includes(shell.name) ? current : [...current, shell.name]);
+    setLiveSessionName(shell.name);
     setSelectedName(shell.name);
+    if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
+      void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
+    }
+  };
+
+  const openShellInTab = (shell: ShellSessionSummary) => {
     openTab({ kind: "terminal", sessionName: shell.name, title: shell.name });
     if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
       void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
@@ -184,7 +214,7 @@ export default function TerminalsTab() {
     const ok = await patchUiState(api, shell.name, patch);
     if (!ok) setActionError("Could not update shell");
     if (placement === "active" && ok) {
-      openShell(
+      showShellDetail(
         shell.latestSeq !== undefined && shell.latestSeq !== null
           ? { ...shell, placement, lastSeenSeq: shell.latestSeq }
           : { ...shell, placement },
@@ -225,6 +255,8 @@ export default function TerminalsTab() {
       return;
     }
     renameTerminalSession(originalName, nextName);
+    setOpenedSessionNames((current) => current.map((name) => name === originalName ? nextName : name));
+    setLiveSessionName((current) => current === originalName ? nextName : current);
     if (selectedRef.current === originalName) setSelectedName(nextName);
     if (renamingNameRef.current === originalName) {
       setRenameError(null);
@@ -245,9 +277,10 @@ export default function TerminalsTab() {
       return;
     }
     if (selectedRef.current === name) {
-      const next = useShellSessions.getState().sessions.find((shell) => shell.name !== name);
-      setSelectedName(next?.name ?? null);
+      setSelectedName(null);
     }
+    setOpenedSessionNames((current) => current.filter((openedName) => openedName !== name));
+    setLiveSessionName((current) => current === name ? null : current);
   };
 
   const finishDrag = () => {
@@ -270,139 +303,184 @@ export default function TerminalsTab() {
     finishDrag();
   };
 
+  const overviewVisible = selectedName === null;
+
   return (
-    <div className="flex min-h-0 flex-1">
-      <div
-        className="flex w-[320px] shrink-0 flex-col border-r"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+    <div className="relative flex min-h-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
+      <section
+        className="absolute inset-0 flex min-h-0 flex-col"
+        style={{ visibility: overviewVisible ? "visible" : "hidden" }}
+        aria-hidden={!overviewVisible}
+        inert={!overviewVisible}
       >
-        <div className="flex items-center gap-2 border-b px-3 py-2.5" style={{ borderColor: "var(--border-subtle)" }}>
-          <SquareTerminal size={15} style={{ color: "var(--text-secondary)" }} />
-          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Shells</span>
-          <div className="flex-1" />
-          <IconButton label="Refresh shells" onClick={() => api && void load(api)}>
-            <RefreshCw size={13} />
-          </IconButton>
-          <Button variant="primary" disabled={!api || creating} onClick={() => void createShell()} aria-label="New shell">
-            <Plus size={13} />
-            {creating ? "Starting" : "New shell"}
-          </Button>
-        </div>
+        <nav
+          aria-label="Terminal breadcrumb"
+          className="flex h-10 shrink-0 items-center gap-1.5 border-b px-4 text-xs"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+        >
+          <span>Home</span>
+          <span aria-hidden="true">›</span>
+          <span style={{ color: "var(--text-secondary)" }}>Terminal</span>
+        </nav>
 
-        <div className="border-b p-2" style={{ borderColor: "var(--border-subtle)" }}>
-          <label
-            className="flex h-8 items-center gap-2 rounded-md border px-2"
-            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
-          >
-            <Search size={13} style={{ color: "var(--text-tertiary)" }} />
-            <input
-              aria-label="Filter shells"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search shells"
-              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-              style={{ color: "var(--text-primary)" }}
-            />
-          </label>
-        </div>
+        <div className="mx-auto flex min-h-0 w-full max-w-[960px] flex-1 flex-col px-8 pb-8 pt-5">
+          <div className="flex shrink-0 items-center gap-2 pb-4">
+            <h1 className="text-2xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>Terminal</h1>
+            <div className="flex-1" />
+            <IconButton
+              label="Search terminal sessions"
+              active={searchOpen}
+              onClick={() => {
+                setSearchOpen((open) => !open);
+                if (searchOpen) setQuery("");
+              }}
+            >
+              <Search size={14} />
+            </IconButton>
+            <Button variant="ghost" aria-label="Select terminal sessions">Select</Button>
+            <Button variant="primary" disabled={!api || creating} onClick={() => void createShell()} aria-label="New shell">
+              <Plus size={13} />
+              {creating ? "Starting" : "New"}
+            </Button>
+          </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
-          {error ? (
-            <p className="rounded-md px-2.5 py-2 text-xs" style={{ color: "var(--danger)", background: "var(--danger-muted)" }}>
-              {categoryMessage(error)}
-            </p>
+          {searchOpen ? (
+            <label
+              className="mb-3 flex h-9 shrink-0 items-center gap-2 rounded-md border px-3"
+              style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
+            >
+              <Search size={14} aria-hidden="true" style={{ color: "var(--text-tertiary)" }} />
+              <input
+                autoFocus
+                aria-label="Search terminal sessions"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search sessions"
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                style={{ color: "var(--text-primary)" }}
+              />
+            </label>
           ) : null}
+
           {actionError ? (
-            <p role="status" className="rounded-md px-2.5 py-2 text-xs" style={{ color: "var(--danger)", background: "var(--danger-muted)" }}>
+            <p role="status" className="mb-3 rounded-md px-3 py-2 text-xs" style={{ color: "var(--danger)", background: "var(--danger-muted)" }}>
               {actionError}
             </p>
           ) : null}
-          {loading && shells.length === 0 ? (
-            <p className="px-2.5 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading shells...</p>
-          ) : shells.length === 0 && !error ? (
-            <ShellListEmpty onCreate={createShell} creating={creating} disabled={!api} />
-          ) : filteredShells.length === 0 ? (
-            <p className="px-2.5 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>No shells match your search.</p>
-          ) : (
-            groups.map((group) => (
-              <section key={group.key} data-testid={`shell-group-${group.key}`} className="flex flex-col gap-1">
-                <div className="flex items-center gap-2 px-1.5 pt-1">
-                  <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>
-                    {group.label}
-                  </span>
-                  <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>{group.shells.length}</span>
-                </div>
-                {group.shells.length === 0 ? (
-                  <p className="px-1.5 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
-                    {group.key === "active" ? "No active shells." : "No background shells."}
-                  </p>
-                ) : (
-                  group.shells.map((shell) => (
-                    <ShellCard
-                      key={shell.name}
-                      shell={shell}
-                      selected={shell.name === selected}
-                      busy={isShellBusy(shell.name)}
-                      placement={placementFor(shell, openShellNames)}
-                      renaming={renamingName === shell.name}
-                      renameDraft={renameDraft}
-                      renameError={renameError}
-                      onRenameDraft={setRenameDraft}
-                      onCommitRename={() => void commitRename()}
-                      onCancelRename={() => {
-                        setRenamingName(null);
-                        setRenameError(null);
-                      }}
-                      onSelect={() => setSelectedName(shell.name)}
-                      onOpen={() => openShell(shell)}
-                      onMove={(placement) => void moveShell(shell, placement)}
-                      onRename={() => startRename(shell)}
-                      onDelete={() => setDeleteTarget(shell)}
-                      onCopy={() => void copyAttachCommand(shell)}
-                      onDragStart={() => {
-                        draggingNameRef.current = shell.name;
-                        draggingPlacementRef.current = placementFor(shell, openShellNames);
-                      }}
-                      onDragEnd={finishDrag}
-                      onDrop={() => dropOnShell(shell)}
-                    />
-                  ))
-                )}
-              </section>
-            ))
-          )}
-        </div>
-      </div>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {selectedShell ? (
-          <>
-            <div
-              className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5"
-              style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border-subtle)" }}>
+            {loading && shells.length === 0 ? (
+              <div role="status" aria-label="Loading terminal sessions" className="flex flex-1 items-center justify-center gap-2 py-16" style={{ color: "var(--text-secondary)" }}>
+                <RefreshCw className="status-pulse" size={16} aria-hidden="true" />
+                <span className="text-sm">Loading terminal sessions…</span>
+              </div>
+            ) : error && shells.length === 0 ? (
+              <EmptyState
+                icon={<SquareTerminal size={26} />}
+                headline="Terminal sessions unavailable"
+                description={categoryMessage(error)}
+                action={
+                  <Button variant="subtle" aria-label="Retry terminal sessions" disabled={!api} onClick={() => api && void load(api)}>
+                    <RefreshCw size={13} />
+                    Retry
+                  </Button>
+                }
+              />
+            ) : shells.length === 0 ? (
+              <ShellListEmpty onCreate={createShell} creating={creating} disabled={!api} />
+            ) : filteredShells.length === 0 ? (
+              <EmptyState
+                icon={<Search size={24} />}
+                headline="No matching sessions"
+                description="Try a different search term."
+              />
+            ) : (
+              <ul aria-label="Terminal sessions">
+                {filteredShells.map((shell) => (
+                  <ShellCard
+                    key={shell.name}
+                    shell={shell}
+                    busy={isShellBusy(shell.name)}
+                    placement={placementFor(shell, openShellNames)}
+                    renaming={renamingName === shell.name}
+                    renameDraft={renameDraft}
+                    renameError={renameError}
+                    onRenameDraft={setRenameDraft}
+                    onCommitRename={() => void commitRename()}
+                    onCancelRename={() => {
+                      setRenamingName(null);
+                      setRenameError(null);
+                    }}
+                    onOpen={() => showShellDetail(shell)}
+                    onOpenInTab={() => openShellInTab(shell)}
+                    onMove={(placement) => void moveShell(shell, placement)}
+                    onRename={() => startRename(shell)}
+                    onDelete={() => setDeleteTarget(shell)}
+                    onCopy={() => void copyAttachCommand(shell)}
+                    onDragStart={() => {
+                      draggingNameRef.current = shell.name;
+                      draggingPlacementRef.current = placementFor(shell, openShellNames);
+                    }}
+                    onDragEnd={finishDrag}
+                    onDrop={() => dropOnShell(shell)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {openedSessionNames.map((sessionName) => {
+        const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
+        const visible = selectedName === sessionName;
+        return (
+          <section
+            key={sessionName}
+            className="absolute inset-0 flex min-h-0 flex-col"
+            style={{ visibility: visible ? "visible" : "hidden" }}
+            aria-hidden={!visible}
+            inert={!visible}
+          >
+            <nav
+              aria-label="Terminal breadcrumb"
+              className="flex h-10 shrink-0 items-center gap-1.5 border-b px-4 text-xs"
+              style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
             >
-              <StatusDot color={statusColor(selectedShell)} pulse={selectedShell.status !== "exited"} />
-              <span className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{selectedShell.name}</span>
-              <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{shellStatusLabel(selectedShell)}</span>
-              <div className="flex-1" />
-              <span className="font-mono text-xs" style={{ color: "var(--text-tertiary)" }}>{attachCommand(selectedShell)}</span>
-            </div>
-            <TerminalView key={selectedShell.name} sessionName={selectedShell.name} active />
-          </>
-        ) : (
-          <EmptyState
-            icon={<SquareTerminal size={26} />}
-            headline="No shell selected"
-            description="Pick a shell on the left or start a new one."
-            action={
-              <Button variant="primary" disabled={!api || creating} onClick={() => void createShell()}>
-                <Plus size={13} />
-                New shell
-              </Button>
-            }
-          />
-        )}
-      </div>
+              <span>Home</span>
+              <span aria-hidden="true">›</span>
+              <button
+                type="button"
+                aria-label="Terminal sessions breadcrumb"
+                className="rounded px-1 py-0.5 hover:bg-[var(--bg-hover)]"
+                style={{ color: "var(--text-secondary)" }}
+                onClick={() => setSelectedName(null)}
+              >
+                Terminal
+              </button>
+              <span aria-hidden="true">›</span>
+              <span className="min-w-0 truncate" style={{ color: "var(--text-primary)" }}>{sessionName}</span>
+            </nav>
+
+            <header className="flex shrink-0 items-center gap-3 border-b px-5 py-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+              <IconButton label="Back to terminal sessions" onClick={() => setSelectedName(null)}>
+                <ArrowLeft size={14} />
+              </IconButton>
+              <div className="min-w-0 flex-1">
+                <h1 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</h1>
+                <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+                <StatusDot color={statusColor(shell)} pulse={shell.status !== "exited" && shell.visualStatus === "running"} />
+                {shellStatusLabel(shell)}
+              </span>
+            </header>
+            <TerminalView sessionName={sessionName} active={liveSessionName === sessionName} />
+          </section>
+        );
+      })}
 
       <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)} width={360}>
         <div className="flex flex-col gap-3 p-4">
@@ -450,7 +528,6 @@ function ShellListEmpty({
 
 function ShellCard({
   shell,
-  selected,
   busy,
   placement,
   renaming,
@@ -459,8 +536,8 @@ function ShellCard({
   onRenameDraft,
   onCommitRename,
   onCancelRename,
-  onSelect,
   onOpen,
+  onOpenInTab,
   onMove,
   onRename,
   onDelete,
@@ -470,7 +547,6 @@ function ShellCard({
   onDrop,
 }: {
   shell: ShellSessionSummary;
-  selected: boolean;
   busy: boolean;
   placement: ShellSessionPlacement;
   renaming: boolean;
@@ -479,8 +555,8 @@ function ShellCard({
   onRenameDraft: (value: string) => void;
   onCommitRename: () => void;
   onCancelRename: () => void;
-  onSelect: () => void;
   onOpen: () => void;
+  onOpenInTab: () => void;
   onMove: (placement: ShellSessionPlacement) => void;
   onRename: () => void;
   onDelete: () => void;
@@ -490,13 +566,10 @@ function ShellCard({
   onDrop: () => void;
 }) {
   return (
-    <div
+    <li
       data-testid={`shell-card-${shell.name}`}
-      className="group/shell rounded-md border px-2 py-2 transition-colors duration-100"
-      style={{
-        borderColor: selected ? "var(--accent)" : "var(--border-subtle)",
-        background: selected ? "var(--bg-selected)" : "var(--bg-overlay)",
-      }}
+      className="group/shell relative border-b px-3 py-2.5 last:border-b-0 hover:bg-[var(--bg-hover)]"
+      style={{ borderColor: "var(--border-subtle)" }}
       onDragEnter={(event) => {
         event.preventDefault();
       }}
@@ -508,33 +581,77 @@ function ShellCard({
         onDrop();
       }}
     >
-      <div className="flex items-start gap-2">
+      <div className="flex min-h-9 items-center gap-2">
         <button
           type="button"
           aria-label={`Drag ${shell.name}`}
           draggable
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
-          className="mt-0.5 flex h-6 w-5 shrink-0 items-center justify-center rounded"
+          className="flex h-7 w-5 shrink-0 items-center justify-center rounded opacity-40 transition-opacity group-hover/shell:opacity-100 focus:opacity-100"
           style={{ color: "var(--text-tertiary)" }}
         >
           <GripVertical size={13} />
         </button>
-        <button type="button" className="flex min-w-0 flex-1 flex-col text-left" onClick={onSelect}>
-          <span className="flex min-w-0 items-center gap-2">
-            <StatusDot color={statusColor(shell)} pulse={shell.status !== "exited" && selected} />
-            <span className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{shell.name}</span>
-            {shell.unread ? <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--accent)" }} /> : null}
+        <button
+          type="button"
+          aria-label={`Open ${shell.name}`}
+          disabled={busy}
+          className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-5 text-left disabled:opacity-50"
+          onClick={onOpen}
+        >
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</span>
+            {shellTitle(shell) !== shell.name ? (
+              <span className="mt-0.5 block truncate font-mono text-[11px]" style={{ color: "var(--text-tertiary)" }}>{shell.name}</span>
+            ) : null}
           </span>
-          <span className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {shellStatusLabel(shell)} · {tabSummary(shell)}
-            {typeof shell.attachedClients === "number" ? ` · ${shell.attachedClients} attached` : ""}
+          <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            <StatusDot color={statusColor(shell)} pulse={shell.visualStatus === "running"} />
+            {shellStatusLabel(shell)}
+          </span>
+          <span className="w-[92px] text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {relativeActivity(shell.updatedAt)}
           </span>
         </button>
+
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              aria-label={`More actions for ${shell.name}`}
+              disabled={busy}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-60 transition-opacity hover:bg-[var(--bg-active)] group-hover/shell:opacity-100 focus:opacity-100 disabled:opacity-30"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              <MoreHorizontal size={14} />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              aria-label={`Actions for ${shell.name}`}
+              align="end"
+              sideOffset={5}
+              className="fade-in z-[100] min-w-[190px] rounded-lg border p-1"
+              style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
+            >
+              <ShellMenuItem icon={<ExternalLink size={13} />} label="Open in tab" onSelect={onOpenInTab} />
+              <ShellMenuItem
+                icon={placement === "active" ? <Layers size={13} /> : <SquareTerminal size={13} />}
+                label={placement === "active" ? "Move to background" : "Make active"}
+                onSelect={() => onMove(placement === "active" ? "background" : "active")}
+              />
+              <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
+              <ShellMenuItem icon={<Edit3 size={13} />} label="Rename" onSelect={onRename} />
+              <ShellMenuItem icon={<Clipboard size={13} />} label="Copy attach command" onSelect={onCopy} />
+              <ShellMenuItem icon={<Trash2 size={13} />} label="Delete" danger onSelect={onDelete} />
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </div>
 
       {renaming ? (
-        <div className="mt-2 flex flex-col gap-1 pl-7">
+        <div className="mt-2 flex flex-col gap-1 pl-7 pr-9">
           <div className="flex items-center gap-1">
             <input
               aria-label="Shell name"
@@ -559,29 +676,29 @@ function ShellCard({
         </div>
       ) : null}
 
-      <div className="mt-2 flex items-center gap-1 pl-7 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/shell:opacity-100">
-        <IconButton label={`Open ${shell.name}`} disabled={busy} onClick={onOpen}>
-          <Play size={13} />
-        </IconButton>
-        {placement === "active" ? (
-          <IconButton label={`Move ${shell.name} to background`} disabled={busy} onClick={() => onMove("background")}>
-            <Layers size={13} />
-          </IconButton>
-        ) : (
-          <IconButton label={`Make ${shell.name} active`} disabled={busy} onClick={() => onMove("active")}>
-            <SquareTerminal size={13} />
-          </IconButton>
-        )}
-        <IconButton label={`Rename ${shell.name}`} disabled={busy} onClick={onRename}>
-          <Edit3 size={13} />
-        </IconButton>
-        <IconButton label={`Copy attach command for ${shell.name}`} disabled={busy} onClick={onCopy}>
-          <Clipboard size={13} />
-        </IconButton>
-        <IconButton label={`Delete ${shell.name}`} disabled={busy} onClick={onDelete}>
-          <Trash2 size={13} />
-        </IconButton>
-      </div>
-    </div>
+    </li>
+  );
+}
+
+function ShellMenuItem({
+  icon,
+  label,
+  danger = false,
+  onSelect,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  danger?: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <DropdownMenu.Item
+      onSelect={onSelect}
+      className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+      style={{ color: danger ? "var(--danger)" : "var(--text-primary)" }}
+    >
+      {icon}
+      {label}
+    </DropdownMenu.Item>
   );
 }

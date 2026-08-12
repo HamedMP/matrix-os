@@ -10,8 +10,22 @@ import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
+const terminalMounts = vi.hoisted(() => new Map<string, number>());
+
 vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({ sessionName }: { sessionName: string }) => <div>Terminal {sessionName}</div>,
+  default: ({ sessionName, active }: { sessionName: string; active?: boolean }) => {
+    React.useEffect(() => {
+      terminalMounts.set(sessionName, (terminalMounts.get(sessionName) ?? 0) + 1);
+      return () => {
+        terminalMounts.set(sessionName, (terminalMounts.get(sessionName) ?? 1) - 1);
+      };
+    }, [sessionName]);
+    return (
+      <div data-testid={`terminal-view-${sessionName}`} data-active={active ? "true" : "false"}>
+        Terminal {sessionName}
+      </div>
+    );
+  },
 }));
 
 function renderTab() {
@@ -20,6 +34,13 @@ function renderTab() {
       <TerminalsTab />
     </Tooltip.Provider>,
   );
+}
+
+function openShellActions(name: string) {
+  fireEvent.pointerDown(screen.getByRole("button", { name: `More actions for ${name}` }), {
+    button: 0,
+    ctrlKey: false,
+  });
 }
 
 function deferred<T>() {
@@ -34,6 +55,7 @@ function deferred<T>() {
 
 describe("TerminalsTab", () => {
   beforeEach(() => {
+    terminalMounts.clear();
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -68,7 +90,7 @@ describe("TerminalsTab", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders Active and Background groups from shell placement with open-tab fallback", () => {
+  it("renders only canonical shell sessions while preserving active and background placement actions", () => {
     useShellSessions.setState({
       sessions: [
         { name: "matrix-active", status: "active", placement: "active" },
@@ -83,12 +105,114 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    const activeGroup = screen.getByTestId("shell-group-active");
-    const backgroundGroup = screen.getByTestId("shell-group-background");
-    expect(activeGroup.textContent).toContain("matrix-active");
-    expect(activeGroup.textContent).toContain("matrix-open");
-    expect(backgroundGroup.textContent).toContain("matrix-bg");
+    expect(screen.getByTestId("shell-card-matrix-active")).toBeTruthy();
+    expect(screen.getByTestId("shell-card-matrix-open")).toBeTruthy();
+    expect(screen.getByTestId("shell-card-matrix-bg")).toBeTruthy();
+    openShellActions("matrix-active");
+    expect(screen.getByRole("menuitem", { name: "Move to background" })).toBeTruthy();
     expect(screen.queryByText("Workspace Only")).toBeNull();
+  });
+
+  it("opens the Figma-aligned session detail and preserves its mounted live terminal when returning to the list", () => {
+    useShellSessions.setState({
+      sessions: [{
+        name: "matrix-main",
+        status: "active",
+        placement: "active",
+        createdAt: "2026-08-12T09:30:00.000Z",
+      }],
+    });
+
+    renderTab();
+
+    expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(screen.queryByTestId("terminal-view-matrix-main")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+
+    expect(screen.getByRole("navigation", { name: "Terminal breadcrumb" }).textContent).toContain("matrix-main");
+    expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+
+    expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("uses the Figma list toolbar and reveals a bounded search-empty state", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    renderTab();
+
+    expect(screen.queryByRole("textbox", { name: "Search terminal sessions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Search terminal sessions" }));
+    const input = screen.getByRole("textbox", { name: "Search terminal sessions" });
+    fireEvent.change(input, { target: { value: "not-a-session" } });
+
+    expect(screen.getByRole("heading", { name: "No matching sessions" })).toBeTruthy();
+    expect(screen.getByText("Try a different search term.")).toBeTruthy();
+  });
+
+  it("keeps secondary row actions in an accessible overflow menu", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    renderTab();
+
+    expect(screen.queryByRole("button", { name: "Rename matrix-main" })).toBeNull();
+    openShellActions("matrix-main");
+
+    expect(screen.getByRole("menu", { name: "More actions for matrix-main" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Copy attach command" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
+  });
+
+  it("renders canonical active, waiting, and closed lifecycle badges with relative activity", () => {
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-active", status: "active", visualStatus: "running", updatedAt: new Date(Date.now() - 120_000).toISOString() },
+        { name: "matrix-waiting", status: "degraded", visualStatus: "waiting" },
+        { name: "matrix-closed", status: "exited", visualStatus: "idle" },
+      ],
+    });
+
+    renderTab();
+
+    expect(screen.getByTestId("shell-card-matrix-active").textContent).toContain("Active");
+    expect(screen.getByTestId("shell-card-matrix-active").textContent).toContain("2 minutes ago");
+    expect(screen.getByTestId("shell-card-matrix-waiting").textContent).toContain("Waiting");
+    expect(screen.getByTestId("shell-card-matrix-closed").textContent).toContain("Closed");
+  });
+
+  it("bounds loading and load-error states in the list surface", () => {
+    useShellSessions.setState({ sessions: [], loading: true, error: null });
+    const { rerender } = renderTab();
+
+    expect(screen.getByRole("status", { name: "Loading terminal sessions" })).toBeTruthy();
+
+    act(() => {
+      useShellSessions.setState({ sessions: [], loading: false, error: "network" });
+    });
+    rerender(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Terminal sessions unavailable" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry terminal sessions" })).toBeTruthy();
   });
 
   it("creates shell sessions from the shell store, not workspace sessions", async () => {
@@ -114,7 +238,8 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByRole("textbox", { name: /shell name/i });
     fireEvent.change(input, { target: { value: "Bad Name" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -140,7 +265,8 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByRole("textbox", { name: /shell name/i });
     fireEvent.change(input, { target: { value: "matrix-dev" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -167,7 +293,8 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByRole("textbox", { name: /shell name/i });
     fireEvent.change(input, { target: { value: "matrix-dev" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -194,16 +321,15 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByRole("textbox", { name: /shell name/i });
     fireEvent.change(input, { target: { value: "matrix-dev" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(screen.getByTestId("shell-card-matrix-dev")).toBeTruthy());
     expect((screen.getByRole("button", { name: /open matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: /move matrix-dev to background/i }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: /rename matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: /delete matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /more actions for matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
 
     await act(async () => {
       renameResult.resolve(true);
@@ -224,11 +350,13 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByRole("textbox", { name: /shell name/i });
     fireEvent.change(input, { target: { value: "matrix-dev" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.click(screen.getByRole("button", { name: /rename matrix-other/i }));
+    openShellActions("matrix-other");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
 
     await act(async () => {
       renameResult.resolve(true);
@@ -249,7 +377,8 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /delete matrix-main/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(deleteSession).not.toHaveBeenCalled();
     expect(screen.getByText("Delete matrix-main?")).toBeTruthy();
 
@@ -272,7 +401,8 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /delete matrix-main/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
     fireEvent.click(screen.getByText("matrix-third"));
 
@@ -315,7 +445,7 @@ describe("TerminalsTab", () => {
     expect(screen.getByText("No shell sessions yet")).toBeTruthy();
   });
 
-  it("opens selected shell sessions in a native terminal tab", async () => {
+  it("keeps opening a canonical shell session in a native terminal tab available from overflow", async () => {
     const openTab = vi.fn();
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
@@ -324,8 +454,8 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    await screen.findByText("Terminal matrix-main");
-    fireEvent.click(screen.getByRole("button", { name: /open matrix-main/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open in tab" }));
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "terminal",
@@ -343,7 +473,8 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /move matrix-main to background/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to background" }));
 
     await waitFor(() =>
       expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", {
@@ -357,7 +488,8 @@ describe("TerminalsTab", () => {
       });
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /make matrix-main active/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Make active" }));
 
     await waitFor(() =>
       expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", {
@@ -384,9 +516,12 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /move matrix-one to background/i }));
-    fireEvent.click(screen.getByRole("button", { name: /move matrix-two to background/i }));
-    fireEvent.click(screen.getByRole("button", { name: /delete matrix-three/i }));
+    openShellActions("matrix-one");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to background" }));
+    openShellActions("matrix-two");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to background" }));
+    openShellActions("matrix-three");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() =>
@@ -413,7 +548,8 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    fireEvent.click(screen.getByRole("button", { name: /make matrix-main active/i }));
+    openShellActions("matrix-main");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Make active" }));
 
     await waitFor(() =>
       expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", {
