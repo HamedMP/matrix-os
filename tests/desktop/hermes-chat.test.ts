@@ -82,4 +82,31 @@ describe("useHermesChat", () => {
       ],
     });
   });
+
+  it("binds the kernel session only for the active request", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+
+    useHermesChat.getState().ingest({
+      type: "kernel:init",
+      sessionId: "session-current",
+      requestId,
+    });
+
+    expect(useHermesChat.getState().sessionId).toBe("session-current");
+  });
+
+  it("ignores a late init after New clears the active request", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+    useHermesChat.getState().newChat();
+
+    useHermesChat.getState().ingest({
+      type: "kernel:init",
+      sessionId: "session-stale",
+      requestId,
+    });
+
+    expect(useHermesChat.getState().sessionId).toBeNull();
+  });
 });

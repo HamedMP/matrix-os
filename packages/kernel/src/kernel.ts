@@ -27,6 +27,13 @@ export type KernelEvent =
   | { type: "result"; data: KernelResult }
   | { type: "aborted" };
 
+class KernelQueryFailedError extends Error {
+  constructor() {
+    super("Kernel query failed");
+    this.name = "KernelQueryFailedError";
+  }
+}
+
 export async function* spawnKernel(
   message: string,
   config: KernelConfig,
@@ -115,7 +122,11 @@ export async function* spawnKernel(
           // A non-success SDK result is a failed dispatch, not a successful
           // terminal event. Keep provider details server-side; the gateway
           // maps this generic failure to safe client copy.
-          throw new Error("Kernel query failed");
+          console.error("[kernel] Query returned a non-success result:", {
+            subtype: msg.subtype,
+            errors: msg.errors,
+          });
+          throw new KernelQueryFailedError();
         }
       }
     }
@@ -132,7 +143,7 @@ export async function* spawnKernel(
       return;
     }
     // If we were resuming a session and it failed, retry without resume
-    if (!retried && opts.resume) {
+    if (!retried && opts.resume && !(error instanceof KernelQueryFailedError)) {
       retried = true;
       const { resume: _, ...optsWithoutResume } = opts;
       yield* run(optsWithoutResume);

@@ -83,14 +83,18 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   },
 
   ingest: (event) => {
-    // Bind the session from init/switch even before a request is active.
-    if (event.type === "kernel:init" && event.sessionId) {
-      set({ sessionId: event.sessionId });
-    }
     const { activeRequestId, messages } = get();
     const matchesActiveRequest = Boolean(
       activeRequestId && event.requestId === activeRequestId,
     );
+    // Only the current request may bind a resumable session. A late init from
+    // an aborted request must not resurrect the conversation after New.
+    if (event.type === "kernel:init") {
+      if (matchesActiveRequest && event.sessionId) {
+        set({ sessionId: event.sessionId });
+      }
+      return;
+    }
     // A provider can emit a terminal-looking result before its process exits
     // unsuccessfully. Preserve a later error when it belongs to a request that
     // is still visible, while ignoring stale errors after New clears the chat.
