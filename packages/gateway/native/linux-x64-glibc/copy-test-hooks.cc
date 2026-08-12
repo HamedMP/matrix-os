@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <time.h>
 #include <unistd.h>
 
 namespace matrix_fs {
@@ -27,6 +28,35 @@ int InstallFinalDirectoryClaimantForTest(int parent, const std::string& name) {
     return -1;
   }
   return 0;
+}
+
+int PauseAfterStageClaimForTest(int parent, const std::string& stage_name) {
+  constexpr char ready_name[] = ".matrix-copy-test-ready";
+  constexpr char release_name[] = ".matrix-copy-test-release";
+  const int marker = openat(
+    parent, ready_name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if (marker < 0) return -1;
+  const ssize_t written = write(marker, stage_name.data(), stage_name.size());
+  const int write_error = errno;
+  close(marker);
+  if (written != static_cast<ssize_t>(stage_name.size())) {
+    errno = written < 0 ? write_error : EIO;
+    return -1;
+  }
+  constexpr struct timespec interval = {0, 1000 * 1000};
+  for (size_t attempt = 0; attempt < 5000; ++attempt) {
+    struct stat release = {};
+    if (fstatat(parent, release_name, &release, AT_SYMLINK_NOFOLLOW) == 0) {
+      if (!S_ISREG(release.st_mode)) { errno = EINVAL; return -1; }
+      unlinkat(parent, ready_name, 0);
+      unlinkat(parent, release_name, 0);
+      return 0;
+    }
+    if (errno != ENOENT) return -1;
+    nanosleep(&interval, nullptr);
+  }
+  errno = ETIMEDOUT;
+  return -1;
 }
 
 int RunCopyEntryTestScenario(

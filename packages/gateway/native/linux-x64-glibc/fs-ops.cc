@@ -304,7 +304,11 @@ Result CopyDirectoryStaged(
   struct stat opened = {};
   if (fstat(source.get(), &opened) != 0 || !StableEntry(before, opened)) return Failure(ESTALE);
 
-  StagingDirectoryClaim staging = CreateStagingDirectory(target_parent);
+  const StagingSweepTestScenario sweep_scenario =
+    test_scenario == CopyTestScenario::kReplaceRetainedChildBeforeOpen
+      ? StagingSweepTestScenario::kReplaceChildBeforeOpen
+      : StagingSweepTestScenario::kNone;
+  StagingDirectoryClaim staging = CreateStagingDirectory(target_parent, sweep_scenario);
   Fd stage(staging.fd);
   if (!stage) {
     const int error = errno;
@@ -313,6 +317,10 @@ Result CopyDirectoryStaged(
       : Failure(error, true, ParentRelativePath(target_path, staging.name));
   }
   const std::string partial_path = ParentRelativePath(target_path, staging.name);
+  if (test_scenario == CopyTestScenario::kPauseAfterStageClaim
+      && PauseAfterStageClaimForTest(target_parent, staging.name) != 0) {
+    return Failure(errno, true, partial_path);
+  }
   if (test_scenario == CopyTestScenario::kReplaceFinalAfterStageClaim
       && InstallFinalDirectoryClaimantForTest(target_parent, target_path.components.back()) != 0) {
     return Failure(errno, true, partial_path);

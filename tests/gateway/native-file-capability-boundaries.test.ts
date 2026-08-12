@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getNativeFileCapability,
+  getNativeFileCapabilityTestHarness,
   isNativeFileCapabilityTarget,
 } from "../../packages/gateway/src/file-management/native-file-capability.js";
 
@@ -95,4 +96,62 @@ describeNative("Gateway native recursive copy bounds", () => {
     expect(existsSync(join(home, symlinkName))).toBe(true);
     expect(existsSync(join(outside, "owner.txt"))).toBe(true);
   });
+
+  it("retains a changed expired stage instead of cleaning a substituted child", async () => {
+    const home = makeHome("stage-child-swap");
+    const stageName = ".matrix-copy-stage-00000000000000000000000000000000";
+    const stage = join(home, stageName);
+    mkdirSync(join(stage, "child"), { recursive: true });
+    writeFileSync(join(stage, "child", "owner.txt"), "owner");
+    const expired = new Date(Date.now() - 25 * 60 * 60 * 1_000);
+    utimesSync(stage, expired, expired);
+
+    expect(await getNativeFileCapabilityTestHarness().copyWithScenario(
+      home,
+      "source",
+      "target",
+      false,
+      "replace_retained_child_before_open",
+    )).toEqual({ ok: true, code: "ok" });
+
+    expect(readFileSync(join(stage, ".matrix-sweep-original", "owner.txt"), "utf8")).toBe("owner");
+    expect(readFileSync(join(stage, "child", "claimant.txt"), "utf8")).toBe("claimant");
+  });
+
+  it("keeps an old active stage locked and enforces the cap for another copy", async () => {
+    const home = makeHome("active-stage-cap");
+    for (let index = 0; index < 63; index += 1) {
+      mkdirSync(join(home, `.matrix-copy-stage-${index.toString(16).padStart(32, "0")}`));
+    }
+    const paused = getNativeFileCapabilityTestHarness().copyWithScenario(
+      home,
+      "source",
+      "first-target",
+      false,
+      "pause_after_stage_claim",
+    );
+    const ready = join(home, ".matrix-copy-test-ready");
+    await expect.poll(() => existsSync(ready), { timeout: 5_000 }).toBe(true);
+    const activeStage = readFileSync(ready, "utf8");
+    const expired = new Date(Date.now() - 25 * 60 * 60 * 1_000);
+    utimesSync(join(home, activeStage), expired, expired);
+
+    await expect(getNativeFileCapability().copy(home, "source", "second-target", false))
+      .resolves.toEqual({ ok: false, code: "limit_exceeded" });
+    expect(existsSync(join(home, activeStage))).toBe(true);
+
+    writeFileSync(join(home, ".matrix-copy-test-release"), "release");
+    await expect(paused).resolves.toEqual({ ok: true, code: "ok" });
+  }, 10_000);
+
+  it("fails closed when the target parent scan exceeds its fixed budget", async () => {
+    const home = makeHome("stage-scan-budget");
+    for (let index = 0; index <= 10_000; index += 1) {
+      writeFileSync(join(home, `unrelated-${index}`), "x");
+    }
+
+    await expect(getNativeFileCapability().copy(home, "source", "target", false))
+      .resolves.toEqual({ ok: false, code: "limit_exceeded" });
+    expect(existsSync(join(home, "target"))).toBe(false);
+  }, 30_000);
 });

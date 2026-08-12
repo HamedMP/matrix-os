@@ -9,6 +9,7 @@
 namespace matrix_fs {
 
 int InstallFinalDirectoryClaimantForTest(int parent, const std::string& name);
+int PauseAfterStageClaimForTest(int parent, const std::string& stage_name);
 
 int RunCopyEntryTestScenario(
   int source_parent,

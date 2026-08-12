@@ -23,7 +23,9 @@ export type NativeCopyTestScenario =
   | "replace_final_after_stage_claim"
   | "chmod_source_after_identity"
   | "replace_source_after_identity"
-  | "fail_regular_after_target_claim";
+  | "fail_regular_after_target_claim"
+  | "replace_retained_child_before_open"
+  | "pause_after_stage_claim";
 
 export interface NativeFileCapabilityTestHarness {
   copyWithScenario(

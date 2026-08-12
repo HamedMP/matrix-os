@@ -56,6 +56,14 @@ bool ReadTestScenario(napi_env env, napi_value value, matrix_fs::CopyTestScenari
     *output = matrix_fs::CopyTestScenario::kFailRegularAfterTargetClaim;
     return true;
   }
+  if (scenario == "replace_retained_child_before_open") {
+    *output = matrix_fs::CopyTestScenario::kReplaceRetainedChildBeforeOpen;
+    return true;
+  }
+  if (scenario == "pause_after_stage_claim") {
+    *output = matrix_fs::CopyTestScenario::kPauseAfterStageClaim;
+    return true;
+  }
   return false;
 }
 
