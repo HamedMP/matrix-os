@@ -10,6 +10,7 @@ import {
 } from "./file-operation-controller";
 import {
   createFileSelection,
+  MAX_FILE_BATCH_SIZE,
   MAX_FILE_SELECTION,
   reconcileFileSelection,
   resetFileSelectionScope,
@@ -25,6 +26,7 @@ export type FileNameDraft =
   | { mode: "rename"; path: string; name: string };
 
 const INVALID_NAME_NOTICE = "Choose a valid portable name.";
+const BATCH_SELECTION_NOTICE = `Batch actions support up to ${MAX_FILE_BATCH_SIZE} selected items.`;
 const NO_DIRECTORY_SOCKET: DirectorySyncSocket = {
   subscribeDirectory: () => () => {},
   touchDirectory: () => false,
@@ -47,6 +49,11 @@ export function useFileManagement(options: {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [localNotice, setLocalNotice] = useState<string | null>(null);
   const [trashPaths, setTrashPaths] = useState<string[]>([]);
+  const syncBatchSelectionNotice = useCallback((selectedCount: number) => {
+    setLocalNotice((notice) => selectedCount > MAX_FILE_BATCH_SIZE
+      ? BATCH_SELECTION_NOTICE
+      : notice === BATCH_SELECTION_NOTICE ? null : notice);
+  }, []);
   const selectionScope = {
     directory: options.directory,
     runtimeSlot: options.runtimeSlot,
@@ -216,21 +223,23 @@ export function useFileManagement(options: {
       modifiers,
       platform,
     );
+    syncBatchSelectionNotice(next.selectedPaths.length);
     selectionRef.current = next;
     setStoredSelection(next);
-  }, []);
+  }, [syncBatchSelectionNotice]);
 
   const reconcilePaths = useCallback((renderedPaths: readonly string[]) => {
     const current = resetFileSelectionScope(selectionRef.current, scopeRef.current);
     const next = reconcileFileSelection(current, scopeRef.current, renderedPaths);
     selectionRef.current = next;
+    syncBatchSelectionNotice(next.selectedPaths.length);
     if (current.focusedPath && !renderedPaths.includes(current.focusedPath)) onFocusRef.current?.(null);
     if (!sameSelection(current, next)) setStoredSelection(next);
-  }, []);
+  }, [syncBatchSelectionNotice]);
 
   const requestTrash = useCallback((paths: readonly string[]) => {
-    if (paths.length < 1 || paths.length > 100) {
-      setLocalNotice("Select between 1 and 100 items to move to Trash.");
+    if (paths.length < 1 || paths.length > MAX_FILE_BATCH_SIZE) {
+      setLocalNotice(`Select between 1 and ${MAX_FILE_BATCH_SIZE} items to move to Trash.`);
       return;
     }
     setLocalNotice(null);
@@ -252,9 +261,10 @@ export function useFileManagement(options: {
       focusedPath: outcome.retainedPaths[0] ?? null,
     };
     selectionRef.current = nextSelection;
+    syncBatchSelectionNotice(nextSelection.selectedPaths.length);
     setStoredSelection(nextSelection);
     onFocusRef.current?.(nextSelection.focusedPath);
-  }, [controller, trashPaths]);
+  }, [controller, syncBatchSelectionNotice, trashPaths]);
 
   return {
     draft, draftError, draftSubmitting, localNotice, snapshot, selection, trashPaths,

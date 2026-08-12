@@ -285,7 +285,7 @@ describe("Files management UI", () => {
     expect(onPreviewPathChange).toHaveBeenLastCalledWith(null);
   });
 
-  it("shows a bounded explanation instead of silently extending Shift selection beyond 100", async () => {
+  it("keeps oversized Shift selections and disables batch actions with an explanation", async () => {
     api.setEntries(Array.from({ length: 101 }, (_, index) => ({
       name: `file-${String(index).padStart(3, "0")}.md`,
       type: "file" as const,
@@ -295,7 +295,24 @@ describe("Files management UI", () => {
     const first = await screen.findByRole("button", { name: "Open file-000.md" });
     fireEvent.click(first);
     fireEvent.click(screen.getByRole("button", { name: "Open file-100.md" }), { shiftKey: true });
-    expect(screen.getByRole("status").textContent).toMatch(/up to 100/i);
+    expect(screen.getAllByRole("button", { pressed: true })
+      .filter((button) => button.getAttribute("aria-label")?.startsWith("Open file-"))).toHaveLength(101);
+    expect(screen.getByRole("status").textContent).toMatch(/batch actions support up to 100/i);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for file-000.md" }));
+    expect((await screen.findByRole("menuitem", { name: "Move to Trash" })).hasAttribute("data-disabled")).toBe(true);
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    api.setEntries(Array.from({ length: 100 }, (_, index) => ({
+      name: `file-${String(index).padStart(3, "0")}.md`,
+      type: "file" as const,
+      capabilities: CAPABILITIES,
+    })));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh folder" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open file-100.md" })).toBeNull());
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for file-000.md" }));
+    expect((await screen.findByRole("menuitem", { name: "Move to Trash" })).hasAttribute("data-disabled")).toBe(false);
   });
 
   it("rejects invalid portable names locally and keeps typed conflicts safe and editable", async () => {

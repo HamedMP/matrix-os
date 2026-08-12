@@ -31,7 +31,7 @@ import {
 } from "./browser-views";
 import { useFileManagement } from "./use-file-management";
 import { useAuthoritativeListing, type BrowserListingStatus } from "./use-authoritative-listing";
-import type { FileSelectionPlatform } from "./file-selection";
+import { MAX_FILE_BATCH_SIZE, type FileSelectionPlatform } from "./file-selection";
 import { getKernelSocket } from "../../lib/kernel-wiring";
 import type { DirectorySyncSocket } from "./use-directory-sync";
 
@@ -141,8 +141,8 @@ export default function ComputerFileBrowser({
     () => new Map(sortedEntries.map((entry) => [joinPath(viewCurrentPath, entry.name), entry])),
     [sortedEntries, viewCurrentPath],
   );
-  // Selection contracts cap this collection at 100 paths; a derived Set keeps
-  // per-row state checks constant-time without entering shared/store state.
+  // Selection is bounded by the 1,000-entry listing contract; a derived Set
+  // keeps per-row checks constant-time without entering shared/store state.
   const selectedPathSet = useMemo(
     () => new Set(management.selection.selectedPaths),
     [management.selection.selectedPaths],
@@ -338,7 +338,7 @@ export default function ComputerFileBrowser({
       const selectedForAction = selectedPathSet.has(path)
         ? management.selection.selectedPaths
         : [path];
-      const trashDisabled = selectedForAction.some((selected) =>
+      const trashDisabled = selectedForAction.length > MAX_FILE_BATCH_SIZE || selectedForAction.some((selected) =>
         management.snapshot.pendingPaths.includes(selected) || !entriesByPath.get(selected)?.capabilities.canTrash);
       return (
         <ManagedFileActionMenu
