@@ -3,7 +3,6 @@
 import { useEffect, useState, type CSSProperties, type ReactElement, type RefObject } from "react";
 import { HoverCard as HoverCardPrimitive } from "radix-ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { TerminalAgentLogo } from "./TerminalAgentLogo";
 import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
 import { TERMINAL_MONO_FONT_FAMILY, TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
@@ -125,6 +124,7 @@ export function TerminalSessionHoverCard({
   shell,
   displayName,
   cardRef,
+  canvasZoom = 1,
   open,
   suppressed,
   onOpenChange,
@@ -133,13 +133,13 @@ export function TerminalSessionHoverCard({
   shell: ShellSessionSummary;
   displayName: string;
   cardRef: RefObject<HTMLDivElement | null>;
+  canvasZoom?: number;
   open: boolean;
   suppressed: boolean;
   onOpenChange: (open: boolean) => void;
   children: ReactElement;
 }) {
   const [theme, setTheme] = useState(FALLBACK_HOVER_CARD_THEME);
-  const canvasZoom = useCanvasTransform((state) => state.zoom);
   const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : "Terminal";
   const liveState = getShellVisualStatus(shell);
   const updatedAt = shell.agent ? shell.agentUpdatedAt : shell.updatedAt;

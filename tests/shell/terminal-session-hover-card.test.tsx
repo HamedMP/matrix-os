@@ -2,12 +2,12 @@
 
 import React from "react";
 import { act, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalSessionHoverCard } from "../../shell/src/components/terminal/TerminalSessionHoverCard.js";
 import type { ShellSessionSummary } from "../../shell/src/components/terminal/terminal-session-state.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 
-function renderHoverCard(shell: ShellSessionSummary) {
+function renderHoverCard(shell: ShellSessionSummary, canvasZoom = 1) {
   const anchor = document.createElement("div");
   Object.defineProperty(anchor, "getBoundingClientRect", {
     configurable: true,
@@ -32,6 +32,7 @@ function renderHoverCard(shell: ShellSessionSummary) {
       cardRef={{ current: anchor }}
       open
       suppressed={false}
+      canvasZoom={canvasZoom}
       onOpenChange={vi.fn()}
     >
       <button type="button">Session</button>
@@ -43,7 +44,11 @@ function renderHoverCard(shell: ShellSessionSummary) {
 }
 
 describe("TerminalSessionHoverCard", () => {
-  it("scales portal content with the canvas zoom", () => {
+  afterEach(() => {
+    act(() => useCanvasTransform.setState({ zoom: 1 }));
+  });
+
+  it("uses the renderer's effective zoom instead of stale global canvas zoom", () => {
     useCanvasTransform.setState({ zoom: 0.5 });
     renderHoverCard({
       name: "claude-zoomed",
@@ -53,12 +58,27 @@ describe("TerminalSessionHoverCard", () => {
       agent: "claude",
       model: "claude-opus-4-20250514",
       tabs: [],
-    });
+    }, 1);
 
     const hoverCard = screen.getByTestId("terminal-session-hover-card-claude-zoomed");
+    expect(hoverCard.style.transform).toContain("scale(1)");
+    expect(hoverCard.style.transformOrigin).toBe("left top");
+  });
+
+  it("scales portal content with the renderer's effective canvas zoom", () => {
+    renderHoverCard({
+      name: "claude-canvas-zoomed",
+      status: "active",
+      placement: "active",
+      visualStatus: "idle",
+      agent: "claude",
+      model: "claude-opus-4-20250514",
+      tabs: [],
+    }, 0.5);
+
+    const hoverCard = screen.getByTestId("terminal-session-hover-card-claude-canvas-zoomed");
     expect(hoverCard.style.transform).toContain("scale(0.5)");
     expect(hoverCard.style.transformOrigin).toBe("left top");
-    act(() => useCanvasTransform.setState({ zoom: 1 }));
   });
 
   it("gives model-only metadata the full available row", () => {

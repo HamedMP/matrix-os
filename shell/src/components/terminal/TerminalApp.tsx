@@ -936,7 +936,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
           style={{ background: "var(--terminal-app-body-bg)" }}
         >
-          <LocalTerminalSidebar />
+          <LocalTerminalSidebar canvasZoom={canvasZoom} />
           {activeTab ? (
             <div
               data-testid="terminal-content-surface"
