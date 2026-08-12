@@ -9,7 +9,7 @@ export function resolveWithinHome(
   const target = resolve(base, requestedPath);
   const rel = relative(base, target);
 
-  if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
+  if (rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
     return target;
   }
 

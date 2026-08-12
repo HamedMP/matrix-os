@@ -51,6 +51,10 @@ describe("/files/* path containment", () => {
     expect(normalizeHomeRelativePath(homePath, join(homePath, "..notes.md"))).toBe("..notes.md");
   });
 
+  it("resolves a contained home-relative name beginning with two dots", () => {
+    expect(resolveWithinHome(homePath, "..notes.md")).toBe(join(homePath, "..notes.md"));
+  });
+
   it("blocks absolute path escape", () => {
     expect(resolveWithinHome(homePath, "/etc/passwd")).toBeNull();
   });
