@@ -492,11 +492,16 @@ describe('CI workflows', () => {
   it('compiles and runs the real Linux native filesystem capability in CI', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const nativeJob = workflow.split('\n  native-file-capability:')[1]?.split('\n  docs-contract:')[0] ?? '';
 
     expect(workflow).toContain('native-file-capability:');
     expect(workflow).toContain("pnpm --filter '@matrix-os/gateway' run build:native");
     expect(workflow).toContain('tests/gateway/native-file-capability.test.ts');
     expect(workflow).toContain('tests/gateway/native-file-capability-races.test.ts');
     expect(workflow).toContain('native-file-capability, unit');
+    expect(nativeJob).toContain('actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2');
+    expect(nativeJob).toContain('pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10');
+    expect(nativeJob).toContain('actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0');
+    expect(nativeJob).not.toMatch(/(?:actions\/checkout|pnpm\/action-setup|actions\/setup-node)@v\d/);
   });
 });
