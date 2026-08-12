@@ -390,7 +390,7 @@ describe("FileBatchMoveService", () => {
       close: vi.fn(),
     } as unknown as FileOperationResultCache;
     const boundedService = new FileBatchMoveService({
-      resultCache: passthroughCache,
+      preflightResultCache: passthroughCache,
       moveCapability: capability,
     });
     writeFileSync(join(homePath, "projects", "inbox", "retained.md"), "retained");
@@ -410,6 +410,24 @@ describe("FileBatchMoveService", () => {
     await expect(boundedService.execute(
       executeInput(homePath, firstId, first.preflightFingerprint),
     )).resolves.toMatchObject({ results: [{ code: "moved" }] });
+    boundedService.close();
+  });
+
+  it("preserves execution capacity for an accepted preflight when the preflight cache is full", async () => {
+    writeFileSync(join(homePath, "projects", "inbox", "capacity.md"), "capacity");
+    const firstId = nextRequestId();
+    const first = await service.preflight(
+      batchInput(homePath, firstId, ["projects/inbox/capacity.md"]),
+    );
+    for (let index = 1; index < 512; index += 1) {
+      await service.preflight(
+        batchInput(homePath, nextRequestId(), ["projects/inbox/capacity.md"]),
+      );
+    }
+
+    await expect(service.execute(
+      executeInput(homePath, firstId, first.preflightFingerprint),
+    )).resolves.toMatchObject({ results: [{ source: "projects/inbox/capacity.md", code: "moved" }] });
   });
 
   it("re-authorizes symlinks and stale source state immediately before execution", async () => {

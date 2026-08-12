@@ -46,7 +46,8 @@ export interface FileBatchMoveExecutionResult {
 }
 
 export interface FileBatchMoveServiceOptions {
-  resultCache?: FileOperationResultCache;
+  preflightResultCache?: FileOperationResultCache;
+  executeResultCache?: FileOperationResultCache;
   moveCapability?: NoReplaceFileMoveCapability;
 }
 
@@ -66,14 +67,18 @@ export class FileBatchStalePreflightError extends Error {
 }
 
 export class FileBatchMoveService {
-  private readonly resultCache: FileOperationResultCache;
-  private readonly ownsResultCache: boolean;
+  private readonly preflightResultCache: FileOperationResultCache;
+  private readonly executeResultCache: FileOperationResultCache;
+  private readonly ownsPreflightResultCache: boolean;
+  private readonly ownsExecuteResultCache: boolean;
   private readonly moveCapability: NoReplaceFileMoveCapability | undefined;
   private readonly preflights = new Map<string, StoredPreflight>();
 
   constructor(options: FileBatchMoveServiceOptions = {}) {
-    this.resultCache = options.resultCache ?? new FileOperationResultCache();
-    this.ownsResultCache = options.resultCache === undefined;
+    this.preflightResultCache = options.preflightResultCache ?? new FileOperationResultCache();
+    this.executeResultCache = options.executeResultCache ?? new FileOperationResultCache();
+    this.ownsPreflightResultCache = options.preflightResultCache === undefined;
+    this.ownsExecuteResultCache = options.executeResultCache === undefined;
     this.moveCapability = options.moveCapability;
   }
 
@@ -88,7 +93,7 @@ export class FileBatchMoveService {
       throw new FileBatchPreflightError();
     }
 
-    const result = await this.resultCache.run({
+    const result = await this.preflightResultCache.run({
       ownerId: input.ownerId,
       namespace: "move:preflight",
       requestId: input.requestId,
@@ -114,7 +119,7 @@ export class FileBatchMoveService {
       throw new FileBatchStalePreflightError();
     }
 
-    return this.resultCache.run({
+    return this.executeResultCache.run({
       ownerId: input.ownerId,
       namespace: "move:execute",
       requestId: input.requestId,
@@ -152,7 +157,8 @@ export class FileBatchMoveService {
 
   close(): void {
     this.preflights.clear();
-    if (this.ownsResultCache) this.resultCache.close();
+    if (this.ownsPreflightResultCache) this.preflightResultCache.close();
+    if (this.ownsExecuteResultCache) this.executeResultCache.close();
   }
 
   private rememberPreflight(
