@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -116,6 +116,73 @@ describeNative("Gateway native recursive copy bounds", () => {
 
     expect(readFileSync(join(stage, ".matrix-sweep-original", "owner.txt"), "utf8")).toBe("owner");
     expect(readFileSync(join(stage, "child", "claimant.txt"), "utf8")).toBe("claimant");
+  });
+
+  it.each(["file", "symlink"] as const)(
+    "retains a changed expired stage instead of deleting a substituted %s leaf",
+    async (kind) => {
+      const home = makeHome(`stage-${kind}-swap`);
+      const stageName = ".matrix-copy-stage-00000000000000000000000000000000";
+      const stage = join(home, stageName);
+      mkdirSync(stage);
+      if (kind === "file") {
+        writeFileSync(join(stage, "leaf"), "owner");
+      } else {
+        symlinkSync("owner-target", join(stage, "leaf"));
+      }
+      const expired = new Date(Date.now() - 25 * 60 * 60 * 1_000);
+      utimesSync(stage, expired, expired);
+
+      expect(await getNativeFileCapabilityTestHarness().copyWithScenario(
+        home,
+        "source",
+        "target",
+        false,
+        "replace_retained_leaf_before_quarantine",
+      )).toEqual({ ok: true, code: "ok" });
+
+      const quarantined = readdirSync(stage)
+        .find((name) => name.startsWith(".matrix-sweep-quarantine-"));
+      expect(quarantined).toBeDefined();
+      if (kind === "file") {
+        expect(readFileSync(join(stage, ".matrix-sweep-original-leaf"), "utf8")).toBe("owner");
+        expect(readFileSync(join(stage, quarantined!), "utf8")).toBe("claimant");
+      } else {
+        expect(readlinkSync(join(stage, ".matrix-sweep-original-leaf"))).toBe("owner-target");
+        expect(readlinkSync(join(stage, quarantined!))).toBe("claimant-target");
+      }
+    },
+  );
+
+  it.each([
+    ["same-size rewrite", "rewrite_retained_leaf_before_quarantine"],
+    ["chmod-only mutation", "chmod_retained_leaf_before_quarantine"],
+  ] as const)("retains an expired stage after a regular leaf %s", async (_label, scenario) => {
+    const home = makeHome("stage-leaf-mutation");
+    const stageName = ".matrix-copy-stage-00000000000000000000000000000000";
+    const stage = join(home, stageName);
+    mkdirSync(stage);
+    writeFileSync(join(stage, "leaf"), "owner");
+    const expired = new Date(Date.now() - 25 * 60 * 60 * 1_000);
+    utimesSync(stage, expired, expired);
+
+    expect(await getNativeFileCapabilityTestHarness().copyWithScenario(
+      home,
+      "source",
+      "target",
+      false,
+      scenario,
+    )).toEqual({ ok: true, code: "ok" });
+
+    const quarantined = readdirSync(stage)
+      .find((name) => name.startsWith(".matrix-sweep-quarantine-"));
+    expect(quarantined).toBeDefined();
+    if (scenario === "rewrite_retained_leaf_before_quarantine") {
+      expect(readFileSync(join(stage, quarantined!), "utf8")).toBe("rival");
+    } else {
+      expect(readFileSync(join(stage, quarantined!), "utf8")).toBe("owner");
+      expect(statSync(join(stage, quarantined!)).mode & 0o100).toBe(0o100);
+    }
   });
 
   it("keeps an old active stage locked and enforces the cap for another copy", async () => {

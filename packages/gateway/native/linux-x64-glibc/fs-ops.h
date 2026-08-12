@@ -29,6 +29,9 @@ enum class CopyTestScenario {
   kReplaceSourceAfterIdentity,
   kFailRegularAfterTargetClaim,
   kReplaceRetainedChildBeforeOpen,
+  kReplaceRetainedLeafBeforeQuarantine,
+  kRewriteRetainedLeafBeforeQuarantine,
+  kChmodRetainedLeafBeforeQuarantine,
   kPauseAfterStageClaim,
   kPauseAfterStageSweep,
 };

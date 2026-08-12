@@ -25,6 +25,9 @@ export type NativeCopyTestScenario =
   | "replace_source_after_identity"
   | "fail_regular_after_target_claim"
   | "replace_retained_child_before_open"
+  | "replace_retained_leaf_before_quarantine"
+  | "rewrite_retained_leaf_before_quarantine"
+  | "chmod_retained_leaf_before_quarantine"
   | "pause_after_stage_claim"
   | "pause_after_stage_sweep";
 

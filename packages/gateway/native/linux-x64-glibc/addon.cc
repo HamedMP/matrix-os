@@ -60,6 +60,18 @@ bool ReadTestScenario(napi_env env, napi_value value, matrix_fs::CopyTestScenari
     *output = matrix_fs::CopyTestScenario::kReplaceRetainedChildBeforeOpen;
     return true;
   }
+  if (scenario == "replace_retained_leaf_before_quarantine") {
+    *output = matrix_fs::CopyTestScenario::kReplaceRetainedLeafBeforeQuarantine;
+    return true;
+  }
+  if (scenario == "rewrite_retained_leaf_before_quarantine") {
+    *output = matrix_fs::CopyTestScenario::kRewriteRetainedLeafBeforeQuarantine;
+    return true;
+  }
+  if (scenario == "chmod_retained_leaf_before_quarantine") {
+    *output = matrix_fs::CopyTestScenario::kChmodRetainedLeafBeforeQuarantine;
+    return true;
+  }
   if (scenario == "pause_after_stage_claim") {
     *output = matrix_fs::CopyTestScenario::kPauseAfterStageClaim;
     return true;

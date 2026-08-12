@@ -24,11 +24,13 @@ namespace {
 
 constexpr size_t kStageRandomBytes = 16;
 constexpr size_t kMaxStageClaims = 16;
+constexpr size_t kMaxLeafQuarantineClaims = 16;
 constexpr size_t kMaxRetainedStages = 64;
 constexpr size_t kMaxSweepEntries = 10000;
 constexpr size_t kMaxSweepDepth = 128;
 constexpr time_t kStageTtlSeconds = 24 * 60 * 60;
 constexpr char kStagePrefix[] = ".matrix-copy-stage-";
+constexpr char kLeafQuarantinePrefix[] = ".matrix-sweep-quarantine-";
 
 struct RetainedStage {
   std::string name;
@@ -76,6 +78,30 @@ bool SameDirectory(const struct stat& left, const struct stat& right) {
     && S_ISDIR(right.st_mode);
 }
 
+bool StableEntry(const struct stat& left, const struct stat& right) {
+  return left.st_dev == right.st_dev
+    && left.st_ino == right.st_ino
+    && left.st_mode == right.st_mode
+    && left.st_size == right.st_size
+    && left.st_mtim.tv_sec == right.st_mtim.tv_sec
+    && left.st_mtim.tv_nsec == right.st_mtim.tv_nsec
+    && left.st_ctim.tv_sec == right.st_ctim.tv_sec
+    && left.st_ctim.tv_nsec == right.st_ctim.tv_nsec;
+}
+
+bool RandomName(const char* prefix, std::string* output) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::array<unsigned char, kStageRandomBytes> random = {};
+  if (!FillRandom(&random)) return false;
+  *output = prefix;
+  output->reserve(output->size() + random.size() * 2);
+  for (const unsigned char value : random) {
+    output->push_back(kHex[value >> 4]);
+    output->push_back(kHex[value & 0x0f]);
+  }
+  return true;
+}
+
 bool IsStageName(const char* name) {
   constexpr size_t prefix_length = sizeof(kStagePrefix) - 1;
   if (strncmp(name, kStagePrefix, prefix_length) != 0 || strlen(name) != prefix_length + 32) return false;
@@ -101,6 +127,81 @@ bool ReplaceChildBeforeOpenForTest(int directory, const char* name) {
   close(claimant);
   if (written != 8) { errno = written < 0 ? write_error : EIO; return false; }
   return true;
+}
+
+bool ReplaceLeafBeforeQuarantineForTest(
+  int directory,
+  const char* name,
+  const struct stat& before) {
+  constexpr char moved_name[] = ".matrix-sweep-original-leaf";
+  if (renameat(directory, name, directory, moved_name) != 0) return false;
+  if (S_ISLNK(before.st_mode)) {
+    return symlinkat("claimant-target", directory, name) == 0;
+  }
+  const int claimant = openat(
+    directory, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if (claimant < 0) return false;
+  const ssize_t written = write(claimant, "claimant", 8);
+  const int write_error = errno;
+  close(claimant);
+  if (written != 8) {
+    errno = written < 0 ? write_error : EIO;
+    return false;
+  }
+  return true;
+}
+
+bool RewriteLeafBeforeQuarantineForTest(
+  int directory,
+  const char* name,
+  const struct stat& before) {
+  if (!S_ISREG(before.st_mode)) { errno = EINVAL; return false; }
+  const int leaf = openat(directory, name, O_WRONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (leaf < 0) return false;
+  const ssize_t written = pwrite(leaf, "rival", 5, 0);
+  const int write_error = errno;
+  close(leaf);
+  if (written != 5) {
+    errno = written < 0 ? write_error : EIO;
+    return false;
+  }
+  return true;
+}
+
+bool ChmodLeafBeforeQuarantineForTest(
+  int directory,
+  const char* name,
+  const struct stat& before) {
+  if (!S_ISREG(before.st_mode)) { errno = EINVAL; return false; }
+  return fchmodat(directory, name, (before.st_mode & 0777) ^ S_IXUSR, 0) == 0;
+}
+
+bool QuarantineAndRemoveLeaf(
+  int directory,
+  const char* name,
+  const struct stat& expected) {
+  for (size_t attempt = 0; attempt < kMaxLeafQuarantineClaims; ++attempt) {
+    std::string quarantine;
+    if (!RandomName(kLeafQuarantinePrefix, &quarantine)) return false;
+    if (syscall(
+          SYS_renameat2,
+          directory,
+          name,
+          directory,
+          quarantine.c_str(),
+          RENAME_NOREPLACE) != 0) {
+      if (errno == EEXIST) continue;
+      return false;
+    }
+    struct stat quarantined = {};
+    if (fstatat(directory, quarantine.c_str(), &quarantined, AT_SYMLINK_NOFOLLOW) != 0) {
+      return false;
+    }
+    if (!StableEntry(expected, quarantined)) { errno = ESTALE; return false; }
+    return unlinkat(directory, quarantine.c_str(), 0) == 0;
+  }
+  errno = EEXIST;
+  return false;
 }
 
 bool RemoveTreeContents(
@@ -177,11 +278,43 @@ bool RemoveTreeContents(
         errno = unlink_error;
         return false;
       }
-    } else if (unlinkat(directory, entry->d_name, 0) != 0) {
-      const int error = errno;
-      closedir(iteration);
-      errno = error;
-      return false;
+    } else {
+      if (test_scenario == StagingSweepTestScenario::kReplaceLeafBeforeQuarantine
+          && !*test_scenario_fired) {
+        *test_scenario_fired = true;
+        if (!ReplaceLeafBeforeQuarantineForTest(directory, entry->d_name, child)) {
+          const int error = errno;
+          closedir(iteration);
+          errno = error;
+          return false;
+        }
+      }
+      if (test_scenario == StagingSweepTestScenario::kRewriteLeafBeforeQuarantine
+          && !*test_scenario_fired) {
+        *test_scenario_fired = true;
+        if (!RewriteLeafBeforeQuarantineForTest(directory, entry->d_name, child)) {
+          const int error = errno;
+          closedir(iteration);
+          errno = error;
+          return false;
+        }
+      }
+      if (test_scenario == StagingSweepTestScenario::kChmodLeafBeforeQuarantine
+          && !*test_scenario_fired) {
+        *test_scenario_fired = true;
+        if (!ChmodLeafBeforeQuarantineForTest(directory, entry->d_name, child)) {
+          const int error = errno;
+          closedir(iteration);
+          errno = error;
+          return false;
+        }
+      }
+      if (!QuarantineAndRemoveLeaf(directory, entry->d_name, child)) {
+        const int error = errno;
+        closedir(iteration);
+        errno = error;
+        return false;
+      }
     }
     errno = 0;
   }
@@ -290,16 +423,9 @@ StagingDirectoryClaim CreateStagingDirectory(int parent, StagingSweepTestScenari
   if (!SweepRetainedStages(parent, test_scenario, &test_scenario_fired)) return {};
   if (test_scenario == StagingSweepTestScenario::kPauseAfterSweep
       && PauseAfterStageSweepForTest(parent) != 0) return {};
-  static constexpr char kHex[] = "0123456789abcdef";
   for (size_t attempt = 0; attempt < kMaxStageClaims; ++attempt) {
-    std::array<unsigned char, kStageRandomBytes> random = {};
-    if (!FillRandom(&random)) return {};
-    std::string candidate = kStagePrefix;
-    candidate.reserve(candidate.size() + random.size() * 2);
-    for (const unsigned char value : random) {
-      candidate.push_back(kHex[value >> 4]);
-      candidate.push_back(kHex[value & 0x0f]);
-    }
+    std::string candidate;
+    if (!RandomName(kStagePrefix, &candidate)) return {};
     if (mkdirat(parent, candidate.c_str(), 0700) != 0) {
       if (errno == EEXIST) continue;
       return {};

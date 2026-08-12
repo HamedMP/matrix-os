@@ -307,6 +307,12 @@ Result CopyDirectoryStaged(
   const StagingSweepTestScenario sweep_scenario =
     test_scenario == CopyTestScenario::kReplaceRetainedChildBeforeOpen
       ? StagingSweepTestScenario::kReplaceChildBeforeOpen
+      : test_scenario == CopyTestScenario::kReplaceRetainedLeafBeforeQuarantine
+        ? StagingSweepTestScenario::kReplaceLeafBeforeQuarantine
+      : test_scenario == CopyTestScenario::kRewriteRetainedLeafBeforeQuarantine
+        ? StagingSweepTestScenario::kRewriteLeafBeforeQuarantine
+      : test_scenario == CopyTestScenario::kChmodRetainedLeafBeforeQuarantine
+        ? StagingSweepTestScenario::kChmodLeafBeforeQuarantine
       : test_scenario == CopyTestScenario::kPauseAfterStageSweep
         ? StagingSweepTestScenario::kPauseAfterSweep
       : StagingSweepTestScenario::kNone;
