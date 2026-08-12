@@ -98,7 +98,7 @@ describe("file selection", () => {
     expect(ranged.selectedPaths).toEqual(["projects/a", "projects/c"]);
   });
 
-  it("hard-caps selected and dragged rows at 100", () => {
+  it("keeps selections above the batch limit and refuses a partial drag", () => {
     const many = Array.from({ length: 140 }, (_, index) => `projects/${index.toString().padStart(3, "0")}`);
     const selected = updateFileSelection(
       { ...createFileSelection(scope), anchorPath: many[0] },
@@ -107,8 +107,23 @@ describe("file selection", () => {
       { shiftKey: true },
       "mac",
     );
-    expect(selected.selectedPaths).toHaveLength(100);
-    expect(beginFileDrag(selected, selected.selectedPaths[10]!).dragPaths).toHaveLength(100);
+    expect(selected.selectedPaths).toEqual(many);
+    expect(beginFileDrag(selected, selected.selectedPaths[10]!)).toEqual({
+      state: selected,
+      dragPaths: [],
+    });
+  });
+
+  it("caps serializable selection state at the bounded listing size", () => {
+    const many = Array.from({ length: 1_100 }, (_, index) => `projects/${index.toString().padStart(4, "0")}`);
+    const selected = updateFileSelection(
+      { ...createFileSelection(scope), anchorPath: many[0] },
+      many,
+      many.at(-1)!,
+      { shiftKey: true },
+      "mac",
+    );
+    expect(selected.selectedPaths).toEqual(many.slice(0, 1_000));
   });
 
   it.each([

@@ -1,4 +1,7 @@
-export const MAX_FILE_SELECTION = 100;
+import { MAX_BROWSER_ENTRIES } from "./browser-entries";
+
+export const MAX_FILE_BATCH_SIZE = 100;
+export const MAX_FILE_SELECTION = MAX_BROWSER_ENTRIES;
 
 export interface FileSelectionScope {
   directory: string;
@@ -104,10 +107,8 @@ export function beginFileDrag(
     .filter((selectedPath) => parentDirectory(selectedPath) === state.scope.directory)
     .slice(0, MAX_FILE_SELECTION);
   if (siblingSelection.includes(path)) {
-    const nextState = siblingSelection === state.selectedPaths
-      ? state
-      : { ...state, selectedPaths: siblingSelection };
-    return { state: nextState, dragPaths: [...siblingSelection] };
+    if (siblingSelection.length > MAX_FILE_BATCH_SIZE) return { state, dragPaths: [] };
+    return { state: { ...state, selectedPaths: siblingSelection }, dragPaths: [...siblingSelection] };
   }
   const nextState = singleSelection(state.scope, path);
   return { state: nextState, dragPaths: [path] };
@@ -118,7 +119,7 @@ function singleSelection(scope: FileSelectionScope, path: string): FileSelection
 }
 
 function orderSelected(renderedPaths: readonly string[], selectedPaths: readonly string[]): string[] {
-  const selected = new Set(selectedPaths.slice(0, MAX_FILE_SELECTION * 2));
+  const selected = new Set(selectedPaths.slice(0, MAX_FILE_SELECTION));
   return renderedPaths.filter((path) => selected.has(path)).slice(0, MAX_FILE_SELECTION);
 }
 
