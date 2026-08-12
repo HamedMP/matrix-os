@@ -364,9 +364,16 @@ describe("CreateProjectDialog add-project flows", () => {
         }
         return { entries: [] };
       });
-      const post = vi.fn(async (requestPath: string, body: unknown) => {
+      let mkdirAttempts = 0;
+      const post = vi.fn(async (requestPath: string, body: unknown, _options?: unknown) => {
         if (requestPath === "/api/projects/mkdir") {
-          expect(body).toEqual({ name: "side-project", parent: "code" });
+          expect(body).toEqual({
+            name: "side-project",
+            parent: "code",
+            clientRequestId: expect.stringMatching(/^req_[A-Za-z0-9_-]+$/),
+          });
+          mkdirAttempts += 1;
+          if (mkdirAttempts === 1) throw new AppError("timeout");
           return { path: "code/side-project" };
         }
         throw new Error(`unexpected POST ${requestPath}`);
@@ -390,7 +397,15 @@ describe("CreateProjectDialog add-project flows", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-      await waitFor(() => expect(post).toHaveBeenCalledWith("/api/projects/mkdir", { name: "side-project", parent: "code" }));
+      await waitFor(() => expect(post).toHaveBeenCalledWith(
+        "/api/projects/mkdir",
+        expect.objectContaining({ name: "side-project", parent: "code" }),
+        { timeoutMs: 30_000 },
+      ));
+      const mkdirCalls = post.mock.calls.filter(([path]) => path === "/api/projects/mkdir");
+      expect(mkdirCalls).toHaveLength(2);
+      expect(mkdirCalls[1]?.[1]).toEqual(mkdirCalls[0]?.[1]);
+      expect(mkdirCalls[1]?.[2]).toEqual({ timeoutMs: 310_000 });
       await waitFor(() => expect(createProject).toHaveBeenCalledWith(expect.anything(), {
         name: "Side Project",
         mode: "folder",

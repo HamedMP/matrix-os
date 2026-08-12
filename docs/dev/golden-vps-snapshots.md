@@ -41,7 +41,7 @@ Related state changes use Postgres transactions. Provider requests are always ou
 
 ## Build and Validation
 
-The release workflow enqueues the immutable bundle version only after publication. Enqueue failure is non-blocking, and the existing `deploy` job does not depend on snapshot success.
+The release workflow enqueues the immutable bundle version only after publication and only when the GitHub Actions variable `GOLDEN_SNAPSHOT_BUILDS_ENABLED` is exactly `true`. The platform deployment workflow passes the same variable to both candidate and production roles, defaults it to `false`, and keeps snapshot selection disabled with rollout `0%`. Enqueue failure is non-blocking, and the existing `deploy` job does not depend on snapshot success.
 
 The worker uses bounded batches and leases. Ephemeral builders and validation clones carry exact labels for build ID, snapshot ID, and role. Those labels are also the only allowed basis for adopting a resource after an ambiguous create result. Zero matches means wait; multiple exact matches quarantine the build. Cleanup verifies the recorded resource ID and labels before deletion.
 

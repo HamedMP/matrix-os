@@ -1764,6 +1764,20 @@ describe("shell registry", () => {
     expect(adapter.deleteSession).toHaveBeenCalledWith("bench", { force: true });
   });
 
+  it("delegates repeated forced deletion so idempotent runtime adapters can confirm cleanup", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => []),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.delete("already-gone", { force: true })).resolves.toBeUndefined();
+
+    expect(adapter.deleteSession).toHaveBeenCalledWith("already-gone", { force: true });
+  });
+
   it("deletes metadata-tracked sessions without listing live zellij sessions", async () => {
     const root = await tempRoot();
     const persistPath = join(root, "system", "shell-sessions.json");

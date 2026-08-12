@@ -89,6 +89,9 @@ const HMAC_WEBHOOK_PREFIXES = [
 const ROUTE_SCOPED_BEARER_PATHS = [
   "/api/internal/upgrade",
 ];
+const ROUTE_SCOPED_SIGNATURE_PATHS = [
+  "/api/internal/terminal-acceptance/run",
+];
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/terminal/session", "/ws/onboarding", "/ws/vocal"];
@@ -137,6 +140,17 @@ const webhookRateLimiter = createRateLimiter({
   lockoutMs: 30_000,
 });
 
+// The preview-only acceptance transport uploads two bounded probe assets in
+// signed chunks before running two lifecycle commands. It therefore needs a
+// short valid burst larger than the generic failed-auth ceiling, and must not
+// inherit a lockout caused by unrelated requests sharing a proxy source IP.
+// Keep HMAC verification bounded independently at 64 requests per minute.
+const acceptanceSignatureRateLimiter = createRateLimiter({
+  maxAttempts: 64,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
   const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   return (
@@ -145,6 +159,13 @@ function getClientIp(c: { req: { header: (name: string) => string | undefined } 
     forwardedFor ||
     "127.0.0.1"
   );
+}
+
+function getTrustedProxyClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
+  // Customer-VPS nginx always overwrites X-Real-IP with its transport peer.
+  // CF-Connecting-IP is intentionally excluded because direct callers can
+  // supply it and rotate the signature-verification limiter key.
+  return c.req.header("x-real-ip")?.trim() || "trusted-proxy-address-unavailable";
 }
 
 export function authMiddleware(
@@ -201,6 +222,14 @@ export function authMiddleware(
     if (ROUTE_SCOPED_BEARER_PATHS.some((p) => normalizedPath === p)) {
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    if (ROUTE_SCOPED_SIGNATURE_PATHS.some((p) => normalizedPath === p)) {
+      const ip = getTrustedProxyClientIp(c);
+      if (!acceptanceSignatureRateLimiter.check(ip)) {
         return tooManyRequests(c);
       }
       return nextWithReady(c, next);

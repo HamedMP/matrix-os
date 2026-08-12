@@ -5,6 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -22,11 +24,19 @@ import { useBrowserViewPreference } from "./browser-view-preference";
 import {
   BrowserToolbar,
   EntryButton,
+  hasRegularDroppedFiles,
   measureGridColumns,
+  regularDroppedFiles,
   SortHeader,
 } from "./browser-views";
+import { useFileUploads } from "./use-file-uploads";
 
 type BrowserStatus = "loading" | "ready" | "error";
+
+export type FolderPickerChoice =
+  | { kind: "choose" }
+  | { kind: "blocked"; message: string }
+  | { kind: "alternate"; label: string; message: string };
 
 const NO_ENTRIES: BrowserEntry[] = [];
 
@@ -44,6 +54,8 @@ export default function ComputerFileBrowser({
   mode = "browse",
   onOpenFile,
   onChooseFolder,
+  resolveFolderChoice,
+  onAlternateFolderAction,
 }: {
   compact?: boolean;
   // framed renders the browser as its own bordered card (dialogs, pickers).
@@ -55,6 +67,8 @@ export default function ComputerFileBrowser({
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
   onChooseFolder?: (path: string) => void;
+  resolveFolderChoice?: (path: string) => FolderPickerChoice;
+  onAlternateFolderAction?: (path: string) => void;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -76,6 +90,9 @@ export default function ComputerFileBrowser({
   // <body>, arrow keys stop working, and a keyboard user is stranded outside
   // the listing with no way back in except the mouse.
   const restoreFocusRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dragDepth = useRef(0);
+  const [dragActive, setDragActive] = useState(false);
 
   const markFocusForRestore = useCallback(() => {
     const active = document.activeElement;
@@ -126,6 +143,34 @@ export default function ComputerFileBrowser({
       setError(toUserMessage(err));
     }
   }, [api]);
+
+  const fileUploads = useFileUploads({
+    api,
+    browserScope,
+    currentPath,
+    enabled: mode === "browse",
+    onUploaded: load,
+  });
+
+  const enqueueFiles = useCallback((files: File[], destination = viewCurrentPath) => {
+    fileUploads.enqueue(files, destination);
+  }, [fileUploads.enqueue, viewCurrentPath]);
+
+  const onListingDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (mode !== "browse" || !hasRegularDroppedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragActive(false);
+    enqueueFiles(regularDroppedFiles(event.dataTransfer));
+  }, [enqueueFiles, mode]);
+
+  const onListingPaste = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
+    if (mode !== "browse") return;
+    const files = Array.from(event.clipboardData.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    enqueueFiles(files);
+  }, [enqueueFiles, mode]);
 
   useEffect(() => {
     setLoadedScope(browserScope);
@@ -232,6 +277,9 @@ export default function ComputerFileBrowser({
   }, [viewCurrentPath]);
 
   const chosenName = (viewCandidatePath.split("/").pop() || "Matrix home");
+  const folderChoice = viewCandidatePath
+    ? resolveFolderChoice?.(viewCandidatePath) ?? { kind: "choose" as const }
+    : null;
   // Name flexes (minmax(0,1fr) + truncate); Size/Modified are fixed-width
   // right-aligned columns sized to the format.ts outputs, so long names only
   // truncate once the pane is genuinely out of room.
@@ -276,6 +324,9 @@ export default function ComputerFileBrowser({
             if (entry.type === "directory") navigate(path);
           }}
           onKeyDown={(event) => onEntryKeyDown(event, entry, path, index)}
+          onDropFiles={mode === "browse" && entry.type === "directory"
+            ? (files) => enqueueFiles(files, path)
+            : undefined}
         />
       );
     });
@@ -340,18 +391,92 @@ export default function ComputerFileBrowser({
         onUp={goUp}
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
+        onUpload={mode === "browse" ? () => fileInputRef.current?.click() : undefined}
       />
 
-      <div className={`${compact ? "h-52" : "min-h-0 flex-1"} overflow-y-auto p-1.5`}>{content}</div>
+      {mode === "browse" ? (
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="sr-only"
+          aria-label="Choose files to upload"
+          onChange={(event) => {
+            enqueueFiles(Array.from(event.currentTarget.files ?? []));
+            event.currentTarget.value = "";
+          }}
+        />
+      ) : null}
+      <div
+        data-files-listing
+        className={`${compact ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto p-1.5`}
+        onDragEnter={mode === "browse" ? (event) => {
+          if (!hasRegularDroppedFiles(event.dataTransfer)) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          setDragActive(true);
+        } : undefined}
+        onDragLeave={mode === "browse" ? () => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragActive(false);
+        } : undefined}
+        onDragOver={mode === "browse" ? (event) => {
+          if (hasRegularDroppedFiles(event.dataTransfer)) event.preventDefault();
+        } : undefined}
+        onDrop={mode === "browse" ? onListingDrop : undefined}
+        onPaste={mode === "browse" ? onListingPaste : undefined}
+      >
+        {content}
+        {dragActive ? (
+          <div className="pointer-events-none absolute inset-2 flex items-center justify-center rounded-lg border border-dashed text-sm" style={{ borderColor: "var(--accent)", color: "var(--accent)", background: "var(--bg-surface)" }}>
+            Drop files to upload
+          </div>
+        ) : null}
+      </div>
+
+      {fileUploads.uploads.length > 0 ? (
+        <div className="shrink-0 space-y-1 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }} aria-live="polite">
+          {fileUploads.uploads.slice(0, 4).map((upload) => (
+            <div key={upload.id} className="flex min-h-7 items-center justify-between gap-2">
+              <span className="min-w-0 truncate">{upload.name}: {upload.error ?? upload.status}</span>
+              {upload.status === "failed" ? (
+                <span className="flex shrink-0 items-center gap-1">
+                  {upload.error !== "Files are limited to 10 MB." ? (
+                    <Button variant="subtle" className="h-7 text-xs" onClick={() => fileUploads.retry(upload.id)}>Retry</Button>
+                  ) : null}
+                  <Button variant="ghost" className="h-7 text-xs" onClick={() => fileUploads.remove(upload.id)}>Remove</Button>
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {onChooseFolder ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
-          <span className="min-w-0 truncate text-xs" style={{ color: "var(--text-secondary)" }} title={viewCandidatePath || "Matrix home"}>
-            {viewCandidatePath || "Matrix home"}
-          </span>
-          <Button variant="primary" disabled={!viewCandidatePath} onClick={() => onChooseFolder(viewCandidatePath)}>
-            Choose {chosenName}
-          </Button>
+          <div className="min-w-0">
+            <div className="truncate text-xs" style={{ color: "var(--text-secondary)" }} title={viewCandidatePath || "Matrix home"}>
+              {viewCandidatePath || "Matrix home"}
+            </div>
+            {folderChoice && folderChoice.kind !== "choose" ? (
+              <div className="mt-0.5 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+                {folderChoice.message}
+              </div>
+            ) : null}
+          </div>
+          {folderChoice?.kind === "alternate" ? (
+            <Button variant="primary" onClick={() => onAlternateFolderAction?.(viewCandidatePath)}>
+              {folderChoice.label}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              disabled={!viewCandidatePath || folderChoice?.kind === "blocked"}
+              onClick={() => onChooseFolder(viewCandidatePath)}
+            >
+              Choose {chosenName}
+            </Button>
+          )}
         </div>
       ) : null}
     </div>

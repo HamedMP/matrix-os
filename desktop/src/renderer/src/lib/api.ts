@@ -40,8 +40,10 @@ export interface ApiClient {
   getText(path: string, options?: BoundedReadOptions): Promise<string>;
   getBlob(path: string, options?: BoundedReadOptions): Promise<Blob>;
   post<T>(path: string, body: unknown, options?: RequestTimeoutOptions): Promise<T>;
+  postBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
   put<T>(path: string, body: unknown): Promise<T>;
+  putBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
   delete<T>(path: string): Promise<T>;
   putText<T>(path: string, body: string): Promise<T>;
   baseUrl: string;
@@ -156,6 +158,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }, requestOptions),
+    postBytes: (path, body, headers, requestOptions) =>
+      request(path, { method: "POST", headers, body }, requestOptions),
     patch: (path, body) =>
       request(path, {
         method: "PATCH",
@@ -168,6 +172,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
+    putBytes: (path, body, headers, requestOptions) =>
+      request(path, { method: "PUT", headers, body }, requestOptions),
     // The gateway task DELETE route parses the JSON body unconditionally, so a
     // body-less DELETE 400s; always send an empty JSON object.
     delete: (path) =>

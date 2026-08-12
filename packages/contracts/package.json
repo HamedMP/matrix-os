@@ -9,6 +9,7 @@
   "imports": {
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#contract-primitives": "./src/primitives.ts",
+    "#hermes-configuration": "./src/hermes-configuration.ts",
     "#terminal-links": "./src/terminal-links.ts"
   },
   "main": "src/index.ts",

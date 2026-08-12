@@ -12,4 +12,9 @@ describe("canSubmitChatDraft", () => {
     expect(canSubmitChatDraft("", "idle")).toBe(false);
     expect(canSubmitChatDraft("   ", "idle")).toBe(false);
   });
+
+  it("allows attachment-only drafts while Hermes is idle", () => {
+    expect(canSubmitChatDraft("", "idle", 1)).toBe(true);
+    expect(canSubmitChatDraft("", "thinking", 1)).toBe(false);
+  });
 });

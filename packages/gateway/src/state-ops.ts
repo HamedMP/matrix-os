@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { resolveWithinHome } from "./path-security.js";
 
@@ -68,6 +68,26 @@ export async function atomicWriteJson(path: string, value: unknown): Promise<voi
   const tmpPath = join(dirname(path), `.${randomUUID()}.tmp`);
   await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
   await rename(tmpPath, path);
+}
+
+// Publish a fully written JSON file without replacing an existing file. The
+// hard-link is atomic on the same filesystem, so concurrent writers either
+// publish one complete value or observe EEXIST and reconcile with the winner.
+export async function atomicCreateJson(path: string, value: unknown): Promise<boolean> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmpPath = join(dirname(path), `.${randomUUID()}.tmp`);
+  await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  try {
+    await link(tmpPath, path);
+    return true;
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST") {
+      return false;
+    }
+    throw err;
+  } finally {
+    await rm(tmpPath, { force: true });
+  }
 }
 
 export async function readJsonFile<T = unknown>(path: string): Promise<T> {

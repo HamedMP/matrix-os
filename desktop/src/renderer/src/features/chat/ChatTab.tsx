@@ -18,6 +18,9 @@ import { Bubble, BubbleContent } from "./elements/bubble";
 import { Conversation, ConversationContent, ConversationItem } from "./elements/conversation";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
+import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
+import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
+import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { Reasoning } from "./elements/reasoning";
 import { Tool } from "./elements/tool";
 
@@ -55,8 +58,8 @@ function ConnectCard({ title, body, icon, done }: { title: string; body: string;
   );
 }
 
-export function canSubmitChatDraft(draft: string, status: HermesStatus): boolean {
-  return draft.trim().length > 0 && status === "idle";
+export function canSubmitChatDraft(draft: string, status: HermesStatus, attachmentCount = 0): boolean {
+  return (draft.trim().length > 0 || attachmentCount > 0) && status === "idle";
 }
 
 // The Hermes (OS agent) conversation — the default pane when no agent thread is
@@ -68,16 +71,36 @@ function HermesPane() {
   const abort = useHermesChat((s) => s.abort);
   const projects = useBoard((s) => s.projects);
   const [draft, setDraft] = useState("");
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const attachments = useConversationAttachments();
 
   const projectName = projects[0]?.name ?? projects[0]?.slug ?? "Matrix OS";
   const groups = groupMessages(messages);
   const empty = messages.length === 0;
 
-  const submit = () => {
-    if (!canSubmitChatDraft(draft, status)) return;
-    send(draft);
-    setDraft("");
+  const submit = async () => {
+    if (uploadingAttachments || !canSubmitChatDraft(draft, status, attachments.items.length)) return;
+    setUploadingAttachments(true);
+    try {
+      const uploaded = await attachments.uploadAll();
+      if (!uploaded.ok) return;
+      send(appendHermesAttachmentPaths(draft, uploaded.paths));
+      setDraft("");
+      attachments.clear();
+    } finally {
+      setUploadingAttachments(false);
+    }
   };
+
+  const attachmentPreviews = (
+    <AttachmentPreviewRow
+      items={attachments.items}
+      disabled={uploadingAttachments}
+      onRemove={attachments.remove}
+      onRetry={(localId) => void attachments.retry(localId)}
+    />
+  );
+  const composerReady = canSubmitChatDraft(draft, status, attachments.items.length);
 
   const composerFooter = (
     <>
@@ -89,12 +112,12 @@ function HermesPane() {
 
   if (empty) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div role="region" aria-label="Hermes conversation" className="flex min-h-0 flex-1 flex-col" {...attachments.paneProps}>
         <div className="mx-auto flex w-full max-w-[760px] flex-1 flex-col justify-center px-5">
           <h1 className="mb-8 text-center text-2xl font-semibold tracking-tight" style={{ color: "var(--text-primary)", fontSize: "var(--text-2xl)" }}>
             What should we build in {projectName}?
           </h1>
-          <PromptInput value={draft} onChange={setDraft} onSubmit={submit} onAbort={abort} busy={status !== "idle"} autoFocus footer={composerFooter} />
+          <PromptInput value={draft} onChange={setDraft} onSubmit={() => void submit()} onAbort={status !== "idle" ? abort : undefined} busy={status !== "idle" || uploadingAttachments} disabled={uploadingAttachments} canSubmit={composerReady} attachments={attachmentPreviews} autoFocus footer={composerFooter} />
           <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
             <ConnectCard title="Connect messaging" body="Get context from recent team discussions" icon={<MessageSquare size={13} aria-hidden />} />
             <ConnectCard title="Connect email" body="Summarize stakeholder asks from email" icon={<Mail size={13} aria-hidden />} />
@@ -106,7 +129,7 @@ function HermesPane() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div role="region" aria-label="Hermes conversation" className="flex min-h-0 flex-1 flex-col" {...attachments.paneProps}>
       <Conversation>
         <ConversationContent>
           {groups.map((group) =>
@@ -154,7 +177,7 @@ function HermesPane() {
         </ConversationContent>
       </Conversation>
       <div className="mx-auto w-full max-w-[760px] px-5 pb-5">
-        <PromptInput value={draft} onChange={setDraft} onSubmit={submit} onAbort={abort} busy={status !== "idle"} placeholder="Reply to Hermes…" footer={composerFooter} />
+        <PromptInput value={draft} onChange={setDraft} onSubmit={() => void submit()} onAbort={status !== "idle" ? abort : undefined} busy={status !== "idle" || uploadingAttachments} disabled={uploadingAttachments} canSubmit={composerReady} attachments={attachmentPreviews} placeholder="Reply to Hermes…" footer={composerFooter} />
       </div>
     </div>
   );

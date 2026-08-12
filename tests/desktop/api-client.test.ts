@@ -131,6 +131,57 @@ describe("createApiClient", () => {
     expect(timeout).toHaveBeenCalledWith(310_000);
   });
 
+  it("uploads binary blobs with caller headers and a bounded timeout", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(201, {
+      terminalPath: "/home/matrix/home/projects/paste.png",
+    }));
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "vm-2",
+      fetchFn,
+    });
+    const image = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: "image/png" });
+
+    await client.postBytes(
+      "/api/terminal/sessions/main/paste-assets",
+      image,
+      { "Content-Type": "image/png", "X-Matrix-Filename": "shot.png" },
+      { timeoutMs: 30_000 },
+    );
+
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe("https://x.test/api/terminal/sessions/main/paste-assets?runtime=vm-2");
+    expect(init).toMatchObject({ method: "POST", body: image });
+    expect((init as RequestInit).headers).toEqual({
+      "Content-Type": "image/png",
+      "X-Matrix-Filename": "shot.png",
+    });
+    expect(timeout).toHaveBeenCalledWith(30_000);
+  });
+
+  it("uploads file blobs with PUT without JSON encoding", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, {
+      ok: true,
+      path: "projects/demo/readme.txt",
+      size: 5,
+    }));
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+    const file = new Blob(["hello"], { type: "text/plain" });
+
+    await client.putBytes("/api/files/blob?path=projects%2Fdemo%2Freadme.txt", file, {
+      "Content-Type": "text/plain",
+    });
+
+    const [, init] = fetchFn.mock.calls[0]!;
+    expect(init).toMatchObject({ method: "PUT", body: file });
+    expect((init as RequestInit).headers).toEqual({ "Content-Type": "text/plain" });
+  });
+
   it("treats non-JSON success bodies as server errors", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response("<html>", { status: 200 }));
     const client = createApiClient({

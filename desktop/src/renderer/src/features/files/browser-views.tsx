@@ -10,8 +10,9 @@ import {
   LayoutGrid,
   List,
   RefreshCw,
+  Upload,
 } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import type { DragEvent, KeyboardEvent } from "react";
 import { IconButton } from "../../design/primitives";
 import type { BrowserEntry, BrowserSortDirection } from "./browser-entries";
 import type { BrowserViewMode } from "./browser-view-preference";
@@ -22,6 +23,30 @@ const VIEW_OPTIONS: Array<{ mode: BrowserViewMode; label: string; icon: typeof L
   { mode: "grid", label: "Grid view", icon: LayoutGrid },
   { mode: "list", label: "List view", icon: List },
 ];
+
+export function hasRegularDroppedFiles(dataTransfer: DataTransfer): boolean {
+  if (!dataTransfer.items || dataTransfer.items.length === 0) return dataTransfer.files.length > 0;
+  return Array.from(dataTransfer.items).some((item) => {
+    if (item.kind !== "file") return false;
+    const entry = "webkitGetAsEntry" in item
+      ? (item as DataTransferItem & { webkitGetAsEntry?: () => { isDirectory?: boolean } | null }).webkitGetAsEntry?.()
+      : null;
+    return !entry?.isDirectory;
+  });
+}
+
+export function regularDroppedFiles(dataTransfer: DataTransfer): File[] {
+  if (!dataTransfer.items || dataTransfer.items.length === 0) return Array.from(dataTransfer.files);
+  return Array.from(dataTransfer.items).flatMap((item) => {
+    if (item.kind !== "file") return [];
+    const entry = "webkitGetAsEntry" in item
+      ? (item as DataTransferItem & { webkitGetAsEntry?: () => { isDirectory?: boolean } | null }).webkitGetAsEntry?.()
+      : null;
+    if (entry?.isDirectory) return [];
+    const file = item.getAsFile();
+    return file ? [file] : [];
+  });
+}
 
 // ArrowUp/ArrowDown in grid view move by a visual row. Columns are measured
 // from the rendered tiles; jsdom (offsetWidth 0) and unmeasured layouts fall
@@ -128,6 +153,7 @@ export function EntryButton({
   onSelect,
   onNavigate,
   onKeyDown,
+  onDropFiles,
 }: {
   entry: BrowserEntry;
   grid: boolean;
@@ -138,6 +164,7 @@ export function EntryButton({
   onSelect: () => void;
   onNavigate: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onDropFiles?: (files: File[]) => void;
 }) {
   const kind = kindForEntry(entry);
   const glyphColor = entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)";
@@ -155,6 +182,16 @@ export function EntryButton({
         onClick={onSelect}
         onDoubleClick={onNavigate}
         onKeyDown={onKeyDown}
+        onDragOver={(event) => {
+          if (!onDropFiles || !hasRegularDroppedFiles(event.dataTransfer)) return;
+          event.preventDefault();
+        }}
+        onDrop={(event: DragEvent<HTMLButtonElement>) => {
+          if (!onDropFiles || !hasRegularDroppedFiles(event.dataTransfer)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          onDropFiles(regularDroppedFiles(event.dataTransfer));
+        }}
       >
         <span style={{ color: glyphColor }}>
           <FileGlyph kind={kind} size={34} />
@@ -185,6 +222,16 @@ export function EntryButton({
       onClick={onSelect}
       onDoubleClick={onNavigate}
       onKeyDown={onKeyDown}
+      onDragOver={(event) => {
+        if (!onDropFiles || !hasRegularDroppedFiles(event.dataTransfer)) return;
+        event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (!onDropFiles || !hasRegularDroppedFiles(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onDropFiles(regularDroppedFiles(event.dataTransfer));
+      }}
     >
       <span className="flex min-w-0 items-center gap-2">
         <span className="shrink-0" style={{ color: glyphColor }}>
@@ -211,6 +258,7 @@ export function BrowserToolbar({
   onUp,
   onNavigate,
   onRefresh,
+  onUpload,
 }: {
   compact: boolean;
   currentPath: string;
@@ -220,6 +268,7 @@ export function BrowserToolbar({
   onUp: () => void;
   onNavigate: (path: string) => void;
   onRefresh: () => void;
+  onUpload?: () => void;
 }) {
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
@@ -257,6 +306,11 @@ export function BrowserToolbar({
         ))}
       </div>
       <ViewSwitcher view={view} onChange={onViewChange} />
+      {onUpload ? (
+        <IconButton label="Upload files" className="shrink-0" onClick={onUpload}>
+          <Upload size={13} />
+        </IconButton>
+      ) : null}
       <IconButton label="Refresh folder" className="shrink-0" onClick={onRefresh}>
         <RefreshCw size={13} />
       </IconButton>
