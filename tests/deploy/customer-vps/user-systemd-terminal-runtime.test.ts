@@ -98,6 +98,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(build).toContain('printf \'1\\n\' > "$STAGE_DIR/app/TERMINAL_USER_SYSTEMD_ENABLED"');
     expect(server).toContain('const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)');
     expect(server).toContain('process.env.MATRIX_RUNTIME_SLOT === runtimeHandle');
+    expect(server).toContain('secret: () => process.env.UPGRADE_TOKEN ?? ""');
     expect(server).toContain("loadInstalledTerminalRuntimeGeneration");
     expect(server).toContain("createUserSystemdZellijRuntime");
     expect(server).toContain("createUserSystemdZellijAdapter");

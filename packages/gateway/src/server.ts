@@ -1791,7 +1791,7 @@ export async function createGateway(config: GatewayConfig) {
     && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
   if (terminalAcceptanceEnabled) {
     app.route("/api/internal/terminal-acceptance", createTerminalAcceptanceRoutes({
-      secret: process.env.UPGRADE_TOKEN ?? "",
+      secret: () => process.env.UPGRADE_TOKEN ?? "",
       run: (input) => shellCommandRunner.run(input),
     }));
   }
