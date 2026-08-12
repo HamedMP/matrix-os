@@ -2,100 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildKernelWsUrl,
   KernelSocket,
+  parseKernelServerMessage,
   type KernelConnectionState,
+  type FileDirectoryServerMessage,
   type KernelServerMessage,
-  type WebSocketLike,
 } from "@desktop/renderer/src/lib/kernel-socket";
-
-class FakeWebSocket implements WebSocketLike {
-  readyState = 0;
-  sent: string[] = [];
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: unknown }) => void) | null = null;
-  onclose: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-
-  send(data: string): void {
-    this.sent.push(data);
-  }
-
-  close(): void {
-    if (this.readyState === 3) return;
-    this.readyState = 3;
-    this.onclose?.();
-  }
-
-  open(): void {
-    this.readyState = 1;
-    this.onopen?.();
-  }
-
-  message(data: unknown): void {
-    this.onmessage?.({ data });
-  }
-
-  fail(): void {
-    this.close();
-  }
-}
-
-interface ScheduledTimer {
-  id: number;
-  fn: () => void;
-  delay: number;
-  cleared: boolean;
-  fired: boolean;
-}
-
-function createFakeTimers() {
-  const scheduled: ScheduledTimer[] = [];
-  let nextId = 1;
-  const setTimeoutFn = ((fn: () => void, delay?: number) => {
-    const timer: ScheduledTimer = {
-      id: nextId++,
-      fn,
-      delay: delay ?? 0,
-      cleared: false,
-      fired: false,
-    };
-    scheduled.push(timer);
-    return timer.id as unknown as ReturnType<typeof setTimeout>;
-  }) as typeof setTimeout;
-  const clearTimeoutFn = ((id?: unknown) => {
-    const timer = scheduled.find((t) => t.id === id);
-    if (timer) timer.cleared = true;
-  }) as typeof clearTimeout;
-  function runNext(): void {
-    const timer = scheduled.find((t) => !t.cleared && !t.fired);
-    if (!timer) throw new Error("no pending timer");
-    timer.fired = true;
-    timer.fn();
-  }
-  function pending(): ScheduledTimer[] {
-    return scheduled.filter((t) => !t.cleared && !t.fired);
-  }
-  return { scheduled, setTimeoutFn, clearTimeoutFn, runNext, pending };
-}
-
-function createHarness(overrides?: { runtimeSlot?: string; random?: () => number }) {
-  const sockets: FakeWebSocket[] = [];
-  const urls: string[] = [];
-  const timers = createFakeTimers();
-  const socket = new KernelSocket({
-    baseUrl: "https://app.matrix-os.com",
-    runtimeSlot: overrides?.runtimeSlot ?? "primary",
-    createWebSocket: (url) => {
-      urls.push(url);
-      const ws = new FakeWebSocket();
-      sockets.push(ws);
-      return ws;
-    },
-    setTimeoutFn: timers.setTimeoutFn,
-    clearTimeoutFn: timers.clearTimeoutFn,
-    random: overrides?.random ?? (() => 1),
-  });
-  return { socket, sockets, urls, timers, last: () => sockets[sockets.length - 1]! };
-}
+import { createKernelSocketHarness as createHarness, FakeWebSocket } from "./kernel-socket-fixture";
 
 beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -205,6 +117,19 @@ describe("KernelSocket: connection and routing", () => {
     h.last().message(JSON.stringify(["array"]));
     h.last().message(12345);
     expect(seen).toEqual([]);
+  });
+
+  it("drops whole known and unknown frames over one million UTF-8 bytes before delivery", () => {
+    const h = createHarness();
+    const seen: KernelServerMessage[] = [];
+    h.socket.subscribe((message) => seen.push(message));
+    h.socket.connect();
+    h.last().open();
+    const multibyte = "界".repeat(340_000);
+    h.last().message(JSON.stringify({ type: "future:event", payload: multibyte }));
+    h.last().message(JSON.stringify({ type: "kernel:text", text: multibyte }));
+    expect(seen).toHaveLength(0);
+    expect(console.warn).not.toHaveBeenCalled();
   });
 
   it("isolates subscriber failures so later subscribers still receive", () => {
@@ -380,5 +305,146 @@ describe("KernelSocket: dispose", () => {
     expect(h.sockets).toHaveLength(1);
     h.socket.connect();
     expect(h.sockets).toHaveLength(1);
+  });
+});
+
+describe("KernelSocket: file directory subscriptions", () => {
+  it("strictly parses known file frames and drops malformed variants", () => {
+    expect(parseKernelServerMessage({ type: "files:subscribed", directory: "projects", revision: 0 })).toEqual({
+      type: "files:subscribed", directory: "projects", revision: 0,
+    });
+    expect(parseKernelServerMessage({ type: "files:change", directory: "projects", entry: "a.md", event: "add", revision: 1 })).toEqual({
+      type: "files:change", directory: "projects", entry: "a.md", event: "add", revision: 1,
+    });
+    expect(parseKernelServerMessage({ type: "files:shutdown" })).toEqual({ type: "files:shutdown" });
+    expect(parseKernelServerMessage({ type: "files:change", directory: "projects", entry: "../raw", event: "add", revision: 1 })).toBeNull();
+    expect(parseKernelServerMessage({ type: "files:subscribed", directory: "projects", revision: -1 })).toBeNull();
+    expect(parseKernelServerMessage({ type: "files:shutdown", raw: "provider" })).toBeNull();
+    expect(parseKernelServerMessage({ type: "files:subscribed", directory: "界".repeat(1_366), revision: 0 })).toBeNull();
+    expect(parseKernelServerMessage({ type: "files:change", directory: "projects", entry: "界".repeat(86), event: "add", revision: 1 })).toBeNull();
+  });
+
+  it("reference-counts one wire subscription across two local surfaces", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.last().open();
+    const first = h.socket.subscribeDirectory("projects", () => {});
+    const second = h.socket.subscribeDirectory("projects", () => {});
+    expect(h.last().sent.map(JSON.parse)).toEqual([{ type: "files:subscribe", directory: "projects" }]);
+
+    first();
+    expect(h.last().sent).toHaveLength(1);
+    second();
+    expect(h.last().sent.map(JSON.parse)).toEqual([
+      { type: "files:subscribe", directory: "projects" },
+      { type: "files:unsubscribe", directory: "projects" },
+    ]);
+  });
+
+  it("caps eight distinct directories and the total file-handler count", () => {
+    const h = createHarness();
+    for (let index = 0; index < 8; index++) h.socket.subscribeDirectory(`d${index}`, () => {});
+    expect(() => h.socket.subscribeDirectory("d8", () => {})).toThrow(/directory cap/i);
+
+    const same = createHarness();
+    for (let index = 0; index < 64; index++) same.socket.subscribeDirectory("projects", () => {});
+    expect(() => same.socket.subscribeDirectory("projects", () => {})).toThrow(/handler cap/i);
+  });
+
+  it("does not emit a wire subscribe when a new directory exceeds the handler cap", () => {
+    const h = createHarness();
+    for (let index = 0; index < 64; index++) h.socket.subscribeDirectory("projects", () => {});
+    h.socket.connect();
+    h.last().open();
+    h.last().sent.length = 0;
+    expect(() => h.socket.subscribeDirectory("archive", () => {})).toThrow(/handler cap/i);
+    expect(h.last().sent).toEqual([]);
+  });
+
+  it("sends touch only for a connected active scope and rejects invalid direct file frames", () => {
+    const h = createHarness();
+    h.socket.subscribeDirectory("projects", () => {});
+    h.socket.connect();
+    h.last().open();
+    h.last().sent.length = 0;
+    expect(h.socket.touchDirectory("projects")).toBe(true);
+    h.socket.send({ type: "files:touch", directory: "../raw" });
+    h.socket.send({ type: "files:subscribe", directory: "archive" });
+    h.socket.send({ type: "files:unsubscribe", directory: "projects" });
+    expect(h.last().sent.map(JSON.parse)).toEqual([{ type: "files:touch", directory: "projects" }]);
+  });
+
+  it("logs only a safe error kind when a directory wire send throws", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.last().open();
+    h.last().send = () => { throw new Error("/private/token provider failure"); };
+    h.socket.subscribeDirectory("projects", () => {});
+    expect(vi.mocked(console.warn).mock.calls.flat().join(" ")).not.toContain("/private/token");
+  });
+
+  it("resubscribes every current directory once before queued kernel messages on reconnect", () => {
+    const h = createHarness();
+    h.socket.subscribeDirectory("projects", () => {});
+    h.socket.subscribeDirectory("archive", () => {});
+    h.socket.send({ type: "message", text: "queued", requestId: "r1" });
+    h.socket.connect();
+    h.last().open();
+    expect(h.last().sent.map(JSON.parse)).toEqual([
+      { type: "files:subscribe", directory: "projects" },
+      { type: "files:subscribe", directory: "archive" },
+      { type: "message", text: "queued", requestId: "r1" },
+    ]);
+
+    h.last().fail();
+    h.timers.runNext();
+    h.last().open();
+    expect(h.last().sent.map(JSON.parse)).toEqual([
+      { type: "files:subscribe", directory: "projects" },
+      { type: "files:subscribe", directory: "archive" },
+    ]);
+  });
+
+  it("never replays stale unsubscribe or touch frames after reconnect", () => {
+    const h = createHarness();
+    const cleanup = h.socket.subscribeDirectory("projects", () => {});
+    h.socket.connect();
+    h.last().open();
+    h.last().fail();
+    expect(h.socket.touchDirectory("projects")).toBe(false);
+    cleanup();
+    h.timers.runNext();
+    h.last().open();
+    expect(h.last().sent).toEqual([]);
+  });
+
+  it("routes only matching directory frames, isolates handlers, and broadcasts shutdown", () => {
+    const h = createHarness();
+    const seen: FileDirectoryServerMessage[] = [];
+    h.socket.subscribeDirectory("projects", () => { throw new Error("boom"); });
+    h.socket.subscribeDirectory("projects", (message) => seen.push(message));
+    h.socket.subscribeDirectory("archive", () => {});
+    h.socket.connect();
+    h.last().open();
+    h.last().message(JSON.stringify({ type: "files:change", directory: "projects", entry: "a.md", event: "change", revision: 1 }));
+    h.last().message(JSON.stringify({ type: "files:shutdown" }));
+    expect(seen).toEqual([
+      { type: "files:change", directory: "projects", entry: "a.md", event: "change", revision: 1 },
+      { type: "files:shutdown" },
+    ]);
+    expect(console.warn).toHaveBeenCalled();
+    expect(vi.mocked(console.warn).mock.calls.flat().join(" ")).not.toContain("boom");
+  });
+
+  it("dispose clears directory subscriptions and suppresses later delivery", () => {
+    const h = createHarness();
+    const seen: FileDirectoryServerMessage[] = [];
+    h.socket.subscribeDirectory("projects", (message) => seen.push(message));
+    h.socket.connect();
+    const wire = h.last();
+    wire.open();
+    h.socket.dispose();
+    wire.message(JSON.stringify({ type: "files:subscribed", directory: "projects", revision: 0 }));
+    expect(seen).toEqual([]);
   });
 });

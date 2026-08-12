@@ -9,7 +9,21 @@ export interface BrowserEntry {
   sizeBytes?: number;
   modifiedAt?: string;
   children?: number;
+  capabilities: BrowserEntryCapabilities;
 }
+
+export interface BrowserEntryCapabilities {
+  canRename: boolean;
+  canMove: boolean;
+  canTrash: boolean;
+  readOnlyReason?: "protected" | "policy";
+}
+
+export const NO_FILE_CAPABILITIES: BrowserEntryCapabilities = Object.freeze({
+  canRename: false,
+  canMove: false,
+  canTrash: false,
+});
 
 export type BrowserSortKey = "name" | "size" | "modified";
 export type BrowserSortDirection = "asc" | "desc";
@@ -27,12 +41,17 @@ export function parseBrowserEntries(value: unknown): BrowserEntry[] {
       !raw ||
       typeof raw !== "object" ||
       typeof (raw as BrowserEntry).name !== "string" ||
+      !isSafeEntryName((raw as BrowserEntry).name) ||
       ((raw as BrowserEntry).type !== "file" && (raw as BrowserEntry).type !== "directory")
     ) {
       continue;
     }
     const record = raw as Record<string, unknown>;
-    const entry: BrowserEntry = { name: record.name as string, type: record.type as BrowserEntry["type"] };
+    const entry: BrowserEntry = {
+      name: record.name as string,
+      type: record.type as BrowserEntry["type"],
+      capabilities: parseBrowserEntryCapabilities(record.capabilities),
+    };
     if (typeof record.size === "number" && Number.isFinite(record.size) && record.size >= 0) {
       entry.sizeBytes = record.size;
     }
@@ -45,6 +64,41 @@ export function parseBrowserEntries(value: unknown): BrowserEntry[] {
     entries.push(entry);
   }
   return sortBrowserEntries(entries, "name", "asc");
+}
+
+function isSafeEntryName(name: string): boolean {
+  return name.length > 0
+    && name.length <= 255
+    && new TextEncoder().encode(name).byteLength <= 255
+    && name !== "."
+    && name !== ".."
+    && !name.includes("/")
+    && !name.includes("\\")
+    && !/[\u0000-\u001f\u007f]/.test(name);
+}
+
+export function parseBrowserEntryCapabilities(value: unknown): BrowserEntryCapabilities {
+  if (!value || typeof value !== "object") return NO_FILE_CAPABILITIES;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (
+    keys.some((key) => !["canRename", "canMove", "canTrash", "readOnlyReason"].includes(key))
+    || keys.length < 3
+    || typeof record.canRename !== "boolean"
+    || typeof record.canMove !== "boolean"
+    || typeof record.canTrash !== "boolean"
+    || (record.readOnlyReason !== undefined
+      && record.readOnlyReason !== "protected"
+      && record.readOnlyReason !== "policy")
+  ) {
+    return NO_FILE_CAPABILITIES;
+  }
+  return {
+    canRename: record.canRename,
+    canMove: record.canMove,
+    canTrash: record.canTrash,
+    ...(record.readOnlyReason ? { readOnlyReason: record.readOnlyReason } : {}),
+  };
 }
 
 // Finder-style ordering: directories always group first, the active key sorts
