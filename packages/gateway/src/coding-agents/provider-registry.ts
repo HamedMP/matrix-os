@@ -147,6 +147,14 @@ function applyCredentialState(
       authStatus: "missing",
     };
   }
+  if (credential.status === "auth_required") {
+    return {
+      ...summary,
+      availability: "auth_required",
+      installStatus: "installed",
+      authStatus: "missing",
+    };
+  }
   if (credential.status === "expired" || credential.status === "revoked") {
     return {
       ...summary,
