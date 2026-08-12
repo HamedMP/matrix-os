@@ -32,6 +32,14 @@ export type NativeCopyTestScenario =
   | "pause_after_stage_sweep";
 
 export interface NativeFileCapabilityTestHarness {
+  createWithScenario(
+    homePath: string,
+    relativePath: string,
+    content: string,
+    createParents: boolean,
+    allowExisting: boolean,
+    scenario: "fail_regular_after_target_claim",
+  ): Promise<NativeFileCapabilityResult>;
   copyWithScenario(
     homePath: string,
     sourcePath: string,
@@ -72,6 +80,14 @@ interface NativeAddon {
     content: string,
     createParents: boolean,
     allowExisting: boolean,
+  ): Promise<NativeFileCapabilityResult>;
+  createForTest(
+    homePath: string,
+    relativePath: string,
+    content: string,
+    createParents: boolean,
+    allowExisting: boolean,
+    scenario: "fail_regular_after_target_claim",
   ): Promise<NativeFileCapabilityResult>;
   copy(homePath: string, sourcePath: string, targetPath: string, createParents: boolean): Promise<NativeFileCapabilityResult>;
   copyForTest(
@@ -141,6 +157,8 @@ export function getNativeFileCapabilityTestHarness(): NativeFileCapabilityTestHa
   }
   const addon = loadAddon();
   return {
+    createWithScenario: (homePath, relativePath, content, createParents, allowExisting, scenario) =>
+      addon.createForTest(homePath, relativePath, content, createParents, allowExisting, scenario),
     copyWithScenario: (homePath, sourcePath, targetPath, createParents, scenario) =>
       addon.copyForTest(homePath, sourcePath, targetPath, createParents, scenario),
   };

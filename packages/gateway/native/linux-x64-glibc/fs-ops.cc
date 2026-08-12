@@ -406,9 +406,14 @@ Result CopyImpl(
   return {Code::kOk, 0};
 }
 
-}  // namespace
-
-Result Create(const std::string& home, const std::string& relative_path, bool directory, const std::string& content, bool create_parents, bool allow_existing) {
+Result CreateImpl(
+  const std::string& home,
+  const std::string& relative_path,
+  bool directory,
+  const std::string& content,
+  bool create_parents,
+  bool allow_existing,
+  bool fail_after_target_claim) {
   const PathParts path = SplitRelative(relative_path);
   if (!path.valid) return Failure(EINVAL);
   Fd home_fd = OpenHome(home);
@@ -426,8 +431,28 @@ Result Create(const std::string& home, const std::string& relative_path, bool di
   }
   Fd target(openat(parent.get(), name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666));
   if (!target) return Failure(errno);
-  if (WriteAll(target.get(), content.data(), content.size()) != 0) return Failure(errno, true);
+  if (fail_after_target_claim) return Failure(EIO, true, relative_path);
+  if (WriteAll(target.get(), content.data(), content.size()) != 0) {
+    return Failure(errno, true, relative_path);
+  }
   return {Code::kOk, 0};
+}
+
+}  // namespace
+
+Result Create(const std::string& home, const std::string& relative_path, bool directory, const std::string& content, bool create_parents, bool allow_existing) {
+  return CreateImpl(home, relative_path, directory, content, create_parents, allow_existing, false);
+}
+
+Result CreateForTest(
+  const std::string& home,
+  const std::string& relative_path,
+  const std::string& content,
+  bool create_parents,
+  bool allow_existing,
+  CopyTestScenario scenario) {
+  if (scenario != CopyTestScenario::kFailRegularAfterTargetClaim) return Failure(EINVAL);
+  return CreateImpl(home, relative_path, false, content, create_parents, allow_existing, true);
 }
 
 Result Copy(const std::string& home, const std::string& source, const std::string& target, bool create_parents) {

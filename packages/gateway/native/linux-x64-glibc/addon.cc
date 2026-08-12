@@ -6,7 +6,7 @@
 
 namespace {
 
-enum class Operation { kCreate, kCopy, kCopyTest, kMove };
+enum class Operation { kCreate, kCreateTest, kCopy, kCopyTest, kMove };
 
 struct Work {
   napi_async_work async = nullptr;
@@ -94,6 +94,15 @@ void Execute(napi_env, void* data) {
         work->content,
         work->create_parents,
         work->allow_existing);
+      break;
+    case Operation::kCreateTest:
+      work->result = matrix_fs::CreateForTest(
+        work->home,
+        work->target,
+        work->content,
+        work->create_parents,
+        work->allow_existing,
+        work->test_scenario);
       break;
     case Operation::kCopy:
       work->result = matrix_fs::Copy(work->home, work->source, work->target, work->create_parents);
@@ -191,6 +200,29 @@ napi_value CopyOrMove(napi_env env, napi_callback_info info, Operation operation
   return Queue(env, work, operation == Operation::kCopy ? "matrix_fs_copy" : "matrix_fs_move");
 }
 
+napi_value CreateForTest(napi_env env, napi_callback_info info) {
+  size_t argc = 6;
+  napi_value args[6];
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+  if (argc != 6) {
+    napi_throw_type_error(env, nullptr, "createForTest requires 6 arguments");
+    return nullptr;
+  }
+  Work* work = new Work();
+  work->operation = Operation::kCreateTest;
+  if (!ReadString(env, args[0], &work->home)
+      || !ReadString(env, args[1], &work->target)
+      || !ReadString(env, args[2], &work->content)
+      || !ReadBoolean(env, args[3], &work->create_parents)
+      || !ReadBoolean(env, args[4], &work->allow_existing)
+      || !ReadTestScenario(env, args[5], &work->test_scenario)) {
+    delete work;
+    napi_throw_type_error(env, nullptr, "invalid createForTest arguments");
+    return nullptr;
+  }
+  return Queue(env, work, "matrix_fs_create_test");
+}
+
 napi_value Copy(napi_env env, napi_callback_info info) {
   return CopyOrMove(env, info, Operation::kCopy);
 }
@@ -224,6 +256,7 @@ napi_value Move(napi_env env, napi_callback_info info) {
 napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor properties[] = {
     {"create", nullptr, Create, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"createForTest", nullptr, CreateForTest, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"copy", nullptr, Copy, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"copyForTest", nullptr, CopyForTest, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"move", nullptr, Move, nullptr, nullptr, nullptr, napi_default, nullptr},

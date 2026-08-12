@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getNativeFileCapability,
+  getNativeFileCapabilityTestHarness,
   isNativeFileCapabilityTarget,
   NativeFileCapabilityUnavailableError,
 } from "../../packages/gateway/src/file-management/native-file-capability.js";
@@ -120,6 +121,22 @@ describe.runIf(isRequiredLinuxTarget)("Gateway native file capability on Linux x
 
     expect(result).toEqual({ ok: false, code: "partial", partialPath: "target.txt" });
     expect(existsSync(join(home, "target.txt"))).toBe(true);
+  });
+
+  it("reports the claimed destination when file creation fails after creation", async () => {
+    const home = makeRoot("partial-create");
+
+    const result = await getNativeFileCapabilityTestHarness().createWithScenario(
+      home,
+      "created.txt",
+      "content",
+      false,
+      false,
+      "fail_regular_after_target_claim",
+    );
+
+    expect(result).toEqual({ ok: false, code: "partial", partialPath: "created.txt" });
+    expect(existsSync(join(home, "created.txt"))).toBe(true);
   });
 
   it("copies nested symlinks without dereferencing and preserves executable mode", async () => {

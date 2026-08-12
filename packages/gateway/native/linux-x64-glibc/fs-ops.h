@@ -44,6 +44,14 @@ Result Create(
   bool create_parents,
   bool allow_existing);
 
+Result CreateForTest(
+  const std::string& home,
+  const std::string& relative_path,
+  const std::string& content,
+  bool create_parents,
+  bool allow_existing,
+  CopyTestScenario scenario);
+
 Result Copy(
   const std::string& home,
   const std::string& source,
