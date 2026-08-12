@@ -417,6 +417,33 @@ describe("AgentSection", () => {
     ));
   });
 
+  it("offers a visible restart for a selected installed runtime that is stopped", async () => {
+    const current = currentAgentSettings();
+    current.runtime.options[0] = {
+      ...current.runtime.options[0],
+      installState: "installed",
+      health: "stopped",
+      selectionState: "action_required",
+    };
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(current)
+      : Promise.resolve({}));
+    api.post.mockResolvedValue({ name: "matrix-restart-hermes" });
+
+    render(<AgentSection />);
+
+    const restart = await screen.findByRole("button", { name: "Restart Hermes" });
+    expect(screen.queryByText("Hermes is active")).toBeNull();
+    fireEvent.click(restart);
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({
+        cmd: "/opt/matrix/bin/matrix-agent-runtime-control switch hermes",
+        cwd: "projects",
+      }),
+    ));
+  });
+
   it("submits the visible fallback when the saved messaging model is unavailable", async () => {
     const current = currentAgentSettings();
     const messagingProvider = current.providers.find((provider) => provider.id === "openrouter");

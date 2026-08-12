@@ -3,7 +3,9 @@ export type TerminalLaunchAction =
   | "codex-login"
   | "github-ssh-login"
   | "hermes-install"
+  | "hermes-restart"
   | "openclaw-install"
+  | "openclaw-restart"
   | "openclaw-model-auth";
 
 export interface TerminalLaunchConfig {
@@ -35,10 +37,20 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
     label: "Install Hermes",
     command: "/opt/matrix/bin/matrix-agent-runtime-control install hermes",
   },
+  "hermes-restart": {
+    action: "hermes-restart",
+    label: "Restart Hermes",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control switch hermes",
+  },
   "openclaw-install": {
     action: "openclaw-install",
     label: "Install OpenClaw",
     command: "/opt/matrix/bin/matrix-agent-runtime-control install openclaw",
+  },
+  "openclaw-restart": {
+    action: "openclaw-restart",
+    label: "Restart OpenClaw",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control switch openclaw",
   },
   "openclaw-model-auth": {
     action: "openclaw-model-auth",

@@ -54,6 +54,21 @@ const RUNTIME_INSTALL: Record<AgentRuntimeId, ProviderSetupCommand> = {
   },
 };
 
+const RUNTIME_RESTART: Record<AgentRuntimeId, ProviderSetupCommand> = {
+  hermes: {
+    key: "hermes:restart",
+    label: "Restart Hermes",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control switch hermes",
+    sessionName: "matrix-restart-hermes",
+  },
+  openclaw: {
+    key: "openclaw:restart",
+    label: "Restart OpenClaw",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control switch openclaw",
+    sessionName: "matrix-restart-openclaw",
+  },
+};
+
 const CLAUDE_SETUP: ProviderSetupCommand = {
   key: "claude:login",
   label: "Claude login",
@@ -111,6 +126,9 @@ function RuntimeOptions({
           && runtime.selectionState !== "unavailable";
         const canInstall = runtime.installState !== "installed"
           && runtime.setupAction === "install";
+        const canRestart = selected
+          && runtime.installState === "installed"
+          && runtime.selectionState === "action_required";
         return (
           <article
             key={runtime.id}
@@ -147,6 +165,15 @@ function RuntimeOptions({
                   onClick={() => void onOpenSetup(RUNTIME_INSTALL[runtime.id])}
                 >
                   <SquareTerminal size={13} />Install {runtime.displayName}
+                </Button>
+              ) : canRestart ? (
+                <Button
+                  variant="subtle"
+                  disabled={busy}
+                  aria-label={`Restart ${runtime.displayName}`}
+                  onClick={() => void onOpenSetup(RUNTIME_RESTART[runtime.id])}
+                >
+                  <SquareTerminal size={13} />Restart {runtime.displayName}
                 </Button>
               ) : selected ? (
                 <span className="text-xs font-medium" style={{ color: "var(--warning)" }}>

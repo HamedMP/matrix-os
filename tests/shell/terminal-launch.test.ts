@@ -45,6 +45,16 @@ describe("terminal launch paths", () => {
       command: "/opt/matrix/bin/matrix-agent-runtime-control install openclaw",
     });
     expect(terminalLaunchConfig("openclaw-install").command).not.toContain("sudo");
+    expect(terminalLaunchConfig("hermes-restart")).toMatchObject({
+      action: "hermes-restart",
+      label: "Restart Hermes",
+      command: "/opt/matrix/bin/matrix-agent-runtime-control switch hermes",
+    });
+    expect(terminalLaunchConfig("openclaw-restart")).toMatchObject({
+      action: "openclaw-restart",
+      label: "Restart OpenClaw",
+      command: "/opt/matrix/bin/matrix-agent-runtime-control switch openclaw",
+    });
   });
 
   it("targets setup actions at the canonical terminal surface", () => {

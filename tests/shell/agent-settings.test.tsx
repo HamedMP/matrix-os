@@ -205,6 +205,24 @@ describe("Canvas Agent runtime settings", () => {
     expect(onOpenTerminal).toHaveBeenCalledWith("hermes-install");
   });
 
+  it("offers a visible restart for a selected installed runtime that is stopped", async () => {
+    const view = makeView();
+    view.runtime.options[0] = {
+      ...view.runtime.options[0],
+      installState: "installed",
+      health: "stopped",
+      selectionState: "action_required",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response(view)));
+    const onOpenTerminal = vi.fn();
+
+    render(<AgentRuntimePanel onOpenTerminal={onOpenTerminal} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Restart Hermes" }));
+    expect(screen.queryByText("Hermes is active")).not.toBeInTheDocument();
+    expect(onOpenTerminal).toHaveBeenCalledWith("hermes-restart");
+  });
+
   it("offers visible provider setup when the selected runtime has no catalog", async () => {
     const view = makeView();
     view.providers = view.providers.filter((provider) => provider.runtime !== "hermes");

@@ -97,7 +97,14 @@ function RuntimeCards({
           const installAction: TerminalLaunchAction = runtime.id === "hermes"
             ? "hermes-install"
             : "openclaw-install";
+          const restartAction: TerminalLaunchAction = runtime.id === "hermes"
+            ? "hermes-restart"
+            : "openclaw-restart";
           const canInstall = !installed && runtime.setupAction === "install" && onOpenTerminal;
+          const canRestart = selected
+            && installed
+            && runtime.selectionState === "action_required"
+            && onOpenTerminal;
           return (
             <article
               key={runtime.id}
@@ -127,6 +134,16 @@ function RuntimeCards({
                     aria-label={`Install ${runtime.displayName}`}
                   >
                     <TerminalIcon className="size-3.5" /> Install {runtime.displayName}
+                  </Button>
+                ) : canRestart ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => onOpenTerminal(restartAction)}
+                    aria-label={`Restart ${runtime.displayName}`}
+                  >
+                    <TerminalIcon className="size-3.5" /> Restart {runtime.displayName}
                   </Button>
                 ) : selected ? (
                   <p className="text-xs font-medium text-warning">
