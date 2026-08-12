@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
+import { inspectDesktopHandoffBaseline } from "./handoff-electron-baseline";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
 const DESKTOP_MAIN = resolve(__dirname, "../../../desktop/out/main/index.js");
@@ -356,5 +357,28 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "20-delete-project-confirmation.png") });
     await page.getByRole("button", { name: "Delete project" }).click();
     await page.getByRole("button", { name: "Open Matrix OS" }).waitFor({ state: "detached", timeout: 10_000 });
+  }, 40_000);
+
+  it("keeps the handoff surfaces named, keyboard reachable, and resize safe", async () => {
+    const evidence = await inspectDesktopHandoffBaseline(page);
+
+    expect(evidence.navigationNames).toEqual([
+      "Home",
+      "Chat",
+      "Terminal",
+      "Files",
+    ]);
+    expect(evidence.focusTargets.Home).toBe("Home");
+    expect(["Chat", "Do anything"]).toContain(evidence.focusTargets.Chat);
+    expect(["Terminal", "Terminal input"]).toContain(
+      evidence.focusTargets.Terminal,
+    );
+    expect(evidence.focusTargets.Files).toBe("Files");
+    expect(evidence.hiddenPanesMissingInert).toBe(0);
+    expect(evidence.narrowViewport).toEqual({
+      width: 820,
+      hasHorizontalDocumentOverflow: false,
+    });
+    expect(evidence.reducedMotion).toBe("reduce");
   }, 40_000);
 });
