@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   discardStaleCachedTerminal,
   getCachedTerminalRestorePlan,
@@ -109,5 +110,31 @@ describe("getCachedTerminalRestorePlan", () => {
 
     expect(close).not.toHaveBeenCalled();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("TerminalPane terminal-link wiring", () => {
+  const source = readFileSync("shell/src/components/terminal/TerminalPane.tsx", "utf8");
+
+  it("uses the bounded reducer and both approved link action surfaces", () => {
+    expect(source).toContain("useReducer(");
+    expect(source).toContain("terminalLinksReducer");
+    expect(source).toContain("scanTerminalLinkOutput");
+    expect(source).toContain("<TerminalLinksTray");
+    expect(source).toContain("<TerminalLinkContextMenu");
+    expect(source).not.toContain("TerminalAuthBanner");
+    expect(source).not.toContain("authLink");
+  });
+
+  it("intercepts contextmenu only after resolving a safe link under the pointer", () => {
+    expect(source).toContain('addEventListener("contextmenu"');
+    expect(source).toContain("terminalCellFromPointer");
+    expect(source).toContain("findTerminalLinkAtCell");
+    expect(source).toMatch(/if \(!(?:cell|link)\) return;/);
+    expect(source).toContain("event.preventDefault()");
+  });
+
+  it("overrides xterm OSC hyperlink activation with the button-aware link handler", () => {
+    expect(source).toContain("linkHandler: { activate: activateTerminalLink }");
   });
 });

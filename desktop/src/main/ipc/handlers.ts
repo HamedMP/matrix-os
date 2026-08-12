@@ -121,6 +121,21 @@ function zoomTarget(event: unknown): ZoomTarget | null {
   return null;
 }
 
+function toWebContentsViewBounds(
+  bounds: InvokeRequest<"embed:set-bounds">["bounds"],
+  event: unknown,
+): InvokeRequest<"embed:set-bounds">["bounds"] {
+  const factor = clampZoomFactor(
+    zoomTarget(event)?.getZoomFactor() ?? DEFAULT_ZOOM_FACTOR,
+  );
+  return {
+    x: Math.round(bounds.x * factor),
+    y: Math.round(bounds.y * factor),
+    width: Math.round(bounds.width * factor),
+    height: Math.round(bounds.height * factor),
+  };
+}
+
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
@@ -255,9 +270,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
-  handle("embed:open", async ({ kind, slug, bounds, active }) => {
+  handle("embed:open", async ({ kind, slug, bounds, active }, event) => {
     try {
-      return await ctx.embeds.open({ kind, slug, bounds, active });
+      return await ctx.embeds.open({
+        kind,
+        slug,
+        bounds: toWebContentsViewBounds(bounds, event),
+        active,
+      });
     } catch (err: unknown) {
       console.warn(
         "[ipc] embed:open failed:",
@@ -266,8 +286,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
       throw new Error("embed unavailable");
     }
   });
-  handle("embed:set-bounds", ({ embedId, bounds }) => ({
-    ok: ctx.embeds.setBounds(embedId, bounds),
+  handle("embed:set-bounds", ({ embedId, bounds }, event) => ({
+    ok: ctx.embeds.setBounds(embedId, toWebContentsViewBounds(bounds, event)),
   }));
   handle("embed:set-active", ({ embedId, active }) => ({
     ok: ctx.embeds.setActive(embedId, active),

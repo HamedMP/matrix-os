@@ -1,7 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
-
-const MAX_URL_LENGTH = 2048;
-const URL_REGEX = /https?:\/\/[^\s<>"')\]]{1,2048}/g;
+import { activateTerminalLink, extractTerminalLinkMatches } from "./terminal-links";
 
 const FILE_EXTENSIONS = /\.(ts|js|tsx|jsx|py|rs|go|md|json|yaml|yml|toml|css|html|sh|sql|rb|java|kt|swift|c|cpp|h)$/;
 const FILE_PATH_REGEX = /(?:\.{1,2}\/|\/)[^\s:]+(?::\d+(?::\d+)?)?/g;
@@ -19,19 +17,10 @@ interface SemanticLinkMatch extends LinkMatch {
 }
 
 export function detectUrls(text: string): LinkMatch[] {
-  const matches: LinkMatch[] = [];
-  let match: RegExpExecArray | null;
-  URL_REGEX.lastIndex = 0;
-  while ((match = URL_REGEX.exec(text)) !== null) {
-    const nextChar = text[match.index + match[0].length];
-    if (match[0].length >= MAX_URL_LENGTH && nextChar && !/[\s<>"')\]]/.test(nextChar)) {
-      continue;
-    }
-    let url = match[0];
-    url = url.replace(/[.,;:!?)]+$/, "");
-    matches.push({ text: url, startIndex: match.index });
-  }
-  return matches;
+  return extractTerminalLinkMatches(text).map((match) => ({
+    text: match.text,
+    startIndex: match.startIndex,
+  }));
 }
 
 export function detectFilePaths(text: string): LinkMatch[] {
@@ -128,7 +117,7 @@ function offsetToRowCol(lineLengths: number[], startRow: number, offset: number)
 type LinkEntry = {
   range: { start: { x: number; y: number }; end: { x: number; y: number } };
   text: string;
-  activate: () => void;
+  activate: (event: MouseEvent) => void;
 };
 
 export class WebLinkProvider {
@@ -160,17 +149,7 @@ export class WebLinkProvider {
         links.push({
           range: { start, end },
           text: url.text,
-          activate: () => {
-            try {
-              const parsed = new URL(url.text);
-              if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-                return;
-              }
-              window.open(parsed.href, "_blank", "noopener,noreferrer");
-            } catch (err: unknown) {
-              console.warn("[terminal] Ignoring malformed URL:", err instanceof Error ? err.message : String(err));
-            }
-          },
+          activate: (event) => activateTerminalLink(event, url.text),
         });
       }
     }

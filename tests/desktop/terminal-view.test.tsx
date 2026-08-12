@@ -15,7 +15,16 @@ import {
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const { createdTerminals } = vi.hoisted(() => ({
-  createdTerminals: [] as Array<{ options: { theme?: unknown } }>,
+  createdTerminals: [] as Array<{
+    initialOptions: {
+      linkHandler?: {
+        activate: (event: Pick<MouseEvent, "button">, text: string) => void;
+      };
+    };
+    options: { theme?: unknown };
+    registeredProviders: unknown[];
+    element: HTMLElement | null;
+  }>,
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -23,18 +32,44 @@ vi.mock("@xterm/xterm", () => ({
     cols = 80;
     rows = 24;
     options: { theme?: unknown } = {};
+    element: HTMLElement | null = null;
+    buffer = {
+      active: {
+        viewportY: 0,
+        length: 1,
+        getLine: (row: number) => row === 0
+          ? {
+              isWrapped: false,
+              translateToString: () => "https://example.org/desktop-terminal",
+            }
+          : undefined,
+      },
+    };
+    initialOptions: {
+      linkHandler?: {
+        activate: (event: Pick<MouseEvent, "button">, text: string) => void;
+      };
+    };
+    registeredProviders: unknown[] = [];
 
-    constructor() {
+    constructor(options: FakeTerminal["initialOptions"]) {
+      this.initialOptions = options;
       createdTerminals.push(this);
     }
 
     loadAddon(): void {}
-    open(): void {}
+    open(host: HTMLElement): void {
+      this.element = host;
+    }
     write(): void {}
     clear(): void {}
     focus(): void {}
     dispose(): void {}
     onData(): { dispose: () => void } {
+      return { dispose: () => {} };
+    }
+    registerLinkProvider(provider: unknown): { dispose: () => void } {
+      this.registeredProviders.push(provider);
       return { dispose: () => {} };
     }
   },
@@ -147,6 +182,52 @@ describe("TerminalView session switching", () => {
     expect(terminal.options.theme).toMatchObject({
       background: getThemeTerminalColors("dracula", "dark").background,
     });
+  });
+
+  it("overrides xterm OSC activation and registers plain-text URL detection", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+
+    terminal.initialOptions.linkHandler?.activate(
+      { button: 2 },
+      "https://example.org/final-check",
+    );
+
+    expect(open).not.toHaveBeenCalled();
+    expect(terminal.initialOptions.linkHandler).toBeDefined();
+    expect(terminal.registeredProviders).toHaveLength(1);
+  });
+
+  it("intercepts primary and secondary link mouseup before xterm can activate it", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const provider = terminal.registeredProviders[0] as {
+      provideLinks: (
+        line: number,
+        callback: (links: Array<{ hover?: () => void }> | undefined) => void,
+      ) => void;
+    };
+    let links: Array<{ hover?: () => void }> | undefined;
+    provider.provideLinks(1, (provided) => {
+      links = provided;
+    });
+    links?.[0]?.hover?.();
+
+    const host = container.querySelector<HTMLElement>("[data-selectable]");
+    expect(host).toBeTruthy();
+    const primaryAllowed = fireEvent.mouseUp(host!, { button: 0 });
+    const secondaryAllowed = fireEvent.mouseUp(host!, { button: 2 });
+
+    expect(primaryAllowed).toBe(false);
+    expect(secondaryAllowed).toBe(false);
+    expect(open).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledWith(
+      "https://example.org/desktop-terminal",
+      "_blank",
+      "noopener,noreferrer",
+    );
   });
 
   it("filters terminal files to supported image formats and strips nested paste markers", () => {

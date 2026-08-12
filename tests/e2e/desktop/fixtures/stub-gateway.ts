@@ -16,6 +16,7 @@ import {
 export interface StubGateway {
   url: string;
   port: number;
+  sendTerminalOutput(data: string): void;
   close(): Promise<void>;
   state: {
     deviceCodeRequests: number;
@@ -454,6 +455,7 @@ export async function startStubGateway(): Promise<StubGateway> {
     runtimeSelections: [],
   };
   let currentToken = TOKEN;
+  let activeTerminalOutput: ((data: string) => void) | null = null;
 
   const server: Server = createServer((req, res) => {
     void handle(req, res);
@@ -917,8 +919,15 @@ export async function startStubGateway(): Promise<StubGateway> {
       return;
     }
     ws.send(JSON.stringify({ type: "attached", session, state: "running", fromSeq: seq }));
-    seq += 1;
-    ws.send(JSON.stringify({ type: "output", seq, data: "stub-shell$ " }));
+    const sendOutput = (data: string) => {
+      seq += 1;
+      ws.send(JSON.stringify({ type: "output", seq, data }));
+    };
+    activeTerminalOutput = sendOutput;
+    ws.once("close", () => {
+      if (activeTerminalOutput === sendOutput) activeTerminalOutput = null;
+    });
+    sendOutput("stub-shell$ ");
     ws.on("message", (raw) => {
       let msg: Record<string, unknown>;
       try {
@@ -932,9 +941,8 @@ export async function startStubGateway(): Promise<StubGateway> {
       }
       if (msg.type === "input" && typeof msg.data === "string") {
         state.terminalInputs.push(msg.data);
-        seq += 1;
         // Echo back like a shell, with deterministic seq numbering.
-        ws.send(JSON.stringify({ type: "output", seq, data: msg.data.replace(/\r/g, "\r\nran!\r\nstub-shell$ ") }));
+        sendOutput(msg.data.replace(/\r/g, "\r\nran!\r\nstub-shell$ "));
       } else if (msg.type === "ping") {
         ws.send(JSON.stringify({ type: "pong" }));
       }
@@ -978,6 +986,7 @@ export async function startStubGateway(): Promise<StubGateway> {
     url: `http://127.0.0.1:${port}`,
     port,
     state,
+    sendTerminalOutput: (data) => activeTerminalOutput?.(data),
     close: () =>
       new Promise<void>((resolve, reject) => {
         for (const client of terminalWss.clients) client.terminate();

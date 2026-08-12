@@ -117,6 +117,63 @@ describe("registerIpcHandlers", () => {
     ).rejects.toThrow("embed unavailable");
   });
 
+  it.each([
+    {
+      factor: 1.5,
+      expected: { x: 360, y: 57, width: 920, height: 764 },
+    },
+    {
+      factor: 0.8,
+      expected: { x: 192, y: 30, width: 490, height: 407 },
+    },
+  ])("converts embed bounds at $factor zoom to native view coordinates", async ({
+    factor,
+    expected,
+  }) => {
+    const harness = makeHarness();
+    const sender = { getZoomFactor: vi.fn(() => factor), setZoomFactor: vi.fn() };
+    vi.mocked(harness.ctx.embeds.setBounds).mockReturnValue(true);
+
+    await expect(
+      harness.invoke(
+        "embed:set-bounds",
+        {
+          embedId: "embed-1",
+          bounds: { x: 240, y: 38, width: 613, height: 509 },
+        },
+        { sender },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(harness.ctx.embeds.setBounds).toHaveBeenCalledWith("embed-1", expected);
+  });
+
+  it("converts initial embed bounds from renderer CSS pixels to native view coordinates", async () => {
+    const harness = makeHarness();
+    const sender = { getZoomFactor: vi.fn(() => 1.5), setZoomFactor: vi.fn() };
+    vi.mocked(harness.ctx.embeds.open).mockResolvedValue({
+      embedId: "embed-1",
+      state: "loading",
+    });
+
+    await expect(
+      harness.invoke(
+        "embed:open",
+        {
+          kind: "hosted-shell",
+          bounds: { x: 240, y: 38, width: 613, height: 509 },
+          active: true,
+        },
+        { sender },
+      ),
+    ).resolves.toEqual({ embedId: "embed-1", state: "loading" });
+    expect(harness.ctx.embeds.open).toHaveBeenCalledWith({
+      kind: "hosted-shell",
+      slug: undefined,
+      bounds: { x: 360, y: 57, width: 920, height: 764 },
+      active: true,
+    });
+  });
+
   it("returns a failed retry-auth result when embed retry throws", async () => {
     const harness = makeHarness();
     vi.mocked(harness.ctx.embeds.retryAuth).mockRejectedValue(new Error("handoff unavailable"));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
@@ -15,6 +15,19 @@ import type { Terminal } from "@xterm/xterm";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
+import { TerminalLinksTray } from "./TerminalLinksTray";
+import { TerminalLinkContextMenu, type TerminalLinkMenuState } from "./TerminalLinkContextMenu";
+import {
+  INITIAL_TERMINAL_LINKS_STATE,
+  activateTerminalLink,
+  copyTerminalLink,
+  findTerminalLinkAtCell,
+  mayContainTerminalLink,
+  openTerminalLink,
+  scanTerminalLinkOutput,
+  terminalCellFromPointer,
+  terminalLinksReducer,
+} from "./terminal-links";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, removeCached, takeCached, type CachedTerminal } from "./terminal-cache";
 import {
@@ -52,6 +65,21 @@ const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_C
 const MAX_TERMINAL_INPUT = 65_536;
 const SUPPORTED_TERMINAL_PASTE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
+const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
+  position: "absolute",
+  top: 8,
+  left: 8,
+  right: 8,
+  zIndex: 20,
+  color: "#fff",
+  borderRadius: 8,
+  padding: "8px 12px",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  fontSize: 13,
+  boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+};
 const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -148,65 +176,6 @@ function splitBracketedPastePayload(parts: string[]): string[] {
 
 function scrollTerminalViewportToBottom(term: Terminal | null): void {
   term?.scrollToBottom();
-}
-
-const AUTH_BANNER_BASE_STYLE: CSSProperties = {
-  position: "absolute",
-  top: 8,
-  left: 8,
-  right: 8,
-  zIndex: 20,
-  color: "#fff",
-  borderRadius: 8,
-  padding: "8px 12px",
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  fontSize: 13,
-  boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-};
-
-const AUTH_BANNER_ACTION_STYLE: CSSProperties = {
-  background: "rgba(255,255,255,0.2)",
-  border: "1px solid rgba(255,255,255,0.3)",
-  color: "#fff",
-  borderRadius: 6,
-  padding: "4px 12px",
-  cursor: "pointer",
-  fontSize: 13,
-  whiteSpace: "nowrap",
-};
-
-function extractTrustedClaudeAuthUrl(raw: string): string | null {
-  const stripped = raw
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-    .replace(/[\x00-\x20\x7f-\x9f]/g, "");
-  const match = stripped.match(/https:\/\/claude\.ai\/oauth\/authorize[^"'<>)]{0,2048}?state=[A-Za-z0-9_-]+/);
-  if (!match) {
-    return null;
-  }
-
-  try {
-    const url = new URL(match[0]);
-    const state = url.searchParams.get("state");
-    const responseType = url.searchParams.get("response_type");
-    const clientId = url.searchParams.get("client_id");
-    if (
-      url.origin !== "https://claude.ai" ||
-      url.pathname !== "/oauth/authorize" ||
-      responseType !== "code" ||
-      !clientId ||
-      !state ||
-      !/^[A-Za-z0-9_-]+$/.test(state) ||
-      url.searchParams.has("redirect")
-    ) {
-      return null;
-    }
-    return url.toString();
-  } catch (_err: unknown) {
-    return null;
-  }
 }
 
 function terminalDebug(event: string, details: Record<string, unknown>): void {
@@ -411,13 +380,17 @@ export function TerminalPane({
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [authUrl, setAuthUrl] = useState<string | null>(null);
+  const [terminalLinks, dispatchTerminalLinks] = useReducer(
+    terminalLinksReducer,
+    INITIAL_TERMINAL_LINKS_STATE,
+  );
+  const [linkContextMenu, setLinkContextMenu] = useState<TerminalLinkMenuState | null>(null);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | null>(null);
   const outputBufferRef = useRef("");
   const commandBlockBufferRef = useRef("");
   const activeCommandBlockRef = useRef(false);
-  const authDetectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const linkDetectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClosingRef = useRef(false);
   const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
   const isFocusedRef = useRef(isFocused);
@@ -428,6 +401,15 @@ export function TerminalPane({
   const softGridLayoutRef = useRef<(() => void) | null>(null);
   const hardGridMeasureRef = useRef<(() => void) | null>(null);
   const terminalFontSizeRef = useRef(terminalFontSize);
+  const collapseTerminalLinks = useCallback(() => {
+    dispatchTerminalLinks({ type: "collapse" });
+  }, []);
+  const dismissTerminalLinks = useCallback(() => {
+    dispatchTerminalLinks({ type: "dismiss" });
+  }, []);
+  const closeLinkContextMenu = useCallback(() => {
+    setLinkContextMenu(null);
+  }, []);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
   // (and the cleanup it returns) read current prop values without re-running and
@@ -767,10 +749,10 @@ export function TerminalPane({
 
       const webglDisabled = shouldDisableWebglRenderer(suppressNativeKeyboard);
 
-      const clearAuthDetectTimer = () => {
-        if (authDetectTimerRef.current) {
-          clearTimeout(authDetectTimerRef.current);
-          authDetectTimerRef.current = null;
+      const clearLinkDetectTimer = () => {
+        if (linkDetectTimerRef.current) {
+          clearTimeout(linkDetectTimerRef.current);
+          linkDetectTimerRef.current = null;
         }
       };
 
@@ -1180,6 +1162,7 @@ export function TerminalPane({
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           minimumContrastRatio: getTerminalMinimumContrastRatio(xtermTheme),
           theme: xtermTheme,
+          linkHandler: { activate: activateTerminalLink },
           // Make ⌥ (Option) on macOS act as Meta — without this, Option+Left/Right
           // never reaches the shell as ESC-b / ESC-f, so word-jump is broken.
           macOptionIsMeta: true,
@@ -1566,19 +1549,19 @@ export function TerminalPane({
               if (outputBufferRef.current.length > 8192) {
                 outputBufferRef.current = outputBufferRef.current.slice(-4096);
               }
-              if (outputBufferRef.current.includes("claude.ai/oauth/authorize")) {
-                clearAuthDetectTimer();
-                authDetectTimerRef.current = setTimeout(() => {
-                  authDetectTimerRef.current = null;
+              if (mayContainTerminalLink(outputBufferRef.current)) {
+                clearLinkDetectTimer();
+                linkDetectTimerRef.current = setTimeout(() => {
+                  linkDetectTimerRef.current = null;
                   if (disposed) {
                     outputBufferRef.current = "";
                     return;
                   }
-                  const nextAuthUrl = extractTrustedClaudeAuthUrl(outputBufferRef.current);
-                  if (nextAuthUrl) {
-                    setAuthUrl(nextAuthUrl);
+                  const scan = scanTerminalLinkOutput(outputBufferRef.current);
+                  outputBufferRef.current = scan.bufferedOutput;
+                  if (scan.entries.length > 0) {
+                    dispatchTerminalLinks({ type: "linksDetected", entries: scan.entries });
                   }
-                  outputBufferRef.current = "";
                 }, 300);
               }
               if (activeCommandBlockRef.current) {
@@ -1603,7 +1586,7 @@ export function TerminalPane({
               break;
 
             case "replay-start":
-              clearAuthDetectTimer();
+              clearLinkDetectTimer();
               outputBufferRef.current = "";
               break;
             case "replay-end":
@@ -1802,6 +1785,17 @@ export function TerminalPane({
 
       document.addEventListener("visibilitychange", onVisibilityChange);
 
+      const onLinkContextMenu = (event: MouseEvent) => {
+        const cell = terminalCellFromPointer(term, event.clientX, event.clientY);
+        if (!cell) return;
+        const link = findTerminalLinkAtCell(term, cell);
+        if (!link) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
+      };
+      container.addEventListener("contextmenu", onLinkContextMenu);
+
       onDataDisposableRef.current?.dispose();
       onDataDisposableRef.current = term.onData((data: string) => {
         const ws = wsRef.current;
@@ -1924,6 +1918,7 @@ export function TerminalPane({
 
       return () => {
         document.removeEventListener("visibilitychange", onVisibilityChange);
+        container.removeEventListener("contextmenu", onLinkContextMenu);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
         if (softGridLayoutFrame !== null) {
@@ -1941,7 +1936,7 @@ export function TerminalPane({
           hardGridMeasureRef.current = null;
         }
         softGridScaleRef.current = 1;
-        clearAuthDetectTimer();
+        clearLinkDetectTimer();
         clearReconnectTimer();
         clearPendingReconnectBanner();
         coldReplayVisibility?.dispose();
@@ -2151,8 +2146,8 @@ export function TerminalPane({
           role="status"
           aria-live="polite"
           style={{
-            ...AUTH_BANNER_BASE_STYLE,
-            top: authUrl ? 76 : 8,
+            ...TERMINAL_OVERLAY_BASE_STYLE,
+            top: terminalLinks.presentation === "expanded" ? 76 : 8,
             background: "rgba(127, 29, 29, 0.95)",
           }}
         >
@@ -2179,8 +2174,8 @@ export function TerminalPane({
           role="status"
           aria-live="polite"
           style={{
-            ...AUTH_BANNER_BASE_STYLE,
-            top: authUrl ? 76 : 8,
+            ...TERMINAL_OVERLAY_BASE_STYLE,
+            top: terminalLinks.presentation === "expanded" ? 76 : 8,
             left: "50%",
             right: "auto",
             transform: "translateX(-50%)",
@@ -2194,76 +2189,19 @@ export function TerminalPane({
           {connectionNotice === "reconnecting" ? "Reconnecting terminal..." : "Terminal disconnected"}
         </div>
       )}
-      {authUrl && (
-        <div
-          style={{
-            ...AUTH_BANNER_BASE_STYLE,
-            background: theme.colors.primary || "#c2703a",
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div>Claude Code login required</div>
-            <div style={{ fontSize: 12, opacity: 0.85 }}>
-              Detected from terminal output. Terminal apps can spoof this. Only continue if you initiated Claude Code login.
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                opacity: 0.9,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-              title={authUrl}
-            >
-              {authUrl}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              window.open(authUrl, "_blank", "noopener,noreferrer");
-            }}
-            style={AUTH_BANNER_ACTION_STYLE}
-          >
-            Open login
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard.writeText(authUrl).catch((_err: unknown) => {
-                // Fallback for insecure contexts / iframe restrictions
-                const ta = document.createElement("textarea");
-                ta.value = authUrl;
-                ta.style.position = "fixed";
-                ta.style.opacity = "0";
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand("copy");
-                document.body.removeChild(ta);
-              });
-            }}
-            style={AUTH_BANNER_ACTION_STYLE}
-          >
-            Copy URL
-          </button>
-          <button
-            type="button"
-            onClick={() => setAuthUrl(null)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "rgba(255,255,255,0.7)",
-              cursor: "pointer",
-              fontSize: 16,
-              padding: "0 4px",
-              lineHeight: 1,
-            }}
-          >
-            x
-          </button>
-        </div>
-      )}
+      <TerminalLinksTray
+        state={terminalLinks}
+        onCollapse={collapseTerminalLinks}
+        onDismiss={dismissTerminalLinks}
+        onOpen={openTerminalLink}
+        onCopy={copyTerminalLink}
+      />
+      <TerminalLinkContextMenu
+        menu={linkContextMenu}
+        onClose={closeLinkContextMenu}
+        onOpen={openTerminalLink}
+        onCopy={copyTerminalLink}
+      />
       {/* Reading the imperative xterm search-addon handle during render is
           intentional: the addon is created inside the init effect and is stable
           thereafter; searchOpen state (not the ref) drives re-render, so these
