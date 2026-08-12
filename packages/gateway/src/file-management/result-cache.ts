@@ -73,7 +73,7 @@ export class FileOperationResultCache {
       return existing.promise as Promise<T>;
     }
     this.removeExpired();
-    if (!this.makeSpaceForNewEntry()) {
+    if (this.entries.size >= MAX_ENTRIES) {
       return Promise.reject(new FileOperationCacheCapacityError());
     }
 
@@ -110,17 +110,6 @@ export class FileOperationResultCache {
     this.entries.delete(key);
     this.entries.set(key, entry);
     return entry;
-  }
-
-  private makeSpaceForNewEntry(): boolean {
-    if (this.entries.size < MAX_ENTRIES) return true;
-    for (const [key, entry] of this.entries) {
-      if (entry.expiresAt !== undefined) {
-        this.entries.delete(key);
-        return true;
-      }
-    }
-    return false;
   }
 
   private removeExpired(): void {

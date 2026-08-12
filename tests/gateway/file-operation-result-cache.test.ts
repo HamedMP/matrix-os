@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  FileOperationCacheCapacityError,
   FileOperationRequestIdConflictError,
   FileOperationResultCache,
   hashBatchMoveExecutePayload,
@@ -22,7 +23,7 @@ describe("FileOperationResultCache", () => {
     vi.useRealTimers();
   });
 
-  it("evicts the least recently used result after 512 entries", async () => {
+  it("retains all unexpired results and rejects a new identity at capacity", async () => {
     let executions = 0;
     const run = (requestId: string) => cache.run({
       ownerId: "owner-a",
@@ -35,11 +36,11 @@ describe("FileOperationResultCache", () => {
       await run(`request-${index}`);
     }
     await run("request-0");
-    await run("request-512");
+    await expect(run("request-512")).rejects.toBeInstanceOf(FileOperationCacheCapacityError);
 
     await run("request-0");
     await run("request-1");
-    expect(executions).toBe(514);
+    expect(executions).toBe(512);
   });
 
   it("expires results after ten minutes", async () => {
