@@ -20,7 +20,7 @@ import {
   isNativeFileCapabilityTarget,
   NativeFileCapabilityUnavailableError,
 } from "../../packages/gateway/src/file-management/native-file-capability.js";
-import { fileMkdir } from "../../packages/gateway/src/file-ops.js";
+import { createFile, fileMkdir, fileTouch } from "../../packages/gateway/src/file-ops.js";
 
 const isRequiredLinuxTarget = process.platform === "linux"
   && process.arch === "x64"
@@ -43,6 +43,36 @@ describe("Gateway native file capability loader", () => {
         error: "Failed to create directory",
       });
       expect(existsSync(join(home, "must-not-exist"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a claimed partial path through typed and legacy create results", async () => {
+    const home = join(tmpdir(), `matrix-native-public-create-${process.pid}-${Date.now()}`);
+    mkdirSync(join(home, "projects"), { recursive: true });
+    const nativeCreate = async (
+      _homePath: string,
+      relativePath: string,
+    ) => ({ ok: false, code: "partial" as const, partialPath: relativePath });
+
+    try {
+      expect(await createFile(home, {
+        requestId: "a9d9d1d8-8e5d-45d0-8d17-2c85f4e19a11",
+        parentDirectory: "projects",
+        name: "typed.txt",
+        kind: "file",
+      }, { nativeCreate })).toEqual({
+        ok: false,
+        errorCode: "failed",
+        partialPath: "projects/typed.txt",
+      });
+
+      expect(await fileTouch(home, "legacy.txt", "content", { nativeCreate })).toEqual({
+        ok: false,
+        error: "Failed to create file",
+        partialPath: "legacy.txt",
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

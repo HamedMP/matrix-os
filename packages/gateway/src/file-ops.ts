@@ -28,6 +28,7 @@ import {
 import {
   getNativeFileCapability,
   NativeFileCapabilityUnavailableError,
+  type NativeFileCapability,
   type NativeFileCapabilityResult,
 } from "./file-management/native-file-capability.js";
 
@@ -57,6 +58,10 @@ export interface FileCopyDependencies {
   beforeNativeMutation?: () => Promise<void>;
 }
 
+export interface FileCreateDependencies {
+  nativeCreate?: NativeFileCapability["create"];
+}
+
 function isSameOrDescendantPath(source: string, target: string): boolean {
   return target === source || target.startsWith(`${source}/`);
 }
@@ -74,9 +79,19 @@ async function runNativeMutation(
   }
 }
 
+function claimedCreatePartialPath(
+  result: NativeFileCapabilityResult,
+  requestedPath: string,
+): string | undefined {
+  return result.code === "partial" && result.partialPath === requestedPath
+    ? requestedPath
+    : undefined;
+}
+
 export async function createFile(
   homePath: string,
   input: unknown,
+  dependencies: FileCreateDependencies = {},
 ): Promise<FileManagementMutationResult> {
   const parsed = CreateFileRequestSchema.safeParse(input);
   if (!parsed.success) return { ok: false, errorCode: "invalid_path" };
@@ -107,10 +122,17 @@ export async function createFile(
 
   try {
     const nativeResult = await runNativeMutation(() =>
-      getNativeFileCapability().create(homePath, requestedPath, kind, "", false, false));
+      dependencies.nativeCreate
+        ? dependencies.nativeCreate(homePath, requestedPath, kind, "", false, false)
+        : getNativeFileCapability().create(homePath, requestedPath, kind, "", false, false));
     if (!nativeResult.ok) {
       if (nativeResult.code === "destination_conflict") return { ok: false, errorCode: "destination_conflict" };
-      return { ok: false, errorCode: nativeResult.code === "invalid_path" ? "invalid_path" : "failed" };
+      const partialPath = claimedCreatePartialPath(nativeResult, requestedPath);
+      return {
+        ok: false,
+        errorCode: nativeResult.code === "invalid_path" ? "invalid_path" : "failed",
+        ...(partialPath ? { partialPath } : {}),
+      };
     }
     const path = normalizeHomeRelativePath(homePath, target);
     if (!path) return { ok: false, errorCode: "failed" };
@@ -232,17 +254,25 @@ export async function fileTouch(
   homePath: string,
   requestedPath: string,
   content = "",
-): Promise<{ ok: boolean; path?: string; error?: string; status?: number }> {
+  dependencies: FileCreateDependencies = {},
+): Promise<{ ok: boolean; path?: string; error?: string; status?: number; partialPath?: string }> {
   const resolved = resolveWritableFileApiPath(homePath, requestedPath);
   if (!resolved || !isFileManagementMutationAllowed(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
 
   try {
     if (!isFileManagementMutationAllowed(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
     const nativeResult = await runNativeMutation(() =>
-      getNativeFileCapability().create(homePath, requestedPath, "file", content, true, false));
+      dependencies.nativeCreate
+        ? dependencies.nativeCreate(homePath, requestedPath, "file", content, true, false)
+        : getNativeFileCapability().create(homePath, requestedPath, "file", content, true, false));
     if (!nativeResult.ok) {
       if (nativeResult.code === "destination_conflict") return { ok: false, error: "File already exists", status: 409 };
-      return { ok: false, error: "Failed to create file" };
+      const partialPath = claimedCreatePartialPath(nativeResult, requestedPath);
+      return {
+        ok: false,
+        error: "Failed to create file",
+        ...(partialPath ? { partialPath } : {}),
+      };
     }
     return { ok: true, path: requestedPath };
   } catch (err: unknown) {
