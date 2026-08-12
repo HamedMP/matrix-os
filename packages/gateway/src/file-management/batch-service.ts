@@ -32,6 +32,9 @@ import {
   trashList,
   trashRestore,
 } from "../trash.js";
+import { executeBatchTrash, type TrashItemResult } from "./trash-batch.js";
+
+export type { TrashItemResult } from "./trash-batch.js";
 
 const PREFLIGHT_RECORD_LIMIT = 512;
 const PREFLIGHT_TTL_MS = 10 * 60 * 1_000;
@@ -63,11 +66,6 @@ export interface FileBatchTrashInput {
   homePath: string;
   requestId: string;
   sources: string[];
-}
-
-export interface TrashItemResult {
-  source: string;
-  code: "trashed" | "source_missing" | "protected" | "invalid_destination" | "failed";
 }
 
 export interface FileBatchTrashResult {
@@ -407,20 +405,14 @@ export class FileBatchTrashService {
       requestId: input.requestId,
       payloadHash: hashBatchTrashPayload(parsed.data.sources),
     }, async () => {
-      const results: TrashItemResult[] = [];
-      for (const source of parsed.data.sources) {
-        const result = await fileDelete(
-          input.homePath,
-          source,
-          {
-            manifestQueue: this.manifestQueue,
-            requestId: input.requestId,
-            moveCapability: this.moveCapability,
-            manifestIo: this.manifestIo,
-          },
-        );
-        results.push(toTrashItemResult(source, result));
-      }
+      const results = await executeBatchTrash({
+        homePath: input.homePath,
+        requestId: input.requestId,
+        sources: parsed.data.sources,
+        manifestQueue: this.manifestQueue,
+        moveCapability: this.moveCapability,
+        manifestIo: this.manifestIo,
+      });
       return {
         results,
         sourceDirectory: posix.dirname(parsed.data.sources[0]),
@@ -494,15 +486,4 @@ function hashBatchTrashPayload(sources: readonly string[]): string {
   return createHash("sha256")
     .update(JSON.stringify({ sources }))
     .digest("base64url");
-}
-
-function toTrashItemResult(
-  source: string,
-  result: { ok: boolean; error?: string; status?: number },
-): TrashItemResult {
-  if (result.ok) return { source, code: "trashed" };
-  if (result.status === 404) return { source, code: "source_missing" };
-  if (result.status === 403) return { source, code: "protected" };
-  if (result.error === "Invalid path") return { source, code: "invalid_destination" };
-  return { source, code: "failed" };
 }
