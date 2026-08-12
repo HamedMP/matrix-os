@@ -112,7 +112,10 @@ export async function* spawnKernel(
         if (msg.subtype === "success") {
           yield { type: "result", data: { ...base, result: msg.result } };
         } else {
-          yield { type: "result", data: { ...base, errors: msg.errors } };
+          // A non-success SDK result is a failed dispatch, not a successful
+          // terminal event. Keep provider details server-side; the gateway
+          // maps this generic failure to safe client copy.
+          throw new Error("Kernel query failed");
         }
       }
     }

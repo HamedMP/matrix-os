@@ -83,13 +83,28 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   },
 
   ingest: (event) => {
-    const { activeRequestId } = get();
     // Bind the session from init/switch even before a request is active.
     if (event.type === "kernel:init" && event.sessionId) {
       set({ sessionId: event.sessionId });
     }
-    // Only fold events for the in-flight request into this transcript.
-    if (!activeRequestId || event.requestId !== activeRequestId) return;
+    const { activeRequestId, messages } = get();
+    const matchesActiveRequest = Boolean(
+      activeRequestId && event.requestId === activeRequestId,
+    );
+    // A provider can emit a terminal-looking result before its process exits
+    // unsuccessfully. Preserve a later error when it belongs to a request that
+    // is still visible, while ignoring stale errors after New clears the chat.
+    const matchesVisibleCompletedRequest = event.type === "kernel:error"
+      && typeof event.requestId === "string"
+      && messages.some((message) => (
+        message.role === "user" && message.requestId === event.requestId
+      ))
+      && !messages.some((message) => (
+        message.role === "system"
+        && !message.tool
+        && message.requestId === event.requestId
+      ));
+    if (!matchesActiveRequest && !matchesVisibleCompletedRequest) return;
 
     set((state) => {
       const messages = reduceChat(state.messages, event).slice(-TRANSCRIPT_CAP);

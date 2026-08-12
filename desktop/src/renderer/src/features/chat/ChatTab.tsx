@@ -190,6 +190,7 @@ export default function ChatTab() {
   const threads = useThreads((s) => s.threads);
   const activeThreadId = useThreads((s) => s.activeThreadId);
   const setActiveThread = useThreads((s) => s.setActiveThread);
+  const newHermesChat = useHermesChat((s) => s.newChat);
   // Short-circuit inside the selector so a disabled workspace never re-renders
   // the rail on coding-agent store updates.
   const summary = useCodingAgentWorkspace((s) => (CODING_AGENTS_DESKTOP_WORKSPACE ? s.summary : null));
@@ -236,7 +237,10 @@ export default function ChatTab() {
             type="button"
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-[var(--bg-hover)]"
             style={{ color: "var(--text-secondary)" }}
-            onClick={() => setActiveThread(null)}
+            onClick={() => {
+              newHermesChat();
+              setActiveThread(null);
+            }}
             title="New chat with Hermes"
           >
             <MessageSquarePlus size={13} />

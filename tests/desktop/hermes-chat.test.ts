@@ -61,4 +61,25 @@ describe("useHermesChat", () => {
       activeRequestId: null,
     });
   });
+
+  it("shows a late error for the visible request after an earlier result event", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+
+    useHermesChat.getState().ingest({ type: "kernel:result", requestId });
+    useHermesChat.getState().ingest({
+      type: "kernel:error",
+      message: "Request failed",
+      requestId,
+    });
+
+    expect(useHermesChat.getState()).toMatchObject({
+      status: "idle",
+      activeRequestId: null,
+      messages: [
+        expect.objectContaining({ role: "user", content: "hello", requestId }),
+        expect.objectContaining({ role: "system", content: "Request failed", requestId }),
+      ],
+    });
+  });
 });

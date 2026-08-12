@@ -122,6 +122,21 @@ describe("ChatTab", () => {
     expect(container.querySelector(".h-full.items-center.justify-center")).toBeNull();
   });
 
+  it("starts a fresh Hermes conversation from New", () => {
+    useHermesChat.setState({ sessionId: "session-1" });
+    render(<ChatTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+
+    expect(screen.queryByText("hello")).toBeNull();
+    expect(useHermesChat.getState()).toMatchObject({
+      messages: [],
+      sessionId: null,
+      status: "idle",
+      activeRequestId: null,
+    });
+  });
+
   it("renders connect cards with real lucide icons instead of placeholder squares", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);
