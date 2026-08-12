@@ -104,8 +104,13 @@ unit installation is forward-only. Keeping the exact activation marker inside
 the app payload therefore makes rollback to a pre-activation bundle remove the
 marker before the old gateway starts. The gateway opens the marker with
 `O_NOFOLLOW`, requires a two-byte regular file containing exactly `1\n`, and
-fails closed for missing, malformed, or symlinked state. A bundle must be
-explicitly deployed to a canary or channel before this activation reaches a VPS.
+fails closed for missing, malformed, or symlinked state. Once activation is
+requested, gateway startup also requires the marker-pinned immutable generation,
+the exact `current` link, all three executable runtime assets, both regular
+static user-unit files, and discovery of those units through the owner's user
+manager. An incomplete installation aborts startup so updater health fails and
+the app rolls back; it never falls back to the legacy terminal owner. A bundle
+must be explicitly deployed to a canary or channel before this activation reaches a VPS.
 The activation layer does not adopt a live legacy Zellij process into a user
 unit. Initial rollout is therefore limited to fresh/disposable hosts or canaries
 whose legacy sessions have been deliberately drained; an automatic customer
@@ -113,12 +118,15 @@ fleet rollout is not implied by merging the activation code.
 
 The first bundle that introduces this installer can be applied by an older,
 already-running sync-agent process that does not yet know about terminal
-generations. Before the dormant flag is activated, the activation/acceptance
-path must reload the newly installed sync agent and perform one supported
-exact-version reapply. That idempotent reapply installs and verifies the
-generation and user units; it is an explicit activation prerequisite, not a
-default-on or customer rollout side effect. Later updates use the loaded
-installer directly.
+generations. Existing customer VPSes must therefore first receive a dormant
+bootstrap bundle and verify the new updater before receiving an activation
+bundle. A direct jump to activation is intentionally rejected and rolled back.
+The newer installed updater can repair a disposable canary through one supported
+exact-version reapply, which installs and verifies the generation and user
+units; that repair is evidence, not the supported customer migration plan.
+Fresh signups must boot from a refreshed golden image or clean-image path that
+installs the complete app, immutable runtime, and user-unit payload before
+starting the gateway. Later updates use the loaded installer directly.
 
 Full-bundle transfer is independently bounded from runtime continuity. If the
 first transfer fails, the sync agent refreshes the exact-version signed

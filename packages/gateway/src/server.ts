@@ -374,6 +374,9 @@ export async function createGateway(config: GatewayConfig) {
         generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
       })
     : null;
+  if (userSystemdTerminalController) {
+    await userSystemdTerminalController.assertInstallationReady();
+  }
   const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
     ? createUserSystemdZellijRuntime({
         homePath,

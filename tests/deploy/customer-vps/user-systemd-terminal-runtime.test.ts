@@ -101,6 +101,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(server).toContain("loadInstalledTerminalRuntimeGeneration");
     expect(server).toContain("createUserSystemdZellijRuntime");
     expect(server).toContain("createUserSystemdZellijAdapter");
+    expect(server).toContain("await userSystemdTerminalController.assertInstallationReady()");
     expect(server).not.toContain('MATRIX_TERMINAL_USER_SYSTEMD_ENABLED !== "0"');
   });
 
@@ -152,6 +153,24 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(updater).not.toMatch(/systemctl restart[^\n]*(matrix-zellij|matrix-terminal\.slice|user@)/);
     expect(decision).toContain("ordered content digests");
     expect(decision).toContain("exact-version reapply");
+  });
+
+  it("documents separate fail-closed rollout paths for new and existing VPSes", () => {
+    const activation = readFileSync(
+      join(root, "docs/dev/user-systemd-terminal-activation.md"),
+      "utf8",
+    );
+    const decision = readFileSync(
+      join(root, "specs/109-persist-terminal-sessions/user-systemd-alternative.md"),
+      "utf8",
+    );
+
+    expect(activation).toContain("Activation never falls back to the legacy");
+    expect(activation).toContain("### New signups");
+    expect(activation).toContain("### Existing users");
+    expect(activation).toContain("two-stage migration");
+    expect(decision).toContain("A direct jump to activation is intentionally rejected and rolled back");
+    expect(decision).toContain("it never falls back to the legacy terminal owner");
   });
 
   it("gates exact-head disposable-VPS acceptance behind an explicit same-repository label", () => {
