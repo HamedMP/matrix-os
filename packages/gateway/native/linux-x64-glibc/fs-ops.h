@@ -27,6 +27,7 @@ enum class CopyTestScenario {
   kReplaceFinalAfterStageClaim,
   kChmodSourceAfterIdentity,
   kReplaceSourceAfterIdentity,
+  kFailRegularAfterTargetClaim,
 };
 
 Result Create(

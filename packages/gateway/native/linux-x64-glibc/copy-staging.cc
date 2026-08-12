@@ -3,6 +3,7 @@
 #include "copy-staging.h"
 
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <linux/openat2.h>
 #include <sys/random.h>
@@ -10,13 +11,28 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
+#include <cstring>
+#include <ctime>
+#include <string>
+#include <vector>
 
 namespace matrix_fs {
 namespace {
 
 constexpr size_t kStageRandomBytes = 16;
 constexpr size_t kMaxStageClaims = 16;
+constexpr size_t kMaxRetainedStages = 64;
+constexpr size_t kMaxSweepEntries = 10000;
+constexpr size_t kMaxSweepDepth = 128;
+constexpr time_t kStageTtlSeconds = 24 * 60 * 60;
+constexpr char kStagePrefix[] = ".matrix-copy-stage-";
+
+struct RetainedStage {
+  std::string name;
+  struct timespec modified = {};
+};
 
 bool FillRandom(std::array<unsigned char, kStageRandomBytes>* bytes) {
   size_t offset = 0;
@@ -46,14 +62,153 @@ bool SameDirectory(const struct stat& left, const struct stat& right) {
     && S_ISDIR(right.st_mode);
 }
 
+bool IsStageName(const char* name) {
+  constexpr size_t prefix_length = sizeof(kStagePrefix) - 1;
+  if (strncmp(name, kStagePrefix, prefix_length) != 0 || strlen(name) != prefix_length + 32) return false;
+  return std::all_of(name + prefix_length, name + prefix_length + 32, [](unsigned char value) {
+    return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f');
+  });
+}
+
+bool RemoveTreeContents(int directory, size_t depth, size_t* entries) {
+  if (depth > kMaxSweepDepth) { errno = E2BIG; return false; }
+  const int iteration_fd = dup(directory);
+  if (iteration_fd < 0) return false;
+  DIR* iteration = fdopendir(iteration_fd);
+  if (!iteration) {
+    const int error = errno;
+    close(iteration_fd);
+    errno = error;
+    return false;
+  }
+  errno = 0;
+  while (dirent* entry = readdir(iteration)) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+    if (++*entries > kMaxSweepEntries) {
+      closedir(iteration);
+      errno = E2BIG;
+      return false;
+    }
+    struct stat child = {};
+    if (fstatat(directory, entry->d_name, &child, AT_SYMLINK_NOFOLLOW) != 0) {
+      const int error = errno;
+      closedir(iteration);
+      errno = error;
+      return false;
+    }
+    if (S_ISDIR(child.st_mode)) {
+      const int child_fd = OpenStagingDirectory(directory, entry->d_name);
+      if (child_fd < 0) {
+        const int error = errno;
+        closedir(iteration);
+        errno = error;
+        return false;
+      }
+      const bool removed = RemoveTreeContents(child_fd, depth + 1, entries);
+      const int error = errno;
+      close(child_fd);
+      if (!removed || unlinkat(directory, entry->d_name, AT_REMOVEDIR) != 0) {
+        const int unlink_error = removed ? errno : error;
+        closedir(iteration);
+        errno = unlink_error;
+        return false;
+      }
+    } else if (unlinkat(directory, entry->d_name, 0) != 0) {
+      const int error = errno;
+      closedir(iteration);
+      errno = error;
+      return false;
+    }
+    errno = 0;
+  }
+  const int error = errno;
+  closedir(iteration);
+  errno = error;
+  return error == 0;
+}
+
+bool RemoveRetainedStage(int parent, const RetainedStage& stage) {
+  struct stat before = {};
+  if (fstatat(parent, stage.name.c_str(), &before, AT_SYMLINK_NOFOLLOW) != 0 || !S_ISDIR(before.st_mode)) return false;
+  const int stage_fd = OpenStagingDirectory(parent, stage.name.c_str());
+  if (stage_fd < 0) return false;
+  struct stat opened = {};
+  if (fstat(stage_fd, &opened) != 0 || !SameDirectory(before, opened)) {
+    const int error = errno == 0 ? ESTALE : errno;
+    close(stage_fd);
+    errno = error;
+    return false;
+  }
+  size_t entries = 0;
+  const bool contents_removed = RemoveTreeContents(stage_fd, 0, &entries);
+  const int removal_error = errno;
+  struct stat current = {};
+  const bool identity_matches = contents_removed
+    && fstatat(parent, stage.name.c_str(), &current, AT_SYMLINK_NOFOLLOW) == 0
+    && SameDirectory(opened, current);
+  close(stage_fd);
+  if (!identity_matches) {
+    errno = contents_removed ? ESTALE : removal_error;
+    return false;
+  }
+  return unlinkat(parent, stage.name.c_str(), AT_REMOVEDIR) == 0;
+}
+
+bool SweepRetainedStages(int parent) {
+  const int iteration_fd = dup(parent);
+  if (iteration_fd < 0) return false;
+  DIR* iteration = fdopendir(iteration_fd);
+  if (!iteration) {
+    const int error = errno;
+    close(iteration_fd);
+    errno = error;
+    return false;
+  }
+  std::vector<RetainedStage> retained;
+  errno = 0;
+  while (dirent* entry = readdir(iteration)) {
+    if (!IsStageName(entry->d_name)) continue;
+    struct stat stats = {};
+    if (fstatat(parent, entry->d_name, &stats, AT_SYMLINK_NOFOLLOW) != 0) {
+      const int error = errno;
+      closedir(iteration);
+      errno = error;
+      return false;
+    }
+    if (S_ISDIR(stats.st_mode)) retained.push_back({entry->d_name, stats.st_mtim});
+    errno = 0;
+  }
+  const int read_error = errno;
+  closedir(iteration);
+  if (read_error != 0) { errno = read_error; return false; }
+
+  std::sort(retained.begin(), retained.end(), [](const RetainedStage& left, const RetainedStage& right) {
+    if (left.modified.tv_sec != right.modified.tv_sec) return left.modified.tv_sec < right.modified.tv_sec;
+    return left.modified.tv_nsec < right.modified.tv_nsec;
+  });
+  const time_t now = time(nullptr);
+  if (now == static_cast<time_t>(-1)) { errno = EIO; return false; }
+  const time_t cutoff = now - kStageTtlSeconds;
+  size_t remaining = retained.size();
+  for (const RetainedStage& stage : retained) {
+    if (stage.modified.tv_sec > cutoff) break;
+    if (RemoveRetainedStage(parent, stage)) --remaining;
+  }
+  // Recent stages may still belong to an active copy. Never delete them merely
+  // to make room; reject the new claim until an expired stage can be swept.
+  if (remaining >= kMaxRetainedStages) { errno = E2BIG; return false; }
+  return true;
+}
+
 }  // namespace
 
 StagingDirectoryClaim CreateStagingDirectory(int parent) {
+  if (!SweepRetainedStages(parent)) return {};
   static constexpr char kHex[] = "0123456789abcdef";
   for (size_t attempt = 0; attempt < kMaxStageClaims; ++attempt) {
     std::array<unsigned char, kStageRandomBytes> random = {};
     if (!FillRandom(&random)) return {};
-    std::string candidate = ".matrix-copy-stage-";
+    std::string candidate = kStagePrefix;
     candidate.reserve(candidate.size() + random.size() * 2);
     for (const unsigned char value : random) {
       candidate.push_back(kHex[value >> 4]);

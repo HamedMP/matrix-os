@@ -52,6 +52,10 @@ bool ReadTestScenario(napi_env env, napi_value value, matrix_fs::CopyTestScenari
     *output = matrix_fs::CopyTestScenario::kReplaceSourceAfterIdentity;
     return true;
   }
+  if (scenario == "fail_regular_after_target_claim") {
+    *output = matrix_fs::CopyTestScenario::kFailRegularAfterTargetClaim;
+    return true;
+  }
   return false;
 }
 

@@ -106,6 +106,22 @@ describe.runIf(isRequiredLinuxTarget)("Gateway native file capability on Linux x
     expect(existsSync(join(home, "target copy"))).toBe(false);
   });
 
+  it("reports the claimed destination when a regular-file copy fails after creation", async () => {
+    const home = makeRoot("partial-file");
+    writeFileSync(join(home, "source.txt"), "source");
+
+    const result = await getNativeFileCapabilityTestHarness().copyWithScenario(
+      home,
+      "source.txt",
+      "target.txt",
+      false,
+      "fail_regular_after_target_claim",
+    );
+
+    expect(result).toEqual({ ok: false, code: "partial", partialPath: "target.txt" });
+    expect(existsSync(join(home, "target.txt"))).toBe(true);
+  });
+
   it("copies nested symlinks without dereferencing and preserves executable mode", async () => {
     const home = makeRoot("metadata");
     mkdirSync(join(home, "source"));

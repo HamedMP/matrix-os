@@ -232,6 +232,13 @@ int CopyCapturedEntry(
     Fd target(openat(target_parent, target_name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, opened.st_mode & 0777));
     if (!target) return -1;
     state->target_claimed = true;
+    if (state->test_scenario == CopyTestScenario::kFailRegularAfterTargetClaim
+        && !state->test_scenario_fired
+        && depth == 0) {
+      state->test_scenario_fired = true;
+      errno = EIO;
+      return -1;
+    }
     if (CopyBytes(source.get(), target.get()) != 0 || fchmod(target.get(), opened.st_mode & 0777) != 0) return -1;
     struct stat after = {};
     if (fstat(source.get(), &after) != 0 || !StableEntry(opened, after)) { errno = ESTALE; return -1; }
@@ -378,7 +385,7 @@ Result CopyImpl(
         target_path.components.back(),
         0,
         &state) != 0) {
-    return Failure(errno, state.target_claimed);
+    return Failure(errno, state.target_claimed, state.target_claimed ? target : std::string{});
   }
   return {Code::kOk, 0};
 }
