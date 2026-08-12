@@ -8,6 +8,11 @@
 
 **Tech Stack:** TypeScript 5.5+ strict, React 19, Next.js 16, xterm, Lucide React, Vitest 4, Testing Library, Electron WebContentsView.
 
+**Scope update (2026-08-12):** The hosted Shell implementation remains the
+source behavior, and the native Desktop Terminal tab now receives parity via a
+shared parser in `@matrix-os/contracts`. A first-class in-app Browser surface is
+deferred to [MAT-295](https://linear.app/matrix-os/issue/MAT-295/add-a-first-class-in-app-browser-surface-to-matrix-desktop).
+
 ## Global Constraints
 
 - Work only in the manual worktree `matrix-os-mat-289-terminal-links`; preserve the dirty root checkout.
@@ -449,3 +454,9 @@ Confirm focused tests, typecheck/builds, PR checks, latest-head Greptile 5/5,
 and zero unresolved threads. Update the PR body and MAT-289 comment in English
 with exact head/bundle/runtime evidence. Leave the preview open for user review;
 do not merge.
+
+- [ ] **Step 7: Publish the user-facing behavior in the docs site**
+
+Open a separate Conventional Commit PR in the private `FinnaAI/matrix-os-site`
+repository documenting terminal Open/Copy behavior and the external-browser
+trust boundary. Link that docs PR from #1187 before merge.

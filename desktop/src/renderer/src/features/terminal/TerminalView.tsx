@@ -2,7 +2,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
 import { getThemeTerminalColors } from "../../design/themes";
@@ -12,6 +12,17 @@ import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
 import { getAttachManager } from "./terminal-runtime";
+import TerminalLinkContextMenu, { type DesktopTerminalLinkMenuState } from "./TerminalLinkContextMenu";
+import {
+  DesktopWebLinkProvider,
+  activateDesktopTerminalLink,
+  copyDesktopTerminalLink,
+  desktopTerminalCellFromPointer,
+  findDesktopTerminalLinkAtCell,
+  openDesktopTerminalLink,
+  resolveDesktopTerminalLink,
+  type TerminalLinkEntry,
+} from "./terminal-link-actions";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -31,8 +42,11 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const endedRef = useRef(false);
+  const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
+  const [linkContextMenu, setLinkContextMenu] = useState<DesktopTerminalLinkMenuState | null>(null);
+  const closeLinkContextMenu = useCallback(() => setLinkContextMenu(null), []);
 
   if (stateSessionName !== sessionName) {
     setStateSessionName(sessionName);
@@ -58,12 +72,36 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       lineHeight: 1.25,
       scrollback: 5000,
       theme,
+      linkHandler: {
+        activate: activateDesktopTerminalLink,
+        hover: (_event, text) => {
+          hoveredLinkRef.current = resolveDesktopTerminalLink(text);
+        },
+        leave: () => {
+          hoveredLinkRef.current = null;
+        },
+      },
     });
     const fit = new FitAddon();
     const serialize = new SerializeAddon();
     terminal.loadAddon(fit);
     terminal.loadAddon(serialize);
     terminal.open(host);
+    const linkProviderDisposable = terminal.registerLinkProvider(
+      new DesktopWebLinkProvider(terminal, (link) => {
+        hoveredLinkRef.current = link;
+      }),
+    );
+    const onLinkContextMenu = (event: MouseEvent) => {
+      const cell = desktopTerminalCellFromPointer(terminal, event.clientX, event.clientY);
+      const link = hoveredLinkRef.current
+        ?? (cell ? findDesktopTerminalLinkAtCell(terminal, cell) : null);
+      if (!link) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
+    };
+    host.addEventListener("contextmenu", onLinkContextMenu);
     try {
       terminal.loadAddon(new WebglAddon());
     } catch (err: unknown) {
@@ -95,6 +133,10 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     observer.observe(host);
 
     return () => {
+      closeLinkContextMenu();
+      hoveredLinkRef.current = null;
+      host.removeEventListener("contextmenu", onLinkContextMenu);
+      linkProviderDisposable.dispose();
       unsubscribeAppearance();
       observer.disconnect();
       if (rafId !== null) {
@@ -111,7 +153,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       terminal.dispose();
       termRef.current = null;
     };
-  }, [sessionName]);
+  }, [closeLinkContextMenu, sessionName]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
   useEffect(() => {
@@ -173,6 +215,12 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
           {banner.action}
         </div>
       ) : null}
+      <TerminalLinkContextMenu
+        menu={linkContextMenu}
+        onClose={closeLinkContextMenu}
+        onOpen={openDesktopTerminalLink}
+        onCopy={copyDesktopTerminalLink}
+      />
     </div>
   );
 }

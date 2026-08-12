@@ -9,7 +9,15 @@ import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 
 const attachMock = vi.fn();
 const { createdTerminals } = vi.hoisted(() => ({
-  createdTerminals: [] as Array<{ options: { theme?: unknown } }>,
+  createdTerminals: [] as Array<{
+    initialOptions: {
+      linkHandler?: {
+        activate: (event: Pick<MouseEvent, "button">, text: string) => void;
+      };
+    };
+    options: { theme?: unknown };
+    registeredProviders: unknown[];
+  }>,
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -17,8 +25,15 @@ vi.mock("@xterm/xterm", () => ({
     cols = 80;
     rows = 24;
     options: { theme?: unknown } = {};
+    initialOptions: {
+      linkHandler?: {
+        activate: (event: Pick<MouseEvent, "button">, text: string) => void;
+      };
+    };
+    registeredProviders: unknown[] = [];
 
-    constructor() {
+    constructor(options: FakeTerminal["initialOptions"]) {
+      this.initialOptions = options;
       createdTerminals.push(this);
     }
 
@@ -29,6 +44,10 @@ vi.mock("@xterm/xterm", () => ({
     focus(): void {}
     dispose(): void {}
     onData(): { dispose: () => void } {
+      return { dispose: () => {} };
+    }
+    registerLinkProvider(provider: unknown): { dispose: () => void } {
+      this.registeredProviders.push(provider);
       return { dispose: () => {} };
     }
   },
@@ -132,5 +151,20 @@ describe("TerminalView session switching", () => {
     expect(terminal.options.theme).toMatchObject({
       background: getThemeTerminalColors("dracula", "dark").background,
     });
+  });
+
+  it("overrides xterm OSC activation and registers plain-text URL detection", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+
+    terminal.initialOptions.linkHandler?.activate(
+      { button: 2 },
+      "https://example.org/final-check",
+    );
+
+    expect(open).not.toHaveBeenCalled();
+    expect(terminal.initialOptions.linkHandler).toBeDefined();
+    expect(terminal.registeredProviders).toHaveLength(1);
   });
 });

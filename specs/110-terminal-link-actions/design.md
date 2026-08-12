@@ -1,16 +1,17 @@
 # 110 — Terminal link actions
 
-Status: Awaiting product approval
-Date: 2026-08-11
+Status: In review
+Date: 2026-08-12
 Owner: Yuhan
 Linear: [MAT-289](https://linear.app/matrix-os/issue/MAT-289/fix-terminal-links-in-the-desktop-home-embedded-shell)
 PR: [#1187](https://github.com/HamedMP/matrix-os/pull/1187)
 
 ## Summary
 
-Replace the single persistent coding-agent login banner with one bounded terminal
-link system that supports every HTTP(S) URL, multiple links, durable dismissal
-within a terminal pane, and direct right-click actions.
+Replace the single persistent coding-agent login banner with one terminal-link
+system shared by the hosted Shell and native Desktop Terminal surfaces. It
+supports every safe HTTP(S) URL, multiple links, durable dismissal within a
+Shell terminal pane, and direct right-click actions.
 
 The chosen interaction combines:
 
@@ -21,7 +22,7 @@ The chosen interaction combines:
 
 Claude Code and Codex URLs remain specially classified only when they pass the
 existing strict provider validation. They use clearer sign-in copy, but share
-the same tray and action plumbing as ordinary web links.
+the same parser and actions as ordinary web links across both terminal surfaces.
 
 ## Problem confirmed from the Desktop preview
 
@@ -54,8 +55,8 @@ Its state model also causes three behavioral defects:
 - Retain at most the 20 most recent unique links per terminal pane. New entries
   evict the oldest entry. No unbounded `Map` or `Set` is introduced.
 - Continue strict Claude/Codex classification. A provider-shaped URL that fails
-  strict auth validation remains an ordinary web link and never receives a
-  trusted sign-in label.
+  strict auth validation is rejected rather than downgraded to an ordinary web
+  link.
 
 ### 2. Compact Links Tray
 
@@ -122,9 +123,24 @@ activation guard: only a primary-button click may open a URL. A secondary-button
 click never activates either provider and remains exclusively available to the
 Matrix context menu.
 
-Both tray and context menu call the same Open and Copy helpers. Opening remains
-`window.open(url, "_blank", "noopener,noreferrer")`; packaged Desktop continues
-to deny embedded navigation and hands HTTPS/HTTP URLs to the system browser.
+Both tray and context menu call the same surface-level Open and Copy helpers.
+Opening remains `window.open(url, "_blank", "noopener,noreferrer")`; packaged
+Desktop denies embedded navigation and hands validated HTTPS/HTTP URLs to the
+system browser.
+
+### 5. Native Desktop Terminal parity
+
+The Desktop application's native Terminal tab owns a separate xterm instance
+from the hosted Shell, so it must explicitly register the same link behavior:
+
+- override xterm's OSC 8 handler so secondary click never opens the built-in
+  confirmation dialog;
+- register a plain-text HTTP(S) link provider backed by the shared parser;
+- show the same compact Open/Copy context menu on right-click; and
+- route both HTTP and HTTPS through the packaged Desktop system-browser handoff.
+
+The native Terminal does not add the Shell's recent-links tray because it does
+not currently scan or retain PTY output outside xterm's bounded buffer.
 
 ## Visual direction
 
@@ -176,9 +192,11 @@ set.
 
 ## Component boundaries
 
-- `terminal-links.ts`: control-sequence stripping, generic extraction, strict
-  auth classification, normalization, display metadata, wrapped-line hit tests,
-  and the pure bounded reducer.
+- `packages/contracts/src/terminal-links.ts`: renderer-neutral control-sequence
+  stripping, generic extraction, strict auth classification, normalization, and
+  display metadata shared by Shell and Desktop.
+- `shell/.../terminal-links.ts`: Shell actions, wrapped-line hit tests, and the
+  pure bounded recent-links reducer.
 - `TerminalLinksTray.tsx`: expanded tray, collapsed trigger, recent-link
   popover, timers, focus behavior, and shared actions.
 - `TerminalLinkContextMenu.tsx`: link-only right-click menu using the shared
@@ -187,6 +205,13 @@ set.
   adapter, and component composition only.
 - Existing `WebLinkProvider`: reuse the shared detector and action helper so
   ordinary click behavior cannot drift from the tray/context menu.
+- `desktop/.../terminal-link-actions.ts`: native xterm provider, pointer hit
+  testing, and Open/Copy actions backed by the shared parser.
+- `desktop/.../TerminalLinkContextMenu.tsx`: native Desktop token-based
+  right-click actions.
+- `desktop/.../TerminalView.tsx`: thin xterm registration and menu composition.
+- `desktop/src/main/external-url.ts`: one credential-free HTTP(S) policy shared
+  by native renderer handoff and embedded WebContentsView navigation.
 
 `TerminalPane.tsx` is already large, so new parsing, state, and UI behavior must
 not be added inline.
@@ -217,9 +242,11 @@ Write failing tests before implementation for:
    from a URL, including no xterm navigation confirmation or URL activation on
    secondary-button clicks for plain-text and OSC 8 hyperlinks;
 7. Electron Desktop denial plus external browser handoff for both HTTP and HTTPS;
-8. real packaged/preview Desktop validation at the narrow Home-terminal width
+8. native Desktop Terminal OSC 8 and plain-text providers, right-click menu,
+   secondary-click suppression, and HTTP/HTTPS main-process handoff; and
+9. real packaged/preview Desktop validation at the narrow Home-terminal width
    shown in the reported screenshot, including multiple links and a repeated
-   dismissed link.
+   dismissed link, plus native Terminal-tab parity.
 
 ## Invariants
 
@@ -241,5 +268,7 @@ Write failing tests before implementation for:
 - Non-web schemes such as `file:`, `mailto:`, `ssh:`, or editor deep links.
 - Server-side URL previews, metadata fetches, or reachability checks.
 - Persistent cross-session browser history.
+- A first-class in-app Browser surface; tracked separately in
+  [MAT-295](https://linear.app/matrix-os/issue/MAT-295/add-a-first-class-in-app-browser-surface-to-matrix-desktop).
 - Changing terminal output, coding-agent CLI behavior, or OAuth completion.
 - General right-click copy/paste redesign when the pointer is not over a URL.

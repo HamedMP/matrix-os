@@ -5,23 +5,7 @@
 import { WebContentsView, shell, type BaseWindow } from "electron";
 import { isNavigationAllowed } from "./origin-policy";
 import type { Bounds, EmbedViewLike } from "./embed-manager";
-
-function safeExternalHttpUrl(raw: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch (_err: unknown) {
-    return null;
-  }
-  if (
-    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
-    parsed.username !== "" ||
-    parsed.password !== ""
-  ) {
-    return null;
-  }
-  return parsed.toString();
-}
+import { safeExternalHttpUrl } from "../external-url";
 
 export function createWebContentsView(options: {
   window: BaseWindow;

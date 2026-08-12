@@ -29,6 +29,7 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
 import { createUpdater } from "./updates";
+import { safeExternalHttpUrl } from "./external-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
@@ -74,15 +75,10 @@ function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>)
   mainWindow?.webContents.send(channel, parsed.data);
 }
 
-async function openExternalHttps(url: string): Promise<void> {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return;
-  }
-  if (parsed.protocol !== "https:") return;
-  await shell.openExternal(parsed.toString());
+async function openExternalHttpUrl(url: string): Promise<void> {
+  const externalUrl = safeExternalHttpUrl(url);
+  if (!externalUrl) return;
+  await shell.openExternal(externalUrl);
 }
 
 function createWindow(bounds: { x?: number; y?: number; width: number; height: number }): BrowserWindow {
@@ -106,7 +102,7 @@ function createWindow(bounds: { x?: number; y?: number; width: number; height: n
 
   // window.open / target=_blank from the renderer goes to the system browser only.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void openExternalHttps(url).catch((err: unknown) => {
+    void openExternalHttpUrl(url).catch((err: unknown) => {
       logMainError("failed to open external URL", err);
     });
     return { action: "deny" };
@@ -235,7 +231,7 @@ if (!gotLock) {
         auth,
         store,
         embeds,
-        openExternal: openExternalHttps,
+        openExternal: openExternalHttpUrl,
         setBadgeCount: (count) => {
           app.setBadgeCount(count);
         },
