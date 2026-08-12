@@ -46,6 +46,16 @@ gateway startup with a generic terminal-runtime error. The host updater then
 treats `/health` as failed and rolls back the app. It must not advertise a
 healthy activation bundle while serving legacy terminals.
 
+The updater stages bounded, validated release metadata before replacing the app,
+but commits `/opt/matrix/release.json` only after health succeeds. Preview and
+acceptance automation additionally verifies the active `/opt/matrix/app/BUNDLE_VERSION`;
+a release marker alone is not installation
+evidence. A disposable `pr-<number>` preview may perform one bounded updater
+restart and exact-version reapply when a pre-terminal-runtime updater process
+has retained the new host helper after a deliberate fail-closed rollback. That
+repair is restricted to disposable validation and does not replace the existing
+user migration below.
+
 ## Rollout
 
 1. Build and register an immutable bundle without promoting a channel.
