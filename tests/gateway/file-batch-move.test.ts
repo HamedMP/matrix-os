@@ -390,7 +390,7 @@ describe("FileBatchMoveService", () => {
       close: vi.fn(),
     } as unknown as FileOperationResultCache;
     const boundedService = new FileBatchMoveService({
-      preflightResultCache: passthroughCache,
+      resultCache: passthroughCache,
       moveCapability: capability,
     });
     writeFileSync(join(homePath, "projects", "inbox", "retained.md"), "retained");
@@ -411,6 +411,7 @@ describe("FileBatchMoveService", () => {
       executeInput(homePath, firstId, first.preflightFingerprint),
     )).resolves.toMatchObject({ results: [{ code: "moved" }] });
     boundedService.close();
+    expect(passthroughCache.close).not.toHaveBeenCalled();
   });
 
   it("preserves execution capacity for an accepted preflight when the preflight cache is full", async () => {
