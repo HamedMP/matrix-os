@@ -144,6 +144,34 @@ describeNative("Gateway native recursive copy bounds", () => {
     await expect(paused).resolves.toEqual({ ok: true, code: "ok" });
   }, 10_000);
 
+  it("serializes the 63-to-64 sweep and claim boundary without blocking", async () => {
+    const home = makeHome("parallel-stage-claim");
+    for (let index = 0; index < 63; index += 1) {
+      mkdirSync(join(home, `.matrix-copy-stage-${index.toString(16).padStart(32, "0")}`));
+    }
+    const paused = getNativeFileCapabilityTestHarness().copyWithScenario(
+      home,
+      "source",
+      "first-target",
+      false,
+      "pause_after_stage_sweep",
+    );
+    await expect.poll(
+      () => existsSync(join(home, ".matrix-copy-test-sweep-ready")),
+      { timeout: 5_000 },
+    ).toBe(true);
+
+    await expect(getNativeFileCapability().copy(home, "source", "second-target", false))
+      .resolves.toEqual({ ok: false, code: "failed" });
+    expect(readdirSync(home).filter((name) => name.startsWith(".matrix-copy-stage-")))
+      .toHaveLength(63);
+
+    writeFileSync(join(home, ".matrix-copy-test-release"), "release");
+    await expect(paused).resolves.toEqual({ ok: true, code: "ok" });
+    expect(readdirSync(home).filter((name) => name.startsWith(".matrix-copy-stage-")))
+      .toHaveLength(63);
+  }, 10_000);
+
   it("fails closed when the target parent scan exceeds its fixed budget", async () => {
     const home = makeHome("stage-scan-budget");
     for (let index = 0; index <= 10_000; index += 1) {

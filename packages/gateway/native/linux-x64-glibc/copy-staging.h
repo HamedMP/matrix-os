@@ -7,6 +7,7 @@ namespace matrix_fs {
 enum class StagingSweepTestScenario {
   kNone,
   kReplaceChildBeforeOpen,
+  kPauseAfterSweep,
 };
 
 struct StagingDirectoryClaim {

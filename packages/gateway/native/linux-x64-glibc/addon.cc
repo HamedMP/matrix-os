@@ -64,6 +64,10 @@ bool ReadTestScenario(napi_env env, napi_value value, matrix_fs::CopyTestScenari
     *output = matrix_fs::CopyTestScenario::kPauseAfterStageClaim;
     return true;
   }
+  if (scenario == "pause_after_stage_sweep") {
+    *output = matrix_fs::CopyTestScenario::kPauseAfterStageSweep;
+    return true;
+  }
   return false;
 }
 

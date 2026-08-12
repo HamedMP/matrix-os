@@ -307,6 +307,8 @@ Result CopyDirectoryStaged(
   const StagingSweepTestScenario sweep_scenario =
     test_scenario == CopyTestScenario::kReplaceRetainedChildBeforeOpen
       ? StagingSweepTestScenario::kReplaceChildBeforeOpen
+      : test_scenario == CopyTestScenario::kPauseAfterStageSweep
+        ? StagingSweepTestScenario::kPauseAfterSweep
       : StagingSweepTestScenario::kNone;
   StagingDirectoryClaim staging = CreateStagingDirectory(target_parent, sweep_scenario);
   Fd stage(staging.fd);

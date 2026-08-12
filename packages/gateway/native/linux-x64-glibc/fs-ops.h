@@ -30,6 +30,7 @@ enum class CopyTestScenario {
   kFailRegularAfterTargetClaim,
   kReplaceRetainedChildBeforeOpen,
   kPauseAfterStageClaim,
+  kPauseAfterStageSweep,
 };
 
 Result Create(

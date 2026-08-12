@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "copy-staging.h"
+#include "copy-test-hooks.h"
 
 #include <errno.h>
 #include <dirent.h>
@@ -281,9 +282,14 @@ bool SweepRetainedStages(
 
 StagingDirectoryClaim CreateStagingDirectory(int parent, StagingSweepTestScenario test_scenario) {
   ScopedFd locked_parent(OpenStagingDirectory(parent, "."));
-  if (!locked_parent || flock(locked_parent.get(), LOCK_EX) != 0) return {};
+  if (!locked_parent || flock(locked_parent.get(), LOCK_EX | LOCK_NB) != 0) {
+    errno = locked_parent ? EAGAIN : errno;
+    return {};
+  }
   bool test_scenario_fired = false;
   if (!SweepRetainedStages(parent, test_scenario, &test_scenario_fired)) return {};
+  if (test_scenario == StagingSweepTestScenario::kPauseAfterSweep
+      && PauseAfterStageSweepForTest(parent) != 0) return {};
   static constexpr char kHex[] = "0123456789abcdef";
   for (size_t attempt = 0; attempt < kMaxStageClaims; ++attempt) {
     std::array<unsigned char, kStageRandomBytes> random = {};

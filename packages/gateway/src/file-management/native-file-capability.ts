@@ -25,7 +25,8 @@ export type NativeCopyTestScenario =
   | "replace_source_after_identity"
   | "fail_regular_after_target_claim"
   | "replace_retained_child_before_open"
-  | "pause_after_stage_claim";
+  | "pause_after_stage_claim"
+  | "pause_after_stage_sweep";
 
 export interface NativeFileCapabilityTestHarness {
   copyWithScenario(

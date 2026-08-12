@@ -30,16 +30,15 @@ int InstallFinalDirectoryClaimantForTest(int parent, const std::string& name) {
   return 0;
 }
 
-int PauseAfterStageClaimForTest(int parent, const std::string& stage_name) {
-  constexpr char ready_name[] = ".matrix-copy-test-ready";
+int PauseAtMarkerForTest(int parent, const char* ready_name, const std::string& ready_value) {
   constexpr char release_name[] = ".matrix-copy-test-release";
   const int marker = openat(
     parent, ready_name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
   if (marker < 0) return -1;
-  const ssize_t written = write(marker, stage_name.data(), stage_name.size());
+  const ssize_t written = write(marker, ready_value.data(), ready_value.size());
   const int write_error = errno;
   close(marker);
-  if (written != static_cast<ssize_t>(stage_name.size())) {
+  if (written != static_cast<ssize_t>(ready_value.size())) {
     errno = written < 0 ? write_error : EIO;
     return -1;
   }
@@ -57,6 +56,16 @@ int PauseAfterStageClaimForTest(int parent, const std::string& stage_name) {
   }
   errno = ETIMEDOUT;
   return -1;
+}
+
+int PauseAfterStageClaimForTest(int parent, const std::string& stage_name) {
+  constexpr char ready_name[] = ".matrix-copy-test-ready";
+  return PauseAtMarkerForTest(parent, ready_name, stage_name);
+}
+
+int PauseAfterStageSweepForTest(int parent) {
+  constexpr char ready_name[] = ".matrix-copy-test-sweep-ready";
+  return PauseAtMarkerForTest(parent, ready_name, "ready");
 }
 
 int RunCopyEntryTestScenario(
