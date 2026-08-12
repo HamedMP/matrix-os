@@ -64,9 +64,9 @@ suite("operator desktop e2e", () => {
   });
 
   it("signs in via the device flow and reaches Home, then opens a project board", async () => {
-    // "Continue with GitHub" unambiguously starts the device flow (the browser
-    // would present the provider). The stub approves instantly.
-    await page.getByRole("button", { name: /continue with github/i }).click();
+    // Browser sign-in unambiguously starts the device flow; the approval page
+    // presents the available providers and the stub approves instantly.
+    await page.getByRole("button", { name: /continue in browser/i }).click();
     // Poll loop approves; the signed-in shell (sidebar nav) renders.
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
     expect(gateway.state.tokenRequests).toBeGreaterThan(0);
