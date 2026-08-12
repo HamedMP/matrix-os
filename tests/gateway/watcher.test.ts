@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { watch as chokidarWatch } from "chokidar";
@@ -10,6 +10,7 @@ import {
   type WatcherBackend,
   type WatcherFactory,
 } from "../../packages/gateway/src/watcher.js";
+import { authorizeFileDirectoryScope } from "../../packages/gateway/src/file-management/directory-subscriptions.js";
 
 function createFakeWatcherFactory() {
   const backends: Array<WatcherBackend & {
@@ -139,6 +140,28 @@ describe("gateway home watcher", () => {
 
     await release();
     expect(fake.backends[1].unwatch).toHaveBeenCalledWith(join(homePath, "projects"));
+    await watcher.close();
+    await rm(homePath, { recursive: true });
+  });
+
+  it("rejects a directory replaced after authorization but before scope acquisition", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-watcher-identity-"));
+    await mkdir(join(homePath, "projects", "allowed"), { recursive: true });
+    await mkdir(join(homePath, "data", "browser-profiles"), { recursive: true });
+    const authorization = await authorizeFileDirectoryScope(homePath, "projects/allowed");
+    expect(authorization).not.toBe(false);
+    await rename(join(homePath, "projects", "allowed"), join(homePath, "projects", "original"));
+    await rename(join(homePath, "data", "browser-profiles"), join(homePath, "projects", "allowed"));
+    const fake = createFakeWatcherFactory();
+    const watcher = createWatcher(homePath, { watchFactory: fake.factory });
+
+    await expect(watcher.acquireDirectoryScope(
+      "projects/allowed",
+      authorization || undefined,
+    )).rejects.toThrow("Invalid directory scope");
+    expect(fake.calls).toHaveLength(1);
+
     await watcher.close();
     await rm(homePath, { recursive: true });
   });

@@ -1,6 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
-import type { FileChangeEvent } from "../watcher.js";
+import type { DirectoryScopeIdentity, FileChangeEvent } from "../watcher.js";
 import { resolveWithinHome } from "../path-security.js";
 import { FileManagementDirectoryPathSchema } from "./contracts.js";
 import { isFileManagementParentAllowed } from "./policy.js";
@@ -24,8 +24,13 @@ export interface FileDirectoryAuthorization {
 }
 
 export interface FileDirectorySubscriptionHubOptions {
-  acquireScope: (directory: string) => (() => void | Promise<void>) | Promise<() => void | Promise<void>>;
-  authorize?: (input: FileDirectoryAuthorization) => boolean | Promise<boolean>;
+  acquireScope: (
+    directory: string,
+    authorization?: DirectoryScopeIdentity,
+  ) => (() => void | Promise<void>) | Promise<() => void | Promise<void>>;
+  authorize?: (
+    input: FileDirectoryAuthorization,
+  ) => boolean | DirectoryScopeIdentity | Promise<boolean | DirectoryScopeIdentity>;
   maxSubscriptions?: number;
   maxDirectoriesPerConnection?: number;
   maxConnectionsPerOwner?: number;
@@ -41,6 +46,7 @@ interface SubscriptionState extends FileDirectorySubscriber {
   release: (() => void | Promise<void>) | null;
   scopeReady: Promise<void> | null;
   cleanupPromise: Promise<void> | null;
+  authorization: DirectoryScopeIdentity | null;
 }
 
 function subscriptionKey(ownerId: string, connectionId: string, directory: string): string {
@@ -71,6 +77,13 @@ export async function authorizeFileDirectory(
   homePath: string,
   directory: string,
 ): Promise<boolean> {
+  return (await authorizeFileDirectoryScope(homePath, directory)) !== false;
+}
+
+export async function authorizeFileDirectoryScope(
+  homePath: string,
+  directory: string,
+): Promise<DirectoryScopeIdentity | false> {
   const parsed = FileManagementDirectoryPathSchema.safeParse(directory);
   if (!parsed.success
     || /^[a-zA-Z]:\//.test(parsed.data)
@@ -85,11 +98,12 @@ export async function authorizeFileDirectory(
     realpath(resolved),
   ]);
   const realRelative = relative(homeReal, directoryReal);
-  if (realRelative === "") return true;
+  if (realRelative === "") return verifyDirectoryIdentity(resolved, stats);
   if (realRelative.startsWith("..") || isAbsolute(realRelative)) return false;
   const normalizedRealRelative = realRelative.split(sep).join(posix.sep);
-  return !normalizedRealRelative.split("/").some((segment) => segment.startsWith("."))
-    && isFileManagementParentAllowed(homePath, normalizedRealRelative);
+  if (normalizedRealRelative.split("/").some((segment) => segment.startsWith("."))
+    || !isFileManagementParentAllowed(homePath, normalizedRealRelative)) return false;
+  return verifyDirectoryIdentity(resolved, stats);
 }
 
 export class FileDirectorySubscriptionHub {
@@ -164,6 +178,7 @@ export class FileDirectorySubscriptionHub {
       release: null,
       scopeReady: null,
       cleanupPromise: null,
+      authorization: null,
     };
     this.subscriptions.set(key, state);
     const scopeReady = this.initializeSubscription(key, state);
@@ -328,6 +343,7 @@ export class FileDirectorySubscriptionHub {
     key: string,
     state: SubscriptionState,
   ): Promise<void> {
+    let scopeAuthorization: DirectoryScopeIdentity | undefined;
     if (this.authorize) {
       const authorized = await this.authorize({
         ownerId: state.ownerId,
@@ -335,9 +351,11 @@ export class FileDirectorySubscriptionHub {
       });
       this.assertCurrent(key, state);
       if (!authorized) throw new Error("Directory subscription is not authorized");
+      if (typeof authorized === "object") scopeAuthorization = authorized;
     }
-    const release = await this.acquireScope(state.directory);
+    const release = await this.acquireScope(state.directory, scopeAuthorization);
     state.release = release;
+    state.authorization = scopeAuthorization ?? null;
     try {
       this.assertCurrent(key, state);
     } catch (error: unknown) {
@@ -363,7 +381,31 @@ export class FileDirectorySubscriptionHub {
       });
       this.assertCurrent(key, existing);
       if (!authorized) throw new Error("Directory subscription is not authorized");
+      if (typeof authorized === "object"
+        && existing.authorization
+        && !sameDirectoryIdentity(authorized, existing.authorization)) {
+        throw new Error("Directory subscription is not authorized");
+      }
     }
     return existing.revision;
   }
+}
+
+async function verifyDirectoryIdentity(
+  resolved: string,
+  expected: { dev: number; ino: number },
+): Promise<DirectoryScopeIdentity | false> {
+  const verified = await lstat(resolved);
+  if (verified.isSymbolicLink()
+    || !verified.isDirectory()
+    || verified.dev !== expected.dev
+    || verified.ino !== expected.ino) return false;
+  return { device: verified.dev, inode: verified.ino };
+}
+
+function sameDirectoryIdentity(
+  first: DirectoryScopeIdentity,
+  second: DirectoryScopeIdentity,
+): boolean {
+  return first.device === second.device && first.inode === second.inode;
 }

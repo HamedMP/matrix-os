@@ -84,6 +84,20 @@ describe("FileDirectorySubscriptionHub", () => {
     await hub.close();
   });
 
+  it("binds the authorized directory identity to scope acquisition", async () => {
+    const authorization = { device: 42, inode: 84 };
+    const acquireScope = vi.fn(async () => () => {});
+    const hub = new FileDirectorySubscriptionHub({
+      authorize: async () => authorization,
+      acquireScope,
+    });
+
+    await hub.subscribe(subscriber("owner-a", "connection-a", "projects"));
+
+    expect(acquireScope).toHaveBeenCalledWith("projects", authorization);
+    await hub.close();
+  });
+
   it("enforces the exact default global, per-connection, and per-owner bounds", async () => {
     const globalHub = new FileDirectorySubscriptionHub({ acquireScope: async () => () => {} });
     for (let index = 0; index < FILE_DIRECTORY_MAX_SUBSCRIPTIONS; index += 1) {

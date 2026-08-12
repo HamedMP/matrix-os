@@ -235,7 +235,7 @@ import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
 import { registerFileManagementRoutes } from "./server/file-management-routes.js";
 import {
-  authorizeFileDirectory,
+  authorizeFileDirectoryScope,
   FileDirectorySubscriptionHub,
 } from "./file-management/directory-subscriptions.js";
 import {
@@ -444,8 +444,11 @@ export async function createGateway(config: GatewayConfig) {
 
   const watcher: Watcher = createWatcher(homePath);
   const fileDirectorySubscriptionHub = new FileDirectorySubscriptionHub({
-    authorize: ({ directory }) => authorizeFileDirectory(homePath, directory),
-    acquireScope: (directory) => watcher.acquireDirectoryScope(directory),
+    authorize: ({ directory }) => authorizeFileDirectoryScope(homePath, directory),
+    acquireScope: (directory, authorization) => watcher.acquireDirectoryScope(
+      directory,
+      authorization,
+    ),
   });
   bindFileDirectoryWatcher(fileDirectorySubscriptionHub, watcher);
   const conversations: ConversationStore = createConversationStore(homePath);

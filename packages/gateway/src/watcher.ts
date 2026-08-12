@@ -26,8 +26,16 @@ export type WatcherFactory = (
 
 export interface Watcher {
   on(listener: (event: FileChangeEvent) => void): void;
-  acquireDirectoryScope(directory: string): Promise<() => Promise<void>>;
+  acquireDirectoryScope(
+    directory: string,
+    authorization?: DirectoryScopeIdentity,
+  ): Promise<() => Promise<void>>;
   close(): Promise<void>;
+}
+
+export interface DirectoryScopeIdentity {
+  device: number;
+  inode: number;
 }
 
 export interface WatcherIgnoredOptions {
@@ -44,6 +52,7 @@ export interface CreateWatcherOptions {
 interface ScopedReferenceState {
   count: number;
   removePromise: Promise<void> | null;
+  identity: DirectoryScopeIdentity;
 }
 
 const MAX_SCOPED_DIRECTORIES = 1_024;
@@ -106,7 +115,7 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
     ?? ((paths, watchOptions) => watch(paths, watchOptions) as FSWatcher);
   const listeners: Array<(event: FileChangeEvent) => void> = [];
   const scopedReferences = new Map<string, ScopedReferenceState>();
-  const scopeAcquisitions = new Map<string, Promise<void>>();
+  const scopeAcquisitions = new Map<string, Promise<DirectoryScopeIdentity>>();
   const rootCorrelations = new Map<string, RootCorrelationTokens>();
   const now = options.now ?? Date.now;
   const rootCorrelationWindowMs = options.rootCorrelationWindowMs
@@ -210,7 +219,7 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
       listeners.push(listener);
     },
 
-    async acquireDirectoryScope(directory) {
+    async acquireDirectoryScope(directory, authorization) {
       if (closed) throw new Error("Watcher is closed");
       const parsed = FileManagementDirectoryPathSchema.safeParse(directory);
       if (!parsed.success) throw new Error("Invalid directory scope");
@@ -225,6 +234,7 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
         acquisition = (async () => {
           await validateDirectoryScope(parsed.data, absolutePath);
           if (closed) throw new Error("Watcher is closed");
+          return readDirectoryScopeIdentity(absolutePath);
         })();
         scopeAcquisitions.set(absolutePath, acquisition);
         void acquisition.then(
@@ -233,7 +243,10 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
         );
       }
       try {
-        await acquisition;
+        const acquiredIdentity = await acquisition;
+        if (authorization && !sameDirectoryIdentity(acquiredIdentity, authorization)) {
+          throw new Error("Directory scope identity changed");
+        }
       } catch (error: unknown) {
         if (closed && error instanceof Error && error.message === "Watcher is closed") throw error;
         console.error("[watcher] Directory scope validation failed", {
@@ -244,7 +257,13 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
       }
       if (closed) throw new Error("Watcher is closed");
 
+      const acquiredIdentity = await acquisition;
+
       if (isCoveredByGlobalWatcher(parsed.data)) {
+        const currentIdentity = await readDirectoryScopeIdentity(absolutePath);
+        if (!sameDirectoryIdentity(currentIdentity, acquiredIdentity)) {
+          throw new Error("Invalid directory scope");
+        }
         let released = false;
         return async () => { released = true; void released; };
       }
@@ -255,32 +274,49 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
         if (closed) throw new Error("Watcher is closed");
         scopeState = scopedReferences.get(absolutePath);
       }
+      if (scopeState && !sameDirectoryIdentity(scopeState.identity, acquiredIdentity)) {
+        throw new Error("Invalid directory scope");
+      }
       if (!scopeState) {
         if (scopedReferences.size >= MAX_SCOPED_DIRECTORIES) {
           throw new Error("Scoped watcher limit reached");
         }
         if (closed) throw new Error("Watcher is closed");
-        if (!scopedWatcher) {
-          const createdWatcher = watchFactory(absolutePath, {
-            depth: 0,
-            ignoreInitial: true,
-            followSymlinks: false,
-            usePolling: true,
-            interval: 2_000,
-            binaryInterval: 5_000,
-            ignored: createWatcherIgnored({ watchProjects: true }),
-          });
-          bindEvents(createdWatcher, "scoped");
-          if (closed) {
-            await createdWatcher.close();
-            throw new Error("Watcher is closed");
+        let createdWatcher: WatcherBackend | null = null;
+        let addedToWatcher = false;
+        try {
+          if (!scopedWatcher) {
+            createdWatcher = watchFactory(absolutePath, {
+              depth: 0,
+              ignoreInitial: true,
+              followSymlinks: false,
+              usePolling: true,
+              interval: 2_000,
+              binaryInterval: 5_000,
+              ignored: createWatcherIgnored({ watchProjects: true }),
+            });
+            bindEvents(createdWatcher, "scoped");
+            if (closed) throw new Error("Watcher is closed");
+            scopedWatcher = createdWatcher;
+          } else {
+            scopedWatcher.add(absolutePath);
+            addedToWatcher = true;
+            if (closed) throw new Error("Watcher is closed");
           }
-          scopedWatcher = createdWatcher;
-        } else {
-          scopedWatcher.add(absolutePath);
-          if (closed) throw new Error("Watcher is closed");
+          const watchedIdentity = await readDirectoryScopeIdentity(absolutePath);
+          if (!sameDirectoryIdentity(watchedIdentity, acquiredIdentity)) {
+            throw new Error("Directory scope identity changed");
+          }
+        } catch (error: unknown) {
+          if (createdWatcher) {
+            if (scopedWatcher === createdWatcher) scopedWatcher = null;
+            await createdWatcher.close();
+          } else if (addedToWatcher && scopedWatcher) {
+            await scopedWatcher.unwatch(absolutePath);
+          }
+          throw error;
         }
-        scopeState = { count: 0, removePromise: null };
+        scopeState = { count: 0, removePromise: null, identity: acquiredIdentity };
         scopedReferences.set(absolutePath, scopeState);
       }
       scopeState.count += 1;
@@ -335,4 +371,19 @@ export function createWatcher(homePath: string, options: CreateWatcherOptions = 
       return closePromise;
     },
   };
+}
+
+async function readDirectoryScopeIdentity(absolutePath: string): Promise<DirectoryScopeIdentity> {
+  const stats = await lstat(absolutePath);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error("Scope is not a concrete directory");
+  }
+  return { device: stats.dev, inode: stats.ino };
+}
+
+function sameDirectoryIdentity(
+  first: DirectoryScopeIdentity,
+  second: DirectoryScopeIdentity,
+): boolean {
+  return first.device === second.device && first.inode === second.inode;
 }
