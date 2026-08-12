@@ -196,13 +196,13 @@ describe("FileBatchMoveService lifecycle", () => {
     expect(resultCache.closeCalls).toBe(1);
   });
 
-  it("closes an owned result cache exactly once", async () => {
+  it("closes each owned phase result cache exactly once", async () => {
     const closeCache = vi.spyOn(FileOperationResultCache.prototype, "close");
     const service = new FileBatchMoveService();
 
     await Promise.all([service.close(), service.close(), service.close()]);
 
-    expect(closeCache).toHaveBeenCalledOnce();
+    expect(closeCache).toHaveBeenCalledTimes(2);
     closeCache.mockRestore();
   });
 });
