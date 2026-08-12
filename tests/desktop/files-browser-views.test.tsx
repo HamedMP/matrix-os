@@ -370,6 +370,8 @@ describe("ComputerFileBrowser view options", () => {
 
     // Files never appear as pick targets.
     expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New File" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New Folder" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Open assets" }));
     expect(
@@ -396,5 +398,46 @@ describe("ComputerFileBrowser view options", () => {
     await screen.findByText("This folder is empty.");
     fireEvent.click(screen.getByRole("button", { name: "Grid view" }));
     expect(screen.getByText("This folder is empty.")).toBeTruthy();
+  });
+
+  it("synchronously hides rows and management actions when the API is absent or replaced", async () => {
+    renderBrowser();
+    await screen.findByRole("button", { name: "Open README.md" });
+
+    act(() => useConnection.setState({ api: null }));
+    expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New File" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "More actions for README.md" })).toBeNull();
+
+    let resolveReplacement!: (value: { entries: typeof ROOT_ENTRIES }) => void;
+    const replacement = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(() => new Promise<{ entries: typeof ROOT_ENTRIES }>((resolve) => {
+        resolveReplacement = resolve;
+      })),
+    };
+    act(() => useConnection.setState({ api: replacement as never }));
+    expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New Folder" })).toBeNull();
+
+    await act(async () => resolveReplacement({ entries: ROOT_ENTRIES }));
+    expect(await screen.findByRole("button", { name: "Open README.md" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "New File" })).not.toBeNull();
+  });
+
+  it("shows a safe error when a replacement API cannot load its first listing", async () => {
+    renderBrowser();
+    await screen.findByRole("button", { name: "Open README.md" });
+    const replacement = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => { throw new Error("provider failed at /home/operator"); }),
+    };
+
+    act(() => useConnection.setState({ api: replacement as never }));
+
+    expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull();
+    expect(await screen.findByText("Something went wrong. Please try again.")).not.toBeNull();
+    expect(screen.queryByText(/provider|\/home|operator/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "New File" })).toBeNull();
   });
 });

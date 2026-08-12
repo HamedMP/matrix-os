@@ -28,8 +28,8 @@ export default function FilesWorkspace() {
     );
   }, [runtimeSlot, authGeneration]);
 
-  const handleOpenFile = useCallback(
-    (path: string) => setSelection({ slot: runtimeSlot, authGeneration, path }),
+  const handlePreviewPathChange = useCallback(
+    (path: string | null) => setSelection(path ? { slot: runtimeSlot, authGeneration, path } : null),
     [runtimeSlot, authGeneration],
   );
 
@@ -54,7 +54,7 @@ export default function FilesWorkspace() {
         className="m-3 grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(220px,40%)_minmax(0,1fr)] overflow-hidden rounded-lg border md:grid-cols-[minmax(280px,2fr)_minmax(0,3fr)] md:grid-rows-1"
         style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
       >
-        <ComputerFileBrowser onOpenFile={handleOpenFile} framed={false} />
+        <ComputerFileBrowser onPreviewPathChange={handlePreviewPathChange} framed={false} />
         <section
           className="flex min-h-0 min-w-0 flex-col border-t md:border-t-0 md:border-l"
           style={{ borderColor: "var(--border-subtle)" }}
