@@ -19,17 +19,18 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, docs-contract, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, native-file-capability, unit, docs-contract, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
     expect(workflow).toContain('needs.patterns.result');
     expect(workflow).toContain('needs.react-doctor.result');
     expect(workflow).toContain('needs.sync-client.result');
+    expect(workflow).toContain('needs.native-file-capability.result');
     expect(workflow).toContain('needs.unit.result');
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$NATIVE_FILE_CAPABILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT"');
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
@@ -486,5 +487,21 @@ describe('CI workflows', () => {
     expect(releaseDocs).toContain('`deploy_after_publish=true`');
     expect(releaseDocs).toContain('Security severity does not override this opt-in deployment gate.');
     expect(releaseDocs).not.toContain('which auto-deploys the built version after publish');
+  });
+
+  it('compiles and runs the real Linux native filesystem capability in CI', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const nativeJob = workflow.split('\n  native-file-capability:')[1]?.split('\n  docs-contract:')[0] ?? '';
+
+    expect(workflow).toContain('native-file-capability:');
+    expect(workflow).toContain("pnpm --filter '@matrix-os/gateway' run build:native");
+    expect(workflow).toContain('tests/gateway/native-file-capability.test.ts');
+    expect(workflow).toContain('tests/gateway/native-file-capability-races.test.ts');
+    expect(workflow).toContain('native-file-capability, unit');
+    expect(nativeJob).toContain('actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2');
+    expect(nativeJob).toContain('pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10');
+    expect(nativeJob).toContain('actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0');
+    expect(nativeJob).not.toMatch(/(?:actions\/checkout|pnpm\/action-setup|actions\/setup-node)@v\d/);
   });
 });

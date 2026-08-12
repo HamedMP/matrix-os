@@ -76,6 +76,9 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild node-pty');
+    expect(script).toContain("pnpm --filter '@matrix-os/gateway' run build:native");
+    expect(script).toContain('packages/gateway/dist/native/linux-x64-glibc/matrix-fs.node');
+    expect(script).toContain('Native filesystem capability missing from staged host bundle');
     expect(script).toContain('scripts/build-default-apps.mjs');
     expect(script).toContain('generateTemplateManifest');
     expect(script).toContain('home/.template-manifest.json');

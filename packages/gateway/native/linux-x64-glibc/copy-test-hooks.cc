@@ -1,0 +1,91 @@
+#include "copy-test-hooks.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <time.h>
+#include <unistd.h>
+
+namespace matrix_fs {
+
+int InstallFinalDirectoryClaimantForTest(int parent, const std::string& name) {
+  if (unlinkat(parent, name.c_str(), AT_REMOVEDIR) != 0 && errno != ENOENT) return -1;
+  if (mkdirat(parent, name.c_str(), 0700) != 0) return -1;
+  const int directory = openat(parent, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (directory < 0) return -1;
+  const int marker = openat(
+    directory, "claimant.txt", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+  const int open_error = errno;
+  close(directory);
+  if (marker < 0) {
+    errno = open_error;
+    return -1;
+  }
+  const ssize_t written = write(marker, "claimant", 8);
+  const int write_error = errno;
+  close(marker);
+  if (written != 8) {
+    errno = written < 0 ? write_error : EIO;
+    return -1;
+  }
+  return 0;
+}
+
+int PauseAtMarkerForTest(int parent, const char* ready_name, const std::string& ready_value) {
+  constexpr char release_name[] = ".matrix-copy-test-release";
+  const int marker = openat(
+    parent, ready_name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if (marker < 0) return -1;
+  const ssize_t written = write(marker, ready_value.data(), ready_value.size());
+  const int write_error = errno;
+  close(marker);
+  if (written != static_cast<ssize_t>(ready_value.size())) {
+    errno = written < 0 ? write_error : EIO;
+    return -1;
+  }
+  constexpr struct timespec interval = {0, 1000 * 1000};
+  for (size_t attempt = 0; attempt < 5000; ++attempt) {
+    struct stat release = {};
+    if (fstatat(parent, release_name, &release, AT_SYMLINK_NOFOLLOW) == 0) {
+      if (!S_ISREG(release.st_mode)) { errno = EINVAL; return -1; }
+      unlinkat(parent, ready_name, 0);
+      unlinkat(parent, release_name, 0);
+      return 0;
+    }
+    if (errno != ENOENT) return -1;
+    nanosleep(&interval, nullptr);
+  }
+  errno = ETIMEDOUT;
+  return -1;
+}
+
+int PauseAfterStageClaimForTest(int parent, const std::string& stage_name) {
+  constexpr char ready_name[] = ".matrix-copy-test-ready";
+  return PauseAtMarkerForTest(parent, ready_name, stage_name);
+}
+
+int PauseAfterStageSweepForTest(int parent) {
+  constexpr char ready_name[] = ".matrix-copy-test-sweep-ready";
+  return PauseAtMarkerForTest(parent, ready_name, "ready");
+}
+
+int RunCopyEntryTestScenario(
+  int source_parent,
+  const std::string& source_name,
+  size_t depth,
+  const struct stat& before,
+  CopyTestScenario scenario,
+  bool* scenario_fired) {
+  if (depth != 1 || *scenario_fired || !S_ISREG(before.st_mode)) return 0;
+  if (scenario == CopyTestScenario::kChmodSourceAfterIdentity) {
+    *scenario_fired = true;
+    return fchmodat(source_parent, source_name.c_str(), (before.st_mode & 0777) ^ S_IXUSR, 0);
+  }
+  if (scenario == CopyTestScenario::kReplaceSourceAfterIdentity) {
+    *scenario_fired = true;
+    if (unlinkat(source_parent, source_name.c_str(), 0) != 0) return -1;
+    return symlinkat("/etc/passwd", source_parent, source_name.c_str());
+  }
+  return 0;
+}
+
+}  // namespace matrix_fs

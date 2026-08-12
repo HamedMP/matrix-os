@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -9,9 +9,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileCopy, fileDuplicate } from "../../packages/gateway/src/file-ops.js";
+import { isNativeFileCapabilityTarget } from "../../packages/gateway/src/file-management/native-file-capability.js";
 
-describe("fileCopy safety", () => {
+const describeNative = isNativeFileCapabilityTarget() ? describe : describe.skip;
+
+describeNative("fileCopy safety", () => {
   let testDir: string;
   beforeEach(() => {
     testDir = join(tmpdir(), `file-copy-test-${Date.now()}`);
@@ -97,72 +101,50 @@ describe("fileCopy safety", () => {
     },
   );
 
-  it("reports one retained partial directory after a nested copy conflict", async () => {
-    mkdirSync(join(testDir, "source", "nested"), { recursive: true });
-    writeFileSync(join(testDir, "source", "nested", "file.md"), "content");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await fileCopy(testDir, "source", "target", {
-      afterDirectoryClaim: async (target) => { mkdirSync(join(target, "nested")); },
-    });
-    warn.mockRestore();
-
-    expect(result).toEqual({ ok: false, error: "Failed to copy", partialPath: "target" });
-    expect(existsSync(join(testDir, "target"))).toBe(true);
-  });
-
   it("rejects copying a directory into its descendant before target creation", async () => {
     mkdirSync(join(testDir, "source"));
-    const result = await fileCopy(
-      testDir,
-      "source",
-      "source/child",
-      { afterDirectoryClaim: async () => { throw new Error("target was created"); } },
-    );
+    const result = await fileCopy(testDir, "source", "source/child");
 
     expect(result).toEqual({ ok: false, error: "Invalid path" });
     expect(existsSync(join(testDir, "source", "child"))).toBe(false);
   });
 
-  it("fails closed when the claimed copy target is swapped for a symlink", async () => {
+  it("reports one retained partial directory after a nested native copy failure", async () => {
+    mkdirSync(join(testDir, "source"));
+    expect(spawnSync("mkfifo", [join(testDir, "source", "unsupported-fifo")]).status).toBe(0);
+
+    const result = await fileCopy(testDir, "source", "target");
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "Failed to copy",
+      partialPath: expect.stringMatching(/^\.matrix-copy-stage-/),
+    });
+    expect(existsSync(join(testDir, result.partialPath!))).toBe(true);
+    expect(existsSync(join(testDir, "target"))).toBe(false);
+  });
+
+  it("contains a target-parent symlink swap after Gateway authorization", async () => {
     const outsideDir = join(tmpdir(), `file-copy-target-swap-${Date.now()}`);
-    mkdirSync(join(testDir, "source", "nested"), { recursive: true });
+    mkdirSync(join(testDir, "target-parent"));
     mkdirSync(outsideDir);
-    writeFileSync(join(testDir, "source", "nested", "file.md"), "source");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await fileCopy(testDir, "source", "target", {
-      afterDirectoryClaim: async (target) => {
-        rmSync(target, { recursive: true });
-        symlinkSync(outsideDir, target, "dir");
+    writeFileSync(join(testDir, "source.md"), "source");
+
+    const result = await fileCopy(testDir, "source.md", "target-parent/copied.md", {
+      beforeNativeMutation: async () => {
+        rmSync(join(testDir, "target-parent"), { recursive: true });
+        symlinkSync(outsideDir, join(testDir, "target-parent"), "dir");
       },
     });
-    warn.mockRestore();
 
-    expect(result).toEqual({ ok: false, error: "Failed to copy", partialPath: "target" });
-    expect(existsSync(join(outsideDir, "nested"))).toBe(false);
+    expect(result).toEqual({ ok: false, error: "Invalid path" });
+    expect(existsSync(join(outsideDir, "copied.md"))).toBe(false);
     rmSync(outsideDir, { recursive: true, force: true });
   });
 
-  it("fails closed when a source child is swapped for a symlink", async () => {
-    const outsideFile = join(tmpdir(), `file-copy-source-swap-${Date.now()}.md`);
-    mkdirSync(join(testDir, "source"));
-    writeFileSync(join(testDir, "source", "child.md"), "source");
-    writeFileSync(outsideFile, "outside-secret");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await fileCopy(testDir, "source", "target", {
-      afterSourceEntryInspection: async (source) => {
-        rmSync(source);
-        symlinkSync(outsideFile, source);
-      },
-    });
-    warn.mockRestore();
-
-    expect(result).toEqual({ ok: false, error: "Failed to copy", partialPath: "target" });
-    expect(existsSync(join(testDir, "target", "child.md"))).toBe(false);
-    rmSync(outsideFile, { force: true });
-  });
 });
 
-describe("fileDuplicate reconciliation", () => {
+describeNative("fileDuplicate reconciliation", () => {
   let testDir: string;
   beforeEach(() => {
     testDir = join(tmpdir(), `file-dup-test-${Date.now()}`);
@@ -241,24 +223,6 @@ describe("fileDuplicate reconciliation", () => {
     },
   );
 
-  it("does not fan out copy names after a nested duplicate conflict", async () => {
-    mkdirSync(join(testDir, "folder", "nested"), { recursive: true });
-    writeFileSync(join(testDir, "folder", "nested", "file.md"), "content");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await fileDuplicate(testDir, "folder", {
-      afterDirectoryClaim: async (target) => { mkdirSync(join(target, "nested")); },
-    });
-    warn.mockRestore();
-
-    expect(result).toEqual({
-      ok: false,
-      newPath: "folder copy",
-      error: "Failed to duplicate",
-    });
-    expect(existsSync(join(testDir, "folder copy"))).toBe(true);
-    expect(existsSync(join(testDir, "folder copy 2"))).toBe(false);
-  });
-
   it("gives concurrent duplicate claimants distinct exclusive destinations", async () => {
     writeFileSync(join(testDir, "file.md"), "content");
     const results = await Promise.all([
@@ -272,5 +236,21 @@ describe("fileDuplicate reconciliation", () => {
     );
     expect(readFileSync(join(testDir, "file copy.md"), "utf8")).toBe("content");
     expect(readFileSync(join(testDir, "file copy 2.md"), "utf8")).toBe("content");
+  });
+
+  it("does not fan out copy names after a nested native duplicate failure", async () => {
+    mkdirSync(join(testDir, "folder"));
+    expect(spawnSync("mkfifo", [join(testDir, "folder", "unsupported-fifo")]).status).toBe(0);
+
+    const result = await fileDuplicate(testDir, "folder");
+
+    expect(result).toMatchObject({
+      ok: false,
+      newPath: expect.stringMatching(/^\.matrix-copy-stage-/),
+      error: "Failed to duplicate",
+    });
+    expect(existsSync(join(testDir, result.newPath!))).toBe(true);
+    expect(existsSync(join(testDir, "folder copy"))).toBe(false);
+    expect(existsSync(join(testDir, "folder copy 2"))).toBe(false);
   });
 });

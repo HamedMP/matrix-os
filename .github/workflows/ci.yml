@@ -340,8 +340,54 @@ jobs:
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
+      - name: Build Gateway native filesystem capability
+        if: needs.changes.outputs.should_run == 'true'
+        run: pnpm --filter '@matrix-os/gateway' run build:native
+
       - run: bun run test -- --shard=${{ matrix.shard }}/4
         if: needs.changes.outputs.should_run == 'true'
+
+  native-file-capability:
+    name: Gateway Native Filesystem Capability
+    needs: [changes, patterns]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Skip native validation for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No CI-relevant source changes detected; skipping native filesystem validation."
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: needs.changes.outputs.should_run == 'true'
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        if: needs.changes.outputs.should_run == 'true'
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: needs.changes.outputs.should_run == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.should_run == 'true'
+
+      - name: Compile the Linux x64 glibc Node-API addon
+        if: needs.changes.outputs.should_run == 'true'
+        run: pnpm --filter '@matrix-os/gateway' run build:native
+
+      - name: Exercise the real native capability and Gateway integration
+        if: needs.changes.outputs.should_run == 'true'
+        run: >-
+          pnpm exec vitest run
+          tests/gateway/native-file-capability.test.ts
+          tests/gateway/native-file-capability-races.test.ts
+          tests/gateway/native-file-capability-boundaries.test.ts
+          tests/gateway/file-management-contracts.test.ts
+          tests/gateway/files-tree.test.ts
+          tests/gateway/file-ops.test.ts
+          tests/gateway/file-management-typed-ops.test.ts
+          tests/gateway/file-management-copy-safety.test.ts
 
   docs-contract:
     name: Docs Contract Tests
@@ -420,7 +466,7 @@ jobs:
 
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, docs-contract, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, native-file-capability, unit, docs-contract, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -434,6 +480,7 @@ jobs:
           PATTERNS_RESULT: ${{ needs.patterns.result }}
           REACT_DOCTOR_RESULT: ${{ needs.react-doctor.result }}
           SYNC_CLIENT_RESULT: ${{ needs.sync-client.result }}
+          NATIVE_FILE_CAPABILITY_RESULT: ${{ needs.native-file-capability.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -455,13 +502,14 @@ jobs:
             echo "| Pattern Scan | $PATTERNS_RESULT |"
             echo "| React Doctor | $REACT_DOCTOR_RESULT |"
             echo "| Sync Client Package (Node 20) | $SYNC_CLIENT_RESULT |"
+            echo "| Gateway Native Filesystem Capability | $NATIVE_FILE_CAPABILITY_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$NATIVE_FILE_CAPABILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
