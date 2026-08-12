@@ -379,6 +379,17 @@ export function openTerminalLink(link: TerminalLinkEntry): void {
   window.open(link.url, "_blank", "noopener,noreferrer");
 }
 
+export function activateTerminalLink(
+  event: Pick<MouseEvent, "button">,
+  rawUrl: string,
+): void {
+  if (event.button !== 0) return;
+  const link = extractTerminalLinkMatches(rawUrl).find(
+    (match) => match.startIndex === 0 && match.text.length === rawUrl.length,
+  )?.entry;
+  if (link) openTerminalLink(link);
+}
+
 export function mayContainTerminalAuthLink(raw: string): boolean {
   return (
     raw.includes("claude.ai/oauth/authorize") ||

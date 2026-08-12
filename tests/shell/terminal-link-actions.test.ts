@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  activateTerminalLink,
   copyTerminalLink,
   openTerminalLink,
   type TerminalLinkEntry,
@@ -41,6 +42,34 @@ describe("terminal link actions", () => {
       "_blank",
       "noopener,noreferrer",
     );
+  });
+
+  it("does not activate a terminal link from a secondary-button click", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+    activateTerminalLink({ button: 2 }, LINK.url);
+
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("activates a safe terminal link from a primary-button click", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+    activateTerminalLink({ button: 0 }, LINK.url);
+
+    expect(open).toHaveBeenCalledWith(
+      "https://example.com/docs",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("does not activate an unsafe OSC hyperlink", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+    activateTerminalLink({ button: 0 }, "https://user:pass@example.com/private");
+
+    expect(open).not.toHaveBeenCalled();
   });
 
   it("copies a link with the Clipboard API", () => {

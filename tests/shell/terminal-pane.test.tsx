@@ -133,4 +133,8 @@ describe("TerminalPane terminal-link wiring", () => {
     expect(source).toMatch(/if \(!(?:cell|link)\) return;/);
     expect(source).toContain("event.preventDefault()");
   });
+
+  it("overrides xterm OSC hyperlink activation with the button-aware link handler", () => {
+    expect(source).toContain("linkHandler: { activate: activateTerminalLink }");
+  });
 });

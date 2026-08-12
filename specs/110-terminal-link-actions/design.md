@@ -116,6 +116,12 @@ private xterm internals, so it works with DOM and WebGL renderers.
 If the pointer is not over a valid URL, the new link menu does not intercept the
 event and existing terminal behavior remains unchanged.
 
+Both xterm link sources are button-aware. OSC 8 hyperlinks override xterm's
+default confirmation-based handler, and detected plain-text links use the same
+activation guard: only a primary-button click may open a URL. A secondary-button
+click never activates either provider and remains exclusively available to the
+Matrix context menu.
+
 Both tray and context menu call the same Open and Copy helpers. Opening remains
 `window.open(url, "_blank", "noopener,noreferrer")`; packaged Desktop continues
 to deny embedded navigation and hands HTTPS/HTTP URLs to the system browser.
@@ -208,7 +214,8 @@ Write failing tests before implementation for:
 5. tray responsive structure, accessible names, Open, Copy, count/list,
    dismiss, timeout collapse, and Escape/focus behavior;
 6. right-click Open/Copy for the URL under the pointer and no interception away
-   from a URL;
+   from a URL, including no xterm navigation confirmation or URL activation on
+   secondary-button clicks for plain-text and OSC 8 hyperlinks;
 7. Electron Desktop denial plus external browser handoff for both HTTP and HTTPS;
 8. real packaged/preview Desktop validation at the narrow Home-terminal width
    shown in the reported screenshot, including multiple links and a repeated

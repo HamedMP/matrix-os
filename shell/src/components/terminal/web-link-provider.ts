@@ -1,5 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
-import { extractTerminalLinkMatches, openTerminalLink } from "./terminal-links";
+import { activateTerminalLink, extractTerminalLinkMatches } from "./terminal-links";
 
 const FILE_EXTENSIONS = /\.(ts|js|tsx|jsx|py|rs|go|md|json|yaml|yml|toml|css|html|sh|sql|rb|java|kt|swift|c|cpp|h)$/;
 const FILE_PATH_REGEX = /(?:\.{1,2}\/|\/)[^\s:]+(?::\d+(?::\d+)?)?/g;
@@ -117,7 +117,7 @@ function offsetToRowCol(lineLengths: number[], startRow: number, offset: number)
 type LinkEntry = {
   range: { start: { x: number; y: number }; end: { x: number; y: number } };
   text: string;
-  activate: () => void;
+  activate: (event: MouseEvent) => void;
 };
 
 export class WebLinkProvider {
@@ -149,10 +149,7 @@ export class WebLinkProvider {
         links.push({
           range: { start, end },
           text: url.text,
-          activate: () => {
-            const entry = extractTerminalLinkMatches(url.text)[0]?.entry;
-            if (entry) openTerminalLink(entry);
-          },
+          activate: (event) => activateTerminalLink(event, url.text),
         });
       }
     }

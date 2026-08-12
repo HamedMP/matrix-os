@@ -1,4 +1,6 @@
-import { describe, it, expect } from "vitest";
+// @vitest-environment jsdom
+
+import { describe, it, expect, vi } from "vitest";
 import {
   detectUrls,
   detectFilePaths,
@@ -176,6 +178,32 @@ describe("Web Link Provider", () => {
       expect(links?.[0]?.text).toBe("./main.ts");
       expect(links?.[0]?.range.start).toEqual({ x: 5, y: 1 });
       expect(links?.[0]?.range.end).toEqual({ x: 14, y: 1 });
+    });
+
+    it("does not activate a detected URL from a secondary-button click", () => {
+      const text = "https://example.com/docs";
+      const line = {
+        translateToString: () => text,
+        isWrapped: false,
+      };
+      const terminal = {
+        buffer: {
+          active: {
+            length: 1,
+            getLine: (_index: number) => line,
+          },
+        },
+      };
+      const open = vi.spyOn(window, "open").mockReturnValue(null);
+      const provider = new WebLinkProvider(terminal as never);
+      let links: Array<{ activate: (event: MouseEvent) => void }> | undefined;
+
+      provider.provideLinks(1, (nextLinks) => {
+        links = nextLinks;
+      });
+      links?.[0]?.activate({ button: 2 } as MouseEvent);
+
+      expect(open).not.toHaveBeenCalled();
     });
   });
 });

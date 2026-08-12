@@ -19,6 +19,7 @@ import { TerminalLinksTray } from "./TerminalLinksTray";
 import { TerminalLinkContextMenu, type TerminalLinkMenuState } from "./TerminalLinkContextMenu";
 import {
   INITIAL_TERMINAL_LINKS_STATE,
+  activateTerminalLink,
   copyTerminalLink,
   findTerminalLinkAtCell,
   mayContainTerminalLink,
@@ -1161,6 +1162,7 @@ export function TerminalPane({
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           minimumContrastRatio: getTerminalMinimumContrastRatio(xtermTheme),
           theme: xtermTheme,
+          linkHandler: { activate: activateTerminalLink },
           // Make ⌥ (Option) on macOS act as Meta — without this, Option+Left/Right
           // never reaches the shell as ESC-b / ESC-f, so word-jump is broken.
           macOptionIsMeta: true,
