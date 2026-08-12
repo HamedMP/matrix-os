@@ -8,6 +8,7 @@ import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useThreads } from "../../stores/threads";
+import { useTabs } from "../../stores/tabs";
 import {
   listUnifiedThreads,
   UNIFIED_THREAD_STATUS_META,
@@ -190,6 +191,7 @@ export default function ChatTab() {
   const threads = useThreads((s) => s.threads);
   const activeThreadId = useThreads((s) => s.activeThreadId);
   const setActiveThread = useThreads((s) => s.setActiveThread);
+  const recordRecentConversation = useTabs((s) => s.recordRecentConversation);
   // Short-circuit inside the selector so a disabled workspace never re-renders
   // the rail on coding-agent store updates.
   const summary = useCodingAgentWorkspace((s) => (CODING_AGENTS_DESKTOP_WORKSPACE ? s.summary : null));
@@ -200,6 +202,7 @@ export default function ChatTab() {
   );
 
   const selectRailThread = (item: UnifiedThreadItem) => {
+    recordRecentConversation(item.id, item.title);
     if (item.source === "kernel") {
       setActiveThread(item.id);
       return;
@@ -247,7 +250,10 @@ export default function ChatTab() {
           {railButton(
             "hermes",
             showHermes,
-            () => setActiveThread(null),
+            () => {
+              setActiveThread(null);
+              recordRecentConversation("hermes", "Hermes");
+            },
             <Sparkles size={14} style={{ color: showHermes ? "var(--accent)" : "var(--text-tertiary)" }} />,
             "Hermes",
           )}

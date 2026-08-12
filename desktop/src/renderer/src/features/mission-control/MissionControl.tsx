@@ -7,7 +7,7 @@ import { useUi } from "../../stores/ui";
 import { useWorkspace, type PanelLayout } from "../../stores/workspace";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import Sidebar from "./Sidebar";
-import TabBar from "./TabBar";
+import NavigationHeader from "./NavigationHeader";
 import TabContent from "./TabContent";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
@@ -24,6 +24,7 @@ export default function MissionControl() {
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const authGeneration = useConnection((s) => s.authGeneration);
   const loadProjects = useBoard((s) => s.loadProjects);
   const openTab = useTabs((s) => s.openTab);
   const tabCount = useTabs((s) => s.tabs.length);
@@ -45,6 +46,10 @@ export default function MissionControl() {
     });
     void hydrate();
   }, []);
+
+  useEffect(() => {
+    useTabs.getState().ensureNavigationScope(`${runtimeScope}|${authGeneration}`);
+  }, [authGeneration, runtimeScope]);
 
   useEffect(() => {
     // Open the Home tab on first mount so the workspace is never empty.
@@ -120,7 +125,7 @@ export default function MissionControl() {
     <div className="flex flex-1 overflow-hidden">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col" style={{ background: "var(--bg-app)" }}>
-        <TabBar />
+        <NavigationHeader />
         <TabContent />
       </div>
       <Composer />

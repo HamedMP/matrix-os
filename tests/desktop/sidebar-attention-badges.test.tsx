@@ -142,7 +142,7 @@ describe("Sidebar attention badges", () => {
     expect(within(projectButton).queryByText("0")).toBeNull();
   });
 
-  it("places a ready update after Settings and outside the account row", () => {
+  it("places a ready update outside and before the account row", () => {
     useDesktopUpdate.setState({
       snapshot: { status: "ready", version: "1.2.3", progress: 100 },
     });
@@ -153,11 +153,9 @@ describe("Sidebar attention badges", () => {
       </Tooltip.Provider>,
     );
 
-    const settings = screen.getByRole("button", { name: "Settings" });
     const update = screen.getByRole("button", { name: "Update Matrix OS to 1.2.3" });
-    const account = screen.getByTitle("Manage account");
+    const account = screen.getByRole("button", { name: "Open account menu" });
 
-    expect(settings.compareDocumentPosition(update) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(update.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(update.parentElement).not.toBe(account.parentElement);
   });

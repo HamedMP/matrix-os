@@ -108,12 +108,17 @@ describe("desktop runtime transition", () => {
   });
 
   it("reopens the Home tab so the desktop is never left blank after a switch", () => {
+    useTabs.getState().ensureNavigationScope("old-runtime");
+    useTabs.getState().recordRecentConversation("thread-old", "Old private thread");
+
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
 
-    const { tabs, activeTabId } = useTabs.getState();
+    const { tabs, activeTabId, recentViews, viewHistory } = useTabs.getState();
     expect(tabs).toHaveLength(1);
     expect(tabs[0]).toMatchObject({ kind: "home", closable: false });
     expect(activeTabId).toBe(tabs[0]?.id);
+    expect(recentViews).toEqual([]);
+    expect(viewHistory).toEqual([tabs[0]?.id]);
   });
 
   it("clears the Hermes chat transcript and session owned by the previous computer", () => {

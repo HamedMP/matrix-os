@@ -2,11 +2,101 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 
 beforeEach(() => {
-  // Merge (not replace) so the store's action functions are preserved.
-  useTabs.setState({ tabs: [], activeTabId: null });
+  useTabs.setState(useTabs.getInitialState(), true);
 });
 
 describe("tabs store", () => {
+  it("traverses bounded view history without replacing mounted tab resources", () => {
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    const terminal = useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
+    const project = useTabs.getState().openTab({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" });
+    const mountedTabs = useTabs.getState().tabs;
+
+    expect(useTabs.getState().canGoBack).toBe(true);
+    useTabs.getState().goBack();
+    expect(useTabs.getState().activeTabId).toBe(terminal);
+    expect(useTabs.getState().tabs).toBe(mountedTabs);
+
+    useTabs.getState().goBack();
+    expect(useTabs.getState().activeTabId).toBe(home);
+    useTabs.getState().goForward();
+    expect(useTabs.getState().activeTabId).toBe(terminal);
+    useTabs.getState().goForward();
+    expect(useTabs.getState().activeTabId).toBe(project);
+    expect(useTabs.getState().canGoForward).toBe(false);
+  });
+
+  it("does not duplicate consecutive history entries and drops forward history after a branch", () => {
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    const terminal = useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
+    useTabs.getState().focusTab(terminal);
+
+    expect(useTabs.getState().viewHistory).toEqual([home, terminal]);
+    useTabs.getState().goBack();
+    useTabs.getState().openTab({ kind: "files", title: "Files", slug: "files", closable: false });
+
+    expect(useTabs.getState().viewHistory).toHaveLength(2);
+    expect(useTabs.getState().canGoForward).toBe(false);
+  });
+
+  it("caps view history during long navigation sessions", () => {
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    const files = useTabs.getState().openTab({ kind: "files", title: "Files", slug: "files", closable: false });
+
+    for (let index = 0; index < 100; index += 1) {
+      useTabs.getState().focusTab(index % 2 === 0 ? home : files);
+    }
+
+    expect(useTabs.getState().viewHistory.length).toBeLessThanOrEqual(40);
+    expect(useTabs.getState().historyIndex).toBe(useTabs.getState().viewHistory.length - 1);
+  });
+
+  it("keeps Recents bounded, serializable, filterable, and scoped to one runtime", () => {
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    for (let index = 0; index < 20; index += 1) {
+      useTabs.getState().openTab({
+        kind: "project",
+        projectSlug: `project-${index}`,
+        title: `Project ${index}`,
+      });
+    }
+    useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
+    useTabs.getState().recordRecentConversation("thread-1", "Fix navigation");
+
+    const state = useTabs.getState();
+    expect(state.recentViews.length).toBeLessThanOrEqual(12);
+    expect(() => JSON.stringify(state.recentViews)).not.toThrow();
+    expect(state.recentViews[0]).toMatchObject({ kind: "conversation", id: "thread-1" });
+
+    state.setRecentFilter("terminal");
+    expect(useTabs.getState().recentFilter).toBe("terminal");
+    useTabs.getState().ensureNavigationScope("runtime-b");
+    expect(useTabs.getState()).toMatchObject({
+      navigationScope: "runtime-b",
+      recentViews: [],
+      viewHistory: [],
+      historyIndex: -1,
+      recentFilter: "all",
+    });
+  });
+
+  it("seeds the safe Home root after a runtime transition changes navigation scope", () => {
+    const homeId = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+
+    useTabs.getState().ensureNavigationScope("runtime-b");
+
+    expect(useTabs.getState()).toMatchObject({
+      navigationScope: "runtime-b",
+      viewHistory: [homeId],
+      historyIndex: 0,
+      canGoBack: false,
+      canGoForward: false,
+    });
+  });
+
   it("opens a tab and makes it active", () => {
     const id = useTabs.getState().openTab({ kind: "home", title: "Home" });
     const state = useTabs.getState();

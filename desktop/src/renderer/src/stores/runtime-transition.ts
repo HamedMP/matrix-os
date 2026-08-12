@@ -46,7 +46,17 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     pendingProjectSlug: null,
     error: null,
   });
-  useTabs.setState({ tabs: [], activeTabId: null });
+  useTabs.setState({
+    tabs: [],
+    activeTabId: null,
+    navigationScope: null,
+    viewHistory: [],
+    historyIndex: -1,
+    canGoBack: false,
+    canGoForward: false,
+    recentViews: [],
+    recentFilter: "all",
+  });
   // MissionControl only opens Home in its mount-only effect, so reopen it here
   // or a successful switch leaves the already-mounted desktop with no active tab.
   useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
