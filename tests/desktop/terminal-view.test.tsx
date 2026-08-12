@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
@@ -17,6 +17,7 @@ const { createdTerminals } = vi.hoisted(() => ({
     };
     options: { theme?: unknown };
     registeredProviders: unknown[];
+    element: HTMLElement | null;
   }>,
 }));
 
@@ -25,6 +26,19 @@ vi.mock("@xterm/xterm", () => ({
     cols = 80;
     rows = 24;
     options: { theme?: unknown } = {};
+    element: HTMLElement | null = null;
+    buffer = {
+      active: {
+        viewportY: 0,
+        length: 1,
+        getLine: (row: number) => row === 0
+          ? {
+              isWrapped: false,
+              translateToString: () => "https://example.org/desktop-terminal",
+            }
+          : undefined,
+      },
+    };
     initialOptions: {
       linkHandler?: {
         activate: (event: Pick<MouseEvent, "button">, text: string) => void;
@@ -38,7 +52,9 @@ vi.mock("@xterm/xterm", () => ({
     }
 
     loadAddon(): void {}
-    open(): void {}
+    open(host: HTMLElement): void {
+      this.element = host;
+    }
     write(): void {}
     clear(): void {}
     focus(): void {}
@@ -166,5 +182,36 @@ describe("TerminalView session switching", () => {
     expect(open).not.toHaveBeenCalled();
     expect(terminal.initialOptions.linkHandler).toBeDefined();
     expect(terminal.registeredProviders).toHaveLength(1);
+  });
+
+  it("intercepts primary and secondary link mouseup before xterm can activate it", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const provider = terminal.registeredProviders[0] as {
+      provideLinks: (
+        line: number,
+        callback: (links: Array<{ hover?: () => void }> | undefined) => void,
+      ) => void;
+    };
+    let links: Array<{ hover?: () => void }> | undefined;
+    provider.provideLinks(1, (provided) => {
+      links = provided;
+    });
+    links?.[0]?.hover?.();
+
+    const host = container.querySelector<HTMLElement>("[data-selectable]");
+    expect(host).toBeTruthy();
+    const primaryAllowed = fireEvent.mouseUp(host!, { button: 0 });
+    const secondaryAllowed = fireEvent.mouseUp(host!, { button: 2 });
+
+    expect(primaryAllowed).toBe(false);
+    expect(secondaryAllowed).toBe(false);
+    expect(open).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledWith(
+      "https://example.org/desktop-terminal",
+      "_blank",
+      "noopener,noreferrer",
+    );
   });
 });

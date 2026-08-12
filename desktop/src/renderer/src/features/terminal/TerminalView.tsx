@@ -92,15 +92,27 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
         hoveredLinkRef.current = link;
       }),
     );
-    const onLinkContextMenu = (event: MouseEvent) => {
+    const linkAtPointer = (event: MouseEvent): TerminalLinkEntry | null => {
       const cell = desktopTerminalCellFromPointer(terminal, event.clientX, event.clientY);
-      const link = hoveredLinkRef.current
+      return hoveredLinkRef.current
         ?? (cell ? findDesktopTerminalLinkAtCell(terminal, cell) : null);
+    };
+    const onLinkMouseUp = (event: MouseEvent) => {
+      if (event.button !== 0 && event.button !== 2) return;
+      const link = linkAtPointer(event);
+      if (!link) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.button === 0) openDesktopTerminalLink(link);
+    };
+    const onLinkContextMenu = (event: MouseEvent) => {
+      const link = linkAtPointer(event);
       if (!link) return;
       event.preventDefault();
       event.stopPropagation();
       setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
     };
+    host.addEventListener("mouseup", onLinkMouseUp, true);
     host.addEventListener("contextmenu", onLinkContextMenu);
     try {
       terminal.loadAddon(new WebglAddon());
@@ -135,6 +147,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     return () => {
       closeLinkContextMenu();
       hoveredLinkRef.current = null;
+      host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onLinkContextMenu);
       linkProviderDisposable.dispose();
       unsubscribeAppearance();

@@ -41,7 +41,10 @@ suite("native Desktop Terminal links", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  async function rightClickTerminalText(text: string): Promise<void> {
+  async function clickTerminalText(
+    text: string,
+    button: "left" | "right",
+  ): Promise<void> {
     const row = page.locator('.xterm-accessibility-tree [role="listitem"]', {
       hasText: text,
     }).last();
@@ -59,7 +62,7 @@ suite("native Desktop Terminal links", () => {
     const y = rowBox.y + rowBox.height / 2;
     await page.mouse.move(x, y);
     await page.waitForTimeout(100);
-    await page.mouse.click(x, y, { button: "right" });
+    await page.mouse.click(x, y, { button });
   }
 
   it("uses Matrix actions for plain-text and OSC 8 links without xterm confirmation", async () => {
@@ -69,17 +72,39 @@ suite("native Desktop Terminal links", () => {
       void dialog.dismiss();
     });
 
-    const plainUrl = "https://example.org/desktop-terminal";
-    await page.keyboard.type(plainUrl);
-    await page.keyboard.press("Enter");
-    await rightClickTerminalText(plainUrl);
+    const plainUrl = `https://example.org/desktop-terminal/${"segment/".repeat(12)}final-check`;
+    const plainLinkTarget = "final-check";
+    gateway.sendTerminalOutput(`\r\n${plainUrl}\r\n`);
+    await page.evaluate(() => {
+      Object.defineProperty(window, "__openedTerminalLinks", {
+        configurable: true,
+        value: [] as string[],
+      });
+      window.open = ((url?: string | URL) => {
+        (window as Window & { __openedTerminalLinks: string[] }).__openedTerminalLinks.push(
+          String(url),
+        );
+        return null;
+      }) as typeof window.open;
+    });
+    await clickTerminalText(plainLinkTarget, "left");
+    await expect.poll(() => page.evaluate(
+      () => (window as Window & { __openedTerminalLinks: string[] }).__openedTerminalLinks,
+    )).toEqual([plainUrl]);
+
+    await clickTerminalText(plainLinkTarget, "right");
     await page.getByRole("menu", { name: "Link actions" }).waitFor();
     await page.getByRole("menuitem", { name: "Copy Link" }).click();
 
     const oscUrl = "https://example.org/osc-terminal";
     const oscLabel = "Open OSC link";
     gateway.sendTerminalOutput(`\r\n\u001b]8;;${oscUrl}\u0007${oscLabel}\u001b]8;;\u0007\r\n`);
-    await rightClickTerminalText(oscLabel);
+    await clickTerminalText(oscLabel, "left");
+    await expect.poll(() => page.evaluate(
+      () => (window as Window & { __openedTerminalLinks: string[] }).__openedTerminalLinks,
+    )).toEqual([plainUrl, oscUrl]);
+
+    await clickTerminalText(oscLabel, "right");
     await page.getByRole("menu", { name: "Link actions" }).waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "19-terminal-link-actions.png") });
     await page.getByRole("menuitem", { name: "Copy Link" }).click();
