@@ -122,6 +122,18 @@ describe("desktop runtime transition", () => {
       sessionId: "session-old",
       status: "streaming",
       activeRequestId: "r1",
+      view: "conversation",
+      conversations: [{
+        id: "session-old",
+        title: "Private old conversation",
+        preview: "old transcript",
+        messageCount: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+      indexStatus: "ready",
+      loadStatus: "loading",
+      loadingConversationId: "session-next",
     });
 
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
@@ -131,6 +143,36 @@ describe("desktop runtime transition", () => {
       sessionId: null,
       status: "idle",
       activeRequestId: null,
+      view: "index",
+      conversations: [],
+      indexStatus: "idle",
+      loadStatus: "idle",
+      loadingConversationId: null,
+    });
+  });
+
+  it("discards a conversation index response that settles after the computer changes", async () => {
+    let resolveList!: (value: unknown[]) => void;
+    const api = {
+      get: vi.fn(() => new Promise<unknown[]>((resolve) => {
+        resolveList = resolve;
+      })),
+    } as never;
+
+    const pending = useHermesChat.getState().refreshConversations(api);
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+    resolveList([{
+      id: "conversation-stale",
+      preview: "private old runtime content",
+      messageCount: 1,
+      createdAt: 1,
+      updatedAt: 2,
+    }]);
+    await pending;
+
+    expect(useHermesChat.getState()).toMatchObject({
+      conversations: [],
+      indexStatus: "idle",
     });
   });
 

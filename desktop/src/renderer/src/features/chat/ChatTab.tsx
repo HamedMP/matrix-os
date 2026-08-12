@@ -1,11 +1,12 @@
-import { FolderOpen, GitBranch, Laptop, Mail, MessageSquare, MessageSquarePlus, Sparkles, SquareTerminal } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronRight, FolderOpen, GitBranch, Laptop, Mail, MessageSquare, MessageSquarePlus, Sparkles, SquareTerminal } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { StatusDot } from "../../design/primitives";
 import { groupMessages } from "../../lib/chat";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { openCodingAgentThread } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useConnection } from "../../stores/connection";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useThreads } from "../../stores/threads";
 import {
@@ -23,6 +24,7 @@ import { appendHermesAttachmentPaths } from "./attachments/local-attachment-cont
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { Reasoning } from "./elements/reasoning";
 import { Tool } from "./elements/tool";
+import { HermesConversationIndex } from "./HermesConversationIndex";
 
 function Pill({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
@@ -62,11 +64,43 @@ export function canSubmitChatDraft(draft: string, status: HermesStatus, attachme
   return (draft.trim().length > 0 || attachmentCount > 0) && status === "idle";
 }
 
+function RailButton({
+  active,
+  onClick,
+  dot,
+  label,
+  bold = false,
+}: {
+  active: boolean;
+  onClick: () => void;
+  dot: React.ReactNode;
+  label: string;
+  bold?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-100"
+      style={{ background: active ? "var(--bg-selected)" : "transparent" }}
+      onMouseEnter={(event) => { if (!active) event.currentTarget.style.background = "var(--bg-hover)"; }}
+      onMouseLeave={(event) => { if (!active) event.currentTarget.style.background = "transparent"; }}
+      onClick={onClick}
+    >
+      <span className="flex w-4 shrink-0 items-center justify-center">{dot}</span>
+      <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)", fontWeight: bold ? 600 : 400 }}>{label}</span>
+    </button>
+  );
+}
+
 // The Hermes (OS agent) conversation — the default pane when no agent thread is
 // selected in the rail.
 function HermesPane() {
   const messages = useHermesChat((s) => s.messages);
+  const sessionId = useHermesChat((s) => s.sessionId);
   const status = useHermesChat((s) => s.status);
+  const conversations = useHermesChat((s) => s.conversations);
+  const loadError = useHermesChat((s) => s.loadError);
+  const showIndex = useHermesChat((s) => s.showIndex);
   const send = useHermesChat((s) => s.send);
   const abort = useHermesChat((s) => s.abort);
   const projects = useBoard((s) => s.projects);
@@ -75,6 +109,7 @@ function HermesPane() {
   const attachments = useConversationAttachments();
 
   const projectName = projects[0]?.name ?? projects[0]?.slug ?? "Matrix OS";
+  const conversationTitle = conversations.find((conversation) => conversation.id === sessionId)?.title ?? "New conversation";
   const groups = groupMessages(messages);
   const empty = messages.length === 0;
 
@@ -110,9 +145,31 @@ function HermesPane() {
     </>
   );
 
+  const breadcrumb = (
+    <nav
+      aria-label="Chat breadcrumb"
+      className="flex h-10 shrink-0 items-center gap-1.5 border-b px-5 text-sm"
+      style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
+    >
+      <button type="button" className="rounded px-1.5 py-1 hover:bg-[var(--bg-hover)]" onClick={showIndex}>
+        Chat
+      </button>
+      <ChevronRight size={12} aria-hidden style={{ color: "var(--text-tertiary)" }} />
+      <span className="min-w-0 truncate font-medium" style={{ color: "var(--text-primary)" }}>{conversationTitle}</span>
+    </nav>
+  );
+
+  const loadErrorBanner = loadError ? (
+    <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[760px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+      {loadError}
+    </div>
+  ) : null;
+
   if (empty) {
     return (
       <div role="region" aria-label="Hermes conversation" className="flex min-h-0 flex-1 flex-col" {...attachments.paneProps}>
+        {breadcrumb}
+        {loadErrorBanner}
         <div className="mx-auto flex w-full max-w-[760px] flex-1 flex-col justify-center px-5">
           <h1 className="mb-8 text-center text-2xl font-semibold tracking-tight" style={{ color: "var(--text-primary)", fontSize: "var(--text-2xl)" }}>
             What should we build in {projectName}?
@@ -130,6 +187,8 @@ function HermesPane() {
 
   return (
     <div role="region" aria-label="Hermes conversation" className="flex min-h-0 flex-1 flex-col" {...attachments.paneProps}>
+      {breadcrumb}
+      {loadErrorBanner}
       <Conversation>
         <ConversationContent>
           {groups.map((group) =>
@@ -193,6 +252,18 @@ export default function ChatTab() {
   // Short-circuit inside the selector so a disabled workspace never re-renders
   // the rail on coding-agent store updates.
   const summary = useCodingAgentWorkspace((s) => (CODING_AGENTS_DESKTOP_WORKSPACE ? s.summary : null));
+  const api = useConnection((s) => s.api);
+  const conversationView = useHermesChat((s) => s.view);
+  const sessionId = useHermesChat((s) => s.sessionId);
+  const conversations = useHermesChat((s) => s.conversations);
+  const indexStatus = useHermesChat((s) => s.indexStatus);
+  const refreshConversations = useHermesChat((s) => s.refreshConversations);
+  const createConversation = useHermesChat((s) => s.createConversation);
+  const showIndex = useHermesChat((s) => s.showIndex);
+
+  useEffect(() => {
+    if (api && indexStatus === "idle") void refreshConversations(api);
+  }, [api, indexStatus, refreshConversations]);
 
   const railThreads = useMemo(
     () => listUnifiedThreads(threads, summary),
@@ -211,21 +282,17 @@ export default function ChatTab() {
   // selected agent run (the composer and sidebar Chat both drive it).
   const activeThread = activeThreadId ? threads.find((t) => t.id === activeThreadId) ?? null : null;
   const showHermes = !activeThread;
+  const activeConversationTitle = conversations.find((conversation) => conversation.id === sessionId)?.title ?? "Hermes";
 
-  const railButton = (key: string, active: boolean, onClick: () => void, dot: React.ReactNode, label: string, bold = false) => (
-    <button
-      key={key}
-      type="button"
-      className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-100"
-      style={{ background: active ? "var(--bg-selected)" : "transparent" }}
-      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "var(--bg-hover)"; }}
-      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
-      onClick={onClick}
-    >
-      <span className="flex w-4 shrink-0 items-center justify-center">{dot}</span>
-      <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)", fontWeight: bold ? 600 : 400 }}>{label}</span>
-    </button>
-  );
+  const openConversationIndex = () => {
+    setActiveThread(null);
+    showIndex();
+  };
+
+  const startConversation = () => {
+    setActiveThread(null);
+    if (api) void createConversation(api);
+  };
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -236,41 +303,56 @@ export default function ChatTab() {
             type="button"
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-[var(--bg-hover)]"
             style={{ color: "var(--text-secondary)" }}
-            onClick={() => setActiveThread(null)}
-            title="New chat with Hermes"
+            onClick={startConversation}
+            title="New conversation with Hermes"
+            aria-label="New conversation"
+            disabled={!api}
           >
             <MessageSquarePlus size={13} />
             New
           </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
-          {railButton(
-            "hermes",
-            showHermes,
-            () => setActiveThread(null),
-            <Sparkles size={14} style={{ color: showHermes ? "var(--accent)" : "var(--text-tertiary)" }} />,
-            "Hermes",
-          )}
+          <RailButton
+            active={showHermes && conversationView === "index"}
+            onClick={openConversationIndex}
+            dot={<MessageSquare size={14} style={{ color: showHermes && conversationView === "index" ? "var(--accent)" : "var(--text-tertiary)" }} />}
+            label="Conversations"
+          />
+          {conversationView === "conversation" ? (
+            <RailButton
+              active={showHermes}
+              onClick={() => setActiveThread(null)}
+              dot={<Sparkles size={14} style={{ color: showHermes ? "var(--accent)" : "var(--text-tertiary)" }} />}
+              label={activeConversationTitle}
+            />
+          ) : null}
           {railThreads.length > 0 ? (
             <span className="px-2.5 pt-2 pb-0.5 text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>
               Agent runs
             </span>
           ) : null}
-          {railThreads.map((item) =>
-            railButton(
-              `${item.source}:${item.id}`,
-              item.source === "kernel" && item.id === activeThreadId,
-              () => selectRailThread(item),
-              <StatusDot color={UNIFIED_THREAD_STATUS_META[item.status].color} pulse={item.status === "running"} />,
-              item.title,
-              item.unread,
-            ),
-          )}
+          {railThreads.map((item) => (
+            <RailButton
+              key={`${item.source}:${item.id}`}
+              active={item.source === "kernel" && item.id === activeThreadId}
+              onClick={() => selectRailThread(item)}
+              dot={<StatusDot color={UNIFIED_THREAD_STATUS_META[item.status].color} pulse={item.status === "running"} />}
+              label={item.title}
+              bold={item.unread}
+            />
+          ))}
         </div>
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {activeThread ? <ThreadView threadId={activeThread.id} embedded /> : <HermesPane />}
+        {activeThread ? (
+          <ThreadView threadId={activeThread.id} embedded />
+        ) : conversationView === "index" ? (
+          <HermesConversationIndex api={api} />
+        ) : (
+          <HermesPane />
+        )}
       </div>
     </div>
   );

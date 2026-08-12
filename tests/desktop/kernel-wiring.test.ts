@@ -5,6 +5,7 @@ import { wireKernel } from "../../desktop/src/renderer/src/lib/kernel-wiring";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -12,6 +13,8 @@ import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 
 type MockKernelSocket = {
   subscribe: ReturnType<typeof vi.fn>;
+  onStateChange: ReturnType<typeof vi.fn>;
+  send: ReturnType<typeof vi.fn>;
   connect: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
 };
@@ -70,6 +73,8 @@ vi.mock("../../desktop/src/renderer/src/lib/kernel-socket", async (importOrigina
     KernelSocket: vi.fn().mockImplementation(function MockKernelSocketConstructor() {
       const instance: MockKernelSocket = {
         subscribe: vi.fn(() => () => undefined),
+        onStateChange: vi.fn(() => () => undefined),
+        send: vi.fn(),
         connect: vi.fn(),
         dispose: vi.fn(),
       };
@@ -97,6 +102,7 @@ describe("kernel wiring", () => {
     useProjectView.setState({ entries: {}, runtimeScope: null });
     useProjectWorkspaces.setState({ entries: {} });
     useThreads.setState({ threads: [], activeThreadId: null });
+    useHermesChat.setState(useHermesChat.getInitialState(), true);
     useCodingAgentWorkspace.setState({
       status: "idle",
       summary: null,
@@ -178,6 +184,48 @@ describe("kernel wiring", () => {
     const tabs = useTabs.getState();
     expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)?.kind).toBe("chat");
 
+    cleanup();
+  });
+
+  it("reattaches the selected Hermes conversation when the kernel socket reconnects", () => {
+    useHermesChat.setState({ sessionId: "conversation-live", view: "conversation" });
+    const cleanup = wireKernel();
+    const instance = kernelSocketMocks.instances[0]!;
+    const onState = instance.onStateChange.mock.calls[0]?.[0] as (state: string) => void;
+
+    onState("connected");
+
+    expect(instance.send).toHaveBeenCalledWith({
+      type: "switch_session",
+      sessionId: "conversation-live",
+    });
+    cleanup();
+  });
+
+  it("refreshes the persistent index after the selected Hermes run settles", async () => {
+    const get = vi.fn().mockResolvedValue([]);
+    useConnection.setState({ api: { get } as never });
+    useHermesChat.setState({
+      sessionId: "conversation-live",
+      view: "conversation",
+      status: "streaming",
+      activeRequestId: "request-live",
+    });
+    const cleanup = wireKernel();
+    const handleMessage = kernelSocketMocks.instances[0]?.subscribe.mock.calls[0]?.[0] as (
+      msg: unknown,
+    ) => void;
+
+    handleMessage({
+      type: "kernel:result",
+      data: {},
+      sessionId: "conversation-live",
+      requestId: "request-live",
+      eventId: "conversation-live:request-live:2",
+    });
+
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith("/api/conversations"));
+    expect(useHermesChat.getState().status).toBe("idle");
     cleanup();
   });
 

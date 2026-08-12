@@ -32,6 +32,24 @@ export interface StubGateway {
 const TOKEN = "stub-token-1";
 const REVIEW_TOKEN = "stub-review-token-with-enough-entropy-1";
 const NOW = "2026-07-08T00:00:00.000Z";
+const HERMES_NOW = Date.parse("2026-08-12T10:30:00.000Z");
+
+const HERMES_CONVERSATIONS = [
+  {
+    id: "hermes-desktop-index",
+    preview: "Plan the persistent Desktop conversation experience",
+    messageCount: 2,
+    createdAt: HERMES_NOW - 60_000,
+    updatedAt: HERMES_NOW,
+  },
+  {
+    id: "hermes-provider-check",
+    preview: "Verify provider switching remains intact",
+    messageCount: 2,
+    createdAt: HERMES_NOW - 3_600_000,
+    updatedAt: HERMES_NOW - 1_800_000,
+  },
+] as const;
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
@@ -456,6 +474,7 @@ export async function startStubGateway(): Promise<StubGateway> {
   };
   let currentToken = TOKEN;
   let activeTerminalOutput: ((data: string) => void) | null = null;
+  let createdHermesConversation = false;
 
   const server: Server = createServer((req, res) => {
     void handle(req, res);
@@ -539,6 +558,61 @@ export async function startStubGateway(): Promise<StubGateway> {
         selectedSlot: currentToken === REVIEW_TOKEN ? "review" : "primary",
         hasMore: false,
         limit: 20,
+      });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/conversations") {
+      json(res, 200, [
+        ...(createdHermesConversation ? [{
+          id: "hermes-new-conversation",
+          preview: "",
+          messageCount: 0,
+          createdAt: HERMES_NOW + 60_000,
+          updatedAt: HERMES_NOW + 60_000,
+        }] : []),
+        ...HERMES_CONVERSATIONS,
+      ]);
+      return;
+    }
+    if (req.method === "POST" && path === "/api/conversations") {
+      await readBody(req);
+      createdHermesConversation = true;
+      json(res, 201, { id: "hermes-new-conversation" });
+      return;
+    }
+    if (req.method === "GET" && path.startsWith("/api/conversations/")) {
+      const id = decodeURIComponent(path.slice("/api/conversations/".length));
+      const conversation = HERMES_CONVERSATIONS.find((candidate) => candidate.id === id);
+      if (!conversation) {
+        json(res, 404, { error: "Conversation not found" });
+        return;
+      }
+      json(res, 200, {
+        id,
+        createdAt: conversation.createdAt,
+        updatedAt: conversation.updatedAt,
+        totalCount: 2,
+        messages: [
+          {
+            index: 0,
+            role: "user",
+            content: conversation.preview,
+            contentTruncated: false,
+            timestamp: conversation.createdAt,
+          },
+          {
+            index: 1,
+            role: "assistant",
+            content: id === "hermes-desktop-index"
+              ? "The canonical Gateway conversation is ready to continue."
+              : "Provider controls remain independent from the conversation index.",
+            contentTruncated: false,
+            timestamp: conversation.updatedAt,
+          },
+        ],
+        hasMore: false,
+        limit: 50,
       });
       return;
     }
