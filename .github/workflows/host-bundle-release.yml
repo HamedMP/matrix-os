@@ -384,7 +384,7 @@ jobs:
   enqueue-golden-snapshot:
     name: Enqueue golden snapshot build
     needs: [dev-bundle-gate, build, publish]
-    if: ${{ needs.dev-bundle-gate.outputs.should_build == 'true' && ((github.event_name == 'push' && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag')) || (github.event_name == 'workflow_dispatch' && inputs.channel != '')) }}
+    if: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED == 'true' && needs.dev-bundle-gate.outputs.should_build == 'true' && ((github.event_name == 'push' && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag')) || (github.event_name == 'workflow_dispatch' && inputs.channel != '')) }}
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 5
