@@ -37,7 +37,7 @@ export function isProtectedHomeSubpath(homePath: string, resolvedPath: string): 
   if (rel === "") return true;
   const firstSegment = rel.split(sep)[0];
   if (firstSegment === undefined) return false;
-  if (firstSegment.startsWith(".")) return true;
+  if (firstSegment.startsWith(".") && !firstSegment.startsWith("..")) return true;
   return PROTECTED_HOME_PREFIXES.includes(firstSegment);
 }
 

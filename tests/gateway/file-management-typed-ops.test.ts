@@ -50,6 +50,35 @@ describe("Desktop typed file mutations", () => {
     expect(readFileSync(join(testDir, "projects", "..notes.md"), "utf8")).toBe("");
   });
 
+  it("creates and renames a contained top-level file whose name begins with two dots", async () => {
+    const created = await createFile(testDir, {
+      requestId,
+      parentDirectory: "",
+      name: "..notes.md",
+      kind: "file",
+    });
+
+    expect(created).toMatchObject({
+      ok: true,
+      path: "..notes.md",
+      resultCode: "created",
+    });
+
+    const renamed = await renameFile(testDir, {
+      requestId: "b9d9d1d8-8e5d-45d0-8d17-2c85f4e19a11",
+      path: "..notes.md",
+      name: "..renamed.md",
+    });
+
+    expect(renamed).toMatchObject({
+      ok: true,
+      path: "..renamed.md",
+      resultCode: "renamed",
+    });
+    expect(existsSync(join(testDir, "..notes.md"))).toBe(false);
+    expect(readFileSync(join(testDir, "..renamed.md"), "utf8")).toBe("");
+  });
+
   it("renames a typed file without allowing an occupied target", async () => {
     writeFileSync(join(testDir, "projects", "old.md"), "content");
     const result = await renameFile(testDir, {
