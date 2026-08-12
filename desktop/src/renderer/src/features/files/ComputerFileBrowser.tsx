@@ -30,6 +30,7 @@ import {
   measureGridColumns,
 } from "./browser-views";
 import { useFileManagement } from "./use-file-management";
+import { MoveFilesDialog } from "./MoveFilesDialog";
 import { useAuthoritativeListing, type BrowserListingStatus } from "./use-authoritative-listing";
 import { MAX_FILE_BATCH_SIZE, type FileSelectionPlatform } from "./file-selection";
 import { getKernelSocket } from "../../lib/kernel-wiring";
@@ -147,6 +148,9 @@ export default function ComputerFileBrowser({
     () => new Set(management.selection.selectedPaths),
     [management.selection.selectedPaths],
   );
+  const movablePaths = useMemo(() => renderedPaths.filter((path) =>
+    entriesByPath.get(path)?.capabilities.canMove && !management.snapshot.pendingPaths.includes(path)),
+  [entriesByPath, management.snapshot.pendingPaths, renderedPaths]);
   useEffect(() => management.reconcilePaths(renderedPaths), [management.reconcilePaths, renderedPaths]);
 
   const load = useCallback((path: string) => {
@@ -331,6 +335,7 @@ export default function ComputerFileBrowser({
             if (entry.type === "directory") navigate(path);
           }}
           onKeyDown={(event) => onEntryKeyDown(event, entry, path, index)}
+          {...(mode === "browse" ? management.move.entryDragProps(path, entry.type === "directory", movablePaths) : {})}
         />
       );
       if (mode === "folder-picker") return entryButton;
@@ -340,6 +345,8 @@ export default function ComputerFileBrowser({
         : [path];
       const trashDisabled = selectedForAction.length > MAX_FILE_BATCH_SIZE || selectedForAction.some((selected) =>
         management.snapshot.pendingPaths.includes(selected) || !entriesByPath.get(selected)?.capabilities.canTrash);
+      const moveDisabled = selectedForAction.length < 1 || selectedForAction.length > MAX_FILE_BATCH_SIZE || selectedForAction.some((selected) =>
+        management.snapshot.pendingPaths.includes(selected) || !entriesByPath.get(selected)?.capabilities.canMove);
       return (
         <ManagedFileActionMenu
           key={`${entry.type}:${path}`}
@@ -348,10 +355,12 @@ export default function ComputerFileBrowser({
           disabled={pending}
           selectedCount={management.selection.selectedPaths.length}
           canRename={entry.capabilities.canRename}
+          canMove={!moveDisabled}
           canTrash={!trashDisabled}
           onOpen={() => activateEntry(entry, path)}
           onOpenInEditor={onOpenInEditor && entry.type === "file" ? () => onOpenInEditor(path) : undefined}
           onRename={() => management.startRename(path, entry.name)}
+          onMove={() => management.move.requestMenuMove(selectedForAction)}
           onTrash={() => management.requestTrash(selectedForAction)}
           onMenuOpen={() => {
             if (!selectedPathSet.has(path)) {
@@ -405,6 +414,7 @@ export default function ComputerFileBrowser({
         onRefresh={() => void load(viewCurrentPath)}
         onNewFile={mode === "browse" && managementEnabled ? () => management.startCreate("file") : undefined}
         onNewFolder={mode === "browse" && managementEnabled ? () => management.startCreate("directory") : undefined}
+        dropHandlers={mode === "browse" ? management.move.dropHandlers : undefined}
       />
 
       <FileOperationNotice snapshot={management.snapshot} localNotice={management.localNotice} />
@@ -436,6 +446,7 @@ export default function ComputerFileBrowser({
         onCancel={management.cancelTrash}
         onConfirm={() => void management.confirmTrash()}
       />
+      <MoveFilesDialog controls={management.move} />
     </div>
   );
 }

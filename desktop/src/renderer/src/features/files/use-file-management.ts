@@ -20,6 +20,7 @@ import {
   type FileSelectionState,
 } from "./file-selection";
 import { useDirectorySync, type DirectorySyncSocket } from "./use-directory-sync";
+import { useFileMove } from "./use-file-move";
 
 export type FileNameDraft =
   | { mode: "create"; kind: "file" | "directory"; name: string }
@@ -112,6 +113,37 @@ export function useFileManagement(options: {
     },
   }), [managementApi, options.api, options.runtimeSlot, options.authGeneration, options.loadAuthoritativeDirectory, fetchEntries]);
   const [snapshot, setSnapshot] = useState<FileOperationSnapshot>(controller.snapshot);
+  const settleMoveOutcome = useCallback((outcome: { retainedPaths: string[] }) => {
+    const nextSelection: FileSelectionState = {
+      scope: { ...scopeRef.current },
+      selectedPaths: [...outcome.retainedPaths],
+      anchorPath: outcome.retainedPaths[0] ?? null,
+      focusedPath: outcome.retainedPaths[0] ?? null,
+    };
+    selectionRef.current = nextSelection;
+    setStoredSelection(nextSelection);
+    onFocusRef.current?.(nextSelection.focusedPath);
+  }, []);
+  const getMoveSelection = useCallback(() => selectionRef.current, []);
+  const setMoveSelection = useCallback((nextSelection: FileSelectionState) => {
+    selectionRef.current = nextSelection;
+    setStoredSelection(nextSelection);
+    onFocusRef.current?.(nextSelection.focusedPath);
+  }, []);
+  const move = useFileMove({
+    api: options.api,
+    controller,
+    directory: options.directory,
+    runtimeSlot: options.runtimeSlot,
+    authGeneration: options.authGeneration,
+    onOutcome: settleMoveOutcome,
+    getSelection: getMoveSelection,
+    onSelectionChange: setMoveSelection,
+  });
+  const requestMenuMove = useCallback((paths: readonly string[]) => {
+    setLocalNotice(null);
+    return move.requestMenuMove(paths);
+  }, [move.requestMenuMove]);
 
   useEffect(() => {
     setSnapshot(controller.snapshot);
@@ -270,6 +302,7 @@ export function useFileManagement(options: {
     draft, draftError, draftSubmitting, localNotice, snapshot, selection, trashPaths,
     startCreate, startRename, updateDraftName, cancelDraft, submitDraft, selectPath,
     reconcilePaths, requestTrash, cancelTrash, confirmTrash,
+    move: { ...move, requestMenuMove },
   };
 }
 

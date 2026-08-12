@@ -300,6 +300,7 @@ describe("Files management UI", () => {
     expect(screen.getByRole("status").textContent).toMatch(/batch actions support up to 100/i);
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for file-000.md" }));
+    expect((await screen.findByRole("menuitem", { name: "Move to…" })).hasAttribute("data-disabled")).toBe(true);
     expect((await screen.findByRole("menuitem", { name: "Move to Trash" })).hasAttribute("data-disabled")).toBe(true);
     fireEvent.keyDown(document, { key: "Escape" });
 
@@ -312,6 +313,7 @@ describe("Files management UI", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open file-100.md" })).toBeNull());
     expect(screen.queryByRole("status")).toBeNull();
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for file-000.md" }));
+    expect((await screen.findByRole("menuitem", { name: "Move to…" })).hasAttribute("data-disabled")).toBe(false);
     expect((await screen.findByRole("menuitem", { name: "Move to Trash" })).hasAttribute("data-disabled")).toBe(false);
   });
 
