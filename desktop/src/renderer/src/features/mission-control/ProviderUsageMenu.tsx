@@ -5,7 +5,7 @@ import type {
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
 import { CircleDollarSign, Gauge, LoaderCircle, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useProviderPreferences } from "../settings/provider-preferences";
 import { ProviderGlyph } from "../settings/provider-glyph";
 import { openProviderSetupTerminal, providerSetupCommands } from "../coding-agents/provider-setup-terminal";
@@ -17,6 +17,7 @@ import {
   useProviderUsage,
 } from "../../stores/provider-usage";
 import { useTabs } from "../../stores/tabs";
+import { useUi } from "../../stores/ui";
 
 const SETUP_ERROR = "Could not open setup terminal. Try again from Terminal.";
 
@@ -285,7 +286,8 @@ export default function ProviderUsageMenu({ collapsed }: { collapsed: boolean })
   const status = useProviderUsage((state) => state.status);
   const response = useProviderUsage((state) => state.response);
   const refresh = useProviderUsage((state) => state.refresh);
-  const [open, setOpen] = useState(false);
+  const open = useUi((state) => state.providerUsageOpen);
+  const setOpen = useUi((state) => state.setProviderUsageOpen);
 
   const capabilityEnabled = summary?.capabilities.some(
     (capability) => capability.id === "codingAgentsUsageSummary" && capability.enabled,
@@ -307,6 +309,12 @@ export default function ProviderUsageMenu({ collapsed }: { collapsed: boolean })
     reset?.toLowerCase(),
     freshness?.toLowerCase(),
   ].filter(Boolean).join(", ");
+
+  useEffect(() => () => setOpen(false), [setOpen]);
+
+  useEffect(() => {
+    if (!capabilityEnabled && open) setOpen(false);
+  }, [capabilityEnabled, open, setOpen]);
 
   if (!capabilityEnabled) return null;
 

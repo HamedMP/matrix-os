@@ -14,6 +14,7 @@ import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/c
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useProviderUsage } from "../../desktop/src/renderer/src/stores/provider-usage";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 const NOW = new Date("2026-08-10T12:00:00.000Z");
 const RUNTIME_SCOPE = "operator|https://platform.test|primary";
@@ -135,6 +136,7 @@ describe("ProviderUsageMenu", () => {
       activeTabId: "home",
       tabs: [{ id: "home", kind: "home", title: "Home", closable: false }],
     });
+    useUi.setState(useUi.getInitialState(), true);
     useProviderUsage.getState().clear();
   });
 
@@ -193,6 +195,19 @@ describe("ProviderUsageMenu", () => {
     expect(screen.getByText("Resets in 4 hours")).toBeTruthy();
     expect(screen.getByText("$12.50 remaining")).toBeTruthy();
     expect(screen.getAllByText(/Updated just now/).length).toBeGreaterThan(0);
+  });
+
+  it("marks the provider popover as a renderer overlay until it closes", async () => {
+    renderUsageMenu();
+
+    fireEvent.click(screen.getByRole("button", { name: /Codex, 72% left/i }));
+    await screen.findByRole("dialog", { name: "Provider usage" });
+    expect(useUi.getState()).toMatchObject({ providerUsageOpen: true });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => {
+      expect(useUi.getState()).toMatchObject({ providerUsageOpen: false });
+    });
   });
 
   it("keeps collapsed mode compact while exposing complete usage context", () => {

@@ -11,6 +11,7 @@ interface UiState {
   composerOpen: boolean;
   paletteOpen: boolean;
   quickOpenOpen: boolean;
+  providerUsageOpen: boolean;
   sidebarCollapsed: boolean;
   // One-shot request for which Settings section the next Settings render
   // should select (consumed and cleared by SettingsView).
@@ -22,6 +23,7 @@ interface UiState {
   setComposerOpen: (open: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   setQuickOpenOpen: (open: boolean) => void;
+  setProviderUsageOpen: (open: boolean) => void;
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   requestSettingsSection: (section: string) => void;
@@ -35,6 +37,7 @@ export const useUi = create<UiState>()((set) => ({
   composerOpen: false,
   paletteOpen: false,
   quickOpenOpen: false,
+  providerUsageOpen: false,
   sidebarCollapsed: false,
   requestedSettingsSection: null,
   setCreateProjectOpen: (open) => set({ createProjectOpen: open }),
@@ -44,6 +47,7 @@ export const useUi = create<UiState>()((set) => ({
   setComposerOpen: (open) => set({ composerOpen: open }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setQuickOpenOpen: (open) => set({ quickOpenOpen: open }),
+  setProviderUsageOpen: (open) => set({ providerUsageOpen: open }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   requestSettingsSection: (section) => set({ requestedSettingsSection: section }),

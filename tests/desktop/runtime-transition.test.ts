@@ -13,6 +13,7 @@ import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 
 describe("desktop runtime transition", () => {
@@ -69,6 +70,7 @@ describe("desktop runtime transition", () => {
       runtimeScope: "old-runtime",
       error: null,
     });
+    useUi.setState({ providerUsageOpen: true });
   });
 
   it("atomically removes identifiers and attachments owned by the previous computer", () => {
@@ -94,6 +96,7 @@ describe("desktop runtime transition", () => {
       runtimeScope: null,
       error: null,
     });
+    expect(useUi.getState().providerUsageOpen).toBe(false);
   });
 
   it("clears unsent chat drafts owned by the previous identity", () => {

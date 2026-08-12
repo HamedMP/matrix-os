@@ -86,6 +86,7 @@ export default function TabContent() {
       s.paletteOpen ||
       s.composerOpen ||
       s.quickOpenOpen ||
+      s.providerUsageOpen ||
       s.createTaskOpen ||
       s.createProjectOpen,
   );
