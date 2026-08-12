@@ -151,6 +151,18 @@ describe("internal Files drag payload", () => {
 
     expect(createFileDragSession(mac, order[1]!)?.paths).toEqual(order);
     expect(createFileDragSession(windows, order[1]!)?.paths).toEqual(order);
+
+    const exactBatch = Array.from({ length: 100 }, (_, index) => `projects/${index}.md`);
+    const exactSelection = {
+      ...createFileSelection(scope),
+      selectedPaths: exactBatch,
+      anchorPath: exactBatch[0]!,
+      focusedPath: exactBatch[0]!,
+    };
+    expect(createFileDragSession(exactSelection, exactBatch[0]!)?.paths).toEqual(exactBatch);
+
+    const oversized = [...exactBatch, "projects/100.md"];
+    expect(createFileDragSession({ ...exactSelection, selectedPaths: oversized }, oversized[0]!)).toBeNull();
   });
 
   it("mounts at most one drag preview node and removes it deterministically", () => {

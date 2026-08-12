@@ -345,7 +345,7 @@ export default function ComputerFileBrowser({
         : [path];
       const trashDisabled = selectedForAction.length > MAX_FILE_BATCH_SIZE || selectedForAction.some((selected) =>
         management.snapshot.pendingPaths.includes(selected) || !entriesByPath.get(selected)?.capabilities.canTrash);
-      const moveDisabled = selectedForAction.length < 1 || selectedForAction.length > 100 || selectedForAction.some((selected) =>
+      const moveDisabled = selectedForAction.length < 1 || selectedForAction.length > MAX_FILE_BATCH_SIZE || selectedForAction.some((selected) =>
         management.snapshot.pendingPaths.includes(selected) || !entriesByPath.get(selected)?.capabilities.canMove);
       return (
         <ManagedFileActionMenu
