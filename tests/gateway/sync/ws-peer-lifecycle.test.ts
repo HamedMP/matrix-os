@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { createSyncPeerLifecycle } from "../../../packages/gateway/src/sync/ws-peer-lifecycle.js";
+import {
+  createSyncPeerLifecycle,
+  subscribeSyncPeerOrReject,
+} from "../../../packages/gateway/src/sync/ws-peer-lifecycle.js";
 
 function createRegistry() {
   return {
@@ -13,6 +16,30 @@ function createRegistry() {
 }
 
 describe("createSyncPeerLifecycle", () => {
+  it("rejects subscription failures with a coarse diagnostic", () => {
+    const reject = vi.fn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const lifecycle = {
+      subscribe: vi.fn(() => {
+        throw new Error("sensitive peer failure");
+      }),
+      close: vi.fn(),
+    };
+
+    expect(subscribeSyncPeerOrReject(lifecycle, {
+      peerId: "peer-1",
+      hostname: "mbp",
+      platform: "darwin",
+      clientVersion: "0.1.0",
+    }, reject)).toBe(false);
+
+    expect(reject).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith("[sync/realtime] Peer subscription failed", {
+      errorKind: "Error",
+    });
+    expect(JSON.stringify(error.mock.calls)).not.toContain("sensitive peer failure");
+  });
+
   it("proxies the live websocket readyState when registering peers", () => {
     const registry = createRegistry();
     const ws = {

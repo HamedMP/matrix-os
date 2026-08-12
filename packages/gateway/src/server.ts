@@ -87,7 +87,7 @@ import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
 } from "./auth.js";
-import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
+import { getOptionalRequestPrincipal, isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
@@ -196,7 +196,7 @@ import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
 import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
-import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
+import { createSyncPeerLifecycle, subscribeSyncPeerOrReject } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
 import { sanitizePeerId } from "./sync/peer-id.js";
 import {
@@ -234,6 +234,17 @@ import {
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
 import { registerFileManagementRoutes } from "./server/file-management-routes.js";
+import {
+  authorizeFileDirectoryScope,
+  FileDirectorySubscriptionHub,
+} from "./file-management/directory-subscriptions.js";
+import {
+  bindFileDirectoryWatcher,
+  closeFileDirectoryResources,
+  createMainWsFileDirectoryRouter,
+  createFileDirectoryWsLifecycle,
+  isFileDirectoryFrameCandidate,
+} from "./server/file-directory-ws.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import {
   metricsRegistry,
@@ -432,6 +443,14 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const watcher: Watcher = createWatcher(homePath);
+  const fileDirectorySubscriptionHub = new FileDirectorySubscriptionHub({
+    authorize: ({ directory }) => authorizeFileDirectoryScope(homePath, directory),
+    acquireScope: (directory, authorization) => watcher.acquireDirectoryScope(
+      directory,
+      authorization,
+    ),
+  });
+  bindFileDirectoryWatcher(fileDirectorySubscriptionHub, watcher);
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
   const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
@@ -1833,24 +1852,28 @@ export async function createGateway(config: GatewayConfig) {
       // sync:subscribe branch below keys peers off the same principal as the
       // HTTP sync routes. authMiddleware ran on the upgrade request and
       // stashed claims if a JWT was presented.
+      const wsOwnerId = getOptionalRequestPrincipal(c)?.userId;
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
-      try {
-        const wsSyncUserId = requireRequestPrincipal(c).userId;
-        syncPeerLifecycle = syncPeerRegistry
-          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
-              send: (data: string) => syncPeerSocket?.send(data),
-              get readyState() {
-                return syncPeerSocket?.readyState ?? 3;
-              },
-            })
-          : null;
-      } catch (err) {
-        if (!isRequestPrincipalError(err)) {
-          throw err;
-        }
-        console.warn("[sync/ws] Missing or invalid sync request principal on websocket upgrade");
-      }
+      syncPeerLifecycle = syncPeerRegistry && wsOwnerId
+        ? createSyncPeerLifecycle(syncPeerRegistry, wsOwnerId, {
+            send: (data: string) => syncPeerSocket?.send(data),
+            get readyState() {
+              return syncPeerSocket?.readyState ?? 3;
+            },
+          })
+        : null;
+      let mainWsSocket: WSContext | null = null;
+      const fileDirectoryRouter = createMainWsFileDirectoryRouter(c, {
+        connectionId: randomUUID(),
+        hub: fileDirectorySubscriptionHub,
+        send: (message) => {
+          if (!mainWsSocket) throw new Error("Main WebSocket is not open");
+          mainWsSocket.send(message);
+        },
+        closeSocket: () => mainWsSocket?.close(1008, "File subscription closed"),
+      });
+      const fileDirectoryLifecycle = createFileDirectoryWsLifecycle(fileDirectoryRouter);
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
@@ -1920,6 +1943,7 @@ export async function createGateway(config: GatewayConfig) {
 
       return {
         onOpen(_evt, ws) {
+          mainWsSocket = ws;
           syncPeerSocket = ws;
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
@@ -1961,11 +1985,22 @@ export async function createGateway(config: GatewayConfig) {
           const parsedResult = MainWsClientMessageSchema.safeParse(rawMessage);
           if (!parsedResult.success) {
             captureGatewayProductEvent("shell_ws_invalid_message");
+            if (isFileDirectoryFrameCandidate(rawMessage)) {
+              fileDirectoryRouter.rejectInvalidFrame();
+              return;
+            }
             send(ws, { type: "kernel:error", message: "Invalid message format" });
             return;
           }
 
           const parsed: MainWsClientMessage = parsedResult.data;
+
+          if (parsed.type === "files:subscribe"
+            || parsed.type === "files:unsubscribe"
+            || parsed.type === "files:touch") {
+            fileDirectoryRouter.handleFrame(parsed);
+            return;
+          }
 
           if (parsed.type === "ping") {
             send(ws, { type: "pong" } as ServerMessage);
@@ -2019,16 +2054,21 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
 
-          if (parsed.type === "sync:subscribe" && syncPeerRegistry) {
+          if (parsed.type === "sync:subscribe") {
+            const subscribed = subscribeSyncPeerOrReject(
+              syncPeerLifecycle,
+              {
+                peerId: parsed.peerId,
+                hostname: parsed.hostname,
+                platform: parsed.platform,
+                clientVersion: parsed.clientVersion,
+              },
+              () => send(ws, { type: "kernel:error", message: "Sync subscription failed" }),
+            );
+            if (!subscribed) return;
             captureGatewayProductEvent("sync_peer_subscribe", {
               shell_surface: "gateway_ws",
               client_version_present: Boolean(parsed.clientVersion),
-            });
-            syncPeerLifecycle?.subscribe({
-              peerId: parsed.peerId,
-              hostname: parsed.hostname,
-              platform: parsed.platform,
-              clientVersion: parsed.clientVersion,
             });
             return;
           }
@@ -2176,9 +2216,11 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose(_evt, ws) {
+          void fileDirectoryLifecycle.onClose();
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
           syncPeerSocket = null;
+          mainWsSocket = null;
           // Abort inactive in-flight runs so the kernel doesn't keep burning
           // tokens forever, while still allowing short browser reconnects to
           // replay and reattach runs that still have an active subscriber.
@@ -4280,7 +4322,11 @@ export async function createGateway(config: GatewayConfig) {
       await zellijShellWs.dispose();
       await sessionRegistry.shutdown();
       await fileManagementRoutes.close();
-      await watcher.close();
+      await closeFileDirectoryResources(fileDirectorySubscriptionHub, {
+        close: async () => {
+          await watcher.close();
+        },
+      });
       await homeMirror?.stop();
       await homeMirrorStart?.catch((err: unknown) => {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
