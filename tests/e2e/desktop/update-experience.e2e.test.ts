@@ -56,7 +56,7 @@ suite("desktop update experience", () => {
     const runningVersion = await app.evaluate(({ app: electronApp }) => electronApp.getVersion());
     seedRelease(runningVersion);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByRole("button", { name: /continue with github/i }).click();
+    await page.getByRole("button", { name: /continue in browser/i }).click();
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
   }, 60_000);
 
@@ -67,7 +67,7 @@ suite("desktop update experience", () => {
   });
 
   it("shows What's New after launch and places Update below Settings", async () => {
-    await page.getByRole("heading", { name: "What's New" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("heading", { name: "What's New", level: 1 }).waitFor({ timeout: 10_000 });
     await page.getByText("Automatic background downloads for Matrix OS updates").waitFor();
     await page.mouse.move(80, 400);
     await page.waitForTimeout(200);

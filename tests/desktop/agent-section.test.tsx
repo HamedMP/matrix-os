@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AgentSection from "../../desktop/src/renderer/src/features/settings/sections/AgentSection";
+import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
@@ -145,6 +146,9 @@ describe("AgentSection", () => {
     });
     window.operator = {
       invoke: vi.fn((channel: string) => {
+        if (channel === "runtime:get-hermes-configuration" || channel === "runtime:get-hermes-environment") {
+          return Promise.reject(new Error("structured setup unavailable"));
+        }
         if (channel === "runtime:get-summary") {
           return Promise.resolve({
             runtime: { id: "rt_primary", label: "Primary", status: "available" },
@@ -329,9 +333,17 @@ describe("AgentSection", () => {
     await waitFor(() => expect(api.put).toHaveBeenCalledWith(
       "/api/settings/agent",
       { runtime: "openclaw", revision: 7 },
+      { timeoutMs: 90_000 },
     ));
 
     fireEvent.click(screen.getByRole("button", { name: "Configure Hermes provider" }));
+    expect(await screen.findByRole("heading", { name: "Configure Hermes" })).toBeTruthy();
+    expect(api.post).not.toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),
+    );
+    expect(await screen.findByRole("button", { name: "Open setup terminal" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open setup terminal" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       "/api/terminal/sessions",
       expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),
@@ -548,6 +560,54 @@ describe("AgentSection", () => {
     await screen.findByText("Something went wrong. Please try again.");
     expect(screen.getByText("Messaging runtime")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Use OpenClaw" })).toBeTruthy();
+  });
+
+  it("uses the bounded runtime-transition timeout for a messaging runtime switch", async () => {
+    const current = currentAgentSettings();
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(current)
+      : Promise.resolve({}));
+    api.put.mockResolvedValue(current);
+    render(<AgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
+
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      "/api/settings/agent",
+      { runtime: "openclaw", revision: 7 },
+      { timeoutMs: 90_000 },
+    ));
+  });
+
+  it("reconciles an authoritative runtime switch after the mutation times out", async () => {
+    const current = currentAgentSettings();
+    const switched = structuredClone(current);
+    switched.revision = 8;
+    switched.runtime.selected = "openclaw";
+    switched.runtime.options[0].selectionState = "available";
+    switched.runtime.options[0].health = "stopped";
+    switched.runtime.options[1].selectionState = "active";
+    switched.runtime.options[1].health = "healthy";
+    switched.currentSelection.messaging = {
+      runtime: "openclaw",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+    let settingsReads = 0;
+    api.get.mockImplementation((path: string) => {
+      if (path !== "/api/settings/agent") return Promise.resolve({});
+      settingsReads += 1;
+      return Promise.resolve(settingsReads <= 2 ? current : switched);
+    });
+    api.put.mockRejectedValue(new AppError("timeout"));
+    render(<AgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
+
+    expect(await screen.findByText("OpenClaw is active")).toBeTruthy();
+    expect(screen.queryByText("The request timed out. Please try again.")).toBeNull();
+    expect(settingsReads).toBe(3);
   });
 
   it("keeps a typed API key after a rejected validation request", async () => {

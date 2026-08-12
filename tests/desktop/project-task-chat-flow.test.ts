@@ -72,7 +72,15 @@ describe("project to task to chat flow", () => {
 
     const project = await useBoard.getState().createProject(api, { name: "Desktop", mode: "scratch" });
     const task = await useBoard.getState().createTask(api, project!.slug, { title: "Build chat" });
-    expect(api.post).toHaveBeenCalledWith("/api/projects", { name: "Desktop", mode: "scratch" });
+    expect(api.post).toHaveBeenCalledWith(
+      "/api/projects",
+      {
+        name: "Desktop",
+        mode: "scratch",
+        clientRequestId: expect.stringMatching(/^req_desktop_project_[A-Za-z0-9-]+$/),
+      },
+      { timeoutMs: 30_000 },
+    );
     expect(api.post).toHaveBeenCalledWith("/api/projects/desktop/tasks", { title: "Build chat" });
 
     const runtimeSummary = summary();

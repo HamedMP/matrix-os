@@ -7,6 +7,29 @@ import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-rout
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { createProjectFolders } from "../../packages/gateway/src/project-folders.js";
 
+const receiptRemovalRace = vi.hoisted(() => ({
+  enabled: false,
+  active: 0,
+  maxActive: 0,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: async (...args: unknown[]) => {
+      const path = String(args[0]);
+      if (receiptRemovalRace.enabled && path.endsWith("req_desktop_folder_expired_overlap.json")) {
+        receiptRemovalRace.active += 1;
+        receiptRemovalRace.maxActive = Math.max(receiptRemovalRace.maxActive, receiptRemovalRace.active);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        receiptRemovalRace.active -= 1;
+      }
+      return (actual.rm as (...rmArgs: unknown[]) => Promise<void>)(...args);
+    },
+  };
+});
+
 function jsonRequest(path: string, body: unknown): Request {
   const requestBody = path === "/api/projects/clone"
     && typeof body === "object"
@@ -233,6 +256,41 @@ describe("project clone and mkdir routes", () => {
   });
 
   describe("POST /api/projects branch passthrough", () => {
+    it("passes the idempotency key to the project manager", async () => {
+      const projectManager = makeProjectManager();
+      const app = createWorkspaceRoutes({ homePath, projectManager });
+
+      const res = await app.request(jsonRequest("/api/projects", {
+        mode: "scratch",
+        name: "My App",
+        clientRequestId: "req_desktop_project_123",
+      }));
+
+      expect(res.status).toBe(201);
+      expect(projectManager.createProject).toHaveBeenCalledWith(expect.objectContaining({
+        clientRequestId: "req_desktop_project_123",
+      }));
+    });
+
+    it("preserves the manager status for an idempotent replay", async () => {
+      const projectManager = makeProjectManager({
+        createProject: vi.fn(async () => ({
+          ok: true as const,
+          status: 200,
+          project: { id: "proj_1", name: "My App", slug: "my-app", localPath: "/x", addedAt: "", updatedAt: "" },
+        })),
+      });
+      const app = createWorkspaceRoutes({ homePath, projectManager });
+
+      const res = await app.request(jsonRequest("/api/projects", {
+        mode: "scratch",
+        name: "My App",
+        clientRequestId: "req_desktop_project_123",
+      }));
+
+      expect(res.status).toBe(200);
+    });
+
     it("passes an optional branch to the project manager", async () => {
       const projectManager = makeProjectManager();
       const app = createWorkspaceRoutes({ homePath, projectManager });
@@ -327,6 +385,30 @@ describe("project clone and mkdir routes", () => {
     });
   });
 
+  describe("folder project idempotency", () => {
+    it("returns the original project when the same create request is retried", async () => {
+      await mkdir(join(homePath, "workspaces", "my-app"), { recursive: true });
+      const manager = createProjectManager({ homePath });
+      const input = {
+        mode: "folder" as const,
+        name: "My App",
+        path: "workspaces/my-app",
+        clientRequestId: "req_desktop_project_123",
+      };
+
+      const first = await manager.createProject(input);
+      const retry = await manager.createProject(input);
+
+      expect(first.ok).toBe(true);
+      expect(retry.ok).toBe(true);
+      if (!first.ok || !retry.ok) throw new Error("expected idempotent project creation");
+      expect(first.status).toBe(201);
+      expect(retry.status).toBe(200);
+      expect(retry.project.id).toBe(first.project.id);
+      expect(retry.project.slug).toBe("my-app");
+    });
+  });
+
   describe("POST /api/projects/mkdir", () => {
     it("creates projects/<name>/repo by default", async () => {
       const app = createWorkspaceRoutes({ homePath });
@@ -363,6 +445,146 @@ describe("project clone and mkdir routes", () => {
       await expect(res.json()).resolves.toEqual({ path: "code/side-project" });
       const created = await stat(join(homePath, "code", "side-project"));
       expect(created.isDirectory()).toBe(true);
+    });
+
+    it("connects a custom-parent folder returned by mkdir as a project", async () => {
+      await mkdir(join(homePath, "apps"), { recursive: true });
+      // A legacy/unmanaged directory may already occupy the registry slug.
+      // Folder binding should publish config.json into that slot instead of
+      // reporting a false slug conflict after mkdir has already succeeded.
+      await mkdir(join(homePath, "projects", "matrix-os", "symphony-workspaces"), { recursive: true });
+      const app = createWorkspaceRoutes({ homePath });
+
+      const mkdirResponse = await app.request(jsonRequest("/api/projects/mkdir", {
+        name: "matrix-os",
+        parent: "apps",
+        clientRequestId: "req_desktop_folder_connect",
+      }));
+      expect(mkdirResponse.status).toBe(201);
+      const folder = await mkdirResponse.json() as { path: string };
+
+      const connectResponse = await app.request(jsonRequest("/api/projects", {
+        name: "matrix-os",
+        mode: "folder",
+        path: folder.path,
+        clientRequestId: "req_desktop_project_connect",
+      }));
+
+      expect(connectResponse.status).toBe(201);
+      await expect(connectResponse.json()).resolves.toMatchObject({
+        project: {
+          name: "matrix-os",
+          localPath: expect.stringMatching(/[/\\]apps[/\\]matrix-os$/),
+        },
+      });
+      await expect(stat(join(homePath, "projects", "matrix-os", "config.json"))).resolves.toBeTruthy();
+    });
+
+    it("returns the same custom folder for an idempotent mkdir retry", async () => {
+      await mkdir(join(homePath, "code"), { recursive: true });
+      const app = createWorkspaceRoutes({ homePath });
+      const request = {
+        name: "side-project",
+        parent: "code",
+        clientRequestId: "req_desktop_folder_123",
+      };
+
+      const first = await app.request(jsonRequest("/api/projects/mkdir", request));
+      const retry = await app.request(jsonRequest("/api/projects/mkdir", request));
+
+      expect(first.status).toBe(201);
+      expect(retry.status).toBe(200);
+      await expect(retry.json()).resolves.toEqual({ path: "code/side-project" });
+    });
+
+    it("does not let an expired mkdir receipt conflict with a new payload", async () => {
+      await mkdir(join(homePath, "code"), { recursive: true });
+      const manager = createProjectFolders({ homePath });
+      const clientRequestId = "req_desktop_folder_expired";
+      const ownerScope = { type: "user" as const, id: "user_123" };
+
+      const first = await manager.createFolder({
+        name: "old-project",
+        parent: "code",
+        clientRequestId,
+        ownerScope,
+      });
+      expect(first.ok).toBe(true);
+
+      const receiptPath = join(homePath, "system", "project-folder-requests", `${clientRequestId}.json`);
+      const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+      await writeFile(receiptPath, JSON.stringify({ ...receipt, createdAt: "2020-01-01T00:00:00.000Z" }));
+
+      const next = await manager.createFolder({
+        name: "new-project",
+        parent: "code",
+        clientRequestId,
+        ownerScope,
+      });
+
+      expect(next).toMatchObject({ ok: true, status: 201, path: "code/new-project" });
+      const created = await stat(join(homePath, "code", "new-project"));
+      expect(created.isDirectory()).toBe(true);
+    });
+
+    it("preserves the replacement receipt when expired mkdir retries overlap", async () => {
+      await mkdir(join(homePath, "code"), { recursive: true });
+      const clientRequestId = "req_desktop_folder_expired_overlap";
+      const ownerScope = { type: "user" as const, id: "user_123" };
+      const seedManager = createProjectFolders({ homePath });
+      await seedManager.createFolder({
+        name: "old-project",
+        parent: "code",
+        clientRequestId,
+        ownerScope,
+      });
+
+      const receiptPath = join(homePath, "system", "project-folder-requests", `${clientRequestId}.json`);
+      const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+      await writeFile(receiptPath, JSON.stringify({ ...receipt, createdAt: "2020-01-01T00:00:00.000Z" }));
+      const request = {
+        name: "new-project",
+        parent: "code",
+        clientRequestId,
+        ownerScope,
+      };
+
+      receiptRemovalRace.enabled = true;
+      receiptRemovalRace.active = 0;
+      receiptRemovalRace.maxActive = 0;
+      const overlapping = await Promise.all([
+        createProjectFolders({ homePath }).createFolder(request),
+        createProjectFolders({ homePath }).createFolder(request),
+      ]);
+      receiptRemovalRace.enabled = false;
+      expect(receiptRemovalRace.maxActive).toBe(1);
+      expect(overlapping.every((result) => result.ok)).toBe(true);
+
+      const retry = await createProjectFolders({ homePath }).createFolder(request);
+      expect(retry).toMatchObject({ ok: true, status: 200, path: "code/new-project" });
+    });
+
+    it("reconciles overlapping idempotent mkdir requests", async () => {
+      await mkdir(join(homePath, "code"), { recursive: true });
+      const firstManager = createProjectFolders({ homePath });
+      const secondManager = createProjectFolders({ homePath });
+      const request = {
+        name: "side-project",
+        parent: "code",
+        clientRequestId: "req_desktop_folder_overlap",
+        ownerScope: { type: "user" as const, id: "user_123" },
+      };
+
+      const [first, second] = await Promise.all([
+        firstManager.createFolder(request),
+        secondManager.createFolder(request),
+      ]);
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) throw new Error("expected idempotent folder creation");
+      expect(first.path).toBe("code/side-project");
+      expect(second.path).toBe(first.path);
     });
 
     it("allows a safe child beside a denied subtree", async () => {

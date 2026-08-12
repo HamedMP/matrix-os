@@ -39,8 +39,8 @@ Status: `201 Created`
   "assets": [
     {
       "assetId": "paste_01H...",
-      "path": "/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/paste_01H.png",
-      "homeRelativePath": "projects/.matrix-terminal-pastes/main/2026-07-08/paste_01H.png",
+      "path": "/home/matrix/home/temporary/terminal-pastes/2026-07-08/paste_01H.png",
+      "homeRelativePath": "temporary/terminal-pastes/2026-07-08/paste_01H.png",
       "mimeType": "image/png",
       "size": 184203
     }
@@ -79,9 +79,9 @@ Server logs may include diagnostics, but client responses must remain generic.
 
 ## Storage Contract
 
-- Destination root: `projects/.matrix-terminal-pastes/`.
-- Session segment: sanitized terminal session name.
+- Destination root: `temporary/terminal-pastes/`.
 - Date segment: UTC date.
 - Filename: server-generated ID plus extension derived from validated image type.
 - Write policy: exclusive temp create, write, chmod, atomic rename.
-- Cleanup: recurring, symlink-safe pruning by max age and max count.
+- Cleanup: not automatic in the current contract; bounded, symlink-safe pruning is
+  deferred to `MAT-269`.

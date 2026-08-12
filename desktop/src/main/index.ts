@@ -25,6 +25,13 @@ import {
   updateCodingAgentNotificationPreferences,
 } from "./coding-agents/runtime-summary-client";
 import { createCodingAgentThreadEventStreamer } from "./coding-agents/thread-event-stream";
+import {
+  fetchHermesConfiguration,
+  fetchHermesEnvironment,
+  removeHermesCredential,
+  setHermesCredential,
+  updateHermesConfiguration,
+} from "./hermes/configuration-client";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
@@ -282,6 +289,11 @@ if (!gotLock) {
         fetchProjectWorkspace: (request) => fetchCodingAgentProjectWorkspace(auth, request),
         fetchNotificationPreferences: () => fetchCodingAgentNotificationPreferences(auth),
         updateNotificationPreferences: (request) => updateCodingAgentNotificationPreferences(auth, request),
+        fetchHermesConfiguration: () => fetchHermesConfiguration(auth),
+        fetchHermesEnvironment: () => fetchHermesEnvironment(auth),
+        updateHermesConfiguration: (request) => updateHermesConfiguration(auth, request),
+        setHermesCredential: (request) => setHermesCredential(auth, request),
+        removeHermesCredential: (request) => removeHermesCredential(auth, request),
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
         fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
         fetchFileBrowse: (request) => fetchCodingAgentFileBrowse(auth, request),

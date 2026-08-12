@@ -1,7 +1,8 @@
 // Single source of truth for the renderer ↔ trusted-core IPC contract
 // (specs/094-electron-macos-shell/contracts/ipc-contract.md). Both main and
 // preload import this module; every channel is validated on both sides
-// (FR-081). The credential never appears in any schema.
+// (FR-081). The bearer credential never appears in any schema; Hermes provider
+// credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
 import {
   ApprovalDecisionRequestSchema,
@@ -23,6 +24,11 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  HermesConfigurationChangeRequestSchema,
+  HermesConfigurationSchema,
+  HermesCredentialRemoveRequestSchema,
+  HermesCredentialSetRequestSchema,
+  HermesEnvironmentSchema,
   ProjectAgentWorkspaceSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -50,6 +56,7 @@ import {
 const Empty = z.object({}).strict();
 
 const Ok = z.object({ ok: z.boolean() }).strict();
+const HermesOk = z.object({ ok: z.literal(true) }).strict();
 const CodingAgentCreateTurnRequestSchema = CreateAgentTurnRequestSchema.extend({
   threadId: ThreadIdSchema,
 }).strict();
@@ -172,6 +179,26 @@ export const INVOKE_CHANNELS = {
   "runtime:update-notification-preferences": {
     request: CodingAgentNotificationPreferencesUpdateSchema,
     response: CodingAgentNotificationPreferencesSchema,
+  },
+  "runtime:get-hermes-configuration": {
+    request: Empty,
+    response: HermesConfigurationSchema,
+  },
+  "runtime:get-hermes-environment": {
+    request: Empty,
+    response: HermesEnvironmentSchema,
+  },
+  "runtime:update-hermes-configuration": {
+    request: HermesConfigurationChangeRequestSchema,
+    response: HermesOk,
+  },
+  "runtime:set-hermes-credential": {
+    request: HermesCredentialSetRequestSchema,
+    response: HermesOk,
+  },
+  "runtime:remove-hermes-credential": {
+    request: HermesCredentialRemoveRequestSchema,
+    response: HermesOk,
   },
   "runtime:get-reviews": {
     request: z.object({ cursor: CursorSchema.optional() }).strict(),

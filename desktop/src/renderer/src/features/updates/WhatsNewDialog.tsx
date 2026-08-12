@@ -26,7 +26,7 @@ export default function WhatsNewDialog() {
   const date = releaseDateLabel(release.releaseDate);
 
   return (
-    <Dialog open={open} onClose={close} width={860} top="8vh">
+    <Dialog open={open} onClose={close} width={860} title="What's New" top="8vh">
       <div
         className="flex flex-col overflow-hidden"
         style={{ height: "min(76vh, 680px)", minHeight: "min(520px, 84vh)" }}

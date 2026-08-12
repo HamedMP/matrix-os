@@ -7,7 +7,7 @@ import { KeyRound, Radio, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, StatusDot } from "../../../design/primitives";
 import { normalizeAgentConfig } from "../../../lib/agent-config";
-import { toUserMessage } from "../../../lib/errors";
+import { AppError, diagnosticErrorKind, toUserMessage } from "../../../lib/errors";
 import { useConnection } from "../../../stores/connection";
 import { useTabs } from "../../../stores/tabs";
 import {
@@ -15,12 +15,14 @@ import {
   type ProviderSetupCommand,
 } from "../../coding-agents/provider-setup-terminal";
 import { Card, Empty } from "./section-kit";
+import { HermesConfigurationDialog } from "../hermes/HermesConfigurationDialog";
 
 const AGENT_PATH = "/api/settings/agent";
 const API_KEY_PATH = "/api/settings/api-key";
 const LOAD_ERROR = "Agent runtime settings are unavailable.";
 const UPDATE_ERROR = "Agent settings could not be updated.";
 const SETUP_ERROR = "Could not open setup terminal. Try again from Terminal.";
+const AGENT_RUNTIME_MUTATION_TIMEOUT_MS = 90_000;
 
 const RUNTIME_SETUP: Record<AgentRuntimeId, ProviderSetupCommand> = {
   hermes: {
@@ -229,12 +231,12 @@ function MessagingProvider({
   view,
   busy,
   onSave,
-  onOpenSetup,
+  onConfigure,
 }: {
   view: AgentSettingsView;
   busy: boolean;
   onSave: (provider: string, model: string) => void;
-  onOpenSetup: (setup: ProviderSetupCommand) => Promise<void>;
+  onConfigure: (runtime: AgentRuntimeId) => void;
 }) {
   const providers = useMemo(() => view.providers.filter((candidate) =>
     candidate.runtime === view.runtime.selected && candidate.scopes.includes("messaging")), [view]);
@@ -296,7 +298,7 @@ function MessagingProvider({
         <Button
           variant="subtle"
           aria-label={`Configure ${statusLabel(view.runtime.selected)} provider`}
-          onClick={() => void onOpenSetup(RUNTIME_SETUP[view.runtime.selected])}
+          onClick={() => onConfigure(view.runtime.selected)}
         >
           <SquareTerminal size={13} />Configure
         </Button>
@@ -314,12 +316,19 @@ function MessagingProvider({
 
 export default function AgentRuntimeSettingsCard() {
   const api = useConnection((state) => state.api);
+  const handle = useConnection((state) => state.handle);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const openTab = useTabs((state) => state.openTab);
   const [view, setView] = useState<AgentSettingsView | null>(null);
   const [legacy, setLegacy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hermesOpen, setHermesOpen] = useState(false);
+
+  useEffect(() => {
+    setHermesOpen(false);
+  }, [handle, runtimeSlot]);
 
   const load = async () => {
     if (!api) return;
@@ -360,13 +369,34 @@ export default function AgentRuntimeSettingsCard() {
 
   const mutate = async (body: Record<string, unknown>) => {
     if (!api) return;
+    const targetRuntime: AgentRuntimeId | null =
+      body.runtime === "hermes" || body.runtime === "openclaw" ? body.runtime : null;
     setBusy(true);
     setError(null);
     try {
       let raw: unknown;
       try {
-        raw = await api.put<unknown>(AGENT_PATH, body);
+        raw = targetRuntime
+          ? await api.put<unknown>(AGENT_PATH, body, {
+              timeoutMs: AGENT_RUNTIME_MUTATION_TIMEOUT_MS,
+            })
+          : await api.put<unknown>(AGENT_PATH, body);
       } catch (mutationError: unknown) {
+        if (targetRuntime && mutationError instanceof AppError && mutationError.category === "timeout") {
+          try {
+            const config = normalizeAgentConfig(await api.get<unknown>(AGENT_PATH));
+            if (config.extended?.runtime.selected === targetRuntime) {
+              setView(config.extended);
+              setLegacy(config.runtimeUpdateRequired);
+              return;
+            }
+          } catch (reconciliationError: unknown) {
+            console.warn(
+              "[settings] Failed to reconcile runtime after timeout:",
+              diagnosticErrorKind(reconciliationError),
+            );
+          }
+        }
         setError(toUserMessage(mutationError) || UPDATE_ERROR);
         return;
       }
@@ -430,6 +460,7 @@ export default function AgentRuntimeSettingsCard() {
   if (!view) return <Card><Empty text={error ?? LOAD_ERROR} /></Card>;
 
   return (
+    <>
     <Card>
       <div className="flex items-start gap-2">
         <Radio size={15} style={{ color: "var(--accent)" }} />
@@ -457,7 +488,10 @@ export default function AgentRuntimeSettingsCard() {
           key={`${view.revision}:${view.runtime.selected}`}
           view={view}
           busy={busy}
-          onOpenSetup={openSetup}
+          onConfigure={(runtime) => {
+            if (runtime === "hermes") setHermesOpen(true);
+            else void openSetup(RUNTIME_SETUP[runtime]);
+          }}
           onSave={(provider, messagingModel) => void mutate({
             provider,
             messagingModel,
@@ -466,5 +500,22 @@ export default function AgentRuntimeSettingsCard() {
         />
       </div>
     </Card>
+    <HermesConfigurationDialog
+      key={`${handle ?? "signed-out"}:${runtimeSlot}`}
+      open={hermesOpen}
+      version={view.runtime.options.find((runtime) => runtime.id === "hermes")?.version}
+      onClose={() => setHermesOpen(false)}
+      onOpenSetupTerminal={() => {
+        setHermesOpen(false);
+        return openSetup(RUNTIME_SETUP.hermes);
+      }}
+      onConfigurationChanged={() => {
+        void load().catch((loadError: unknown) => {
+          console.warn("Hermes provider status refresh failed", loadError instanceof Error ? loadError.name : "UnknownError");
+          setError(LOAD_ERROR);
+        });
+      }}
+    />
+    </>
   );
 }

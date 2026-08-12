@@ -1,6 +1,6 @@
 # Release Process
 
-Matrix OS production releases are VPS-native host bundles. R2 stores immutable tarball bytes, and platform Postgres is the source of truth for release metadata and channel pointers. Customer VPSes update by downloading a registered bundle and atomically replacing `/opt/matrix/app`; user data stays in `/home/matrix/home` and local Postgres.
+Matrix OS production releases are VPS-native host bundles. R2 stores immutable tarball bytes, and platform Postgres is the source of truth for release metadata and channel pointers. Customer VPSes update by downloading a registered bundle and atomically replacing `/opt/matrix/app`; user data stays in `/home/matrix/home` and local Postgres. If the first bounded full-bundle transfer fails, the sync agent refreshes the exact immutable release metadata, requires the same version, checksum, and size, and resumes the partial file once through a fresh signed URL. Production acceptance bounds the complete apply separately so checksum verification, extraction, immutable runtime installation, and app replacement have explicit time after the transfer bound.
 
 For installable CLI releases, use [CLI Release Process](cli-release.md). CLI versions publish `@finnaai/matrix` and use `cli-v<version>` tags; they are intentionally separate from host-bundle versions.
 

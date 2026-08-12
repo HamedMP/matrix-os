@@ -3,7 +3,8 @@
 ## Source of truth
 
 - Local files and macOS clipboard bytes are read only by the local CLI during an observed paste transaction.
-- Remote paste assets are owner-controlled files under `~/projects/.matrix-terminal-pastes/` in the authenticated Matrix home.
+- Remote paste assets are owner-controlled files under
+  `~/temporary/terminal-pastes/` in the authenticated Matrix home.
 - No database or platform-owned object store is added for paste assets.
 
 ## Lock/Transaction Scope
@@ -14,8 +15,11 @@
 
 ## Acceptable Orphan States
 
-- If one asset write succeeds and a later write fails, the completed file may remain under `.matrix-terminal-pastes/`.
-- Orphaned paste files are acceptable because they are owner-visible temporary files and are pruned by max-age and max-count cleanup.
+- If one asset write succeeds and a later write fails, the completed file may remain
+  under `~/temporary/terminal-pastes/`.
+- Orphaned paste files are acceptable because they remain visible owner data. The
+  current contract does not delete them automatically; bounded cleanup is deferred to
+  `MAT-269`.
 - Failed local validation or upload returns local feedback and forwards no detected local image path.
 
 ## Auth Source of Truth
@@ -29,10 +33,12 @@
 - Mutating paste asset upload uses Hono `bodyLimit` before multipart parsing.
 - A paste transaction accepts at most five images.
 - Each image is capped at 10 MB and must match a supported image signature.
-- Cleanup skips symlinks with `lstat()` and clears its recurring timer on gateway shutdown.
+- Any future cleanup must skip symlinks with `lstat()`, stay confined to
+  `~/temporary/`, and clear its recurring timer on gateway shutdown (`MAT-269`).
 
 ## Deferred Scope
 
 - Browser shell and mobile rich image paste are not included.
 - Terminals that emit no stdin bytes and no bracketed paste boundary cannot trigger image-only clipboard upload.
 - Clipboard image reading is macOS best-effort through `pngpaste`; no global clipboard polling or keyboard hooks are added.
+- Automatic retention and deletion for `~/temporary/` is deferred to `MAT-269`.

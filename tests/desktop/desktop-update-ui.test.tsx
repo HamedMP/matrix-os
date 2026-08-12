@@ -147,7 +147,11 @@ describe("desktop update experience", () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByRole("heading", { name: "What's New" })).toBeTruthy();
+    const dialog = screen.getByRole("dialog", { name: "What's New" });
+    expect(dialog.style.top).toBe("8vh");
+    expect(dialog.style.maxWidth).toBe("calc(100vw - 32px)");
+    expect(dialog.className).toContain("-translate-x-1/2");
+    expect(screen.getByRole("heading", { name: "What's New", level: 1 })).toBeTruthy();
     expect(screen.getByText("v1.2.3")).toBeTruthy();
     expect(screen.getByText("Latest")).toBeTruthy();
     expect(screen.getByText("Faster project loading")).toBeTruthy();

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 3 ]; then
+  echo "matrix-terminal-generation-id: expected three runtime assets" >&2
+  exit 2
+fi
+
+for asset in "$@"; do
+  [ -f "$asset" ] && [ ! -L "$asset" ] || {
+    echo "matrix-terminal-generation-id: invalid runtime asset" >&2
+    exit 1
+  }
+done
+
+{
+  for asset in "$@"; do
+    sha256sum "$asset" | awk '{print $1}'
+  done
+} | sha256sum | awk '{print "gen_" $1}'

@@ -76,7 +76,8 @@ Represents a copied image inside the user's Matrix environment.
 **Validation rules**:
 
 - Filename is generated server-side and must not include local path fragments.
-- Path must stay under `projects/.matrix-terminal-pastes/`.
+- Path must stay under `temporary/terminal-pastes/` in the authenticated owner's
+  Matrix home.
 - Writes must be atomic and exclusive.
 - Assets are owned by the authenticated Matrix user.
 
@@ -100,9 +101,11 @@ collecting -> validating -> failed
 collecting -> validating -> uploading -> failed
 ```
 
-## PasteAssetCleanupPolicy
+## PasteAssetCleanupPolicy (Deferred)
 
-Represents retention limits for remote paste assets.
+Represents the planned retention limits for remote paste assets. The current upload
+contract does not delete files automatically; Linear issue `MAT-269` owns this
+follow-up.
 
 **Fields**:
 
@@ -112,7 +115,7 @@ Represents retention limits for remote paste assets.
 
 **Validation rules**:
 
-- Cleanup must use `lstat()` and skip symlinks.
-- Cleanup must only operate under the paste asset directory.
-- Cleanup must run at startup or first use and recur while the gateway is alive.
-- Shutdown must clear cleanup timers.
+- A future cleanup implementation must use `lstat()` and skip symlinks.
+- A future cleanup implementation must only operate under `~/temporary/`.
+- A future cleanup implementation must run on a bounded recurring schedule.
+- Gateway shutdown must clear any future cleanup timers.

@@ -6,7 +6,13 @@ import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { CloneStepFields, ExistingFolderStepFields, NewFolderStepFields } from "./AddProjectStepFields";
-import { submitClone, submitExistingFolder, submitNewFolder } from "./add-project-submit";
+import {
+  openExistingProject,
+  submitClone,
+  submitExistingFolder,
+  submitNewFolder,
+  type AddProjectSubmitContext,
+} from "./add-project-submit";
 import {
   isValidBranchName,
   isValidProjectSlug,
@@ -65,6 +71,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const createProject = useBoard((s) => s.createProject);
   const selectProject = useBoard((s) => s.selectProject);
   const loadProjects = useBoard((s) => s.loadProjects);
+  const projects = useBoard((s) => s.projects);
   const openTab = useTabs((s) => s.openTab);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const authGeneration = useConnection((s) => s.authGeneration);
@@ -87,6 +94,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cloneRequestId] = useState(() => `req_${crypto.randomUUID()}`);
+  const folderRequestRef = useRef<{ payload: string; id: string } | null>(null);
   const dialogClosedRef = useRef(false);
   const dialogGenerationRef = useRef(0);
   // Latest runtime identity. A submission captures the identity it was sent to
@@ -174,17 +182,8 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     return false;
   })();
 
-  const submit = async () => {
-    if (!api || step === "pick" || !canSubmit || submitting) return;
-    if (step === "github") {
-      setUrlAttempted(true);
-      setBranchAttempted(true);
-      if (!parsedUrl || branchInvalid || !isValidProjectSlug(effectiveFolderName)) return;
-    }
-    if (step === "scratch" && slugifyProjectName(name.trim()).length === 0) {
-      setError("Use at least one letter or number in the name.");
-      return;
-    }
+  const beginSubmission = (): { ctx: AddProjectSubmitContext; isCurrent: () => boolean } | null => {
+    if (!api || submitting) return null;
     const submitGeneration = dialogGenerationRef.current;
     const submitRuntimeSlot = runtimeSlot;
     const submitAuthGeneration = authGeneration;
@@ -195,18 +194,47 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       && dialogGenerationRef.current === submitGeneration
       && runtimeIdentityRef.current.runtimeSlot === submitRuntimeSlot
       && runtimeIdentityRef.current.authGeneration === submitAuthGeneration;
-    const ctx = {
-      api,
-      runtimeSlot,
-      createProject,
-      selectProject,
-      loadProjects,
-      openTab,
+    return {
       isCurrent,
-      setError,
-      close: closeFromUser,
+      ctx: {
+        api,
+        runtimeSlot,
+        getProjects: () => useBoard.getState().projects,
+        createProject,
+        selectProject,
+        loadProjects,
+        openTab,
+        isCurrent,
+        setError,
+        close: closeFromUser,
+      },
     };
+  };
+
+  const runSubmission = async (action: (ctx: AddProjectSubmitContext) => Promise<void>) => {
+    const submission = beginSubmission();
+    if (!submission) return;
     try {
+      await action(submission.ctx);
+    } catch (err: unknown) {
+      if (submission.isCurrent()) setError(toUserMessage(err));
+    } finally {
+      if (submission.isCurrent()) setActiveSubmission(null);
+    }
+  };
+
+  const submit = async () => {
+    if (step === "pick" || !canSubmit || submitting) return;
+    if (step === "github") {
+      setUrlAttempted(true);
+      setBranchAttempted(true);
+      if (!parsedUrl || branchInvalid || !isValidProjectSlug(effectiveFolderName)) return;
+    }
+    if (step === "scratch" && slugifyProjectName(name.trim()).length === 0) {
+      setError("Use at least one letter or number in the name.");
+      return;
+    }
+    await runSubmission(async (ctx) => {
       if (step === "folder") {
         await submitExistingFolder(ctx, { name: name.trim(), path: folderPath });
       } else if (step === "github") {
@@ -217,13 +245,20 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
           clientRequestId: cloneRequestId,
         });
       } else {
-        await submitNewFolder(ctx, { name: name.trim(), parentPath });
+        const folderPayload = JSON.stringify({ name: name.trim(), parentPath });
+        if (folderRequestRef.current?.payload !== folderPayload) {
+          folderRequestRef.current = {
+            payload: folderPayload,
+            id: `req_desktop_folder_${crypto.randomUUID()}`,
+          };
+        }
+        await submitNewFolder(ctx, {
+          name: name.trim(),
+          parentPath,
+          clientRequestId: folderRequestRef.current.id,
+        });
       }
-    } catch (err: unknown) {
-      if (isCurrent()) setError(toUserMessage(err));
-    } finally {
-      if (isCurrent()) setActiveSubmission(null);
-    }
+    });
   };
 
   const submitLabel = step === "github" ? (submitting ? "Cloning…" : "Clone") : submitting ? "Creating…" : "Create";
@@ -313,7 +348,9 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
             setNameTouched(true);
           }}
           folderPath={folderPath}
+          projects={projects}
           onChooseFolder={chooseFolder}
+          onOpenProject={(slug) => void runSubmission((ctx) => openExistingProject(ctx, slug))}
           submitting={submitting}
         />
       ) : null}

@@ -274,7 +274,7 @@ describe("gateway shell routes", () => {
     expect(commandRunner.run).toHaveBeenCalledWith({ command: ["ls"], cwd: "projects/app" });
   });
 
-  it("uploads pasted terminal image assets into the project-local paste directory", async () => {
+  it("uploads pasted terminal image assets into the owner temporary directory", async () => {
     const root = await tempRoot();
     await mkdir(join(root, "projects", "app"), { recursive: true });
     const registry = {
@@ -305,7 +305,8 @@ describe("gateway shell routes", () => {
       size: PNG_BYTES.length,
       mimeType: "image/png",
     });
-    expect(body.path).toMatch(/^projects\/app\/\.matrix-terminal-pastes\/\d{4}-\d{2}-\d{2}\//);
+    expect(body.path).toMatch(/^temporary\/terminal-pastes\/\d{4}-\d{2}-\d{2}\//);
+    expect(body.path).not.toContain("projects/app");
     expect(body.path.endsWith(".png")).toBe(true);
     expect(body.terminalPath).toBe(join(root, body.path));
     await expect(readFile(body.terminalPath)).resolves.toEqual(Buffer.from(PNG_BYTES));

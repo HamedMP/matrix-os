@@ -6,6 +6,7 @@ import {
   CheckCircle2Icon,
   KeyRoundIcon,
   LoaderCircleIcon,
+  RefreshCwIcon,
   RotateCcwIcon,
   SearchIcon,
   Settings2Icon,
@@ -113,17 +114,28 @@ async function attemptCredentialMutation(operation: () => Promise<void>, action:
   }
 }
 
+async function readHermesConfigurationData() {
+  try {
+    const [configuration, environment] = await Promise.all([
+      loadHermesConfiguration(),
+      loadHermesEnvironment(),
+    ]);
+    return { ok: true as const, configuration, environment };
+  } catch (error) {
+    return { ok: false as const, error };
+  }
+}
+
 function configurationCategories(configuration: HermesConfiguration | null) {
   if (!configuration) return [];
   // Bounded by the gateway's 1,024-field schema cap.
-  const counts = new Map<string, number>();
+  const counts: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const field of Object.values(configuration.fields)) {
-    counts.set(field.category, (counts.get(field.category) ?? 0) + 1);
+    counts[field.category] = (counts[field.category] ?? 0) + 1;
   }
-  const ordered = configuration.categoryOrder.filter((entry) => counts.has(entry));
-  const orderedSet = new Set(ordered);
-  const remaining = [...counts.keys()].filter((entry) => !orderedSet.has(entry)).sort();
-  return [...ordered, ...remaining].map((id) => ({ id, count: counts.get(id) ?? 0 }));
+  const ordered = configuration.categoryOrder.filter((entry) => counts[entry] !== undefined);
+  const remaining = Object.keys(counts).filter((entry) => !ordered.includes(entry)).sort();
+  return [...ordered, ...remaining].map((id) => ({ id, count: counts[id] ?? 0 }));
 }
 
 function matchingConfigurationFields(configuration: HermesConfiguration | null, search: string, category: string) {
@@ -423,11 +435,14 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
   const [tab, setTab] = useState("settings");
   const [loading, setLoading] = useState(open);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [confirmation, setConfirmation] = useState<"refresh" | "close" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [previousOpen, setPreviousOpen] = useState(open);
   const hasLoadedConfiguration = useRef(false);
   const environmentRevision = useRef(0);
+  const configurationRevision = useRef(0);
   const pendingConfigValues = useRef<Record<string, HermesConfigValue>>({});
   const latestConfiguration = useRef(configuration);
   latestConfiguration.current = configuration;
@@ -468,35 +483,54 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
     }
   };
 
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
+  const loadData = async (discardDrafts: boolean, mode: "initial" | "refresh") => {
+    const revision = configurationRevision.current + 1;
+    configurationRevision.current = revision;
+    if (mode === "initial") setLoading(true);
+    else setRefreshing(true);
+    setError(null);
     const environmentReadRevision = environmentRevision.current;
-    void Promise.all([loadHermesConfiguration(), loadHermesEnvironment()]).then(([nextConfig, nextEnv]) => {
-      if (cancelled) return;
-      setConfiguration(nextConfig);
-      if (environmentReadRevision === environmentRevision.current) setEnvironment(nextEnv);
-      setDrafts((current) => Object.fromEntries(
-        Object.entries(current).filter(([path]) => Object.hasOwn(nextConfig.fields, path)),
+    const result = await readHermesConfigurationData();
+    if (revision !== configurationRevision.current) return;
+    if (result.ok) {
+      setConfiguration(result.configuration);
+      if (environmentReadRevision === environmentRevision.current) setEnvironment(result.environment);
+      setDrafts((current) => discardDrafts ? {} : Object.fromEntries(
+        Object.entries(current).filter(([path]) => Object.hasOwn(result.configuration.fields, path)),
       ));
-      setInvalidFields((current) => Object.fromEntries(
-        Object.entries(current).filter(([path]) => Object.hasOwn(nextConfig.fields, path)),
+      setInvalidFields((current) => discardDrafts ? {} : Object.fromEntries(
+        Object.entries(current).filter(([path]) => Object.hasOwn(result.configuration.fields, path)),
       ));
-      setFieldTexts((current) => Object.fromEntries(
-        Object.entries(current).filter(([path]) => Object.hasOwn(nextConfig.fields, path)),
+      setFieldTexts((current) => discardDrafts ? {} : Object.fromEntries(
+        Object.entries(current).filter(([path]) => Object.hasOwn(result.configuration.fields, path)),
       ));
+      setNotice(null);
       if (!hasLoadedConfiguration.current) {
         hasLoadedConfiguration.current = true;
-        setCategory(nextConfig.categoryOrder[0] ?? Object.values(nextConfig.fields)[0]?.category ?? "general");
+        setCategory(result.configuration.categoryOrder[0]
+          ?? Object.values(result.configuration.fields)[0]?.category
+          ?? "general");
       }
-    }).catch((loadError: unknown) => {
-      if (!cancelled) setError(loadError instanceof HermesConfigurationError ? loadError.message : "Hermes configuration is unavailable.");
-    }).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
+    } else {
+      console.warn("Hermes configuration refresh failed", result.error instanceof Error ? result.error.name : "UnknownError");
+      setError(result.error instanceof HermesConfigurationError ? result.error.message : "Hermes configuration is unavailable.");
+    }
+    setLoading(false);
+    setRefreshing(false);
+  };
+
+  useEffect(() => {
+    if (!open) {
+      configurationRevision.current += 1;
+      return;
+    }
+    void loadData(false, "initial");
     return () => {
-      cancelled = true;
+      configurationRevision.current += 1;
     };
+    // Opening is the only automatic load. Explicit refreshes call loadData
+    // directly and use the request revision to reject stale responses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const categories = configurationCategories(configuration);
@@ -504,6 +538,23 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
   const visibleCredentials = matchingCredentials(environment, credentialSearch);
   const invalidFieldCount = Object.keys(invalidFields).length;
   const draftCount = Object.keys(drafts).length;
+
+  const requestRefresh = () => {
+    if (draftCount > 0 || invalidFieldCount > 0) setConfirmation("refresh");
+    else void loadData(true, "refresh");
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) {
+      onOpenChange(true);
+      return;
+    }
+    if (draftCount > 0 || invalidFieldCount > 0) {
+      setConfirmation("close");
+      return;
+    }
+    onOpenChange(false);
+  };
 
   const save = async () => {
     if (!configuration || invalidFieldCount > 0) return;
@@ -564,7 +615,7 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className="flex h-[min(86vh,820px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl"
         style={{ zIndex: SHELL_Z_INDEX.popover }}
@@ -580,7 +631,19 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
                 A friendly control center generated from the exact Hermes version installed on this computer.
               </DialogDescription>
             </div>
-            {version && <Badge variant="outline">Version {version}</Badge>}
+            <div className="flex items-center gap-2">
+              {version && <Badge variant="outline">Version {version}</Badge>}
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Refresh Hermes configuration"
+                disabled={loading || refreshing}
+                onClick={requestRefresh}
+              >
+                <RefreshCwIcon className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </Button>
+            </div>
           </div>
         </DialogHeader>
 
@@ -775,6 +838,49 @@ export function HermesConfigurationDialog({ open, onOpenChange, version }: Herme
             </TabsContent>
           </Tabs>
         ) : null}
+        <Dialog open={confirmation !== null} onOpenChange={(nextOpen) => {
+          if (!nextOpen) setConfirmation(null);
+        }}>
+          {confirmation && (
+            <DialogContent
+              role="alertdialog"
+              showCloseButton={false}
+              className="max-w-sm gap-0 p-5"
+              style={{ zIndex: SHELL_Z_INDEX.popover }}
+              overlayStyle={{ zIndex: SHELL_Z_INDEX.popover }}
+            >
+              <DialogTitle className="text-sm">
+                {confirmation === "refresh"
+                  ? "Discard unsaved changes and refresh?"
+                  : "Discard unsaved changes and close?"}
+              </DialogTitle>
+              <DialogDescription className="mt-2 text-xs">
+                Your unsaved Hermes setting changes will be lost.
+              </DialogDescription>
+              <div className="mt-4 flex justify-end gap-2">
+                <Button size="sm" variant="outline" onClick={() => setConfirmation(null)}>Cancel</Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => {
+                    const action = confirmation;
+                    setConfirmation(null);
+                    if (action === "refresh") {
+                      void loadData(true, "refresh");
+                    } else {
+                      setDrafts({});
+                      setInvalidFields({});
+                      setFieldTexts({});
+                      onOpenChange(false);
+                    }
+                  }}
+                >
+                  {confirmation === "refresh" ? "Discard and refresh" : "Discard and close"}
+                </Button>
+              </div>
+            </DialogContent>
+          )}
+        </Dialog>
       </DialogContent>
     </Dialog>
   );

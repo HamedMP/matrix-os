@@ -41,6 +41,11 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
     acknowledgeWhatsNew: vi.fn(async () => undefined),
     fetchRuntimeSummary: vi.fn(),
+    fetchHermesConfiguration: vi.fn(),
+    fetchHermesEnvironment: vi.fn(),
+    updateHermesConfiguration: vi.fn(),
+    setHermesCredential: vi.fn(),
+    removeHermesCredential: vi.fn(),
     fetchProjectWorkspace: vi.fn(),
     fetchReviewSummaries: vi.fn(),
     fetchReviewSnapshot: vi.fn(),
@@ -226,6 +231,58 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-summary")).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-summary")).rejects.not.toThrow("10.0.0.5");
+  });
+
+  it("routes Hermes setup through strict trusted-core IPC handlers", async () => {
+    const configuration = {
+      config: {},
+      defaults: {},
+      fields: {},
+      categoryOrder: [],
+    };
+    const environment = {
+      OPENAI_API_KEY: {
+        is_set: false,
+        description: "OpenAI API key",
+        category: "Providers",
+        is_password: true,
+        tools: ["hermes"],
+        advanced: false,
+        channel_managed: false,
+        provider: "openai",
+        provider_label: "OpenAI",
+      },
+    };
+    const handlers = {
+      fetchHermesConfiguration: vi.fn().mockResolvedValue(configuration),
+      fetchHermesEnvironment: vi.fn().mockResolvedValue(environment),
+      updateHermesConfiguration: vi.fn().mockResolvedValue({ ok: true }),
+      setHermesCredential: vi.fn().mockResolvedValue({ ok: true }),
+      removeHermesCredential: vi.fn().mockResolvedValue({ ok: true }),
+    };
+    const harness = makeHarness(handlers as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-hermes-configuration")).resolves.toEqual(configuration);
+    await expect(harness.invoke("runtime:get-hermes-environment")).resolves.toEqual(environment);
+    await expect(harness.invoke("runtime:update-hermes-configuration", {
+      changes: [{ path: "general.model", value: "openai/gpt-5" }],
+    })).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("runtime:set-hermes-credential", {
+      key: "OPENAI_API_KEY",
+      value: "secret",
+    })).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("runtime:remove-hermes-credential", {
+      key: "OPENAI_API_KEY",
+    })).resolves.toEqual({ ok: true });
+    expect(handlers.setHermesCredential).toHaveBeenCalledWith({
+      key: "OPENAI_API_KEY",
+      value: "secret",
+    });
+    await expect(harness.invoke("runtime:set-hermes-credential", {
+      key: "OPENAI_API_KEY",
+      value: "secret",
+      bearerToken: "leak",
+    })).rejects.toThrow("invalid request");
   });
 
   it("DT-001 returns a project workspace through strict trusted-core IPC", async () => {

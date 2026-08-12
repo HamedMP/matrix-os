@@ -21,6 +21,7 @@ readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
 readonly UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
 readonly UPDATE_VERSION_FILE="$APP_DIR/.update-version"
 readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"
+readonly UPDATE_PHASE_MARKER="$STAGING_DIR/update-phase"
 readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"
 readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
 readonly HEALTH_URL="http://127.0.0.1:4000/health"
@@ -32,6 +33,9 @@ readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
 readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
 readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
 readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
+readonly TERMINAL_RUNTIME_ROOT="/opt/matrix/terminal-runtime"
+readonly TERMINAL_RUNTIME_GENERATION_FILE="TERMINAL_RUNTIME_GENERATION"
+readonly TERMINAL_RUNTIME_MAX_GENERATIONS="${MATRIX_TERMINAL_RUNTIME_MAX_GENERATIONS:-8}"
 # Keys this agent owns and rewrites on every sync from platform-provided values.
 # Any other key in symphony.env (e.g. an operator-set SYMPHONY_LINEAR_PROJECT_SLUG)
 # is preserved across updates instead of being wiped.
@@ -83,6 +87,51 @@ write_symphony_env() {
   rm -f "$temp_file"
   return "$status"
 }
+
+install_host_bin_payload() {
+  local source_dir="$1" source name incoming destination
+  [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
+  sudo install -d -o root -g root -m 0755 "$BIN_DIR" || return 1
+  while IFS= read -r -d '' source; do
+    name="${source##*/}"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 1
+    incoming="$BIN_DIR/.${name}.incoming.$$"
+    destination="$BIN_DIR/$name"
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid installed host-bin destination for $name"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0755 "$source" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+  done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+}
+
+install_terminal_runtime_bootstrap_helpers() {
+  local source_dir="$1" name source incoming destination
+  [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
+  sudo install -d -o root -g root -m 0755 "$BIN_DIR" || return 1
+  for name in matrix-terminal-generation-id matrix-terminal-generation-gc.py; do
+    source="$source_dir/$name"
+    incoming="$BIN_DIR/.${name}.incoming.$$"
+    destination="$BIN_DIR/$name"
+    [ -f "$source" ] && [ ! -L "$source" ] || return 1
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid installed terminal helper destination for $name"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0755 "$source" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+  done
+}
+
 default_update_channel() {
   local channel="${MATRIX_UPDATE_CHANNEL:-}"
   case "$channel" in
@@ -131,9 +180,133 @@ else:
 PY
 }
 
+terminal_runtime_generation_for_dir() {
+  local generation_dir="$1"
+  [ -d "$generation_dir" ] && [ ! -L "$generation_dir" ] || return 1
+  [ -f "$BIN_DIR/matrix-terminal-generation-id" ] &&
+    [ ! -L "$BIN_DIR/matrix-terminal-generation-id" ] &&
+    [ -x "$BIN_DIR/matrix-terminal-generation-id" ] || return 1
+  [ -f "$generation_dir/zellij" ] && [ ! -L "$generation_dir/zellij" ] || return 1
+  [ -f "$generation_dir/matrix-terminal-user-keeper.mjs" ] && [ ! -L "$generation_dir/matrix-terminal-user-keeper.mjs" ] || return 1
+  [ -f "$generation_dir/matrix-terminal-attach.mjs" ] && [ ! -L "$generation_dir/matrix-terminal-attach.mjs" ] || return 1
+  "$BIN_DIR/matrix-terminal-generation-id" \
+    "$generation_dir/zellij" \
+    "$generation_dir/matrix-terminal-user-keeper.mjs" \
+    "$generation_dir/matrix-terminal-attach.mjs"
+}
+
+activate_terminal_runtime_generation() {
+  local generation="$1" generation_dir="$TERMINAL_RUNTIME_ROOT/generations/$1" link_tmp
+  [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || {
+    log "ERROR: invalid terminal runtime generation marker"
+    return 1
+  }
+  [ "$(terminal_runtime_generation_for_dir "$generation_dir")" = "$generation" ] || {
+    log "ERROR: terminal runtime generation verification failed"
+    return 1
+  }
+  link_tmp="$TERMINAL_RUNTIME_ROOT/.current.$$"
+  sudo rm -f -- "$link_tmp" || return 1
+  sudo ln -s "generations/$generation" "$link_tmp" || return 1
+  sudo mv -Tf "$link_tmp" "$TERMINAL_RUNTIME_ROOT/current" || return 1
+  sudo install -o root -g root -m 0755 \
+    "$generation_dir/matrix-terminal-attach.mjs" \
+    /usr/local/bin/matrix-terminal-attach || return 1
+}
+
+reload_terminal_user_manager() {
+  local matrix_uid
+  matrix_uid="$(id -u matrix)"
+  sudo -u matrix env \
+    HOME=/home/matrix/home \
+    XDG_RUNTIME_DIR="/run/user/$matrix_uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$matrix_uid/bus" \
+    /usr/bin/timeout --signal=KILL 30 /usr/bin/systemctl --user daemon-reload
+}
+
+cleanup_terminal_runtime_generations() {
+  local max_generations="$TERMINAL_RUNTIME_MAX_GENERATIONS" candidate installed_count removed
+  [ -f "$BIN_DIR/matrix-terminal-generation-gc.py" ] &&
+    [ ! -L "$BIN_DIR/matrix-terminal-generation-gc.py" ] || return 1
+  if [[ ! "$max_generations" =~ ^[0-9]+$ ]] || [ "$max_generations" -lt 2 ] || [ "$max_generations" -gt 32 ]; then
+    max_generations=8
+  fi
+  if ! removed="$(sudo python3 "$BIN_DIR/matrix-terminal-generation-gc.py" --delete \
+    "$TERMINAL_RUNTIME_ROOT" \
+    "/home/matrix/home/system/terminal-runtimes" \
+    "$APP_DIR" \
+    "$APP_DIR.rollback" \
+    "$max_generations")"; then
+    log "ERROR: terminal runtime generation cleanup failed closed"
+    return 1
+  fi
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    [[ "$candidate" =~ ^gen_[0-9a-f]{64}$ ]] || return 1
+    log "Removed unreferenced terminal runtime generation $candidate"
+  done <<< "$removed"
+  installed_count="$(find "$TERMINAL_RUNTIME_ROOT/generations" -mindepth 1 -maxdepth 1 -type d -name 'gen_*' -print 2>/dev/null | wc -l)"
+  if [ "$installed_count" -gt "$max_generations" ]; then
+    log "ERROR: terminal runtime generation cap reached by active or recoverable sessions"
+    return 1
+  fi
+}
+
+install_terminal_runtime_payload() {
+  local extract_dir="$1" generation source_dir destination_dir incoming_dir
+  [ -f "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE" ] || return 0
+  generation="$(cat "$extract_dir/app/$TERMINAL_RUNTIME_GENERATION_FILE")" || return 1
+  [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || {
+    log "ERROR: invalid terminal runtime generation in bundle"
+    return 1
+  }
+  source_dir="$extract_dir/terminal-runtime/generations/$generation"
+  [ "$(terminal_runtime_generation_for_dir "$source_dir")" = "$generation" ] || {
+    log "ERROR: bundled terminal runtime generation verification failed"
+    return 1
+  }
+
+  sudo install -d -o root -g root -m 0755 "$TERMINAL_RUNTIME_ROOT/generations" || return 1
+  destination_dir="$TERMINAL_RUNTIME_ROOT/generations/$generation"
+  if [ -e "$destination_dir" ]; then
+    [ ! -L "$destination_dir" ] && [ "$(terminal_runtime_generation_for_dir "$destination_dir")" = "$generation" ] || {
+      log "ERROR: installed terminal runtime generation is inconsistent"
+      return 1
+    }
+  else
+    incoming_dir="$TERMINAL_RUNTIME_ROOT/generations/.incoming-${generation}-$$"
+    sudo rm -rf -- "$incoming_dir"
+    if ! sudo cp -a "$source_dir" "$incoming_dir"; then
+      sudo rm -rf -- "$incoming_dir"
+      return 1
+    fi
+    if ! sudo chown -R root:root "$incoming_dir" \
+      || ! sudo chmod 0755 "$incoming_dir" "$incoming_dir/zellij" "$incoming_dir/matrix-terminal-user-keeper.mjs" "$incoming_dir/matrix-terminal-attach.mjs" \
+      || ! sudo mv "$incoming_dir" "$destination_dir"; then
+      sudo rm -rf -- "$incoming_dir"
+      return 1
+    fi
+  fi
+
+  if [ -d "$extract_dir/user-systemd" ]; then
+    sudo install -d -o root -g root -m 0755 /etc/systemd/user || return 1
+    sudo find "$extract_dir/user-systemd" -maxdepth 1 -type f \( -name 'matrix-*.service' -o -name 'matrix-*.slice' \) \
+      -exec install -o root -g root -m 0644 {} /etc/systemd/user/ \; || return 1
+    reload_terminal_user_manager || return 1
+  fi
+  activate_terminal_runtime_generation "$generation" || return 1
+  cleanup_terminal_runtime_generations || return 1
+  log "Installed terminal runtime generation $generation"
+}
+
 write_update_error() {
-  local code="$1" message="$2" version="${3:-}" available_kb="${4:-}" required_kb="${5:-}"
-  python3 - "$UPDATE_ERROR_MARKER" "$code" "$message" "$version" "$available_kb" "$required_kb" <<'PY'
+  local code="$1" message="$2" version="${3:-}" available_kb="${4:-}" required_kb="${5:-}" temp
+  if [ -L "$UPDATE_ERROR_MARKER" ] || { [ -e "$UPDATE_ERROR_MARKER" ] && [ ! -f "$UPDATE_ERROR_MARKER" ]; }; then
+    log "ERROR: update error marker has an invalid file type"
+    return 1
+  fi
+  temp="$(mktemp "$APP_DIR/.update-error.json.XXXXXX")" || return 1
+  if ! python3 - "$temp" "$code" "$message" "$version" "$available_kb" "$required_kb" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -156,6 +329,49 @@ with open(path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, separators=(",", ":"))
     handle.write("\n")
 PY
+  then
+    rm -f -- "$temp"
+    return 1
+  fi
+  if ! mv -fT "$temp" "$UPDATE_ERROR_MARKER"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+}
+
+write_update_phase() {
+  local phase="$1" temp
+  case "$phase" in
+    prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
+    *) return 1 ;;
+  esac
+  temp="$(mktemp "$STAGING_DIR/.update-phase.XXXXXX")" || return 1
+  if ! printf '%s\n' "$phase" >"$temp" || ! mv -fT "$temp" "$UPDATE_PHASE_MARKER"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+}
+
+consume_update_trigger() {
+  sudo rm -f -- "$UPDATE_TRIGGER"
+}
+
+recover_interrupted_update() {
+  local phase version=""
+  [ -f "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 0
+  [ -f "$UPDATE_MARKER" ] && [ ! -L "$UPDATE_MARKER" ] || {
+    rm -f -- "$UPDATE_PHASE_MARKER"
+    return 0
+  }
+  [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 0
+  phase="$(cat "$UPDATE_PHASE_MARKER" 2>/dev/null || true)"
+  case "$phase" in
+    prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
+    *) phase=unknown ;;
+  esac
+  version="$(json_field "$(cat "$UPDATE_MARKER")" version 2>/dev/null || true)"
+  log "ERROR: interrupted update recovered at bounded phase $phase"
+  write_update_error "apply_interrupted" "The update process was interrupted before completion." "$version"
 }
 
 fetch_manifest() {
@@ -166,11 +382,118 @@ fetch_manifest() {
   printf '%s' "$manifest"
 }
 
+write_prepared_update_marker() {
+  local manifest="$1" temp
+  if [ -L "$UPDATE_MARKER" ] || { [ -e "$UPDATE_MARKER" ] && [ ! -f "$UPDATE_MARKER" ]; }; then
+    log "ERROR: prepared update marker has an invalid file type"
+    return 1
+  fi
+  temp="$(mktemp "$APP_DIR/.update-available.json.XXXXXX")" || return 1
+  if ! printf '%s\n' "$manifest" >"$temp" || ! mv -fT "$temp" "$UPDATE_MARKER"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+}
+
+download_bundle() {
+  local version="$1" expected_sha256="$2" expected_size="$3" bundle_url="$4" bundle_file="$5"
+  local attempt refreshed refreshed_version refreshed_sha256 refreshed_size refreshed_url partial_size
+  local -a continue_args
+  rm -f -- "$bundle_file"
+  for attempt in 1 2; do
+    continue_args=()
+    if [ "$attempt" -eq 2 ]; then
+      if ! refreshed="$(fetch_manifest "$(release_url_for_version "$version")")"; then
+        continue
+      fi
+      refreshed_version="$(json_field "$refreshed" version)"
+      refreshed_sha256="$(json_field "$refreshed" sha256)"
+      refreshed_size="$(json_field "$refreshed" size)"
+      refreshed_url="$(json_field "$refreshed" url)"
+      if ! [ "$refreshed_version" = "$version" ] ||
+        ! [ "$refreshed_sha256" = "$expected_sha256" ] ||
+        ! [ "$refreshed_size" = "$expected_size" ] || [ -z "$refreshed_url" ]; then
+        write_update_error "download_metadata_changed" \
+          "The immutable release metadata changed during download." "$version"
+        rm -f -- "$bundle_file"
+        return 1
+      fi
+      bundle_url="$refreshed_url"
+      if [ -f "$bundle_file" ] && [ ! -L "$bundle_file" ]; then
+        partial_size="$(stat -c %s "$bundle_file" 2>/dev/null || true)"
+        if [[ "$expected_size" =~ ^[0-9]+$ ]] && [[ "$partial_size" =~ ^[0-9]+$ ]] &&
+          [ "$partial_size" -eq "$expected_size" ]; then
+          return 0
+        fi
+        if [[ "$partial_size" =~ ^[1-9][0-9]*$ ]] &&
+          { [[ ! "$expected_size" =~ ^[0-9]+$ ]] || [ "$partial_size" -lt "$expected_size" ]; }; then
+          continue_args=(--continue-at -)
+        else
+          rm -f -- "$bundle_file"
+        fi
+      else
+        rm -f -- "$bundle_file"
+      fi
+    fi
+    if /usr/bin/timeout --signal=KILL 1800 curl --fail --location \
+      --connect-timeout 10 --max-time 1770 --http1.1 \
+      "${continue_args[@]}" "$bundle_url" -o "$bundle_file"; then
+      [ -f "$bundle_file" ] && [ ! -L "$bundle_file" ] && return 0
+    fi
+    log "WARN: bundle download attempt $attempt failed"
+  done
+  write_update_error "download_failed" "The release bundle download failed." "$version"
+  rm -f -- "$bundle_file"
+  return 1
+}
+
+prepare_triggered_update_action=apply
+
+installed_terminal_runtime_is_ready() {
+  local marker="$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE" generation generation_dir asset actual_generation
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  IFS= read -r generation <"$marker" || return 1
+  [[ "$generation" =~ ^gen_[0-9a-f]{64}$ ]] || return 1
+
+  generation_dir="$TERMINAL_RUNTIME_ROOT/generations/$generation"
+  [ -d "$generation_dir" ] && [ ! -L "$generation_dir" ] || return 1
+  for asset in matrix-terminal-user-keeper.mjs matrix-terminal-attach.mjs; do
+    [ -f "$generation_dir/$asset" ] && [ ! -L "$generation_dir/$asset" ] || return 1
+  done
+  [ -f "$generation_dir/zellij" ] && [ ! -L "$generation_dir/zellij" ] &&
+    [ -x "$generation_dir/zellij" ] || return 1
+  [ -f "$BIN_DIR/matrix-terminal-generation-id" ] &&
+    [ ! -L "$BIN_DIR/matrix-terminal-generation-id" ] &&
+    [ -x "$BIN_DIR/matrix-terminal-generation-id" ] || return 1
+  actual_generation="$("$BIN_DIR/matrix-terminal-generation-id" \
+    "$generation_dir/zellij" \
+    "$generation_dir/matrix-terminal-user-keeper.mjs" \
+    "$generation_dir/matrix-terminal-attach.mjs" 2>/dev/null)" || return 1
+  [ "$actual_generation" = "$generation" ]
+}
+
+requested_update_is_already_current() {
+  local remote_version="$1"
+  [ -f "$UPDATE_VERSION_FILE" ] && [ ! -L "$UPDATE_VERSION_FILE" ] || return 1
+  [ "$remote_version" = "$(current_version)" ] || return 1
+  [ ! -e "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 1
+  [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 1
+  installed_terminal_runtime_is_ready || return 1
+}
+
+consume_idempotent_update_request() {
+  log "Exact requested version is already installed; consuming idempotent request"
+  rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+  consume_update_trigger || log "WARN: failed to consume idempotent update trigger"
+}
+
 prepare_triggered_update() {
-  local url="" target=""
+  local url="" target="" requested_version=""
+  prepare_triggered_update_action=apply
   if [ -f "$UPDATE_VERSION_FILE" ]; then
     target="$(cat "$UPDATE_VERSION_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update version file is empty"; return 1; }
+    requested_version="$target"
     url="$(release_url_for_version "$target")"
   elif [ -f "$UPDATE_CHANNEL_FILE" ]; then
     target="$(cat "$UPDATE_CHANNEL_FILE" 2>/dev/null || true)"
@@ -197,12 +520,22 @@ prepare_triggered_update() {
   if [ -z "$remote_version" ]; then
     log "WARN: release metadata missing 'version' field"; return 1
   fi
+  if [ -n "$requested_version" ] && ! [ "$remote_version" = "$requested_version" ]; then
+    log "ERROR: immutable update target did not match fetched release metadata"
+    write_update_error "update_target_mismatch" \
+      "The fetched release metadata did not match the requested version." "$requested_version"
+    return 1
+  fi
+  if requested_update_is_already_current "$remote_version"; then
+    prepare_triggered_update_action=already-current
+    return 0
+  fi
   if [ ! -f "$UPDATE_VERSION_FILE" ] && [ ! -f "$UPDATE_CHANNEL_FILE" ] && [ "$remote_version" = "$(current_version)" ]; then
     log "No update available on ${target} — nothing to apply"
     rm -f "$UPDATE_MARKER"
     return 1
   fi
-  echo "$manifest" > "$UPDATE_MARKER"
+  write_prepared_update_marker "$manifest" || return 1
   log "Prepared requested update target ${target}: $remote_version"
 }
 
@@ -236,14 +569,14 @@ check_for_update() {
   update_type="$(json_field "$manifest" updateType)"
 
   log "Update available: $remote_version (current: $cur, severity: ${severity:-normal})"
-  echo "$manifest" > "$UPDATE_MARKER"
+  write_prepared_update_marker "$manifest" || return 1
 
   if [ "$severity" = "security" ] || [ "$update_type" = "auto" ]; then
     if [ -f "$AUTO_APPLY_FAILED_MARKER" ] && [ "$(cat "$AUTO_APPLY_FAILED_MARKER" 2>/dev/null)" = "$remote_version" ]; then
       log "Skipping auto-apply for $remote_version — previous attempt failed (use .update-now to retry)"
     else
       log "Auto-apply update $remote_version (severity=${severity:-normal}, updateType=${update_type:-manual})"
-      if ! apply_update; then
+      if ! run_apply_update; then
         echo "$remote_version" > "$AUTO_APPLY_FAILED_MARKER"
         log "Auto-apply failed — will not retry automatically (use .update-now to force)"
       else
@@ -255,6 +588,7 @@ check_for_update() {
 
 # ── Apply update ─────────────────────────────────────────────────────
 apply_update() {
+  local trigger_source="${1:-other}"
   if [ ! -f "$UPDATE_MARKER" ]; then
     log "No update available — nothing to apply"; return 1
   fi
@@ -269,24 +603,44 @@ apply_update() {
 
   sudo mkdir -p "$STAGING_DIR"
   sudo chown matrix:matrix "$STAGING_DIR"
-  ensure_update_headroom "$(json_field "$manifest" size)" "$version" || return 1
+  if ! ensure_update_headroom "$(json_field "$manifest" size)" "$version"; then
+    if [ "$trigger_source" = explicit ]; then
+      consume_update_trigger || log "WARN: failed to consume update trigger"
+    fi
+    return 1
+  fi
   rm -f "$UPDATE_ERROR_MARKER"
+  if ! write_update_phase prepare; then
+    if [ "$trigger_source" = explicit ]; then
+      consume_update_trigger || log "WARN: failed to consume update trigger"
+    fi
+    return 1
+  fi
+  # Keep the explicit request durable until an atomic phase marker exists. If
+  # the agent is interrupted before this point, systemd can restart it and the
+  # still-present trigger will retry the prepared immutable manifest. Once the
+  # phase is durable, startup recovery can report apply_interrupted instead.
+  if [ "$trigger_source" = explicit ]; then
+    consume_update_trigger || return 1
+  fi
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
   extract_dir="$STAGING_DIR/bundle-${version}"
 
   log "Downloading bundle..."
-  if ! curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
-       --connect-timeout 10 --max-time 1800 --http1.1 \
-       "$bundle_url" -o "$bundle_file"; then
-    log "ERROR: download failed"; rm -f "$bundle_file"; return 1
+  write_update_phase download || return 1
+  if ! download_bundle "$version" "$sha256" "$(json_field "$manifest" size)" "$bundle_url" "$bundle_file"; then
+    log "ERROR: download failed"
+    return 1
   fi
 
   # Verify checksum
+  write_update_phase verify || return 1
   if [ -n "$sha256" ]; then
     local actual_sha256
     actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
     if [ "$actual_sha256" != "$sha256" ]; then
       log "ERROR: checksum mismatch (expected $sha256, got $actual_sha256)"
+      write_update_error "checksum_mismatch" "The release bundle checksum did not match." "$version"
       rm -f "$bundle_file"; return 1
     fi
     log "Checksum verified"
@@ -296,16 +650,34 @@ apply_update() {
 
   # Extract and validate
   log "Extracting bundle..."
+  write_update_phase extract || return 1
   mkdir -p "$extract_dir"
   if ! tar -xzf "$bundle_file" -C "$extract_dir"; then
-    log "ERROR: extraction failed"; rm -rf "$extract_dir" "$bundle_file"; return 1
+    log "ERROR: extraction failed"
+    write_update_error "bundle_extract_failed" "The release bundle could not be extracted." "$version"
+    rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
   if [ ! -d "$extract_dir/app" ]; then
     log "ERROR: extracted bundle missing 'app' directory"
+    write_update_error "bundle_layout_invalid" "The release bundle layout was invalid." "$version"
     rm -rf "$extract_dir" "$bundle_file"; return 1
+  fi
+  if ! install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"; then
+    log "ERROR: Terminal runtime helper bootstrap failed; aborting before app replacement"
+    write_update_error "terminal_runtime_helper_install_failed" "The terminal runtime verification helpers could not be installed." "$version"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
+  write_update_phase terminal-runtime || return 1
+  if ! install_terminal_runtime_payload "$extract_dir"; then
+    log "ERROR: Terminal runtime installation failed; aborting before app replacement"
+    write_update_error "terminal_runtime_install_failed" "The terminal runtime assets could not be installed." "$version"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
   fi
 
   # Stop services, backup, install
+  write_update_phase app-install || return 1
   log "Stopping services..."
   sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   sudo rm -rf "$APP_DIR.rollback"
@@ -322,8 +694,16 @@ apply_update() {
     log "Updated release metadata"
   fi
   if [ -d "$extract_dir/bin" ]; then
-    sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
-    sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
+    if ! write_update_phase host-bin || ! install_host_bin_payload "$extract_dir/bin"; then
+      log "ERROR: host-bin installation failed — rolling back"
+      if do_rollback; then
+        write_update_error "post_install_host_bin_failed" "The host update helpers could not be installed and the previous release was restored." "$version"
+      else
+        write_update_error "post_install_rollback_failed" "The host update helpers could not be installed and rollback did not complete." "$version"
+      fi
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
     log "Updated bin scripts"
   fi
   write_symphony_env
@@ -370,8 +750,18 @@ apply_update() {
 
   # Start services and health-check
   log "Starting services..."
-  sudo systemctl start matrix-gateway matrix-shell
+  if ! sudo systemctl start matrix-gateway matrix-shell; then
+    log "ERROR: updated services failed to start — rolling back"
+    if do_rollback; then
+      write_update_error "post_install_service_start_failed" "The updated services failed to start and the previous release was restored." "$version"
+    else
+      write_update_error "post_install_rollback_failed" "The updated services failed to start and rollback did not complete." "$version"
+    fi
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   log "Running health check..."
+  write_update_phase health || return 1
   local healthy=false
   for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
@@ -384,13 +774,34 @@ apply_update() {
     rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
   else
     log "ERROR: health check failed — rolling back"
-    do_rollback
+    if do_rollback; then
+      write_update_error "post_install_health_failed" "The updated gateway failed its health check and the previous release was restored." "$version"
+    else
+      write_update_error "post_install_rollback_failed" "The updated gateway failed its health check and rollback did not complete." "$version"
+    fi
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
   rm -rf "$extract_dir" "$bundle_file"
   clean_staging || true
+  rm -f -- "$UPDATE_PHASE_MARKER"
   restart_sync_agent_after_update
+}
+
+run_apply_update() {
+  local trigger_source="${1:-other}" status version=""
+  if apply_update "$trigger_source"; then
+    return 0
+  else
+    status=$?
+  fi
+  if [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ]; then
+    if [ -f "$UPDATE_MARKER" ] && [ ! -L "$UPDATE_MARKER" ]; then
+      version="$(json_field "$(cat "$UPDATE_MARKER")" version 2>/dev/null || true)"
+    fi
+    write_update_error "apply_failed" "The update failed outside a classified apply phase." "$version"
+  fi
+  return "$status"
 }
 
 # ── Rollback ─────────────────────────────────────────────────────────
@@ -407,6 +818,10 @@ do_rollback() {
   fi
   sudo mv "$APP_DIR.rollback" "$APP_DIR"
   sudo chown -R matrix:matrix "$APP_DIR"
+  if [ -f "$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE" ]; then
+    activate_terminal_runtime_generation "$(cat "$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE")"
+  fi
+  cleanup_terminal_runtime_generations || log "WARN: terminal generation cleanup remains above cap after rollback"
   sudo systemctl start matrix-gateway matrix-shell
   sudo systemctl start --no-block matrix-symphony || true
   local healthy=false
@@ -572,15 +987,17 @@ fi
 mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
+recover_interrupted_update
 last_staging_cleanup="$(date +%s)"
 
 while true; do
   # React to trigger files and signals
   if [ -f "$UPDATE_TRIGGER" ]; then
-    sudo rm -f "$UPDATE_TRIGGER"
     rm -f "$AUTO_APPLY_FAILED_MARKER"
     if prepare_triggered_update; then
-      if apply_update; then
+      if [ "$prepare_triggered_update_action" = already-current ]; then
+        consume_idempotent_update_request
+      elif run_apply_update explicit; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update failed — will retry on next trigger"
@@ -588,6 +1005,7 @@ while true; do
     else
       log "Requested release metadata fetch failed — skipping apply"
       rm -f "$UPDATE_MARKER"
+      consume_update_trigger || log "WARN: failed to consume update trigger"
     fi
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then
@@ -598,7 +1016,9 @@ while true; do
     sudo rm -f "$UPDATE_REPAIR_TRIGGER"
     perform_update_repair
     if prepare_triggered_update; then
-      if apply_update; then
+      if [ "$prepare_triggered_update_action" = already-current ]; then
+        consume_idempotent_update_request
+      elif run_apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update repair retry failed — will retry on next trigger"
@@ -611,7 +1031,9 @@ while true; do
   if [ "$update_requested" = true ]; then
     update_requested=false
     if prepare_triggered_update; then
-      if apply_update; then
+      if [ "$prepare_triggered_update_action" = already-current ]; then
+        consume_idempotent_update_request
+      elif run_apply_update; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
         log "Update (via SIGUSR1) failed — will retry on next trigger"

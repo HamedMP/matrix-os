@@ -44,6 +44,17 @@ export interface HandlerContext {
   updateNotificationPreferences: (
     request: CodingAgentNotificationPreferencesUpdate,
   ) => Promise<CodingAgentNotificationPreferences>;
+  fetchHermesConfiguration: () => Promise<InvokeResponse<"runtime:get-hermes-configuration">>;
+  fetchHermesEnvironment: () => Promise<InvokeResponse<"runtime:get-hermes-environment">>;
+  updateHermesConfiguration: (
+    request: InvokeRequest<"runtime:update-hermes-configuration">,
+  ) => Promise<InvokeResponse<"runtime:update-hermes-configuration">>;
+  setHermesCredential: (
+    request: InvokeRequest<"runtime:set-hermes-credential">,
+  ) => Promise<InvokeResponse<"runtime:set-hermes-credential">>;
+  removeHermesCredential: (
+    request: InvokeRequest<"runtime:remove-hermes-credential">,
+  ) => Promise<InvokeResponse<"runtime:remove-hermes-credential">>;
   fetchReviewSummaries: (
     options: { cursor?: string },
   ) => Promise<{ items: ReviewSummary[]; hasMore: boolean; limit: number; nextCursor?: string }>;
@@ -162,6 +173,11 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:get-project-workspace", (request) => ctx.fetchProjectWorkspace(request));
   handle("runtime:get-notification-preferences", () => ctx.fetchNotificationPreferences());
   handle("runtime:update-notification-preferences", (request) => ctx.updateNotificationPreferences(request));
+  handle("runtime:get-hermes-configuration", () => ctx.fetchHermesConfiguration());
+  handle("runtime:get-hermes-environment", () => ctx.fetchHermesEnvironment());
+  handle("runtime:update-hermes-configuration", (request) => ctx.updateHermesConfiguration(request));
+  handle("runtime:set-hermes-credential", (request) => ctx.setHermesCredential(request));
+  handle("runtime:remove-hermes-credential", (request) => ctx.removeHermesCredential(request));
   handle("runtime:get-reviews", (request) => ctx.fetchReviewSummaries(request));
   handle("runtime:get-review-snapshot", (request) => ctx.fetchReviewSnapshot(request));
   handle("runtime:browse-files", (request) => ctx.fetchFileBrowse(request));

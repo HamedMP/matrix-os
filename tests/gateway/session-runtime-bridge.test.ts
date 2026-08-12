@@ -113,6 +113,29 @@ describe("session-runtime-bridge", () => {
     );
   });
 
+  it("allows only the fixed Matrix terminal attach helper for version-pinned runtimes", () => {
+    const spawn = vi.fn(() => createMockPty());
+    const registry = new SessionRegistry(
+      homePath,
+      { persistPath: join(homePath, "system", "terminal-sessions.json") },
+      spawn,
+    );
+    const zellijRuntime = {
+      attachCommand: vi.fn(() => ["matrix-terminal-attach", "rt_0123456789abcdef0123456789abcdef"]),
+      observeCommand: vi.fn(() => ["matrix-terminal-attach", "rt_0123456789abcdef0123456789abcdef", "--index", "0"]),
+    };
+    const bridge = createSessionRuntimeBridge({ homePath, registry, zellijRuntime });
+
+    const result = bridge.registerSession(createSession(), { mode: "observe" });
+
+    expect(result).toMatchObject({ ok: true, mode: "observe" });
+    expect(spawn).toHaveBeenCalledWith(
+      "matrix-terminal-attach",
+      ["rt_0123456789abcdef0123456789abcdef", "--index", "0"],
+      expect.any(Object),
+    );
+  });
+
   it("supports tmux runtime records without zellij metadata", () => {
     const spawn = vi.fn(() => createMockPty());
     const registry = new SessionRegistry(

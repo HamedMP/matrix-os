@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
   return {
@@ -77,6 +78,14 @@ describe("AgentConversationView transcript", () => {
     }
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
     useCodingAgentWorkspace.setState({ turnStatus: "idle", turnError: null, turnThreadId: null });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      authGeneration: 1,
+      api: null,
+    });
   });
 
   afterEach(cleanup);
@@ -249,6 +258,45 @@ describe("AgentConversationView transcript", () => {
 
     const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
     expect(input.maxLength).toBe(24_000);
+  });
+
+  it("uploads dropped files and sends a follow-up with existing structured refs", async () => {
+    const sendThreadMessage = vi.fn().mockResolvedValue(true);
+    const putBytes = vi.fn(async (path: string, file: File) => ({
+      ok: true,
+      path: decodeURIComponent(path.split("path=")[1] ?? ""),
+      size: file.size,
+    }));
+    useCodingAgentWorkspace.setState({ sendThreadMessage });
+    useConnection.setState({ api: { putBytes } as never });
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    const pane = screen.getByRole("region", { name: "Conversation Fix settings route" });
+    fireEvent.drop(pane, {
+      dataTransfer: { files: [new File(["context"], "context.txt", { type: "text/plain" })] },
+    });
+    const input = screen.getByLabelText("Message conversation");
+    fireEvent.change(input, { target: { value: "Continue with this context" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(sendThreadMessage).toHaveBeenCalledWith({
+      threadId: "thread_alpha",
+      message: "Continue with this context",
+      attachments: [expect.objectContaining({
+        id: expect.stringMatching(/^desktop_upload_[A-Za-z0-9]+$/),
+        kind: "structured_ref",
+        label: "context.txt",
+        path: expect.stringMatching(/^temporary\/desktop-chat\/[A-Za-z0-9]+-context\.txt$/),
+      })],
+    }));
+    expect(screen.queryByRole("button", { name: "Remove context.txt" })).toBeNull();
   });
 
   it("clears an unsent draft when switching threads", () => {
