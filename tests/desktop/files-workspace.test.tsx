@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FilesWorkspace, {
   resolveActivePath,
 } from "../../desktop/src/renderer/src/features/files/FilesWorkspace";
+import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -15,9 +16,12 @@ const LIST: Record<string, { entries: Array<{ name: string; type: string }> }> =
   "/api/files/list?path=": {
     entries: [
       { name: "workspaces", type: "directory" },
+      { name: "empty", type: "directory" },
       { name: "README.md", type: "file" },
+      { name: "archive.zip", type: "file" },
     ],
   },
+  "/api/files/list?path=empty": { entries: [] },
   "/api/files/list?path=workspaces": {
     entries: [
       { name: "hero.png", type: "file" },
@@ -97,20 +101,83 @@ describe("Files workspace", () => {
     ]);
   });
 
-  it("renders browser and preview as panes of one bordered container with a hairline divider", async () => {
+  it("starts with the full-width overview and opens a split preview after selection", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     await screen.findByRole("button", { name: "Open README.md" });
 
-    // One bordered container owns both panes; the preview is separated by a
-    // hairline divider instead of sitting in its own nested card.
     const panes = screen.getByTestId("files-workspace-panes");
-    expect(panes.className).toContain("rounded-lg");
-    expect(panes.className).toContain("border");
+    expect(panes.getAttribute("data-layout")).toBe("overview");
     expect(within(panes).getByRole("button", { name: "Refresh folder" })).toBeTruthy();
-    expect(within(panes).getByText("Preview")).toBeTruthy();
-    const previewPane = screen.getByText("Preview").closest("section");
-    expect(previewPane?.className).toContain("border-t");
-    expect(previewPane?.className).not.toContain("rounded-lg");
+    expect(within(panes).queryByRole("region", { name: "File preview" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open workspaces" }));
+
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    expect(await within(panes).findByRole("region", { name: "File preview" })).toBeTruthy();
+    expect(within(panes).getByRole("heading", { name: "workspaces" })).toBeTruthy();
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces"));
+    expect(within(panes).getByText("hero.png")).toBeTruthy();
+  });
+
+  it("shows the designed empty-folder preview state", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open empty" }));
+
+    expect(await screen.findByRole("heading", { name: "This folder is empty" })).toBeTruthy();
+    expect(screen.getByText("No files or folders inside.")).toBeTruthy();
+    expect(api.getText).not.toHaveBeenCalled();
+    expect(api.getBlob).not.toHaveBeenCalled();
+  });
+
+  it("shows an unsupported state without reading unknown file bytes", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open archive.zip" }));
+
+    expect(await screen.findByRole("heading", { name: "Preview not available" })).toBeTruthy();
+    expect(screen.getByText("This file type can’t be previewed here.")).toBeTruthy();
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining("/api/files/stat"));
+    expect(api.getText).not.toHaveBeenCalled();
+    expect(api.getBlob).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes missing and permission preview failures", async () => {
+    const missing = makeApi({
+      statImpl: async () => { throw new AppError("notFound", { detail: "not_found" }); },
+    });
+    useConnection.setState({ api: missing as never });
+    const first = render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(await screen.findByRole("heading", { name: "File not found" })).toBeTruthy();
+    expect(screen.getByText("It may have been moved or deleted.")).toBeTruthy();
+    first.unmount();
+
+    const denied = makeApi({
+      statImpl: async () => { throw new AppError("unauthorized", { detail: "permission_denied" }); },
+    });
+    useConnection.setState({ api: denied as never });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(await screen.findByRole("heading", { name: "Permission required" })).toBeTruthy();
+    expect(screen.getByText("You don’t have permission to preview this file.")).toBeTruthy();
+  });
+
+  it("retries a recoverable preview failure in place", async () => {
+    const statImpl = vi.fn()
+      .mockRejectedValueOnce(new AppError("server"))
+      .mockResolvedValueOnce({ size: 128 });
+    const custom = makeApi({ statImpl });
+    useConnection.setState({ api: custom as never });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+
+    expect(await screen.findByRole("heading", { name: "Couldn’t load preview" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText(/A remote home you can inspect/)).toBeTruthy();
+    expect(statImpl).toHaveBeenCalledTimes(2);
   });
 
   it("browses folders with breadcrumbs and previews markdown", async () => {
@@ -181,7 +248,8 @@ describe("Files workspace", () => {
       useConnection.setState({ runtimeSlot: "pr-920" });
     });
 
-    expect(await screen.findByText("Choose a file")).not.toBeNull();
+    expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+    expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("overview");
     expect(api.getText).not.toHaveBeenCalled();
     expect(api.getBlob).not.toHaveBeenCalled();
     const staleStat = api.get.mock.calls.find(
@@ -272,7 +340,8 @@ describe("Files workspace", () => {
       useConnection.setState({ authGeneration: 4 });
     });
 
-    expect(await screen.findByText("Choose a file")).not.toBeNull();
+    expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+    expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("overview");
     expect(api.getText).not.toHaveBeenCalled();
     const staleStat = api.get.mock.calls.find(
       ([p]) => String(p).includes("/api/files/stat") && String(p).includes("app.ts"),
