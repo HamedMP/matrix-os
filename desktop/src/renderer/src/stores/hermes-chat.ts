@@ -115,7 +115,11 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       let status = state.status;
       let active: string | null = state.activeRequestId;
       if (event.type === "kernel:text") status = "streaming";
-      if (event.type === "kernel:result" || event.type === "kernel:error" || event.type === "kernel:aborted") {
+      if (matchesActiveRequest && (
+        event.type === "kernel:result"
+        || event.type === "kernel:error"
+        || event.type === "kernel:aborted"
+      )) {
         status = "idle";
         active = null;
       }

@@ -83,6 +83,33 @@ describe("useHermesChat", () => {
     });
   });
 
+  it("keeps a newer request active when an older request reports a late error", () => {
+    useHermesChat.getState().send("first");
+    const firstRequestId = useHermesChat.getState().activeRequestId!;
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId: firstRequestId,
+    });
+
+    useHermesChat.getState().send("second");
+    const secondRequestId = useHermesChat.getState().activeRequestId!;
+    useHermesChat.getState().ingest({
+      type: "kernel:error",
+      message: "First request failed",
+      requestId: firstRequestId,
+    });
+
+    expect(useHermesChat.getState()).toMatchObject({
+      status: "thinking",
+      activeRequestId: secondRequestId,
+      messages: [
+        expect.objectContaining({ role: "user", content: "first", requestId: firstRequestId }),
+        expect.objectContaining({ role: "user", content: "second", requestId: secondRequestId }),
+        expect.objectContaining({ role: "system", content: "First request failed", requestId: firstRequestId }),
+      ],
+    });
+  });
+
   it("binds the kernel session only for the active request", () => {
     useHermesChat.getState().send("hello");
     const requestId = useHermesChat.getState().activeRequestId!;
