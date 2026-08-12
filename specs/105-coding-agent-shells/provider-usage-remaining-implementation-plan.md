@@ -297,9 +297,11 @@ getUsage(
 close(): void;
 ```
 
-- `createCodingAgentProviderUsageService` consumes the registered provider
-  adapters, provider summaries, optional snapshot repository, `runtimeId`, and
-  injected clock/timeouts for tests.
+- `createCodingAgentProviderUsageService` consumes the provider-usage catalog,
+  provider summaries, optional snapshot repository, `runtimeId`, and injected
+  clock/timeouts for tests. Gateway builds that catalog from the built-in
+  Claude, Codex, OpenCode, and Pi identities plus configured custom providers;
+  this catalog does not register providers for thread execution.
 
 - [x] **Step 1: Write failing service and route tests**
 
@@ -320,6 +322,9 @@ Use real service behavior with small fake provider adapters to prove:
 10. `refresh=1` bypasses fresh cache only while a capped owner-scoped rate
     limiter allows it; invalid query values fail validation.
 11. `close()` clears timers and cached entries.
+12. Gateway wiring keeps all built-in provider identities visible when only one
+    execution provider is configured, with absent adapters reported as
+    `unsupported` and no fabricated usage windows.
 
 - [x] **Step 2: Run focused tests and verify RED**
 

@@ -7,8 +7,23 @@ import {
 } from "./provider-usage-repository.js";
 import {
   createCodingAgentProviderUsageService,
+  type CodingAgentUsageProviderAdapter,
   type CodingAgentProviderUsageService,
 } from "./provider-usage.js";
+
+const BUILTIN_PROVIDER_USAGE_IDS = ["claude", "codex", "opencode", "pi"] as const;
+
+function withBuiltinProviderUsageCatalog(
+  providers: readonly CodingAgentProviderAdapter[],
+): CodingAgentUsageProviderAdapter[] {
+  const catalog: CodingAgentUsageProviderAdapter[] = [...providers];
+  for (const providerId of BUILTIN_PROVIDER_USAGE_IDS) {
+    if (!catalog.some((provider) => provider.providerId === providerId)) {
+      catalog.push({ providerId });
+    }
+  }
+  return catalog;
+}
 
 export interface GatewayCodingAgentProviderUsageOptions {
   kysely: Kysely<any> | null;
@@ -28,7 +43,7 @@ export async function createGatewayCodingAgentProviderUsageService(
   );
   await snapshots.bootstrap();
   return createCodingAgentProviderUsageService({
-    providers: options.providers,
+    providers: withBuiltinProviderUsageCatalog(options.providers),
     providerRegistry: options.providerRegistry,
     snapshotRepository: snapshots,
     runtimeId: options.runtimeId,

@@ -484,7 +484,23 @@ function providerUsageResponse(mode: StubGateway["state"]["providerUsageMode"]) 
       };
   return ProviderUsageResponseSchema.parse({
     usageSources: [
+      {
+        id: "claude",
+        displayName: "Claude",
+        linkedAgentProviderIds: ["claude"],
+        state: "unsupported",
+        windows: [],
+        setupActions: [],
+      },
       codex,
+      {
+        id: "opencode",
+        displayName: "OpenCode",
+        linkedAgentProviderIds: ["opencode"],
+        state: "unsupported",
+        windows: [],
+        setupActions: [],
+      },
       {
         id: "pi",
         displayName: "Pi",

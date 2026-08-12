@@ -60,7 +60,28 @@ describe("gateway provider usage wiring", () => {
     const response = await service?.getUsage(testPrincipal);
 
     expect(response?.usageSources).toEqual([
+      expect.objectContaining({
+        id: "claude",
+        displayName: "Claude",
+        linkedAgentProviderIds: ["claude"],
+        state: "unsupported",
+        windows: [],
+      }),
       expect.objectContaining({ id: "openai-chatgpt", state: "available" }),
+      expect.objectContaining({
+        id: "opencode",
+        displayName: "OpenCode",
+        linkedAgentProviderIds: ["opencode"],
+        state: "unsupported",
+        windows: [],
+      }),
+      expect.objectContaining({
+        id: "pi",
+        displayName: "Pi",
+        linkedAgentProviderIds: ["pi"],
+        state: "unsupported",
+        windows: [],
+      }),
     ]);
     const persisted = await sql<{ count: string }>`
       SELECT count(*)::text AS count

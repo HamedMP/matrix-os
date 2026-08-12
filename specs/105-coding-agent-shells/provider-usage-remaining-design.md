@@ -181,7 +181,12 @@ invariants:
 - Provider-specific identifiers, subprocess payloads, filesystem paths, and
   credentials remain inside the adapter.
 
-If a configured agent provider produces no concrete usage source, the Gateway
+The usage catalog is independent from the execution-provider registry. Gateway
+always includes the built-in Claude, Codex, OpenCode, and Pi identities in the
+usage catalog, then preserves any additional configured provider identities.
+This visibility does not register, enable, or advertise execution support.
+
+If a catalog provider produces no concrete usage source, the Gateway
 synthesizes one stable status-only entry linked to that provider. This preserves
 the universal provider list while keeping the entry `unsupported`,
 `setup_required`, or `unavailable`; it never invents a billing account or
@@ -207,11 +212,14 @@ machine-readable plan-usage source that can be invoked without parsing terminal
 presentation text or exposing credentials. Otherwise the source remains
 `unsupported` or `setup_required`.
 
-### Pi and multi-model runners
+### Pi, OpenCode, and multi-model runners
 
 Pi must not report one synthetic "Pi quota". A future adapter resolves the
 selected underlying account/model provider into one or more usage sources. Until
 an authoritative account source exists, Pi remains visible with `unsupported`.
+OpenCode follows the same rule: its built-in identity stays visible, while exact
+remaining values require an authoritative account source for the selected
+underlying provider.
 
 ## 7. Persistence And Freshness
 
@@ -417,8 +425,9 @@ Implementation follows Red -> Green -> Refactor.
   enabled.
 - Codex displays provider-backed remaining windows and reset times through a
   real Electron run.
-- Every configured provider has a truthful state even when it has no remaining
-  percentage.
+- Every built-in provider has a truthful state even when it is not enabled for
+  execution or has no remaining percentage; custom configured providers remain
+  included without expanding their execution capability.
 - Multiple windows display independently and the compact row uses the lowest
   remaining percentage for the selected source.
 - Provider errors, timeouts, and malformed payloads never expose secrets or

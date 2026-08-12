@@ -1,7 +1,7 @@
 # Current State: Coding Agent Shells
 
 **Branch stack**: implementation checkpoint merged to `main` through PR #869 (`056b3da668ed6d1753712120316d2d5accfafdcf`)
-**Updated**: 2026-08-10
+**Updated**: 2026-08-12
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 For the evidence-based checkpoint audit, see [completion-audit.md](./completion-audit.md).
@@ -21,9 +21,12 @@ reclassifying Matrix token telemetry as subscription quota:
   app-server `account/rateLimits/read` JSON-RPC contract and normalizes its
   provider-reported five-hour/weekly windows and optional credit balance. A
   version or payload mismatch fails closed.
-- Claude Code and Pi remain truthful status-only sources. Matrix OS does not
-  display an exact remaining percentage for them until a stable,
-  machine-readable provider quota contract is independently verified.
+- The usage catalog is independent from execution enablement: Claude, Codex,
+  OpenCode, and Pi stay visible even when the runtime only enables one of them
+  for thread execution. Claude Code, OpenCode, and Pi remain truthful
+  status-only sources; Matrix OS does not display an exact remaining percentage
+  until a stable, machine-readable provider quota contract is independently
+  verified.
 - Electron main owns authenticated transport and strict response validation;
   the renderer receives only normalized safe fields through
   `runtime:get-provider-usage`.

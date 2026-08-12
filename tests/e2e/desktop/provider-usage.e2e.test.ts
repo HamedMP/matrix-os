@@ -61,8 +61,10 @@ suite("provider usage desktop e2e", () => {
     await dialog.getByText("5-hour window").waitFor();
     await dialog.getByText("7-day window").waitFor();
     await dialog.getByText("$12.50 remaining").waitFor();
+    await dialog.getByRole("heading", { name: "Claude" }).waitFor();
+    await dialog.getByRole("heading", { name: "OpenCode" }).waitFor();
     await dialog.getByRole("heading", { name: "Pi" }).waitFor();
-    await dialog.getByText("Usage not reported").waitFor();
+    expect(await dialog.getByText("Usage not reported").count()).toBe(3);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-265-usage-popover.png") });
 
     const requestsBeforeRefresh = gateway.state.providerUsageRequests;

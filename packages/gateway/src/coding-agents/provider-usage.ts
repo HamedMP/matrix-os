@@ -56,7 +56,7 @@ export interface CodingAgentProviderUsageService {
 }
 
 export interface CodingAgentProviderUsageServiceOptions {
-  providers: readonly CodingAgentProviderAdapter[];
+  providers: readonly CodingAgentUsageProviderAdapter[];
   providerRegistry: Pick<CodingAgentProviderRegistry, "listProviders">;
   snapshotRepository?: ProviderUsageSnapshotStore;
   runtimeId: string;
@@ -68,16 +68,32 @@ export interface CodingAgentProviderUsageServiceOptions {
   forceRefreshRateLimiter?: Pick<RateLimiter, "check">;
 }
 
+export type CodingAgentUsageProviderAdapter = Pick<
+  CodingAgentProviderAdapter,
+  "providerId" | "getUsageSources"
+>;
+
+const BUILTIN_PROVIDER_METADATA: Partial<Record<
+  string,
+  Pick<AgentProviderSummary, "displayName" | "kind">
+>> = {
+  claude: { displayName: "Claude", kind: "claude" },
+  codex: { displayName: "Codex", kind: "codex" },
+  opencode: { displayName: "OpenCode", kind: "opencode" },
+  pi: { displayName: "Pi", kind: "pi" },
+};
+
 function boundedInteger(value: number | undefined, fallback: number, max: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.min(Math.floor(value), max));
 }
 
 function fallbackSummary(providerId: string): AgentProviderSummary {
+  const metadata = BUILTIN_PROVIDER_METADATA[providerId];
   return {
     id: ProviderIdSchema.parse(providerId),
-    displayName: providerId,
-    kind: "custom",
+    displayName: metadata?.displayName ?? providerId,
+    kind: metadata?.kind ?? "custom",
     availability: "unknown",
     installStatus: "unknown",
     authStatus: "unknown",
@@ -275,7 +291,7 @@ export function createCodingAgentProviderUsageService(
   }
 
   async function probeProvider(input: {
-    adapter: CodingAgentProviderAdapter;
+    adapter: CodingAgentUsageProviderAdapter;
     principal: RequestPrincipal;
     summary: AgentProviderSummary;
     snapshots: readonly ProviderUsageSourceSummary[];
