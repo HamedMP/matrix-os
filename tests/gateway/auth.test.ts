@@ -107,6 +107,123 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("delegates the exact terminal acceptance path to its request-signature verifier", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext(
+        "/api/internal/terminal-acceptance/run",
+        undefined,
+        undefined,
+        undefined,
+        { "x-real-ip": "10.44.0.1" },
+      ),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+
+    nextCalled = false;
+    const result = await mw(
+      mockContext("/api/internal/terminal-acceptance/other", undefined, undefined, "10.44.0.2"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
+  it("isolates the signed terminal acceptance burst from failed-auth lockouts", async () => {
+    const mw = authMiddleware("secret-token");
+    const testIp = "10.44.0.3";
+    for (let i = 0; i < 11; i++) {
+      await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, testIp),
+        async () => {},
+      );
+    }
+
+    for (let i = 0; i < 20; i++) {
+      let nextCalled = false;
+      const result = await mw(
+        mockContext(
+          "/api/internal/terminal-acceptance/run",
+          undefined,
+          undefined,
+          undefined,
+          { "x-real-ip": testIp },
+        ),
+        async () => { nextCalled = true; },
+      );
+      expect(result?.status).not.toBe(429);
+      expect(nextCalled).toBe(true);
+    }
+  });
+
+  it("rate-limits signed terminal acceptance verification at its dedicated ceiling", async () => {
+    const mw = authMiddleware("secret-token");
+    const testIp = "10.44.0.4";
+    for (let i = 0; i < 64; i++) {
+      let nextCalled = false;
+      await mw(
+        mockContext(
+          "/api/internal/terminal-acceptance/run",
+          undefined,
+          undefined,
+          undefined,
+          { "x-real-ip": testIp },
+        ),
+        async () => { nextCalled = true; },
+      );
+      expect(nextCalled).toBe(true);
+    }
+
+    let nextCalled = false;
+    const result = await mw(
+      mockContext(
+        "/api/internal/terminal-acceptance/run",
+        undefined,
+        undefined,
+        undefined,
+        { "x-real-ip": testIp },
+      ),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(429);
+  });
+
+  it("cannot bypass signed terminal acceptance limits by rotating CF-Connecting-IP", async () => {
+    const mw = authMiddleware("secret-token");
+    const trustedProxyIp = "10.44.0.5";
+    for (let i = 0; i < 64; i++) {
+      let nextCalled = false;
+      await mw(
+        mockContext(
+          "/api/internal/terminal-acceptance/run",
+          undefined,
+          undefined,
+          undefined,
+          { "x-real-ip": trustedProxyIp, "cf-connecting-ip": `198.51.100.${i + 1}` },
+        ),
+        async () => { nextCalled = true; },
+      );
+      expect(nextCalled).toBe(true);
+    }
+
+    let nextCalled = false;
+    const result = await mw(
+      mockContext(
+        "/api/internal/terminal-acceptance/run",
+        undefined,
+        undefined,
+        undefined,
+        { "x-real-ip": trustedProxyIp, "cf-connecting-ip": "203.0.113.200" },
+      ),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(429);
+  });
+
   it("allows WebSocket path with correct token", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

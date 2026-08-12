@@ -76,14 +76,14 @@ export interface SessionInfo {
 const ExternalSessionRegistrationSchema = z.object({
   sessionId: z.string().regex(UUID_REGEX).optional(),
   cwd: z.string().min(1).max(4096),
-  command: z.enum(["zellij", "tmux"]),
+  command: z.enum(["zellij", "tmux", "matrix-terminal-attach"]),
   args: z.array(z.string().max(4096)).max(64),
 });
 
 export interface ExternalSessionRegistration {
   sessionId?: string;
   cwd: string;
-  command: "zellij" | "tmux";
+  command: "zellij" | "tmux" | "matrix-terminal-attach";
   args: string[];
 }
 

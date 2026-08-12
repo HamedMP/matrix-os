@@ -64,7 +64,7 @@ type AgentLauncher = Pick<ReturnType<typeof createAgentLauncher>, "buildLaunch">
 type ZellijRuntime = Pick<
   ReturnType<typeof createZellijRuntime>,
   "start" | "attachCommand" | "observeCommand" | "kill" | "health"
->;
+> & { isAlive?: (sessionId: string) => Promise<boolean> };
 
 type Failure = {
   ok: false;
@@ -505,7 +505,30 @@ export function createAgentSessionManager(options: {
       const stoppedSessions: WorkspaceSessionView[] = [];
       for (const session of sessions) {
         if (!isActive(session) || session.runtime.type !== "zellij") continue;
-        const health = await options.zellijRuntime.health();
+        let health = await options.zellijRuntime.health();
+        if (health.status !== "degraded" && options.zellijRuntime.isAlive) {
+          try {
+            if (!await options.zellijRuntime.isAlive(session.id)) {
+              health = {
+                available: false,
+                status: "degraded",
+                fallbackReason: "runtime_not_running",
+                version: health.version,
+              };
+            }
+          } catch (err: unknown) {
+            console.warn(
+              "[agent-session-manager] Runtime liveness check failed:",
+              err instanceof Error ? err.message : String(err),
+            );
+            health = {
+              available: false,
+              status: "degraded",
+              fallbackReason: "runtime_liveness_unavailable",
+              version: health.version,
+            };
+          }
+        }
         if (health.status !== "degraded") continue;
         degraded += 1;
         if (session.projectSlug && session.worktreeId && await releaseSessionLease(options.worktreeManager, session)) releasedLeases += 1;
