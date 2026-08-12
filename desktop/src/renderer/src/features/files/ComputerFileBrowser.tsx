@@ -26,6 +26,7 @@ import {
   BrowserToolbar,
   BrowserListing,
   EntryButton,
+  getFileListColumns,
   measureGridColumns,
 } from "./browser-views";
 import { useFileManagement } from "./use-file-management";
@@ -139,6 +140,12 @@ export default function ComputerFileBrowser({
   const entriesByPath = useMemo(
     () => new Map(sortedEntries.map((entry) => [joinPath(viewCurrentPath, entry.name), entry])),
     [sortedEntries, viewCurrentPath],
+  );
+  // Selection contracts cap this collection at 100 paths; a derived Set keeps
+  // per-row state checks constant-time without entering shared/store state.
+  const selectedPathSet = useMemo(
+    () => new Set(management.selection.selectedPaths),
+    [management.selection.selectedPaths],
   );
   useEffect(() => management.reconcilePaths(renderedPaths), [management.reconcilePaths, renderedPaths]);
 
@@ -263,10 +270,8 @@ export default function ComputerFileBrowser({
   }, [viewCurrentPath]);
 
   const chosenName = (viewCandidatePath.split("/").pop() || "Matrix home");
-  // Name flexes (minmax(0,1fr) + truncate); Size/Modified are fixed-width
-  // right-aligned columns sized to the format.ts outputs, so long names only
-  // truncate once the pane is genuinely out of room.
-  const listColumns = compact ? "minmax(0,1fr) 64px 88px" : "minmax(0,1fr) 72px 104px";
+  // Name flexes while Size, Modified, and row actions keep aligned tracks.
+  const listColumns = getFileListColumns(compact);
 
   let content: ReactNode;
   if (viewStatus === "loading") {
@@ -313,10 +318,10 @@ export default function ComputerFileBrowser({
           entry={entry}
           grid={view === "grid"}
           listColumns={listColumns}
-          selected={mode === "folder-picker" ? viewSelectedPath === path || isCandidate : management.selection.selectedPaths.includes(path)}
+          selected={mode === "folder-picker" ? viewSelectedPath === path || isCandidate : selectedPathSet.has(path)}
           pressed={mode === "folder-picker" && entry.type === "directory"
             ? isCandidate
-            : mode === "browse" ? management.selection.selectedPaths.includes(path) : undefined}
+            : mode === "browse" ? selectedPathSet.has(path) : undefined}
           buttonRef={(el) => {
             entryRefs.current[index] = el;
           }}
@@ -330,7 +335,7 @@ export default function ComputerFileBrowser({
       );
       if (mode === "folder-picker") return entryButton;
       const pending = management.snapshot.pendingPaths.includes(path);
-      const selectedForAction = management.selection.selectedPaths.includes(path)
+      const selectedForAction = selectedPathSet.has(path)
         ? management.selection.selectedPaths
         : [path];
       const trashDisabled = selectedForAction.some((selected) =>
@@ -339,6 +344,7 @@ export default function ComputerFileBrowser({
         <ManagedFileActionMenu
           key={`${entry.type}:${path}`}
           label={entry.name}
+          selected={selectedPathSet.has(path)}
           disabled={pending}
           selectedCount={management.selection.selectedPaths.length}
           canRename={entry.capabilities.canRename}
@@ -348,7 +354,7 @@ export default function ComputerFileBrowser({
           onRename={() => management.startRename(path, entry.name)}
           onTrash={() => management.requestTrash(selectedForAction)}
           onMenuOpen={() => {
-            if (!management.selection.selectedPaths.includes(path)) {
+            if (!selectedPathSet.has(path)) {
               management.selectPath(
                 renderedPaths,
                 path, {}, selectionPlatform,

@@ -8,12 +8,14 @@ export function FileActionMenu({
   items,
   onMenuOpen,
   children,
+  selected = false,
   disabled = false,
 }: {
   label: string;
   items: MenuItem[];
   onMenuOpen: () => void;
   children: ReactNode;
+  selected?: boolean;
   disabled?: boolean;
 }) {
   const content = (
@@ -24,7 +26,9 @@ export function FileActionMenu({
             <IconButton
               label={`More actions for ${label}`}
               disabled={disabled}
-              className="absolute top-1 right-1 opacity-70 group-hover:opacity-100 focus:opacity-100"
+              className={`absolute top-1 right-1 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 ${
+                selected ? "opacity-100" : "opacity-0"
+              }`}
               onPointerDown={onMenuOpen}
             >
               <MoreHorizontal size={14} aria-hidden />
@@ -57,10 +61,11 @@ export function FileActionMenu({
 }
 
 export function ManagedFileActionMenu({
-  label, disabled, selectedCount, canRename, canTrash,
+  label, selected, disabled, selectedCount, canRename, canTrash,
   onMenuOpen, onOpen, onOpenInEditor, onRename, onTrash, children,
 }: {
   label: string;
+  selected: boolean;
   disabled: boolean;
   selectedCount: number;
   canRename: boolean;
@@ -79,7 +84,7 @@ export function ManagedFileActionMenu({
     { label: "Move to Trash", danger: true, disabled: !canTrash, onSelect: onTrash },
   ];
   return (
-    <FileActionMenu label={label} items={items} disabled={disabled} onMenuOpen={onMenuOpen}>
+    <FileActionMenu label={label} items={items} selected={selected} disabled={disabled} onMenuOpen={onMenuOpen}>
       {children}
     </FileActionMenu>
   );

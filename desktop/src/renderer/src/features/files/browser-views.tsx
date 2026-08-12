@@ -25,6 +25,12 @@ const VIEW_OPTIONS: Array<{ mode: BrowserViewMode; label: string; icon: typeof L
   { mode: "list", label: "List view", icon: List },
 ];
 
+export function getFileListColumns(compact: boolean): string {
+  return compact
+    ? "minmax(0,1fr) 64px 88px 32px"
+    : "minmax(0,1fr) 72px 104px 32px";
+}
+
 // ArrowUp/ArrowDown in grid view move by a visual row. Columns are measured
 // from the rendered tiles; jsdom (offsetWidth 0) and unmeasured layouts fall
 // back to single-step movement.
@@ -204,6 +210,7 @@ export function EntryButton({
       <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
         {formatModified(entry.modifiedAt)}
       </span>
+      <span aria-hidden="true" />
     </button>
   );
 }
@@ -308,6 +315,7 @@ export function BrowserListing({
         <SortHeader label="Name" sortLabel="Sort by name" active={sortKey === "name"} direction={sortDirection} onClick={() => onSort("name")} />
         <SortHeader label="Size" sortLabel="Sort by size" active={sortKey === "size"} direction={sortDirection} alignEnd onClick={() => onSort("size")} />
         <SortHeader label="Modified" sortLabel="Sort by modified" active={sortKey === "modified"} direction={sortDirection} alignEnd onClick={() => onSort("modified")} />
+        <span aria-hidden="true" />
       </div>
       <div className="grid grid-cols-1 gap-0.5 pt-0.5">{draftRow}{buttons}</div>
     </div>
