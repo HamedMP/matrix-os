@@ -11,22 +11,58 @@ import { useTabs, type Tab } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 
-export function breadcrumbsForTab(tab: Tab | undefined, conversationTitle?: string): string[] {
+interface BreadcrumbItem {
+  key: string;
+  label: string;
+}
+
+export function breadcrumbItemsForTab(
+  tab: Tab | undefined,
+  conversationTitle?: string,
+): BreadcrumbItem[] {
   if (!tab) return [];
   switch (tab.kind) {
     case "project":
-      return ["Projects", tab.title];
+      return [
+        { key: "projects", label: "Projects" },
+        { key: `projects/${tab.projectSlug ?? tab.id}`, label: tab.title },
+      ];
     case "task":
-      return ["Projects", tab.projectSlug ?? "Project", tab.title];
+      return [
+        { key: "projects", label: "Projects" },
+        {
+          key: `projects/${tab.projectSlug ?? "project"}`,
+          label: tab.projectSlug ?? "Project",
+        },
+        {
+          key: `projects/${tab.projectSlug ?? "project"}/tasks/${tab.taskId ?? tab.id}`,
+          label: tab.title,
+        },
+      ];
     case "terminal":
-      return ["Terminal", tab.title];
+      return [
+        { key: "terminal", label: "Terminal" },
+        { key: `terminal/${tab.sessionName ?? tab.id}`, label: tab.title },
+      ];
     case "app":
-      return ["Apps", tab.title];
+      return [
+        { key: "apps", label: "Apps" },
+        { key: `apps/${tab.slug ?? tab.id}`, label: tab.title },
+      ];
     case "chat":
-      return conversationTitle ? ["Chat", conversationTitle] : ["Chat"];
+      return conversationTitle
+        ? [
+            { key: "chat", label: "Chat" },
+            { key: `chat/${tab.id}`, label: conversationTitle },
+          ]
+        : [{ key: "chat", label: "Chat" }];
     default:
-      return [tab.title];
+      return [{ key: tab.kind, label: tab.title }];
   }
+}
+
+export function breadcrumbsForTab(tab: Tab | undefined, conversationTitle?: string): string[] {
+  return breadcrumbItemsForTab(tab, conversationTitle).map((breadcrumb) => breadcrumb.label);
 }
 
 function HeaderButton({
@@ -70,7 +106,7 @@ export default function NavigationHeader() {
   const activeConversationTitle = useThreads((state) =>
     state.threads.find((thread) => thread.id === activeThreadId)?.title,
   );
-  const breadcrumbs = breadcrumbsForTab(activeTab, activeConversationTitle);
+  const breadcrumbs = breadcrumbItemsForTab(activeTab, activeConversationTitle);
 
   return (
     <header
@@ -95,8 +131,8 @@ export default function NavigationHeader() {
       </HeaderButton>
 
       <nav aria-label="Breadcrumb" className="no-drag ml-1 flex min-w-0 items-center gap-1 text-sm">
-        {breadcrumbs.map((label, index) => (
-          <Fragment key={`${label}-${index}`}>
+        {breadcrumbs.map((breadcrumb, index) => (
+          <Fragment key={breadcrumb.key}>
             {index > 0 ? (
               <ChevronRight size={12} className="shrink-0" style={{ color: "var(--text-disabled)" }} />
             ) : null}
@@ -109,7 +145,7 @@ export default function NavigationHeader() {
                 fontWeight: index === breadcrumbs.length - 1 ? 500 : 400,
               }}
             >
-              {label}
+              {breadcrumb.label}
             </span>
           </Fragment>
         ))}
