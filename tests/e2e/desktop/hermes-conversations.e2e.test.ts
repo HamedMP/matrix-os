@@ -121,6 +121,7 @@ suite("persistent Hermes Desktop conversations", () => {
     await expect.poll(() => page.getByRole("alertdialog").count()).toBe(0);
     expect(gateway.state.deletedConversationIds).toEqual([]);
 
+    await providerRow.hover();
     await deleteProvider.click();
     const deleteDialog = page.getByRole("alertdialog", {
       name: "Delete Verify provider switching remains intact?",

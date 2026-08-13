@@ -143,14 +143,14 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-6" aria-labelledby="conversation-index-title">
       <div className="mx-auto flex w-full max-w-[840px] flex-col">
-        <div className="mb-5 flex min-h-9 items-center justify-between gap-4">
+        <div className="mb-5 flex min-h-9 min-w-0 items-center justify-between gap-4">
           <h1 id="conversation-index-title" className="text-xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
             Chats
           </h1>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
             {searchOpen ? (
               <div
-                className="flex h-8 w-64 items-center gap-2 rounded-lg border px-2.5"
+                className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 sm:max-w-64"
                 style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}
               >
                 <Search size={14} aria-hidden style={{ color: "var(--text-tertiary)" }} />
