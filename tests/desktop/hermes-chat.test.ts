@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHermesChat } from "@desktop/renderer/src/stores/hermes-chat";
+import { advanceRuntimeGeneration } from
+  "@desktop/renderer/src/stores/runtime-generation";
+import { AppError } from "@desktop/shared/app-error";
 
 const kernel = vi.hoisted(() => ({
   abortKernelRequest: vi.fn(),
@@ -8,6 +11,25 @@ const kernel = vi.hoisted(() => ({
 }));
 
 vi.mock("@desktop/renderer/src/lib/kernel-wiring", () => kernel);
+
+function conversation(id: string) {
+  return {
+    id,
+    title: `Title ${id}`,
+    preview: `Preview ${id}`,
+    messageCount: 1,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 describe("useHermesChat", () => {
   beforeEach(() => {
@@ -215,6 +237,131 @@ describe("useHermesChat", () => {
       messages: [{ id: "old", role: "assistant", content: "keep me", timestamp: 1 }],
       loadStatus: "error",
       loadError: "Conversation could not be opened. Try again.",
+    });
+  });
+
+  it("keeps the selected transcript until deletion succeeds, then clears it", async () => {
+    const pending = deferred<{ ok: true }>();
+    const remove = vi.fn(() => pending.promise);
+    useHermesChat.setState({
+      conversations: [conversation("conversation-one"), conversation("conversation-two")],
+      view: "conversation",
+      sessionId: "conversation-one",
+      messages: [{ id: "message-1", role: "assistant", content: "keep pending", timestamp: 1 }],
+    });
+
+    const deletion = useHermesChat.getState().deleteConversation(
+      { delete: remove } as never,
+      "conversation-one",
+    );
+
+    expect(remove).toHaveBeenCalledWith("/api/conversations/conversation-one");
+    expect(useHermesChat.getState()).toMatchObject({
+      deletingConversationId: "conversation-one",
+      sessionId: "conversation-one",
+      messages: [{ id: "message-1", content: "keep pending" }],
+    });
+
+    pending.resolve({ ok: true });
+    await expect(deletion).resolves.toBe(true);
+    expect(useHermesChat.getState()).toMatchObject({
+      conversations: [expect.objectContaining({ id: "conversation-two" })],
+      deletingConversationId: null,
+      deleteError: null,
+      view: "index",
+      sessionId: null,
+      messages: [],
+    });
+  });
+
+  it("rejects invalid ids and suppresses duplicate deletion requests", async () => {
+    const pending = deferred<{ ok: true }>();
+    const remove = vi.fn(() => pending.promise);
+    const api = { delete: remove } as never;
+
+    await expect(useHermesChat.getState().deleteConversation(api, "../private"))
+      .resolves.toBe(false);
+    const first = useHermesChat.getState().deleteConversation(api, "conversation-one");
+    await expect(useHermesChat.getState().deleteConversation(api, "conversation-two"))
+      .resolves.toBe(false);
+
+    expect(remove).toHaveBeenCalledTimes(1);
+    pending.resolve({ ok: true });
+    await expect(first).resolves.toBe(true);
+  });
+
+  it("keeps a busy conversation and exposes only approved recovery copy", async () => {
+    const remove = vi.fn().mockRejectedValue(
+      new AppError("server", { detail: "conversation_busy" }),
+    );
+    useHermesChat.setState({ conversations: [conversation("conversation-one")] });
+
+    await expect(useHermesChat.getState().deleteConversation(
+      { delete: remove } as never,
+      "conversation-one",
+    )).resolves.toBe(false);
+
+    expect(useHermesChat.getState()).toMatchObject({
+      conversations: [expect.objectContaining({ id: "conversation-one" })],
+      deletingConversationId: null,
+      deleteError: "Stop the active response before deleting this chat.",
+    });
+  });
+
+  it("refreshes a stale not-found row from the canonical index", async () => {
+    const remove = vi.fn().mockRejectedValue(
+      new AppError("notFound", { detail: "conversation_not_found" }),
+    );
+    const get = vi.fn().mockResolvedValue([{
+      id: "conversation-two",
+      preview: "Still here",
+      messageCount: 1,
+      createdAt: 2,
+      updatedAt: 3,
+    }]);
+    useHermesChat.setState({
+      conversations: [conversation("conversation-one"), conversation("conversation-two")],
+    });
+
+    await expect(useHermesChat.getState().deleteConversation(
+      { delete: remove, get } as never,
+      "conversation-one",
+    )).resolves.toBe(false);
+
+    expect(get).toHaveBeenCalledWith("/api/conversations");
+    expect(useHermesChat.getState()).toMatchObject({
+      conversations: [expect.objectContaining({ id: "conversation-two" })],
+      deleteError: "This chat no longer exists. Chats were refreshed.",
+    });
+  });
+
+  it("allowlists delete errors and discards a late success after runtime reset", async () => {
+    const unsafeRemove = vi.fn().mockRejectedValue(
+      new AppError("server", { detail: "/home/matrix/private" }),
+    );
+    useHermesChat.setState({ conversations: [conversation("conversation-one")] });
+
+    await useHermesChat.getState().deleteConversation(
+      { delete: unsafeRemove } as never,
+      "conversation-one",
+    );
+    expect(useHermesChat.getState().deleteError)
+      .toBe("Chat could not be deleted. Try again.");
+
+    const pending = deferred<{ ok: true }>();
+    const deletion = useHermesChat.getState().deleteConversation(
+      { delete: vi.fn(() => pending.promise) } as never,
+      "conversation-one",
+    );
+    advanceRuntimeGeneration();
+    useHermesChat.getState().resetRuntime();
+    pending.resolve({ ok: true });
+
+    await expect(deletion).resolves.toBe(false);
+    expect(useHermesChat.getState()).toMatchObject({
+      conversations: [],
+      deletingConversationId: null,
+      deleteError: null,
     });
   });
 

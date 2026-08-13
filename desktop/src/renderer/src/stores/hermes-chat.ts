@@ -3,11 +3,14 @@
 // snapshots and live WebSocket state. Task-bound coding-agent runs remain in
 // the threads/workspace stores as a separate typed source.
 import {
+  KernelConversationDeleteResponseSchema,
   KernelConversationHistoryResponseSchema,
   KernelConversationIdSchema,
+  KernelConversationMutationErrorCodeSchema,
 } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { z } from "zod/v4";
+import { AppError } from "../../../shared/app-error";
 import { reduceChat, type ChatEvent, type ChatMessage } from "../lib/chat";
 import type { ApiClient } from "../lib/api";
 import {
@@ -28,6 +31,9 @@ const REPLAY_EVENT_CAP = 2_000;
 const DISCONNECTED_MESSAGE = "Can't reach Matrix OS. Check your connection.";
 const INDEX_ERROR_MESSAGE = "Conversations could not be loaded. Try again.";
 const LOAD_ERROR_MESSAGE = "Conversation could not be opened. Try again.";
+const DELETE_ERROR_MESSAGE = "Chat could not be deleted. Try again.";
+const DELETE_BUSY_MESSAGE = "Stop the active response before deleting this chat.";
+const DELETE_NOT_FOUND_MESSAGE = "This chat no longer exists. Chats were refreshed.";
 
 export type HermesStatus = "idle" | "thinking" | "streaming";
 export type HermesConversationView = "index" | "conversation";
@@ -60,6 +66,23 @@ function normalizedPreview(value: string): string {
 
 function titleFromPreview(preview: string): string {
   return preview.slice(0, CONVERSATION_TITLE_CAP).trimEnd() || "New conversation";
+}
+
+function conversationMutationCode(error: unknown) {
+  if (!(error instanceof AppError)) return null;
+  const parsed = KernelConversationMutationErrorCodeSchema.safeParse(error.detail);
+  return parsed.success ? parsed.data : null;
+}
+
+function safeConversationDeleteMessage(error: unknown): string {
+  switch (conversationMutationCode(error)) {
+    case "conversation_busy":
+      return DELETE_BUSY_MESSAGE;
+    case "conversation_not_found":
+      return DELETE_NOT_FOUND_MESSAGE;
+    default:
+      return DELETE_ERROR_MESSAGE;
+  }
 }
 
 export function normalizeConversationIndex(raw: unknown): HermesConversationSummary[] | null {
@@ -107,6 +130,8 @@ interface HermesChatState {
   loadStatus: HermesLoadStatus;
   loadError: string | null;
   loadingConversationId: string | null;
+  deletingConversationId: string | null;
+  deleteError: string | null;
   indexSequence: number;
   loadSequence: number;
   seenReplayEventIds: string[];
@@ -117,6 +142,8 @@ interface HermesChatState {
   refreshConversations: (api: ApiClient) => Promise<void>;
   createConversation: (api: ApiClient) => Promise<string | null>;
   openConversation: (api: ApiClient, id: string) => Promise<boolean>;
+  deleteConversation: (api: ApiClient, id: string) => Promise<boolean>;
+  clearDeleteError: () => void;
   resetRuntime: () => void;
   // Fed by the single kernel subscription in kernel-wiring.
   ingest: (event: ChatEvent) => boolean;
@@ -138,6 +165,8 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   loadStatus: "idle",
   loadError: null,
   loadingConversationId: null,
+  deletingConversationId: null,
+  deleteError: null,
   indexSequence: 0,
   loadSequence: 0,
   seenReplayEventIds: [],
@@ -322,6 +351,70 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     }
   },
 
+  deleteConversation: async (api, id) => {
+    const parsedId = KernelConversationIdSchema.safeParse(id);
+    if (!parsedId.success || get().deletingConversationId) {
+      if (!parsedId.success) set({ deleteError: DELETE_ERROR_MESSAGE });
+      return false;
+    }
+
+    const generation = captureRuntimeGeneration();
+    set({ deletingConversationId: parsedId.data, deleteError: null });
+    try {
+      const response = KernelConversationDeleteResponseSchema.safeParse(
+        await api.delete<unknown>(
+          `/api/conversations/${encodeURIComponent(parsedId.data)}`,
+        ),
+      );
+      if (!isCurrentRuntimeGeneration(generation)) return false;
+      if (!response.success) throw new AppError("server");
+
+      set((state) => {
+        const deletedSelectedConversation = state.sessionId === parsedId.data;
+        return {
+          conversations: state.conversations.filter((item) => item.id !== parsedId.data),
+          deletingConversationId: null,
+          deleteError: null,
+          ...(deletedSelectedConversation
+            ? {
+                sessionId: null,
+                messages: [],
+                status: "idle" as const,
+                activeRequestId: null,
+                view: "index" as const,
+                loadStatus: "idle" as const,
+                loadError: null,
+                loadingConversationId: null,
+                seenReplayEventIds: [],
+              }
+            : {}),
+        };
+      });
+      return true;
+    } catch (error: unknown) {
+      if (!isCurrentRuntimeGeneration(generation)) return false;
+      const code = conversationMutationCode(error);
+      if (!code) {
+        console.warn(
+          "[hermes-chat] conversation delete failed",
+          error instanceof Error ? error.name : typeof error,
+        );
+      }
+      set({
+        deletingConversationId: null,
+        deleteError: safeConversationDeleteMessage(error),
+      });
+      if (code === "conversation_not_found") {
+        await get().refreshConversations(api);
+      }
+      return false;
+    }
+  },
+
+  clearDeleteError: () => {
+    set({ deleteError: null });
+  },
+
   resetRuntime: () => {
     set((state) => ({
       messages: [],
@@ -335,6 +428,8 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       loadStatus: "idle",
       loadError: null,
       loadingConversationId: null,
+      deletingConversationId: null,
+      deleteError: null,
       indexSequence: state.indexSequence + 1,
       loadSequence: state.loadSequence + 1,
       seenReplayEventIds: [],
