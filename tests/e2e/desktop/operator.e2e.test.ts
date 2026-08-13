@@ -19,6 +19,27 @@ const hasBuild = existsSync(DESKTOP_MAIN);
 
 const suite = hasBuild ? describe : describe.skip;
 
+async function openSettings(page: Page): Promise<void> {
+  const sidebar = page.locator("aside");
+  const directSettings = sidebar
+    .getByRole("button", { name: "Settings", exact: true })
+    .first();
+
+  if ((await directSettings.count()) > 0 && await directSettings.isVisible()) {
+    await directSettings.click();
+  } else {
+    await sidebar.getByRole("button", { name: "Open account menu" }).click();
+    await page
+      .getByRole("menu", { name: "Account" })
+      .getByRole("button", { name: "Settings" })
+      .click();
+  }
+
+  await page
+    .getByRole("heading", { name: "Settings" })
+    .waitFor({ timeout: 10_000 });
+}
+
 suite("operator desktop e2e", () => {
   let gateway: StubGateway;
   let app: ElectronApplication;
@@ -165,8 +186,7 @@ suite("operator desktop e2e", () => {
   }, 30_000);
 
   it("shows provider and integration settings for the selected computer", async () => {
-    await page.locator("aside button", { hasText: "Settings" }).first().click();
-    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await openSettings(page);
 
     await page.getByRole("button", { name: "Providers" }).click();
     await page.getByText("Coding agents on this computer").waitFor({ timeout: 10_000 });
@@ -229,8 +249,14 @@ suite("operator desktop e2e", () => {
     await page.getByText("Notes").first().waitFor({ timeout: 10_000 });
     await page.getByText("Pomodoro").first().waitFor({ timeout: 10_000 });
     await page.getByText("Notes").first().click();
-    // The app opens in its own tab (tab chip with the app name).
-    await page.locator('[role="tab"]', { hasText: "Notes" }).first().waitFor({ timeout: 10_000 });
+    // Legacy Desktop exposes a tab chip; the navigation handoff keeps that
+    // cached tab mounted behind a breadcrumb-only header.
+    const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
+    if ((await breadcrumb.count()) > 0) {
+      await breadcrumb.getByText("Notes", { exact: true }).waitFor({ timeout: 10_000 });
+    } else {
+      await page.locator('[role="tab"]', { hasText: "Notes" }).first().waitFor({ timeout: 10_000 });
+    }
     await page.screenshot({ path: join(SCREENSHOT_DIR, "07-apps.png") });
   }, 30_000);
 
@@ -239,8 +265,7 @@ suite("operator desktop e2e", () => {
     await expect.poll(attachedNativeViewCount).toBe(1);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "08-home-shell-active.png") });
 
-    await page.locator("aside button", { hasText: "Settings" }).first().click();
-    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await openSettings(page);
     await expect.poll(attachedNativeViewCount).toBe(0);
     await page.getByRole("button", { name: "Computers" }).click();
     await page.getByText("Additional Computer").waitFor({ timeout: 10_000 });
@@ -255,8 +280,7 @@ suite("operator desktop e2e", () => {
 
     // Reopening Settings must mark the server-reported slot as current and
     // leave the other computer selectable.
-    await page.locator("aside button", { hasText: "Settings" }).first().click();
-    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await openSettings(page);
     await page.getByRole("button", { name: "Computers" }).click();
     await page.getByRole("button", { name: "Current computer" }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Use Main Computer" }).waitFor({ timeout: 10_000 });
@@ -291,8 +315,7 @@ suite("operator desktop e2e", () => {
   }, 40_000);
 
   it("switches unified themes from Appearance settings", async () => {
-    await page.locator("aside button", { hasText: "Settings" }).first().click();
-    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await openSettings(page);
     await page.getByRole("button", { name: "Appearance" }).click();
     await page.getByRole("radiogroup", { name: "Theme" }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "13-appearance-theme-picker.png") });
@@ -307,7 +330,7 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "15-theme-dracula-terminal.png") });
 
     // Restore the default so later suites see the stock palette.
-    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await openSettings(page);
     await page.getByRole("button", { name: "Appearance" }).click();
     await page.getByRole("radio", { name: "Use Operator theme" }).click();
     await page.waitForFunction(() => document.documentElement.getAttribute("data-theme-id") === "operator");
@@ -340,7 +363,7 @@ suite("operator desktop e2e", () => {
     await page.getByText("Archive project", { exact: true }).click();
     await expect.poll(() => page.getByRole("button", { name: "Open Matrix OS" }).count()).toBe(0);
 
-    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await openSettings(page);
     const settingsNav = page.locator("nav", { has: page.getByRole("heading", { name: "Settings" }) });
     await settingsNav.getByRole("button", { name: "Projects" }).click();
     await page.getByRole("heading", { name: "Archived projects" }).waitFor({ timeout: 10_000 });

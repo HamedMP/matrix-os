@@ -41,7 +41,10 @@ async function waitForSurface(page: Page, name: (typeof NAVIGATION_NAMES)[number
       return;
     case "Chat":
       await page
-        .getByRole("region", { name: "Hermes conversation" })
+        .locator(
+          '[role="region"][aria-label="Hermes conversation"], #conversation-index-title',
+        )
+        .first()
         .waitFor({ timeout: 10_000 });
       return;
     case "Terminal":
