@@ -52,6 +52,7 @@ PLATFORM_JWT_SECRET=...
 ATS_DATABASE_URL=postgresql://.../matrix_ats
 ATS_INGEST_SECRET=...
 ATS_ADMIN_SECRET=...
+ATS_BOOKING_BASE_URL=https://booking-provider.example/...
 
 CUSTOMER_VPS_ENABLED=true
 CUSTOMER_VPS_IMAGE_VERSION=matrix-os-host-dev
@@ -80,9 +81,10 @@ endpoint parameters in its connection URL, and store the three settings in
 Secret Manager as `ats-database-url`, `ats-ingest-secret`, and
 `ats-admin-secret`. Grant the Cloud Run service account
 `roles/secretmanager.secretAccessor` on each secret. The production deployment
-preflights all three, mounts them into the candidate revision, checks the
-authenticated ingest route, and performs a read against the ATS database before
-promotion. Staging does not mount the production ATS secrets.
+preflights all three and requires `ATS_BOOKING_BASE_URL` as a production GitHub
+environment variable, mounts the ATS settings into the candidate revision,
+checks the authenticated ingest route, and performs a read against the ATS
+database before promotion. Staging does not mount the production ATS settings.
 
 Platform-owned integrations also need:
 
