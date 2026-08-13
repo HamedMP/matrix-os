@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -7,6 +15,16 @@ import {
   type ConversationFile,
   type SearchResult,
 } from "../../packages/gateway/src/conversations.js";
+import { createConversationMutationLock } from
+  "../../packages/gateway/src/conversation-mutation-lock.js";
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function tmpHome() {
   const dir = mkdtempSync(join(tmpdir(), "conv-test-"));
@@ -264,32 +282,77 @@ describe("ConversationStore", () => {
   });
 
   describe("delete", () => {
-    it("removes session file and returns true", () => {
+    it("removes an idle session file and reports deleted", async () => {
       const store = createConversationStore(homePath);
       const id = store.create();
       store.addUserMessage(id, "hello");
       store.finalize(id);
 
-      const result = store.delete(id);
-      expect(result).toBe(true);
+      await expect(store.delete(id)).resolves.toBe("deleted");
       expect(store.get(id)).toBeNull();
       expect(store.list().find((c) => c.id === id)).toBeUndefined();
     });
 
-    it("returns false for nonexistent session", () => {
+    it("reports not found for a missing session", async () => {
       const store = createConversationStore(homePath);
-      expect(store.delete("nonexistent")).toBe(false);
+      await expect(store.delete("nonexistent")).resolves.toBe("not_found");
     });
 
-    it("deleted session does not appear in search", () => {
+    it("deleted session does not appear in search", async () => {
       const store = createConversationStore(homePath);
       const id = store.create();
       store.addUserMessage(id, "unique-search-term");
       store.finalize(id);
 
-      store.delete(id);
+      await store.delete(id);
       const results = store.search("unique-search-term");
       expect(results).toHaveLength(0);
+    });
+
+    it("rejects symlink records without deleting their targets or buffered state", async () => {
+      const store = createConversationStore(homePath);
+      const id = store.create();
+      store.appendAssistantText(id, "retained response");
+
+      const recordPath = join(homePath, "system", "conversations", `${id}.json`);
+      const originalRecord = readFileSync(recordPath, "utf-8");
+      const outsidePath = join(homePath, "outside.json");
+      writeFileSync(outsidePath, originalRecord);
+      unlinkSync(recordPath);
+      symlinkSync(outsidePath, recordPath);
+
+      await expect(store.delete(id)).rejects.toThrow("conversation record is not a regular file");
+      expect(existsSync(outsidePath)).toBe(true);
+
+      unlinkSync(recordPath);
+      writeFileSync(recordPath, originalRecord);
+      await store.finalize(id);
+      expect(store.get(id)?.messages).toEqual([
+        expect.objectContaining({ role: "assistant", content: "retained response" }),
+      ]);
+    });
+
+    it("serializes finalization behind a queued delete for the same session", async () => {
+      const mutationLock = createConversationMutationLock({ maxKeys: 2 });
+      const store = createConversationStore(homePath, { mutationLock });
+      const id = store.create();
+      store.appendAssistantText(id, "must not be recreated");
+      const recordPath = join(homePath, "system", "conversations", `${id}.json`);
+      const gate = deferred();
+
+      const blocker = mutationLock.run(id, async () => {
+        await gate.promise;
+      });
+      const deletion = store.delete(id);
+      const finalization = store.finalize(id);
+
+      await Promise.resolve();
+      const beforeRelease = JSON.parse(readFileSync(recordPath, "utf-8")) as ConversationFile;
+      expect(beforeRelease.messages).toEqual([]);
+
+      gate.resolve();
+      await Promise.all([blocker, deletion, finalization]);
+      expect(store.get(id)).toBeNull();
     });
   });
 
@@ -317,13 +380,13 @@ describe("ConversationStore", () => {
       expect(fromDisk!.messages[0].content).toBe("persisted message");
     });
 
-    it("delete cleans up all internal state", () => {
+    it("delete cleans up all internal state", async () => {
       const store = createConversationStore(homePath);
       const id = store.create();
       store.addUserMessage(id, "hello");
       store.appendAssistantText(id, "world");
 
-      store.delete(id);
+      await store.delete(id);
 
       expect(store.get(id)).toBeNull();
       expect(store.list().find((c) => c.id === id)).toBeUndefined();

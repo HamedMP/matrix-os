@@ -1,7 +1,13 @@
 import * as fs from "node:fs";
-import { readFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
+import { lstat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { KernelConversationId } from "@matrix-os/contracts";
+import {
+  createConversationMutationLock,
+  type ConversationMutationLock,
+} from "./conversation-mutation-lock.js";
 
 export interface ConversationMessage {
   role: "user" | "assistant" | "system";
@@ -41,23 +47,30 @@ export interface ConversationStore {
   appendAssistantText(sessionId: string, text: string): void;
   addToolStart(sessionId: string, tool: string): void;
   addToolEnd(sessionId: string, tool: string, input?: Record<string, unknown>): void;
-  finalize(sessionId: string): void;
+  finalize(sessionId: string): Promise<void>;
   list(): ConversationMeta[];
   get(id: string): ConversationFile | null;
   create(channel?: string): string;
-  delete(id: string): boolean;
+  delete(id: KernelConversationId): Promise<"deleted" | "not_found">;
   search(query: string, opts?: { limit?: number }): SearchResult[];
 }
 
 const CONVERSATION_IDLE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_ACTIVE_CONVERSATIONS = 20;
+const MAX_CONVERSATION_MUTATION_KEYS = 64;
 
-export function createConversationStore(homePath: string): ConversationStore {
+export function createConversationStore(
+  homePath: string,
+  options: { mutationLock?: ConversationMutationLock } = {},
+): ConversationStore {
   const dir = join(homePath, "system", "conversations");
   mkdirSync(dir, { recursive: true });
   const active = new Map<string, ConversationFile>();
   const buffers = new Map<string, string>();
   const lastTouched = new Map<string, number>();
+  const mutationLock = options.mutationLock ?? createConversationMutationLock({
+    maxKeys: MAX_CONVERSATION_MUTATION_KEYS,
+  });
 
   function evictStale() {
     const now = Date.now();
@@ -190,23 +203,25 @@ export function createConversationStore(homePath: string): ConversationStore {
     },
 
     finalize(sessionId) {
-      const conv = active.get(sessionId);
-      if (!conv) return;
+      return mutationLock.run(sessionId, async () => {
+        const conv = active.get(sessionId);
+        if (!conv) return;
 
-      const buffered = buffers.get(sessionId);
-      if (buffered) {
-        conv.messages.push({
-          role: "assistant",
-          content: buffered,
-          timestamp: Date.now(),
-        });
-        buffers.delete(sessionId);
-        conv.updatedAt = Date.now();
-      }
+        const buffered = buffers.get(sessionId);
+        if (buffered) {
+          conv.messages.push({
+            role: "assistant",
+            content: buffered,
+            timestamp: Date.now(),
+          });
+          buffers.delete(sessionId);
+          conv.updatedAt = Date.now();
+        }
 
-      writeToDisk(conv);
-      active.delete(sessionId);
-      lastTouched.delete(sessionId);
+        writeToDisk(conv);
+        active.delete(sessionId);
+        lastTouched.delete(sessionId);
+      });
     },
 
     list() {
@@ -252,12 +267,27 @@ export function createConversationStore(homePath: string): ConversationStore {
 
     delete(id) {
       const path = filePath(id);
-      if (!existsSync(path)) return false;
-      unlinkSync(path);
-      active.delete(id);
-      buffers.delete(id);
-      lastTouched.delete(id);
-      return true;
+      return mutationLock.run(id, async () => {
+        let stats: fs.Stats;
+        try {
+          stats = await lstat(path);
+        } catch (error: unknown) {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return "not_found";
+          }
+          throw error;
+        }
+
+        if (!stats.isFile() || stats.isSymbolicLink()) {
+          throw new Error("conversation record is not a regular file");
+        }
+
+        await unlink(path);
+        active.delete(id);
+        buffers.delete(id);
+        lastTouched.delete(id);
+        return "deleted";
+      });
     },
 
     search(query, opts?) {
