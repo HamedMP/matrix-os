@@ -209,7 +209,14 @@ interface ChatHarnessAdapter<State> {
 
 The adapter-state store exposes state only to the registered adapter whose ID
 and schema version match the Run. Adapters must not place access tokens,
-credentials, raw stderr, absolute paths, or unbounded transcripts in state.
+credentials, raw stderr, or unbounded transcripts in state. A provider-native
+absolute execution root such as Pi's `cwd` is the sole path exception: the
+exact adapter schema must declare the field, and Gateway must realpath-resolve
+and validate it against the current owner-scoped `ProjectConfig.id` at import,
+write, and resume. It remains encrypted, adapter-private, and excluded from
+logs, renderer projections, and default exports. Client-supplied paths and
+paths outside the resolved project root are rejected; a moved or unavailable
+project makes the Run non-resumable rather than silently rebinding the path.
 
 ### Model plugin contract
 
@@ -251,7 +258,7 @@ Run orchestration have drained.
 | `chat_outbox` | Monotonic owner/Chat event cursor inserted transactionally with mutations for cross-shell replay |
 | `chat_deletions` | Content-free idempotency tombstone for hard deletes; contains only owner, Chat ID, request ID, and deletion time |
 | `chat_legacy_imports` | Unique source kind/source ID to Chat mapping, source hash, import version, and verification status |
-| `chat_migrations` | Migration phase, cutover marker/version, source fingerprint, counts, errors, and timestamps |
+| `chat_migrations` | Migration phase, cutover marker/version, source fingerprint, counts, errors, timestamps, and the immutable legacy-alias expiry |
 
 `project_id` intentionally has no relational foreign key because ProjectConfig
 is file-backed. The ProjectManager is authoritative. The Chat repository stores
@@ -497,8 +504,11 @@ refreshing it or recreating content.
    alias. Convert messages to canonical parts. Map each coding-agent thread to
    a Chat, its accepted inputs to Turns, and provider attempts/events to Runs.
 5. Preserve valid Hermes/coding provider session state only in the matching
-   adapter-state envelope. Invalid or secret-shaped state is quarantined from
-   execution but reported; transcript import still proceeds.
+   adapter-state envelope. Pi's absolute `cwd` remains resumable only when its
+   adapter schema accepts it and Gateway binds its realpath to the imported
+   Chat's current owner-scoped project root. Secrets, undeclared path fields,
+   and paths outside that root are quarantined from execution but reported;
+   transcript import still proceeds.
 6. Validate counts, sequence ordering, owner scope, hashes, orphan references,
    and sample transcript parity. Partial batch failure rolls back that batch and
    leaves the cutover marker unset.
@@ -510,15 +520,21 @@ refreshing it or recreating content.
 2. Acquire the migration advisory lock, take a final source fingerprint, and
    rerun the idempotent delta import.
 3. In one transaction verify counts/hashes, set the immutable cutover marker,
-   and append a migration-complete outbox event.
+   persist `legacy_alias_expires_at = cutover_at + interval '90 days'`, and
+   append a migration-complete outbox event.
 4. Release the barrier with PostgreSQL as the sole read/write authority.
 
 There is no dual write. Before the marker, legacy JSON is authoritative. After
 the marker, all reads and writes use PostgreSQL. Legacy API IDs resolve through
-`chat_legacy_imports` for a bounded compatibility window of two stable releases
-or 30 days, whichever is longer; this translation reads PostgreSQL, not JSON.
-The original JSON files remain untouched, read-only owner backup material until
-the documented retention/export step. Runtime code never falls back to them.
+`chat_legacy_imports` only while the database clock is strictly earlier than the
+immutable `legacy_alias_expires_at`, exactly 90 days after cutover. At and after
+that instant the resolver returns the safe expired/not-found result and a
+recurring cleanup may delete alias rows. Tests use an injected clock at the
+89-day, exact-expiry, and post-expiry boundaries. This rule needs no platform
+release history and cannot remain active indefinitely. The translation reads
+PostgreSQL, not JSON. The original JSON files remain untouched, read-only owner
+backup material until the documented retention/export step. Runtime code never
+falls back to them.
 
 Rollback before cutover is safe. After cutover, rollback is allowed only to a
 release that understands the marker and PostgreSQL schema; an older JSON writer

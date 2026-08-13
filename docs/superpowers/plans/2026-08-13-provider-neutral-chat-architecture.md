@@ -497,9 +497,10 @@ expect(await migration.hasCutoverMarker()).toBe(false);
 ```
 
 Cover symlinks, oversized/invalid JSON, duplicate IDs, crash after each phase,
-valid/invalid resume state, transcript ordering, active Run drain, final delta,
-marker atomicity, old-release startup refusal, and 30-day/two-release legacy ID
-translation from PostgreSQL.
+valid/invalid resume state, preservation of Pi `cwd` inside the resolved owner
+project root, quarantine outside that root, transcript ordering, active Run
+drain, final delta, marker atomicity, old-release startup refusal, and legacy-ID
+translation before, exactly at, and after the immutable 90-day expiry.
 
 - [ ] **Step 2: Run tests and verify Red**
 
@@ -514,7 +515,13 @@ export type ChatMigrationPhase =
 
 await db.transaction().execute(async (trx) => {
   await verifyFinalFingerprint(trx, fingerprint);
-  await setCutoverMarker(trx, { version: CHAT_SCHEMA_VERSION, fingerprint });
+  const cutoverAt = clock.now();
+  await setCutoverMarker(trx, {
+    version: CHAT_SCHEMA_VERSION,
+    fingerprint,
+    cutoverAt,
+    legacyAliasExpiresAt: addDays(cutoverAt, 90),
+  });
   await appendMigrationOutbox(trx);
 });
 ```
@@ -628,8 +635,10 @@ await expect(registry.resolve({ harnessId: "codex", modelId: "vision-only", root
 ```
 
 Cover 64-model/128-tool caps, 2-second health timeout, bounded owner cache,
-invalidation, secret/path-shaped metadata rejection, state 64-KiB limit, and
-schema-version mismatch.
+invalidation, secret/path-shaped descriptor metadata rejection, state 64-KiB
+limit, schema-version mismatch, and the adapter-state rule that only a
+schema-declared execution root validated against the owner project may contain
+an absolute path.
 
 - [ ] **Step 2: Run tests and verify Red**
 
@@ -819,7 +828,9 @@ await expect(runWith({ harnessId: "pi", stateFrom: "codex" }))
 
 Cover tool/approval/input projection, provider event ownership, secret/path
 sanitization, cancellation, project requirement, exact adapter-state version,
-and compatibility projection parity.
+valid Pi `cwd` preservation and resume after owner-project revalidation,
+out-of-root/stale path quarantine, no path projection, and compatibility
+projection parity.
 
 - [ ] **Step 2: Run tests and verify Red**
 
