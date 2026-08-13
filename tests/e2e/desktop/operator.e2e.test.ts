@@ -402,6 +402,15 @@ suite("operator desktop e2e", () => {
       evidence.focusTargets.Terminal,
     );
     expect(evidence.focusTargets.Files).toBe("Files");
+    if (evidence.historyTargets) {
+      expect(evidence.historyTargets).toEqual({
+        back: "Terminal",
+        forward: "Files",
+      });
+    }
+    if (evidence.recentConversationTarget) {
+      expect(evidence.recentConversationTarget).toBe("Conversations");
+    }
     expect(evidence.hiddenPanesMissingInert).toBe(0);
     expect(evidence.narrowViewport).toEqual({
       width: 820,

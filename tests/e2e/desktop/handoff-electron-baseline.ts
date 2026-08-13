@@ -5,6 +5,8 @@ const NAVIGATION_NAMES = ["Home", "Chat", "Terminal", "Files"] as const;
 export interface DesktopHandoffBaselineEvidence {
   navigationNames: string[];
   focusTargets: Record<(typeof NAVIGATION_NAMES)[number], string>;
+  historyTargets: { back: string; forward: string } | null;
+  recentConversationTarget: string | null;
   hiddenPanesMissingInert: number;
   narrowViewport: {
     width: number;
@@ -48,9 +50,12 @@ async function waitForSurface(page: Page, name: (typeof NAVIGATION_NAMES)[number
         .waitFor({ timeout: 10_000 });
       return;
     case "Terminal":
-      await page
-        .getByRole("heading", { name: "Terminal" })
-        .waitFor({ timeout: 10_000 });
+      await Promise.race([
+        page
+          .getByRole("heading", { name: "Terminal" })
+          .waitFor({ timeout: 10_000 }),
+        page.getByText("Shells").first().waitFor({ timeout: 10_000 }),
+      ]);
       return;
     case "Files":
       await page
@@ -95,6 +100,32 @@ export async function inspectDesktopHandoffBaseline(
     });
   }
 
+  let historyTargets: DesktopHandoffBaselineEvidence["historyTargets"] = null;
+  const hasCombinedNavigation =
+    (await page.getByRole("navigation", { name: "Breadcrumb" }).count()) > 0;
+  const goBack = page.getByRole("button", { name: "Go back" });
+  if ((await goBack.count()) > 0 && await goBack.isEnabled()) {
+    await goBack.click();
+    await waitForSurface(page, "Terminal");
+    await page.getByRole("button", { name: "Go forward" }).click();
+    await waitForSurface(page, "Files");
+    historyTargets = { back: "Terminal", forward: "Files" };
+  } else if (hasCombinedNavigation) {
+    throw new Error("Combined Desktop navigation did not expose usable Back/Forward history");
+  }
+
+  let recentConversationTarget: string | null = null;
+  const recentConversation = page.getByRole("button", {
+    name: "Open recent Hermes",
+  });
+  if ((await recentConversation.count()) > 0) {
+    await recentConversation.click();
+    await waitForSurface(page, "Chat");
+    recentConversationTarget = "Conversations";
+  } else if (hasCombinedNavigation) {
+    throw new Error("Combined Desktop navigation did not expose the Hermes Recent");
+  }
+
   const hiddenPanesMissingInert = await page.evaluate(
     () =>
       document.querySelectorAll(
@@ -121,6 +152,8 @@ export async function inspectDesktopHandoffBaseline(
   return {
     navigationNames,
     focusTargets,
+    historyTargets,
+    recentConversationTarget,
     hiddenPanesMissingInert,
     narrowViewport,
     reducedMotion,
