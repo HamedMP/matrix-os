@@ -8,7 +8,7 @@
 
 **Created**: 2026-08-13
 
-**Status**: Product design approved; written specification awaiting review
+**Status**: Approved — product design and written specification approved
 
 **Depends On**: MAT-299 persistent Hermes conversation index and switching
 
