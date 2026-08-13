@@ -292,12 +292,12 @@ suite("operator desktop e2e", () => {
     await page.getByRole("listbox", { name: "Choose computer" }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "09d-computer-menu.png") });
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Collapse sidebar (⌘B)" }).click();
+    await page.getByRole("button", { name: /^Collapse sidebar/ }).click();
     await page.getByRole("button", { name: /Change computer, currently/ }).click();
     await page.getByRole("listbox", { name: "Choose computer" }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "09e-computer-menu-collapsed.png") });
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Expand sidebar (⌘B)" }).click();
+    await page.getByRole("button", { name: /^Expand sidebar/ }).click();
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();
     await page.getByRole("heading", { name: "Chats" }).waitFor({ timeout: 10_000 });

@@ -48,8 +48,9 @@ async function waitForSurface(page: Page, name: (typeof NAVIGATION_NAMES)[number
         .waitFor({ timeout: 10_000 });
       return;
     case "Terminal":
-      await page.getByText("Shells").first().waitFor({ timeout: 10_000 });
-      await page.getByLabel("Terminal input").waitFor({ timeout: 10_000 });
+      await page
+        .getByRole("heading", { name: "Terminal" })
+        .waitFor({ timeout: 10_000 });
       return;
     case "Files":
       await page
