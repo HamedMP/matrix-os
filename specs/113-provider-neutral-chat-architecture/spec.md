@@ -152,11 +152,17 @@ interface ChatProjectProjection {
   repositoryLabel?: string;
   status: "ready" | "unavailable";
 }
+
+type ChatExecutionRootRef =
+  | { kind: "project"; projectId: string }
+  | { kind: "worktree"; projectId: string; worktreeId: string };
 ```
 
 The client never sends `OwnerScope`, a filesystem path, provider resume state,
 provider credentials, repository URL, or runtime identity. Gateway derives
-owner scope from the verified principal and resolves project/runtime state.
+owner scope from the verified principal and resolves project/runtime state. A
+client may select an opaque existing `worktreeId` where the harness supports
+it, but only Gateway constructs and validates `ChatExecutionRootRef`.
 
 ### Canonical messages
 
@@ -212,11 +218,34 @@ and schema version match the Run. Adapters must not place access tokens,
 credentials, raw stderr, or unbounded transcripts in state. A provider-native
 absolute execution root such as Pi's `cwd` is the sole path exception: the
 exact adapter schema must declare the field, and Gateway must realpath-resolve
-and validate it against the current owner-scoped `ProjectConfig.id` at import,
-write, and resume. It remains encrypted, adapter-private, and excluded from
-logs, renderer projections, and default exports. Client-supplied paths and
-paths outside the resolved project root are rejected; a moved or unavailable
-project makes the Run non-resumable rather than silently rebinding the path.
+it through an owner-scoped `ChatExecutionRootResolver` at import, write, and
+resume. Validation is exact provenance, not lexical containment:
+
+- a `project` root must equal the current realpath of
+  `ProjectConfig.localPath`; this includes owner-approved external folder
+  projects that ProjectManager already accepted; or
+- a `worktree` root must equal the current realpath of the exact live
+  `WorktreeRecord` resolved by the same ProjectConfig's slug and `worktreeId`,
+  and that record must remain under Matrix's canonical
+  `projects/<slug>/worktrees/<worktreeId>` root with matching `.matrix`
+  metadata.
+
+The adapter envelope stores the safe execution-root reference alongside the
+provider `cwd`. A legacy Pi state with only `cwd` is preserved only when it
+exactly matches the project root or exactly one registered worktree for that
+project; import backfills that reference. Arbitrary siblings, unregistered
+worktrees, subpaths, owner mismatches, and ambiguous matches are quarantined.
+The path remains encrypted, adapter-private, and excluded from logs, renderer
+projections, and default exports. A moved/deleted root or changed provenance
+makes the Run non-resumable rather than silently rebinding it.
+
+The resolver returns a non-secret fingerprint derived from a canonical encoding
+of the safe reference, owner scope, `ProjectConfig.id`, its validated current
+`localPath` realpath, and, for worktrees, the `WorktreeRecord` ID, project slug,
+validated realpath, and creation timestamp. The fingerprint is stored with the
+Run; raw paths are not. Re-resolution must reproduce the same reference and
+fingerprint before start/resume. Any file-config or worktree-record change that
+alters those inputs requires a new Run instead of reusing adapter state.
 
 ### Model plugin contract
 
@@ -252,7 +281,7 @@ Run orchestration have drained.
 | `chat_messages` | Per-Chat monotonic `seq`; role; strict parts JSONB; state; optional Turn/Run IDs; byte count; timestamps; unique `(chat_id, seq)` |
 | `chat_attachments` | Owner-file/object references and safe metadata; never embeds arbitrary local paths or attachment bytes in renderer projections |
 | `chat_turns` | User action, `base_message_seq`, input message, idempotency key, status, timestamps; unique `(chat_id, client_request_id)` |
-| `chat_runs` | Attempt number, actual harness/model, capability snapshot, history boundary, status/outcome, timestamps; one active Run per Chat via a partial unique index |
+| `chat_runs` | Attempt number, actual harness/model, safe execution-root reference, capability snapshot, history boundary, status/outcome, timestamps; one active Run per Chat via a partial unique index |
 | `chat_run_events` | Bounded normalized replay events for streaming, approvals, tool progress, and recovery; provider raw frames are forbidden |
 | `chat_run_adapter_state` | Opaque, bounded, schema-versioned state keyed by Run and harness; repository API is adapter-only |
 | `chat_outbox` | Monotonic owner/Chat event cursor inserted transactionally with mutations for cross-shell replay |
@@ -281,19 +310,24 @@ only the stable ID and treats missing/archived/deleting projects as unavailable.
 
 ### Turn admission
 
-One transaction:
+Before opening the transaction, Gateway resolves any execution-root reference
+through ProjectManager/WorktreeManager and records a root fingerprint without
+holding a database lock across filesystem I/O. One transaction then:
 
 1. derive owner from the verified principal and lock the Chat row `FOR UPDATE`;
-2. validate membership, lifecycle, base revision, project availability, and no
-   active Run;
+2. validate membership, lifecycle, base revision, the same project/root
+   reference, and no active Run;
 3. resolve harness/model capability selection and canonical history boundary;
 4. insert the user message, Turn, accepted Run, initial adapter-state envelope,
    and outbox event; and
 5. increment Chat revision and commit.
 
-Only after commit may orchestration call the external harness/model. A failed
-call transitions the persisted Run to `failed` in a new transaction. It never
-rolls back the accepted user input or holds a database lock across I/O.
+Only after commit may orchestration call the external harness/model. Immediately
+before that call it re-resolves the exact execution-root reference and compares
+the fingerprint; a changed, deleted, moved, or owner-mismatched root fails the
+Run safely. A failed call transitions the persisted Run to `failed` in a new
+transaction. It never rolls back the accepted user input or holds a database
+lock across I/O.
 
 ### Context, lifecycle, and deletion
 
@@ -331,7 +365,11 @@ outbox record commit together.
 - Slug changes do not affect the Chat link. Duplicate/missing IDs fail closed
   and require owner-visible repair.
 - At Run admission, Gateway resolves the current active ProjectConfig and fixes
-  its validated working root for that Run. The renderer sends no path.
+  a safe `ChatExecutionRootRef` for that Run. Direct project execution resolves
+  exactly to `ProjectConfig.localPath`, including an approved external folder.
+  Worktree execution resolves only through the existing WorktreeManager record
+  for the same project; managed sibling worktrees are valid without being
+  descendants of `localPath`. The renderer sends no path.
 - Archived, deleting, missing, inaccessible, or owner-mismatched context keeps
   history readable but blocks new Runs until context is repaired or cleared.
 - Worktree requirements are capability metadata only in the first delivery.
@@ -505,10 +543,12 @@ refreshing it or recreating content.
    a Chat, its accepted inputs to Turns, and provider attempts/events to Runs.
 5. Preserve valid Hermes/coding provider session state only in the matching
    adapter-state envelope. Pi's absolute `cwd` remains resumable only when its
-   adapter schema accepts it and Gateway binds its realpath to the imported
-   Chat's current owner-scoped project root. Secrets, undeclared path fields,
-   and paths outside that root are quarantined from execution but reported;
-   transcript import still proceeds.
+   adapter schema accepts it and Gateway binds its realpath to either the exact
+   current `ProjectConfig.localPath` or one exact registered WorktreeRecord for
+   the imported Chat's owner-scoped project, backfilling the corresponding safe
+   execution-root reference. Secrets, undeclared path fields, arbitrary sibling
+   paths, and unregistered/ambiguous roots are quarantined from execution but
+   reported; transcript import still proceeds.
 6. Validate counts, sequence ordering, owner scope, hashes, orphan references,
    and sample transcript parity. Partial batch failure rolls back that batch and
    leaves the cutover marker unset.

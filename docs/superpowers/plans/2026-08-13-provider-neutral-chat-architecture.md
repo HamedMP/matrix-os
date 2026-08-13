@@ -76,7 +76,8 @@ until its PR exists, then `PR In Review`, and never `Done` before merge.
 - `packages/gateway/src/chat/repository.ts`: owner-scoped reads/mutations,
   transactions, optimistic revisions, and outbox insertion.
 - `packages/gateway/src/chat/project-resolver.ts`: immutable-ID ProjectConfig
-  resolution with safe public projection and internal working root.
+  resolution with safe public projection plus exact direct-project/registered-
+  worktree execution-root references and fingerprints.
 - `packages/gateway/src/chat/service.ts`: authorization-independent orchestration
   over repository/project resolver; no Hono or provider code.
 - `packages/gateway/src/chat/routes.ts`: Hono validation, auth principal mapping,
@@ -219,12 +220,14 @@ git commit -m "feat(contracts): define canonical chat model"
 - Create: `tests/gateway/chat-project-resolver.test.ts`
 
 **Interfaces:**
-- Consumes: `ProjectConfig`, `OwnerScope`, and existing safe project reads.
+- Consumes: `ProjectConfig`, `OwnerScope`, existing safe project reads, and
+  WorktreeManager's validated records.
 - Produces: `ProjectLookupResult`,
   `ProjectManager.getProjectById(input: { ownerScope: OwnerScope;
   projectId: string }): Promise<ProjectLookupResult>` and
-  `ChatProjectResolver.resolve(ownerScope, projectId)` returning separate
-  internal `workingDirectory` and safe `ChatProjectProjection`.
+  `ChatProjectResolver.resolve(ownerScope, projectId)` returning a safe
+  `ChatProjectProjection`, plus `resolveExecutionRoot(ownerScope,
+  { projectId, worktreeId? })` returning an internal exact root and fingerprint.
 
 - [ ] **Step 1: Write failing immutable-ID tests**
 
@@ -235,10 +238,19 @@ const after = await projects.getProjectById({ ownerScope, projectId: created.id 
 expect(before.ok && after.ok && after.project.id).toBe(created.id);
 expect(JSON.stringify((await resolver.resolve(ownerScope, created.id)).projection))
   .not.toContain(created.localPath);
+
+expect(await resolver.resolveExecutionRoot(ownerScope, {
+  projectId: githubProject.id,
+  worktreeId: registeredSiblingWorktree.id,
+})).toMatchObject({ ref: { kind: "worktree", projectId: githubProject.id } });
 ```
 
 Cover duplicate IDs, archived/deleting configs, owner mismatch, unreadable
-paths, cache eviction, and reconciliation after file changes.
+paths, cache eviction, and reconciliation after file changes. Add fixtures for
+a managed repository root, an owner-approved external folder project's exact
+`localPath`, a registered sibling worktree, an unregistered sibling with the
+same prefix, mismatched project/worktree metadata, deleted/moved worktrees, and
+symlink retargeting. Public projections must contain neither root path.
 
 - [ ] **Step 2: Run tests and verify Red**
 
@@ -252,6 +264,10 @@ export type ProjectLookupResult =
   | { ok: true; project: ProjectConfig }
   | { ok: false; status: number; error: WorkspaceError };
 
+export type ChatExecutionRootRef =
+  | { kind: "project"; projectId: string }
+  | { kind: "worktree"; projectId: string; worktreeId: string };
+
 async getProjectById(input: { ownerScope: OwnerScope; projectId: string }) {
   const project = await immutableIdIndex.resolve(input.projectId);
   if (!project || !ownerScopeMatches(project.ownerScope, input.ownerScope)) {
@@ -264,7 +280,14 @@ async getProjectById(input: { ownerScope: OwnerScope; projectId: string }) {
 Build the index only from validated owner file configs, cap entries to the
 existing project maximum, invalidate it on create/lifecycle/delete/file-watch
 changes, and fail closed on duplicate immutable IDs. Do not store ProjectConfig
-in PostgreSQL.
+in PostgreSQL. Resolve direct roots by exact realpath equality with the current
+`ProjectConfig.localPath`; resolve worktrees only from an exact WorktreeManager
+record for that ProjectConfig's slug and canonical managed worktree metadata.
+Never approve a path merely because it shares an ancestor or string prefix.
+Fingerprint the canonical safe reference, owner scope, immutable project ID,
+validated project realpath, and, for worktrees, the record ID/project slug/
+validated realpath/creation timestamp. Persist only that fingerprint and safe
+reference with the Run, then require an exact match on pre-dispatch re-resolution.
 
 - [ ] **Step 4: Run tests and verify Green**
 
@@ -497,10 +520,12 @@ expect(await migration.hasCutoverMarker()).toBe(false);
 ```
 
 Cover symlinks, oversized/invalid JSON, duplicate IDs, crash after each phase,
-valid/invalid resume state, preservation of Pi `cwd` inside the resolved owner
-project root, quarantine outside that root, transcript ordering, active Run
-drain, final delta, marker atomicity, old-release startup refusal, and legacy-ID
-translation before, exactly at, and after the immutable 90-day expiry.
+valid/invalid resume state, preservation of Pi `cwd` for the exact current
+project root, owner-approved external folder root, and registered sibling
+worktree, quarantine of arbitrary/unregistered/ambiguous sibling paths,
+transcript ordering, active Run drain, final delta, marker atomicity,
+old-release startup refusal, and legacy-ID translation before, exactly at, and
+after the immutable 90-day expiry.
 
 - [ ] **Step 2: Run tests and verify Red**
 
@@ -683,7 +708,7 @@ git commit -m "feat(chat): define harness capability registry"
 
 **Interfaces:**
 - Consumes: accepted Runs from Slice A, harness/model registries, adapter-only
-  state repository, canonical history pages.
+  state repository, canonical history pages, and exact execution-root resolver.
 - Produces: `startAcceptedRun`, `resumeRun`, `cancelRun`, and `forkChat`.
 
 - [ ] **Step 1: Write failing lifecycle tests**
@@ -694,12 +719,16 @@ await expect(orchestrator.resumeRun(codexRun.id, { harnessId: "pi" }))
   .rejects.toMatchObject({ code: "run_not_resumable" });
 expect(pi.start).not.toHaveBeenCalledWith(expect.objectContaining({ adapterState: expect.anything() }));
 expect((await repository.getRun(piRun.id)).baseMessageSeq).toBe(committedBoundary);
+await moveRegisteredWorktree(piRun.executionRootRef);
+await expect(orchestrator.resumeRun(piRun.id, { harnessId: "pi" }))
+  .rejects.toMatchObject({ code: "run_not_resumable" });
 ```
 
 Cover same-harness/version resume, incompatible version, Run retry attempt,
 failed partial output exclusion, 200-message/2-MiB history window metadata,
 late events, 500-event backpressure, explicit fork provenance, no active state
-copy, cancellation timeout, and restart interruption.
+copy, cancellation timeout, restart interruption, and execution-root
+fingerprint revalidation immediately before adapter start/resume.
 
 - [ ] **Step 2: Run tests and verify Red**
 
@@ -829,7 +858,8 @@ await expect(runWith({ harnessId: "pi", stateFrom: "codex" }))
 Cover tool/approval/input projection, provider event ownership, secret/path
 sanitization, cancellation, project requirement, exact adapter-state version,
 valid Pi `cwd` preservation and resume after owner-project revalidation,
-out-of-root/stale path quarantine, no path projection, and compatibility
+registered sibling-worktree and external-folder fixtures, unregistered or
+ambiguous sibling/stale path quarantine, no path projection, and compatibility
 projection parity.
 
 - [ ] **Step 2: Run tests and verify Red**
