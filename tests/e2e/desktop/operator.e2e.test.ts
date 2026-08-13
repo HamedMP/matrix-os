@@ -300,7 +300,12 @@ suite("operator desktop e2e", () => {
     await page.getByRole("button", { name: /^Expand sidebar/ }).click();
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();
-    await page.getByRole("heading", { name: "Chats" }).waitFor({ timeout: 10_000 });
+    await page
+      .locator(
+        '[role="region"][aria-label="Hermes conversation"], #conversation-index-title',
+      )
+      .first()
+      .waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "10-chat-no-shell-overlay.png") });
 
