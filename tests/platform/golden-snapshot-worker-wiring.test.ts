@@ -67,12 +67,6 @@ describe('golden snapshot worker wiring', () => {
     expect(worker).not.toContain('listClaimableGoldenSnapshotBuildIds(');
   });
 
-  it('does not scan release history or backfill golden snapshot builds', async () => {
-    const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
-    expect(source).not.toContain('reconcileMissingGoldenSnapshotBuilds');
-    expect(source).not.toContain('golden snapshot release reconciliation');
-  });
-
   it('reconciles durable base-generation revocations in bounded pages even when builds are disabled', async () => {
     const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
     const worker = source.slice(
@@ -83,6 +77,8 @@ describe('golden snapshot worker wiring', () => {
     expect(worker).toContain('reconcileRevokedGoldenSnapshotBaseGeneration');
     expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
       .toBeLessThan(worker.indexOf('if (goldenSnapshotConfig.buildsEnabled)'));
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('reconcileMissingGoldenSnapshotBuilds'));
     expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
       .toBeLessThan(worker.indexOf('claimGoldenSnapshotBuildBatch'));
     expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))

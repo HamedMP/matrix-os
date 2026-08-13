@@ -67,7 +67,6 @@ describe('golden snapshot repository', () => {
     await upsertHostBundleRelease(db, {
       version: 'v1',
       gitCommit: '1111111',
-      snapshotEligible: true,
       buildTime: '2026-07-01T00:00:00.000Z',
       bundleKey: 'system-bundles/v1/matrix-host-bundle.tar.gz',
       checksumKey: 'system-bundles/v1/matrix-host-bundle.tar.gz.sha256',
@@ -75,7 +74,6 @@ describe('golden snapshot repository', () => {
       size: 100,
       createdAt: '2026-07-01T00:00:00.000Z',
     });
-    await promoteHostBundleChannel(db, 'stable', 'v1', '2026-07-01T00:01:00.000Z');
     await upsertHostBundleRelease(db, {
       version: 'v2',
       gitCommit: '2222222',
@@ -322,27 +320,6 @@ describe('golden snapshot repository', () => {
     await expect(claimGoldenSnapshotBuildBatch(
       db, '2026-07-03T00:00:03.000Z', '2026-07-03T00:10:03.000Z', 5, 10, 1,
     )).resolves.toEqual([]);
-  });
-
-  it('claims capacity only for the current eligible stable release', async () => {
-    const queued = await enqueueGoldenSnapshotBuild(db, {
-      bundleVersion: 'v2', compatibility,
-      snapshotId: '10000000-0000-4000-8000-000000000034',
-      buildId: '20000000-0000-4000-8000-000000000034', now: '2026-07-03T00:00:00.000Z',
-    });
-
-    await expect(claimGoldenSnapshotBuildBatch(
-      db, '2026-07-03T00:00:01.000Z', '2026-07-03T00:10:01.000Z', 5, 10, 1,
-    )).resolves.toEqual([]);
-
-    await db.executor.updateTable('host_bundle_releases').set({ snapshot_eligible: true })
-      .where('version', '=', 'v2').execute();
-    await promoteHostBundleChannel(db, 'stable', 'v2', '2026-07-03T00:00:02.000Z');
-    await expect(claimGoldenSnapshotBuildBatch(
-      db, '2026-07-03T00:00:03.000Z', '2026-07-03T00:10:03.000Z', 5, 10, 1,
-    )).resolves.toEqual([
-      expect.objectContaining({ buildId: queued.build.buildId, status: 'running' }),
-    ]);
   });
 
   it('counts callback-wait infrastructure against the durable concurrency cap', async () => {
@@ -829,7 +806,7 @@ describe('golden snapshot repository', () => {
       buildId: '20000000-0000-4000-8000-000000000054', now: '2026-07-03T00:00:00.000Z',
     });
     const second = await enqueueGoldenSnapshotBuild(db, {
-      bundleVersion: 'v2', compatibility, testMode: true,
+      bundleVersion: 'v2', compatibility,
       snapshotId: '10000000-0000-4000-8000-000000000055',
       buildId: '20000000-0000-4000-8000-000000000055', now: '2026-07-03T00:00:00.000Z',
     });
@@ -1071,20 +1048,23 @@ describe('golden snapshot repository', () => {
       leaseId: '40000000-0000-4000-8000-000000000008',
       now: '2026-07-03T00:27:00.000Z', expiresAt: '2026-07-03T00:37:00.000Z',
     });
-    expect(retargeted).toBeUndefined();
+    expect(retargeted).toMatchObject({
+      snapshot: { snapshotId: enqueued.snapshot.snapshotId },
+      lease: { leaseId: '40000000-0000-4000-8000-000000000008', targetBundleVersion: 'v2' },
+    });
     await expect(db.executor.selectFrom('golden_snapshot_leases').select('released_at')
       .where('lease_id', '=', selected!.lease.leaseId).executeTakeFirstOrThrow())
       .resolves.toEqual({ released_at: '2026-07-03T00:27:00.000Z' });
   });
 
-  it('pre-filters reusable candidates by exact immutable provenance only', async () => {
+  it('pre-filters bounded reusable candidates by exact or chronologically older provenance', async () => {
     const source = await readFile('packages/platform/src/golden-snapshot-repository.ts', 'utf8');
     const start = source.indexOf('export async function selectAndLeaseGoldenSnapshot');
     const end = source.indexOf('export async function releaseGoldenSnapshotLease', start);
     const selection = source.slice(start, end);
-    expect(selection).toContain(".where('golden_snapshots.bundle_sha256', '=', targetSha256)");
-    expect(selection).not.toContain("sql.ref('host_bundle_releases.build_time')}::timestamptz <");
-    expect(selection).not.toContain("CASE WHEN ${sql.ref('golden_snapshots.bundle_sha256')}");
+    expect(selection).toContain("eb('golden_snapshots.bundle_sha256', '=', targetSha256)");
+    expect(selection).toContain("sql.ref('host_bundle_releases.build_time')}::timestamptz <");
+    expect(selection).toContain("CASE WHEN ${sql.ref('golden_snapshots.bundle_sha256')}");
   });
 
   it('preserves the first exact provider image and quarantines a conflicting observation', async () => {

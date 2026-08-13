@@ -3392,7 +3392,7 @@ export async function promoteHostBundleChannel(
   return db.transaction((trx) => promoteHostBundleChannelInTransaction(trx, channel, version, updatedAt));
 }
 
-export async function promoteHostBundleChannelInTransaction(
+async function promoteHostBundleChannelInTransaction(
   db: PlatformDB,
   channel: string,
   version: string,

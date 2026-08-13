@@ -11,27 +11,7 @@ import {
 } from '../../packages/platform/src/db.js';
 import type { Orchestrator } from '../../packages/platform/src/orchestrator.js';
 import { enqueueGoldenSnapshotBuild } from '../../packages/platform/src/golden-snapshot-repository.js';
-import type { GoldenSnapshotRuntimeConfig } from '../../packages/platform/src/golden-snapshot-schema.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-
-const goldenSnapshotConfig: GoldenSnapshotRuntimeConfig = {
-  enabled: false,
-  buildsEnabled: false,
-  rolloutPercent: 0,
-  compatibility: {
-    provider: 'hetzner', architecture: 'x86', region: 'eu-central', baseImage: 'ubuntu-24.04',
-    baseGeneration: 'ubuntu-24.04-v1', bootMode: 'bios', activationAbi: 'host-v1', minimumDiskGb: 40,
-  },
-  maxBuildAttempts: 5,
-  maxConcurrentBuilds: 2,
-  buildLeaseMs: 300_000,
-  provisioningLeaseMs: 600_000,
-  retentionLimit: 20,
-  freshnessMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
-  reconciliationBatchSize: 25,
-  testModeTtlMs: 24 * 60 * 60 * 1000,
-  auditRetentionMs: 90 * 24 * 60 * 60 * 1000,
-};
 
 describe('platform host bundle route', () => {
   let db: PlatformDB;
@@ -509,7 +489,6 @@ describe('platform host bundle route', () => {
       db,
       orchestrator,
       platformSecret: 'secret',
-      goldenSnapshotConfig,
       customerVpsObjectStore: {
         getObject: vi.fn(),
         putObject: vi.fn(),
@@ -583,8 +562,6 @@ describe('platform host bundle route', () => {
       body: JSON.stringify({ version: 'v2026.05.12-2' }),
     });
     expect(promoteRes.status).toBe(200);
-    await expect(db.executor.selectFrom('golden_snapshot_builds').select('status').execute())
-      .resolves.toEqual([{ status: 'queued' }]);
 
     const promotedStableRes = await app.request('/system-bundles/releases?channel=stable');
     await expect(promotedStableRes.json()).resolves.toMatchObject({
@@ -617,33 +594,11 @@ describe('platform host bundle route', () => {
       }),
     });
     expect(reRegisterRes.status).toBe(200);
-    await expect(db.executor.selectFrom('golden_snapshot_builds').select('status').execute())
-      .resolves.toEqual([{ status: 'queued' }]);
 
     const canaryAfterReRegisterRes = await app.request('/system-bundles/releases?channel=canary');
     await expect(canaryAfterReRegisterRes.json()).resolves.toMatchObject({
       releases: [{ version: 'v2026.05.12-2', channel: 'canary' }],
     });
-  });
-
-  it('allows stable snapshot opt-out without golden build configuration', async () => {
-    await seedRelease('v2026.05.12-opt-out');
-    const app = createApp({
-      db, orchestrator, platformSecret: 'secret',
-      customerVpsObjectStore: { getObject: vi.fn(), putObject: vi.fn() } as unknown as CustomerVpsObjectStore,
-    });
-
-    const response = await app.request('/system-bundles/channels/stable', {
-      method: 'POST',
-      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
-      body: JSON.stringify({ version: 'v2026.05.12-opt-out', snapshotEligible: false }),
-    });
-
-    expect(response.status).toBe(200);
-    await expect(getHostBundleRelease(db, 'v2026.05.12-opt-out'))
-      .resolves.toMatchObject({ snapshotEligible: false });
-    await expect(db.executor.selectFrom('golden_snapshot_builds').select('build_id').execute())
-      .resolves.toEqual([]);
   });
 
   it('rejects snapshot eligibility for a version outside the snapshot identity schema', async () => {

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  getHostBundleChannel,
+  getHostBundleRelease,
   promoteHostBundleChannel,
   upsertHostBundleRelease,
   type PlatformDB,
@@ -12,8 +12,7 @@ import {
 } from '../../packages/platform/src/golden-snapshot-repository.js';
 import {
   getGoldenSnapshotCoarseStatuses,
-  promoteHostBundleChannelWithStableSnapshot,
-  registerHostBundleReleaseWithStableSnapshot,
+  reconcileMissingGoldenSnapshotBuilds,
 } from '../../packages/platform/src/golden-snapshot-release-repository.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import {
@@ -145,12 +144,25 @@ describe('host bundle golden snapshot release hook', () => {
     expect(String(failure)).not.toContain('provider details');
   });
 
-  it('uses platform stable promotion as the only snapshot enqueue trigger', () => {
+  it('keeps snapshot enqueue failure isolated from existing fleet deployment', () => {
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+    const enqueueJob = workflow.slice(
+      workflow.indexOf('\n  enqueue-golden-snapshot:'),
+      workflow.indexOf('\n  deploy:'),
+    );
     const deployJob = workflow.slice(workflow.indexOf('\n  deploy:'));
 
-    expect(workflow).not.toContain('\n  enqueue-golden-snapshot:');
-    expect(workflow).not.toContain('scripts/enqueue-golden-snapshot.mjs');
+    expect(enqueueJob).toContain('needs: [dev-bundle-gate, build, publish]');
+    expect(enqueueJob).toContain('continue-on-error: true');
+    expect(enqueueJob).toContain("vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED == 'true'");
+    expect(enqueueJob).toContain("github.event_name == 'push'");
+    expect(enqueueJob).toContain("(github.event_name == 'workflow_dispatch' && inputs.channel != '')");
+    expect(enqueueJob).toContain("github.ref_name == 'main'");
+    expect(enqueueJob).toContain("github.ref_type == 'tag'");
+    expect(enqueueJob).toContain('PUBLISH_CHANNEL: ${{ needs.build.outputs.channel }}');
+    expect(enqueueJob).toContain('PUBLISH_VERSION: ${{ needs.build.outputs.version }}');
+    expect(enqueueJob).toContain('scripts/enqueue-golden-snapshot.mjs --version "$PUBLISH_VERSION"');
+    expect(enqueueJob).not.toContain('--version "${{ needs.build.outputs.version }}"');
     expect(deployJob).toContain('needs: [dev-bundle-gate, build, publish]');
     expect(deployJob).not.toContain('enqueue-golden-snapshot');
   });
@@ -177,10 +189,12 @@ describe('host bundle golden snapshot release hook', () => {
     expect(productionDeploy).toContain('GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0');
   });
 
-  it('lets durable release registration derive eligibility from the promoted channel', () => {
+  it('uses the same manual-channel eligibility rule for durable release registration', () => {
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
 
-    expect(workflow).not.toContain('GOLDEN_SNAPSHOT_ELIGIBLE:');
+    expect(workflow).toContain(
+      "GOLDEN_SNAPSHOT_ELIGIBLE: ${{ (github.event_name == 'push' && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag')) || (github.event_name == 'workflow_dispatch' && inputs.channel != '') }}",
+    );
   });
 
   it('resolves enqueue validation from the platform package and preserves eligibility in both publishers', () => {
@@ -193,10 +207,9 @@ describe('host bundle golden snapshot release hook', () => {
     expect(nodePublisher).toContain('resolveReleaseSnapshotEligibility');
   });
 
-  it('defaults only stable eligible while preserving explicit overrides', () => {
-    expect(resolveReleaseSnapshotEligibility('stable')).toBe(true);
-    for (const channel of ['dev', 'canary', 'beta']) {
-      expect(resolveReleaseSnapshotEligibility(channel)).toBe(false);
+  it('defaults customer channels eligible while keeping preview and explicit opt-out ineligible', () => {
+    for (const channel of ['dev', 'canary', 'beta', 'stable']) {
+      expect(resolveReleaseSnapshotEligibility(channel)).toBe(true);
     }
     expect(resolveReleaseSnapshotEligibility('none')).toBe(false);
     expect(resolveReleaseSnapshotEligibility('preview')).toBe(false);
@@ -206,273 +219,142 @@ describe('host bundle golden snapshot release hook', () => {
   });
 });
 
-describe('forward-only stable golden snapshot promotion', () => {
+describe('durable golden snapshot release reconciliation', () => {
   let db: PlatformDB;
   beforeEach(async () => ({ db } = await createTestPlatformDb()));
   afterEach(async () => destroyTestPlatformDb(db));
 
-  it('atomically registers an eligible stable release and queues its exact snapshot build', async () => {
-    const compatibility = {
-      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
-      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
-      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
-    };
-
-    await expect(registerHostBundleReleaseWithStableSnapshot(db, {
-      version: 'v-stable', gitCommit: '1111111', gitRef: 'main',
-      buildTime: '2026-07-01T00:00:00.000Z',
-      bundleKey: 'system-bundles/v-stable/matrix-host-bundle.tar.gz', checksumKey: null,
-      sha256: '1'.repeat(64), size: 100, createdAt: '2026-07-01T00:00:00.000Z',
-    }, 'stable', {
-      compatibility,
-      snapshotId: '10000000-0000-4000-8000-000000000001',
-      buildId: '20000000-0000-4000-8000-000000000001',
-      now: '2026-07-01T00:01:00.000Z',
-    })).resolves.toMatchObject({
-      release: { version: 'v-stable', snapshotEligible: true },
-      channel: { channel: 'stable', version: 'v-stable' },
-    });
-
-    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-stable'])))
-      .toEqual({ 'v-stable': 'requested' });
-  });
-
-  it('queues an existing release only when it is promoted to stable', async () => {
-    const compatibility = {
-      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
-      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
-      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
-    };
+  it('enqueues eligible durable releases missing a candidate and batches coarse status reads', async () => {
     await upsertHostBundleRelease(db, {
-      version: 'v-promoted', gitCommit: '2222222', gitRef: 'main', snapshotEligible: false,
-      buildTime: '2026-07-02T00:00:00.000Z',
-      bundleKey: 'system-bundles/v-promoted/matrix-host-bundle.tar.gz', checksumKey: null,
+      version: 'v1', gitCommit: '1111111', gitRef: 'main', snapshotEligible: true, buildTime: '2026-07-01T00:00:00.000Z',
+      bundleKey: 'system-bundles/v1/matrix-host-bundle.tar.gz', checksumKey: null,
+      sha256: '1'.repeat(64), size: 100, createdAt: '2026-07-01T00:00:00.000Z',
+    });
+    await upsertHostBundleRelease(db, {
+      version: 'preview-1', gitCommit: '2222222', gitRef: 'preview-1', buildTime: '2026-07-02T00:00:00.000Z',
+      bundleKey: 'system-bundles/preview-1/matrix-host-bundle.tar.gz', checksumKey: null,
       sha256: '2'.repeat(64), size: 100, createdAt: '2026-07-02T00:00:00.000Z',
     });
-    await promoteHostBundleChannel(db, 'dev', 'v-promoted', '2026-07-02T00:01:00.000Z');
-
-    await expect(promoteHostBundleChannelWithStableSnapshot(db, 'stable', 'v-promoted', {
-      compatibility,
-      snapshotId: '10000000-0000-4000-8000-000000000002',
-      buildId: '20000000-0000-4000-8000-000000000002',
-      now: '2026-07-02T00:02:00.000Z',
-    })).resolves.toMatchObject({
-      release: { version: 'v-promoted', snapshotEligible: true },
-      channel: { channel: 'stable', version: 'v-promoted' },
-    });
-    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-promoted'])))
-      .toEqual({ 'v-promoted': 'requested' });
-  });
-
-  it('quarantines and cleans unfinished work when a newer stable release supersedes it', async () => {
-    const compatibility = {
-      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
-      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
-      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
-    };
-    const release = (version: string, digit: string, buildTime: string) => ({
-      version, gitCommit: digit.repeat(7), gitRef: 'main', buildTime,
-      bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`, checksumKey: null,
-      sha256: digit.repeat(64), size: 100, createdAt: buildTime,
-    });
-    await registerHostBundleReleaseWithStableSnapshot(db, release(
-      'v-old-stable', '3', '2026-07-03T00:00:00.000Z',
-    ), 'stable', {
-      compatibility,
-      snapshotId: '10000000-0000-4000-8000-000000000003',
-      buildId: '20000000-0000-4000-8000-000000000003',
-      now: '2026-07-03T00:01:00.000Z',
-    });
-    await db.executor.updateTable('golden_snapshots').set({ state: 'building' })
-      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000003').execute();
-    await db.executor.updateTable('golden_snapshot_builds').set({
-      status: 'running', phase: 'builder_create', provider_builder_id: 42,
-      lease_expires_at: '2026-07-03T00:10:00.000Z',
-    }).where('build_id', '=', '20000000-0000-4000-8000-000000000003').execute();
-
-    await registerHostBundleReleaseWithStableSnapshot(db, release(
-      'v-new-stable', '4', '2026-07-04T00:00:00.000Z',
-    ), 'stable', {
-      compatibility,
-      snapshotId: '10000000-0000-4000-8000-000000000004',
-      buildId: '20000000-0000-4000-8000-000000000004',
-      now: '2026-07-04T00:01:00.000Z',
-    });
-
-    await expect(db.executor.selectFrom('golden_snapshots').select(['state', 'failure_code'])
-      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000003').executeTakeFirst())
-      .resolves.toEqual({ state: 'quarantined', failure_code: 'superseded_stable_release' });
-    await expect(db.executor.selectFrom('golden_snapshot_builds').select(['status', 'phase', 'last_error_code'])
-      .where('build_id', '=', '20000000-0000-4000-8000-000000000003').executeTakeFirst())
-      .resolves.toEqual({ status: 'failed', phase: 'failed', last_error_code: 'superseded_stable_release' });
-    await expect(db.executor.selectFrom('golden_snapshot_cleanup').select(['resource_type', 'provider_resource_id'])
-      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000003').execute())
-      .resolves.toEqual([{ resource_type: 'builder_server', provider_resource_id: 42 }]);
-    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-new-stable'])))
-      .toEqual({ 'v-new-stable': 'requested' });
-  });
-
-  it('preserves unfinished work when a stable alias has the same immutable bundle digest', async () => {
-    const compatibility = {
-      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
-      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
-      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
-    };
-    const release = (version: string, buildTime: string) => ({
-      version, gitCommit: '5555555', gitRef: 'main', buildTime,
-      bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`, checksumKey: null,
-      sha256: '5'.repeat(64), size: 100, createdAt: buildTime,
-    });
-    await registerHostBundleReleaseWithStableSnapshot(db, release(
-      'v-original-stable', '2026-07-04T00:00:00.000Z',
-    ), 'stable', {
-      compatibility,
-      snapshotId: '10000000-0000-4000-8000-000000000005',
-      buildId: '20000000-0000-4000-8000-000000000005',
-      now: '2026-07-04T00:01:00.000Z',
-    });
-    await db.executor.updateTable('golden_snapshots').set({ state: 'building' })
-      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000005').execute();
-    await db.executor.updateTable('golden_snapshot_builds').set({ status: 'running' })
-      .where('build_id', '=', '20000000-0000-4000-8000-000000000005').execute();
-
-    await expect(registerHostBundleReleaseWithStableSnapshot(db, release(
-      'v-stable-alias', '2026-07-04T01:00:00.000Z',
-    ), 'stable', {
-      compatibility,
-      snapshotId: '10000000-0000-4000-8000-000000000006',
-      buildId: '20000000-0000-4000-8000-000000000006',
-      now: '2026-07-04T01:01:00.000Z',
-    })).resolves.toMatchObject({
-      release: { version: 'v-stable-alias', snapshotEligible: true },
-      channel: { channel: 'stable', version: 'v-stable-alias' },
-    });
-
-    await expect(db.executor.selectFrom('golden_snapshots').select(['state', 'failure_code'])
-      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000005').executeTakeFirst())
-      .resolves.toEqual({ state: 'building', failure_code: null });
-    await expect(db.executor.selectFrom('golden_snapshot_builds').select('status')
-      .where('build_id', '=', '20000000-0000-4000-8000-000000000005').executeTakeFirst())
-      .resolves.toEqual({ status: 'running' });
-    await expect(db.executor.selectFrom('golden_snapshot_cleanup').select('cleanup_id')
-      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000005').execute())
-      .resolves.toEqual([]);
-    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-stable-alias'])))
-      .toEqual({ 'v-stable-alias': 'building' });
-  });
-
-  it('does not scan or backfill previously registered eligible releases', async () => {
     await upsertHostBundleRelease(db, {
-      version: 'v-historical', gitCommit: '4444444', gitRef: 'main', snapshotEligible: true,
+      version: 'manual-main', gitCommit: '3333333', gitRef: 'main', snapshotEligible: false,
+      buildTime: '2026-07-02T01:00:00.000Z', bundleKey: 'system-bundles/manual-main/matrix-host-bundle.tar.gz',
+      checksumKey: null, sha256: '3'.repeat(64), size: 100, createdAt: '2026-07-02T01:00:00.000Z',
+    });
+    const compatibility = {
+      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
+      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
+      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
+    };
+
+    await expect(reconcileMissingGoldenSnapshotBuilds(db, {
+      compatibility, now: '2026-07-03T00:00:00.000Z', limit: 25, freshnessMaxAgeMs: 86_400_000,
+    })).resolves.toEqual({ enqueued: 1 });
+    await expect(reconcileMissingGoldenSnapshotBuilds(db, {
+      compatibility, now: '2026-07-03T00:01:00.000Z', limit: 25, freshnessMaxAgeMs: 86_400_000,
+    })).resolves.toEqual({ enqueued: 0 });
+    const statuses = await getGoldenSnapshotCoarseStatuses(db, ['v1', 'preview-1', 'manual-main', 'missing']);
+    expect(Object.fromEntries(statuses)).toEqual({
+      v1: 'requested', 'preview-1': 'not_requested', 'manual-main': 'not_requested', missing: 'not_requested',
+    });
+  });
+
+  it('backfills a legacy release promoted before the new platform becomes authoritative', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'legacy-main-race', gitCommit: 'aaaaaaa', gitRef: 'main',
+      buildTime: '2026-07-02T02:00:00.000Z',
+      bundleKey: 'system-bundles/legacy-main-race/matrix-host-bundle.tar.gz', checksumKey: null,
+      sha256: 'a'.repeat(64), size: 100, createdAt: '2026-07-02T02:00:00.000Z',
+    });
+    await promoteHostBundleChannel(db, 'dev', 'legacy-main-race', '2026-07-02T02:01:00.000Z');
+    await upsertHostBundleRelease(db, {
+      version: 'explicit-opt-out', gitCommit: 'bbbbbbb', gitRef: 'main', snapshotEligible: false,
+      buildTime: '2026-07-02T03:00:00.000Z',
+      bundleKey: 'system-bundles/explicit-opt-out/matrix-host-bundle.tar.gz', checksumKey: null,
+      sha256: 'b'.repeat(64), size: 100, createdAt: '2026-07-02T03:00:00.000Z',
+    });
+    await promoteHostBundleChannel(db, 'beta', 'explicit-opt-out', '2026-07-02T03:01:00.000Z');
+    const compatibility = {
+      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
+      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
+      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
+    };
+
+    await expect(reconcileMissingGoldenSnapshotBuilds(db, {
+      compatibility, now: '2026-07-03T00:00:00.000Z', limit: 25, freshnessMaxAgeMs: 86_400_000,
+    })).resolves.toEqual({ enqueued: 1 });
+    await expect(getHostBundleRelease(db, 'legacy-main-race'))
+      .resolves.toMatchObject({ snapshotEligible: true });
+    await expect(getHostBundleRelease(db, 'explicit-opt-out'))
+      .resolves.toMatchObject({ snapshotEligible: false });
+  });
+
+  it('never lets test-mode snapshots satisfy production reconciliation or public status', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v-test-isolation', gitCommit: '4444444', gitRef: 'main', snapshotEligible: true,
       buildTime: '2026-07-04T00:00:00.000Z',
-      bundleKey: 'system-bundles/v-historical/matrix-host-bundle.tar.gz', checksumKey: null,
+      bundleKey: 'system-bundles/v-test-isolation/matrix-host-bundle.tar.gz', checksumKey: null,
       sha256: '4'.repeat(64), size: 100, createdAt: '2026-07-04T00:00:00.000Z',
     });
-    await promoteHostBundleChannel(db, 'stable', 'v-historical', '2026-07-04T00:01:00.000Z');
-
-    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-historical'])))
-      .toEqual({ 'v-historical': 'not_requested' });
-  });
-
-  it('persists an explicit stable opt-out and supersedes unfinished older work without enqueueing', async () => {
     const compatibility = {
       provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
       baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
       bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
     };
-    await registerHostBundleReleaseWithStableSnapshot(db, {
-      version: 'v-old-opt-out', gitCommit: '8888888', gitRef: 'main',
-      buildTime: '2026-07-05T00:00:00.000Z',
-      bundleKey: 'system-bundles/v-old-opt-out/matrix-host-bundle.tar.gz', checksumKey: null,
-      sha256: '8'.repeat(64), size: 100, createdAt: '2026-07-05T00:00:00.000Z',
-    }, 'stable', {
-      compatibility, snapshotId: '10000000-0000-4000-8000-000000000088',
-      buildId: '20000000-0000-4000-8000-000000000088', now: '2026-07-05T00:01:00.000Z',
-    });
-    await db.executor.updateTable('golden_snapshot_builds').set({ status: 'running' })
-      .where('build_id', '=', '20000000-0000-4000-8000-000000000088').execute();
-
-    const optedOut = await registerHostBundleReleaseWithStableSnapshot(db, {
-      version: 'v-stable-opt-out', gitCommit: '9999999', gitRef: 'main', snapshotEligible: false,
-      buildTime: '2026-07-06T00:00:00.000Z',
-      bundleKey: 'system-bundles/v-stable-opt-out/matrix-host-bundle.tar.gz', checksumKey: null,
-      sha256: '9'.repeat(64), size: 100, createdAt: '2026-07-06T00:00:00.000Z',
-    }, 'stable', {
-      compatibility, snapshotId: '10000000-0000-4000-8000-000000000089',
-      buildId: '20000000-0000-4000-8000-000000000089', now: '2026-07-06T00:01:00.000Z',
+    await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v-test-isolation', compatibility, testMode: true,
+      snapshotId: '10000000-0000-4000-8000-000000000099',
+      buildId: '20000000-0000-4000-8000-000000000099',
+      now: '2026-07-04T00:01:00.000Z',
     });
 
-    expect(optedOut.release.snapshotEligible).toBe(false);
-    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-stable-opt-out'])))
-      .toEqual({ 'v-stable-opt-out': 'not_requested' });
-    await expect(db.executor.selectFrom('golden_snapshot_builds').select('status')
-      .where('build_id', '=', '20000000-0000-4000-8000-000000000088').executeTakeFirst())
-      .resolves.toEqual({ status: 'failed' });
+    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-test-isolation'])))
+      .toEqual({ 'v-test-isolation': 'not_requested' });
+    await expect(reconcileMissingGoldenSnapshotBuilds(db, {
+      compatibility, now: '2026-07-04T00:02:00.000Z', limit: 25, freshnessMaxAgeMs: 86_400_000,
+    })).resolves.toEqual({ enqueued: 1 });
   });
 
-  it('cancels the current release build when that stable release opts out', async () => {
+  it('enqueues one immutable replacement for a stale ready snapshot and reuses it on reconciliation', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v-stale', gitCommit: '8888888', gitRef: 'main', snapshotEligible: true,
+      buildTime: '2026-07-01T00:00:00.000Z',
+      bundleKey: 'system-bundles/v-stale/matrix-host-bundle.tar.gz', checksumKey: null,
+      sha256: '8'.repeat(64), size: 100, createdAt: '2026-07-01T00:00:00.000Z',
+    });
     const compatibility = {
       provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
       baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
       bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
     };
-    await registerHostBundleReleaseWithStableSnapshot(db, {
-      version: 'v-current-opt-out', gitCommit: 'aaaaaaa', gitRef: 'main',
-      buildTime: '2026-07-07T00:00:00.000Z',
-      bundleKey: 'system-bundles/v-current-opt-out/matrix-host-bundle.tar.gz', checksumKey: null,
-      sha256: 'a'.repeat(64), size: 100, createdAt: '2026-07-07T00:00:00.000Z',
-    }, 'stable', {
-      compatibility, snapshotId: '10000000-0000-4000-8000-000000000090',
-      buildId: '20000000-0000-4000-8000-000000000090', now: '2026-07-07T00:01:00.000Z',
+    const original = await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v-stale', compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000088',
+      buildId: '20000000-0000-4000-8000-000000000088', now: '2026-07-01T00:01:00.000Z',
     });
+    await db.executor.updateTable('golden_snapshots').set({
+      state: 'ready', ready_at: '2026-07-01T00:02:00.000Z', provider_image_id: 88,
+    }).where('snapshot_id', '=', original.snapshot.snapshotId).execute();
 
-    await promoteHostBundleChannelWithStableSnapshot(db, 'stable', 'v-current-opt-out', {
-      snapshotEligible: false, now: '2026-07-07T00:02:00.000Z',
-    });
-
-    await expect(db.executor.selectFrom('golden_snapshot_builds').select('status')
-      .where('build_id', '=', '20000000-0000-4000-8000-000000000090').executeTakeFirst())
-      .resolves.toEqual({ status: 'failed' });
-    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-current-opt-out'])))
-      .toEqual({ 'v-current-opt-out': 'failed' });
-  });
-
-  it('rolls back the stable pointer and eligibility when enqueue fails', async () => {
-    const compatibility = {
-      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
-      baseImage: 'ubuntu-24.04', baseGeneration: 'revoked-generation',
-      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
-    };
-    await upsertHostBundleRelease(db, {
-      version: 'v-existing-stable', gitCommit: 'bbbbbbb', gitRef: 'main', snapshotEligible: false,
-      buildTime: '2026-07-08T00:00:00.000Z',
-      bundleKey: 'system-bundles/v-existing-stable/matrix-host-bundle.tar.gz', checksumKey: null,
-      sha256: 'b'.repeat(64), size: 100, createdAt: '2026-07-08T00:00:00.000Z',
-    });
-    await upsertHostBundleRelease(db, {
-      version: 'v-revoked-target', gitCommit: 'ccccccc', gitRef: 'main', snapshotEligible: false,
-      buildTime: '2026-07-09T00:00:00.000Z',
-      bundleKey: 'system-bundles/v-revoked-target/matrix-host-bundle.tar.gz', checksumKey: null,
-      sha256: 'c'.repeat(64), size: 100, createdAt: '2026-07-09T00:00:00.000Z',
-    });
-    await promoteHostBundleChannel(db, 'stable', 'v-existing-stable', '2026-07-08T00:01:00.000Z');
-    await db.executor.insertInto('golden_snapshot_revoked_base_generations').values({
-      base_generation: compatibility.baseGeneration,
-      reason: 'test_revocation',
-      revoked_at: '2026-07-08T00:02:00.000Z',
-      updated_at: '2026-07-08T00:02:00.000Z',
-    }).execute();
-
-    await expect(promoteHostBundleChannelWithStableSnapshot(db, 'stable', 'v-revoked-target', {
-      compatibility, snapshotId: '10000000-0000-4000-8000-000000000091',
-      buildId: '20000000-0000-4000-8000-000000000091', now: '2026-07-09T00:01:00.000Z',
-    })).rejects.toThrow('Base generation is revoked');
-
-    await expect(getHostBundleChannel(db, 'stable'))
-      .resolves.toMatchObject({ version: 'v-existing-stable' });
-    await expect(db.executor.selectFrom('host_bundle_releases').select('snapshot_eligible')
-      .where('version', '=', 'v-revoked-target').executeTakeFirst())
-      .resolves.toEqual({ snapshot_eligible: false });
+    await expect(reconcileMissingGoldenSnapshotBuilds(db, {
+      compatibility, now: '2026-07-03T00:00:00.000Z', limit: 25,
+      freshnessMaxAgeMs: 24 * 60 * 60 * 1000,
+    })).resolves.toEqual({ enqueued: 1 });
+    await expect(reconcileMissingGoldenSnapshotBuilds(db, {
+      compatibility, now: '2026-07-03T00:01:00.000Z', limit: 25,
+      freshnessMaxAgeMs: 24 * 60 * 60 * 1000,
+    })).resolves.toEqual({ enqueued: 0 });
+    await expect(db.executor.selectFrom('golden_snapshots')
+      .select(['image_generation', 'state']).where('bundle_sha256', '=', '8'.repeat(64))
+      .orderBy('image_generation').execute()).resolves.toEqual([
+      { image_generation: 1, state: 'ready' },
+      { image_generation: 2, state: 'candidate' },
+    ]);
+    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(
+      db,
+      ['v-stale'],
+      compatibility,
+      { now: '2026-07-03T00:01:00.000Z', freshnessMaxAgeMs: 24 * 60 * 60 * 1000 },
+    ))).toEqual({ 'v-stale': 'requested' });
   });
 
   it('reports status only for the active provisioning compatibility', async () => {
@@ -506,4 +388,54 @@ describe('forward-only stable golden snapshot promotion', () => {
     ))).toEqual({ 'v-active-compatibility': 'requested' });
   });
 
+  it('prioritizes the newest missing eligible release within each bounded reconciliation batch', async () => {
+    for (const [version, day, sha] of [['v-backlog-old', '01', '6'], ['v-backlog-new', '02', '7']] as const) {
+      await upsertHostBundleRelease(db, {
+        version, gitCommit: sha.repeat(7), gitRef: 'main', snapshotEligible: true,
+        buildTime: `2026-07-${day}T00:00:00.000Z`,
+        bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`, checksumKey: null,
+        sha256: sha.repeat(64), size: 100, createdAt: `2026-07-${day}T00:00:00.000Z`,
+      });
+    }
+    const compatibility = {
+      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
+      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
+      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
+    };
+
+    await expect(reconcileMissingGoldenSnapshotBuilds(db, {
+      compatibility, now: '2026-07-03T00:00:00.000Z', limit: 1, freshnessMaxAgeMs: 86_400_000,
+    })).resolves.toEqual({ enqueued: 1 });
+    await expect(db.executor.selectFrom('golden_snapshots').select('bundle_version').execute())
+      .resolves.toEqual([{ bundle_version: 'v-backlog-new' }]);
+  });
+
+  it('continues the bounded reconciliation batch after one release cannot enqueue', async () => {
+    for (const [version, day, sha] of [['v-reconcile-old', '01', '6'], ['v-reconcile-corrupt', '02', '7']] as const) {
+      await upsertHostBundleRelease(db, {
+        version, gitCommit: sha.repeat(7), gitRef: 'main', snapshotEligible: true,
+        buildTime: `2026-07-${day}T00:00:00.000Z`,
+        bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`, checksumKey: null,
+        sha256: sha.repeat(64), size: 100, createdAt: `2026-07-${day}T00:00:00.000Z`,
+      });
+    }
+    await db.executor.updateTable('host_bundle_releases').set({ sha256: 'invalid-provenance' })
+      .where('version', '=', 'v-reconcile-corrupt').execute();
+    const compatibility = {
+      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
+      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
+      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
+    };
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(reconcileMissingGoldenSnapshotBuilds(db, {
+      compatibility, now: '2026-07-03T00:00:00.000Z', limit: 25, freshnessMaxAgeMs: 86_400_000,
+    })).resolves.toEqual({ enqueued: 1 });
+    await expect(db.executor.selectFrom('golden_snapshots').select('bundle_version').execute())
+      .resolves.toEqual([{ bundle_version: 'v-reconcile-old' }]);
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(
+      '[golden-snapshot] missing-build enqueue failed release=v-reconcile-corrupt',
+    ));
+    consoleError.mockRestore();
+  });
 });

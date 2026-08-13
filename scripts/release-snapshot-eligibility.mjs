@@ -1,3 +1,5 @@
+const CUSTOMER_RELEASE_CHANNELS = new Set(['dev', 'canary', 'beta', 'stable']);
+
 export function resolveReleaseSnapshotEligibility(channel, explicitValue) {
   if (explicitValue !== undefined) {
     if (explicitValue !== 'true' && explicitValue !== 'false') {
@@ -5,5 +7,5 @@ export function resolveReleaseSnapshotEligibility(channel, explicitValue) {
     }
     return explicitValue === 'true';
   }
-  return channel === 'stable';
+  return CUSTOMER_RELEASE_CHANNELS.has(channel);
 }

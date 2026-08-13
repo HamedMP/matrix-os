@@ -508,9 +508,11 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
           listUnresolvedGoldenSnapshotBuildIds,
           reconcileRevokedGoldenSnapshotBaseGeneration,
         },
+        { reconcileMissingGoldenSnapshotBuilds },
       ] = await Promise.all([
         import('./golden-snapshot-service.js'),
         import('./golden-snapshot-repository.js'),
+        import('./golden-snapshot-release-repository.js'),
       ]);
       const builderTemplate = await readFile(
         process.env.GOLDEN_SNAPSHOT_BUILDER_CLOUD_INIT_PATH
@@ -548,6 +550,16 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
               }
             }
             if (goldenSnapshotConfig.buildsEnabled) {
+              try {
+                await reconcileMissingGoldenSnapshotBuilds(db, {
+                  compatibility: goldenSnapshotConfig.compatibility,
+                  now: workerNow,
+                  limit: goldenSnapshotConfig.reconciliationBatchSize,
+                  freshnessMaxAgeMs: goldenSnapshotConfig.freshnessMaxAgeMs,
+                });
+              } catch (err: unknown) {
+                logPlatformRouteError('golden snapshot release reconciliation', err);
+              }
               await claimGoldenSnapshotBuildBatch(
                 db,
                 workerNow,

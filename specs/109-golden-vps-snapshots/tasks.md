@@ -91,16 +91,16 @@
 
 ## Phase 4: User Story 1 - Fast Fresh Computer Provisioning (Priority: P1) MVP
 
-**Goal**: Use only an exact ready snapshot for a newly authorized customer VPS, fall back clean for non-exact targets, inject owner secrets only after clone creation, and route only after exact-version health registration.
+**Goal**: Use an exact or compatible older ready snapshot for a newly authorized customer VPS, inject owner secrets only after clone creation, and route only after exact-version health registration.
 
 **Independent Test**: Seed an exact ready synthetic snapshot, provision two customers concurrently, and verify separate servers, unique identities/credentials/stores/host keys, exact bundle registration, snapshot lease release, and improved readiness instrumentation.
 
 ### Tests for User Story 1
 
 - [ ] T040 [P] [US1] Write failing exact snapshot selection/lease and image-override tests in `tests/platform/golden-snapshot-provisioning.test.ts`
-- [ ] T041 [P] [US1] Write failing non-exact clean-fallback and exact-target registration tests in `tests/platform/golden-snapshot-provisioning.test.ts`
+- [ ] T041 [P] [US1] Write failing compatible-older activation and exact-target registration tests in `tests/platform/golden-snapshot-provisioning.test.ts`
 - [ ] T042 [P] [US1] Write failing concurrent owner isolation, idempotent runtime-slot, secret-injection-boundary, deterministic compatibility-scoped durable-rollout cohort, one-intent-per-lease worker takeover, authorization/billing-revocation, rollout-disable/create-intent, and snapshot/base-generation-revocation races that pause a durable job before every provider create, after an accepted or ambiguous create, and before routing in `tests/platform/golden-snapshot-provisioning.test.ts`
-- [ ] T043 [P] [US1] Write failing cloud-init exact-snapshot fast path and non-exact clean-fallback tests in `tests/platform/golden-snapshot-host-scripts.test.ts`
+- [ ] T043 [P] [US1] Write failing cloud-init exact-snapshot fast path and older-snapshot update tests in `tests/platform/golden-snapshot-host-scripts.test.ts`
 
 ### Implementation for User Story 1
 
@@ -194,20 +194,20 @@
 
 ## Phase 8: User Story 6 - Existing Computers Continue Normal Updates (Priority: P3)
 
-**Goal**: Enqueue only forward-looking eligible stable promotions without scanning release history or blocking the unchanged existing-fleet deployment path.
+**Goal**: Automatically enqueue every eligible main/tag/trusted manual-dispatch bundle without blocking publication or the unchanged existing-fleet deployment path.
 
-**Independent Test**: Simulate stable, non-stable, explicit opt-out, repeated-promotion, and superseding releases; the current eligible stable identity enqueues once, historical and non-stable releases do not, and `/vps/deploy` still runs for existing machines.
+**Independent Test**: Simulate eligible, preview, repeated-promotion, enqueue-failed, and build-failed releases; eligible identities enqueue once, previews do not, and `/vps/deploy` still runs for existing machines.
 
 ### Tests for User Story 6
 
 - [ ] T079 [P] [US6] Write failing enqueue script tests for immutable metadata, eligibility, bounded timeout, generic output, and non-zero internal failure in `tests/platform/host-bundle-snapshot-workflow.test.ts`
-- [ ] T080 [P] [US6] Write failing workflow and transaction tests proving stable promotion is the only automatic enqueue trigger, explicit opt-out is preserved, older unfinished work is superseded, startup performs no historical scan, and production plus preview platform Cloud Run deployments bind `GOLDEN_SNAPSHOT_OPERATOR_SECRET` from Secret Manager in `tests/platform/host-bundle-snapshot-workflow.test.ts` and `tests/platform/ci-workflows.test.ts`
+- [ ] T080 [P] [US6] Write failing workflow and durable-reconciliation tests proving snapshot enqueue depends on publish but deploy does not depend on snapshot success, stale/deleted identities receive exactly one replacement generation, repeated scans reuse it, and production plus preview platform Cloud Run deployments bind `GOLDEN_SNAPSHOT_OPERATOR_SECRET` from Secret Manager in `tests/platform/host-bundle-snapshot-workflow.test.ts` and `tests/platform/ci-workflows.test.ts`
 - [ ] T081 [P] [US6] Write failing route tests proving channel promotion reuses bundle identity and preview artifacts are excluded in `tests/platform/golden-snapshot-routes.test.ts`
 
 ### Implementation for User Story 6
 
 - [ ] T082 [US6] Implement bounded authenticated idempotent enqueue CLI with `AbortSignal.timeout()` in `scripts/enqueue-golden-snapshot.mjs`
-- [ ] T083 [US6] Atomically enqueue the exact eligible stable release during channel promotion, supersede unfinished older builds with durable exact-resource cleanup, remove workflow enqueue and startup history scans, and keep existing-fleet deploy independent; bind `GOLDEN_SNAPSHOT_OPERATOR_SECRET` into production and preview Cloud Run revisions and validate secret access/startup without exposing its value
+- [ ] T083 [US6] Add non-blocking post-publish snapshot enqueue plus a bounded reconciler for eligible main/tag/trusted manual-dispatch bundles without a fresh ready or active candidate; enqueue immutable replacements for stale/deleted identities while keeping existing-fleet deploy independent in `.github/workflows/host-bundle-release.yml` and platform startup; bind `GOLDEN_SNAPSHOT_OPERATOR_SECRET` into production and preview Cloud Run revisions and validate secret access/startup without exposing its value
 - [ ] T084 [US6] Preserve release/channel registration semantics and expose coarse snapshot status alongside release metadata in `packages/platform/src/host-bundle-routes.ts`
 - [ ] T085 [US6] Add package script wiring for the enqueue helper in `package.json`
 - [ ] T086 [US6] Run workflow/route tests and verify a snapshot enqueue/build failure cannot prevent exact-version `/vps/deploy`
@@ -290,7 +290,7 @@ Task T026: validation clone tests
 
 ```text
 Task T040: exact selection and lease tests
-Task T041: non-exact clean-fallback tests
+Task T041: compatible older update tests
 Task T042: concurrent owner isolation tests
 Task T043: host activation script tests
 ```

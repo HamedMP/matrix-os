@@ -70,8 +70,8 @@ migration work.
 Required scenarios:
 
 1. exact ready snapshot selected and leased;
-2. compatible but non-exact snapshots fall back to clean Ubuntu;
-3. a snapshot for a different target is never selected;
+2. newest compatible older snapshot updates to exact target before registration;
+3. newer snapshot rejected for older target;
 4. missing/rejected/quarantined/incompatible image uses clean Ubuntu fallback;
 5. lost create response adopts one exact-labeled server; if adoption is impossible,
    the possible server's credentials are revoked and it is proven powered off or

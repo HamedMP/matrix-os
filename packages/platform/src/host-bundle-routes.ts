@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
@@ -20,8 +19,6 @@ import { timingSafeTokenEquals } from './platform-token.js';
 import {
   getGoldenSnapshotCoarseStatus,
   getGoldenSnapshotCoarseStatuses,
-  promoteHostBundleChannelWithStableSnapshot,
-  registerHostBundleReleaseWithStableSnapshot,
 } from './golden-snapshot-release-repository.js';
 import {
   GoldenSnapshotBundleVersionSchema,
@@ -69,7 +66,6 @@ const HostBundleReleaseBodySchema = z.object({
 
 const HostBundleChannelBodySchema = z.object({
   version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
-  snapshotEligible: z.boolean().optional(),
 });
 
 function isObjectNotFoundError(err: unknown): boolean {
@@ -252,24 +248,7 @@ export function createHostBundleRoutes(opts: {
       return c.json({ error: 'Invalid request' }, 400);
     }
     try {
-      const stableEligible = parsed.data.channel === 'stable'
-        && (parsed.data.snapshotEligible ?? true);
-      if (stableEligible && !opts.goldenSnapshotCompatibility) {
-        return c.json({ error: 'Host bundle unavailable' }, 503);
-      }
-      const registered = parsed.data.channel === 'stable'
-        ? await registerHostBundleReleaseWithStableSnapshot(db, parsed.data, parsed.data.channel, {
-          ...(opts.goldenSnapshotCompatibility ? {
-            compatibility: opts.goldenSnapshotCompatibility,
-            snapshotId: randomUUID(),
-            buildId: randomUUID(),
-          } : {}),
-          now: new Date().toISOString(),
-        })
-        : await registerHostBundleRelease(db, {
-          ...parsed.data,
-          snapshotEligible: parsed.data.snapshotEligible ?? false,
-        }, parsed.data.channel);
+      const registered = await registerHostBundleRelease(db, parsed.data, parsed.data.channel);
       const { release, channel } = registered;
       if (channel && parsed.data.channel) {
         capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_CHANNEL_PROMOTED, {
@@ -325,23 +304,7 @@ export function createHostBundleRoutes(opts: {
       return c.json({ error: 'Invalid request' }, 400);
     }
     try {
-      const stableEligible = channel === 'stable' && (parsed.data.snapshotEligible ?? true);
-      if (stableEligible && !opts.goldenSnapshotCompatibility) {
-        return c.json({ error: 'Host bundle unavailable' }, 503);
-      }
-      const promotedResult = channel === 'stable'
-        ? await promoteHostBundleChannelWithStableSnapshot(db, channel, parsed.data.version, {
-          ...(opts.goldenSnapshotCompatibility ? {
-            compatibility: opts.goldenSnapshotCompatibility,
-            snapshotId: randomUUID(),
-            buildId: randomUUID(),
-          } : {}),
-          snapshotEligible: parsed.data.snapshotEligible,
-          now: new Date().toISOString(),
-        })
-        : undefined;
-      const promoted = promotedResult?.channel
-        ?? await promoteHostBundleChannel(db, channel, parsed.data.version);
+      const promoted = await promoteHostBundleChannel(db, channel, parsed.data.version);
       capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_CHANNEL_PROMOTED, {
         channel,
         version: promoted.version,
