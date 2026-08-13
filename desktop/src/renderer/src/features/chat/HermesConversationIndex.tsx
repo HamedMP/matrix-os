@@ -155,7 +155,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
               >
                 <Search size={14} aria-hidden style={{ color: "var(--text-tertiary)" }} />
                 <input
-                  type="search"
+                  type="text"
                   role="searchbox"
                   aria-label="Search chats"
                   autoFocus

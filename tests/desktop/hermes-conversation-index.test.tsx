@@ -103,6 +103,7 @@ describe("HermesConversationIndex", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
     const search = screen.getByRole("searchbox", { name: "Search chats" });
     expect(document.activeElement).toBe(search);
+    expect(search.getAttribute("type")).toBe("text");
     fireEvent.change(search, { target: { value: "budget" } });
     expect(screen.getByRole("button", { name: "Budget review conversation" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Launch plan conversation" })).toBeNull();
