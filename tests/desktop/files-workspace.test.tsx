@@ -244,12 +244,16 @@ describe("Files workspace", () => {
     api.getText.mockClear();
     api.getBlob.mockClear();
     api.get.mockClear();
-    act(() => {
+    await act(async () => {
       useConnection.setState({ runtimeSlot: "pr-920" });
+      await Promise.resolve();
     });
 
-    expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
-    expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("overview");
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+      expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("overview");
+      expect(api.get).toHaveBeenCalledWith("/api/files/list?path=");
+    });
     expect(api.getText).not.toHaveBeenCalled();
     expect(api.getBlob).not.toHaveBeenCalled();
     const staleStat = api.get.mock.calls.find(
@@ -272,13 +276,16 @@ describe("Files workspace", () => {
     // The store commits the replacement session before React re-renders and
     // runs the effect cleanup; the stat can settle inside that gap, so the
     // cancelled flag alone cannot stop the follow-up blob fetch.
-    useConnection.setState({ authGeneration: 4 });
-    resolveStat({ size: 128 });
     await act(async () => {
+      useConnection.setState({ authGeneration: 4 });
+      resolveStat({ size: 128 });
       await Promise.resolve();
       await Promise.resolve();
     });
 
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+    });
     expect(custom.getText).not.toHaveBeenCalled();
   });
 
@@ -336,12 +343,16 @@ describe("Files workspace", () => {
     api.getText.mockClear();
     api.get.mockClear();
     // Same runtime slot, but a replacement signed-in session (new credential).
-    act(() => {
+    await act(async () => {
       useConnection.setState({ authGeneration: 4 });
+      await Promise.resolve();
     });
 
-    expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
-    expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("overview");
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "File preview" })).toBeNull();
+      expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("overview");
+      expect(api.get).toHaveBeenCalledWith("/api/files/list?path=");
+    });
     expect(api.getText).not.toHaveBeenCalled();
     const staleStat = api.get.mock.calls.find(
       ([p]) => String(p).includes("/api/files/stat") && String(p).includes("app.ts"),
@@ -399,12 +410,18 @@ describe("Files workspace", () => {
 
     // A replacement session can keep the same runtime slot; the previous
     // owner's directory listing must not stay visible or clickable.
-    act(() => {
+    api.get.mockClear();
+    api.get.mockResolvedValue({ entries: [] });
+    await act(async () => {
       useConnection.setState({ authGeneration: 4 });
+      await Promise.resolve();
     });
 
-    expect(screen.queryByRole("button", { name: "Open workspaces" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull();
+    await waitFor(() => {
+      expect(api.get).toHaveBeenCalledWith("/api/files/list?path=");
+      expect(screen.queryByRole("button", { name: "Open workspaces" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull();
+    });
   });
 });
 
