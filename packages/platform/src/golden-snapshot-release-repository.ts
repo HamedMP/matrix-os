@@ -64,8 +64,8 @@ function requireStableSnapshotBuildInput(
 
 async function supersedeUnfinishedStableSnapshotBuilds(
   trx: PlatformDB,
-  currentBundleVersion: string,
-  preserveCurrentBundle: boolean,
+  currentBundleSha256: string,
+  preserveCurrentBundleDigest: boolean,
   now: string,
 ): Promise<void> {
   let query = trx.executor.selectFrom('golden_snapshots')
@@ -78,8 +78,8 @@ async function supersedeUnfinishedStableSnapshotBuilds(
     .where('golden_snapshots.test_mode', '=', false)
     .where('golden_snapshots.state', 'in', ['candidate', 'building', 'sanitizing', 'validating'])
     .where('golden_snapshot_builds.status', 'in', ['queued', 'running']);
-  if (preserveCurrentBundle) {
-    query = query.where('golden_snapshots.bundle_version', '!=', currentBundleVersion);
+  if (preserveCurrentBundleDigest) {
+    query = query.where('golden_snapshots.bundle_sha256', '!=', currentBundleSha256);
   }
   const rows = await query.orderBy('golden_snapshots.snapshot_id').forUpdate().execute();
   for (const row of rows) {
@@ -161,7 +161,7 @@ export async function registerHostBundleReleaseWithStableSnapshot(
     );
     if (channel === 'stable') {
       await supersedeUnfinishedStableSnapshotBuilds(
-        trx, release.version, release.snapshotEligible, input.now,
+        trx, release.sha256, release.snapshotEligible, input.now,
       );
     }
     if (channel === 'stable' && release.snapshotEligible) {
@@ -200,7 +200,7 @@ export async function promoteHostBundleChannelWithStableSnapshot(
     const promoted = await promoteHostBundleChannelInTransaction(trx, channel, version, input.now);
     if (channel === 'stable') {
       await supersedeUnfinishedStableSnapshotBuilds(
-        trx, release.version, release.snapshotEligible, input.now,
+        trx, release.sha256, release.snapshotEligible, input.now,
       );
     }
     if (channel === 'stable' && release.snapshotEligible) {

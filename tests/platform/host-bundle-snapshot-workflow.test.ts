@@ -312,6 +312,55 @@ describe('forward-only stable golden snapshot promotion', () => {
       .toEqual({ 'v-new-stable': 'requested' });
   });
 
+  it('preserves unfinished work when a stable alias has the same immutable bundle digest', async () => {
+    const compatibility = {
+      provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central',
+      baseImage: 'ubuntu-24.04', baseGeneration: 'ubuntu-24.04-v1',
+      bootMode: 'bios' as const, activationAbi: 'host-v1', minimumDiskGb: 40,
+    };
+    const release = (version: string, buildTime: string) => ({
+      version, gitCommit: '5555555', gitRef: 'main', buildTime,
+      bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`, checksumKey: null,
+      sha256: '5'.repeat(64), size: 100, createdAt: buildTime,
+    });
+    await registerHostBundleReleaseWithStableSnapshot(db, release(
+      'v-original-stable', '2026-07-04T00:00:00.000Z',
+    ), 'stable', {
+      compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000005',
+      buildId: '20000000-0000-4000-8000-000000000005',
+      now: '2026-07-04T00:01:00.000Z',
+    });
+    await db.executor.updateTable('golden_snapshots').set({ state: 'building' })
+      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000005').execute();
+    await db.executor.updateTable('golden_snapshot_builds').set({ status: 'running' })
+      .where('build_id', '=', '20000000-0000-4000-8000-000000000005').execute();
+
+    await expect(registerHostBundleReleaseWithStableSnapshot(db, release(
+      'v-stable-alias', '2026-07-04T01:00:00.000Z',
+    ), 'stable', {
+      compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000006',
+      buildId: '20000000-0000-4000-8000-000000000006',
+      now: '2026-07-04T01:01:00.000Z',
+    })).resolves.toMatchObject({
+      release: { version: 'v-stable-alias', snapshotEligible: true },
+      channel: { channel: 'stable', version: 'v-stable-alias' },
+    });
+
+    await expect(db.executor.selectFrom('golden_snapshots').select(['state', 'failure_code'])
+      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000005').executeTakeFirst())
+      .resolves.toEqual({ state: 'building', failure_code: null });
+    await expect(db.executor.selectFrom('golden_snapshot_builds').select('status')
+      .where('build_id', '=', '20000000-0000-4000-8000-000000000005').executeTakeFirst())
+      .resolves.toEqual({ status: 'running' });
+    await expect(db.executor.selectFrom('golden_snapshot_cleanup').select('cleanup_id')
+      .where('snapshot_id', '=', '10000000-0000-4000-8000-000000000005').execute())
+      .resolves.toEqual([]);
+    expect(Object.fromEntries(await getGoldenSnapshotCoarseStatuses(db, ['v-stable-alias'])))
+      .toEqual({ 'v-stable-alias': 'building' });
+  });
+
   it('does not scan or backfill previously registered eligible releases', async () => {
     await upsertHostBundleRelease(db, {
       version: 'v-historical', gitCommit: '4444444', gitRef: 'main', snapshotEligible: true,
