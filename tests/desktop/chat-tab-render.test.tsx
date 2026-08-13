@@ -287,7 +287,7 @@ describe("ChatTab", () => {
 
     render(<ChatTab />);
 
-    expect(screen.getByRole("heading", { name: "Conversations" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Chats" })).toBeTruthy();
     const newest = screen.getByRole("button", { name: "Plan the launch conversation" });
     const older = screen.getByRole("button", { name: "Earlier notes conversation" });
     expect(newest.textContent).toContain("Plan the launch");
@@ -299,12 +299,12 @@ describe("ChatTab", () => {
   it("shows loading, empty, and safe recovery states for conversation discovery", () => {
     useHermesChat.setState({ view: "index", indexStatus: "loading", conversations: [], indexError: null });
     const { rerender } = render(<ChatTab />);
-    expect(screen.getByRole("status", { name: "Loading conversations" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Loading chats" })).toBeTruthy();
 
     act(() => useHermesChat.setState({ indexStatus: "ready", conversations: [] }));
     rerender(<ChatTab />);
-    expect(screen.getByRole("heading", { name: "No conversations yet" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "New conversation" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "No chats yet" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeTruthy();
 
     act(() => useHermesChat.setState({
       indexStatus: "error",
@@ -312,7 +312,7 @@ describe("ChatTab", () => {
     }));
     rerender(<ChatTab />);
     expect(screen.getByRole("alert").textContent).toContain("Conversations could not be loaded. Try again.");
-    expect(screen.getByRole("button", { name: "Retry conversations" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry chats" })).toBeTruthy();
   });
 
   it("marks only the selected live conversation as running", () => {
