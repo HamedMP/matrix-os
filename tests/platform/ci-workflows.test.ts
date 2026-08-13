@@ -326,6 +326,24 @@ describe('CI workflows', () => {
     expect(workflow).toContain('pipedream_secret_tmpfile="$(mktemp)"');
   });
 
+  it('preflights, mounts, and smokes the dedicated recruiting ATS dependencies', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Verify recruiting ATS secrets');
+    expect(workflow).toContain('ATS_DATABASE_URL=ats-database-url');
+    expect(workflow).toContain('ATS_INGEST_SECRET=ats-ingest-secret');
+    expect(workflow).toContain('ATS_ADMIN_SECRET=ats-admin-secret');
+    expect(workflow).toContain('ATS_DATABASE_URL=ats-database-url:latest');
+    expect(workflow).toContain('ATS_INGEST_SECRET=ats-ingest-secret:latest');
+    expect(workflow).toContain('ATS_ADMIN_SECRET=ats-admin-secret:latest');
+    expect(workflow).toContain('ats_secret_tmpfile="$(mktemp)"');
+    expect(workflow).toContain('ATS ingest smoke');
+    expect(workflow).toContain('/api/ats/applications');
+    expect(workflow).toContain('ATS admin database smoke');
+    expect(workflow).toContain('/api/ats/admin/applications');
+  });
+
   it('preflights billing price secrets before deploying platform Cloud Run', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

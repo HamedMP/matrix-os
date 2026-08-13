@@ -154,6 +154,48 @@ jobs:
             exit 1
           fi
 
+      - name: Verify recruiting ATS secrets
+        if: ${{ env.DEPLOY_ENVIRONMENT == 'production' }}
+        run: |
+          set -euo pipefail
+          required_ats_secrets=(
+            ATS_DATABASE_URL=ats-database-url
+            ATS_INGEST_SECRET=ats-ingest-secret
+            ATS_ADMIN_SECRET=ats-admin-secret
+          )
+
+          for entry in "${required_ats_secrets[@]}"; do
+            env_name="${entry%%=*}"
+            secret_name="${entry#*=}"
+            gcloud secrets describe "$secret_name" \
+              --project "$GCP_PROJECT_ID" >/dev/null
+            ats_secret_tmpfile="$(mktemp)"
+            if ! gcloud secrets versions access latest --secret "$secret_name" \
+              --project "$GCP_PROJECT_ID" >"$ats_secret_tmpfile"; then
+              rm -f "$ats_secret_tmpfile"
+              echo "$secret_name must have an accessible latest version for $env_name." >&2
+              exit 1
+            fi
+            if [ ! -s "$ats_secret_tmpfile" ]; then
+              rm -f "$ats_secret_tmpfile"
+              echo "$secret_name must not be empty for $env_name." >&2
+              exit 1
+            fi
+            rm -f "$ats_secret_tmpfile"
+            accessor_member="$(
+              gcloud secrets get-iam-policy "$secret_name" \
+                --project "$GCP_PROJECT_ID" \
+                --flatten='bindings[].members' \
+                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+                --format='value(bindings.members)' \
+                | head -1
+            )"
+            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
+              exit 1
+            fi
+          done
+
       - name: Verify Stripe billing secrets
         run: |
           set -euo pipefail
@@ -438,6 +480,11 @@ jobs:
             traffic_flags+=(--no-traffic)
           fi
 
+          ats_secret_bindings=""
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+            ats_secret_bindings=",ATS_DATABASE_URL=ats-database-url:latest,ATS_INGEST_SECRET=ats-ingest-secret:latest,ATS_ADMIN_SECRET=ats-admin-secret:latest"
+          fi
+
           # TODO(#410): flip CUSTOMER_VPS_TLS_VERIFY back to true once customer VPS origins present trusted certs.
           if ! deploy_json=$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
@@ -456,7 +503,7 @@ jobs:
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
             --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_BACKGROUND_WORKERS_ENABLED=false,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync,GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=false,GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest${ats_secret_bindings}" \
             --format=json); then
             exit 1
           fi
@@ -490,6 +537,42 @@ jobs:
             exit 1
           fi
           curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health" >/dev/null
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+            ats_ingest_secret="$(gcloud secrets versions access latest \
+              --secret ats-ingest-secret \
+              --project "$GCP_PROJECT_ID" | tr -d '\r\n')"
+            ats_admin_secret="$(gcloud secrets versions access latest \
+              --secret ats-admin-secret \
+              --project "$GCP_PROJECT_ID" | tr -d '\r\n')"
+            if [ -z "$ats_ingest_secret" ] || [ -z "$ats_admin_secret" ]; then
+              echo "ATS smoke could not read the required scoped secrets." >&2
+              exit 1
+            fi
+            echo "::add-mask::$ats_ingest_secret"
+            echo "::add-mask::$ats_admin_secret"
+            ats_ingest_body="$(mktemp)"
+            ats_admin_body="$(mktemp)"
+            trap 'rm -f "$ats_ingest_body" "$ats_admin_body"' EXIT
+            ats_ingest_status="$(curl --silent --show-error --max-time 10 \
+              --output "$ats_ingest_body" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "authorization: Bearer ${ats_ingest_secret}" \
+              --form "source=deployment_smoke" \
+              "$CANDIDATE_URL/api/ats/applications")"
+            if [ "$ats_ingest_status" != "422" ]; then
+              echo "ATS ingest smoke expected validation status 422, received ${ats_ingest_status}." >&2
+              exit 1
+            fi
+            curl --fail --silent --show-error --max-time 10 \
+              --output "$ats_admin_body" \
+              --header "authorization: Bearer ${ats_admin_secret}" \
+              "$CANDIDATE_URL/api/ats/admin/applications?search=__deployment_smoke__"
+            if ! jq -e '.applications | type == "array"' "$ats_admin_body" >/dev/null; then
+              echo "ATS admin database smoke did not return an application list." >&2
+              exit 1
+            fi
+          fi
           # /sign-in is only served as the pre-VPS auth shell on app-domain hosts.
           # The raw candidate tag URL is not an app-domain host, so simulate the
           # edge router with x-forwarded-host + x-matrix-edge-secret instead of

@@ -49,6 +49,10 @@ CLERK_SECRET_KEY=sk_live_or_test_...
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_or_test_...
 PLATFORM_JWT_SECRET=...
 
+ATS_DATABASE_URL=postgresql://.../matrix_ats
+ATS_INGEST_SECRET=...
+ATS_ADMIN_SECRET=...
+
 CUSTOMER_VPS_ENABLED=true
 CUSTOMER_VPS_IMAGE_VERSION=matrix-os-host-dev
 HETZNER_API_TOKEN=...
@@ -69,6 +73,16 @@ bearer-returning runtime-selection exchange fails closed when this value is
 missing or aliases a renderer-accessible host.
 
 `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is required at host-bundle build time because it is baked into the Next.js shell bundle.
+
+Production recruiting uses a dedicated database in the production Neon project.
+Create the database beside the platform database, preserve the same TLS and
+endpoint parameters in its connection URL, and store the three settings in
+Secret Manager as `ats-database-url`, `ats-ingest-secret`, and
+`ats-admin-secret`. Grant the Cloud Run service account
+`roles/secretmanager.secretAccessor` on each secret. The production deployment
+preflights all three, mounts them into the candidate revision, checks the
+authenticated ingest route, and performs a read against the ATS database before
+promotion. Staging does not mount the production ATS secrets.
 
 Platform-owned integrations also need:
 
