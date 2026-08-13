@@ -42,6 +42,16 @@ describe("ConversationRunRegistry", () => {
     expect(received).toEqual([init, text, nextText]);
   });
 
+  it("reports only unfinished runs as active", () => {
+    const registry = new ConversationRunRegistry();
+
+    expect(registry.isActive("sess-1")).toBe(false);
+    registry.begin("sess-1");
+    expect(registry.isActive("sess-1")).toBe(true);
+    registry.complete("sess-1");
+    expect(registry.isActive("sess-1")).toBe(false);
+  });
+
   it("keeps only the tail of large runs", () => {
     const registry = new ConversationRunRegistry({
       maxRuns: 5,

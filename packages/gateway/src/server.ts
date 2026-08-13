@@ -3387,7 +3387,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  registerConversationHistoryRoutes(app, { conversations });
+  registerConversationHistoryRoutes(app, { conversations, conversationRuns });
 
   app.get("/api/conversations", (c) => {
     return c.json(conversations.list());
@@ -3404,13 +3404,6 @@ export async function createGateway(config: GatewayConfig) {
     }
     const id = conversations.create(body.channel);
     return c.json({ id }, 201);
-  });
-
-  app.delete("/api/conversations/:id", (c) => {
-    const id = c.req.param("id");
-    const deleted = conversations.delete(id);
-    if (!deleted) return c.json({ error: "Not found" }, 404);
-    return c.json({ ok: true });
   });
 
   app.get("/api/conversations/:id/search", (c) => {

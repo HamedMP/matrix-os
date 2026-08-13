@@ -1,15 +1,24 @@
 import {
+  KernelConversationDeleteResponseSchema,
   KernelConversationHistoryQuerySchema,
   KernelConversationHistoryResponseSchema,
   KernelConversationIdSchema,
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import type { ConversationRunRegistry } from "../conversation-run-registry.js";
 import type { ConversationStore } from "../conversations.js";
 
 const MAX_HISTORY_CONTENT_CHARS = 32_000;
+const MAX_DELETE_BODY_BYTES = 512;
+const deleteBodyLimit = bodyLimit({
+  maxSize: MAX_DELETE_BODY_BYTES,
+  onError: () => new Response("Payload Too Large", { status: 413 }),
+});
 
 export interface ConversationHistoryRouteDeps {
   conversations: ConversationStore;
+  conversationRuns: Pick<ConversationRunRegistry, "isActive">;
 }
 
 export function registerConversationHistoryRoutes(
@@ -57,6 +66,36 @@ export function registerConversationHistoryRoutes(
       return c.json({
         error: "Conversation history is temporarily unavailable. Try again.",
       }, 503);
+    }
+  });
+
+  app.delete("/api/conversations/:id", deleteBodyLimit, async (c) => {
+    try {
+      await c.req.arrayBuffer();
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === "BodyLimitError") {
+        return c.body("Payload Too Large", 413);
+      }
+      throw error;
+    }
+    const id = KernelConversationIdSchema.safeParse(c.req.param("id"));
+    if (!id.success) {
+      return c.json({ error: { code: "invalid_conversation_id" } }, 400);
+    }
+
+    if (deps.conversationRuns.isActive(id.data)) {
+      return c.json({ error: { code: "conversation_busy" } }, 409);
+    }
+
+    try {
+      const result = await deps.conversations.delete(id.data);
+      if (result === "not_found") {
+        return c.json({ error: { code: "conversation_not_found" } }, 404);
+      }
+      return c.json(KernelConversationDeleteResponseSchema.parse({ ok: true }));
+    } catch (error: unknown) {
+      console.error("[gateway] Failed to delete conversation:", error);
+      return c.json({ error: { code: "conversation_delete_unavailable" } }, 503);
     }
   });
 }

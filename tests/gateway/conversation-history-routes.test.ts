@@ -1,8 +1,13 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { KernelConversationHistoryResponseSchema } from "../../packages/contracts/src/index.js";
+import {
+  KernelConversationDeleteResponseSchema,
+  KernelConversationHistoryResponseSchema,
+} from "../../packages/contracts/src/index.js";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import type { ConversationStore } from "../../packages/gateway/src/conversations.js";
+import { ConversationRunRegistry } from
+  "../../packages/gateway/src/conversation-run-registry.js";
 import { registerConversationHistoryRoutes } from "../../packages/gateway/src/server/conversation-history-routes.js";
 
 const TOKEN = "conversation-history-test-token";
@@ -14,25 +19,29 @@ function createStore(overrides: Partial<ConversationStore> = {}): ConversationSt
     appendAssistantText: vi.fn(),
     addToolStart: vi.fn(),
     addToolEnd: vi.fn(),
-    finalize: vi.fn(),
+    finalize: vi.fn(async () => undefined),
     list: vi.fn(() => []),
     get: vi.fn(() => null),
     create: vi.fn(() => "conversation-1"),
-    delete: vi.fn(() => false),
+    delete: vi.fn(async () => "not_found" as const),
     search: vi.fn(() => []),
     ...overrides,
   };
 }
 
-function createApp(store: ConversationStore) {
+function createApp(
+  store: ConversationStore,
+  conversationRuns = new ConversationRunRegistry(),
+) {
   const app = new Hono();
   app.use("*", authMiddleware(TOKEN));
-  registerConversationHistoryRoutes(app, { conversations: store });
+  registerConversationHistoryRoutes(app, { conversations: store, conversationRuns });
   return app;
 }
 
-function authenticated(path: string) {
+function authenticated(path: string, init: RequestInit = {}) {
   return new Request(`http://localhost${path}`, {
+    ...init,
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
 }
@@ -44,6 +53,17 @@ describe("kernel conversation history route", () => {
 
     expect(response.status).toBe(401);
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it("requires gateway authentication before deleting storage", async () => {
+    const remove = vi.fn(async () => "deleted" as const);
+    const response = await createApp(createStore({ delete: remove })).request(
+      "/api/conversations/conversation-1",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(401);
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("returns the newest bounded page in chronological order", async () => {
@@ -149,6 +169,90 @@ describe("kernel conversation history route", () => {
     expect(failed.status).toBe(503);
     expect(await failed.json()).toEqual({
       error: "Conversation history is temporarily unavailable. Try again.",
+    });
+    expect(consoleError).toHaveBeenCalledOnce();
+    consoleError.mockRestore();
+  });
+
+  it("rejects invalid delete identifiers before active-run or storage access", async () => {
+    const remove = vi.fn(async () => "deleted" as const);
+    const runs = new ConversationRunRegistry();
+    const active = vi.spyOn(runs, "isActive");
+    const app = createApp(createStore({ delete: remove }), runs);
+
+    const response = await app.request(authenticated(
+      "/api/conversations/..%2Fsystem",
+      { method: "DELETE" },
+    ));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: { code: "invalid_conversation_id" },
+    });
+    expect(active).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("rejects deletion while the authoritative run is active", async () => {
+    const remove = vi.fn(async () => "deleted" as const);
+    const runs = new ConversationRunRegistry();
+    runs.begin("conversation-1");
+    const app = createApp(createStore({ delete: remove }), runs);
+
+    const response = await app.request(authenticated(
+      "/api/conversations/conversation-1",
+      { method: "DELETE" },
+    ));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "conversation_busy" } });
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("maps deleted and stale records to bounded responses", async () => {
+    const deleted = await createApp(createStore({
+      delete: vi.fn(async () => "deleted" as const),
+    })).request(authenticated("/api/conversations/conversation-1", { method: "DELETE" }));
+    const missing = await createApp(createStore({
+      delete: vi.fn(async () => "not_found" as const),
+    })).request(authenticated("/api/conversations/conversation-1", { method: "DELETE" }));
+
+    expect(deleted.status).toBe(200);
+    expect(KernelConversationDeleteResponseSchema.parse(await deleted.json()))
+      .toEqual({ ok: true });
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: { code: "conversation_not_found" } });
+  });
+
+  it("applies a body limit before DELETE route handling", async () => {
+    const remove = vi.fn(async () => "deleted" as const);
+    const app = createApp(createStore({ delete: remove }));
+
+    const response = await app.request(authenticated(
+      "/api/conversations/conversation-1",
+      { method: "DELETE", body: "x".repeat(513) },
+    ));
+
+    expect(response.status).toBe(413);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("logs internal deletion detail and returns a generic bounded code", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const app = createApp(createStore({
+      delete: vi.fn(async () => {
+        throw new Error("/home/matrix/private conversation record failed");
+      }),
+    }));
+
+    const response = await app.request(authenticated(
+      "/api/conversations/conversation-1",
+      { method: "DELETE" },
+    ));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: { code: "conversation_delete_unavailable" },
     });
     expect(consoleError).toHaveBeenCalledOnce();
     consoleError.mockRestore();
