@@ -310,6 +310,32 @@ describe('golden snapshot host scripts', () => {
     expect(source.indexOf(parentHome)).toBeLessThan(source.indexOf(ownerDirectories));
   });
 
+  it('installs activated user-systemd terminal prerequisites before starting the gateway', async () => {
+    const source = await readFile(activatePath, 'utf8');
+    const runtimeSetup = source.indexOf('set_activation_stage activation_terminal_runtime');
+    const serviceStart = source.indexOf('set_activation_stage activation_services_start');
+
+    expect(runtimeSetup).toBeGreaterThan(-1);
+    expect(runtimeSetup).toBeLessThan(serviceStart);
+    expect(source).toContain('/opt/matrix/app/TERMINAL_USER_SYSTEMD_ENABLED');
+    expect(source).toContain('chown -R root:root /opt/matrix/terminal-runtime');
+    expect(source).toContain('for unit in matrix-zellij@.service matrix-terminal.slice; do');
+    expect(source).toContain('"/opt/matrix/user-systemd/$unit"');
+    expect(source).toContain('"/etc/systemd/user/$unit"');
+    expect(source).toContain('timeout --kill-after=10 30 loginctl enable-linger matrix');
+    expect(source).toContain('timeout --kill-after=10 30 systemctl start "user@${matrix_uid}.service"');
+    expect(source).toContain('timeout --kill-after=10 30 runuser -u matrix');
+    expect(source).toContain('systemctl --user daemon-reload');
+    for (const stage of [
+      'activation_gateway_ready',
+      'activation_shell_ready',
+      'activation_sync_agent_ready',
+      'activation_gateway_health',
+    ]) {
+      expect(source).toContain(`set_activation_stage ${stage}`);
+    }
+  });
+
   it('regenerates clone identity and verifies the exact target digest before activation', async () => {
     const source = await readFile('distro/customer-vps/cloud-init.yaml', 'utf8');
     expect(source).toContain('systemd-machine-id-setup');
