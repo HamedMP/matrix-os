@@ -254,7 +254,7 @@ describe('golden snapshot host scripts', () => {
 
   it('overwrites ext4 runtime-reserved clusters and restores the exact reservation', async () => {
     const source = await readFile(sanitizePath, 'utf8');
-    const locateRootDevice = source.indexOf('findmnt -n -o MAJ:MIN --target /');
+    const locateRootDevice = source.indexOf('findmnt -n -r -o MAJ:MIN --target /');
     const locateExt4Control = source.indexOf('/sys/fs/ext4/$root_device_name/reserved_clusters');
     const saveReservation = source.indexOf('reserved_clusters_original="$(<"$reserved_clusters_file")"');
     const exposeReservation = source.indexOf('printf \'0\\n\' > "$reserved_clusters_file"');
@@ -275,6 +275,7 @@ describe('golden snapshot host scripts', () => {
       'printf \'%s\\n\' "$reserved_clusters_original" > "$reserved_clusters_file"',
     );
     expect(source).not.toContain('/sys/fs/ext4/sda1/');
+    expect(source).not.toContain('findmnt -n -o MAJ:MIN --target /');
   });
 
   it('restores the ext4 runtime reservation when sanitation is interrupted', async () => {

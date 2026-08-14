@@ -277,7 +277,7 @@ if [ "$root" = "/" ]; then
     exit 69
   fi
 
-  root_device_major_minor="$(findmnt -n -o MAJ:MIN --target /)"
+  root_device_major_minor="$(findmnt -n -r -o MAJ:MIN --target /)"
   case "$root_device_major_minor" in
     ""|*[!0-9:]*|:*|*:|*:*:*)
       echo "golden snapshot free-block overwrite setup failed" >&2
