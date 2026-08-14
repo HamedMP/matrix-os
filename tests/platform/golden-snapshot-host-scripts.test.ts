@@ -252,6 +252,45 @@ describe('golden snapshot host scripts', () => {
     expect(source).toContain('*) echo "golden snapshot raw-device scan failed" >&2; exit 72');
   });
 
+  it('overwrites ext4 runtime-reserved clusters and restores the exact reservation', async () => {
+    const source = await readFile(sanitizePath, 'utf8');
+    const locateRootDevice = source.indexOf('findmnt -n -o MAJ:MIN --target /');
+    const locateExt4Control = source.indexOf('/sys/fs/ext4/$root_device_name/reserved_clusters');
+    const saveReservation = source.indexOf('reserved_clusters_original="$(<"$reserved_clusters_file")"');
+    const exposeReservation = source.indexOf('printf \'0\\n\' > "$reserved_clusters_file"');
+    const fillFreeBlocks = source.indexOf('dd if=/dev/zero');
+    const removeFill = source.indexOf('rm -f -- "$zero_fill"', fillFreeBlocks);
+    const restoreReservation = source.indexOf('if ! restore_reserved_clusters; then', removeFill);
+
+    expect(locateRootDevice).toBeGreaterThan(-1);
+    expect(locateExt4Control).toBeGreaterThan(locateRootDevice);
+    expect(saveReservation).toBeGreaterThan(locateExt4Control);
+    expect(exposeReservation).toBeGreaterThan(saveReservation);
+    expect(fillFreeBlocks).toBeGreaterThan(exposeReservation);
+    expect(removeFill).toBeGreaterThan(fillFreeBlocks);
+    expect(restoreReservation).toBeGreaterThan(removeFill);
+    expect(source).toContain('reserved_clusters_changed=1');
+    expect(source).toContain('restore_reserved_clusters');
+    expect(source).toContain(
+      'printf \'%s\\n\' "$reserved_clusters_original" > "$reserved_clusters_file"',
+    );
+    expect(source).not.toContain('/sys/fs/ext4/sda1/');
+  });
+
+  it('restores the ext4 runtime reservation when sanitation is interrupted', async () => {
+    const source = await readFile(sanitizePath, 'utf8');
+    const exitCleanup = source.indexOf('trap cleanup_runtime_evidence EXIT');
+    const signalExit = source.indexOf("trap 'exit 70' HUP INT TERM");
+    const cleanupFunction = source.slice(
+      source.indexOf('cleanup_runtime_evidence() {'),
+      exitCleanup,
+    );
+
+    expect(exitCleanup).toBeGreaterThan(-1);
+    expect(signalExit).toBeGreaterThan(exitCleanup);
+    expect(cleanupFunction).toContain('restore_reserved_clusters');
+  });
+
   it('uses one credential-free activation path for builders and validation clones', async () => {
     const source = await readFile(activatePath, 'utf8');
     expect(source).toContain('matrix-golden-validation');
