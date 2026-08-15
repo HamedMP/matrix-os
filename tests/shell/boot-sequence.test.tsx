@@ -188,11 +188,11 @@ describe("BootSequence", () => {
 
   it("reconciles journey state instead of reporting failure after an ambiguous provisioning timeout", async () => {
     let provisionTimedOut = false;
-    let postTimeoutJourneyCalls = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    let staleRefreshCompleted = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/journey")) {
-        const state: JourneyState = provisionTimedOut && postTimeoutJourneyCalls++ > 0
+        const state: JourneyState = provisionTimedOut && staleRefreshCompleted
           ? {
               phase: "provisioning",
               detail: "Building your Matrix computer…",
@@ -204,6 +204,18 @@ describe("BootSequence", () => {
               detail: "Choose default installs before building your Matrix computer.",
               nextAction: { kind: "choose_default_installs" },
             };
+        if (provisionTimedOut && !staleRefreshCompleted) {
+          return await new Promise<Response>((resolve, reject) => {
+            const timer = window.setTimeout(() => {
+              staleRefreshCompleted = true;
+              resolve(Response.json(state));
+            }, 1_500);
+            init?.signal?.addEventListener("abort", () => {
+              window.clearTimeout(timer);
+              reject(new DOMException("The operation was aborted", "AbortError"));
+            }, { once: true });
+          });
+        }
         return new Response(JSON.stringify(state), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -221,7 +233,7 @@ describe("BootSequence", () => {
     await answerAcquisitionSource();
     fireEvent.click(await screen.findByRole("button", { name: "Build VPS" }));
 
-    expect(await screen.findByText("Building your Matrix computer", {}, { timeout: 3_000 })).toBeTruthy();
+    expect(await screen.findByText("Building your Matrix computer", {}, { timeout: 8_000 })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/journey")).length).toBeGreaterThan(1);
   });

@@ -25,7 +25,6 @@ import { navigateForOnboarding } from "@/lib/onboarding-navigation";
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
 // ready is the running shell. BootSequence only renders the billing/build steps.
 const PASSTHROUGH_PHASES = new Set<JourneyState["phase"]>(["first_run", "ready"]);
-const AMBIGUOUS_PROVISIONING_POLL_MS = 1_000;
 const AMBIGUOUS_PROVISIONING_WINDOW_MS = 30_000;
 
 const STAGE_LABEL: Record<string, string> = {
@@ -145,10 +144,13 @@ export function BootSequence({
 
 function BootSequenceInner({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
-  const { state, status, refreshJourney } = useJourney({ enabled: isLoaded && isSignedIn });
+  const [provisioningOutcomeAmbiguous, setProvisioningOutcomeAmbiguous] = useState(false);
+  const { state, status, refreshJourney } = useJourney({
+    enabled: isLoaded && isSignedIn,
+    keepPolling: provisioningOutcomeAmbiguous,
+  });
   const [working, setWorking] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
-  const [provisioningOutcomeAmbiguous, setProvisioningOutcomeAmbiguous] = useState(false);
 
   useEffect(() => {
     if (!provisioningOutcomeAmbiguous) return;
@@ -158,17 +160,15 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       setWorking(false);
       return;
     }
-    const pollTimer = window.setInterval(refreshJourney, AMBIGUOUS_PROVISIONING_POLL_MS);
     const timeoutTimer = window.setTimeout(() => {
       setProvisioningOutcomeAmbiguous(false);
       setWorking(false);
       setInstallError(PROVISIONING_RETRY_ERROR);
     }, AMBIGUOUS_PROVISIONING_WINDOW_MS);
     return () => {
-      window.clearInterval(pollTimer);
       window.clearTimeout(timeoutTimer);
     };
-  }, [provisioningOutcomeAmbiguous, refreshJourney, state?.phase]);
+  }, [provisioningOutcomeAmbiguous, state?.phase]);
 
   async function startProvision(developerTools: DeveloperToolId[]): Promise<void> {
     setWorking(true);
