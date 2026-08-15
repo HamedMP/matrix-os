@@ -16,6 +16,7 @@ import { MatrixBootMark } from "@/components/MatrixBootMark";
 import {
   PROVISIONING_RETRY_ERROR,
   isAcceptedProvisionResponse,
+  isAmbiguousProvisioningTimeout,
 } from "@/lib/provisioning-handoff";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "@/components/Settings";
@@ -185,6 +186,11 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       finishProvision();
     } catch (err: unknown) {
       console.warn("[boot] provision start failed", err instanceof Error ? err.name : typeof err);
+      if (isAmbiguousProvisioningTimeout(err)) {
+        finishProvision();
+        refreshJourney();
+        return;
+      }
       finishProvision(PROVISIONING_RETRY_ERROR);
     }
   }
