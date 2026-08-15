@@ -188,10 +188,11 @@ describe("BootSequence", () => {
 
   it("reconciles journey state instead of reporting failure after an ambiguous provisioning timeout", async () => {
     let provisionTimedOut = false;
+    let postTimeoutJourneyCalls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/journey")) {
-        const state: JourneyState = provisionTimedOut
+        const state: JourneyState = provisionTimedOut && postTimeoutJourneyCalls++ > 0
           ? {
               phase: "provisioning",
               detail: "Building your Matrix computer…",
@@ -220,7 +221,7 @@ describe("BootSequence", () => {
     await answerAcquisitionSource();
     fireEvent.click(await screen.findByRole("button", { name: "Build VPS" }));
 
-    expect(await screen.findByText("Building your Matrix computer")).toBeTruthy();
+    expect(await screen.findByText("Building your Matrix computer", {}, { timeout: 3_000 })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/journey")).length).toBeGreaterThan(1);
   });
