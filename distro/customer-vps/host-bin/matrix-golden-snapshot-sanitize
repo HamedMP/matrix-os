@@ -120,6 +120,7 @@ remove_targets=(
   root/.zsh_history
   root/.npmrc
   root/.netrc
+  var/lib/systemd/linger/matrix
   var/lib/systemd/random-seed
   var/lib/cloud
   var/lib/dhcp
@@ -180,6 +181,24 @@ sensitive_targets=(
   var/crash
   var/lib/systemd/coredump
 )
+
+if [ "$root" = "/" ] && id matrix >/dev/null 2>&1; then
+  matrix_uid="$(id -u matrix)"
+  if ! timeout --kill-after=5 30 loginctl disable-linger matrix; then
+    echo "golden snapshot matrix user quiescence failed" >&2
+    exit 67
+  fi
+  timeout --kill-after=5 30 loginctl terminate-user matrix >/dev/null 2>&1 || true
+  timeout --kill-after=5 30 systemctl stop "user@${matrix_uid}.service" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    pgrep -u matrix >/dev/null 2>&1 || break
+    sleep 1
+  done
+  if pgrep -u matrix >/dev/null 2>&1; then
+    echo "golden snapshot matrix user quiescence failed" >&2
+    exit 67
+  fi
+fi
 
 if [ "$root" = "/" ]; then
   swapoff -a

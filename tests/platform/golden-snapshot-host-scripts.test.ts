@@ -21,6 +21,7 @@ describe('golden snapshot host scripts', () => {
       'etc/ssh/ssh_host_ed25519_key',
       'etc/matrix/tls/server.key',
       'var/lib/systemd/random-seed',
+      'var/lib/systemd/linger/matrix',
       'var/lib/cloud/instances/i-123/state',
       'var/lib/dhcp/dhclient.leases',
       'etc/netplan/50-cloud-init.yaml',
@@ -68,6 +69,7 @@ describe('golden snapshot host scripts', () => {
     const evidence = await readFile(join(root, 'var/lib/matrix/golden-snapshot-sanitized'), 'utf8');
     expect(evidence).toContain('sanitized=true');
     expect(evidence).toContain('clean:/etc/matrix');
+    expect(evidence).toContain('clean:/var/lib/systemd/linger/matrix');
     expect(evidence).toContain('clean:/var/lib/docker/volumes');
     expect(evidence).toContain('clean:/etc/machine-id');
     expect(evidence).toContain('clean:/etc/netplan/50-cloud-init.yaml');
@@ -92,6 +94,23 @@ describe('golden snapshot host scripts', () => {
     expect(runtimeState.mode & 0o777).toBe(0o755);
   });
 
+  it('quiesces the lingering matrix user manager before removing snapshot state', async () => {
+    const source = await readFile(sanitizePath, 'utf8');
+    const disableLinger = source.indexOf('loginctl disable-linger matrix');
+    const terminateUser = source.indexOf('loginctl terminate-user matrix');
+    const stopUserManager = source.indexOf('systemctl stop "user@${matrix_uid}.service"');
+    const verifyStopped = source.indexOf('pgrep -u matrix');
+    const removeState = source.indexOf('for relative in "${remove_targets[@]}"; do');
+
+    expect(disableLinger).toBeGreaterThan(-1);
+    expect(terminateUser).toBeGreaterThan(disableLinger);
+    expect(stopUserManager).toBeGreaterThan(terminateUser);
+    expect(verifyStopped).toBeGreaterThan(stopUserManager);
+    expect(removeState).toBeGreaterThan(verifyStopped);
+    expect(source).toContain('timeout --kill-after=5 30 loginctl disable-linger matrix');
+    expect(source).toContain('golden snapshot matrix user quiescence failed');
+  });
+
   it('fails closed when a forbidden path survives and emits only coarse validation evidence', async () => {
     const source = await readFile(validatePath, 'utf8');
     const activationSource = await readFile(activatePath, 'utf8');
@@ -110,6 +129,7 @@ describe('golden snapshot host scripts', () => {
       '/etc/matrix', '/opt/matrix/env', '/opt/matrix/config', '/opt/matrix/secrets',
       '/opt/matrix/tls', '/home/matrix/home', '/home/matrix/.hermes',
       '/home/matrix/.ssh', '/root/.ssh', '/home/matrix/.npmrc', '/root/.npmrc',
+      '/var/lib/systemd/linger/matrix',
       '/var/lib/docker/volumes', '/var/lib/containerd', '/var/log/matrix',
       '/var/log/matrix-builder.log', '/var/crash', '/var/lib/systemd/coredump',
     ]) {
@@ -127,6 +147,23 @@ describe('golden snapshot host scripts', () => {
       expect(script).toContain('crash_dump_dirs=(/var/crash /var/lib/systemd/coredump)');
       expect(script).toContain('find -P "$crash_dir" -mindepth 1 -print -quit');
     }
+  });
+
+  it('rejects a validation clone with baked matrix linger state before activation', async () => {
+    const activationSource = await readFile(activatePath, 'utf8');
+    const preflight = activationSource.indexOf('set_activation_stage activation_preflight_runtime_state');
+    const lingerMarker = activationSource.indexOf('/var/lib/systemd/linger/matrix', preflight);
+    const lingerState = activationSource.indexOf('loginctl show-user matrix --property=Linger --value');
+    const userManager = activationSource.indexOf('systemctl is-active --quiet "user@${matrix_uid}.service"');
+    const runtimeSetup = activationSource.indexOf('set_activation_stage activation_runtime_setup');
+
+    expect(preflight).toBeGreaterThan(-1);
+    expect(lingerState).toBeGreaterThan(preflight);
+    expect(lingerMarker).toBeGreaterThan(preflight);
+    expect(userManager).toBeGreaterThan(lingerState);
+    expect(userManager).toBeGreaterThan(lingerMarker);
+    expect(runtimeSetup).toBeGreaterThan(userManager);
+    expect(activationSource).toContain('golden snapshot inherited matrix linger state found');
   });
 
   it('emits schema-valid sentinel digests when validation identity files are missing', async () => {
