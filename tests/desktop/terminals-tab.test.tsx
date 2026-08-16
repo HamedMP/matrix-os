@@ -28,10 +28,10 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
   },
 }));
 
-function renderTab() {
+function renderTab(active = true) {
   return render(
     <Tooltip.Provider>
-      <TerminalsTab />
+      <TerminalsTab active={active} />
     </Tooltip.Provider>,
   );
 }
@@ -145,6 +145,52 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
 
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("fully contains cached session chrome and terminal output while the Terminal route is inactive", () => {
+    useShellSessions.setState({
+      sessions: [{
+        name: "matrix-main",
+        status: "active",
+        placement: "active",
+        createdAt: "2026-08-12T09:30:00.000Z",
+      }],
+    });
+
+    const { rerender } = renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+    const terminal = screen.getByTestId("terminal-view-matrix-main");
+    const sessionPane = terminal.closest("section");
+
+    expect(sessionPane?.style.display).toBe("flex");
+    expect(sessionPane?.style.visibility).toBe("visible");
+    expect(sessionPane?.style.pointerEvents).toBe("auto");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+
+    rerender(
+      <Tooltip.Provider>
+        <TerminalsTab active={false} />
+      </Tooltip.Provider>,
+    );
+
+    expect(sessionPane?.style.display).toBe("none");
+    expect(sessionPane?.style.visibility).toBe("hidden");
+    expect(sessionPane?.style.pointerEvents).toBe("none");
+    expect(sessionPane?.getAttribute("aria-hidden")).toBe("true");
+    expect(sessionPane?.hasAttribute("inert")).toBe(true);
+    expect(terminal.getAttribute("data-active")).toBe("false");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+
+    rerender(
+      <Tooltip.Provider>
+        <TerminalsTab active />
+      </Tooltip.Provider>,
+    );
+
+    expect(sessionPane?.style.display).toBe("flex");
+    expect(sessionPane?.style.visibility).toBe("visible");
+    expect(terminal.getAttribute("data-active")).toBe("true");
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 

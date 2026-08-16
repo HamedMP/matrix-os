@@ -26,6 +26,8 @@ const { createdTerminals } = vi.hoisted(() => ({
     registeredProviders: unknown[];
     dataCallback?: (data: string) => void;
     element: HTMLElement | null;
+    focus: ReturnType<typeof vi.fn>;
+    blur: ReturnType<typeof vi.fn>;
   }>,
 }));
 
@@ -65,7 +67,8 @@ vi.mock("@xterm/xterm", () => ({
     }
     write(): void {}
     clear(): void {}
-    focus(): void {}
+    focus = vi.fn();
+    blur = vi.fn();
     dispose(): void {}
     onData(callback: (data: string) => void): { dispose: () => void } {
       this.dataCallback = callback;
@@ -187,6 +190,23 @@ describe("TerminalView session switching", () => {
     expect(screen.getByText("Session exited (code 7).")).toBeTruthy();
     expect(screen.queryByText(/Connecting/)).toBeNull();
     expect(attachMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases keyboard focus when a retained terminal becomes inactive", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" active />);
+    const terminal = createdTerminals.at(-1)!;
+
+    expect(terminal.focus).toHaveBeenCalledOnce();
+    expect(terminal.blur).not.toHaveBeenCalled();
+
+    rerender(<TerminalView sessionName="alpha" active={false} />);
+
+    expect(terminal.blur).toHaveBeenCalledOnce();
+
+    rerender(<TerminalView sessionName="alpha" active />);
+
+    expect(terminal.focus).toHaveBeenCalledTimes(2);
+    expect(terminal.blur).toHaveBeenCalledOnce();
   });
 
   it("announces reconnecting, disconnected, and ended lifecycle states", () => {

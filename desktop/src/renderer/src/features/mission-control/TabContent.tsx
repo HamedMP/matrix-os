@@ -1,6 +1,7 @@
 import { Sparkles } from "lucide-react";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
+import RetainedPane from "../../design/RetainedPane";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import ProjectTab from "../project/ProjectTab";
@@ -111,22 +112,18 @@ export default function TabContent() {
         const isEmbed = tab.kind === "home" || tab.kind === "app";
         const paneActive = active && !(isEmbed && overlayOpen);
         return (
-          <div
+          <RetainedPane
             key={tab.id}
+            active={active}
             className="absolute inset-0 flex min-h-0 flex-col"
-            style={{
-              display: active ? "flex" : "none",
-              visibility: active ? "visible" : "hidden",
-              zIndex: active ? 1 : 0,
-            }}
-            aria-hidden={!active}
-            // `inert` keeps keyboard focus out of cached-but-hidden panes.
-            inert={!active}
+            background="var(--bg-app)"
+            data-tab-id={tab.id}
+            data-tab-kind={tab.kind}
           >
             <TabErrorBoundary tabTitle={tab.title} onClose={() => closeTab(tab.id)}>
               <TabPane tab={tab} active={paneActive} />
             </TabErrorBoundary>
-          </div>
+          </RetainedPane>
         );
       })}
     </div>

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, EmptyState, IconButton, StatusDot } from "../../design/primitives";
+import RetainedPane from "../../design/RetainedPane";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { categoryMessage } from "../../../../shared/app-error";
 import {
@@ -348,15 +349,15 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     finishDrag();
   };
 
-  const overviewVisible = selectedName === null;
+  const overviewVisible = active && selectedName === null;
 
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <section
+      <RetainedPane
+        as="section"
+        active={overviewVisible}
         className="absolute inset-0 flex min-h-0 flex-col"
-        style={{ visibility: overviewVisible ? "visible" : "hidden" }}
-        aria-hidden={!overviewVisible}
-        inert={!overviewVisible}
+        background="var(--bg-surface)"
       >
         <nav
           aria-label="Terminal breadcrumb"
@@ -473,18 +474,18 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
             )}
           </div>
         </div>
-      </section>
+      </RetainedPane>
 
       {openedSessionNames.map((sessionName) => {
         const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
-        const visible = selectedName === sessionName;
+        const visible = active && selectedName === sessionName;
         return (
-          <section
+          <RetainedPane
+            as="section"
             key={sessionName}
+            active={visible}
             className="absolute inset-0 flex min-h-0 flex-col"
-            style={{ visibility: visible ? "visible" : "hidden" }}
-            aria-hidden={!visible}
-            inert={!visible}
+            background="var(--bg-surface)"
           >
             <nav
               aria-label="Terminal breadcrumb"
@@ -522,7 +523,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
               </span>
             </header>
             <TerminalView sessionName={sessionName} active={active && liveSessionName === sessionName} />
-          </section>
+          </RetainedPane>
         );
       })}
 
