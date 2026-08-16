@@ -52,7 +52,7 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "chat":
       return <ChatTab />;
     case "terminals":
-      return <TerminalsTab />;
+      return <TerminalsTab active={active} />;
     case "files":
       return <FilesWorkspace />;
     case "apps":

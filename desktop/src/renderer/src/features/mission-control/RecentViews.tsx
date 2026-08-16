@@ -70,15 +70,15 @@ export default function RecentViews() {
       return;
     }
     if (recent.kind === "terminal") {
-      const nativeTab = tabs.find((tab) => tab.kind === "terminal" && tab.sessionName === recent.id);
-      if (nativeTab) {
-        openTab({ kind: "terminal", sessionName: recent.id, title: recent.label });
-        return;
-      }
       const terminalsWorkspace = tabs.find((tab) => tab.kind === "terminals");
       if (terminalsWorkspace) {
         requestTerminalSession(recent.id);
         openTab({ kind: "terminals", title: terminalsWorkspace.title });
+        return;
+      }
+      const nativeTab = tabs.find((tab) => tab.kind === "terminal" && tab.sessionName === recent.id);
+      if (nativeTab) {
+        openTab({ kind: "terminal", sessionName: recent.id, title: recent.label });
         return;
       }
       openTab({ kind: "terminal", sessionName: recent.id, title: recent.label });

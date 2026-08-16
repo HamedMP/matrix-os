@@ -92,7 +92,7 @@ function normalizeBusyNames(names: string[]): string[] {
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- TerminalsTab is the cohesive shell-session workspace: network load/create, selection, rename, delete confirmation, search, and drag refs are independent UI concerns. A reducer would couple unrelated state transitions without reducing render risk; extracting subcomponents below keeps the row/empty states isolated.
-export default function TerminalsTab() {
+export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const shells = useShellSessions((s) => s.sessions);
@@ -210,7 +210,8 @@ export default function TerminalsTab() {
   useEffect(() => {
     if (!terminalSessionRequest) return;
     const requestedShell = shells.find((shell) => shell.name === terminalSessionRequest.sessionName);
-    if (requestedShell) showShellDetail(requestedShell);
+    if (!requestedShell) return;
+    showShellDetail(requestedShell);
     consumeTerminalSessionRequest(terminalSessionRequest.requestId);
   }, [consumeTerminalSessionRequest, shells, showShellDetail, terminalSessionRequest]);
 
@@ -497,7 +498,7 @@ export default function TerminalsTab() {
                 {shellStatusLabel(shell)}
               </span>
             </header>
-            <TerminalView sessionName={sessionName} active={liveSessionName === sessionName} />
+            <TerminalView sessionName={sessionName} active={active && liveSessionName === sessionName} />
           </section>
         );
       })}

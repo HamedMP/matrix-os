@@ -192,6 +192,30 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
+  it("keeps a requested Recent pending until the canonical session load provides it", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().requestTerminalSession("matrix-delayed");
+    useShellSessions.setState({
+      sessions: [],
+      loading: true,
+    });
+
+    renderTab();
+
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({ sessionName: "matrix-delayed" });
+    expect(screen.queryByTestId("terminal-view-matrix-delayed")).toBeNull();
+
+    act(() => {
+      useShellSessions.setState({
+        sessions: [{ name: "matrix-delayed", status: "active", placement: "active" }],
+        loading: false,
+      });
+    });
+
+    expect(screen.getByRole("navigation", { name: "Terminal breadcrumb" }).textContent).toContain("matrix-delayed");
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
   it("bounds preserved terminal buffers to the eight most recently opened sessions", () => {
     useShellSessions.setState({
       sessions: Array.from({ length: 9 }, (_, index) => ({

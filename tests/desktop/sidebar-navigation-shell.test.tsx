@@ -120,6 +120,18 @@ describe("Desktop sidebar navigation shell", () => {
     expect(useTabs.getState().tabs.filter((tab) => tab.kind === "terminal")).toHaveLength(0);
   });
 
+  it("routes a Terminal recent through the mounted workspace when a native tab also exists", () => {
+    const terminalsWorkspace = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open recent dev" }));
+
+    expect(useTabs.getState().activeTabId).toBe(terminalsWorkspace);
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({ sessionName: "dev" });
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "terminal" && tab.sessionName === "dev")).toHaveLength(1);
+  });
+
   it("opens a recent conversation in Chat and restores its selection", () => {
     renderSidebar();
 
