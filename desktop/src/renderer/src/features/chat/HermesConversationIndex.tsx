@@ -109,6 +109,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   const [query, setQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<HermesConversationSummary | null>(null);
   const conversations = useHermesChat((state) => state.conversations);
+  const isConversationIndexComplete = useHermesChat((state) => state.isConversationIndexComplete);
   const indexStatus = useHermesChat((state) => state.indexStatus);
   const indexError = useHermesChat((state) => state.indexError);
   const deletingConversationId = useHermesChat((state) => state.deletingConversationId);
@@ -125,9 +126,9 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   );
 
   useEffect(() => {
-    if (indexStatus !== "ready") return;
+    if (indexStatus !== "ready" || !isConversationIndexComplete) return;
     reconcileRecentHermesConversations(conversations.map((conversation) => conversation.id));
-  }, [conversations, indexStatus, reconcileRecentHermesConversations]);
+  }, [conversations, indexStatus, isConversationIndexComplete, reconcileRecentHermesConversations]);
 
   const closeSearch = () => {
     setQuery("");

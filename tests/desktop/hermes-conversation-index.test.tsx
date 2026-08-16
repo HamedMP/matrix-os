@@ -95,6 +95,48 @@ describe("conversation search", () => {
 });
 
 describe("HermesConversationIndex", () => {
+  it("does not delete a valid Recent outside the bounded renderer index", async () => {
+    const gatewayConversations = Array.from({ length: 101 }, (_, index) => ({
+      id: `conversation-${index}`,
+      preview: `Conversation ${index}`,
+      messageCount: 1,
+      createdAt: index,
+      updatedAt: index,
+    }));
+    const client = api({ get: vi.fn(async () => gatewayConversations) });
+    useTabs.getState().recordRecentHermesConversation(
+      "conversation-100",
+      "Conversation 100",
+    );
+    useHermesChat.setState({ conversations: [], indexStatus: "idle" });
+
+    await act(async () => {
+      await useHermesChat.getState().refreshConversations(client);
+    });
+    render(<HermesConversationIndex api={client} />);
+
+    expect(useHermesChat.getState().conversations).toHaveLength(100);
+    await waitFor(() => expect(
+      useTabs.getState().recentViews.some((recent) => recent.id === "conversation-100"),
+    ).toBe(true));
+  });
+
+  it("reconciles deleted Recents when the complete Gateway index is available", async () => {
+    const gatewayConversations = conversations.map(({ title: _title, ...conversation }) => conversation);
+    const client = api({ get: vi.fn(async () => gatewayConversations) });
+    useTabs.getState().recordRecentHermesConversation("launch-plan", "Launch plan");
+    useTabs.getState().recordRecentHermesConversation("deleted-chat", "Deleted chat");
+    useHermesChat.setState({ conversations: [], indexStatus: "idle" });
+
+    await act(async () => {
+      await useHermesChat.getState().refreshConversations(client);
+    });
+    render(<HermesConversationIndex api={client} />);
+
+    await waitFor(() => expect(useTabs.getState().recentViews.map((recent) => recent.id))
+      .toEqual(["launch-plan"]));
+  });
+
   it("renders the approved header and focuses an ephemeral Search field", () => {
     render(<HermesConversationIndex api={api()} />);
 

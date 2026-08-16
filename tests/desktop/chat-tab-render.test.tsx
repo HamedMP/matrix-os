@@ -387,6 +387,7 @@ describe("ChatTab", () => {
     useHermesChat.setState({
       view: "index",
       indexStatus: "ready",
+      isConversationIndexComplete: true,
       conversations: [{
         id: "conversation-live",
         title: "Live chat",

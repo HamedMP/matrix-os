@@ -60,6 +60,11 @@ export interface HermesConversationSummary {
   updatedAt: number;
 }
 
+interface ConversationIndexSnapshot {
+  conversations: HermesConversationSummary[];
+  complete: boolean;
+}
+
 function normalizedPreview(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, CONVERSATION_PREVIEW_CAP).trimEnd();
 }
@@ -85,12 +90,16 @@ function safeConversationDeleteMessage(error: unknown): string {
   }
 }
 
-export function normalizeConversationIndex(raw: unknown): HermesConversationSummary[] | null {
+function normalizeConversationIndexSnapshot(raw: unknown): ConversationIndexSnapshot | null {
   if (!Array.isArray(raw)) return null;
   const summaries: HermesConversationSummary[] = [];
+  let complete = raw.length <= CONVERSATION_INDEX_CAP;
   for (const candidate of raw.slice(0, CONVERSATION_INDEX_CAP)) {
     const parsed = ConversationSummaryWireSchema.safeParse(candidate);
-    if (!parsed.success) continue;
+    if (!parsed.success) {
+      complete = false;
+      continue;
+    }
     const preview = normalizedPreview(parsed.data.preview);
     summaries.push({
       ...parsed.data,
@@ -98,9 +107,16 @@ export function normalizeConversationIndex(raw: unknown): HermesConversationSumm
       title: titleFromPreview(preview),
     });
   }
-  return summaries.toSorted((left, right) =>
-    right.updatedAt - left.updatedAt || right.createdAt - left.createdAt || left.id.localeCompare(right.id),
-  );
+  return {
+    conversations: summaries.toSorted((left, right) =>
+      right.updatedAt - left.updatedAt || right.createdAt - left.createdAt || left.id.localeCompare(right.id),
+    ),
+    complete,
+  };
+}
+
+export function normalizeConversationIndex(raw: unknown): HermesConversationSummary[] | null {
+  return normalizeConversationIndexSnapshot(raw)?.conversations ?? null;
 }
 
 function historyMessages(
@@ -125,6 +141,7 @@ interface HermesChatState {
   activeRequestId: string | null;
   view: HermesConversationView;
   conversations: HermesConversationSummary[];
+  isConversationIndexComplete: boolean;
   indexStatus: HermesLoadStatus;
   indexError: string | null;
   loadStatus: HermesLoadStatus;
@@ -160,6 +177,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   activeRequestId: null,
   view: "index",
   conversations: [],
+  isConversationIndexComplete: false,
   indexStatus: "idle",
   indexError: null,
   loadStatus: "idle",
@@ -245,13 +263,20 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       indexError: null,
     }));
     try {
-      const normalized = normalizeConversationIndex(await api.get<unknown>("/api/conversations"));
+      const snapshot = normalizeConversationIndexSnapshot(
+        await api.get<unknown>("/api/conversations"),
+      );
       if (!isCurrentRuntimeGeneration(generation) || get().indexSequence !== sequence) return;
-      if (!normalized) {
+      if (!snapshot) {
         set({ indexStatus: "error", indexError: INDEX_ERROR_MESSAGE });
         return;
       }
-      set({ conversations: normalized, indexStatus: "ready", indexError: null });
+      set({
+        conversations: snapshot.conversations,
+        isConversationIndexComplete: snapshot.complete,
+        indexStatus: "ready",
+        indexError: null,
+      });
     } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(generation) || get().indexSequence !== sequence) return;
       console.warn("[hermes-chat] conversation index request failed", error instanceof Error ? error.name : typeof error);
@@ -423,6 +448,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       activeRequestId: null,
       view: "index",
       conversations: [],
+      isConversationIndexComplete: false,
       indexStatus: "idle",
       indexError: null,
       loadStatus: "idle",
