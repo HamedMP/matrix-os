@@ -205,7 +205,14 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   useEffect(() => {
     const terminal = termRef.current;
     const fit = fitRef.current;
-    if (!terminal || !active || endedRef.current) return;
+    if (!terminal) return;
+    if (!active) {
+      terminal.blur();
+      hoveredLinkRef.current = null;
+      closeLinkContextMenu();
+      return;
+    }
+    if (endedRef.current) return;
 
     const manager = getAttachManager();
     const attachment = manager.attach(sessionName, {
@@ -240,7 +247,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, active]);
+  }, [sessionName, active, closeLinkContextMenu]);
 
   useEffect(() => {
     const host = hostRef.current;

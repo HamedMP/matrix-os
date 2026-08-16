@@ -28,7 +28,8 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     registeredProviders: unknown[];
     dataCallback?: (data: string) => void;
     element: HTMLElement | null;
-    focusCalls: number;
+    focus: ReturnType<typeof vi.fn>;
+    blur: ReturnType<typeof vi.fn>;
   }>,
   resizeObserverCallbacks: [] as ResizeObserverCallback[],
 }));
@@ -57,7 +58,6 @@ vi.mock("@xterm/xterm", () => ({
       };
     };
     registeredProviders: unknown[] = [];
-    focusCalls = 0;
 
     constructor(options: FakeTerminal["initialOptions"]) {
       this.initialOptions = options;
@@ -79,9 +79,8 @@ vi.mock("@xterm/xterm", () => ({
     }
     write(): void {}
     clear(): void {}
-    focus(): void {
-      this.focusCalls += 1;
-    }
+    focus = vi.fn();
+    blur = vi.fn();
     dispose(): void {}
     onData(callback: (data: string) => void): { dispose: () => void } {
       this.dataCallback = callback;
@@ -222,7 +221,7 @@ describe("TerminalView session switching", () => {
 
     expect(createdTerminals).toHaveLength(1);
     expect(fit.fitCalls).toBe(fitCallsBeforeNavigation + 1);
-    expect(terminal.focusCalls).toBe(2);
+    expect(terminal.focus).toHaveBeenCalledTimes(2);
     expect(attachMock).toHaveBeenCalledTimes(2);
     expect(attachmentResize).toHaveBeenCalledTimes(2);
   });
@@ -277,6 +276,23 @@ describe("TerminalView session switching", () => {
     expect(screen.getByText("Session exited (code 7).")).toBeTruthy();
     expect(screen.queryByText(/Connecting/)).toBeNull();
     expect(attachMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases keyboard focus when a retained terminal becomes inactive", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" active />);
+    const terminal = createdTerminals.at(-1)!;
+
+    expect(terminal.focus).toHaveBeenCalledOnce();
+    expect(terminal.blur).not.toHaveBeenCalled();
+
+    rerender(<TerminalView sessionName="alpha" active={false} />);
+
+    expect(terminal.blur).toHaveBeenCalledOnce();
+
+    rerender(<TerminalView sessionName="alpha" active />);
+
+    expect(terminal.focus).toHaveBeenCalledTimes(2);
+    expect(terminal.blur).toHaveBeenCalledOnce();
   });
 
   it("announces reconnecting, disconnected, and ended lifecycle states", () => {

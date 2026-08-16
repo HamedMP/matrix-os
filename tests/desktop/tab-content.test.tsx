@@ -34,6 +34,18 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({
   default: terminalsTabMock,
 }));
+vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({
+  default: () => <button type="button">Home workspace</button>,
+}));
+vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
+  default: () => <button type="button">Chat workspace</button>,
+}));
+vi.mock("@desktop/renderer/src/features/files/FilesWorkspace", () => ({
+  default: () => <button type="button">Files workspace</button>,
+}));
+vi.mock("@desktop/renderer/src/features/plugins/PluginsHub", () => ({
+  default: () => <button type="button">Plugins workspace</button>,
+}));
 
 describe("TabContent", () => {
   beforeEach(() => {
@@ -64,9 +76,47 @@ describe("TabContent", () => {
 
     expect(activePane?.hasAttribute("inert")).toBe(false);
     expect(activePane?.style.display).toBe("flex");
+    expect(activePane?.style.visibility).toBe("visible");
+    expect(activePane?.style.pointerEvents).toBe("auto");
+    expect(activePane?.style.background).toBe("var(--bg-app)");
     expect(hiddenPane?.hasAttribute("inert")).toBe(true);
     expect(hiddenPane?.getAttribute("aria-hidden")).toBe("true");
     expect(hiddenPane?.style.display).toBe("none");
+    expect(hiddenPane?.style.visibility).toBe("hidden");
+    expect(hiddenPane?.style.pointerEvents).toBe("none");
+  });
+
+  it.each([
+    ["apps", { kind: "apps" as const, title: "Apps" }],
+    ["plugins", { kind: "plugins" as const, title: "Plugins" }],
+    ["chat", { kind: "chat" as const, title: "Chat" }],
+    ["files", { kind: "files" as const, title: "Files" }],
+    ["home", { kind: "home" as const, title: "Home" }],
+    ["project", { kind: "project" as const, projectSlug: "alpha", title: "Alpha" }],
+  ])("fully contains the retained Terminal workspace beneath the %s route", (_route, target) => {
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+    const targetId = useTabs.getState().openTab(target);
+    useTabs.getState().focusTab(targetId);
+
+    const { container } = render(<TabContent />);
+    const terminalPane = container.querySelector<HTMLElement>(`[data-tab-id="${terminalId}"]`);
+    const activePane = container.querySelector<HTMLElement>(`[data-tab-id="${targetId}"]`);
+
+    expect(terminalPane).toBeTruthy();
+    expect(terminalPane?.dataset.tabKind).toBe("terminals");
+    expect(terminalPane?.style.display).toBe("none");
+    expect(terminalPane?.style.visibility).toBe("hidden");
+    expect(terminalPane?.style.pointerEvents).toBe("none");
+    expect(terminalPane?.getAttribute("aria-hidden")).toBe("true");
+    expect(terminalPane?.hasAttribute("inert")).toBe(true);
+
+    expect(activePane).toBeTruthy();
+    expect(activePane?.style.display).toBe("flex");
+    expect(activePane?.style.visibility).toBe("visible");
+    expect(activePane?.style.pointerEvents).toBe("auto");
+    expect(activePane?.style.background).toBe("var(--bg-app)");
+    expect(activePane?.getAttribute("aria-hidden")).toBe("false");
+    expect(activePane?.hasAttribute("inert")).toBe(false);
   });
 
   it("forwards task project slugs into the task workspace", () => {
