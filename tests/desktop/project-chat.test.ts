@@ -105,6 +105,18 @@ describe("openProjectChat", () => {
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
   });
 
+  it("records an opened agent conversation in global Recents", () => {
+    useCodingAgentWorkspace.setState({ summary: summaryWithThreads(), status: "ready" });
+
+    openProjectChat("matrix-os", { threadId: "thread_alpha" });
+
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "conversation",
+      id: "thread_alpha",
+      label: "Fix settings route",
+    });
+  });
+
   it("does not reload the snapshot for the already-active thread", () => {
     const loadThreadSnapshot = vi.fn(async () => undefined);
     useCodingAgentWorkspace.setState({ loadThreadSnapshot, activeThreadId: "thread_alpha" });

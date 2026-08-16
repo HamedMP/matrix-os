@@ -1,118 +1,48 @@
-import { ChevronRight, FolderOpen, GitBranch, Laptop, Mail, MessageSquare, MessageSquarePlus, Sparkles, SquareTerminal } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { StatusDot } from "../../design/primitives";
+import { FileText, Paperclip, PanelRight } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BrandLogo } from "../../design/BrandPanel";
 import { groupMessages } from "../../lib/chat";
-import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
-import { openCodingAgentThread } from "../../lib/project-chat";
-import { useBoard } from "../../stores/board";
-import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
-import { useThreads } from "../../stores/threads";
-import { useTabs } from "../../stores/tabs";
-import {
-  listUnifiedThreads,
-  UNIFIED_THREAD_STATUS_META,
-  type UnifiedThreadItem,
-} from "../../stores/unified-threads";
-import ThreadView from "../threads/ThreadView";
+import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
+import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
+import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { Bubble, BubbleContent } from "./elements/bubble";
 import { Conversation, ConversationContent, ConversationItem } from "./elements/conversation";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
-import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
-import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
-import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { Reasoning } from "./elements/reasoning";
 import { Tool } from "./elements/tool";
+import { ChatResourcesPanel, conversationMessageDisplay } from "./ChatResourcesPanel";
 import { HermesConversationIndex } from "./HermesConversationIndex";
-
-function Pill({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <button
-      type="button"
-      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors hover:bg-[var(--bg-hover)]"
-      style={{ color: "var(--text-secondary)" }}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function ConnectCard({ title, body, icon, done }: { title: string; body: string; icon: React.ReactNode; done?: boolean }) {
-  return (
-    <div
-      className="flex flex-col gap-1.5 rounded-xl border p-4 text-left"
-      style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)", opacity: done ? 0.55 : 1 }}
-    >
-      <div className="flex items-center justify-between">
-        <div
-          className="flex h-6 w-6 items-center justify-center rounded"
-          style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)" }}
-        >
-          {icon}
-        </div>
-        {done ? <span className="text-xs" style={{ color: "var(--success)" }}>✓</span> : null}
-      </div>
-      <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{title}</span>
-      <span className="text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>{body}</span>
-    </div>
-  );
-}
 
 export function canSubmitChatDraft(draft: string, status: HermesStatus, attachmentCount = 0): boolean {
   return (draft.trim().length > 0 || attachmentCount > 0) && status === "idle";
 }
 
-function RailButton({
-  active,
-  onClick,
-  dot,
-  label,
-  bold = false,
-}: {
-  active: boolean;
-  onClick: () => void;
-  dot: React.ReactNode;
-  label: string;
-  bold?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-100"
-      style={{ background: active ? "var(--bg-selected)" : "transparent" }}
-      onMouseEnter={(event) => { if (!active) event.currentTarget.style.background = "var(--bg-hover)"; }}
-      onMouseLeave={(event) => { if (!active) event.currentTarget.style.background = "transparent"; }}
-      onClick={onClick}
-    >
-      <span className="flex w-4 shrink-0 items-center justify-center">{dot}</span>
-      <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)", fontWeight: bold ? 600 : 400 }}>{label}</span>
-    </button>
-  );
-}
-
-// The Hermes (OS agent) conversation — the default pane when no agent thread is
-// selected in the rail.
 function HermesPane() {
-  const messages = useHermesChat((s) => s.messages);
-  const sessionId = useHermesChat((s) => s.sessionId);
-  const status = useHermesChat((s) => s.status);
-  const conversations = useHermesChat((s) => s.conversations);
-  const loadError = useHermesChat((s) => s.loadError);
-  const showIndex = useHermesChat((s) => s.showIndex);
-  const send = useHermesChat((s) => s.send);
-  const abort = useHermesChat((s) => s.abort);
-  const projects = useBoard((s) => s.projects);
+  const messages = useHermesChat((state) => state.messages);
+  const sessionId = useHermesChat((state) => state.sessionId);
+  const status = useHermesChat((state) => state.status);
+  const loadError = useHermesChat((state) => state.loadError);
+  const send = useHermesChat((state) => state.send);
+  const abort = useHermesChat((state) => state.abort);
   const [draft, setDraft] = useState("");
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
-  const attachments = useConversationAttachments();
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
+  const attachments = useConversationAttachments(sessionId);
 
-  const projectName = projects[0]?.name ?? projects[0]?.slug ?? "Matrix OS";
-  const conversationTitle = conversations.find((conversation) => conversation.id === sessionId)?.title ?? "New conversation";
   const groups = groupMessages(messages);
   const empty = messages.length === 0;
+
+  const closeResources = useCallback((restoreFocus = true) => {
+    setResourcesOpen(false);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => resourcesTriggerRef.current?.focus());
+    }
+  }, []);
 
   const submit = async () => {
     if (uploadingAttachments || !canSubmitChatDraft(draft, status, attachments.items.length)) return;
@@ -137,229 +67,197 @@ function HermesPane() {
     />
   );
   const composerReady = canSubmitChatDraft(draft, status, attachments.items.length);
-
-  const composerFooter = (
+  const composerControls = (
     <>
-      <Pill icon={<SquareTerminal size={13} />} label={projectName} />
-      <Pill icon={<Laptop size={13} />} label="On VPS" />
-      <Pill icon={<GitBranch size={13} />} label="main" />
+      <button
+        type="button"
+        aria-label="Attach files"
+        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+        style={{ color: "var(--text-secondary)" }}
+        disabled={uploadingAttachments}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Paperclip size={16} aria-hidden />
+      </button>
+      <button
+        ref={resourcesTriggerRef}
+        type="button"
+        aria-label="Resources"
+        aria-expanded={resourcesOpen}
+        className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+        style={{ color: "var(--text-secondary)" }}
+        onClick={() => setResourcesOpen((open) => !open)}
+      >
+        <PanelRight size={15} aria-hidden />
+        <span className="hidden sm:inline">Resources</span>
+      </button>
+    </>
+  );
+  const harnessBadge = (
+    <span
+      className="rounded-full border px-2 py-1 text-xs font-medium"
+      style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+      title="Current chat harness"
+    >
+      Hermes
+    </span>
+  );
+  const renderComposer = (placeholder: string, autoFocus = false) => (
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        aria-label="Choose files"
+        className="sr-only"
+        onChange={(event) => {
+          attachments.add(Array.from(event.currentTarget.files ?? []));
+          event.currentTarget.value = "";
+        }}
+      />
+      <PromptInput
+        value={draft}
+        onChange={setDraft}
+        onSubmit={() => void submit()}
+        onAbort={status !== "idle" ? abort : undefined}
+        busy={status !== "idle" || uploadingAttachments}
+        disabled={uploadingAttachments}
+        canSubmit={composerReady}
+        attachments={attachmentPreviews}
+        autoFocus={autoFocus}
+        placeholder={placeholder}
+        ariaLabel={placeholder}
+        controls={composerControls}
+        trailingControls={harnessBadge}
+      />
     </>
   );
 
-  const breadcrumb = (
-    <nav
-      aria-label="Chat breadcrumb"
-      className="flex h-10 shrink-0 items-center gap-1.5 border-b px-5 text-sm"
-      style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
-    >
-      <button type="button" className="rounded px-1.5 py-1 hover:bg-[var(--bg-hover)]" onClick={showIndex}>
-        Chat
-      </button>
-      <ChevronRight size={12} aria-hidden style={{ color: "var(--text-tertiary)" }} />
-      <span className="min-w-0 truncate font-medium" style={{ color: "var(--text-primary)" }}>{conversationTitle}</span>
-    </nav>
-  );
-
   const loadErrorBanner = loadError ? (
-    <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[760px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+    <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[868px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
       {loadError}
     </div>
   ) : null;
 
-  if (empty) {
-    return (
-      <div role="region" aria-label="Hermes conversation" className="flex min-h-0 flex-1 flex-col" {...attachments.paneProps}>
-        {breadcrumb}
-        {loadErrorBanner}
-        <div className="mx-auto flex w-full max-w-[760px] flex-1 flex-col justify-center px-5">
-          <h1 className="mb-8 text-center text-2xl font-semibold tracking-tight" style={{ color: "var(--text-primary)", fontSize: "var(--text-2xl)" }}>
-            What should we build in {projectName}?
-          </h1>
-          <PromptInput value={draft} onChange={setDraft} onSubmit={() => void submit()} onAbort={status !== "idle" ? abort : undefined} busy={status !== "idle" || uploadingAttachments} disabled={uploadingAttachments} canSubmit={composerReady} attachments={attachmentPreviews} autoFocus footer={composerFooter} />
-          <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <ConnectCard title="Connect messaging" body="Get context from recent team discussions" icon={<MessageSquare size={13} aria-hidden />} />
-            <ConnectCard title="Connect email" body="Summarize stakeholder asks from email" icon={<Mail size={13} aria-hidden />} />
-            <ConnectCard title="Connect files" body="Review results, research, and plans" icon={<FolderOpen size={13} aria-hidden />} />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div role="region" aria-label="Hermes conversation" className="flex min-h-0 flex-1 flex-col" {...attachments.paneProps}>
-      {breadcrumb}
+    <div
+      role="region"
+      aria-label="Hermes conversation"
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+      {...attachments.paneProps}
+    >
       {loadErrorBanner}
-      <Conversation>
-        <ConversationContent>
-          {groups.map((group) =>
-            group.type === "tool_group" ? (
-              <ConversationItem key={group.messages[0]?.id ?? "tools"} messageId={group.messages[0]?.id}>
-                <div className="flex flex-col gap-1.5">
-                  {group.messages.map((m) => (
-                    <Tool key={m.id} name={m.content} detail={m.toolInput ? JSON.stringify(m.toolInput, null, 2) : undefined} />
-                  ))}
-                </div>
-              </ConversationItem>
-            ) : group.message.role === "user" ? (
-              <ConversationItem key={group.message.id} messageId={`user:${group.message.id}`} scrollAnchor>
-                <Message align="end">
-                  <MessageContent>
-                    <Bubble variant="secondary" align="end">
-                      <BubbleContent className="whitespace-pre-wrap" data-selectable>
-                        {group.message.content}
-                      </BubbleContent>
-                    </Bubble>
-                  </MessageContent>
-                </Message>
-              </ConversationItem>
-            ) : (
-              <ConversationItem key={group.message.id} messageId={`assistant:${group.message.id}`}>
-                <Message>
-                  <MessageContent>
-                    <Bubble variant="ghost">
-                      <BubbleContent className="overflow-visible">
-                        <MessageResponse>{group.message.content}</MessageResponse>
-                      </BubbleContent>
-                    </Bubble>
-                  </MessageContent>
-                </Message>
-              </ConversationItem>
-            ),
-          )}
-          {status === "thinking" ? (
-            <ConversationItem messageId="hermes:working">
-              <Reasoning streaming>
-                <span className="shimmer">Working on it…</span>
-              </Reasoning>
-            </ConversationItem>
-          ) : null}
-        </ConversationContent>
-      </Conversation>
-      <div className="mx-auto w-full max-w-[760px] px-5 pb-5">
-        <PromptInput value={draft} onChange={setDraft} onSubmit={() => void submit()} onAbort={status !== "idle" ? abort : undefined} busy={status !== "idle" || uploadingAttachments} disabled={uploadingAttachments} canSubmit={composerReady} attachments={attachmentPreviews} placeholder="Reply to Hermes…" footer={composerFooter} />
-      </div>
+      {empty ? (
+        <div className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col px-5 pb-5">
+          <div className="flex min-h-[180px] flex-1 flex-col items-center justify-center pb-8 text-center">
+            <BrandLogo size={48} color="var(--text-primary)" className="mb-5" />
+            <h1
+              className="text-[32px] font-medium leading-tight tracking-[-0.02em] sm:text-[36px]"
+              style={{ color: "var(--text-primary)", fontFamily: '"Instrument Serif", Georgia, serif' }}
+            >
+              How can I help you?
+            </h1>
+          </div>
+          <div className="shrink-0">{renderComposer("How can I help you today?", true)}</div>
+        </div>
+      ) : (
+        <>
+          <Conversation>
+            <ConversationContent className="justify-start pt-[clamp(72px,30vh,280px)]">
+              {groups.map((group) =>
+                group.type === "tool_group" ? (
+                  <ConversationItem key={group.messages[0]?.id ?? "tools"} messageId={group.messages[0]?.id}>
+                    <div className="flex flex-col gap-1.5">
+                      {group.messages.map((message) => (
+                        <Tool key={message.id} name={message.content} detail={message.toolInput ? JSON.stringify(message.toolInput, null, 2) : undefined} />
+                      ))}
+                    </div>
+                  </ConversationItem>
+                ) : group.message.role === "user" ? (
+                  <ConversationItem key={group.message.id} messageId={`user:${group.message.id}`} scrollAnchor>
+                    <Message align="end">
+                      <MessageContent>
+                        <Bubble variant="secondary" align="end">
+                          {(() => {
+                            const display = conversationMessageDisplay(group.message.content);
+                            return (
+                              <BubbleContent className="max-w-[580px] whitespace-pre-wrap" data-selectable>
+                                {display.text}
+                                {display.attachments.length > 0 ? (
+                                  <span className="mt-2 flex flex-wrap justify-end gap-1.5">
+                                    {display.attachments.map((name) => (
+                                      <span
+                                        key={name}
+                                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+                                        style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+                                      >
+                                        <FileText size={12} aria-hidden className="shrink-0" />
+                                        <span className="truncate">{name}</span>
+                                      </span>
+                                    ))}
+                                  </span>
+                                ) : null}
+                              </BubbleContent>
+                            );
+                          })()}
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </ConversationItem>
+                ) : (
+                  <ConversationItem key={group.message.id} messageId={`assistant:${group.message.id}`}>
+                    <Message>
+                      <MessageContent>
+                        <Bubble variant="ghost">
+                          <BubbleContent className="max-w-[620px] overflow-visible">
+                            <MessageResponse>{group.message.content}</MessageResponse>
+                          </BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </ConversationItem>
+                ),
+              )}
+              {status === "thinking" ? (
+                <ConversationItem messageId="hermes:working">
+                  <Reasoning streaming><span className="shimmer">Working on it…</span></Reasoning>
+                </ConversationItem>
+              ) : null}
+            </ConversationContent>
+          </Conversation>
+          <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
+            {renderComposer("Reply to Hermes…")}
+          </div>
+        </>
+      )}
+
+      {resourcesOpen ? (
+        <ChatResourcesPanel
+          messages={messages}
+          onClose={closeResources}
+          onUpload={() => {
+            fileInputRef.current?.click();
+            closeResources(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
 
-// Unified chat: a Codex-style rail listing Hermes + every agent thread on the
-// left, the selected conversation on the right. Kernel runs open in-pane;
-// coding-agent threads route into their project tab's Chats view.
 export default function ChatTab() {
-  const threads = useThreads((s) => s.threads);
-  const activeThreadId = useThreads((s) => s.activeThreadId);
-  const setActiveThread = useThreads((s) => s.setActiveThread);
-  const recordRecentConversation = useTabs((s) => s.recordRecentConversation);
-  // Short-circuit inside the selector so a disabled workspace never re-renders
-  // the rail on coding-agent store updates.
-  const summary = useCodingAgentWorkspace((s) => (CODING_AGENTS_DESKTOP_WORKSPACE ? s.summary : null));
-  const api = useConnection((s) => s.api);
-  const conversationView = useHermesChat((s) => s.view);
-  const sessionId = useHermesChat((s) => s.sessionId);
-  const conversations = useHermesChat((s) => s.conversations);
-  const indexStatus = useHermesChat((s) => s.indexStatus);
-  const refreshConversations = useHermesChat((s) => s.refreshConversations);
-  const createConversation = useHermesChat((s) => s.createConversation);
-  const showIndex = useHermesChat((s) => s.showIndex);
+  const api = useConnection((state) => state.api);
+  const conversationView = useHermesChat((state) => state.view);
+  const indexStatus = useHermesChat((state) => state.indexStatus);
+  const refreshConversations = useHermesChat((state) => state.refreshConversations);
 
   useEffect(() => {
     if (api && indexStatus === "idle") void refreshConversations(api);
   }, [api, indexStatus, refreshConversations]);
 
-  const railThreads = useMemo(
-    () => listUnifiedThreads(threads, summary),
-    [threads, summary],
-  );
-
-  const selectRailThread = (item: UnifiedThreadItem) => {
-    recordRecentConversation(item.id, item.title);
-    if (item.source === "kernel") {
-      setActiveThread(item.id);
-      return;
-    }
-    void openCodingAgentThread(item.id);
-  };
-
-  // activeThreadId is the single source of truth: null → Hermes, otherwise the
-  // selected agent run (the composer and sidebar Chat both drive it).
-  const activeThread = activeThreadId ? threads.find((t) => t.id === activeThreadId) ?? null : null;
-  const showHermes = !activeThread;
-  const activeConversationTitle = conversations.find((conversation) => conversation.id === sessionId)?.title ?? "Hermes";
-
-  const openConversationIndex = () => {
-    setActiveThread(null);
-    showIndex();
-  };
-
-  const startConversation = () => {
-    setActiveThread(null);
-    if (api) void createConversation(api);
-  };
-
   return (
-    <div className="flex min-h-0 flex-1">
-      <div className="flex w-[260px] shrink-0 flex-col border-r" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-        <div className="flex items-center justify-between border-b px-3 py-2.5" style={{ borderColor: "var(--border-subtle)" }}>
-          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Chat</span>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-[var(--bg-hover)]"
-            style={{ color: "var(--text-secondary)" }}
-            onClick={startConversation}
-            title="New conversation with Hermes"
-            aria-label="New conversation"
-            disabled={!api}
-          >
-            <MessageSquarePlus size={13} />
-            New
-          </button>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
-          <RailButton
-            active={showHermes && conversationView === "index"}
-            onClick={openConversationIndex}
-            dot={<MessageSquare size={14} style={{ color: showHermes && conversationView === "index" ? "var(--accent)" : "var(--text-tertiary)" }} />}
-            label="Conversations"
-          />
-          {conversationView === "conversation" ? (
-            <RailButton
-              active={showHermes}
-              onClick={() => {
-                setActiveThread(null);
-                if (sessionId) recordRecentConversation(sessionId, activeConversationTitle);
-              }}
-              dot={<Sparkles size={14} style={{ color: showHermes ? "var(--accent)" : "var(--text-tertiary)" }} />}
-              label={activeConversationTitle}
-            />
-          ) : null}
-          {railThreads.length > 0 ? (
-            <span className="px-2.5 pt-2 pb-0.5 text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>
-              Agent runs
-            </span>
-          ) : null}
-          {railThreads.map((item) => (
-            <RailButton
-              key={`${item.source}:${item.id}`}
-              active={item.source === "kernel" && item.id === activeThreadId}
-              onClick={() => selectRailThread(item)}
-              dot={<StatusDot color={UNIFIED_THREAD_STATUS_META[item.status].color} pulse={item.status === "running"} />}
-              label={item.title}
-              bold={item.unread}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {activeThread ? (
-          <ThreadView threadId={activeThread.id} embedded />
-        ) : conversationView === "index" ? (
-          <HermesConversationIndex api={api} />
-        ) : (
-          <HermesPane />
-        )}
-      </div>
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {conversationView === "index" ? <HermesConversationIndex api={api} /> : <HermesPane />}
     </div>
   );
 }

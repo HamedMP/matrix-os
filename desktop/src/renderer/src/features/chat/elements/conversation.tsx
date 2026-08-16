@@ -182,16 +182,17 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   );
 }
 
-export function ConversationContent({ children }: { children: ReactNode }) {
-  // min-h-full + justify-end bottom-anchors short conversations (latest message
-  // sits just above the composer) while longer ones scroll normally. The log
+export function ConversationContent({ children, className }: { children: ReactNode; className?: string }) {
+  // min-h-full + the default justify-end bottom-anchors short conversations;
+  // callers with an approved transcript layout can override that alignment.
+  // Longer conversations scroll normally. The log
   // role marks the transcript as a live region whose streamed text mutations
   // are not announced token by token (aria-relevant=additions only).
   // The 46rem centered column keeps line length readable (Codex-style) while
   // the scroll viewport itself stays full-width for the edge fade.
   return (
     <div
-      className="mx-auto flex min-h-full w-full max-w-[46rem] flex-col justify-end gap-5 px-6 py-6"
+      className={cn("mx-auto flex min-h-full w-full max-w-[46rem] flex-col gap-5 px-6 py-6", className ?? "justify-end")}
       role="log"
       aria-relevant="additions"
       data-slot="message-scroller-content"

@@ -9,6 +9,7 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
+import { useTabs } from "../../stores/tabs";
 import {
   DEFAULT_INSPECTOR_WIDTH_PCT,
   MAX_INSPECTOR_WIDTH_PCT,
@@ -74,6 +75,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const resolveNewChatTarget = useProjectWorkspaces((s) => s.resolveNewChatTarget);
   const selectedThreadId = useProjectView((s) => s.entries[projectId]?.selectedThreadId ?? null);
   const setSelectedThread = useProjectView((s) => s.setSelectedThread);
+  const recordRecentConversation = useTabs((s) => s.recordRecentConversation);
   const composerRequest = useProjectChatLauncher((s) => s.composerRequest);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const inspectorEntry = useInspectorLayout((s) => s.entries[projectId]);
@@ -339,16 +341,23 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     activity: summary.attentionThreads.items.length + summary.activeThreads.items.length,
   };
 
-  // Threads opened from the runtime-wide inspector lists open in their own
-  // project context when they belong elsewhere. Selecting a thread also drops
-  // any pending draft seed so a remounted draft never reapplies a stale one.
-  const openListedThread = (threadId: string, threadProjectId?: string) => {
+  // Global Recents owns cross-surface conversation navigation. Same-project
+  // selections stay local, while cross-project selections use the canonical
+  // launcher. Both paths record the stable thread id and a bounded title.
+  const openListedThread = (threadId: string, threadProjectId?: string, threadTitle?: string) => {
+    newChatRequestIdRef.current += 1;
+    setComposerSeed(null);
+    const listedTitle = threadTitle ?? [
+      ...summary.attentionThreads.items,
+      ...summary.activeThreads.items,
+      ...(workspace?.projectThreads.items ?? []),
+      ...(workspace?.taskThreads.items ?? []),
+    ].find((thread) => thread.id === threadId)?.title ?? "Agent conversation";
+    recordRecentConversation(threadId, listedTitle);
     if (threadProjectId && threadProjectId !== projectId) {
       void openCodingAgentThread(threadId);
       return;
     }
-    newChatRequestIdRef.current += 1;
-    setComposerSeed(null);
     setSelectedThread(projectId, threadId);
     if (useCodingAgentWorkspace.getState().activeThreadId !== threadId) {
       void loadThreadSnapshot(threadId);
@@ -510,15 +519,15 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           <div className="space-y-4">
             <AttentionThreadList
               summary={summary}
-              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId, thread.title)}
             />
             <ThreadList
               summary={summary}
-              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId, thread.title)}
             />
             <CreatedThreadHandleList
               summary={summary}
-              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId, thread.title)}
             />
             <ProviderList summary={summary} />
             <NotificationPreferencesPanel />

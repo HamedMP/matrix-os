@@ -116,14 +116,14 @@ export async function inspectDesktopHandoffBaseline(
 
   let recentConversationTarget: string | null = null;
   const recentConversation = page.getByRole("button", {
-    name: "Open recent Hermes",
+    name: "Open recent Plan the persistent Desktop conversation experience",
   });
   if ((await recentConversation.count()) > 0) {
     await recentConversation.click();
     await waitForSurface(page, "Chat");
     recentConversationTarget = "Conversations";
   } else if (hasCombinedNavigation) {
-    throw new Error("Combined Desktop navigation did not expose the Hermes Recent");
+    throw new Error("Combined Desktop navigation did not expose the canonical Gateway conversation Recent");
   }
 
   const hiddenPanesMissingInert = await page.evaluate(

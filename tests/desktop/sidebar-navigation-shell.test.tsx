@@ -111,6 +111,18 @@ describe("Desktop sidebar navigation shell", () => {
     expect(useThreads.getState().activeThreadId).toBeNull();
   });
 
+  it("uses the global Chat navigation to return to the canonical inbox", () => {
+    useHermesChat.setState({ view: "conversation", sessionId: "conversation-two" });
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+
+    expect(useHermesChat.getState().view).toBe("index");
+    expect(useThreads.getState().activeThreadId).toBeNull();
+    expect(useTabs.getState().recentViews.some((recent) => recent.id === "hermes"))
+      .toBe(false);
+  });
+
   it("offers the approved account actions and routes them through current behavior", () => {
     renderSidebar();
     const trigger = screen.getByRole("button", { name: "Open account menu" });

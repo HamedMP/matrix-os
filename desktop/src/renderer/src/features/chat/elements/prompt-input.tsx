@@ -17,6 +17,7 @@ export function PromptInput({
   ariaLabel,
   footer,
   controls,
+  trailingControls,
   attachments,
   canSubmit,
   focusRequestId,
@@ -37,6 +38,8 @@ export function PromptInput({
   // Left side of the bottom row: compact pickers (provider, mode) rendered
   // Codex-style next to the send/stop control. Purely presentational slot.
   controls?: ReactNode;
+  // Compact, real actions or status placed immediately before Send/Stop.
+  trailingControls?: ReactNode;
   // Bumping this id focuses the textarea (type-to-start, ⌘J, chip seeds).
   focusRequestId?: number;
 }) {
@@ -87,6 +90,7 @@ export function PromptInput({
           {controls}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {trailingControls}
           {busy && onAbort ? (
             <button
               type="button"

@@ -280,7 +280,7 @@ export const HANDOFF_REGRESSION_MATRIX: readonly HandoffRegressionScenario[] = [
       ),
       testEvidence(
         "tests/desktop/chat-tab-render.test.tsx",
-        "opens the selected canonical conversation and exposes a Chat breadcrumb",
+        "opens the selected canonical conversation without duplicating global navigation",
       ),
     ],
     figmaNode: "67:4472",

@@ -10,6 +10,7 @@ const DESKTOP_MAIN = resolve(__dirname, "../../../desktop/out/main/index.js");
 const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/package.json"));
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-299-responsive");
+const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
 const MINIMUM_VIEWPORT = { width: 880, height: 560 } as const;
 const suite = existsSync(DESKTOP_MAIN) ? describe : describe.skip;
 
@@ -54,6 +55,7 @@ suite("responsive Hermes Desktop conversations", () => {
 
   beforeAll(async () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    mkdirSync(MAT_322_SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
     userDataDir = mkdtempSync(join(tmpdir(), "mat-299-responsive-"));
     app = await _electron.launch({
@@ -97,9 +99,14 @@ suite("responsive Hermes Desktop conversations", () => {
     const conversation = page.getByRole("region", { name: "Hermes conversation" });
     await conversation.waitFor();
     const conversationOverflow = await measureOverflow(conversation);
+    await page.getByRole("button", { name: "Resources" }).click();
+    const resources = page.getByRole("complementary", { name: "Resources" });
+    await resources.waitFor();
+    const resourcesOverflow = await measureOverflow(conversation);
+    await page.screenshot({ path: join(MAT_322_SCREENSHOT_DIR, "05-resources-constrained.png") });
+    await page.getByRole("button", { name: "Close Resources" }).click();
 
-    await page.getByRole("navigation", { name: "Chat breadcrumb" })
-      .getByRole("button", { name: "Chat" }).click();
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
     await providerRow.hover();
     await page.getByRole("button", {
       name: "Delete Verify provider switching remains intact",
@@ -113,6 +120,7 @@ suite("responsive Hermes Desktop conversations", () => {
     expectNoHorizontalOverflow(indexOverflow);
     expectNoHorizontalOverflow(searchOverflow);
     expectNoHorizontalOverflow(conversationOverflow);
+    expectNoHorizontalOverflow(resourcesOverflow);
     expectNoHorizontalOverflow(dialogOverflow);
   }, 30_000);
 });

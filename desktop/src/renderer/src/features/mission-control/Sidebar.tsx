@@ -12,6 +12,7 @@ import { useMemo, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useHermesChat } from "../../stores/hermes-chat";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { kernelThreadAttentionCount } from "../../stores/unified-threads";
@@ -89,7 +90,6 @@ export default function Sidebar() {
   const activeTabId = useTabs((s) => s.activeTabId);
   const openTab = useTabs((s) => s.openTab);
   const focusTab = useTabs((s) => s.focusTab);
-  const recordRecentConversation = useTabs((s) => s.recordRecentConversation);
   const projects = useBoard((s) => s.projects);
   const openApps = useMemo(() => tabs.filter((t) => t.kind === "app"), [tabs]);
   const chatAttention = useThreads((s) => kernelThreadAttentionCount(s.threads));
@@ -124,7 +124,7 @@ export default function Sidebar() {
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
         <nav className="flex flex-col gap-0.5">
           <NavRow icon={<Home size={15} />} label="Home" collapsed={collapsed} active={activeTab?.kind === "home"} onClick={() => openTab({ kind: "home", title: "Home", closable: false })} />
-          <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} badge={chatAttention} onClick={() => { useThreads.getState().setActiveThread(null); recordRecentConversation("hermes", "Hermes"); openTab({ kind: "chat", title: "Hermes", closable: false }); }} />
+          <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} badge={chatAttention} onClick={() => { useThreads.getState().setActiveThread(null); useHermesChat.getState().showIndex(); openTab({ kind: "chat", title: "Hermes", closable: false }); }} />
           <NavRow icon={<SquareTerminal size={15} />} label="Terminal" collapsed={collapsed} active={activeTab?.kind === "terminals"} onClick={() => openTab({ kind: "terminals", title: "Terminal" })} />
           <NavRow icon={<FolderTree size={15} />} label="Files" collapsed={collapsed} active={activeTab?.kind === "files"} onClick={() => openTab(FILES_WORKSPACE_TAB_SPEC)} />
           <NavRow icon={<LayoutGrid size={15} />} label="Apps" collapsed={collapsed} active={activeTab?.kind === "apps" || activeTab?.kind === "app"} onClick={() => openTab({ kind: "apps", title: "Apps" })} />

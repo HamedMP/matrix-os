@@ -4,20 +4,14 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
+import { sharedConversationResources } from "../../desktop/src/renderer/src/features/chat/ChatResourcesPanel";
+import { useIntegrations } from "../../desktop/src/renderer/src/features/integrations/integrations-store";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
-import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
-import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
-import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads, type AgentThread } from "../../desktop/src/renderer/src/stores/threads";
-
-vi.mock("../../desktop/src/renderer/src/features/threads/ThreadView", () => ({
-  default: ({ threadId }: { threadId: string }) => (
-    <div data-testid="thread-view">thread:{threadId}</div>
-  ),
-}));
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 function thread(id: string, title: string): AgentThread {
   return {
@@ -31,40 +25,6 @@ function thread(id: string, title: string): AgentThread {
     unread: false,
     createdAt: 1,
     updatedAt: 1,
-  };
-}
-
-function codingAgentSummaryFixture() {
-  return {
-    runtime: { id: "rt_primary", label: "Primary", status: "available" },
-    capabilities: [],
-    providers: [],
-    projects: { items: [], hasMore: false, limit: 20 },
-    activeThreads: {
-      items: [
-        {
-          id: "thread_server",
-          providerId: "codex",
-          title: "Server-backed run",
-          status: "running",
-          attention: "none",
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:01:00.000Z",
-        },
-      ],
-      hasMore: false,
-      limit: 20,
-    },
-    attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
-    recentActivity: { items: [], hasMore: false, limit: 20 },
-    limits: {
-      maxPromptBytes: 16384,
-      maxAttachmentCount: 8,
-      maxTerminalInputBytes: 8192,
-      maxListItems: 20,
-    },
-    serverTime: "2026-07-06T00:03:00.000Z",
   };
 }
 
@@ -93,10 +53,14 @@ describe("ChatTab", () => {
       abort: vi.fn(),
     });
     useThreads.setState({ threads: [], activeThreadId: null });
-    useCodingAgentWorkspace.setState({ summary: null, activeThreadId: null });
-    useProjectView.setState({ entries: {}, runtimeScope: null });
-    useProjectWorkspaces.setState({ entries: {} });
-    useTabs.setState({ tabs: [], activeTabId: null });
+    useTabs.setState(useTabs.getInitialState(), true);
+    useUi.setState({ requestedSettingsSection: null });
+    useIntegrations.setState({
+      available: [],
+      connections: [],
+      status: "idle",
+      errorMessage: null,
+    });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -127,79 +91,136 @@ describe("ChatTab", () => {
 
     expect(container.textContent).toContain("hello");
     expect(container.querySelector(".h-full.items-center.justify-center")).toBeNull();
+    expect(container.querySelector('[data-slot="message-scroller-content"]')?.className)
+      .toContain("justify-start");
   });
 
-  it("renders connect cards with real lucide icons instead of placeholder squares", () => {
+  it("renders the approved centered empty state and only working composer controls", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);
 
-    // Each onboarding connect card carries a glyph matching its label
-    // semantics — no empty gray placeholder tiles.
-    for (const title of ["Connect messaging", "Connect email", "Connect files"]) {
-      const card = screen.getByText(title).parentElement;
-      expect(card).not.toBeNull();
-      expect(card?.querySelector("svg")).not.toBeNull();
-    }
+    expect(screen.getByRole("heading", { name: "How can I help you?" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Resources" })).toBeTruthy();
+    expect(screen.getByText("Hermes", { selector: "span" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByText("Connect messaging")).toBeNull();
+    expect(screen.queryByRole("button", { name: /voice|microphone/i })).toBeNull();
   });
 
-  it("switches from Hermes to an agent thread from the rail", () => {
+  it("removes the redundant internal Chat rail and leaves agent-run navigation to global Recents", () => {
     useThreads.setState({
       threads: [thread("t1", "Build parser")],
       activeThreadId: null,
     });
 
     render(<ChatTab />);
-    expect(screen.queryByTestId("thread-view")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Build parser" }));
-
-    expect(useThreads.getState().activeThreadId).toBe("t1");
-    expect(screen.getByTestId("thread-view").textContent).toBe("thread:t1");
-  });
-
-  it("lists coding-agent workspace threads in the rail", () => {
-    useCodingAgentWorkspace.setState({ summary: codingAgentSummaryFixture() });
-
-    render(<ChatTab />);
-
-    expect(screen.getByRole("button", { name: "Server-backed run" })).toBeTruthy();
-  });
-
-  it("routes a coding-agent rail selection into the project's chats view", async () => {
-    const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
-    useCodingAgentWorkspace.setState({
-      summary: codingAgentSummaryFixture(),
-      loadThreadSnapshot,
-    });
-
-    render(<ChatTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Server-backed run" }));
-
-    await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_server"));
-    const tabs = useTabs.getState();
-    const active = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
-    expect(active).toMatchObject({ kind: "project", projectSlug: "matrix-os" });
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
-    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_server");
-    // The chat pane itself stays on Hermes; the transcript renders in the project.
-    expect(screen.queryByTestId("thread-view")).toBeNull();
-  });
-
-  it("falls back to Hermes when the active agent thread is removed", () => {
-    useThreads.setState({
-      threads: [thread("t1", "Build parser")],
-      activeThreadId: "t1",
-    });
-
-    render(<ChatTab />);
-    expect(screen.getByTestId("thread-view").textContent).toBe("thread:t1");
-
-    act(() => {
-      useThreads.setState({ threads: [], activeThreadId: "t1" });
-    });
-
-    expect(screen.queryByTestId("thread-view")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Build parser" })).toBeNull();
+    expect(screen.queryByText("Agent runs")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Conversations" })).toBeNull();
     expect(screen.getByText("hello")).toBeTruthy();
+  });
+
+  it("adds files from the visible attachment control", async () => {
+    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
+    render(<ChatTab />);
+
+    const picker = screen.getByLabelText("Choose files") as HTMLInputElement;
+    const file = new File(["notes"], "notes.md", { type: "text/markdown" });
+    fireEvent.change(picker, { target: { files: [file] } });
+
+    expect(await screen.findByRole("button", { name: "Remove notes.md" })).toBeTruthy();
+  });
+
+  it("shows canonical shared files and Gateway-backed connected tools in Resources", () => {
+    useHermesChat.setState({
+      messages: [{
+        id: "m1",
+        role: "user",
+        content: "Review this\n\nAttached files (available on your Matrix computer):\n- ~/temporary/desktop-chat/abc-screen.png (/home/matrix/home/temporary/desktop-chat/abc-screen.png)",
+        timestamp: 1,
+      }],
+    });
+    useIntegrations.setState({
+      status: "ready",
+      connections: [{
+        id: "00000000-0000-4000-8000-000000000001",
+        service: "google_drive",
+        accountLabel: "Design Drive",
+        accountEmail: null,
+        status: "active",
+        connectedAt: "2026-08-16T00:00:00.000Z",
+      }],
+    });
+
+    render(<ChatTab />);
+    fireEvent.click(screen.getByRole("button", { name: "Resources" }));
+
+    const panel = screen.getByRole("complementary", { name: "Resources" });
+    expect(panel.textContent).toContain("Shared with agent");
+    expect(panel.textContent).toContain("screen.png");
+    expect(panel.textContent).not.toContain("/home/matrix");
+    expect(panel.textContent).toContain("Design Drive");
+    expect(panel.textContent).toContain("Agent-created resources are not available from this Gateway yet.");
+  });
+
+  it("reduces canonical resource paths to bounded basenames", () => {
+    expect(sharedConversationResources([{
+      id: "m1",
+      role: "user",
+      content: "Attached files (available on your Matrix computer):\n- ~/temporary/desktop-chat/abc-folder/secrets.txt (/home/matrix/home/temporary/desktop-chat/abc-folder/secrets.txt)",
+      timestamp: 1,
+    }])).toEqual(["secrets.txt"]);
+  });
+
+  it("keeps spaced attachment names readable without exposing transport paths", () => {
+    useHermesChat.setState({
+      messages: [{
+        id: "m1",
+        role: "user",
+        content: "Review the final draft\n\nAttached files (available on your Matrix computer):\n- ~/temporary/desktop-chat/abc-final report.pdf (/home/matrix/home/temporary/desktop-chat/abc-final report.pdf)",
+        timestamp: 1,
+      }],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByText("Review the final draft")).toBeTruthy();
+    expect(screen.getByText("final report.pdf")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("temporary/desktop-chat");
+    expect(document.body.textContent).not.toContain("/home/matrix");
+
+    fireEvent.click(screen.getByRole("button", { name: "Resources" }));
+    expect(screen.getByRole("complementary", { name: "Resources" }).textContent)
+      .toContain("final report.pdf");
+  });
+
+  it("states unavailable and failed connected-tool Gateway capabilities explicitly", () => {
+    useIntegrations.setState({ status: "unavailable", connections: [] });
+    const { rerender } = render(<ChatTab />);
+    fireEvent.click(screen.getByRole("button", { name: "Resources" }));
+    expect(screen.getByText("Connected tools are not available from this Gateway.")).toBeTruthy();
+
+    act(() => useIntegrations.setState({ status: "error", connections: [] }));
+    rerender(<ChatTab />);
+    expect(screen.getByText("Connected tools could not be loaded. Try again from Integrations.")).toBeTruthy();
+  });
+
+  it("toggles Resources, closes it with Escape, and routes Connect tool to Integrations", () => {
+    render(<ChatTab />);
+    const trigger = screen.getByRole("button", { name: "Resources" });
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Resources" })).toBeNull();
+
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "Connect tool" }));
+    expect(useUi.getState().requestedSettingsSection).toBe("integrations");
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
   });
 
   it("previews pasted files horizontally, uploads on Send, and sends Hermes readable paths", async () => {
@@ -220,7 +241,7 @@ describe("ChatTab", () => {
     expect(await screen.findByRole("button", { name: "Remove screen.png" })).toBeTruthy();
     const previewRow = screen.getByRole("group", { name: "Attachments" });
     expect(previewRow.className).toContain("overflow-x-auto");
-    const input = screen.getByLabelText("Do anything");
+    const input = screen.getByLabelText("How can I help you today?");
     fireEvent.change(input, { target: { value: "Review this screenshot" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -291,7 +312,9 @@ describe("ChatTab", () => {
     const newest = screen.getByRole("button", { name: "Plan the launch conversation" });
     const older = screen.getByRole("button", { name: "Earlier notes conversation" });
     expect(newest.textContent).toContain("Plan the launch");
-    expect(newest.textContent).toContain("4 messages");
+    expect(newest.textContent).toContain("Hermes");
+    expect(newest.textContent).not.toContain("4 messages");
+    expect(newest.textContent).not.toContain("Review the final launch checklist");
     expect(older.textContent).toContain("Earlier notes");
     expect(screen.queryByText("hello")).toBeNull();
   });
@@ -362,7 +385,7 @@ describe("ChatTab", () => {
     useHermesChat.setState({ view: "index", indexStatus: "ready", conversations: [] });
 
     render(<ChatTab />);
-    fireEvent.click(screen.getAllByRole("button", { name: "New conversation" })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
 
     expect(await screen.findByRole("region", { name: "Hermes conversation" })).toBeTruthy();
     expect(useHermesChat.getState()).toMatchObject({
@@ -370,9 +393,13 @@ describe("ChatTab", () => {
       sessionId: "conversation-created",
       messages: [],
     });
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "conversation",
+      id: "conversation-created",
+    });
   });
 
-  it("opens the selected canonical conversation and exposes a Chat breadcrumb", async () => {
+  it("opens the selected canonical conversation without duplicating global navigation", async () => {
     const get = vi.fn().mockResolvedValue({
       id: "conversation-one",
       createdAt: 10,
@@ -402,7 +429,12 @@ describe("ChatTab", () => {
     fireEvent.click(screen.getByRole("button", { name: /persistent plan conversation/i }));
 
     expect(await screen.findByText("persistent hello")).toBeTruthy();
-    expect(screen.getByRole("navigation", { name: "Chat breadcrumb" }).textContent).toContain("Persistent plan");
+    expect(screen.queryByRole("navigation", { name: "Chat breadcrumb" })).toBeNull();
     expect(useHermesChat.getState().sessionId).toBe("conversation-one");
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "conversation",
+      id: "conversation-one",
+      label: "Persistent plan",
+    });
   });
 });

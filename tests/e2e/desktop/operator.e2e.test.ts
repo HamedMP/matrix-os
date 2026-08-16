@@ -15,6 +15,7 @@ const DESKTOP_MAIN = resolve(__dirname, "../../../desktop/out/main/index.js");
 const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/package.json"));
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../desktop/screenshots");
+const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
 const hasBuild = existsSync(DESKTOP_MAIN);
 
 const suite = hasBuild ? describe : describe.skip;
@@ -55,6 +56,7 @@ suite("operator desktop e2e", () => {
 
   beforeAll(async () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    mkdirSync(MAT_322_SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
     userDataDir = mkdtempSync(join(tmpdir(), "operator-e2e-"));
     app = await _electron.launch({
@@ -329,6 +331,14 @@ suite("operator desktop e2e", () => {
     await page.waitForFunction(() => document.documentElement.getAttribute("data-theme-id") === "dracula");
     await page.screenshot({ path: join(SCREENSHOT_DIR, "14-theme-dracula.png") });
 
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
+    await page.getByRole("heading", { name: "Chats" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(MAT_322_SCREENSHOT_DIR, "06-chats-dark.png") });
+    await page.getByRole("button", {
+      name: "Plan the persistent Desktop conversation experience conversation",
+    }).click();
+    await page.getByText("The canonical Gateway conversation is ready to continue.").waitFor();
+
     // The terminal palette follows the unified theme.
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
@@ -342,22 +352,26 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "16-theme-operator-default.png") });
   }, 40_000);
 
-  it("lists coding-agent threads in the unified chat rail and routes selection to the project", async () => {
+  it("keeps coding-agent navigation in global Recents instead of a Chat rail", async () => {
     // The earlier computer switch cleared the workspace summary; opening the
-    // project refreshes it before the rail is inspected.
+    // project refreshes it before selecting the canonical project chat.
     await page.locator("aside button", { hasText: "Matrix OS" }).last().click();
     await page.getByRole("button", { name: "Board", exact: true }).waitFor({ timeout: 10_000 });
-    await page.locator("aside button", { hasText: "Chat" }).first().click();
-    // The rail lists the server-backed run alongside Hermes under "Agent runs".
-    await page.getByText("Agent runs").waitFor({ timeout: 10_000 });
-    const railItem = page.getByRole("button", { name: "fix the failing auth tests" }).first();
-    await railItem.waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "17-chat-unified-rail.png") });
+    await page.getByRole("button", { name: "Chats" }).click();
+    await page.getByRole("button", { name: "Chat fix the failing auth tests" }).click();
+    const recent = page.getByRole("button", { name: "Open recent fix the failing auth tests" });
+    await recent.waitFor({ timeout: 10_000 });
 
-    // Selecting a coding-agent thread routes to its project tab's Chats view.
-    await railItem.click();
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
+    await page.getByRole("heading", { name: "Chats" }).waitFor({ timeout: 10_000 });
+    await expect.poll(() => page.getByText("Agent runs").count()).toBe(0);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "17-chat-without-internal-rail.png") });
+
+    // Global Recents owns the route back to the project conversation.
+    await recent.click();
     await page.getByRole("button", { name: "New chat in Matrix OS" }).waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "18-chat-rail-routes-to-project.png") });
+    await page.getByRole("region", { name: "Conversation fix the failing auth tests" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "18-global-recent-routes-to-project.png") });
   }, 30_000);
 
   it("archives, restores, and permanently deletes a project through Desktop lifecycle controls", async () => {
@@ -397,7 +411,7 @@ suite("operator desktop e2e", () => {
       "Files",
     ]);
     expect(evidence.focusTargets.Home).toBe("Home");
-    expect(["Chat", "Do anything"]).toContain(evidence.focusTargets.Chat);
+    expect(["Chat", "How can I help you today?"]).toContain(evidence.focusTargets.Chat);
     expect(["Terminal", "Terminal input"]).toContain(
       evidence.focusTargets.Terminal,
     );

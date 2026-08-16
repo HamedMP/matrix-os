@@ -1,6 +1,6 @@
 // Canonical routing for opening coding-agent chats in the project-centric
 // shell. A chat always opens inside its project tab (Chats view active) —
-// notifications, the command palette, the chat rail, and future panels all
+// notifications, global Recents, the command palette, and future panels all
 // funnel through openProjectChat so there is exactly one way to land on a
 // conversation.
 import { create } from "zustand";
@@ -66,6 +66,28 @@ function projectTitleFor(projectId: string): string {
   return summaryProject?.label ?? projectId;
 }
 
+function conversationTitleFor(threadId: string): string {
+  const workspace = useCodingAgentWorkspace.getState();
+  const summaryThread = [
+    ...(workspace.summary?.attentionThreads.items ?? []),
+    ...(workspace.summary?.activeThreads.items ?? []),
+  ].find((thread) => thread.id === threadId);
+  if (summaryThread?.title) return summaryThread.title;
+  if (workspace.threadSnapshot?.thread.id === threadId) {
+    return workspace.threadSnapshot.thread.title;
+  }
+  for (const entry of Object.values(useProjectWorkspaces.getState().entries)) {
+    const projectWorkspace = entry.workspace;
+    if (!projectWorkspace) continue;
+    const listed = [
+      ...projectWorkspace.projectThreads.items,
+      ...projectWorkspace.taskThreads.items,
+    ].find((thread) => thread.id === threadId);
+    if (listed?.title) return listed.title;
+  }
+  return "Agent conversation";
+}
+
 export function openProjectChat(projectId: string, options: OpenProjectChatOptions = {}): void {
   const projectView = useProjectView.getState();
   projectView.setView(projectId, "chats");
@@ -79,6 +101,12 @@ export function openProjectChat(projectId: string, options: OpenProjectChatOptio
     projectSlug: projectId,
     title: projectTitleFor(projectId),
   });
+  if (options.threadId) {
+    useTabs.getState().recordRecentConversation(
+      options.threadId,
+      conversationTitleFor(options.threadId),
+    );
+  }
   // ensure() records load failures in its own entry state and never rejects.
   void useProjectWorkspaces.getState().ensure(projectId);
   if (options.threadId) {
@@ -98,7 +126,7 @@ export function openProjectChat(projectId: string, options: OpenProjectChatOptio
 }
 
 /**
- * Routes a coding-agent thread (notification, palette, chat rail) into its
+ * Routes a coding-agent thread (notification, palette, or Recents) into its
  * project context. The project is resolved from the runtime summary or the
  * already-loaded snapshot; when neither knows it, the default project is a
  * best-effort fallback so the conversation still opens somewhere sensible.

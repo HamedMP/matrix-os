@@ -13,6 +13,7 @@ import {
   useHermesChat,
   type HermesConversationSummary,
 } from "../../stores/hermes-chat";
+import { useTabs } from "../../stores/tabs";
 import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { filterConversations } from "./conversation-search";
 
@@ -42,54 +43,54 @@ function ConversationRow({
   const loadingConversationId = useHermesChat((state) => state.loadingConversationId);
   const deletingConversationId = useHermesChat((state) => state.deletingConversationId);
   const openConversation = useHermesChat((state) => state.openConversation);
+  const recordRecentConversation = useTabs((state) => state.recordRecentConversation);
   const running = conversation.id === sessionId && status !== "idle";
   const loading = loadingConversationId === conversation.id;
   const deleting = deletingConversationId === conversation.id;
   const runningDescriptionId = `delete-running-${conversation.id}`;
+  const openSelectedConversation = async () => {
+    if (!api) return;
+    if (await openConversation(api, conversation.id)) {
+      recordRecentConversation(conversation.id, conversation.title);
+    }
+  };
 
   return (
     <div
-      className="group flex min-h-[76px] items-stretch border-b last:border-b-0"
+      data-conversation-row
+      className="group relative flex h-16 items-stretch border-b last:border-b-0"
       style={{ borderColor: "var(--border-subtle)" }}
     >
       <button
         type="button"
         aria-label={`${conversation.title} conversation`}
-        className="min-w-0 flex-1 px-3 py-3 text-left transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px]"
+        className="min-w-0 flex-1 px-4 pr-14 text-left transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px]"
         disabled={loading || !api}
-        onClick={() => {
-          if (api) void openConversation(api, conversation.id);
-        }}
+        onClick={() => void openSelectedConversation()}
       >
-        <span className="flex min-w-0 items-start gap-4">
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-              {conversation.title}
-            </span>
-            <span className="mt-1 block truncate text-sm" style={{ color: "var(--text-secondary)" }}>
-              {conversation.preview || "No messages yet"}
-            </span>
+        <span className="flex h-full min-w-0 items-center gap-4">
+          <span className="min-w-0 flex-1 truncate text-base font-medium" style={{ color: "var(--text-primary)" }}>
+            {conversation.title}
           </span>
-          <span className="flex w-28 shrink-0 flex-col items-start gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
-            <span>Hermes</span>
-            <span>{conversation.messageCount} {conversation.messageCount === 1 ? "message" : "messages"}</span>
-          </span>
-          <span className="flex w-20 shrink-0 justify-end text-xs" style={{ color: "var(--text-tertiary)" }}>
+          <span className="flex shrink-0 items-center gap-5 text-xs transition-opacity group-hover:opacity-0 group-focus-within:opacity-0" style={{ color: "var(--text-tertiary)" }}>
+            <span className="rounded-full border px-2 py-1 font-medium" style={{ borderColor: "var(--border-default)" }}>Hermes</span>
             {running ? (
               <span className="flex items-center gap-1.5" style={{ color: "var(--accent)" }}>
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" aria-hidden />
                 Running
               </span>
-            ) : loading ? "Opening…" : relativeActivity(conversation.updatedAt)}
+            ) : loading ? <span>Opening…</span> : (
+              <time dateTime={new Date(conversation.updatedAt).toISOString()}>{relativeActivity(conversation.updatedAt)}</time>
+            )}
           </span>
         </span>
       </button>
-      <span className="flex w-10 shrink-0 items-center justify-center">
+      <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center justify-center">
         <button
           type="button"
           aria-label={`Delete ${conversation.title}`}
           aria-describedby={running ? runningDescriptionId : undefined}
-          className="pointer-events-none inline-flex h-7 w-7 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-[var(--danger-muted)] focus:bg-[var(--danger-muted)] focus:opacity-100 focus:pointer-events-auto focus-visible:outline-2 focus-visible:outline-[var(--danger)] group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-40"
+          className="pointer-events-none inline-flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-[var(--danger-muted)] focus:bg-[var(--danger-muted)] focus:opacity-100 focus:pointer-events-auto focus-visible:outline-2 focus-visible:outline-[var(--danger)] group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-40"
           style={{ color: "var(--danger)" }}
           disabled={!api || running || deleting || deletingConversationId !== null}
           onClick={() => onRequestDelete(conversation)}
@@ -119,6 +120,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   const createConversation = useHermesChat((state) => state.createConversation);
   const deleteConversation = useHermesChat((state) => state.deleteConversation);
   const clearDeleteError = useHermesChat((state) => state.clearDeleteError);
+  const recordRecentConversation = useTabs((state) => state.recordRecentConversation);
   const filteredConversations = useMemo(
     () => filterConversations(conversations, query),
     [conversations, query],
@@ -139,12 +141,19 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
       setDeleteTarget(null);
     }
   };
+  const startConversation = async () => {
+    if (!api) return;
+    const id = await createConversation(api);
+    if (!id) return;
+    const created = useHermesChat.getState().conversations.find((item) => item.id === id);
+    recordRecentConversation(id, created?.title ?? "New chat");
+  };
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-6" aria-labelledby="conversation-index-title">
-      <div className="mx-auto flex w-full max-w-[840px] flex-col">
-        <div className="mb-5 flex min-h-9 min-w-0 items-center justify-between gap-4">
-          <h1 id="conversation-index-title" className="text-xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
+    <section className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-6 sm:px-8" aria-labelledby="conversation-index-title">
+      <div className="mx-auto flex w-full max-w-[1020px] flex-col">
+        <div className="mb-6 flex min-h-10 min-w-0 items-center justify-between gap-4">
+          <h1 id="conversation-index-title" className="text-[36px] font-medium leading-none tracking-[-0.02em]" style={{ color: "var(--text-primary)", fontFamily: '"Instrument Serif", Georgia, serif' }}>
             Chats
           </h1>
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
@@ -193,7 +202,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
               variant="subtle"
               className="h-8"
               disabled={!api}
-              onClick={() => { if (api) void createConversation(api); }}
+              onClick={() => void startConversation()}
             >
               <MessageSquarePlus size={14} aria-hidden />
               New chat
@@ -206,7 +215,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
             {[0, 1, 2].map((item) => (
               <div
                 key={item}
-                className="h-[76px] animate-pulse border-b last:border-b-0"
+                className="h-16 animate-pulse border-b last:border-b-0"
                 style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
               />
             ))}

@@ -10,6 +10,7 @@ const DESKTOP_MAIN = resolve(__dirname, "../../../desktop/out/main/index.js");
 const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/package.json"));
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-299");
+const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
 const VIEWPORT = { width: 1440, height: 900 } as const;
 const suite = existsSync(DESKTOP_MAIN) ? describe : describe.skip;
 
@@ -21,6 +22,7 @@ suite("persistent Hermes Desktop conversations", () => {
 
   beforeAll(async () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    mkdirSync(MAT_322_SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
     userDataDir = mkdtempSync(join(tmpdir(), "mat-299-desktop-"));
     app = await _electron.launch({
@@ -55,6 +57,7 @@ suite("persistent Hermes Desktop conversations", () => {
       name: "Verify provider switching remains intact conversation",
     }).waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "01-conversation-index.png") });
+    await page.screenshot({ path: join(MAT_322_SCREENSHOT_DIR, "01-chats-index-wide.png") });
 
     await page.getByRole("button", { name: "Search chats" }).click();
     await page.getByRole("searchbox", { name: "Search chats" }).fill("provider");
@@ -73,15 +76,18 @@ suite("persistent Hermes Desktop conversations", () => {
     await page.getByRole("button", {
       name: "Plan the persistent Desktop conversation experience conversation",
     }).click();
-    await page.getByRole("navigation", { name: "Chat breadcrumb" }).waitFor();
     await page.getByText("The canonical Gateway conversation is ready to continue.").waitFor();
+    await page.screenshot({ path: join(MAT_322_SCREENSHOT_DIR, "02-active-conversation-wide.png") });
+    await page.getByRole("button", { name: "Resources" }).click();
+    await page.getByRole("complementary", { name: "Resources" }).waitFor();
+    await page.screenshot({ path: join(MAT_322_SCREENSHOT_DIR, "03-resources-wide.png") });
+    await page.getByRole("button", { name: "Close Resources" }).click();
     await expect.poll(() => gateway.state.kernelMessages).toContainEqual({
       type: "switch_session",
       sessionId: "hermes-desktop-index",
     });
 
-    await page.getByRole("navigation", { name: "Chat breadcrumb" })
-      .getByRole("button", { name: "Chat" }).click();
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
     await page.getByRole("button", {
       name: "Verify provider switching remains intact conversation",
     }).click();
@@ -91,13 +97,12 @@ suite("persistent Hermes Desktop conversations", () => {
       sessionId: "hermes-provider-check",
     });
 
-    await page.getByRole("navigation", { name: "Chat breadcrumb" })
-      .getByRole("button", { name: "Chat" }).click();
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
     await page.locator('section[aria-labelledby="conversation-index-title"]')
       .getByRole("button", { name: "New chat" }).click();
-    await page.getByRole("textbox", { name: "Do anything" }).waitFor();
-    await page.getByRole("navigation", { name: "Chat breadcrumb" })
-      .getByRole("button", { name: "Chat" }).click();
+    await page.getByRole("textbox", { name: "How can I help you today?" }).waitFor();
+    await page.screenshot({ path: join(MAT_322_SCREENSHOT_DIR, "04-empty-conversation-wide.png") });
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
     await page.getByRole("button", { name: "New conversation conversation" }).waitFor();
 
     const providerRow = page.getByRole("button", {
