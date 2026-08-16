@@ -222,6 +222,10 @@ const processes = (await Promise.all(pids.map(processEntry))).filter(Boolean);
 const zellij = processes
   .filter((entry) => entry.comm === "zellij" && !entry.args.includes("list-sessions"))
   .sort((left, right) => left.pid - right.pid);
+const zellijWatcher = zellij.find((entry) => (
+  entry.args.includes("watch") && entry.args.includes(descriptor.sessionName)
+));
+const zellijServer = zellij.find((entry) => entry.args.includes("--server"));
 const workload = workloadKind === "shell"
   ? processes.find((entry) => entry.args.some((argument) => argument.endsWith("/production-loop.mjs")))
   : processes.find((entry) => (
@@ -232,6 +236,8 @@ const mainPid = Number(properties.MainPID);
 if (!processes.some((entry) => entry.pid === mainPid)) fail("production_probe_roles_main_missing");
 if (zellij.length === 0) fail("production_probe_roles_zellij_0");
 if (zellij.length === 1) fail("production_probe_roles_zellij_1");
+if (!zellijServer) fail("production_probe_roles_server_missing");
+if (!zellijWatcher) fail("production_probe_roles_watcher_missing");
 if (!workload) fail("production_probe_roles_workload_missing");
 
 process.stdout.write(`${JSON.stringify({
@@ -244,7 +250,8 @@ process.stdout.write(`${JSON.stringify({
   unit,
   cgroup: properties.ControlGroup,
   mainPid,
-  zellijServerPid: zellij.at(-1).pid,
+  zellijServerPid: zellijServer.pid,
+  zellijWatcherPid: zellijWatcher.pid,
   workloadPid: workload.pid,
   memoryMax: properties.MemoryMax,
   tasksMax: properties.TasksMax,

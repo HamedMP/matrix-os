@@ -5,6 +5,8 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
+const SESSION_START_TIMEOUT_MS = 10_000;
+const FORCED_KILL_DELAY_MS = 2_000;
 const RUNTIME_ID_PATTERN = /^rt_[0-9a-f]{32}$/;
 const GENERATION_PATTERN = /^gen_[0-9a-f]{64}$/;
 const DESCRIPTOR_KEYS = new Set([
@@ -148,16 +150,8 @@ try {
   fail("runtime_asset_unavailable");
 }
 
-const zellijArgs = [
-  zellijPath,
-  "--session",
-  descriptor.sessionName,
-  "--new-session-with-layout",
-  layoutPath,
-];
-const command = zellijArgs.map(shellQuote).join(" ");
 const configDir = join(homePath, "system", "zellij");
-const child = spawn("/usr/bin/script", ["-qefc", command, "/dev/null"], {
+const childOptions = {
   cwd,
   env: {
     ...process.env,
@@ -173,27 +167,77 @@ const child = spawn("/usr/bin/script", ["-qefc", command, "/dev/null"], {
       ? launchEnvironment.PATH
       : `${homePath}/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin`,
   },
-  stdio: "ignore",
-});
+};
 
+let child;
 let forcedKillTimer;
+let requestedSignal;
 function forwardSignal(signal) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  requestedSignal ??= signal;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
   child.kill(signal);
   if (!forcedKillTimer) {
-    forcedKillTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
+    forcedKillTimer = setTimeout(() => child?.kill("SIGKILL"), FORCED_KILL_DELAY_MS);
     forcedKillTimer.unref();
   }
 }
 
-process.on("SIGTERM", () => forwardSignal("SIGTERM"));
-process.on("SIGINT", () => forwardSignal("SIGINT"));
-child.once("error", () => fail("pty_start_failed"));
-child.once("exit", (code, signal) => {
+function exitAfterChild(code, signal) {
   if (forcedKillTimer) clearTimeout(forcedKillTimer);
-  if (signal) {
-    process.kill(process.pid, signal);
+  const exitSignal = requestedSignal ?? signal;
+  if (exitSignal) {
+    process.kill(process.pid, exitSignal);
     return;
   }
   process.exit(code ?? 1);
+}
+
+process.on("SIGTERM", () => forwardSignal("SIGTERM"));
+process.on("SIGINT", () => forwardSignal("SIGINT"));
+
+// Start the server without a persistent interactive client. Zellij computes its
+// shared grid as the component-wise minimum across interactive clients, so the
+// old headless 80x24 client permanently constrained every browser attachment.
+const starterArgs = [
+  "--new-session-with-layout",
+  layoutPath,
+  "attach", "--create-background", descriptor.sessionName,
+];
+const starterCommand = [zellijPath, ...starterArgs].map(shellQuote).join(" ");
+child = spawn("/usr/bin/script", ["-qefc", starterCommand, "/dev/null"], {
+  ...childOptions,
+  stdio: "ignore",
 });
+
+await new Promise((resolveStart) => {
+  let startTimedOut = false;
+  const startTimer = setTimeout(() => {
+    startTimedOut = true;
+    child.kill("SIGKILL");
+  }, SESSION_START_TIMEOUT_MS);
+  startTimer.unref();
+
+  child.once("error", () => {
+    clearTimeout(startTimer);
+    fail("session_start_failed");
+  });
+  child.once("exit", (_code, signal) => {
+    clearTimeout(startTimer);
+    if (requestedSignal || signal) exitAfterChild(null, signal);
+    if (startTimedOut) fail("session_start_timeout");
+    resolveStart();
+  });
+});
+if (requestedSignal) exitAfterChild(null, null);
+
+// A watcher keeps the user unit active and the Zellij server in its cgroup,
+// while remaining excluded from Zellij's interactive-client size arbitration.
+const watcherCommand = [zellijPath, "watch", descriptor.sessionName]
+  .map(shellQuote)
+  .join(" ");
+child = spawn("/usr/bin/script", ["-qefc", watcherCommand, "/dev/null"], {
+  ...childOptions,
+  stdio: "ignore",
+});
+child.once("error", () => fail("pty_start_failed"));
+child.once("exit", (code, signal) => exitAfterChild(code, signal));

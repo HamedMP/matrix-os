@@ -92,6 +92,7 @@ ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
   exit 1
 }
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
+timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-watcher-sizing.mjs" "$STAGE_DIR/bin/zellij"
 TERMINAL_RUNTIME_GENERATION="$(
   "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
     "$STAGE_DIR/bin/zellij" \

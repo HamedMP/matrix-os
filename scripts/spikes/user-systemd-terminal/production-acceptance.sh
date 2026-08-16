@@ -355,7 +355,7 @@ with os.fdopen(descriptor, encoding="utf-8") as source:
 after = json.loads(sys.argv[2])
 fields = (
     "runtimeId", "generation", "unit", "cgroup", "mainPid",
-    "zellijServerPid", "workloadPid",
+    "zellijServerPid", "zellijWatcherPid", "workloadPid",
 )
 if any(before.get(field) != after.get(field) for field in fields):
     raise SystemExit(1)
@@ -1328,6 +1328,7 @@ verify_deleted() {
   fi
   for pid in "$(json_field "$snapshot_file" mainPid)" \
     "$(json_field "$snapshot_file" zellijServerPid)" \
+    "$(json_field "$snapshot_file" zellijWatcherPid)" \
     "$(json_field "$snapshot_file" workloadPid)"; do
     if [ -r "/proc/${pid}/cgroup" ]; then
       ! grep -F -- "$cgroup" "/proc/${pid}/cgroup" >/dev/null
@@ -1630,6 +1631,7 @@ phase2() {
     write_progress "reboot-${role}-old-pids-detached"
     for pid in "$(json_field "$baseline" mainPid)" \
       "$(json_field "$baseline" zellijServerPid)" \
+      "$(json_field "$baseline" zellijWatcherPid)" \
       "$(json_field "$baseline" workloadPid)"; do
       if [ -r "/proc/${pid}/cgroup" ]; then
         ! grep -F -- "$old_cgroup" "/proc/${pid}/cgroup" >/dev/null

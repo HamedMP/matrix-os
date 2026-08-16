@@ -28,7 +28,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(slice).toContain("TasksMax=");
   });
 
-  it("keeps command argv out of the descriptor-to-keeper boundary", () => {
+  it("creates runtimes detached and keeps them alive with a non-sizing watcher", () => {
     const keeper = readFileSync(
       join(root, "distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs"),
       "utf8",
@@ -39,6 +39,10 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(keeper).toContain("generation");
     expect(keeper).toContain("/usr/bin/script");
     expect(keeper).toContain("--new-session-with-layout");
+    expect(keeper).toContain('"attach", "--create-background", descriptor.sessionName');
+    expect(keeper).toContain('"watch", descriptor.sessionName');
+    expect(keeper).toContain("SESSION_START_TIMEOUT_MS");
+    expect(keeper).not.toContain('"--session",');
     expect(keeper).not.toContain("descriptor.command");
     expect(keeper).not.toContain("descriptor.args");
     expect(keeper).not.toContain("eval(");
@@ -57,12 +61,20 @@ describe("customer VPS user-systemd terminal runtime", () => {
   it("ships immutable helper/Zellij generations and globally installed user units", () => {
     const build = readFileSync(join(root, "scripts/build-host-bundle.sh"), "utf8");
     const cloudInit = readFileSync(join(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
+    const sizingSmoke = readFileSync(
+      join(root, "scripts/smoke-zellij-watcher-sizing.mjs"),
+      "utf8",
+    );
 
     expect(build).toContain('"$STAGE_DIR/terminal-runtime/generations/$TERMINAL_RUNTIME_GENERATION"');
     expect(build).toContain('"$STAGE_DIR/user-systemd"');
     expect(build).toContain("TERMINAL_RUNTIME_GENERATION");
     expect(build).toContain("matrix-terminal-generation-id");
     expect(build).toContain("matrix-terminal-attach.mjs");
+    expect(build).toContain("smoke-zellij-watcher-sizing.mjs");
+    expect(sizingSmoke).toContain('spawn(zellijBinary, ["watch", sessionName]');
+    expect(sizingSmoke).toContain("const INITIAL_SIZE = { cols: 160, rows: 60 }");
+    expect(sizingSmoke).toContain("interactive.resize(RESIZED_SIZE.cols, RESIZED_SIZE.rows)");
     expect(build).toContain("bin app runtime systemd user-systemd terminal-runtime release.json");
     expect(cloudInit).toContain("/etc/systemd/user");
     expect(cloudInit).toContain("systemctl --user daemon-reload");
@@ -315,6 +327,9 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(probe).toContain("/ws/terminal");
     expect(probe).toContain('message?.type === "attached"');
     expect(probe).toContain('message?.type === "error"');
+    expect(probe).toContain("production_probe_roles_server_missing");
+    expect(probe).toContain("production_probe_roles_watcher_missing");
+    expect(probe).toContain("zellijWatcherPid");
     expect(probe).toContain('`server-${safeCode}`');
     expect(probe).toContain("production_probe_runtime_unavailable");
     expect(probe).toContain("recordAttachStatus");
