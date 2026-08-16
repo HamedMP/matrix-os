@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { categoryMessage } from "../../../../shared/app-error";
@@ -107,6 +107,9 @@ export default function TerminalsTab() {
   const patchUiState = useShellSessions((s) => s.patchUiState);
   const tabs = useTabs((s) => s.tabs);
   const openTab = useTabs((s) => s.openTab);
+  const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
+  const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
+  const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
@@ -191,7 +194,8 @@ export default function TerminalsTab() {
     showShellDetail(created);
   };
 
-  const showShellDetail = (shell: ShellSessionSummary) => {
+  const showShellDetail = useCallback((shell: ShellSessionSummary) => {
+    recordRecentTerminal(shell.name, shell.name);
     setOpenedSessionNames((current) => [
       ...current.filter((name) => name !== shell.name),
       shell.name,
@@ -201,7 +205,14 @@ export default function TerminalsTab() {
     if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
       void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
     }
-  };
+  }, [api, patchUiState, recordRecentTerminal]);
+
+  useEffect(() => {
+    if (!terminalSessionRequest) return;
+    const requestedShell = shells.find((shell) => shell.name === terminalSessionRequest.sessionName);
+    if (requestedShell) showShellDetail(requestedShell);
+    consumeTerminalSessionRequest(terminalSessionRequest.requestId);
+  }, [consumeTerminalSessionRequest, shells, showShellDetail, terminalSessionRequest]);
 
   const showShellList = () => {
     setSelectedName(null);

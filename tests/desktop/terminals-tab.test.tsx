@@ -147,6 +147,51 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
+  it("records and refreshes opened canonical session details in global Recents without remounting", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().ensureNavigationScope("primary|operator|1");
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-one", status: "active", placement: "active" },
+        { name: "matrix-two", status: "active", placement: "active" },
+      ],
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-two" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
+
+    expect(useTabs.getState().recentViews).toEqual([
+      expect.objectContaining({ kind: "terminal", id: "matrix-one", label: "matrix-one" }),
+      expect.objectContaining({ kind: "terminal", id: "matrix-two", label: "matrix-two" }),
+    ]);
+    expect(terminalMounts.get("matrix-one")).toBe(1);
+    expect(terminalMounts.get("matrix-two")).toBe(1);
+  });
+
+  it("reopens a requested canonical detail from its mounted cache without remounting", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+
+    act(() => {
+      useTabs.setState({
+        terminalSessionRequest: { sessionName: "matrix-main", requestId: 1 },
+      });
+    });
+
+    expect(screen.getByRole("navigation", { name: "Terminal breadcrumb" }).textContent).toContain("matrix-main");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
   it("bounds preserved terminal buffers to the eight most recently opened sessions", () => {
     useShellSessions.setState({
       sessions: Array.from({ length: 9 }, (_, index) => ({

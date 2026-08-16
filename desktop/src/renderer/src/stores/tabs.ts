@@ -40,6 +40,11 @@ export interface RecentView {
   visitedAt: number;
 }
 
+export interface TerminalSessionRequest {
+  sessionName: string;
+  requestId: number;
+}
+
 export const FILES_WORKSPACE_TAB_SPEC = {
   kind: "files" as const,
   title: "Files",
@@ -121,6 +126,8 @@ interface TabsState {
   canGoForward: boolean;
   recentViews: RecentView[];
   recentFilter: RecentViewFilter;
+  terminalSessionRequest: TerminalSessionRequest | null;
+  terminalSessionRequestSequence: number;
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
@@ -129,6 +136,9 @@ interface TabsState {
   goForward(): void;
   ensureNavigationScope(scope: string): void;
   recordRecentConversation(id: string, label: string): void;
+  recordRecentTerminal(id: string, label: string): void;
+  requestTerminalSession(sessionName: string): void;
+  consumeTerminalSessionRequest(requestId: number): void;
   setRecentFilter(filter: RecentViewFilter): void;
   renameTab(id: string, title: string): void;
   renameTerminalSession(fromName: string, toName: string): void;
@@ -146,6 +156,8 @@ export const useTabs = create<TabsState>()((set, get) => ({
   canGoForward: false,
   recentViews: [],
   recentFilter: "all",
+  terminalSessionRequest: null,
+  terminalSessionRequestSequence: 0,
 
   openTab: (spec) => {
     const key = identityKey(spec);
@@ -263,6 +275,8 @@ export const useTabs = create<TabsState>()((set, get) => ({
       ...historyPatch(soleHome ? [soleHome.id] : [], soleHome ? 0 : -1),
       recentViews: [],
       recentFilter: "all",
+      terminalSessionRequest: null,
+      terminalSessionRequestSequence: 0,
     };
   }),
 
@@ -274,6 +288,29 @@ export const useTabs = create<TabsState>()((set, get) => ({
       visitedAt: Date.now(),
     }),
   })),
+
+  recordRecentTerminal: (id, label) => set((state) => ({
+    recentViews: recordRecent(state.recentViews, {
+      kind: "terminal",
+      id,
+      label,
+      visitedAt: Date.now(),
+    }),
+  })),
+
+  requestTerminalSession: (sessionName) => set((state) => {
+    const requestId = state.terminalSessionRequestSequence + 1;
+    return {
+      terminalSessionRequest: { sessionName, requestId },
+      terminalSessionRequestSequence: requestId,
+    };
+  }),
+
+  consumeTerminalSessionRequest: (requestId) => set((state) => (
+    state.terminalSessionRequest?.requestId === requestId
+      ? { terminalSessionRequest: null }
+      : state
+  )),
 
   setRecentFilter: (recentFilter) => set({ recentFilter }),
 
@@ -292,5 +329,8 @@ export const useTabs = create<TabsState>()((set, get) => ({
           ? { ...recent, id: toName, label: toName }
           : recent,
       ),
+      terminalSessionRequest: state.terminalSessionRequest?.sessionName === fromName
+        ? { ...state.terminalSessionRequest, sessionName: toName }
+        : state.terminalSessionRequest,
     })),
 }));
