@@ -188,6 +188,21 @@ textarea,
   animation: operator-fade-in var(--duration-base) var(--ease-out);
 }
 
+/* Dialog positioning also uses transform, so its entrance must not animate
+   transform or the content visibly jumps when the animation releases it. */
+@keyframes operator-dialog-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.dialog-fade-in {
+  animation: operator-dialog-fade-in var(--duration-base) var(--ease-out);
+}
+
 @keyframes operator-pulse {
   0%,
   100% {

@@ -147,6 +147,132 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
+  it("records and refreshes opened canonical session details in global Recents without remounting", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().ensureNavigationScope("primary|operator|1");
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-one", status: "active", placement: "active" },
+        { name: "matrix-two", status: "active", placement: "active" },
+      ],
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-two" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
+
+    expect(useTabs.getState().recentViews).toEqual([
+      expect.objectContaining({ kind: "terminal", id: "matrix-one", label: "matrix-one" }),
+      expect.objectContaining({ kind: "terminal", id: "matrix-two", label: "matrix-two" }),
+    ]);
+    expect(terminalMounts.get("matrix-one")).toBe(1);
+    expect(terminalMounts.get("matrix-two")).toBe(1);
+  });
+
+  it("reopens a requested canonical detail from its mounted cache without remounting", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+
+    act(() => {
+      useTabs.setState({
+        terminalSessionRequest: { sessionName: "matrix-main", requestId: 1 },
+      });
+    });
+
+    expect(screen.getByRole("navigation", { name: "Terminal breadcrumb" }).textContent).toContain("matrix-main");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("keeps a requested Recent pending until the canonical session load provides it", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().requestTerminalSession("matrix-delayed");
+    useShellSessions.setState({
+      sessions: [],
+      loading: true,
+    });
+
+    renderTab();
+
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({ sessionName: "matrix-delayed" });
+    expect(screen.queryByTestId("terminal-view-matrix-delayed")).toBeNull();
+
+    act(() => {
+      useShellSessions.setState({
+        sessions: [{ name: "matrix-delayed", status: "active", placement: "active" }],
+        loading: false,
+      });
+    });
+
+    expect(screen.getByRole("navigation", { name: "Terminal breadcrumb" }).textContent).toContain("matrix-delayed");
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
+  it("keeps a requested Recent pending during a create-triggered canonical refresh", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().requestTerminalSession("matrix-created");
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      loading: false,
+      creating: true,
+      error: null,
+      loadSequence: 2,
+    });
+
+    renderTab();
+
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({
+      sessionName: "matrix-created",
+    });
+
+    act(() => {
+      useShellSessions.setState({
+        sessions: [
+          { name: "matrix-created", status: "active", placement: "active" },
+          { name: "matrix-main", status: "active", placement: "active" },
+        ],
+        creating: false,
+      });
+    });
+
+    expect(screen.getByRole("navigation", { name: "Terminal breadcrumb" }).textContent).toContain(
+      "matrix-created",
+    );
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
+  it("retires a missing Recent after canonical loading completes so a reused name does not open", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().requestTerminalSession("matrix-deleted");
+    useShellSessions.setState({
+      sessions: [],
+      loading: false,
+      error: null,
+      loadSequence: 1,
+    });
+
+    renderTab();
+
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+
+    act(() => {
+      useShellSessions.setState({
+        sessions: [{ name: "matrix-deleted", status: "active", placement: "active" }],
+      });
+    });
+
+    expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(screen.queryByTestId("terminal-view-matrix-deleted")).toBeNull();
+  });
+
   it("bounds preserved terminal buffers to the eight most recently opened sessions", () => {
     useShellSessions.setState({
       sessions: Array.from({ length: 9 }, (_, index) => ({
@@ -407,6 +533,9 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(deleteSession).not.toHaveBeenCalled();
     expect(screen.getByText("Delete matrix-main?")).toBeTruthy();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.style.top).toBe("50%");
+    expect(dialog.style.transform).toBe("translate(-50%, -50%)");
 
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
