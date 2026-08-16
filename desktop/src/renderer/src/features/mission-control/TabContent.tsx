@@ -52,7 +52,7 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "chat":
       return <ChatTab />;
     case "terminals":
-      return <TerminalsTab />;
+      return <TerminalsTab active={active} />;
     case "files":
       return <FilesWorkspace />;
     case "apps":
@@ -114,7 +114,11 @@ export default function TabContent() {
           <div
             key={tab.id}
             className="absolute inset-0 flex min-h-0 flex-col"
-            style={{ visibility: active ? "visible" : "hidden", zIndex: active ? 1 : 0 }}
+            style={{
+              display: active ? "flex" : "none",
+              visibility: active ? "visible" : "hidden",
+              zIndex: active ? 1 : 0,
+            }}
             aria-hidden={!active}
             // `inert` keeps keyboard focus out of cached-but-hidden panes.
             inert={!active}

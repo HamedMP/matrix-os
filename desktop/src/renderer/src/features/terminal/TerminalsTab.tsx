@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { categoryMessage } from "../../../../shared/app-error";
@@ -92,13 +92,14 @@ function normalizeBusyNames(names: string[]): string[] {
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- TerminalsTab is the cohesive shell-session workspace: network load/create, selection, rename, delete confirmation, search, and drag refs are independent UI concerns. A reducer would couple unrelated state transitions without reducing render risk; extracting subcomponents below keeps the row/empty states isolated.
-export default function TerminalsTab() {
+export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const shells = useShellSessions((s) => s.sessions);
   const loading = useShellSessions((s) => s.loading);
   const creating = useShellSessions((s) => s.creating);
   const error = useShellSessions((s) => s.error);
+  const loadSequence = useShellSessions((s) => s.loadSequence);
   const load = useShellSessions((s) => s.load);
   const create = useShellSessions((s) => s.create);
   const deleteSession = useShellSessions((s) => s.deleteSession);
@@ -107,6 +108,9 @@ export default function TerminalsTab() {
   const patchUiState = useShellSessions((s) => s.patchUiState);
   const tabs = useTabs((s) => s.tabs);
   const openTab = useTabs((s) => s.openTab);
+  const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
+  const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
+  const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
@@ -191,7 +195,8 @@ export default function TerminalsTab() {
     showShellDetail(created);
   };
 
-  const showShellDetail = (shell: ShellSessionSummary) => {
+  const showShellDetail = useCallback((shell: ShellSessionSummary) => {
+    recordRecentTerminal(shell.name, shell.name);
     setOpenedSessionNames((current) => [
       ...current.filter((name) => name !== shell.name),
       shell.name,
@@ -201,7 +206,29 @@ export default function TerminalsTab() {
     if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
       void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
     }
-  };
+  }, [api, patchUiState, recordRecentTerminal]);
+
+  useEffect(() => {
+    if (!terminalSessionRequest) return;
+    const requestedShell = shells.find((shell) => shell.name === terminalSessionRequest.sessionName);
+    if (!requestedShell) {
+      if (!loading && !creating && !error && loadSequence > 0) {
+        consumeTerminalSessionRequest(terminalSessionRequest.requestId);
+      }
+      return;
+    }
+    showShellDetail(requestedShell);
+    consumeTerminalSessionRequest(terminalSessionRequest.requestId);
+  }, [
+    consumeTerminalSessionRequest,
+    creating,
+    error,
+    loading,
+    loadSequence,
+    shells,
+    showShellDetail,
+    terminalSessionRequest,
+  ]);
 
   const showShellList = () => {
     setSelectedName(null);
@@ -486,12 +513,17 @@ export default function TerminalsTab() {
                 {shellStatusLabel(shell)}
               </span>
             </header>
-            <TerminalView sessionName={sessionName} active={liveSessionName === sessionName} />
+            <TerminalView sessionName={sessionName} active={active && liveSessionName === sessionName} />
           </section>
         );
       })}
 
-      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)} width={360}>
+      <Dialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        width={360}
+        placement="center"
+      >
         <div className="flex flex-col gap-3 p-4">
           <div>
             <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>

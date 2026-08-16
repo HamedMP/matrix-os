@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TabContent, { TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -12,6 +12,11 @@ const taskWorkspaceMock = vi.hoisted(() =>
     <button type="button">
       Task {taskId} {projectSlug}
     </button>
+  )),
+);
+const terminalsTabMock = vi.hoisted(() =>
+  vi.fn(({ active }: { active: boolean }) => (
+    <button type="button" data-active={String(active)}>Terminal workspace</button>
   )),
 );
 
@@ -25,6 +30,9 @@ vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({
 }));
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
   default: () => <button type="button">Terminal body</button>,
+}));
+vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({
+  default: terminalsTabMock,
 }));
 
 describe("TabContent", () => {
@@ -55,8 +63,10 @@ describe("TabContent", () => {
     const hiddenPane = getByText("Terminal body").parentElement;
 
     expect(activePane?.hasAttribute("inert")).toBe(false);
+    expect(activePane?.style.display).toBe("flex");
     expect(hiddenPane?.hasAttribute("inert")).toBe(true);
     expect(hiddenPane?.getAttribute("aria-hidden")).toBe("true");
+    expect(hiddenPane?.style.display).toBe("none");
   });
 
   it("forwards task project slugs into the task workspace", () => {
@@ -74,6 +84,22 @@ describe("TabContent", () => {
       expect.objectContaining({ taskId: "task_a", projectSlug: "alpha", active: true }),
       undefined,
     );
+  });
+
+  it("propagates active ownership to the mounted Terminal workspace across native focus changes", () => {
+    const workspaceId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+    const nativeId = useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
+    useTabs.getState().focusTab(workspaceId);
+    render(<TabContent />);
+
+    const workspace = screen.getByRole("button", { name: "Terminal workspace" });
+    expect(workspace.getAttribute("data-active")).toBe("true");
+
+    act(() => useTabs.getState().focusTab(nativeId));
+    expect(workspace.getAttribute("data-active")).toBe("false");
+
+    act(() => useTabs.getState().focusTab(workspaceId));
+    expect(workspace.getAttribute("data-active")).toBe("true");
   });
 
   it("renders the apps tab through the tracked AppLauncher module", () => {
