@@ -368,7 +368,6 @@ jobs:
           PUBLISH_VERSION: ${{ needs.build.outputs.version }}
           PUBLISH_SEVERITY: ${{ steps.meta.outputs.severity }}
           PUBLISH_CHANGELOG: ${{ steps.meta.outputs.changelog }}
-          GOLDEN_SNAPSHOT_ELIGIBLE: ${{ (github.event_name == 'push' && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag')) || (github.event_name == 'workflow_dispatch' && inputs.channel != '') }}
         run: |
           set -euo pipefail
           ARGS=("$PUBLISH_VERSION")
@@ -380,34 +379,6 @@ jobs:
           fi
 
           ./scripts/publish-release.sh "${ARGS[@]}"
-
-  enqueue-golden-snapshot:
-    name: Enqueue golden snapshot build
-    needs: [dev-bundle-gate, build, publish]
-    if: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED == 'true' && needs.dev-bundle-gate.outputs.should_build == 'true' && ((github.event_name == 'push' && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag')) || (github.event_name == 'workflow_dispatch' && inputs.channel != '')) }}
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
-      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
-      PUBLISH_CHANNEL: ${{ needs.build.outputs.channel }}
-      PUBLISH_VERSION: ${{ needs.build.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install enqueue dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Enqueue idempotent snapshot build
-        run: node scripts/enqueue-golden-snapshot.mjs --version "$PUBLISH_VERSION"
 
   deploy:
     name: Deploy published host bundle

@@ -141,6 +141,9 @@ cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sy
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
 printf '%s\n' "$TERMINAL_RUNTIME_GENERATION" > "$STAGE_DIR/app/TERMINAL_RUNTIME_GENERATION"
+# Activation follows the installed app payload so the supported updater's
+# app rollback atomically returns pre-activation bundles to dormant behavior.
+printf '1\n' > "$STAGE_DIR/app/TERMINAL_USER_SYSTEMD_ENABLED"
 if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"
 fi

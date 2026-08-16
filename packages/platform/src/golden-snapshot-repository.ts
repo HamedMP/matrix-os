@@ -418,9 +418,15 @@ export async function enqueueGoldenSnapshotBuild(
   db: PlatformDB,
   rawInput: z.input<typeof EnqueueInputSchema>,
 ): Promise<{ snapshot: GoldenSnapshotRecord; build: GoldenSnapshotBuildRecord; reused: boolean }> {
-  const input = EnqueueInputSchema.parse(rawInput);
   await db.ready;
-  return db.transaction(async (trx) => {
+  return db.transaction((trx) => enqueueGoldenSnapshotBuildInTransaction(trx, rawInput));
+}
+
+export async function enqueueGoldenSnapshotBuildInTransaction(
+  trx: PlatformDB,
+  rawInput: z.input<typeof EnqueueInputSchema>,
+): Promise<{ snapshot: GoldenSnapshotRecord; build: GoldenSnapshotBuildRecord; reused: boolean }> {
+    const input = EnqueueInputSchema.parse(rawInput);
     await sql`SELECT pg_advisory_xact_lock(hashtext(${input.compatibility.baseGeneration}))`.execute(trx.executor);
     const revokedGeneration = await trx.executor.selectFrom('golden_snapshot_revoked_base_generations')
       .select('base_generation').where('base_generation', '=', input.compatibility.baseGeneration)
@@ -531,7 +537,6 @@ export async function enqueueGoldenSnapshotBuild(
       });
     }
     return { snapshot, build, reused: insertedSnapshot === undefined };
-  });
 }
 
 async function countGoldenSnapshotInfrastructure(
@@ -777,6 +782,22 @@ export async function claimGoldenSnapshotBuildBatch(
           .whereRef('golden_snapshots.snapshot_id', '=', 'golden_snapshot_builds.snapshot_id')
           .where('golden_snapshots.state', 'in', ['candidate', 'building', 'sanitizing', 'validating']),
       ))
+      .where((eb) => eb.exists(
+        eb.selectFrom('golden_snapshots')
+          .leftJoin('host_bundle_releases', 'host_bundle_releases.version', 'golden_snapshots.bundle_version')
+          .leftJoin('host_bundle_channels', (join) => join
+            .onRef('host_bundle_channels.version', '=', 'host_bundle_releases.version')
+            .on('host_bundle_channels.channel', '=', 'stable'))
+          .select('golden_snapshots.snapshot_id')
+          .whereRef('golden_snapshots.snapshot_id', '=', 'golden_snapshot_builds.snapshot_id')
+          .where((snapshotEb) => snapshotEb.or([
+            snapshotEb('golden_snapshots.test_mode', '=', true),
+            snapshotEb.and([
+              snapshotEb('host_bundle_releases.snapshot_eligible', '=', true),
+              snapshotEb('host_bundle_channels.channel', '=', 'stable'),
+            ]),
+          ])),
+      ))
       .where('status', '=', 'running')
       .where('lease_expires_at', '<=', now)
       .where((eb) => eb.or([
@@ -819,6 +840,22 @@ export async function claimGoldenSnapshotBuildBatch(
         eb.selectFrom('golden_snapshots').select('snapshot_id')
           .whereRef('golden_snapshots.snapshot_id', '=', 'golden_snapshot_builds.snapshot_id')
           .where('golden_snapshots.state', 'in', ['candidate', 'building', 'sanitizing', 'validating']),
+      ))
+      .where((eb) => eb.exists(
+        eb.selectFrom('golden_snapshots')
+          .leftJoin('host_bundle_releases', 'host_bundle_releases.version', 'golden_snapshots.bundle_version')
+          .leftJoin('host_bundle_channels', (join) => join
+            .onRef('host_bundle_channels.version', '=', 'host_bundle_releases.version')
+            .on('host_bundle_channels.channel', '=', 'stable'))
+          .select('golden_snapshots.snapshot_id')
+          .whereRef('golden_snapshots.snapshot_id', '=', 'golden_snapshot_builds.snapshot_id')
+          .where((snapshotEb) => snapshotEb.or([
+            snapshotEb('golden_snapshots.test_mode', '=', true),
+            snapshotEb.and([
+              snapshotEb('host_bundle_releases.snapshot_eligible', '=', true),
+              snapshotEb('host_bundle_channels.channel', '=', 'stable'),
+            ]),
+          ])),
       ))
       .where('status', '=', 'queued')
       .where('available_at', '<=', now)
@@ -884,6 +921,22 @@ export async function listRunnableGoldenSnapshotBuildIds(
     const rows = await trx.executor.selectFrom('golden_snapshot_builds').select('build_id')
       .where('status', '=', 'running')
       .where('lease_expires_at', '>', now)
+      .where((eb) => eb.exists(
+        eb.selectFrom('golden_snapshots')
+          .leftJoin('host_bundle_releases', 'host_bundle_releases.version', 'golden_snapshots.bundle_version')
+          .leftJoin('host_bundle_channels', (join) => join
+            .onRef('host_bundle_channels.version', '=', 'host_bundle_releases.version')
+            .on('host_bundle_channels.channel', '=', 'stable'))
+          .select('golden_snapshots.snapshot_id')
+          .whereRef('golden_snapshots.snapshot_id', '=', 'golden_snapshot_builds.snapshot_id')
+          .where((snapshotEb) => snapshotEb.or([
+            snapshotEb('golden_snapshots.test_mode', '=', true),
+            snapshotEb.and([
+              snapshotEb('host_bundle_releases.snapshot_eligible', '=', true),
+              snapshotEb('host_bundle_channels.channel', '=', 'stable'),
+            ]),
+          ])),
+      ))
       .where('phase', 'in', [
         'requested', 'builder_create', 'snapshot_create', 'snapshot_wait', 'validation_create',
       ])
@@ -1291,6 +1344,10 @@ export async function selectAndLeaseGoldenSnapshot(
         ? leasedSnapshotRow
         : undefined;
       const existingSnapshot = snapshotRow ? mapSnapshot(snapshotRow) : undefined;
+      const existingTarget = sameTarget
+        ? await trx.executor.selectFrom('host_bundle_releases').select('sha256')
+          .where('version', '=', input.targetBundleVersion).executeTakeFirst()
+        : undefined;
       const revokedGeneration = existingSnapshot
         ? await trx.executor.selectFrom('golden_snapshot_revoked_base_generations')
           .select('base_generation').where('base_generation', '=', existingSnapshot.compatibility.baseGeneration)
@@ -1303,6 +1360,8 @@ export async function selectAndLeaseGoldenSnapshot(
         && existingSnapshot.readyAt !== null
         && existingSnapshot.readyAt > freshnessCutoff
         && !existingSnapshot.testMode
+        && existingTarget !== undefined
+        && existingSnapshot.bundleSha256 === existingTarget.sha256.toLowerCase()
         && existingSnapshot.compatibilityKey === key
         && existingSnapshot.compatibility.activationAbi === input.compatibility.activationAbi
         && existingSnapshot.compatibility.minimumDiskGb <= input.serverDiskGb
@@ -1338,12 +1397,11 @@ export async function selectAndLeaseGoldenSnapshot(
         await retireQuarantinedSnapshotAfterLeaseDrain(trx, leasedSnapshotRow, input.now);
       }
     }
-    const target = await trx.executor.selectFrom('host_bundle_releases').select(['sha256', 'build_time'])
+    const target = await trx.executor.selectFrom('host_bundle_releases').select('sha256')
       .where('version', '=', input.targetBundleVersion).executeTakeFirstOrThrow();
     const targetSha256 = Sha256Schema.parse(target.sha256.toLowerCase());
     const candidates = await trx.executor.selectFrom('golden_snapshots')
-      .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'golden_snapshots.bundle_version')
-      .selectAll('golden_snapshots').select('host_bundle_releases.build_time as source_release_build_time')
+      .selectAll()
       .where('golden_snapshots.state', '=', 'ready').where('golden_snapshots.compatibility_key', '=', key)
       .where('golden_snapshots.ready_at', '>', freshnessCutoff)
       .where('golden_snapshots.test_mode', '=', false)
@@ -1352,20 +1410,14 @@ export async function selectAndLeaseGoldenSnapshot(
           .whereRef('golden_snapshot_revoked_base_generations.base_generation', '=', 'golden_snapshots.base_generation'),
       )))
       .where('golden_snapshots.minimum_disk_gb', '<=', input.serverDiskGb)
-      .where((eb) => eb.or([
-        eb('golden_snapshots.bundle_sha256', '=', targetSha256),
-        sql<boolean>`${sql.ref('host_bundle_releases.build_time')}::timestamptz < ${target.build_time}::timestamptz`,
-      ]))
+      .where('golden_snapshots.bundle_sha256', '=', targetSha256)
       .where((eb) => eb.or([
         eb('golden_snapshots.image_disk_gb', 'is', null),
         eb('golden_snapshots.image_disk_gb', '<=', input.serverDiskGb),
       ]))
-      .orderBy(sql<number>`CASE WHEN ${sql.ref('golden_snapshots.bundle_sha256')} = ${targetSha256} THEN 0 ELSE 1 END`)
-      .orderBy(sql`${sql.ref('host_bundle_releases.build_time')}::timestamptz`, 'desc')
       .orderBy('golden_snapshots.ready_at', 'desc').limit(100).execute();
     const chosen = chooseGoldenSnapshot({
       targetBundleSha256: targetSha256,
-      targetReleaseBuildTime: target.build_time,
       compatibilityKey: key,
       serverDiskGb: input.serverDiskGb,
       activationAbi: input.compatibility.activationAbi,
@@ -1374,7 +1426,6 @@ export async function selectAndLeaseGoldenSnapshot(
       bundleVersion: row.bundle_version,
       bundleSha256: row.bundle_sha256,
       compatibilityKey: row.compatibility_key,
-      sourceReleaseBuildTime: row.source_release_build_time,
       state: GoldenSnapshotStateSchema.parse(row.state),
       minimumDiskGb: row.minimum_disk_gb,
       imageDiskGb: row.image_disk_gb,

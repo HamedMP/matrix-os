@@ -109,6 +109,10 @@ export interface ProvisionResponse {
   etaSeconds: number;
 }
 
+export interface ProvisionOptions {
+  dispatch?: 'wait' | 'detached';
+}
+
 export interface RegisterResponse {
   registered: true;
   status: 'running';
@@ -164,7 +168,7 @@ export interface DeployTarget {
 }
 
 export interface CustomerVpsService {
-  provision(input: ProvisionRequest): Promise<ProvisionResponse>;
+  provision(input: ProvisionRequest, options?: ProvisionOptions): Promise<ProvisionResponse>;
   provisionPreview(input: PreviewProvisionInput): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
@@ -189,6 +193,7 @@ export interface CustomerVpsServiceDeps {
   now?: () => Date;
   provisioningJobIdFactory?: () => string;
   enqueueProvisioningJob?: (db: PlatformDB, job: NewProvisioningJob) => Promise<void>;
+  scheduleProvisioningDispatch?: (dispatch: () => Promise<void>) => void;
   fetchDispatcher?: import('undici').Dispatcher;
   resolveBillingEntitlement?: (
     db: PlatformDB,
@@ -558,6 +563,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
   const enqueueProvisioningJob = deps.enqueueProvisioningJob ?? insertProvisioningJob;
+  const scheduleProvisioningDispatch = deps.scheduleProvisioningDispatch
+    ?? ((dispatch: () => Promise<void>) => queueMicrotask(() => { void dispatch(); }));
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
   const now = deps.now ?? (() => new Date());
@@ -1556,9 +1563,33 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
+  async function dispatchProvisioningJobForRequest(
+    jobId: string,
+    dispatch: NonNullable<ProvisionOptions['dispatch']>,
+  ): Promise<void> {
+    if (dispatch === 'wait') {
+      await dispatchProvisioningJobBestEffort(jobId);
+      return;
+    }
+    try {
+      scheduleProvisioningDispatch(async () => {
+        try {
+          await dispatchProvisioningJobBestEffort(jobId);
+        } catch (err: unknown) {
+          logCustomerVpsError('detached provisioning job dispatch failed', err);
+        }
+      });
+    } catch (err: unknown) {
+      // The job is durable and the reconciliation worker will claim it even if
+      // this best-effort low-latency kick cannot be scheduled in this process.
+      logCustomerVpsError('detached provisioning job scheduling failed', err);
+    }
+  }
+
   async function provision(
     input: ProvisionRequest | PreviewProvisionRequest,
     provisioningClass: UserMachineProvisioningClass,
+    dispatch: NonNullable<ProvisionOptions['dispatch']>,
   ): Promise<ProvisionResponse> {
     const request = {
       ...input,
@@ -1608,7 +1639,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const reconciled = await reconcilePreviewAccess(deps.db, existingBeforeBundleResolve);
       const existingJob = await getProvisioningJobByMachineId(deps.db, existingBeforeBundleResolve.machineId);
       if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
-        await dispatchProvisioningJobBestEffort(existingJob.jobId);
+        await dispatchProvisioningJobForRequest(existingJob.jobId, dispatch);
       }
       return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
@@ -1762,7 +1793,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         const reconciled = await reconcilePreviewAccess(deps.db, concurrent);
         const concurrentJob = await getProvisioningJobByMachineId(deps.db, concurrent.machineId);
         if (concurrentJob && (concurrentJob.status === 'queued' || concurrentJob.status === 'running')) {
-          await dispatchProvisioningJobBestEffort(concurrentJob.jobId);
+          await dispatchProvisioningJobForRequest(concurrentJob.jobId, dispatch);
         }
         return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
       }
@@ -1771,12 +1802,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     if (provisionRow.existing) {
       const existingJob = await getProvisioningJobByMachineId(deps.db, provisionRow.existing.machineId);
       if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
-        await dispatchProvisioningJobBestEffort(existingJob.jobId);
+        await dispatchProvisioningJobForRequest(existingJob.jobId, dispatch);
       }
       return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
     }
 
-    await dispatchProvisioningJobBestEffort(jobId);
+    await dispatchProvisioningJobForRequest(jobId, dispatch);
 
     return {
       machineId,
@@ -1786,10 +1817,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   }
 
   return {
-    async provision(input) {
+    async provision(input, options) {
       return withLocalProvisionLock(
         `${input.clerkUserId}:${input.runtimeSlot ?? 'primary'}`,
-        () => provision(input, 'customer'),
+        () => provision(input, 'customer', options?.dispatch ?? 'wait'),
       );
     },
 
@@ -1797,7 +1828,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const request = PreviewProvisionRequestSchema.parse(input);
       return withLocalProvisionLock(
         `${request.clerkUserId}:${request.runtimeSlot}`,
-        () => provision(request, 'preview'),
+        () => provision(request, 'preview', 'wait'),
       );
     },
 

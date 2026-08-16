@@ -21,6 +21,7 @@ import { createCustomerVpsService } from '../../packages/platform/src/customer-v
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
+import { getProvisioningJobByMachineId } from '../../packages/platform/src/customer-vps-provisioning-jobs.js';
 import { ProvisionRequestSchema } from '../../packages/platform/src/customer-vps-schema.js';
 import { isPreviewMachine } from '../../packages/platform/src/customer-vps-preview.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
@@ -238,6 +239,55 @@ describe('platform/customer-vps', () => {
     expect(row?.developerTools).toEqual(['codex', 'pi']);
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS='codex pi'");
+  });
+
+  it('returns after durable enqueue when provider dispatch is detached', async () => {
+    let dispatch!: () => Promise<void>;
+    let finishCreate!: (server: Awaited<ReturnType<ReturnType<typeof createMockHetznerClient>['createServer']>>) => void;
+    const createStarted = Promise.withResolvers<void>();
+    const createFinished = new Promise<Awaited<ReturnType<ReturnType<typeof createMockHetznerClient>['createServer']>>>((resolve) => {
+      finishCreate = resolve;
+    });
+    const { service, hetzner } = createService({
+      hetzner: {
+        createServer: vi.fn(async () => {
+          createStarted.resolve();
+          return createFinished;
+        }),
+      },
+      scheduleProvisioningDispatch: (scheduled) => {
+        dispatch = scheduled;
+      },
+    });
+
+    const response = await service.provision(
+      { clerkUserId: 'user_123', handle: 'alice' },
+      { dispatch: 'detached' },
+    );
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    await expect(getProvisioningJobByMachineId(db, response.machineId)).resolves.toMatchObject({
+      status: 'queued',
+    });
+
+    const dispatching = dispatch();
+    await createStarted.promise;
+    finishCreate({
+      id: 123456,
+      status: 'running',
+      publicIPv4: '203.0.113.10',
+      publicIPv6: '2001:db8::1',
+    });
+    await dispatching;
+
+    expect(response).toEqual({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      status: 'provisioning',
+      etaSeconds: 90,
+    });
+    expect(hetzner.createServer).toHaveBeenCalledOnce();
+    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+      hetznerServerId: 123456,
+    });
   });
 
   it('preserves an intentional empty developer tool selection', async () => {

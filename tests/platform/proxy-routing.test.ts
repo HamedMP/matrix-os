@@ -34,6 +34,8 @@ import {
   stubOrchestrator,
 } from "./proxy-routing-test-utils.js";
 
+const DETACHED_PROVISION_OPTIONS = { dispatch: "detached" } as const;
+
 describe("platform proxy routing", () => {
   let db: PlatformDB;
 
@@ -1921,7 +1923,7 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.clerk.com/v1/users/user_new",
       expect.objectContaining({
@@ -1995,7 +1997,7 @@ describe("platform proxy routing", () => {
       developerTools: ["opencode", "pi"],
       serverType: "cpx22",
       location: "hil",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
   });
 
   it("falls back to settling checkout-attempt developer tools when provisioning after payment", async () => {
@@ -2060,7 +2062,7 @@ describe("platform proxy routing", () => {
       clerkUserId: "user_paid_tools",
       runtimeSlot: "primary",
       developerTools: ["claude-code"],
-    });
+    }, DETACHED_PROVISION_OPTIONS);
   });
 
   it("does not block hosted runtime provisioning when Clerk returns an empty avatar URL", async () => {
@@ -2109,7 +2111,7 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new_avatar",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new_avatar")).resolves.toMatchObject({
       clerkId: "user_new_avatar",
       handle: "newuser",
@@ -2170,7 +2172,7 @@ describe("platform proxy routing", () => {
       handle: "new",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new")).resolves.toMatchObject({
       clerkId: "user_new",
       handle: "new",
@@ -2222,7 +2224,7 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
     await expect(getPlatformUserByClerkId(db, "user_new")).resolves.toMatchObject({
       handle: "newuser",
       displayName: "New User",
@@ -2274,7 +2276,7 @@ describe("platform proxy routing", () => {
       handle: "very-long-username-with-hyphen",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
   });
 
   it("blocks signed-in runtime provisioning before Stripe checkout creates an entitlement", async () => {
@@ -2378,7 +2380,7 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
   });
 
   it("falls back instead of claiming another user's active handle in another slot", async () => {
@@ -2440,7 +2442,7 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
   });
 
   it("keeps a same-user active machine handle even with a stale legacy container row", async () => {
@@ -2500,7 +2502,7 @@ describe("platform proxy routing", () => {
       handle: "alice",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
   });
 
   it("keeps a same-user handle when another runtime slot already uses it", async () => {
@@ -2561,7 +2563,7 @@ describe("platform proxy routing", () => {
       handle: "alice",
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
   });
 
   it("falls back instead of claiming another user's legacy container handle", async () => {
@@ -2610,7 +2612,7 @@ describe("platform proxy routing", () => {
       handle: fallbackHandle,
       clerkUserId: "user_new",
       runtimeSlot: "primary",
-    });
+    }, DETACHED_PROVISION_OPTIONS);
   });
 
   it("continues signed-in auth pages through a Clerk token exchange", async () => {
@@ -2689,6 +2691,8 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain("Loading your Matrix computer");
     expect(html).not.toContain("function pollProvisioningSession()");
     expect(html).toContain("continueWithClerkSession(true);");
+    expect(html).toContain("if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {");
+    expect(html).toContain("billingConfirmationPolls = 0;\n            continueWithClerkSession(true);\n            return;");
     expect(html).toContain("setProvisionControls(true, null);");
     expect(html).toContain("setProvisionControls(false, provisioningRetryError);");
     expect(html).not.toContain("ask the operator to provision this account");

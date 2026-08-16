@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,14 +32,120 @@ describe("user-systemd terminal runtime", () => {
     vi.restoreAllMocks();
   });
 
+  async function installRuntimeActivationPrerequisites(): Promise<{
+    terminalRuntimeRoot: string;
+    userUnitRoot: string;
+  }> {
+    const terminalRuntimeRoot = join(homePath, "terminal-runtime");
+    const generationDir = join(terminalRuntimeRoot, "generations", GENERATION);
+    const userUnitRoot = join(homePath, "systemd-user");
+    await mkdir(generationDir, { recursive: true });
+    await mkdir(userUnitRoot, { recursive: true });
+    for (const asset of [
+      "zellij",
+      "matrix-terminal-user-keeper.mjs",
+      "matrix-terminal-attach.mjs",
+    ]) {
+      const path = join(generationDir, asset);
+      await writeFile(path, `${asset}\n`);
+      await chmod(path, 0o755);
+    }
+    await writeFile(join(generationDir, "GENERATION"), `${GENERATION}\n`);
+    await symlink(join("generations", GENERATION), join(terminalRuntimeRoot, "current"));
+    await writeFile(join(userUnitRoot, "matrix-zellij@.service"), "[Service]\n");
+    await writeFile(join(userUnitRoot, "matrix-terminal.slice"), "[Slice]\n");
+    return { terminalRuntimeRoot, userUnitRoot };
+  }
+
   it("loads only an exact generation marker from the installed app", async () => {
     const appDir = join(homePath, "installed-app");
     await mkdir(appDir);
     await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${GENERATION}\n`);
+    const prerequisites = await installRuntimeActivationPrerequisites();
 
-    await expect(loadInstalledTerminalRuntimeGeneration(appDir)).resolves.toBe(GENERATION);
+    await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).resolves.toBe(GENERATION);
     await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), "../../unsafe\n");
-    await expect(loadInstalledTerminalRuntimeGeneration(appDir)).rejects.toThrow("Terminal runtime unavailable");
+    await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).rejects.toThrow(
+      "Terminal runtime unavailable",
+    );
+  });
+
+  it("rejects activation applied by an old updater before immutable assets and user units exist", async () => {
+    const appDir = join(homePath, "old-updater-activation");
+    const terminalRuntimeRoot = join(homePath, "missing-terminal-runtime");
+    const userUnitRoot = join(homePath, "missing-systemd-user");
+    await mkdir(appDir);
+    await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${GENERATION}\n`);
+
+    await expect(loadInstalledTerminalRuntimeGeneration(appDir, {
+      terminalRuntimeRoot,
+      userUnitRoot,
+    })).rejects.toThrow("Terminal runtime unavailable");
+  });
+
+  it("rejects incomplete or symlink-substituted activation prerequisites", async () => {
+    const appDir = join(homePath, "incomplete-activation");
+    await mkdir(appDir);
+    await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${GENERATION}\n`);
+    const prerequisites = await installRuntimeActivationPrerequisites();
+    const generationDir = join(prerequisites.terminalRuntimeRoot, "generations", GENERATION);
+
+    await rm(join(generationDir, "matrix-terminal-user-keeper.mjs"));
+    await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).rejects.toThrow(
+      "Terminal runtime unavailable",
+    );
+
+    await writeFile(join(generationDir, "keeper-target"), "keeper\n");
+    await symlink("keeper-target", join(generationDir, "matrix-terminal-user-keeper.mjs"));
+    await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).rejects.toThrow(
+      "Terminal runtime unavailable",
+    );
+
+    await rm(join(generationDir, "matrix-terminal-user-keeper.mjs"));
+    await writeFile(join(generationDir, "matrix-terminal-user-keeper.mjs"), "keeper\n");
+    await chmod(join(generationDir, "matrix-terminal-user-keeper.mjs"), 0o755);
+    await rm(join(prerequisites.userUnitRoot, "matrix-zellij@.service"));
+    await writeFile(join(prerequisites.userUnitRoot, "unit-target"), "[Service]\n");
+    await symlink("unit-target", join(prerequisites.userUnitRoot, "matrix-zellij@.service"));
+    await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).rejects.toThrow(
+      "Terminal runtime unavailable",
+    );
+  });
+
+  it("requires the owner user manager to have loaded both static unit definitions", async () => {
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async () => ({
+      stdout: "matrix-zellij@.service static -\nmatrix-terminal.slice static -\n",
+      stderr: "",
+    }));
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+    });
+
+    await expect(runtime.assertInstallationReady()).resolves.toBeUndefined();
+    expect(runCommand).toHaveBeenCalledWith(
+      "systemctl",
+      [
+        "--user",
+        "list-unit-files",
+        "matrix-zellij@.service",
+        "matrix-terminal.slice",
+        "--no-legend",
+        "--no-pager",
+      ],
+      expect.objectContaining({
+        timeoutMs: 10_000,
+        env: expect.objectContaining({
+          XDG_RUNTIME_DIR: "/run/user/1001",
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1001/bus",
+        }),
+      }),
+    );
+
+    runCommand.mockResolvedValueOnce({ stdout: "matrix-terminal.slice static -\n", stderr: "" });
+    await expect(runtime.assertInstallationReady()).rejects.toThrow("Terminal runtime unavailable");
   });
 
   it("creates an owner descriptor atomically and starts only the derived user unit", async () => {

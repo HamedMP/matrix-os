@@ -5,7 +5,7 @@
 
 ## Summary
 
-Build one sanitized, validated Hetzner snapshot for every eligible immutable customer host bundle and supported compatibility class. Platform Postgres is authoritative for immutable bundle provenance, lifecycle, build leases, validation evidence, selection leases, cleanup, and revocation. New and recovery VPSes are created just in time from an exact ready snapshot, or the newest compatible older snapshot followed by the existing exact-bundle activation path. A newer snapshot is never selected for an older target. Any unsafe or unknown condition falls back to the unchanged Ubuntu/full cloud-init path. Snapshot automation is asynchronous and cannot block host-bundle publication or existing-fleet deployment.
+Build one sanitized, validated Hetzner snapshot for each forward-looking eligible stable host bundle and supported compatibility class. Platform Postgres is authoritative for immutable bundle provenance, lifecycle, build leases, validation evidence, selection leases, cleanup, and revocation. Stable pointer promotion, eligibility, and enqueue are one transaction; startup performs no historical backfill. New and recovery VPSes use only an exact ready snapshot and otherwise fall back to the unchanged Ubuntu/full cloud-init path. Snapshot automation is asynchronous and cannot block existing-fleet deployment.
 
 V1 does not keep running or powered-off warm customer VPSes. Builders and validation clones are ephemeral provider resources with synthetic, single-use identities. Customer credentials and owner state are injected only through the newly created customer VPS's cloud-init activation.
 
@@ -341,8 +341,8 @@ Rollback disables selection immediately and preserves clean-image provisioning. 
 - Provider contract tests: request timeouts, bounded validation, Action polling, response loss, exact label reconciliation, architecture/disk/location rejection, protected/missing deletion.
 - Builder tests: exact digest install, all sanitation categories, quiescence, callback token erasure, forbidden-path/secret scan fail-closed.
 - Validation tests: fresh cloud-init, unique machine/SSH identity, exact bundle, no builder/customer state, health success required before ready.
-- Provisioning tests: exact selection, older-safe update, newer rejection, lease protection, lost response adoption, duplicate cleanup, clean fallback, recovery parity, existing-fleet independence.
-- Workflow tests: eligible main/tag/manual-dispatch enqueue, preview exclusion, channel-promotion dedupe, enqueue failure does not block publish/deploy.
+- Provisioning tests: exact selection, non-exact clean fallback, lease protection, lost response adoption, duplicate cleanup, recovery parity, existing-fleet independence.
+- Workflow tests: eligible stable-promotion enqueue, explicit stable opt-out, non-stable exclusion, channel-promotion dedupe, no historical scan, and deploy independence.
 - Baseline-aware gates: `bun run check:patterns`, focused Vitest suites, `bun run typecheck`, and `bun run test`; record the known unrelated baseline failures without mixing fixes into the stack.
 
 ## Post-Design Constitution Re-check
