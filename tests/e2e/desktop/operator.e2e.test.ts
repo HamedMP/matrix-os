@@ -216,12 +216,10 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05h-files-grid.png") });
   }, 30_000);
 
-  it("opens the Terminal workspace with a session sidebar", async () => {
+  it("opens the Terminal workspace with a canonical session list", async () => {
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
-    // Inner sessions sidebar lists the VPS session as a clickable button
-    // (the hidden task-tab chip with the same name is a span, not matched here).
-    await page.getByText("Shells").first().waitFor({ timeout: 10_000 });
-    await page.locator("button", { hasText: "matrix-task-1" }).first().waitFor({ state: "visible", timeout: 10_000 });
+    await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Open matrix-task-1" }).waitFor({ state: "visible", timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "06-terminal-workspace.png") });
   }, 30_000);
 
@@ -304,7 +302,7 @@ suite("operator desktop e2e", () => {
 
     // The terminal palette follows the unified theme.
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
-    await page.getByText("Shells").first().waitFor({ timeout: 10_000 });
+    await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "15-theme-dracula-terminal.png") });
 
     // Restore the default so later suites see the stock palette.

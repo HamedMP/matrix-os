@@ -60,6 +60,7 @@ describe("useShellSessions", () => {
               name: "matrix-main",
               status: "active",
               placement: "active",
+              createdAt: "2026-06-23T11:00:00.000Z",
               updatedAt: "2026-06-23T12:00:00.000Z",
               attachedClients: 1,
               latestSeq: 3,
@@ -95,6 +96,7 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-main"]);
     expect(useShellSessions.getState().sessions[0]?.tabs).toEqual([{ idx: 0, name: "main", focused: true }]);
     expect(useShellSessions.getState().sessions[0]).toMatchObject({
+      createdAt: "2026-06-23T11:00:00.000Z",
       agent: "codex",
       subtitle: "Implement agent-aware terminal sessions",
       lastAction: "Edited registry.ts",

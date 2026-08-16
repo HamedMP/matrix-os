@@ -5,6 +5,7 @@ import {
   AgentMessagingSelectionSchema,
   AgentProviderAuthStatusSchema,
   AgentProviderDescriptorSchema,
+  AgentRuntimeDescriptorSchema,
   AgentRuntimeIdSchema,
   AgentSettingsCompatibleViewSchema,
   AgentSettingsUpdateSchema,
@@ -251,7 +252,43 @@ describe("agent runtime configuration contracts", () => {
     expect(AgentSettingsViewSchema.safeParse(view).success).toBe(false);
   });
 
-  it("requires exactly one active descriptor for the selected runtime", () => {
+  it("allows the selected runtime to require installation without claiming it is active", () => {
+    const view = makeView();
+    view.runtime.options[0] = {
+      id: "hermes",
+      displayName: "Hermes",
+      installState: "missing",
+      health: "stopped",
+      selectionState: "unavailable",
+      configured: false,
+      capabilities: ["install"],
+      setupAction: "install",
+    };
+    view.providers = view.providers.filter((provider) => provider.runtime !== "hermes");
+    view.currentSelection.messaging = {
+      runtime: "hermes",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+
+    expect(AgentSettingsViewSchema.safeParse(view).success).toBe(true);
+  });
+
+  it("rejects an active runtime that is not installed", () => {
+    expect(AgentRuntimeDescriptorSchema.safeParse({
+      id: "hermes",
+      displayName: "Hermes",
+      installState: "missing",
+      health: "stopped",
+      selectionState: "active",
+      configured: false,
+      capabilities: ["install"],
+      setupAction: "install",
+    }).success).toBe(false);
+  });
+
+  it("requires any active descriptor to match the selected runtime", () => {
     const view = makeView({
       runtime: {
         ...makeView().runtime,

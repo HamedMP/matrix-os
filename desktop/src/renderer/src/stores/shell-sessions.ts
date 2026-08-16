@@ -11,6 +11,7 @@ export interface ShellSessionSummary {
   name: string;
   status?: "active" | "exited" | "degraded";
   placement?: ShellSessionPlacement;
+  createdAt?: string;
   updatedAt?: string;
   attachedClients?: number;
   latestSeq?: number | null;
@@ -81,6 +82,7 @@ function asShellSession(value: unknown): ShellSessionSummary | null {
   const shell: ShellSessionSummary = { name: record.name };
   if (record.status === "active" || record.status === "exited" || record.status === "degraded") shell.status = record.status;
   if (record.placement === "active" || record.placement === "background") shell.placement = record.placement;
+  if (typeof record.createdAt === "string") shell.createdAt = record.createdAt;
   if (typeof record.updatedAt === "string") shell.updatedAt = record.updatedAt;
   if (typeof record.attachedClients === "number" && Number.isFinite(record.attachedClients)) shell.attachedClients = record.attachedClients;
   if (typeof record.latestSeq === "number" && Number.isFinite(record.latestSeq)) shell.latestSeq = record.latestSeq;

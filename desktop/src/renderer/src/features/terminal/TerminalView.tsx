@@ -317,14 +317,14 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
         </div>
       ) : null}
       {active && (socketState === "connecting" || socketState === "reconnecting") ? (
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-2" aria-live="polite">
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-2" role="status" aria-live="polite">
           <span className="status-pulse rounded-full px-3 py-1 text-xs" style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}>
             {socketState === "connecting" ? "Connecting…" : "Reconnecting…"}
           </span>
         </div>
       ) : null}
       {banner ? (
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t px-4 py-2.5" style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t px-4 py-2.5" role="status" aria-live="polite" style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>{banner.text}</span>
           {banner.action}
         </div>
