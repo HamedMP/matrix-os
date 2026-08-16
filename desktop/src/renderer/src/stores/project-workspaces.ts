@@ -45,6 +45,10 @@ interface ProjectWorkspacesState {
 // Per-project load generations: a load that settles after a newer load for the
 // same project started is stale and must be dropped.
 const loadGenerations: Record<string, number> = {};
+// Tracks only currently running loads and deletes each entry on settlement.
+// ensure() joins the authoritative in-flight request instead of treating a
+// transient `loading` projection as either success or failure.
+const activeLoadPromises: Record<string, Promise<void> | undefined> = {};
 
 
 function nextGeneration(projectId: string): number {
@@ -55,11 +59,13 @@ function nextGeneration(projectId: string): number {
 
 export function clearProjectWorkspaces(): void {
   for (const key of Object.keys(loadGenerations)) delete loadGenerations[key];
+  for (const key of Object.keys(activeLoadPromises)) delete activeLoadPromises[key];
   useProjectWorkspaces.setState({ entries: {}, runtimeScope: null });
 }
 
 export function clearProjectWorkspace(projectId: string): void {
   nextGeneration(projectId);
+  delete activeLoadPromises[projectId];
   useProjectWorkspaces.setState((state) => {
     if (!(projectId in state.entries)) return state;
     const entries = { ...state.entries };
@@ -105,7 +111,7 @@ function isStaleLoad(projectId: string, runtimeGeneration: number, generation: n
   return !isCurrentRuntimeGeneration(runtimeGeneration) || loadGenerations[projectId] !== generation;
 }
 
-async function loadWorkspace(projectId: string): Promise<void> {
+async function performWorkspaceLoad(projectId: string): Promise<void> {
   const runtimeGeneration = captureRuntimeGeneration();
   const generation = nextGeneration(projectId);
   useProjectWorkspaces.setState((state) => ({
@@ -162,6 +168,16 @@ async function loadWorkspace(projectId: string): Promise<void> {
   }
 }
 
+function loadWorkspace(projectId: string): Promise<void> {
+  const pending = performWorkspaceLoad(projectId).finally(() => {
+    if (activeLoadPromises[projectId] === pending) {
+      delete activeLoadPromises[projectId];
+    }
+  });
+  activeLoadPromises[projectId] = pending;
+  return pending;
+}
+
 export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) => ({
   entries: {},
   runtimeScope: null,
@@ -171,12 +187,18 @@ export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) 
     // Drop the previous owner's projections before anything new loads, and
     // reset the per-project sequences so the new scope starts clean.
     for (const key of Object.keys(loadGenerations)) delete loadGenerations[key];
+    for (const key of Object.keys(activeLoadPromises)) delete activeLoadPromises[key];
     set({ runtimeScope: scope, entries: {} });
   },
 
   ensure: async (projectId) => {
     const entry = get().entries[projectId];
-    if (entry && (entry.status === "ready" || entry.status === "loading")) return;
+    if (entry?.status === "ready") return;
+    const activeLoad = activeLoadPromises[projectId];
+    if (activeLoad) {
+      await activeLoad;
+      return;
+    }
     await loadWorkspace(projectId);
   },
 

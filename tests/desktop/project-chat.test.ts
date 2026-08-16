@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RuntimeSummary } from "@matrix-os/contracts";
+import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import {
   defaultProjectId,
   openCodingAgentThread,
@@ -213,6 +213,58 @@ describe("openProjectChat", () => {
     expect(useTabs.getState().recentViews).not.toContainEqual(
       expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
     );
+  });
+
+  it("waits for an in-flight project workspace before recording a successful open", async () => {
+    let resolveWorkspace!: (workspace: ProjectAgentWorkspace) => void;
+    const workspaceResponse = new Promise<ProjectAgentWorkspace>((resolve) => {
+      resolveWorkspace = resolve;
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel === "runtime:get-project-workspace") return workspaceResponse;
+          if (channel === "state:set") return { ok: true };
+          throw new Error(`unexpected channel ${channel}`);
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
+    const loadThreadSnapshot = vi.fn(async (threadId: string) => {
+      useCodingAgentWorkspace.setState({
+        activeThreadId: threadId,
+        threadSnapshotStatus: "ready",
+        threadSnapshot: {
+          thread: summaryWithThreads().activeThreads.items[0]!,
+          events: { items: [], hasMore: false, limit: 200 },
+        },
+      });
+    });
+    useCodingAgentWorkspace.setState({
+      summary: summaryWithThreads(),
+      status: "ready",
+      loadThreadSnapshot,
+    });
+
+    const loadingWorkspace = useProjectWorkspaces.getState().refresh("matrix-os");
+    const openingConversation = openProjectChat("matrix-os", { threadId: "thread_alpha" });
+    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.status).toBe("loading");
+
+    resolveWorkspace({
+      project: summaryWithThreads().projects.items[0]!,
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: summaryWithThreads().activeThreads.items, hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+      updatedAt: NOW,
+    });
+    await Promise.all([loadingWorkspace, openingConversation]);
+
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "conversation",
+      id: "thread_alpha",
+      label: "Fix settings route",
+    });
   });
 
   it("does not reload the snapshot for the already-active thread", () => {

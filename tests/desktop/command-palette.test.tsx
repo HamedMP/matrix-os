@@ -307,7 +307,7 @@ describe("CommandPalette", () => {
       projectSlug: "matrix-os",
       title: "matrix-os",
     });
-    expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
+    await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha"));
   });
 
   it("opens attachable coding-agent terminal sessions from the command palette", async () => {
@@ -403,7 +403,7 @@ describe("CommandPalette", () => {
       projectSlug: "matrix-os",
       title: "matrix-os",
     });
-    expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_duplicate");
+    await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_duplicate"));
   });
 
   it("prioritizes current reviews before slicing loaded command-palette reviews", async () => {
