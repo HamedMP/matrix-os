@@ -96,7 +96,7 @@ export function Dialog({
         <RadixDialog.Content
           role={role}
           aria-describedby={undefined}
-          className={`fade-in fixed left-1/2 z-50 rounded-xl border focus:outline-none ${
+          className={`dialog-fade-in fixed left-1/2 z-50 rounded-xl border focus:outline-none ${
             placement === "center" ? "" : "-translate-x-1/2"
           }`}
           style={{

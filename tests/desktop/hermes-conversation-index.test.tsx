@@ -161,7 +161,10 @@ describe("HermesConversationIndex", () => {
     fireEvent.click(remove);
 
     expect(openConversation).not.toHaveBeenCalled();
-    expect(screen.getByRole("alertdialog", { name: "Delete Launch plan?" })).toBeTruthy();
+    const dialog = screen.getByRole("alertdialog", { name: "Delete Launch plan?" });
+    expect(dialog.className).toContain("dialog-fade-in");
+    expect([...dialog.classList]).not.toContain("fade-in");
+    expect(dialog.style.transform).toBe("translate(-50%, -50%)");
   });
 
   it("cancels without a request and confirms only once while pending", async () => {

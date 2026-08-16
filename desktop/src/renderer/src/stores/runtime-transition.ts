@@ -56,6 +56,8 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     canGoForward: false,
     recentViews: [],
     recentFilter: "all",
+    terminalSessionRequest: null,
+    terminalSessionRequestSequence: 0,
   });
   // MissionControl only opens Home in its mount-only effect, so reopen it here
   // or a successful switch leaves the already-mounted desktop with no active tab.

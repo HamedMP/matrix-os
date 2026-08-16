@@ -35,7 +35,9 @@ export default function RecentViews() {
   const recentViews = useTabs((state) => state.recentViews);
   const recentFilter = useTabs((state) => state.recentFilter);
   const setRecentFilter = useTabs((state) => state.setRecentFilter);
+  const tabs = useTabs((state) => state.tabs);
   const openTab = useTabs((state) => state.openTab);
+  const requestTerminalSession = useTabs((state) => state.requestTerminalSession);
   const api = useConnection((state) => state.api);
   const threads = useThreads((state) => state.threads);
   const setActiveThread = useThreads((state) => state.setActiveThread);
@@ -68,6 +70,17 @@ export default function RecentViews() {
       return;
     }
     if (recent.kind === "terminal") {
+      const terminalsWorkspace = tabs.find((tab) => tab.kind === "terminals");
+      if (terminalsWorkspace) {
+        requestTerminalSession(recent.id);
+        openTab({ kind: "terminals", title: terminalsWorkspace.title });
+        return;
+      }
+      const nativeTab = tabs.find((tab) => tab.kind === "terminal" && tab.sessionName === recent.id);
+      if (nativeTab) {
+        openTab({ kind: "terminal", sessionName: recent.id, title: recent.label });
+        return;
+      }
       openTab({ kind: "terminal", sessionName: recent.id, title: recent.label });
       return;
     }

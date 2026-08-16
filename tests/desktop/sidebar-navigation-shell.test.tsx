@@ -80,6 +80,9 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByText("Fix navigation")).toBeTruthy();
     expect(screen.getByText("dev")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open recent Matrix OS" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open recent Fix navigation" }).querySelector(".lucide-message-circle")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open recent dev" }).querySelector(".lucide-square-terminal")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open recent Matrix OS" }).querySelector(".lucide-folder-kanban")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Filter recents" }));
     fireEvent.click(screen.getByRole("button", { name: "Terminals" }));
@@ -87,6 +90,46 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.queryByText("Fix navigation")).toBeNull();
     expect(screen.getByText("dev")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open recent Matrix OS" })).toBeNull();
+  });
+
+  it("focuses the existing canonical Terminal tab from Recents without duplication", () => {
+    const terminal = useTabs.getState().tabs.find((tab) => tab.kind === "terminal");
+    expect(terminal).toBeTruthy();
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    const mountedTabs = useTabs.getState().tabs;
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open recent dev" }));
+
+    expect(useTabs.getState().activeTabId).toBe(terminal?.id);
+    expect(useTabs.getState().tabs).toBe(mountedTabs);
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "terminal" && tab.sessionName === "dev")).toHaveLength(1);
+  });
+
+  it("routes a Terminal recent without a native tab through the mounted Terminal workspace", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    const terminalsWorkspace = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    useTabs.getState().recordRecentTerminal("matrix-main", "matrix-main");
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open recent matrix-main" }));
+
+    expect(useTabs.getState().activeTabId).toBe(terminalsWorkspace);
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "terminal")).toHaveLength(0);
+  });
+
+  it("routes a Terminal recent through the mounted workspace when a native tab also exists", () => {
+    const terminalsWorkspace = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open recent dev" }));
+
+    expect(useTabs.getState().activeTabId).toBe(terminalsWorkspace);
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({ sessionName: "dev" });
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "terminal" && tab.sessionName === "dev")).toHaveLength(1);
   });
 
   it("opens a recent conversation in Chat and restores its selection", () => {
