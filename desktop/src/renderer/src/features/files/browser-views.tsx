@@ -2,6 +2,8 @@
 // control, sortable list header, per-entry tile/row, and the path toolbar.
 // State, loading, and keyboard orchestration live in ComputerFileBrowser.
 import {
+  ArrowLeft,
+  ArrowRight,
   ArrowUp,
   ChevronDown,
   ChevronRight,
@@ -13,9 +15,10 @@ import {
   Upload,
 } from "lucide-react";
 import type { DragEvent, KeyboardEvent } from "react";
-import { IconButton } from "../../design/primitives";
+import { Button, IconButton } from "../../design/primitives";
 import type { BrowserEntry, BrowserSortDirection } from "./browser-entries";
 import type { BrowserViewMode } from "./browser-view-preference";
+import type { FileUploadRow } from "./file-upload-controller";
 import { FileGlyph, kindForEntry } from "./file-kind";
 import { formatEntrySize, formatModified } from "./format";
 
@@ -149,6 +152,7 @@ export function EntryButton({
   listColumns,
   selected,
   pressed,
+  managed,
   buttonRef,
   onSelect,
   onNavigate,
@@ -160,6 +164,7 @@ export function EntryButton({
   listColumns: string;
   selected: boolean;
   pressed: boolean | undefined;
+  managed?: boolean;
   buttonRef: (el: HTMLButtonElement | null) => void;
   onSelect: () => void;
   onNavigate: () => void;
@@ -203,6 +208,11 @@ export function EntryButton({
         >
           {entry.name}
         </span>
+        {managed ? (
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ color: "var(--text-tertiary)", background: "var(--bg-hover)" }}>
+            Managed
+          </span>
+        ) : null}
       </button>
     );
   }
@@ -240,7 +250,7 @@ export function EntryButton({
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
       </span>
       <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
-        {formatEntrySize(entry)}
+        {managed ? "Managed" : formatEntrySize(entry)}
       </span>
       <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
         {formatModified(entry.modifiedAt)}
@@ -256,6 +266,11 @@ export function BrowserToolbar({
   view,
   onViewChange,
   onUp,
+  canGoBack,
+  canGoForward,
+  onBack,
+  onForward,
+  readOnly,
   onNavigate,
   onRefresh,
   onUpload,
@@ -266,12 +281,23 @@ export function BrowserToolbar({
   view: BrowserViewMode;
   onViewChange: (view: BrowserViewMode) => void;
   onUp: () => void;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  onBack: () => void;
+  onForward: () => void;
+  readOnly?: boolean;
   onNavigate: (path: string) => void;
   onRefresh: () => void;
   onUpload?: () => void;
 }) {
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
+      <IconButton label="Back" className="shrink-0 disabled:opacity-40" disabled={!canGoBack} onClick={onBack}>
+        <ArrowLeft size={13} />
+      </IconButton>
+      <IconButton label="Forward" className="shrink-0 disabled:opacity-40" disabled={!canGoForward} onClick={onForward}>
+        <ArrowRight size={13} />
+      </IconButton>
       <IconButton
         label="Up one level"
         className="shrink-0 disabled:opacity-40"
@@ -305,6 +331,11 @@ export function BrowserToolbar({
           </span>
         ))}
       </div>
+      {readOnly ? (
+        <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ color: "var(--text-tertiary)", background: "var(--bg-hover)" }}>
+          Read only
+        </span>
+      ) : null}
       <ViewSwitcher view={view} onChange={onViewChange} />
       {onUpload ? (
         <IconButton label="Upload files" className="shrink-0" onClick={onUpload}>
@@ -314,6 +345,61 @@ export function BrowserToolbar({
       <IconButton label="Refresh folder" className="shrink-0" onClick={onRefresh}>
         <RefreshCw size={13} />
       </IconButton>
+    </div>
+  );
+}
+
+export function UploadStatusList({
+  uploads,
+  onRetry,
+  onRemove,
+}: {
+  uploads: FileUploadRow[];
+  onRetry: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  if (uploads.length === 0) return null;
+  return (
+    <div className="shrink-0 space-y-1 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }} aria-live="polite">
+      {uploads.slice(0, 4).map((upload) => (
+        <div key={upload.id} className="flex min-h-7 items-center justify-between gap-2">
+          <span className="min-w-0 truncate">{upload.name}: {upload.error ?? upload.status}</span>
+          {upload.status === "failed" ? (
+            <span className="flex shrink-0 items-center gap-1">
+              {upload.error !== "Files are limited to 10 MB." ? (
+                <Button variant="subtle" className="h-7 text-xs" onClick={() => onRetry(upload.id)}>Retry</Button>
+              ) : null}
+              <Button variant="ghost" className="h-7 text-xs" onClick={() => onRemove(upload.id)}>Remove</Button>
+            </span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function FolderPickerFooter({
+  path,
+  message,
+  actionLabel,
+  disabled,
+  onAction,
+}: {
+  path: string;
+  message?: string;
+  actionLabel: string;
+  disabled: boolean;
+  onAction: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
+      <div className="min-w-0">
+        <div className="truncate text-xs" style={{ color: "var(--text-secondary)" }} title={path || "Matrix home"}>
+          {path || "Matrix home"}
+        </div>
+        {message ? <div className="mt-0.5 text-[11px]" style={{ color: "var(--text-tertiary)" }}>{message}</div> : null}
+      </div>
+      <Button variant="primary" disabled={disabled} onClick={onAction}>{actionLabel}</Button>
     </div>
   );
 }

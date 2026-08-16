@@ -15,19 +15,23 @@ import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import {
   parseBrowserEntries,
+  isManagedBrowserPath,
   sortBrowserEntries,
   type BrowserEntry,
   type BrowserSortDirection,
   type BrowserSortKey,
 } from "./browser-entries";
+import { useBrowserHistory } from "./browser-history";
 import { useBrowserViewPreference } from "./browser-view-preference";
 import {
   BrowserToolbar,
   EntryButton,
+  FolderPickerFooter,
   hasRegularDroppedFiles,
   measureGridColumns,
   regularDroppedFiles,
   SortHeader,
+  UploadStatusList,
 } from "./browser-views";
 import { useFileUploads } from "./use-file-uploads";
 
@@ -37,6 +41,11 @@ export type FolderPickerChoice =
   | { kind: "choose" }
   | { kind: "blocked"; message: string }
   | { kind: "alternate"; label: string; message: string };
+
+export interface BrowserSelection {
+  path: string;
+  entry: BrowserEntry;
+}
 
 const NO_ENTRIES: BrowserEntry[] = [];
 
@@ -53,6 +62,7 @@ export default function ComputerFileBrowser({
   framed = true,
   mode = "browse",
   onOpenFile,
+  onSelectionChange,
   onChooseFolder,
   resolveFolderChoice,
   onAlternateFolderAction,
@@ -66,6 +76,7 @@ export default function ComputerFileBrowser({
   // competes with files. The default "browse" mode is unchanged.
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
+  onSelectionChange?: (selection: BrowserSelection | null) => void;
   onChooseFolder?: (path: string) => void;
   resolveFolderChoice?: (path: string) => FolderPickerChoice;
   onAlternateFolderAction?: (path: string) => void;
@@ -75,7 +86,17 @@ export default function ComputerFileBrowser({
   const authGeneration = useConnection((state) => state.authGeneration);
   const view = useBrowserViewPreference((state) => state.view);
   const setView = useBrowserViewPreference((state) => state.setView);
-  const [currentPath, setCurrentPath] = useState("");
+  const {
+    currentPath,
+    resetHistory,
+    pushPath,
+    moveBack,
+    moveForward,
+    canGoBack,
+    canGoForward,
+    backPath,
+    forwardPath,
+  } = useBrowserHistory();
   const [candidatePath, setCandidatePath] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<BrowserEntry[]>([]);
@@ -107,6 +128,7 @@ export default function ComputerFileBrowser({
   const [loadedScope, setLoadedScope] = useState(browserScope);
   const scoped = loadedScope === browserScope;
   const viewCurrentPath = scoped ? currentPath : "";
+  const viewReadOnly = isManagedBrowserPath(viewCurrentPath);
   const viewCandidatePath = scoped ? candidatePath : "";
   const viewSelectedPath = scoped ? selectedPath : null;
   const viewStatus: BrowserStatus = scoped ? status : "loading";
@@ -157,39 +179,56 @@ export default function ComputerFileBrowser({
   }, [fileUploads.enqueue, viewCurrentPath]);
 
   const onListingDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (mode !== "browse" || !hasRegularDroppedFiles(event.dataTransfer)) return;
+    if (mode !== "browse" || isManagedBrowserPath(viewCurrentPath) || !hasRegularDroppedFiles(event.dataTransfer)) return;
     event.preventDefault();
     dragDepth.current = 0;
     setDragActive(false);
     enqueueFiles(regularDroppedFiles(event.dataTransfer));
-  }, [enqueueFiles, mode]);
+  }, [enqueueFiles, mode, viewCurrentPath]);
 
   const onListingPaste = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
-    if (mode !== "browse") return;
+    if (mode !== "browse" || isManagedBrowserPath(viewCurrentPath)) return;
     const files = Array.from(event.clipboardData.files ?? []);
     if (files.length === 0) return;
     event.preventDefault();
     enqueueFiles(files);
-  }, [enqueueFiles, mode]);
+  }, [enqueueFiles, mode, viewCurrentPath]);
 
   useEffect(() => {
     setLoadedScope(browserScope);
-    setCurrentPath("");
+    resetHistory();
     setCandidatePath("");
     setSelectedPath(null);
     void load("");
     return () => {
       requestGeneration.current += 1;
     };
-  }, [browserScope, load]);
+  }, [browserScope, load, resetHistory]);
 
-  const navigate = useCallback((path: string) => {
+  const commitNavigation = useCallback((path: string) => {
     markFocusForRestore();
-    setCurrentPath(path);
     setCandidatePath(path);
     setSelectedPath(null);
+    onSelectionChange?.(null);
     void load(path);
-  }, [load, markFocusForRestore]);
+  }, [load, markFocusForRestore, onSelectionChange]);
+
+  const navigate = useCallback((path: string) => {
+    pushPath(path);
+    commitNavigation(path);
+  }, [commitNavigation, pushPath]);
+
+  const goBack = useCallback(() => {
+    if (backPath === null) return;
+    moveBack();
+    commitNavigation(backPath);
+  }, [backPath, commitNavigation, moveBack]);
+
+  const goForward = useCallback(() => {
+    if (forwardPath === null) return;
+    moveForward();
+    commitNavigation(forwardPath);
+  }, [commitNavigation, forwardPath, moveForward]);
 
   const goUp = useCallback(() => {
     if (viewCurrentPath) navigate(parentPath(viewCurrentPath));
@@ -199,9 +238,10 @@ export default function ComputerFileBrowser({
   // browser/preview split behaves like a Finder column with Quick Look.
   const selectEntry = useCallback((entry: BrowserEntry, path: string) => {
     setSelectedPath(path);
+    onSelectionChange?.({ path, entry });
     if (entry.type === "directory") setCandidatePath(path);
     else onOpenFile?.(path);
-  }, [onOpenFile]);
+  }, [onOpenFile, onSelectionChange]);
 
   // Double-click or Enter "opens": directories navigate, files preview.
   const activateEntry = useCallback((entry: BrowserEntry, path: string) => {
@@ -316,6 +356,7 @@ export default function ComputerFileBrowser({
           listColumns={listColumns}
           selected={viewSelectedPath === path || isCandidate}
           pressed={mode === "folder-picker" && entry.type === "directory" ? isCandidate : undefined}
+          managed={isManagedBrowserPath(path)}
           buttonRef={(el) => {
             entryRefs.current[index] = el;
           }}
@@ -324,7 +365,7 @@ export default function ComputerFileBrowser({
             if (entry.type === "directory") navigate(path);
           }}
           onKeyDown={(event) => onEntryKeyDown(event, entry, path, index)}
-          onDropFiles={mode === "browse" && entry.type === "directory"
+          onDropFiles={mode === "browse" && entry.type === "directory" && !isManagedBrowserPath(path)
             ? (files) => enqueueFiles(files, path)
             : undefined}
         />
@@ -389,9 +430,14 @@ export default function ComputerFileBrowser({
           setView(next);
         }}
         onUp={goUp}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        onBack={goBack}
+        onForward={goForward}
+        readOnly={viewReadOnly}
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
-        onUpload={mode === "browse" ? () => fileInputRef.current?.click() : undefined}
+        onUpload={mode === "browse" && !viewReadOnly ? () => fileInputRef.current?.click() : undefined}
       />
 
       {mode === "browse" ? (
@@ -410,21 +456,21 @@ export default function ComputerFileBrowser({
       <div
         data-files-listing
         className={`${compact ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto p-1.5`}
-        onDragEnter={mode === "browse" ? (event) => {
+        onDragEnter={mode === "browse" && !viewReadOnly ? (event) => {
           if (!hasRegularDroppedFiles(event.dataTransfer)) return;
           event.preventDefault();
           dragDepth.current += 1;
           setDragActive(true);
         } : undefined}
-        onDragLeave={mode === "browse" ? () => {
+        onDragLeave={mode === "browse" && !viewReadOnly ? () => {
           dragDepth.current = Math.max(0, dragDepth.current - 1);
           if (dragDepth.current === 0) setDragActive(false);
         } : undefined}
-        onDragOver={mode === "browse" ? (event) => {
+        onDragOver={mode === "browse" && !viewReadOnly ? (event) => {
           if (hasRegularDroppedFiles(event.dataTransfer)) event.preventDefault();
         } : undefined}
-        onDrop={mode === "browse" ? onListingDrop : undefined}
-        onPaste={mode === "browse" ? onListingPaste : undefined}
+        onDrop={mode === "browse" && !viewReadOnly ? onListingDrop : undefined}
+        onPaste={mode === "browse" && !viewReadOnly ? onListingPaste : undefined}
       >
         {content}
         {dragActive ? (
@@ -434,50 +480,18 @@ export default function ComputerFileBrowser({
         ) : null}
       </div>
 
-      {fileUploads.uploads.length > 0 ? (
-        <div className="shrink-0 space-y-1 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }} aria-live="polite">
-          {fileUploads.uploads.slice(0, 4).map((upload) => (
-            <div key={upload.id} className="flex min-h-7 items-center justify-between gap-2">
-              <span className="min-w-0 truncate">{upload.name}: {upload.error ?? upload.status}</span>
-              {upload.status === "failed" ? (
-                <span className="flex shrink-0 items-center gap-1">
-                  {upload.error !== "Files are limited to 10 MB." ? (
-                    <Button variant="subtle" className="h-7 text-xs" onClick={() => fileUploads.retry(upload.id)}>Retry</Button>
-                  ) : null}
-                  <Button variant="ghost" className="h-7 text-xs" onClick={() => fileUploads.remove(upload.id)}>Remove</Button>
-                </span>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <UploadStatusList uploads={fileUploads.uploads} onRetry={fileUploads.retry} onRemove={fileUploads.remove} />
 
       {onChooseFolder ? (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
-          <div className="min-w-0">
-            <div className="truncate text-xs" style={{ color: "var(--text-secondary)" }} title={viewCandidatePath || "Matrix home"}>
-              {viewCandidatePath || "Matrix home"}
-            </div>
-            {folderChoice && folderChoice.kind !== "choose" ? (
-              <div className="mt-0.5 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                {folderChoice.message}
-              </div>
-            ) : null}
-          </div>
-          {folderChoice?.kind === "alternate" ? (
-            <Button variant="primary" onClick={() => onAlternateFolderAction?.(viewCandidatePath)}>
-              {folderChoice.label}
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              disabled={!viewCandidatePath || folderChoice?.kind === "blocked"}
-              onClick={() => onChooseFolder(viewCandidatePath)}
-            >
-              Choose {chosenName}
-            </Button>
-          )}
-        </div>
+        <FolderPickerFooter
+          path={viewCandidatePath}
+          message={folderChoice && folderChoice.kind !== "choose" ? folderChoice.message : undefined}
+          actionLabel={folderChoice?.kind === "alternate" ? folderChoice.label : `Choose ${chosenName}`}
+          disabled={folderChoice?.kind === "alternate" ? false : !viewCandidatePath || folderChoice?.kind === "blocked"}
+          onAction={() => folderChoice?.kind === "alternate"
+            ? onAlternateFolderAction?.(viewCandidatePath)
+            : onChooseFolder(viewCandidatePath)}
+        />
       ) : null}
     </div>
   );

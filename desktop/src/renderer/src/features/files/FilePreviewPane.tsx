@@ -1,8 +1,18 @@
-import { FileCode2 } from "lucide-react";
+import {
+  FileCode2,
+  FileQuestion,
+  Folder,
+  LoaderCircle,
+  ShieldAlert,
+  TriangleAlert,
+} from "lucide-react";
 import { lazy, useEffect, useState } from "react";
-import { EmptyState } from "../../design/primitives";
-import { toUserMessage } from "../../lib/errors";
+import { Button, EmptyState } from "../../design/primitives";
+import { AppError, toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
+import { isManagedBrowserPath, parseBrowserEntries, type BrowserEntry } from "./browser-entries";
+import { FileGlyph, kindForEntry } from "./file-kind";
+import { formatEntrySize, formatModified } from "./format";
 
 const MarkdownContent = lazy(async () => {
   const module = await import("../editor/MarkdownPreview");
@@ -14,17 +24,28 @@ const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024;
 // bound matches the gateway blob body limit rather than the smaller text cap.
 const MAX_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024;
 
+const TEXT_EXTENSIONS = [
+  "txt", "json", "jsonl", "yaml", "yml", "toml", "xml", "csv", "log",
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "css", "scss", "html", "sh",
+  "bash", "zsh", "py", "rb", "go", "rs", "java", "kt", "sql", "env",
+];
+const TEXT_FILENAMES = ["dockerfile", "makefile", "procfile", "license", "notice"];
+
 export interface FileSelection {
   slot: string;
   authGeneration: number;
   path: string;
+  entry?: BrowserEntry;
+}
+
+export interface PreviewSelection {
+  path: string;
+  entry: BrowserEntry;
 }
 
 // A selection captured under one computer/session must never resolve to a
 // preview under another. Scoped to both the runtime slot and the credential
-// generation (a replacement session can keep the same slot). Derived
-// synchronously so a switch clears the path in the same render, before any
-// stat/blob request can target the new computer or owner.
+// generation (a replacement session can keep the same slot).
 export function resolveActivePath(
   selection: FileSelection | null,
   runtimeSlot: string,
@@ -41,8 +62,7 @@ function isFiniteSizeWithin(size: unknown, max: number): boolean {
 
 // The api client resolves the CURRENT runtime slot per request, so a preview
 // that started under one computer/session must re-check the scope immediately
-// before any follow-up fetch instead of relying only on the effect-cleanup
-// flag, which runs on React's schedule.
+// before any follow-up fetch.
 function captureConnectionScope(): string {
   const { runtimeSlot, authGeneration } = useConnection.getState();
   return `${runtimeSlot}|${authGeneration}`;
@@ -56,15 +76,86 @@ function isMarkdown(path: string): boolean {
   return /\.mdx?$/i.test(path);
 }
 
-function previewErrorMessage(err: unknown): string {
-  return err instanceof Error && err.message === "file_too_large"
-    ? "This file is too large to preview."
-    : toUserMessage(err);
+export type FilePreviewKind = "image" | "markdown" | "text" | "unsupported";
+
+export function previewKindForPath(path: string): FilePreviewKind {
+  if (isImage(path)) return "image";
+  if (isMarkdown(path)) return "markdown";
+  const name = path.split("/").pop()?.toLowerCase() ?? "";
+  const extension = name.includes(".") ? name.split(".").pop() ?? "" : "";
+  if (TEXT_EXTENSIONS.includes(extension) || TEXT_FILENAMES.includes(name) || /^\.[a-z0-9_-]+$/.test(name)) {
+    return "text";
+  }
+  return "unsupported";
+}
+
+interface PreviewFailureCopy {
+  headline: string;
+  description: string;
+  kind: "missing" | "permission" | "recoverable";
+}
+
+function previewFailureCopy(error: unknown): PreviewFailureCopy {
+  if (error instanceof Error && error.message === "file_too_large") {
+    return {
+      headline: "Preview too large",
+      description: "This file is too large to preview.",
+      kind: "recoverable",
+    };
+  }
+  if (error instanceof AppError && error.category === "notFound") {
+    return {
+      headline: "File not found",
+      description: "It may have been moved or deleted.",
+      kind: "missing",
+    };
+  }
+  if (
+    error instanceof AppError &&
+    error.category === "unauthorized" &&
+    (error.detail === "permission_denied" || error.detail === "forbidden")
+  ) {
+    return {
+      headline: "Permission required",
+      description: "You don’t have permission to preview this file.",
+      kind: "permission",
+    };
+  }
+  return {
+    headline: "Couldn’t load preview",
+    description: toUserMessage(error),
+    kind: "recoverable",
+  };
+}
+
+function PreviewFailure({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const copy = previewFailureCopy(error);
+  const Icon = copy.kind === "permission" ? ShieldAlert : TriangleAlert;
+  return (
+    <EmptyState
+      icon={<Icon size={26} />}
+      headline={copy.headline}
+      description={copy.description}
+      action={<Button variant="subtle" onClick={onRetry}>Try again</Button>}
+    />
+  );
+}
+
+function LoadingPreview({ label = "Loading preview…" }: { label?: string }) {
+  return (
+    <div className="flex flex-1 items-center justify-center gap-2 text-sm" style={{ color: "var(--text-tertiary)" }}>
+      <LoaderCircle size={16} className="animate-spin" aria-hidden />
+      <span>{label}</span>
+    </div>
+  );
 }
 
 function TextPreview({ path, markdown = false }: { path: string; markdown?: boolean }) {
   const api = useConnection((state) => state.api);
-  const [state, setState] = useState<{ status: "loading" | "ready" | "error"; content?: string; error?: string }>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "ready"; content: string } | { status: "error"; error: unknown }
+  >({ status: "loading" });
 
   useEffect(() => {
     if (!api) return;
@@ -73,28 +164,22 @@ function TextPreview({ path, markdown = false }: { path: string; markdown?: bool
     setState({ status: "loading" });
     void api.get<{ size?: number }>(`/api/files/stat?path=${encodeURIComponent(path)}`)
       .then(async (stat) => {
-        // Fail closed: a missing or non-finite size must not bypass the bound.
         if (!isFiniteSizeWithin(stat.size, MAX_TEXT_PREVIEW_BYTES)) throw new Error("file_too_large");
-        // The selected computer/session may have changed while stat was in
-        // flight; check the pinned scope (not only the effect-cleanup flag)
-        // before fetching this path against the newly selected computer.
         if (cancelled || captureConnectionScope() !== scope) return null;
-        // The stat can be stale by the time the blob is read (the file may
-        // have grown), so the transfer itself is capped too.
         return api.getText(`/api/files/blob?path=${encodeURIComponent(path)}`, { maxBytes: MAX_TEXT_PREVIEW_BYTES });
       })
       .then((content) => {
         if (!cancelled && content !== null) setState({ status: "ready", content });
       })
-      .catch((err: unknown) => {
-        if (!cancelled) setState({ status: "error", error: previewErrorMessage(err) });
+      .catch((error: unknown) => {
+        if (!cancelled) setState({ status: "error", error });
       });
     return () => { cancelled = true; };
-  }, [api, path]);
+  }, [api, attempt, path]);
 
-  if (state.status === "loading") return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>;
-  if (state.status === "error") return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--danger)" }}>{state.error}</div>;
-  if (markdown) return <MarkdownContent content={state.content ?? ""} />;
+  if (state.status === "loading") return <LoadingPreview />;
+  if (state.status === "error") return <PreviewFailure error={state.error} onRetry={() => setAttempt((value) => value + 1)} />;
+  if (markdown) return <MarkdownContent content={state.content} />;
   return (
     <pre className="min-h-0 flex-1 overflow-auto p-5 font-mono text-[13px] leading-6" style={{ color: "var(--text-primary)", background: "var(--bg-sunken)" }} data-selectable>
       <code>{state.content}</code>
@@ -104,7 +189,10 @@ function TextPreview({ path, markdown = false }: { path: string; markdown?: bool
 
 function ImagePreview({ path, name }: { path: string; name: string }) {
   const api = useConnection((state) => state.api);
-  const [state, setState] = useState<{ status: "loading" | "ready" | "error"; url?: string; error?: string }>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "ready"; url: string } | { status: "error"; error: unknown }
+  >({ status: "loading" });
 
   useEffect(() => {
     if (!api) return;
@@ -114,16 +202,8 @@ function ImagePreview({ path, name }: { path: string; name: string }) {
     setState({ status: "loading" });
     void api.get<{ size?: number }>(`/api/files/stat?path=${encodeURIComponent(path)}`)
       .then(async (stat) => {
-        // Fail closed like text previews: bound the bytes read into renderer memory.
         if (!isFiniteSizeWithin(stat.size, MAX_IMAGE_PREVIEW_BYTES)) throw new Error("file_too_large");
-        // The selected computer/session may have changed while stat was in
-        // flight; check the pinned scope (not only the effect-cleanup flag)
-        // before fetching this path against the newly selected computer.
         if (cancelled || captureConnectionScope() !== scope) return null;
-        // Load bytes through the authenticated client so credentials injected at
-        // the network layer apply. A bare <img src> to the blob route cannot
-        // carry them and would expose the selected computer's file by URL. The
-        // transfer is capped as well: the stat may be stale by read time.
         return api.getBlob(`/api/files/blob?path=${encodeURIComponent(path)}`, { maxBytes: MAX_IMAGE_PREVIEW_BYTES });
       })
       .then((blob) => {
@@ -131,18 +211,17 @@ function ImagePreview({ path, name }: { path: string; name: string }) {
         objectUrl = URL.createObjectURL(blob);
         setState({ status: "ready", url: objectUrl });
       })
-      .catch((err: unknown) => {
-        if (!cancelled) setState({ status: "error", error: previewErrorMessage(err) });
+      .catch((error: unknown) => {
+        if (!cancelled) setState({ status: "error", error });
       });
     return () => {
       cancelled = true;
-      // Revoke on path change/unmount so object URLs never leak.
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [api, path]);
+  }, [api, attempt, path]);
 
-  if (state.status === "loading") return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>;
-  if (state.status === "error") return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--danger)" }}>{state.error}</div>;
+  if (state.status === "loading") return <LoadingPreview />;
+  if (state.status === "error") return <PreviewFailure error={state.error} onRetry={() => setAttempt((value) => value + 1)} />;
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6" style={{ background: "var(--bg-sunken)" }}>
       <img src={state.url} alt={name} className="max-h-full max-w-full rounded-lg object-contain" style={{ boxShadow: "var(--shadow-2)" }} />
@@ -150,17 +229,92 @@ function ImagePreview({ path, name }: { path: string; name: string }) {
   );
 }
 
+function FolderPreview({ path }: { path: string }) {
+  const api = useConnection((state) => state.api);
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "ready"; entries: BrowserEntry[] } | { status: "error"; error: unknown }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    const scope = captureConnectionScope();
+    setState({ status: "loading" });
+    void api.get<{ entries: unknown }>(`/api/files/list?path=${encodeURIComponent(path)}`)
+      .then((response) => {
+        if (!cancelled && captureConnectionScope() === scope) {
+          setState({ status: "ready", entries: parseBrowserEntries(response.entries) });
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setState({ status: "error", error });
+      });
+    return () => { cancelled = true; };
+  }, [api, attempt, path]);
+
+  if (state.status === "loading") return <LoadingPreview label="Loading folder…" />;
+  if (state.status === "error") return <PreviewFailure error={state.error} onRetry={() => setAttempt((value) => value + 1)} />;
+  if (state.entries.length === 0) {
+    return <EmptyState icon={<Folder size={28} />} headline="This folder is empty" description="No files or folders inside." />;
+  }
+  return (
+    <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(92px,1fr))] content-start gap-2 overflow-auto p-4">
+      {state.entries.map((entry) => (
+        <div
+          key={`${entry.type}:${entry.name}`}
+          className="flex min-w-0 flex-col items-center gap-2 rounded-lg border px-2 py-3 text-center"
+          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}
+          title={entry.name}
+        >
+          <span style={{ color: entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)" }}>
+            <FileGlyph kind={kindForEntry(entry)} size={28} />
+          </span>
+          <span className="w-full truncate text-xs" style={{ color: "var(--text-primary)" }}>{entry.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Renders below a Suspense boundary (markdown preview is lazy-loaded).
-export function FilePreview({ path }: { path: string | null }) {
+export function FilePreview({ path, entry }: { path: string | null; entry?: BrowserEntry }) {
   const api = useConnection((state) => state.api);
   if (!path || !api) {
     return <EmptyState icon={<FileCode2 size={26} />} headline="Choose a file" description="Preview images, Markdown, and code from this computer." />;
   }
+  if (entry?.type === "directory") return <FolderPreview key={path} path={path} />;
   const name = path.split("/").pop() ?? path;
-  // key={path} remounts the preview when the file changes so its loading state
-  // resets synchronously, instead of showing the previous file until the effect
-  // runs after paint.
-  if (isImage(path)) return <ImagePreview key={path} path={path} name={name} />;
-  if (isMarkdown(path)) return <TextPreview key={path} path={path} markdown />;
-  return <TextPreview key={path} path={path} />;
+  const kind = previewKindForPath(path);
+  if (kind === "image") return <ImagePreview key={path} path={path} name={name} />;
+  if (kind === "markdown") return <TextPreview key={path} path={path} markdown />;
+  if (kind === "text") return <TextPreview key={path} path={path} />;
+  return <EmptyState icon={<FileQuestion size={26} />} headline="Preview not available" description="This file type can’t be previewed here." />;
+}
+
+export function PreviewPane({ selection }: { selection: PreviewSelection }) {
+  const { entry, path } = selection;
+  const metadata = isManagedBrowserPath(path)
+    ? "Managed · Read only"
+    : entry.type === "directory"
+    ? entry.children === undefined ? "Folder" : `${entry.children} ${entry.children === 1 ? "item" : "items"}`
+    : [formatEntrySize(entry), formatModified(entry.modifiedAt)].filter((value) => value !== "–").join(" · ");
+  return (
+    <section
+      aria-label="File preview"
+      className="flex min-h-0 min-w-0 flex-col border-t md:border-t-0 md:border-l"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+    >
+      <header className="flex min-h-16 shrink-0 items-center gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
+        <span className="shrink-0" style={{ color: entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)" }}>
+          <FileGlyph kind={kindForEntry(entry)} size={20} />
+        </span>
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }} title={entry.name}>{entry.name}</h2>
+          {metadata ? <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{metadata}</p> : null}
+        </div>
+      </header>
+      <FilePreview path={path} entry={entry} />
+    </section>
+  );
 }
