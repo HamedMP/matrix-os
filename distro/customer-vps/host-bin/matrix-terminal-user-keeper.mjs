@@ -186,14 +186,24 @@ function exitAfterChild(code, signal) {
   if (forcedKillTimer) clearTimeout(forcedKillTimer);
   const exitSignal = requestedSignal ?? signal;
   if (exitSignal) {
+    process.off("SIGTERM", handleSigterm);
+    process.off("SIGINT", handleSigint);
     process.kill(process.pid, exitSignal);
     return;
   }
   process.exit(code ?? 1);
 }
 
-process.on("SIGTERM", () => forwardSignal("SIGTERM"));
-process.on("SIGINT", () => forwardSignal("SIGINT"));
+function handleSigterm() {
+  forwardSignal("SIGTERM");
+}
+
+function handleSigint() {
+  forwardSignal("SIGINT");
+}
+
+process.on("SIGTERM", handleSigterm);
+process.on("SIGINT", handleSigint);
 
 // Start the server without a persistent interactive client. Zellij computes its
 // shared grid as the component-wise minimum across interactive clients, so the

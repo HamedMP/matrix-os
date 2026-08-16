@@ -42,6 +42,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(keeper).toContain('"attach", "--create-background", descriptor.sessionName');
     expect(keeper).toContain('"watch", descriptor.sessionName');
     expect(keeper).toContain("SESSION_START_TIMEOUT_MS");
+    expect(keeper).toContain('process.off("SIGTERM", handleSigterm)');
+    expect(keeper).toContain('process.off("SIGINT", handleSigint)');
     expect(keeper).not.toContain('"--session",');
     expect(keeper).not.toContain("descriptor.command");
     expect(keeper).not.toContain("descriptor.args");
