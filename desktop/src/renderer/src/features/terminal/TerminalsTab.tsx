@@ -503,7 +503,12 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
         );
       })}
 
-      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)} width={360}>
+      <Dialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        width={360}
+        placement="center"
+      >
         <div className="flex flex-col gap-3 p-4">
           <div>
             <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
