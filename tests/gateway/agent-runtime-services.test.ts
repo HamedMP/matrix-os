@@ -352,6 +352,53 @@ describe("Hermes agent runtime services", () => {
     await services.controller.close();
   });
 
+  it("does not report a selected but missing Hermes runtime as active", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "agent-runtime-services-"));
+    cleanupPaths.push(homePath);
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system/config.json"), JSON.stringify({
+      agent: { messagingRuntime: "hermes", revision: 0 },
+    }));
+    const services = createAgentRuntimeServices({
+      homePath,
+      client: {
+        readJson: vi.fn(async () => { throw new Error("Hermes is not installed"); }),
+        requestJson: vi.fn(async () => ({ ok: true })),
+      },
+      hostControl: {
+        status: vi.fn(async () => ({
+          hermes: { installed: false, running: false },
+          openclaw: { installed: false, running: false },
+        })),
+        switch: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+      },
+      openClawRpc: {
+        call: vi.fn(async () => { throw new Error("OpenClaw is not installed"); }),
+        close: vi.fn(async () => {}),
+      },
+    });
+
+    await expect(services.source(new AbortController().signal)).resolves.toMatchObject({
+      runtime: {
+        selected: "hermes",
+        options: [
+          {
+            id: "hermes",
+            installState: "missing",
+            health: "stopped",
+            selectionState: "unavailable",
+            capabilities: ["install"],
+            setupAction: "install",
+          },
+          { id: "openclaw", selectionState: "unavailable" },
+        ],
+      },
+    });
+
+    await services.controller.close();
+  });
+
   it("clears configured messaging selection when its catalog is unavailable", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "agent-runtime-services-"));
     cleanupPaths.push(homePath);

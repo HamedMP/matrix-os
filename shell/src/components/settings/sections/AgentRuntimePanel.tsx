@@ -93,10 +93,18 @@ function RuntimeCards({
         {view.runtime.options.map((runtime) => {
           const selected = runtime.id === view.runtime.selected;
           const installed = runtime.installState === "installed";
+          const active = selected && installed && runtime.selectionState === "active";
           const installAction: TerminalLaunchAction = runtime.id === "hermes"
             ? "hermes-install"
             : "openclaw-install";
+          const restartAction: TerminalLaunchAction = runtime.id === "hermes"
+            ? "hermes-restart"
+            : "openclaw-restart";
           const canInstall = !installed && runtime.setupAction === "install" && onOpenTerminal;
+          const canRestart = selected
+            && installed
+            && runtime.selectionState === "action_required"
+            && onOpenTerminal;
           return (
             <article
               key={runtime.id}
@@ -115,7 +123,7 @@ function RuntimeCards({
                 </div>
               </div>
               <div className="mt-4">
-                {selected ? (
+                {active ? (
                   <p className="text-xs font-medium text-forest">{runtime.displayName} is active</p>
                 ) : canInstall ? (
                   <Button
@@ -127,6 +135,20 @@ function RuntimeCards({
                   >
                     <TerminalIcon className="size-3.5" /> Install {runtime.displayName}
                   </Button>
+                ) : canRestart ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => onOpenTerminal(restartAction)}
+                    aria-label={`Restart ${runtime.displayName}`}
+                  >
+                    <TerminalIcon className="size-3.5" /> Restart {runtime.displayName}
+                  </Button>
+                ) : selected ? (
+                  <p className="text-xs font-medium text-warning">
+                    {runtime.displayName} is selected · {statusLabel(runtime.selectionState)}
+                  </p>
                 ) : (
                   <Button
                     size="sm"

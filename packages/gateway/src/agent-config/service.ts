@@ -140,7 +140,7 @@ export function buildAgentSettingsView(
           displayName: "Hermes",
           installState: "unknown",
           health: "unknown",
-          selectionState: "active",
+          selectionState: "action_required",
           configured: false,
           capabilities: [
             "provider_catalog",
