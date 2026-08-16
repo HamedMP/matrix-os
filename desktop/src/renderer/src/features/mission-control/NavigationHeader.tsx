@@ -120,6 +120,9 @@ export default function NavigationHeader() {
       className="titlebar-drag flex shrink-0 items-center gap-1 border-b px-2"
       style={{
         height: "var(--tabbar-height)",
+        // The collapsed 56px rail ends inside the macOS traffic-light cluster.
+        // Continue the established 76px titlebar safe area before controls.
+        paddingLeft: collapsed ? 20 : undefined,
         borderColor: "var(--border-subtle)",
         background: "var(--bg-sunken)",
       }}
