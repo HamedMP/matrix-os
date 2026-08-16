@@ -96,6 +96,8 @@ describe("ChatTab", () => {
     expect(container.querySelector(".h-full.items-center.justify-center")).toBeNull();
     expect(container.querySelector('[data-slot="message-scroller-content"]')?.className)
       .toContain("justify-start");
+    expect(container.querySelector('[data-slot="message-scroller-content"]')?.className)
+      .not.toContain("30vh");
   });
 
   it("renders the approved centered empty state and only working composer controls", () => {
@@ -106,7 +108,10 @@ describe("ChatTab", () => {
     expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Resources" })).toBeTruthy();
-    expect(screen.getByText("Hermes", { selector: "span" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use Codex for a project chat" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Chat harness" })).toHaveProperty("value", "hermes");
+    expect(screen.getByTestId("chat-empty-logo").style.height).toBe("208px");
+    expect(screen.getByTestId("chat-empty-content").className).toContain("justify-center");
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
     expect(screen.queryByText("Connect messaging")).toBeNull();
     expect(screen.queryByRole("button", { name: /voice|microphone/i })).toBeNull();
@@ -269,6 +274,45 @@ describe("ChatTab", () => {
     expect(screen.queryByRole("button", { name: "Remove screen.png" })).toBeNull();
   });
 
+  it("promotes a Hermes conversation only after the user sends a message", async () => {
+    const send = vi.fn();
+    useHermesChat.setState({
+      messages: [],
+      sessionId: "conversation-active",
+      status: "idle",
+      send,
+      abort: vi.fn(),
+    });
+    render(<ChatTab />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "How can I help you today?" }), {
+      target: { value: "Continue the release check" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(send).toHaveBeenCalledWith("Continue the release check"));
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "conversation",
+      conversationType: "hermes",
+      id: "conversation-active",
+      label: "Continue the release check",
+    });
+  });
+
+  it("routes the Codex harness to a project-bound durable chat", async () => {
+    useHermesChat.setState({ messages: [], status: "idle" });
+    render(<ChatTab />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Chat harness" }), {
+      target: { value: "codex" },
+    });
+
+    await waitFor(() => expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
+      kind: "project",
+      projectSlug: "matrix-os",
+    })));
+  });
+
   it("does not intercept a text-only drop in Chat", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);
@@ -334,6 +378,29 @@ describe("ChatTab", () => {
     expect(newest.textContent).not.toContain("Review the final launch checklist");
     expect(older.textContent).toContain("Earlier notes");
     expect(screen.queryByText("hello")).toBeNull();
+  });
+
+  it("reconciles stale Hermes Recents without removing coding-agent chats", async () => {
+    useTabs.getState().recordRecentHermesConversation("conversation-live", "Live chat");
+    useTabs.getState().recordRecentHermesConversation("conversation-deleted", "Deleted chat");
+    useTabs.getState().recordRecentConversation("thread-live", "Coding agent run");
+    useHermesChat.setState({
+      view: "index",
+      indexStatus: "ready",
+      conversations: [{
+        id: "conversation-live",
+        title: "Live chat",
+        preview: "Still here",
+        messageCount: 1,
+        createdAt: 1,
+        updatedAt: 2,
+      }],
+    });
+
+    render(<ChatTab />);
+
+    await waitFor(() => expect(useTabs.getState().recentViews.map((recent) => recent.id))
+      .toEqual(["thread-live", "conversation-live"]));
   });
 
   it("shows loading, empty, and safe recovery states for conversation discovery", () => {
@@ -410,10 +477,7 @@ describe("ChatTab", () => {
       sessionId: "conversation-created",
       messages: [],
     });
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      id: "conversation-created",
-    });
+    expect(useTabs.getState().recentViews).toEqual([]);
   });
 
   it("opens the selected canonical conversation without duplicating global navigation", async () => {
@@ -448,10 +512,6 @@ describe("ChatTab", () => {
     expect(await screen.findByText("persistent hello")).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "Chat breadcrumb" })).toBeNull();
     expect(useHermesChat.getState().sessionId).toBe("conversation-one");
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      id: "conversation-one",
-      label: "Persistent plan",
-    });
+    expect(useTabs.getState().recentViews).toEqual([]);
   });
 });

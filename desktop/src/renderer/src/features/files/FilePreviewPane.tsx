@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   FileCode2,
   FileQuestion,
   Folder,
@@ -229,7 +230,17 @@ function ImagePreview({ path, name }: { path: string; name: string }) {
   );
 }
 
-function FolderPreview({ path }: { path: string }) {
+function childBrowserPath(parent: string, name: string): string {
+  return parent ? `${parent}/${name}` : name;
+}
+
+function FolderPreview({
+  path,
+  onOpen,
+}: {
+  path: string;
+  onOpen: (selection: PreviewSelection) => void;
+}) {
   const api = useConnection((state) => state.api);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<
@@ -261,29 +272,45 @@ function FolderPreview({ path }: { path: string }) {
   return (
     <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(92px,1fr))] content-start gap-2 overflow-auto p-4">
       {state.entries.map((entry) => (
-        <div
+        <button
+          type="button"
           key={`${entry.type}:${entry.name}`}
-          className="flex min-w-0 flex-col items-center gap-2 rounded-lg border px-2 py-3 text-center"
+          aria-label={`Open ${entry.name} in preview`}
+          className="flex min-w-0 flex-col items-center gap-2 rounded-lg border px-2 py-3 text-center transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
           style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}
           title={entry.name}
+          onClick={() => onOpen({
+            path: childBrowserPath(path, entry.name),
+            entry,
+          })}
         >
           <span style={{ color: entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)" }}>
             <FileGlyph kind={kindForEntry(entry)} size={28} />
           </span>
           <span className="w-full truncate text-xs" style={{ color: "var(--text-primary)" }}>{entry.name}</span>
-        </div>
+        </button>
       ))}
     </div>
   );
 }
 
 // Renders below a Suspense boundary (markdown preview is lazy-loaded).
-export function FilePreview({ path, entry }: { path: string | null; entry?: BrowserEntry }) {
+export function FilePreview({
+  path,
+  entry,
+  onOpen,
+}: {
+  path: string | null;
+  entry?: BrowserEntry;
+  onOpen?: (selection: PreviewSelection) => void;
+}) {
   const api = useConnection((state) => state.api);
   if (path === null || !api) {
     return <EmptyState icon={<FileCode2 size={26} />} headline="Choose a file" description="Preview images, Markdown, and code from this computer." />;
   }
-  if (entry?.type === "directory") return <FolderPreview key={path} path={path} />;
+  if (entry?.type === "directory") {
+    return <FolderPreview key={path} path={path} onOpen={onOpen ?? (() => undefined)} />;
+  }
   const name = path.split("/").pop() ?? path;
   const kind = previewKindForPath(path);
   if (kind === "image") return <ImagePreview key={path} path={path} name={name} />;
@@ -293,7 +320,14 @@ export function FilePreview({ path, entry }: { path: string | null; entry?: Brow
 }
 
 export function PreviewPane({ selection }: { selection: PreviewSelection }) {
-  const { entry, path } = selection;
+  const [history, setHistory] = useState<PreviewSelection[]>([selection]);
+  const activeSelection = history.at(-1) ?? selection;
+  const { entry, path } = activeSelection;
+
+  useEffect(() => {
+    setHistory([selection]);
+  }, [selection.entry, selection.path]);
+
   const metadata = isManagedBrowserPath(path)
     ? "Managed · Read only"
     : entry.type === "directory"
@@ -306,6 +340,17 @@ export function PreviewPane({ selection }: { selection: PreviewSelection }) {
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
     >
       <header className="flex min-h-16 shrink-0 items-center gap-3 border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
+        {history.length > 1 ? (
+          <button
+            type="button"
+            aria-label="Back in preview"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+            style={{ color: "var(--text-secondary)" }}
+            onClick={() => setHistory((current) => current.slice(0, -1))}
+          >
+            <ArrowLeft size={16} aria-hidden />
+          </button>
+        ) : null}
         <span className="shrink-0" style={{ color: entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)" }}>
           <FileGlyph kind={kindForEntry(entry)} size={20} />
         </span>
@@ -314,7 +359,11 @@ export function PreviewPane({ selection }: { selection: PreviewSelection }) {
           {metadata ? <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{metadata}</p> : null}
         </div>
       </header>
-      <FilePreview path={path} entry={entry} />
+      <FilePreview
+        path={path}
+        entry={entry}
+        onOpen={(next) => setHistory((current) => [...current, next])}
+      />
     </section>
   );
 }

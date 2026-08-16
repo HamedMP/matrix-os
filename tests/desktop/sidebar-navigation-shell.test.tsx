@@ -61,7 +61,16 @@ describe("Desktop sidebar navigation shell", () => {
     useTabs.getState().ensureNavigationScope("runtime-a");
     useTabs.getState().openTab({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" });
     useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
-    useTabs.getState().recordRecentConversation("thread-1", "Fix navigation");
+    useTabs.setState((state) => ({
+      recentViews: [{
+        kind: "conversation",
+        id: "thread-1",
+        label: "Fix navigation",
+        visitedAt: Date.now(),
+      }, ...state.recentViews],
+    }));
+    useTabs.getState().recordRecentTerminal("dev", "dev");
+    useTabs.getState().recordRecentProject("matrix-os", "Matrix OS");
     useUi.setState({ sidebarCollapsed: false, requestedSettingsSection: null });
   });
 
@@ -142,7 +151,7 @@ describe("Desktop sidebar navigation shell", () => {
   });
 
   it("opens a canonical Hermes recent through the Gateway-backed loader", () => {
-    useTabs.getState().recordRecentConversation("conversation-two", "Trip planning");
+    useTabs.getState().recordRecentHermesConversation("conversation-two", "Trip planning");
     renderSidebar();
 
     fireEvent.click(screen.getByRole("button", { name: "Open recent Trip planning" }));

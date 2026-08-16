@@ -74,7 +74,6 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const resolveNewChatTarget = useProjectWorkspaces((s) => s.resolveNewChatTarget);
   const selectedThreadId = useProjectView((s) => s.entries[projectId]?.selectedThreadId ?? null);
   const setSelectedThread = useProjectView((s) => s.setSelectedThread);
-  const recordRecentConversation = useTabs((s) => s.recordRecentConversation);
   const composerRequest = useProjectChatLauncher((s) => s.composerRequest);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const inspectorEntry = useInspectorLayout((s) => s.entries[projectId]);
@@ -340,31 +339,20 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     activity: summary.attentionThreads.items.length + summary.activeThreads.items.length,
   };
 
-  // Global Recents owns cross-surface conversation navigation. Same-project
-  // selections stay local, while cross-project selections use the canonical
-  // launcher. Both paths record the stable thread id only after the owning
-  // project and matching snapshot have loaded successfully.
+  // Selecting a thread is navigation only. Recents is promoted by successful
+  // message sends, never by opening or re-opening a conversation.
   const openListedThread = async (
     threadId: string,
     threadProjectId?: string,
-    threadTitle?: string,
   ): Promise<void> => {
     newChatRequestIdRef.current += 1;
     setComposerSeed(null);
-    const listedTitle = threadTitle ?? [
-      ...summary.attentionThreads.items,
-      ...summary.activeThreads.items,
-      ...(workspace?.projectThreads.items ?? []),
-      ...(workspace?.taskThreads.items ?? []),
-    ].find((thread) => thread.id === threadId)?.title ?? "Agent conversation";
     if (threadProjectId && threadProjectId !== projectId) {
       await openCodingAgentThread(threadId);
       return;
     }
     setSelectedThread(projectId, threadId);
-    if (await loadCodingAgentConversation(projectId, threadId)) {
-      recordRecentConversation(threadId, listedTitle);
-    }
+    await loadCodingAgentConversation(projectId, threadId);
   };
 
   // Slice 2 hero layout: the conversation and the tools inspector sit in a
@@ -394,11 +382,20 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   // A created chat must always surface: select it, drop the draft seed, and
   // refresh the rail. Shared by the draft pane (project workspace path) and
   // the legacy inspector composer (no project-workspace capability).
-  const handleComposerCreated = () => {
-    const createdId = useCodingAgentWorkspace.getState().activeThreadId;
-    if (createdId) setSelectedThread(projectId, createdId);
+  const handleComposerCreated = (threadId: string, label: string) => {
+    setSelectedThread(projectId, threadId);
+    useTabs.getState().recordRecentConversation(threadId, label);
     setComposerSeed(null);
     if (projectWorkspaceEnabled) void refreshWorkspace(projectId);
+  };
+  const handleLegacyComposerCreated = () => {
+    const state = useCodingAgentWorkspace.getState();
+    const threadId = state.activeThreadId;
+    if (!threadId) return;
+    const label = state.threadSnapshot?.thread.id === threadId
+      ? state.threadSnapshot.thread.title
+      : "Agent conversation";
+    handleComposerCreated(threadId, label);
   };
 
   const conversationColumn = (
@@ -480,7 +477,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
               summary={summary}
               seed={composerSeed}
               focusRequestId={composerFocusRequestId}
-              onCreated={handleComposerCreated}
+              onCreated={handleLegacyComposerCreated}
             />
           ) : undefined
         }
@@ -522,15 +519,15 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           <div className="space-y-4">
             <AttentionThreadList
               summary={summary}
-              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId, thread.title)}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
             />
             <ThreadList
               summary={summary}
-              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId, thread.title)}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
             />
             <CreatedThreadHandleList
               summary={summary}
-              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId, thread.title)}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
             />
             <ProviderList summary={summary} />
             <NotificationPreferencesPanel />

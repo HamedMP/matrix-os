@@ -129,6 +129,31 @@ describe("Files workspace", () => {
     expect(within(panes).getByText("hero.png")).toBeTruthy();
   });
 
+  it("opens nested folders and file previews from the preview grid", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open workspaces" }));
+    const preview = await screen.findByRole("region", { name: "File preview" });
+
+    fireEvent.click(await within(preview).findByRole("button", {
+      name: "Open matrix-os in preview",
+    }));
+    expect(await within(preview).findByRole("heading", { name: "matrix-os" })).toBeTruthy();
+
+    fireEvent.click(await within(preview).findByRole("button", {
+      name: "Open packages in preview",
+    }));
+    expect(await within(preview).findByRole("heading", { name: "packages" })).toBeTruthy();
+    expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces%2Fmatrix-os%2Fpackages");
+
+    fireEvent.click(within(preview).getByRole("button", { name: "Back in preview" }));
+    fireEvent.click(within(preview).getByRole("button", { name: "Back in preview" }));
+    fireEvent.click(await within(preview).findByRole("button", {
+      name: "Open app.ts in preview",
+    }));
+    expect(await within(preview).findByText(/A remote home you can inspect/)).toBeTruthy();
+  });
+
   it("shows the designed empty-folder preview state", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     fireEvent.click(await screen.findByRole("button", { name: "Open empty" }));

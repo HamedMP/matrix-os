@@ -105,7 +105,7 @@ describe("openProjectChat", () => {
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
   });
 
-  it("records an opened agent conversation in global Recents", async () => {
+  it("does not promote an agent conversation when it is merely opened", async () => {
     Object.defineProperty(window, "operator", {
       configurable: true,
       value: {
@@ -146,11 +146,9 @@ describe("openProjectChat", () => {
 
     await opened;
 
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      id: "thread_alpha",
-      label: "Fix settings route",
-    });
+    expect(useTabs.getState().recentViews).not.toContainEqual(
+      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
+    );
   });
 
   it("does not record a Recent when the project workspace cannot load", async () => {
@@ -260,11 +258,9 @@ describe("openProjectChat", () => {
     });
     await Promise.all([loadingWorkspace, openingConversation]);
 
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      id: "thread_alpha",
-      label: "Fix settings route",
-    });
+    expect(useTabs.getState().recentViews).not.toContainEqual(
+      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
+    );
   });
 
   it("waits for the authoritative replacement when an in-flight workspace load is superseded", async () => {
@@ -323,11 +319,9 @@ describe("openProjectChat", () => {
     await Promise.all([replacementLoad, openingConversation]);
 
     expect(settledBeforeReplacement).toBe(false);
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      id: "thread_alpha",
-      label: "Fix settings route",
-    });
+    expect(useTabs.getState().recentViews).not.toContainEqual(
+      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
+    );
   });
 
   it("does not record a Recent when the project refreshes while the thread snapshot loads", async () => {

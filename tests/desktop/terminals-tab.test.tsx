@@ -78,6 +78,7 @@ describe("TerminalsTab", () => {
       reorder: vi.fn().mockResolvedValue(true),
       patchUiState: vi.fn().mockResolvedValue(true),
     });
+    useTabs.setState(useTabs.getInitialState(), true);
     useTabs.setState({
       tabs: [],
       activeTabId: null,
@@ -147,7 +148,7 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
-  it("records and refreshes opened canonical session details in global Recents without remounting", () => {
+  it("does not promote canonical sessions that are only opened", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().ensureNavigationScope("primary|operator|1");
     useShellSessions.setState({
@@ -165,10 +166,7 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
 
-    expect(useTabs.getState().recentViews).toEqual([
-      expect.objectContaining({ kind: "terminal", id: "matrix-one", label: "matrix-one" }),
-      expect.objectContaining({ kind: "terminal", id: "matrix-two", label: "matrix-two" }),
-    ]);
+    expect(useTabs.getState().recentViews).toEqual([]);
     expect(terminalMounts.get("matrix-one")).toBe(1);
     expect(terminalMounts.get("matrix-two")).toBe(1);
   });
@@ -526,6 +524,7 @@ describe("TerminalsTab", () => {
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
       deleteSession,
     });
+    useTabs.getState().recordRecentTerminal("matrix-main", "matrix-main");
 
     renderTab();
 
@@ -540,6 +539,23 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main"));
+    await waitFor(() => expect(useTabs.getState().recentViews).toEqual([]));
+  });
+
+  it("removes stale terminal Recents after an authoritative session load", async () => {
+    useTabs.getState().recordRecentTerminal("matrix-live", "matrix-live");
+    useTabs.getState().recordRecentTerminal("matrix-deleted", "matrix-deleted");
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-live", status: "active", placement: "active" }],
+      loading: false,
+      error: null,
+      loadSequence: 1,
+    });
+
+    renderTab();
+
+    await waitFor(() => expect(useTabs.getState().recentViews.map((recent) => recent.id))
+      .toEqual(["matrix-live"]));
   });
 
   it("keeps a newer shell selection when delete finishes after the user changes selection", async () => {

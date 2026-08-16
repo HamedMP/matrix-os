@@ -18,9 +18,6 @@ export interface OpenProjectChatOptions {
   threadId?: string | null;
   // Open the new-chat composer for the project once the view is visible.
   compose?: boolean;
-  // Unknown threads may still open under a best-effort fallback project, but
-  // that unverified route must never become a persistent global Recent.
-  recordRecent?: boolean;
 }
 
 interface ProjectChatLauncherState {
@@ -67,28 +64,6 @@ function projectTitleFor(projectId: string): string {
     .getState()
     .summary?.projects.items.find((project) => project.id === projectId);
   return summaryProject?.label ?? projectId;
-}
-
-function conversationTitleFor(threadId: string): string {
-  const workspace = useCodingAgentWorkspace.getState();
-  const summaryThread = [
-    ...(workspace.summary?.attentionThreads.items ?? []),
-    ...(workspace.summary?.activeThreads.items ?? []),
-  ].find((thread) => thread.id === threadId);
-  if (summaryThread?.title) return summaryThread.title;
-  if (workspace.threadSnapshot?.thread.id === threadId) {
-    return workspace.threadSnapshot.thread.title;
-  }
-  for (const entry of Object.values(useProjectWorkspaces.getState().entries)) {
-    const projectWorkspace = entry.workspace;
-    if (!projectWorkspace) continue;
-    const listed = [
-      ...projectWorkspace.projectThreads.items,
-      ...projectWorkspace.taskThreads.items,
-    ].find((thread) => thread.id === threadId);
-    if (listed?.title) return listed.title;
-  }
-  return "Agent conversation";
 }
 
 /**
@@ -161,14 +136,7 @@ export async function openProjectChat(
     void useProjectWorkspaces.getState().ensure(projectId);
     return true;
   }
-  const opened = await loadCodingAgentConversation(projectId, options.threadId);
-  if (opened && options.recordRecent !== false) {
-    useTabs.getState().recordRecentConversation(
-      options.threadId,
-      conversationTitleFor(options.threadId),
-    );
-  }
-  return opened;
+  return loadCodingAgentConversation(projectId, options.threadId);
 }
 
 /**
@@ -219,7 +187,6 @@ export async function openCodingAgentThread(threadId: string): Promise<void> {
   // to be active; the snapshot later reveals the real projectId but nothing
   // reroutes, so the chat stays selected and persisted under the wrong project.
   const known = listed?.projectId ?? snapshotProjectId ?? workspaceProjectId;
-  let resolvedAuthoritatively = known !== undefined;
   let projectId = known;
   if (!projectId) {
     const runtimeGeneration = captureRuntimeGeneration();
@@ -231,14 +198,10 @@ export async function openCodingAgentThread(threadId: string): Promise<void> {
     // Only guess when the runtime genuinely could not resolve it. The guess
     // opens the chat under whichever project is active and nothing reroutes.
     projectId = resolved ?? defaultProjectId() ?? undefined;
-    resolvedAuthoritatively = resolved !== undefined;
   }
   if (!projectId) {
     console.warn("[project-chat] cannot open a thread before any project exists");
     return;
   }
-  await openProjectChat(projectId, {
-    threadId,
-    recordRecent: resolvedAuthoritatively,
-  });
+  await openProjectChat(projectId, { threadId });
 }

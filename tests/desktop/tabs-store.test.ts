@@ -57,13 +57,9 @@ describe("tabs store", () => {
   it("keeps Recents bounded, serializable, filterable, and scoped to one runtime", () => {
     useTabs.getState().ensureNavigationScope("runtime-a");
     for (let index = 0; index < 20; index += 1) {
-      useTabs.getState().openTab({
-        kind: "project",
-        projectSlug: `project-${index}`,
-        title: `Project ${index}`,
-      });
+      useTabs.getState().recordRecentProject(`project-${index}`, `Project ${index}`);
     }
-    useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
+    useTabs.getState().recordRecentTerminal("dev", "dev");
     useTabs.getState().recordRecentConversation("thread-1", "Fix navigation");
 
     const state = useTabs.getState();
@@ -81,6 +77,53 @@ describe("tabs store", () => {
       historyIndex: -1,
       recentFilter: "all",
     });
+  });
+
+  it("keeps navigation separate from meaningful Recent activity", () => {
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    const terminal = useTabs.getState().openTab({
+      kind: "terminal",
+      sessionName: "vivid-otter",
+      title: "vivid-otter",
+    });
+    const project = useTabs.getState().openTab({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+    });
+
+    useTabs.getState().focusTab(terminal);
+    useTabs.getState().focusTab(project);
+
+    expect(useTabs.getState().recentViews).toEqual([]);
+
+    useTabs.getState().recordRecentTerminal("vivid-otter", "vivid-otter");
+    useTabs.getState().recordRecentProject("matrix-os", "Matrix OS");
+    expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual([
+      "matrix-os",
+      "vivid-otter",
+    ]);
+  });
+
+  it("removes deleted resources and reconciles authoritative Hermes and terminal lists", () => {
+    useTabs.getState().recordRecentHermesConversation("hermes-live", "Live chat");
+    useTabs.getState().recordRecentHermesConversation("hermes-deleted", "Deleted chat");
+    useTabs.getState().recordRecentConversation("thread-live", "Coding agent run");
+    useTabs.getState().recordRecentTerminal("terminal-live", "terminal-live");
+    useTabs.getState().recordRecentTerminal("terminal-deleted", "terminal-deleted");
+
+    useTabs.getState().reconcileRecentHermesConversations(["hermes-live"]);
+    useTabs.getState().reconcileRecentTerminals(["terminal-live"]);
+
+    expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual([
+      "terminal-live",
+      "thread-live",
+      "hermes-live",
+    ]);
+
+    useTabs.getState().removeRecentView("conversation", "hermes-live");
+    useTabs.getState().removeRecentView("terminal", "terminal-live");
+    expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual(["thread-live"]);
   });
 
   it("seeds the safe Home root after a runtime transition changes navigation scope", () => {

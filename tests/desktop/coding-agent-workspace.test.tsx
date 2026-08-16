@@ -7,7 +7,10 @@ import ProjectChatsView, {
   clearComposerLaunchContext,
   mergeComposerSeed,
 } from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
-import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import {
+  clearCodingAgentThreadSelection,
+  useCodingAgentWorkspace,
+} from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
@@ -761,8 +764,10 @@ describe("ProjectChatsView", () => {
   });
 
   afterEach(() => {
+    clearCodingAgentThreadSelection();
     cleanup();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("renders provider, thread, and terminal summaries from trusted IPC", async () => {
@@ -1687,6 +1692,126 @@ describe("ProjectChatsView", () => {
     expect(state.threadSnapshot?.thread.status).toBe("running");
     expect(state.threadSnapshot?.thread.attention).toBe("none");
     expect(state.threadSnapshot?.events.items.map((event) => event.eventId)).toContain("evt_approval_desktop_stream");
+  });
+
+  it("polls the selected running thread until completion when the live stream is unavailable", async () => {
+    vi.useFakeTimers();
+    const completedSnapshot = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "completed" as const,
+        attention: "completed" as const,
+        updatedAt: "2026-07-06T00:08:00.000Z",
+      },
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            type: "thread.completed" as const,
+            eventId: "evt_desktop_completed_poll",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-06T00:08:00.000Z",
+            outcome: "completed" as const,
+          },
+        ],
+      },
+    };
+    let snapshotCalls = 0;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-thread-snapshot") {
+        snapshotCalls += 1;
+        return Promise.resolve(snapshotCalls === 1 ? threadSnapshotFixture() : completedSnapshot);
+      }
+      if (channel === "runtime:subscribe-thread-events") {
+        return Promise.reject(new Error("stream unavailable"));
+      }
+      if (channel === "runtime:unsubscribe-thread-events") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    await useCodingAgentWorkspace.getState().loadThreadSnapshot("thread_alpha");
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(snapshotCalls).toBe(2);
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.status).toBe("completed");
+
+    await vi.runOnlyPendingTimersAsync();
+    expect(snapshotCalls).toBe(2);
+  });
+
+  it("falls back to snapshot polling when an established thread stream reports an error", async () => {
+    vi.useFakeTimers();
+    const listeners: Record<string, (payload: unknown) => void> = {};
+    const completedSnapshot = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "completed" as const,
+        attention: "completed" as const,
+        updatedAt: "2026-07-06T00:08:00.000Z",
+      },
+    };
+    let snapshotCalls = 0;
+    window.operator.on = vi.fn((channel: string, callback: (payload: unknown) => void) => {
+      listeners[channel] = callback;
+      return () => {
+        delete listeners[channel];
+      };
+    });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-thread-snapshot") {
+        snapshotCalls += 1;
+        return Promise.resolve(snapshotCalls === 1 ? threadSnapshotFixture() : completedSnapshot);
+      }
+      if (channel === "runtime:subscribe-thread-events") return Promise.resolve({ ok: true });
+      if (channel === "runtime:unsubscribe-thread-events") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    await useCodingAgentWorkspace.getState().loadThreadSnapshot("thread_alpha");
+    listeners["runtime:thread-stream-error"]?.({
+      threadId: "thread_alpha",
+      error: {
+        code: "stream_unavailable",
+        safeMessage: "Thread stream unavailable",
+        retryable: true,
+      },
+    });
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(snapshotCalls).toBe(2);
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.status).toBe("completed");
+  });
+
+  it("keeps a snapshot safety poll while an established thread stream is silent", async () => {
+    vi.useFakeTimers();
+    const completedSnapshot = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "completed" as const,
+        attention: "completed" as const,
+        updatedAt: "2026-07-06T00:08:00.000Z",
+      },
+    };
+    let snapshotCalls = 0;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-thread-snapshot") {
+        snapshotCalls += 1;
+        return Promise.resolve(snapshotCalls === 1 ? threadSnapshotFixture() : completedSnapshot);
+      }
+      if (channel === "runtime:subscribe-thread-events") return Promise.resolve({ ok: true });
+      if (channel === "runtime:unsubscribe-thread-events") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    await useCodingAgentWorkspace.getState().loadThreadSnapshot("thread_alpha");
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(snapshotCalls).toBe(2);
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.status).toBe("completed");
   });
 
   it("does not let older replayed stream events regress a newer thread snapshot", async () => {
@@ -3463,6 +3588,57 @@ describe("ProjectChatsView", () => {
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_desktop_1");
     expect(await screen.findByText("Thread details")).toBeTruthy();
     expect(useTabs.getState().tabs.some((tab) => tab.kind === "thread")).toBe(false);
+  });
+
+  it("attaches updates and safety polling immediately after creating a thread", async () => {
+    vi.useFakeTimers();
+    const runningSnapshot = {
+      thread: {
+        id: "thread_created_live",
+        providerId: "codex",
+        title: "Verify created thread updates",
+        status: "running" as const,
+        attention: "none" as const,
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      events: {
+        items: [],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const completedSnapshot = {
+      ...runningSnapshot,
+      thread: {
+        ...runningSnapshot.thread,
+        status: "completed" as const,
+        attention: "completed" as const,
+        updatedAt: "2026-07-06T00:00:09.000Z",
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:create-thread") return Promise.resolve(runningSnapshot);
+      if (channel === "runtime:subscribe-thread-events") return Promise.resolve({ ok: true });
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(completedSnapshot);
+      if (channel === "runtime:unsubscribe-thread-events") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({ summary: summaryFixture({ threadCreate: true }) });
+
+    await useCodingAgentWorkspace.getState().createThread({
+      providerId: "codex",
+      prompt: "Verify created thread updates",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+    });
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:subscribe-thread-events", {
+      threadId: "thread_created_live",
+    });
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.status).toBe("completed");
   });
 
   it("keeps a desktop-created thread detail when the active summary window drops it", async () => {

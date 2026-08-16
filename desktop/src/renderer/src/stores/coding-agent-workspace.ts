@@ -31,6 +31,7 @@ import {
   withoutRecordKey,
   type FileReference,
 } from "./coding-agent/thread-model";
+import { createThreadSnapshotPoller } from "./coding-agent/thread-snapshot-poller";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
@@ -53,6 +54,14 @@ type ReviewSummaryList = {
 };
 
 const MAX_LOCAL_CREATED_THREAD_HANDLES = 10;
+const THREAD_SNAPSHOT_POLL_INTERVAL_MS = 2_000;
+const SETTLED_THREAD_STATUSES = new Set<AgentThreadSummary["status"]>([
+  "completed",
+  "failed",
+  "aborted",
+  "stale",
+  "archived",
+]);
 
 interface CodingAgentWorkspaceState {
   status: WorkspaceStatus;
@@ -151,6 +160,7 @@ let createRequestSeq = 0;
 let actionRequestSeq = 0;
 let activeThreadEventSubscription: (() => void) | null = null;
 let activeThreadEventSubscriptionId: string | null = null;
+const activeThreadSnapshotPoller = createThreadSnapshotPoller(THREAD_SNAPSHOT_POLL_INTERVAL_MS);
 
 function clearReviewSelectionState() {
   reviewSnapshotSeq += 1;
@@ -206,6 +216,7 @@ function nextActionRequestId(): string {
 }
 
 function detachActiveThreadEventStream(): void {
+  activeThreadSnapshotPoller.stop();
   const threadId = activeThreadEventSubscriptionId;
   activeThreadEventSubscription?.();
   activeThreadEventSubscription = null;
@@ -213,6 +224,39 @@ function detachActiveThreadEventStream(): void {
   if (!threadId) return;
   void invoke("runtime:unsubscribe-thread-events", { threadId }).catch(() => {
     console.warn("[coding-agents] thread stream detach failed");
+  });
+}
+
+function scheduleActiveThreadSnapshotPoll(threadId: string): void {
+  const current = useCodingAgentWorkspace.getState();
+  if (
+    current.activeThreadId !== threadId
+    || current.threadSnapshot?.thread.id !== threadId
+    || SETTLED_THREAD_STATUSES.has(current.threadSnapshot.thread.status)
+  ) {
+    return;
+  }
+
+  activeThreadSnapshotPoller.start(async () => {
+    try {
+      const snapshot = await invoke("runtime:get-thread-snapshot", { threadId });
+      useCodingAgentWorkspace.setState((state) => {
+        if (state.activeThreadId !== threadId || state.threadSnapshot?.thread.id !== threadId) return {};
+        const merged = mergeSelectedThreadSnapshot(state.threadSnapshot, snapshot);
+        return {
+          threadSnapshotStatus: "ready",
+          threadSnapshot: merged,
+          threadSnapshotError: null,
+          summary: state.summary ? reconcileSummaryThread(state.summary, merged.thread) : state.summary,
+        };
+      });
+    } catch {
+      console.warn("[coding-agents] thread snapshot poll unavailable");
+    }
+    const latest = useCodingAgentWorkspace.getState();
+    return latest.activeThreadId === threadId
+      && latest.threadSnapshot?.thread.id === threadId
+      && !SETTLED_THREAD_STATUSES.has(latest.threadSnapshot.thread.status);
   });
 }
 
@@ -276,7 +320,7 @@ function attachActiveThreadEventStream(snapshot: AgentThreadSnapshot): void {
   });
   const detachErrorListener = onEvent("runtime:thread-stream-error", (payload) => {
     if (payload.threadId !== activeThreadEventSubscriptionId) return;
-    void useCodingAgentWorkspace.getState().loadThreadSnapshot(payload.threadId);
+    scheduleActiveThreadSnapshotPoll(payload.threadId);
   });
   activeThreadEventSubscription = () => {
     detachEventListener();
@@ -292,8 +336,12 @@ function attachActiveThreadEventStream(snapshot: AgentThreadSnapshot): void {
       activeThreadEventSubscription?.();
       activeThreadEventSubscription = null;
       activeThreadEventSubscriptionId = null;
+      scheduleActiveThreadSnapshotPoll(threadId);
     }
   });
+  // Live streams can remain open while silently dropping events. Keep one
+  // bounded selected-thread poll as a safety net until the thread settles.
+  scheduleActiveThreadSnapshotPoll(threadId);
 }
 
 export function codingAgentApprovalActionKey(threadId: string, approvalId: string): string {
@@ -999,6 +1047,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
           },
         };
       });
+      attachActiveThreadEventStream(snapshot);
       return thread.id;
     } catch {
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;

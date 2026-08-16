@@ -183,7 +183,7 @@ describe("HermesConversationIndex", () => {
     expect(dialog.style.transform).toBe("translate(-50%, -50%)");
   });
 
-  it("records the canonical Gateway conversation in global Recents only after opening succeeds", async () => {
+  it("does not promote a canonical Gateway conversation when it is only opened", async () => {
     const openConversation = vi.fn(async () => true);
     useHermesChat.setState({ openConversation });
     render(<HermesConversationIndex api={api()} />);
@@ -194,11 +194,7 @@ describe("HermesConversationIndex", () => {
       expect.anything(),
       "launch-plan",
     ));
-    await waitFor(() => expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      id: "launch-plan",
-      label: "Launch plan",
-    }));
+    expect(useTabs.getState().recentViews).toEqual([]);
 
     openConversation.mockResolvedValue(false);
     fireEvent.click(screen.getByRole("button", { name: "Customer notes conversation" }));
@@ -236,6 +232,18 @@ describe("HermesConversationIndex", () => {
     pending.resolve({ ok: true });
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.queryByRole("button", { name: "Launch plan conversation" })).toBeNull();
+  });
+
+  it("removes a deleted conversation from global Recents", async () => {
+    useTabs.getState().recordRecentHermesConversation("launch-plan", "Launch plan");
+    render(<HermesConversationIndex api={api()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Launch plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(useTabs.getState().recentViews.some((recent) => recent.id === "launch-plan"))
+      .toBe(false);
   });
 
   it("disables deletion for a known running chat with recovery guidance", () => {

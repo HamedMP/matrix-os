@@ -55,6 +55,7 @@ export interface DesktopCodingAgentThreadWebSocket {
 interface ThreadSubscription {
   threadId: string;
   ws: DesktopCodingAgentThreadWebSocket;
+  failureEmitted: boolean;
 }
 
 export interface CodingAgentThreadEventStreamer {
@@ -101,6 +102,19 @@ export function createCodingAgentThreadEventStreamer(options: {
     if (!subscription) return;
     subscriptions.delete(threadId);
     closeSubscription(subscription);
+  }
+
+  function emitStreamUnavailable(subscription: ThreadSubscription): void {
+    if (subscription.failureEmitted) return;
+    subscription.failureEmitted = true;
+    options.emit("runtime:thread-stream-error", {
+      threadId: subscription.threadId,
+      error: {
+        code: "stream_unavailable",
+        safeMessage: "Thread stream unavailable",
+        retryable: true,
+      },
+    });
   }
 
   function unsubscribe(threadId: string): void {
@@ -162,7 +176,11 @@ export function createCodingAgentThreadEventStreamer(options: {
       }
       return;
     }
-    const subscription: ThreadSubscription = { threadId: parsedThreadId.data, ws };
+    const subscription: ThreadSubscription = {
+      threadId: parsedThreadId.data,
+      ws,
+      failureEmitted: false,
+    };
     subscriptions.set(parsedThreadId.data, subscription);
     evictIfNeeded();
 
@@ -199,10 +217,14 @@ export function createCodingAgentThreadEventStreamer(options: {
 
     ws.onerror = () => {
       console.warn("[desktop] coding-agent thread stream unavailable");
+      if (subscriptions.get(parsedThreadId.data) === subscription) {
+        emitStreamUnavailable(subscription);
+      }
     };
     ws.onclose = () => {
       if (subscriptions.get(parsedThreadId.data) === subscription) {
         subscriptions.delete(parsedThreadId.data);
+        emitStreamUnavailable(subscription);
       }
     };
   }

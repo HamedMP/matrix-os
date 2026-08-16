@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
   return {
@@ -80,6 +81,7 @@ describe("AgentConversationView composer busy conflict", () => {
       turnRetry: null,
       turnThreadId: null,
     });
+    useTabs.setState(useTabs.getInitialState(), true);
   });
 
   afterEach(() => {
@@ -98,6 +100,12 @@ describe("AgentConversationView composer busy conflict", () => {
       expect(invoke).toHaveBeenCalledWith("runtime:create-turn", expect.objectContaining({ threadId: "thread_alpha" })),
     );
     expect(screen.queryByLabelText("Queued follow-ups")).toBeNull();
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "conversation",
+      conversationType: "coding-agent",
+      id: "thread_alpha",
+      label: "Fix settings route",
+    });
   });
 
   it("keeps the draft and surfaces the safe conflict when the runtime reports the thread busy", async () => {

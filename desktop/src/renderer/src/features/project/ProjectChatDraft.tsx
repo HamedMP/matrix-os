@@ -50,7 +50,7 @@ export function ProjectChatDraft({
   seed: ComposerSeed | null;
   focusRequestId: number;
   typeToStartEnabled: boolean;
-  onCreated: () => void;
+  onCreated: (threadId: string, label: string) => void;
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
   const initialDraft = useMemo(() => {
@@ -183,7 +183,7 @@ export function ProjectChatDraft({
       useDraftChat.getState().clearDraft(projectId);
       setDraft(initialDraft);
       attachments.clear();
-      onCreated();
+      onCreated(threadId, prompt.replace(/\s+/g, " ").slice(0, 80) || "Agent conversation");
     } finally {
       submitInFlightRef.current = false;
       setResolvingTarget(false);

@@ -84,13 +84,13 @@ export default function RecentViews() {
       openTab({ kind: "terminal", sessionName: recent.id, title: recent.label });
       return;
     }
-    if (recent.id.startsWith("thread_")) {
+    const legacyThread = threads.find((candidate) => candidate.id === recent.id);
+    if (recent.conversationType === "coding-agent") {
       void openCodingAgentThread(recent.id);
       return;
     }
-    const thread = threads.find((candidate) => candidate.id === recent.id);
-    if (thread) {
-      setActiveThread(thread.id);
+    if (legacyThread) {
+      setActiveThread(legacyThread.id);
       openTab({ kind: "chat", title: "Hermes", closable: false });
       return;
     }

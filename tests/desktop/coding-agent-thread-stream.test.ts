@@ -35,6 +35,15 @@ class FakeThreadWebSocket implements DesktopCodingAgentThreadWebSocket {
   emitMessage(data: unknown): void {
     this.onmessage?.({ data });
   }
+
+  emitError(): void {
+    this.onerror?.();
+  }
+
+  emitClose(): void {
+    this.readyState = 3;
+    this.onclose?.();
+  }
 }
 
 function deferred<T>() {
@@ -189,6 +198,37 @@ describe("desktop coding-agent thread event streamer", () => {
         retryable: true,
       },
     }));
+
+    expect(emitted).toEqual([{
+      channel: "runtime:thread-stream-error",
+      payload: {
+        threadId: "thread_desktop_1",
+        error: {
+          code: "stream_unavailable",
+          safeMessage: "Thread stream unavailable",
+          retryable: true,
+        },
+      },
+    }]);
+  });
+
+  it("emits a safe stream error when an established websocket fails", async () => {
+    const emitted: unknown[] = [];
+    const sockets: FakeThreadWebSocket[] = [];
+    const streamer = createCodingAgentThreadEventStreamer({
+      auth: auth(),
+      emit: (channel, payload) => emitted.push({ channel, payload }),
+      fetchFn: vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: "ws-token" }), { status: 200 })),
+      createWebSocket: (url) => {
+        const socket = new FakeThreadWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    await streamer.subscribe({ threadId: "thread_desktop_1" });
+    sockets[0]?.emitError();
+    sockets[0]?.emitClose();
 
     expect(emitted).toEqual([{
       channel: "runtime:thread-stream-error",

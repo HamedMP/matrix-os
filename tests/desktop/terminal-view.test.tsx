@@ -7,6 +7,7 @@ import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
 import { getThemeTerminalColors } from "@desktop/renderer/src/design/themes";
 import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import {
   bracketTerminalPaths,
   terminalPasteFiles,
@@ -23,6 +24,7 @@ const { createdTerminals } = vi.hoisted(() => ({
     };
     options: { theme?: unknown };
     registeredProviders: unknown[];
+    dataCallback?: (data: string) => void;
     element: HTMLElement | null;
   }>,
 }));
@@ -65,7 +67,8 @@ vi.mock("@xterm/xterm", () => ({
     clear(): void {}
     focus(): void {}
     dispose(): void {}
-    onData(): { dispose: () => void } {
+    onData(callback: (data: string) => void): { dispose: () => void } {
+      this.dataCallback = callback;
       return { dispose: () => {} };
     }
     registerLinkProvider(provider: unknown): { dispose: () => void } {
@@ -119,6 +122,7 @@ describe("TerminalView session switching", () => {
       authGeneration: 1,
       api: null,
     });
+    useTabs.setState(useTabs.getInitialState(), true);
     vi.stubGlobal(
       "ResizeObserver",
       class FakeResizeObserver {
@@ -146,6 +150,27 @@ describe("TerminalView session switching", () => {
 
     expect(screen.queryByText("Session exited (code 7).")).toBeNull();
     expect(screen.getByText(/Connecting/)).toBeTruthy();
+  });
+
+  it("promotes a terminal in Recents only after user input", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const recentUpdates = vi.fn();
+    const unsubscribe = useTabs.subscribe(recentUpdates);
+
+    expect(useTabs.getState().recentViews).toEqual([]);
+    act(() => terminal.dataCallback?.("pwd\r"));
+    act(() => terminal.dataCallback?.("ls\r"));
+
+    expect(attachmentWrite).toHaveBeenCalledWith("pwd\r");
+    expect(attachmentWrite).toHaveBeenCalledWith("ls\r");
+    expect(recentUpdates).toHaveBeenCalledTimes(1);
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "terminal",
+      id: "alpha",
+      label: "alpha",
+    });
+    unsubscribe();
   });
 
   it("preserves the ended banner when re-activating an ended terminal", () => {

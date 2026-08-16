@@ -32,12 +32,14 @@ export interface Tab {
 
 export type RecentViewKind = "conversation" | "terminal" | "project";
 export type RecentViewFilter = "all" | RecentViewKind;
+export type RecentConversationType = "hermes" | "coding-agent";
 
 export interface RecentView {
   kind: RecentViewKind;
   id: string;
   label: string;
   visitedAt: number;
+  conversationType?: RecentConversationType;
 }
 
 export interface TerminalSessionRequest {
@@ -98,16 +100,6 @@ function pruneHistory(
   return historyPatch(next, nextIndex);
 }
 
-function recentFromTab(tab: Tab): RecentView | null {
-  if (tab.kind === "project" && tab.projectSlug) {
-    return { kind: "project", id: tab.projectSlug, label: tab.title, visitedAt: Date.now() };
-  }
-  if (tab.kind === "terminal" && tab.sessionName) {
-    return { kind: "terminal", id: tab.sessionName, label: tab.title, visitedAt: Date.now() };
-  }
-  return null;
-}
-
 function recordRecent(recentViews: RecentView[], recent: RecentView | null): RecentView[] {
   if (!recent) return recentViews;
   return [
@@ -135,8 +127,13 @@ interface TabsState {
   goBack(): void;
   goForward(): void;
   ensureNavigationScope(scope: string): void;
+  recordRecentProject(id: string, label: string): void;
   recordRecentConversation(id: string, label: string): void;
+  recordRecentHermesConversation(id: string, label: string): void;
   recordRecentTerminal(id: string, label: string): void;
+  removeRecentView(kind: RecentViewKind, id: string): void;
+  reconcileRecentHermesConversations(ids: string[]): void;
+  reconcileRecentTerminals(ids: string[]): void;
   requestTerminalSession(sessionName: string): void;
   consumeTerminalSessionRequest(requestId: number): void;
   setRecentFilter(filter: RecentViewFilter): void;
@@ -166,7 +163,6 @@ export const useTabs = create<TabsState>()((set, get) => ({
       set((state) => ({
         activeTabId: existing.id,
         ...recordHistory(state.viewHistory, state.historyIndex, existing.id),
-        recentViews: recordRecent(state.recentViews, recentFromTab(existing)),
       }));
       return existing.id;
     }
@@ -192,7 +188,6 @@ export const useTabs = create<TabsState>()((set, get) => ({
         tabs,
         activeTabId: id,
         ...recordHistory(pruned.viewHistory, pruned.historyIndex, id),
-        recentViews: recordRecent(state.recentViews, recentFromTab(tab)),
       };
     });
     return id;
@@ -240,7 +235,6 @@ export const useTabs = create<TabsState>()((set, get) => ({
     return {
       activeTabId: id,
       ...recordHistory(state.viewHistory, state.historyIndex, id),
-      recentViews: recordRecent(state.recentViews, recentFromTab(tab)),
     };
   }),
 
@@ -280,12 +274,32 @@ export const useTabs = create<TabsState>()((set, get) => ({
     };
   }),
 
+  recordRecentProject: (id, label) => set((state) => ({
+    recentViews: recordRecent(state.recentViews, {
+      kind: "project",
+      id,
+      label,
+      visitedAt: Date.now(),
+    }),
+  })),
+
   recordRecentConversation: (id, label) => set((state) => ({
     recentViews: recordRecent(state.recentViews, {
       kind: "conversation",
       id,
       label,
       visitedAt: Date.now(),
+      conversationType: "coding-agent",
+    }),
+  })),
+
+  recordRecentHermesConversation: (id, label) => set((state) => ({
+    recentViews: recordRecent(state.recentViews, {
+      kind: "conversation",
+      id,
+      label,
+      visitedAt: Date.now(),
+      conversationType: "hermes",
     }),
   })),
 
@@ -297,6 +311,30 @@ export const useTabs = create<TabsState>()((set, get) => ({
       visitedAt: Date.now(),
     }),
   })),
+
+  removeRecentView: (kind, id) => set((state) => ({
+    recentViews: state.recentViews.filter((recent) => recent.kind !== kind || recent.id !== id),
+  })),
+
+  reconcileRecentHermesConversations: (ids) => set((state) => {
+    const authoritativeIds = new Set(ids);
+    return {
+      recentViews: state.recentViews.filter((recent) =>
+        recent.kind !== "conversation"
+        || recent.conversationType === "coding-agent"
+        || authoritativeIds.has(recent.id),
+      ),
+    };
+  }),
+
+  reconcileRecentTerminals: (ids) => set((state) => {
+    const authoritativeIds = new Set(ids);
+    return {
+      recentViews: state.recentViews.filter((recent) =>
+        recent.kind !== "terminal" || authoritativeIds.has(recent.id),
+      ),
+    };
+  }),
 
   requestTerminalSession: (sessionName) => set((state) => {
     const requestId = state.terminalSessionRequestSequence + 1;

@@ -109,6 +109,8 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const tabs = useTabs((s) => s.tabs);
   const openTab = useTabs((s) => s.openTab);
   const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
+  const removeRecentView = useTabs((s) => s.removeRecentView);
+  const reconcileRecentTerminals = useTabs((s) => s.reconcileRecentTerminals);
   const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
   const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
@@ -129,6 +131,11 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   useEffect(() => {
     if (api) void load(api);
   }, [api, load]);
+
+  useEffect(() => {
+    if (loading || error || loadSequence === 0) return;
+    reconcileRecentTerminals(shells.map((shell) => shell.name));
+  }, [error, loading, loadSequence, reconcileRecentTerminals, shells]);
 
   const openShellNames = useMemo(
     () => new Set([
@@ -192,11 +199,11 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
       setActionError("Could not create shell");
       return;
     }
+    recordRecentTerminal(created.name, created.name);
     showShellDetail(created);
   };
 
   const showShellDetail = useCallback((shell: ShellSessionSummary) => {
-    recordRecentTerminal(shell.name, shell.name);
     setOpenedSessionNames((current) => [
       ...current.filter((name) => name !== shell.name),
       shell.name,
@@ -206,7 +213,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
       void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
     }
-  }, [api, patchUiState, recordRecentTerminal]);
+  }, [api, patchUiState]);
 
   useEffect(() => {
     if (!terminalSessionRequest) return;
@@ -313,6 +320,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
       setActionError("Could not delete shell");
       return;
     }
+    removeRecentView("terminal", name);
     if (selectedRef.current === name) {
       setSelectedName(null);
     }

@@ -1,9 +1,12 @@
-import { FileText, Paperclip, PanelRight } from "lucide-react";
+import { FileText, FolderOpen, GitBranch, Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { groupMessages } from "../../lib/chat";
 import { useConnection } from "../../stores/connection";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
+import { useTabs } from "../../stores/tabs";
+import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
+import { useProviderPreferences } from "../settings/provider-preferences";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
@@ -27,9 +30,12 @@ function HermesPane() {
   const loadError = useHermesChat((state) => state.loadError);
   const send = useHermesChat((state) => state.send);
   const abort = useHermesChat((state) => state.abort);
+  const recordRecentHermesConversation = useTabs((state) => state.recordRecentHermesConversation);
+  const setDefaultProvider = useProviderPreferences((state) => state.setDefaultProvider);
   const [draft, setDraft] = useState("");
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [harnessError, setHarnessError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
@@ -50,13 +56,35 @@ function HermesPane() {
     try {
       const uploaded = await attachments.uploadAll();
       if (!uploaded.ok) return;
+      const submittedDraft = draft.trim();
       send(appendHermesAttachmentPaths(draft, uploaded.paths));
+      if (sessionId) {
+        const knownTitle = useHermesChat.getState().conversations
+          .find((conversation) => conversation.id === sessionId)?.title;
+        const label = submittedDraft.replace(/\s+/g, " ").slice(0, 80)
+          || knownTitle
+          || "Shared files";
+        recordRecentHermesConversation(sessionId, label);
+      }
       setDraft("");
       attachments.clear();
     } finally {
       setUploadingAttachments(false);
     }
   };
+
+  const startCodexChat = useCallback(async () => {
+    const projectId = defaultProjectId();
+    if (!projectId) {
+      setHarnessError("Create a project before starting a Codex chat.");
+      return;
+    }
+    setHarnessError(null);
+    setDefaultProvider("codex");
+    if (!await openProjectChat(projectId, { compose: true })) {
+      setHarnessError("Codex chat could not be opened. Try again from the project.");
+    }
+  }, [setDefaultProvider]);
 
   const attachmentPreviews = (
     <AttachmentPreviewRow
@@ -77,7 +105,7 @@ function HermesPane() {
         disabled={uploadingAttachments}
         onClick={() => fileInputRef.current?.click()}
       >
-        <Paperclip size={16} aria-hidden />
+        <Plus size={16} aria-hidden />
       </button>
       <button
         ref={resourcesTriggerRef}
@@ -88,19 +116,33 @@ function HermesPane() {
         style={{ color: "var(--text-secondary)" }}
         onClick={() => setResourcesOpen((open) => !open)}
       >
-        <PanelRight size={15} aria-hidden />
-        <span className="hidden sm:inline">Resources</span>
+        <FolderOpen size={15} aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="Use Codex for a project chat"
+        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+        style={{ color: "var(--text-secondary)" }}
+        onClick={() => void startCodexChat()}
+      >
+        <GitBranch size={15} aria-hidden />
       </button>
     </>
   );
   const harnessBadge = (
-    <span
-      className="rounded-full border px-2 py-1 text-xs font-medium"
+    <select
+      aria-label="Chat harness"
+      value="hermes"
+      className="h-7 appearance-none rounded-full border bg-transparent px-2 text-xs font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-      title="Current chat harness"
+      title="Choose chat harness"
+      onChange={(event) => {
+        if (event.currentTarget.value === "codex") void startCodexChat();
+      }}
     >
-      Hermes
-    </span>
+      <option value="hermes">Hermes</option>
+      <option value="codex">Codex</option>
+    </select>
   );
   const renderComposer = (placeholder: string, autoFocus = false) => (
     <>
@@ -147,10 +189,15 @@ function HermesPane() {
       {...attachments.paneProps}
     >
       {loadErrorBanner}
+      {harnessError ? (
+        <div role="alert" className="mx-auto mt-3 w-[calc(100%-2.5rem)] max-w-[868px] rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+          {harnessError}
+        </div>
+      ) : null}
       {empty ? (
-        <div className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col px-5 pb-5">
-          <div className="flex min-h-[180px] flex-1 flex-col items-center justify-center pb-8 text-center">
-            <BrandLogo size={48} color="var(--text-primary)" className="mb-5" />
+        <div data-testid="chat-empty-content" className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center gap-[26px] px-5 py-8">
+          <div className="flex shrink-0 flex-col items-center gap-[26px] text-center">
+            <BrandLogo size={208} color="var(--text-primary)" testId="chat-empty-logo" />
             <h1
               className="text-[32px] font-medium leading-tight tracking-[-0.02em] sm:text-[36px]"
               style={{ color: "var(--text-primary)", fontFamily: '"Instrument Serif", Georgia, serif' }}
@@ -163,7 +210,7 @@ function HermesPane() {
       ) : (
         <>
           <Conversation>
-            <ConversationContent className="justify-start pt-[clamp(72px,30vh,280px)]">
+            <ConversationContent className="justify-start pt-8 sm:pt-12">
               {groups.map((group) =>
                 group.type === "tool_group" ? (
                   <ConversationItem key={group.messages[0]?.id ?? "tools"} messageId={group.messages[0]?.id}>

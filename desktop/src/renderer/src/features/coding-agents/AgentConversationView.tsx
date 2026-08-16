@@ -32,6 +32,7 @@ import {
   codingAgentInputActionKey,
   useCodingAgentWorkspace,
 } from "../../stores/coding-agent-workspace";
+import { useTabs } from "../../stores/tabs";
 import { safeUrlTransform } from "../editor/MarkdownPreview";
 import {
   Attachment,
@@ -609,12 +610,14 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
 
 function ConversationComposer({
   threadId,
+  threadLabel,
   waitingForAction,
   threadBusy,
   composerControls,
   attachments,
 }: {
   threadId: string;
+  threadLabel: string;
   waitingForAction: boolean;
   threadBusy: boolean;
   // Left side of the composer bottom row (provider/mode pickers).
@@ -650,6 +653,7 @@ function ConversationComposer({
         ...(uploaded.attachments.length > 0 ? { attachments: uploaded.attachments } : {}),
       });
       if (sent) {
+        useTabs.getState().recordRecentConversation(threadId, threadLabel);
         setMessage("");
         attachments.clear();
       }
@@ -827,6 +831,7 @@ export function AgentConversationView({
         <ConversationComposer
           key={`composer:${snapshot.thread.id}`}
           threadId={snapshot.thread.id}
+          threadLabel={snapshot.thread.title}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
           threadBusy={running}
           attachments={attachments}

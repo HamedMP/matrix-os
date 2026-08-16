@@ -9,6 +9,7 @@ import { getThemeTerminalColors } from "../../design/themes";
 import { resolveThemeMode } from "../../design/themes/apply";
 import { useAppearance } from "../../stores/appearance";
 import { useConnection } from "../../stores/connection";
+import { useTabs } from "../../stores/tabs";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
@@ -31,6 +32,7 @@ import {
 } from "./terminal-rich-paste";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
+const RECENT_ACTIVITY_THROTTLE_MS = 30_000;
 
 interface TerminalViewProps {
   sessionName: string;
@@ -200,7 +202,15 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       },
     });
     attachmentRef.current = attachment;
-    const dataDisposable = terminal.onData((data) => attachment.write(data));
+    let lastRecentActivityAt = 0;
+    const dataDisposable = terminal.onData((data) => {
+      const now = Date.now();
+      if (now - lastRecentActivityAt >= RECENT_ACTIVITY_THROTTLE_MS) {
+        lastRecentActivityAt = now;
+        useTabs.getState().recordRecentTerminal(sessionName, sessionName);
+      }
+      attachment.write(data);
+    });
     fit?.fit();
     attachment.resize(terminal.cols, terminal.rows);
     terminal.focus();

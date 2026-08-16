@@ -13,6 +13,7 @@ import { useProjectView } from "../../desktop/src/renderer/src/stores/project-vi
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
@@ -147,6 +148,7 @@ function resetStores() {
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {}, resolveNewChatTarget: defaultResolveNewChatTarget });
   useProjectChatLauncher.setState({ composerRequest: null });
+  useTabs.setState(useTabs.getInitialState(), true);
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
   useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
   useCodingAgentWorkspace.setState({
@@ -215,6 +217,12 @@ describe("draft chat implicit thread creation", () => {
     // The created thread replaces the draft in place.
     await waitFor(() => {
       expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_new_draft");
+    });
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "conversation",
+      conversationType: "coding-agent",
+      id: "thread_new_draft",
+      label: "Investigate the flaky desktop check",
     });
     expect(useDraftChat.getState().draftFor("matrix-os")).toBeNull();
     expect(await screen.findByRole("region", { name: /Conversation/ })).toBeTruthy();
