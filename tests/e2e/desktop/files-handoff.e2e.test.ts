@@ -86,6 +86,20 @@ suite("MAT-298 Files handoff in Electron", () => {
 
     await page.getByRole("button", { name: "Matrix home" }).click();
     await page.getByRole("button", { name: "Open SOUL.md" }).waitFor();
+    await page.getByRole("region", { name: "File preview" }).getByRole("heading", { name: "Matrix home" }).waitFor();
+    await page.screenshot({ path: join(EVIDENCE_DIR, "mat-326-files-root-preview.png") });
+
+    await page.getByRole("button", { name: "Open workspaces" }).dblclick();
+    await page.getByRole("button", { name: "Open matrix-os" }).waitFor();
+    await filesWorkspace.getByRole("button", { name: "Up one level" }).click();
+    await page.getByRole("button", { name: "Open SOUL.md" }).waitFor();
+    await page.getByRole("region", { name: "File preview" }).getByRole("heading", { name: "Matrix home" }).waitFor();
+
+    await page.getByRole("button", { name: "Open workspaces" }).dblclick();
+    await page.getByRole("button", { name: "Open matrix-os" }).waitFor();
+    await filesWorkspace.getByRole("button", { name: "Back" }).click();
+    await page.getByRole("button", { name: "Open SOUL.md" }).waitFor();
+    await page.getByRole("region", { name: "File preview" }).getByRole("heading", { name: "Matrix home" }).waitFor();
   });
 
   it("captures selected-folder preview and managed read-only states", async () => {

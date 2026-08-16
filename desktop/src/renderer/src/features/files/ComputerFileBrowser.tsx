@@ -218,12 +218,13 @@ export default function ComputerFileBrowser({
     markFocusForRestore();
     setCandidatePath(path);
     setSelectedPath(null);
-    onSelectionChange?.(path
-      ? {
-          path,
-          entry: entry ?? { name: path.split("/").pop() ?? path, type: "directory" },
-        }
-      : null);
+    onSelectionChange?.({
+      path,
+      entry: entry ?? {
+        name: path ? path.split("/").pop() ?? path : "Matrix home",
+        type: "directory",
+      },
+    });
     void load(path);
   }, [cancelPendingDirectoryPreview, load, markFocusForRestore, onSelectionChange]);
 

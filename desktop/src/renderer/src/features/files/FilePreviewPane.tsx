@@ -280,7 +280,7 @@ function FolderPreview({ path }: { path: string }) {
 // Renders below a Suspense boundary (markdown preview is lazy-loaded).
 export function FilePreview({ path, entry }: { path: string | null; entry?: BrowserEntry }) {
   const api = useConnection((state) => state.api);
-  if (!path || !api) {
+  if (path === null || !api) {
     return <EmptyState icon={<FileCode2 size={26} />} headline="Choose a file" description="Preview images, Markdown, and code from this computer." />;
   }
   if (entry?.type === "directory") return <FolderPreview key={path} path={path} />;

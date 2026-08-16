@@ -17,7 +17,7 @@ export default function FilesWorkspace() {
   // first render with the new slot or generation, so FilePreview never sees a
   // stale path.
   const activePath = resolveActivePath(selection, runtimeSlot, authGeneration);
-  const activeSelection = activePath && selection?.entry
+  const activeSelection = activePath !== null && selection?.entry
     ? { path: activePath, entry: selection.entry }
     : null;
 

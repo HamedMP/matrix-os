@@ -239,6 +239,47 @@ describe("Files workspace", () => {
     expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "packages" })).toBeTruthy();
   });
 
+  it("keeps the Preview pane mounted when Matrix home returns to root", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const panes = screen.getByTestId("files-workspace-panes");
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    await screen.findByRole("button", { name: "Open matrix-os" });
+    fireEvent.click(screen.getByRole("button", { name: "Matrix home" }));
+
+    expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    const preview = screen.getByRole("region", { name: "File preview" });
+    expect(within(preview).getByRole("heading", { name: "Matrix home" })).toBeTruthy();
+    expect(await within(preview).findByText("README.md")).toBeTruthy();
+  });
+
+  it("keeps the Preview pane mounted when Up returns from a top-level folder to root", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const panes = screen.getByTestId("files-workspace-panes");
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    await screen.findByRole("button", { name: "Open matrix-os" });
+    fireEvent.click(screen.getByRole("button", { name: "Up one level" }));
+
+    expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "Matrix home" })).toBeTruthy();
+  });
+
+  it("keeps the Preview pane mounted when Back history returns to root", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const panes = screen.getByTestId("files-workspace-panes");
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    await screen.findByRole("button", { name: "Open matrix-os" });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "Matrix home" })).toBeTruthy();
+  });
+
   it("previews bounded code as selectable text", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
