@@ -99,6 +99,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const loading = useShellSessions((s) => s.loading);
   const creating = useShellSessions((s) => s.creating);
   const error = useShellSessions((s) => s.error);
+  const loadSequence = useShellSessions((s) => s.loadSequence);
   const load = useShellSessions((s) => s.load);
   const create = useShellSessions((s) => s.create);
   const deleteSession = useShellSessions((s) => s.deleteSession);
@@ -210,10 +211,23 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   useEffect(() => {
     if (!terminalSessionRequest) return;
     const requestedShell = shells.find((shell) => shell.name === terminalSessionRequest.sessionName);
-    if (!requestedShell) return;
+    if (!requestedShell) {
+      if (!loading && !error && loadSequence > 0) {
+        consumeTerminalSessionRequest(terminalSessionRequest.requestId);
+      }
+      return;
+    }
     showShellDetail(requestedShell);
     consumeTerminalSessionRequest(terminalSessionRequest.requestId);
-  }, [consumeTerminalSessionRequest, shells, showShellDetail, terminalSessionRequest]);
+  }, [
+    consumeTerminalSessionRequest,
+    error,
+    loading,
+    loadSequence,
+    shells,
+    showShellDetail,
+    terminalSessionRequest,
+  ]);
 
   const showShellList = () => {
     setSelectedName(null);

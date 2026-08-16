@@ -216,6 +216,30 @@ describe("TerminalsTab", () => {
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 
+  it("retires a missing Recent after canonical loading completes so a reused name does not open", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().requestTerminalSession("matrix-deleted");
+    useShellSessions.setState({
+      sessions: [],
+      loading: false,
+      error: null,
+      loadSequence: 1,
+    });
+
+    renderTab();
+
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+
+    act(() => {
+      useShellSessions.setState({
+        sessions: [{ name: "matrix-deleted", status: "active", placement: "active" }],
+      });
+    });
+
+    expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(screen.queryByTestId("terminal-view-matrix-deleted")).toBeNull();
+  });
+
   it("bounds preserved terminal buffers to the eight most recently opened sessions", () => {
     useShellSessions.setState({
       sessions: Array.from({ length: 9 }, (_, index) => ({
