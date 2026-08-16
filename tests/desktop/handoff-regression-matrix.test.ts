@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   HANDOFF_REGRESSION_MATRIX,
@@ -39,7 +41,7 @@ const REQUIRED_PER_SURFACE: HandoffRequirement[] = [
 ];
 
 describe("Desktop handoff regression matrix", () => {
-  it("covers every handoff surface and required cross-surface QA dimension", () => {
+  it("documents every handoff dimension with an explicit verification disposition", () => {
     expect(() => assertHandoffMatrixCoverage(HANDOFF_REGRESSION_MATRIX)).not.toThrow();
 
     for (const surface of SURFACES) {
@@ -50,6 +52,20 @@ describe("Desktop handoff regression matrix", () => {
       );
       for (const requirement of REQUIRED_PER_SURFACE) {
         expect(covered.has(requirement), `${surface}:${requirement}`).toBe(true);
+      }
+    }
+
+    for (const scenario of HANDOFF_REGRESSION_MATRIX) {
+      if (scenario.verification === "automated") {
+        expect(scenario.evidence.length, scenario.id).toBeGreaterThan(0);
+        for (const evidence of scenario.evidence) {
+          const source = readFileSync(resolve(evidence.file), "utf8");
+          expect(source, `${scenario.id}:${evidence.testName}`).toContain(
+            `it("${evidence.testName}"`,
+          );
+        }
+      } else {
+        expect(scenario.note.trim().length, scenario.id).toBeGreaterThan(0);
       }
     }
   });
