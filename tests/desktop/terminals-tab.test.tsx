@@ -113,7 +113,7 @@ describe("TerminalsTab", () => {
     expect(screen.queryByText("Workspace Only")).toBeNull();
   });
 
-  it("opens the Figma-aligned session detail and preserves its mounted live terminal when returning to the list", () => {
+  it("opens the Figma-aligned session detail and releases its live attachment while preserving the mounted terminal on return", () => {
     useShellSessions.setState({
       sessions: [{
         name: "matrix-main",
@@ -138,13 +138,36 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
 
     expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
-    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
+    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("false");
     expect(terminalMounts.get("matrix-main")).toBe(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
 
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
     expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("bounds preserved terminal buffers to the eight most recently opened sessions", () => {
+    useShellSessions.setState({
+      sessions: Array.from({ length: 9 }, (_, index) => ({
+        name: `matrix-${index + 1}`,
+        status: "active" as const,
+        placement: "active" as const,
+      })),
+    });
+
+    renderTab();
+
+    for (let index = 1; index <= 9; index += 1) {
+      fireEvent.click(screen.getByRole("button", { name: `Open matrix-${index}` }));
+      fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+    }
+
+    expect(screen.queryByTestId("terminal-view-matrix-1")).toBeNull();
+    expect(terminalMounts.get("matrix-1")).toBe(0);
+    for (let index = 2; index <= 9; index += 1) {
+      expect(screen.getByTestId(`terminal-view-matrix-${index}`)).toBeTruthy();
+    }
   });
 
   it("uses the Figma list toolbar and reveals a bounded search-empty state", () => {
@@ -154,6 +177,7 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
+    expect(screen.queryByRole("button", { name: "Select terminal sessions" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Search terminal sessions" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Search terminal sessions" }));
     const input = screen.getByRole("textbox", { name: "Search terminal sessions" });
@@ -173,7 +197,9 @@ describe("TerminalsTab", () => {
     expect(screen.queryByRole("button", { name: "Rename matrix-main" })).toBeNull();
     openShellActions("matrix-main");
 
-    expect(screen.getByRole("menu", { name: "More actions for matrix-main" })).toBeTruthy();
+    const menu = screen.getByRole("menu", { name: "More actions for matrix-main" });
+    expect(menu).toBeTruthy();
+    expect((menu as HTMLElement).style.zIndex).toBe("100");
     expect(screen.getByRole("menuitem", { name: "Rename" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Copy attach command" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();

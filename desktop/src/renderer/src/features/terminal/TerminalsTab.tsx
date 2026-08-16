@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, EmptyState, IconButton, StatusDot } from "../../design/primitives";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { categoryMessage } from "../../../../shared/app-error";
 import {
   isValidShellSessionName,
@@ -36,6 +37,7 @@ const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
+const MAX_PRESERVED_TERMINALS = 8;
 
 function attachCommand(shell: ShellSessionSummary): string {
   return shell.attachCommand ?? `matrix shell connect ${shell.name}`;
@@ -190,12 +192,20 @@ export default function TerminalsTab() {
   };
 
   const showShellDetail = (shell: ShellSessionSummary) => {
-    setOpenedSessionNames((current) => current.includes(shell.name) ? current : [...current, shell.name]);
+    setOpenedSessionNames((current) => [
+      ...current.filter((name) => name !== shell.name),
+      shell.name,
+    ].slice(-MAX_PRESERVED_TERMINALS));
     setLiveSessionName(shell.name);
     setSelectedName(shell.name);
     if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
       void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
     }
+  };
+
+  const showShellList = () => {
+    setSelectedName(null);
+    setLiveSessionName(null);
   };
 
   const openShellInTab = (shell: ShellSessionSummary) => {
@@ -337,7 +347,6 @@ export default function TerminalsTab() {
             >
               <Search size={14} />
             </IconButton>
-            <Button variant="ghost" aria-label="Select terminal sessions">Select</Button>
             <Button variant="primary" disabled={!api || creating} onClick={() => void createShell()} aria-label="New shell">
               <Plus size={13} />
               {creating ? "Starting" : "New"}
@@ -454,7 +463,7 @@ export default function TerminalsTab() {
                 aria-label="Terminal sessions breadcrumb"
                 className="rounded px-1 py-0.5 hover:bg-[var(--bg-hover)]"
                 style={{ color: "var(--text-secondary)" }}
-                onClick={() => setSelectedName(null)}
+                onClick={showShellList}
               >
                 Terminal
               </button>
@@ -463,7 +472,7 @@ export default function TerminalsTab() {
             </nav>
 
             <header className="flex shrink-0 items-center gap-3 border-b px-5 py-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-              <IconButton label="Back to terminal sessions" onClick={() => setSelectedName(null)}>
+              <IconButton label="Back to terminal sessions" onClick={showShellList}>
                 <ArrowLeft size={14} />
               </IconButton>
               <div className="min-w-0 flex-1">
@@ -632,8 +641,13 @@ function ShellCard({
               aria-label={`Actions for ${shell.name}`}
               align="end"
               sideOffset={5}
-              className="fade-in z-[100] min-w-[190px] rounded-lg border p-1"
-              style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
+              className="fade-in min-w-[190px] rounded-lg border p-1"
+              style={{
+                zIndex: DESKTOP_Z_INDEX.popover,
+                background: "var(--bg-overlay)",
+                borderColor: "var(--border-default)",
+                boxShadow: "var(--shadow-2)",
+              }}
             >
               <ShellMenuItem icon={<ExternalLink size={13} />} label="Open in tab" onSelect={onOpenInTab} />
               <ShellMenuItem
