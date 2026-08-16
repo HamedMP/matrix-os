@@ -13,6 +13,7 @@ export interface KernelServerMessage {
 
 export type KernelClientMessage =
   | { type: "message"; text: string; sessionId?: string; requestId: string }
+  | { type: "switch_session"; sessionId: string }
   | { type: "abort"; requestId: string }
   | { type: "approval_response"; id: string; approved: boolean }
   | { type: "ping" };

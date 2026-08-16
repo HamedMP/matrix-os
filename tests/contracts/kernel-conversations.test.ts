@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  KernelConversationDeleteResponseSchema,
   KernelConversationHistoryQuerySchema,
   KernelConversationHistoryResponseSchema,
   KernelConversationIdSchema,
+  KernelConversationMutationErrorCodeSchema,
 } from "../../packages/contracts/src/index.js";
 
 describe("kernel conversation contracts", () => {
@@ -11,6 +13,16 @@ describe("kernel conversation contracts", () => {
       .toBe("mobile:123e4567-e89b-12d3-a456-426614174000");
     expect(KernelConversationIdSchema.safeParse("../system/config").success).toBe(false);
     expect(KernelConversationIdSchema.safeParse("chat/other").success).toBe(false);
+  });
+
+  it("bounds conversation deletion responses and client error codes", () => {
+    expect(KernelConversationDeleteResponseSchema.parse({ ok: true })).toEqual({ ok: true });
+    expect(KernelConversationDeleteResponseSchema.safeParse({ ok: true, path: "/private/chat" }).success)
+      .toBe(false);
+    expect(KernelConversationMutationErrorCodeSchema.safeParse("conversation_busy").success)
+      .toBe(true);
+    expect(KernelConversationMutationErrorCodeSchema.safeParse("/Users/name/private").success)
+      .toBe(false);
   });
 
   it("coerces and bounds history pagination", () => {

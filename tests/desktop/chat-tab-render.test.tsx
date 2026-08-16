@@ -82,6 +82,13 @@ describe("ChatTab", () => {
     useHermesChat.setState({
       messages: [{ id: "m1", role: "user", content: "hello", timestamp: 1 }],
       status: "idle",
+      view: "conversation",
+      conversations: [],
+      indexStatus: "ready",
+      indexError: null,
+      loadStatus: "idle",
+      loadError: null,
+      loadingConversationId: null,
       send: vi.fn(),
       abort: vi.fn(),
     });
@@ -251,5 +258,151 @@ describe("ChatTab", () => {
     expect(await screen.findByText("Upload failed. Try again.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry notes.txt" })).toBeTruthy();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("renders the persistent Hermes index newest-first with bounded metadata", () => {
+    useHermesChat.setState({
+      view: "index",
+      indexStatus: "ready",
+      indexError: null,
+      conversations: [
+        {
+          id: "conversation-new",
+          title: "Plan the launch",
+          preview: "Review the final launch checklist",
+          messageCount: 4,
+          createdAt: 20,
+          updatedAt: 30,
+        },
+        {
+          id: "conversation-old",
+          title: "Earlier notes",
+          preview: "Summarize the customer interview",
+          messageCount: 2,
+          createdAt: 10,
+          updatedAt: 15,
+        },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByRole("heading", { name: "Chats" })).toBeTruthy();
+    const newest = screen.getByRole("button", { name: "Plan the launch conversation" });
+    const older = screen.getByRole("button", { name: "Earlier notes conversation" });
+    expect(newest.textContent).toContain("Plan the launch");
+    expect(newest.textContent).toContain("4 messages");
+    expect(older.textContent).toContain("Earlier notes");
+    expect(screen.queryByText("hello")).toBeNull();
+  });
+
+  it("shows loading, empty, and safe recovery states for conversation discovery", () => {
+    useHermesChat.setState({ view: "index", indexStatus: "loading", conversations: [], indexError: null });
+    const { rerender } = render(<ChatTab />);
+    expect(screen.getByRole("status", { name: "Loading chats" })).toBeTruthy();
+
+    act(() => useHermesChat.setState({ indexStatus: "ready", conversations: [] }));
+    rerender(<ChatTab />);
+    expect(screen.getByRole("heading", { name: "No chats yet" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeTruthy();
+
+    act(() => useHermesChat.setState({
+      indexStatus: "error",
+      indexError: "Conversations could not be loaded. Try again.",
+    }));
+    rerender(<ChatTab />);
+    expect(screen.getByRole("alert").textContent).toContain("Conversations could not be loaded. Try again.");
+    expect(screen.getByRole("button", { name: "Retry chats" })).toBeTruthy();
+  });
+
+  it("marks only the selected live conversation as running", () => {
+    useHermesChat.setState({
+      view: "index",
+      sessionId: "conversation-selected",
+      status: "streaming",
+      indexStatus: "ready",
+      conversations: [
+        {
+          id: "conversation-newer",
+          title: "Newer but idle",
+          preview: "idle",
+          messageCount: 1,
+          createdAt: 20,
+          updatedAt: 30,
+        },
+        {
+          id: "conversation-selected",
+          title: "Selected and live",
+          preview: "running",
+          messageCount: 2,
+          createdAt: 10,
+          updatedAt: 15,
+        },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByRole("button", { name: "Selected and live conversation" }).textContent).toContain("Running");
+    expect(screen.getByRole("button", { name: "Newer but idle conversation" }).textContent).not.toContain("Running");
+  });
+
+  it("creates and opens a server-backed empty conversation", async () => {
+    const post = vi.fn().mockResolvedValue({ id: "conversation-created" });
+    const get = vi.fn().mockResolvedValue([
+      {
+        id: "conversation-created",
+        preview: "",
+        messageCount: 0,
+        createdAt: 100,
+        updatedAt: 100,
+      },
+    ]);
+    useConnection.setState({ api: { post, get } as never });
+    useHermesChat.setState({ view: "index", indexStatus: "ready", conversations: [] });
+
+    render(<ChatTab />);
+    fireEvent.click(screen.getAllByRole("button", { name: "New conversation" })[0]!);
+
+    expect(await screen.findByRole("region", { name: "Hermes conversation" })).toBeTruthy();
+    expect(useHermesChat.getState()).toMatchObject({
+      view: "conversation",
+      sessionId: "conversation-created",
+      messages: [],
+    });
+  });
+
+  it("opens the selected canonical conversation and exposes a Chat breadcrumb", async () => {
+    const get = vi.fn().mockResolvedValue({
+      id: "conversation-one",
+      createdAt: 10,
+      updatedAt: 20,
+      totalCount: 1,
+      messages: [
+        { index: 0, role: "user", content: "persistent hello", contentTruncated: false, timestamp: 10 },
+      ],
+      hasMore: false,
+      limit: 50,
+    });
+    useConnection.setState({ api: { get } as never });
+    useHermesChat.setState({
+      view: "index",
+      indexStatus: "ready",
+      conversations: [{
+        id: "conversation-one",
+        title: "Persistent plan",
+        preview: "persistent hello",
+        messageCount: 1,
+        createdAt: 10,
+        updatedAt: 20,
+      }],
+    });
+
+    render(<ChatTab />);
+    fireEvent.click(screen.getByRole("button", { name: /persistent plan conversation/i }));
+
+    expect(await screen.findByText("persistent hello")).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Chat breadcrumb" }).textContent).toContain("Persistent plan");
+    expect(useHermesChat.getState().sessionId).toBe("conversation-one");
   });
 });

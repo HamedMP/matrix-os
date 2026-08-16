@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.146.0";
+export const CODEX_VERIFIED_VERSION = "0.147.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#agent-runtime-config";
 export * from "#hermes-configuration";
@@ -277,10 +277,25 @@ export const KernelConversationHistoryResponseSchema = z.object({
   limit: z.number().int().min(1).max(50),
 }).strict();
 
+export const KernelConversationDeleteResponseSchema = z.object({
+  ok: z.literal(true),
+}).strict();
+
+export const KernelConversationMutationErrorCodeSchema = z.enum([
+  "invalid_conversation_id",
+  "conversation_not_found",
+  "conversation_busy",
+  "conversation_delete_unavailable",
+]);
+
 export type KernelConversationId = z.infer<typeof KernelConversationIdSchema>;
 export type KernelConversationHistoryQuery = z.infer<typeof KernelConversationHistoryQuerySchema>;
 export type KernelConversationHistoryMessage = z.infer<typeof KernelConversationHistoryMessageSchema>;
 export type KernelConversationHistoryResponse = z.infer<typeof KernelConversationHistoryResponseSchema>;
+export type KernelConversationDeleteResponse = z.infer<typeof KernelConversationDeleteResponseSchema>;
+export type KernelConversationMutationErrorCode = z.infer<
+  typeof KernelConversationMutationErrorCodeSchema
+>;
 
 export const RuntimeSelectionRequestSchema = z.object({
   slot: MatrixComputerRuntimeSlotSchema,

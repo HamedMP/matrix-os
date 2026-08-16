@@ -3,13 +3,13 @@
 // mutation causes streaming text duplication.
 
 export type ChatEvent =
-  | { type: "kernel:init"; sessionId: string; requestId?: string }
-  | { type: "kernel:text"; text: string; requestId?: string }
-  | { type: "kernel:tool_start"; tool: string; requestId?: string }
-  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
-  | { type: "kernel:result"; data?: unknown; requestId?: string }
-  | { type: "kernel:error"; message: string; requestId?: string }
-  | { type: "kernel:aborted"; requestId?: string };
+  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
+  | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
+  | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
+  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }
+  | { type: "kernel:result"; data?: unknown; requestId?: string; eventId?: string }
+  | { type: "kernel:error"; message: string; requestId?: string; eventId?: string }
+  | { type: "kernel:aborted"; requestId?: string; eventId?: string };
 
 let msgSeq = 0;
 function newMsgId(): string {

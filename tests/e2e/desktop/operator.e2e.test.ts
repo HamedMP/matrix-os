@@ -275,7 +275,7 @@ suite("operator desktop e2e", () => {
     await page.getByRole("button", { name: "Expand sidebar (⌘B)" }).click();
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();
-    await page.getByRole("heading", { name: /What should we build/i }).waitFor({ timeout: 10_000 });
+    await page.getByRole("heading", { name: "Chats" }).waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "10-chat-no-shell-overlay.png") });
 

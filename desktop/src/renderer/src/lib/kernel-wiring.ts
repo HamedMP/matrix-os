@@ -76,6 +76,15 @@ export function abortKernelRequest(requestId: string): boolean {
   return true;
 }
 
+export function switchKernelSession(sessionId: string): boolean {
+  if (!socket) {
+    console.warn("[kernel-wiring] cannot switch kernel session before socket is connected");
+    return false;
+  }
+  socket.send({ type: "switch_session", sessionId });
+  return true;
+}
+
 export function wireKernel(): () => void {
   const { platformHost, runtimeSlot } = useConnection.getState();
   if (cleanupKernel) {
@@ -116,7 +125,24 @@ export function wireKernel(): () => void {
     }
     // Feed the OS-agent conversation (it filters to its own request id).
     if (KERNEL_CHAT_EVENT_TYPES.has(msg.type)) {
-      useHermesChat.getState().ingest(msg as unknown as ChatEvent);
+      const handledByHermes = useHermesChat.getState().ingest(msg as unknown as ChatEvent);
+      if (
+        handledByHermes
+        && (msg.type === "kernel:result" || msg.type === "kernel:error" || msg.type === "kernel:aborted")
+      ) {
+        const api = useConnection.getState().api;
+        if (api) {
+          void useHermesChat.getState().refreshConversations(api);
+        }
+      }
+    }
+  });
+
+  const unsubscribeState = activeSocket.onStateChange((state) => {
+    if (state !== "connected") return;
+    const selectedSessionId = useHermesChat.getState().sessionId;
+    if (selectedSessionId) {
+      activeSocket.send({ type: "switch_session", sessionId: selectedSessionId });
     }
   });
 
@@ -163,6 +189,7 @@ export function wireKernel(): () => void {
     if (cleaned) return;
     cleaned = true;
     unsubscribeMessages();
+    unsubscribeState();
     unsubscribeBadge();
     unsubscribeCodingAgentBadge();
     offNotificationClick();

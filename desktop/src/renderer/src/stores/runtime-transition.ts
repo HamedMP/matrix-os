@@ -60,9 +60,10 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
   // MissionControl only opens Home in its mount-only effect, so reopen it here
   // or a successful switch leaves the already-mounted desktop with no active tab.
   useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-  // The Hermes transcript and kernel session follow the selected computer; the
-  // kernel socket is already reset above, so drop the chat state with it.
-  useHermesChat.setState({ messages: [], sessionId: null, status: "idle", activeRequestId: null });
+  // The Hermes index, transcript, and kernel session follow the selected
+  // computer; invalidate in-flight list/history requests before the new API is
+  // published so prior-owner data cannot repopulate the next runtime.
+  useHermesChat.getState().resetRuntime();
   useSessions.setState({
     sessions: [],
     aliasMap: {},

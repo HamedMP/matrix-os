@@ -100,6 +100,11 @@ export class ConversationRunRegistry {
     return Boolean(run && run.completedAt === null && run.subscribers.size > 0);
   }
 
+  isActive(sessionId: string): boolean {
+    const run = this.runs.get(sessionId);
+    return Boolean(run && run.completedAt === null);
+  }
+
   attachWithBufferedSnapshot(
     sessionId: string,
     subscriber: Subscriber,
