@@ -55,8 +55,10 @@ describe("TabContent", () => {
     const hiddenPane = getByText("Terminal body").parentElement;
 
     expect(activePane?.hasAttribute("inert")).toBe(false);
+    expect(activePane?.style.display).toBe("flex");
     expect(hiddenPane?.hasAttribute("inert")).toBe(true);
     expect(hiddenPane?.getAttribute("aria-hidden")).toBe("true");
+    expect(hiddenPane?.style.display).toBe("none");
   });
 
   it("forwards task project slugs into the task workspace", () => {

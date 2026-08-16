@@ -407,6 +407,9 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(deleteSession).not.toHaveBeenCalled();
     expect(screen.getByText("Delete matrix-main?")).toBeTruthy();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.style.top).toBe("50%");
+    expect(dialog.style.transform).toBe("translate(-50%, -50%)");
 
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
