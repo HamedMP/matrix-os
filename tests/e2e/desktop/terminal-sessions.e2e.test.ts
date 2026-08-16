@@ -133,7 +133,7 @@ suite("Desktop terminal session handoff", () => {
     }).toBe(true);
   });
 
-  it("fills and refits the terminal detail while preserving its mounted buffer across navigation", async () => {
+  it("renders the Figma-aligned list and preserves the mounted terminal buffer across list-detail navigation", async () => {
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
     await page.getByText("Active", { exact: true }).waitFor();
