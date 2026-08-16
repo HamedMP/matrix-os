@@ -797,6 +797,28 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       .toBeLessThan(workflow.indexOf('name: Comment preview URL on PR'));
   });
 
+  it('preview VPS workflow verifies the active app version and repairs only its disposable updater transition', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('probe_active_bundle_version()');
+    expect(workflow).toContain('/opt/matrix/app/BUNDLE_VERSION');
+    expect(workflow).toContain('os.O_RDONLY | os.O_NOFOLLOW');
+    expect(workflow).toContain('PLATFORM_SIGNING_SECRET="$PLATFORM_SECRET" node');
+    expect(workflow).not.toContain("' \"$HANDLE\" \"$PLATFORM_SECRET\")");
+    expect(workflow).toContain('active_bundle_version="$(probe_active_bundle_version 2>/dev/null)"');
+    expect(workflow).toContain('if [ "$active_bundle_version" != "$VERSION" ]; then');
+    expect(workflow).toContain('[[ "$HANDLE" =~ ^pr-[1-9][0-9]{0,9}$ ]]');
+    expect(workflow).toContain('transition_repair_attempted=false');
+    expect(workflow).toContain('[ "$transition_repair_attempted" != false ]');
+    expect(workflow).toContain('["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"]');
+    expect(workflow.match(/code="\$\(attempt\)"/g)).toHaveLength(3);
+    expect(workflow).toContain('Active app version for ${HANDLE}: ${active_bundle_version:-unavailable}');
+    expect(workflow).toContain('.healthy == true and .runtimeVersion == $v');
+    expect(workflow).toContain('[ "$active_bundle_version" = "$VERSION" ]');
+    expect(workflow).toContain("printf '%s' \"$address\" | grep -Eq '^([0-9]{1,3}\\.){3}[0-9]{1,3}$'");
+  });
+
   it('user-systemd acceptance recovers only its exact disposable preview updater', () => {
     const root = process.cwd();
     const workflow = readFileSync(
@@ -821,7 +843,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('classify_recovery_phase');
     expect(workflow).toContain('diagnose_recovery_state');
     expect(workflow).toContain('phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid)');
-    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
+    expect(workflow).toContain('error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_rollback_failed|post_install_service_start_failed|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)');
     expect(workflow).toContain('recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
     expect(workflow).toContain('initial_recovery_diagnostic="$(diagnose_recovery_state 2>/dev/null || printf \'phase=invalid error=invalid\\n\')"');
     expect(workflow).toContain('/usr/bin/python3 - "$error_path"');
@@ -1316,14 +1338,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('run_apply_update');
 
     const hostBinFailure = syncAgent.indexOf('log "ERROR: host-bin installation failed — rolling back"');
-    const hostBinRollback = syncAgent.indexOf('if do_rollback; then', hostBinFailure);
+    const hostBinRollback = syncAgent.indexOf('if do_rollback false; then', hostBinFailure);
     const durableHostBinError = syncAgent.indexOf('write_update_error "post_install_host_bin_failed"', hostBinFailure);
     expect(hostBinFailure).toBeGreaterThan(-1);
     expect(hostBinRollback).toBeGreaterThan(hostBinFailure);
     expect(durableHostBinError).toBeGreaterThan(hostBinRollback);
 
     const healthFailure = syncAgent.indexOf('log "ERROR: health check failed — rolling back"');
-    const healthRollback = syncAgent.indexOf('if do_rollback; then', healthFailure);
+    const healthRollback = syncAgent.indexOf('if do_rollback false; then', healthFailure);
     const durableHealthError = syncAgent.indexOf('write_update_error "post_install_health_failed"', healthFailure);
     expect(healthFailure).toBeGreaterThan(-1);
     expect(healthRollback).toBeGreaterThan(healthFailure);
@@ -1495,7 +1517,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('No update available on ${target} — nothing to apply');
     expect(syncAgent).toContain('Requested release metadata fetch failed — skipping apply');
     expect(syncAgent).toContain('readonly RELEASE_FILE="/opt/matrix/release.json"');
-    expect(syncAgent).toContain('sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"');
+    expect(syncAgent).toContain('stage_release_metadata "$extract_dir/release.json" "$version"');
+    expect(syncAgent).toContain('commit_release_metadata');
     expect(syncAgent).toContain('rm -f "$UPDATE_MARKER"');
     expect(syncAgent).toContain('Update failed — will retry on next trigger');
     expect(syncAgent).toContain('Update (via SIGUSR1) failed — will retry on next trigger');
@@ -1505,6 +1528,33 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');
     expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
     expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
+  });
+
+  it('publishes installed release metadata only after the candidate app passes health', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    const stageFunction = syncAgent.indexOf('stage_release_metadata()');
+    const stagedInstall = syncAgent.indexOf(
+      'sudo install -o root -g matrix -m 0644 "$source" "$incoming"',
+      stageFunction,
+    );
+    const appReplacement = syncAgent.indexOf('sudo mv "$extract_dir/app" "$APP_DIR"');
+    const healthPassed = syncAgent.indexOf('if [ "$healthy" = true ]; then');
+    const releaseCommit = syncAgent.indexOf('commit_release_metadata', healthPassed);
+    const installedLog = syncAgent.indexOf('Updated release metadata', releaseCommit);
+
+    expect(stageFunction).toBeGreaterThan(-1);
+    expect(stagedInstall).toBeGreaterThan(stageFunction);
+    expect(stagedInstall).toBeLessThan(appReplacement);
+    expect(releaseCommit).toBeGreaterThan(healthPassed);
+    expect(installedLog).toBeGreaterThan(releaseCommit);
+    expect(syncAgent.slice(appReplacement, healthPassed)).not.toContain(
+      'sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"',
+    );
+    expect(syncAgent).toContain('write_update_error "post_install_release_metadata_failed"');
+    expect(syncAgent).toContain('rollback_release_metadata_is_ready "$APP_DIR.rollback"');
+    expect(syncAgent).toContain('restore_rollback_release_metadata');
   });
 
   it('sync agent atomically replaces host-bin scripts without truncating itself', () => {

@@ -186,6 +186,58 @@ describe("BootSequence", () => {
     expect(screen.queryByText(/Starting|Preparing|Loading your Matrix computer/i)).toBeNull();
   });
 
+  it("reconciles journey state instead of reporting failure after an ambiguous provisioning timeout", async () => {
+    let provisionTimedOut = false;
+    let staleRefreshCompleted = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        const state: JourneyState = provisionTimedOut && staleRefreshCompleted
+          ? {
+              phase: "provisioning",
+              detail: "Building your Matrix computer…",
+              nextAction: { kind: "wait" },
+              progress: { stage: "creating_server", startedAt: "2026-08-15T11:04:17.965Z" },
+            }
+          : {
+              phase: "install_choices_required",
+              detail: "Choose default installs before building your Matrix computer.",
+              nextAction: { kind: "choose_default_installs" },
+            };
+        if (provisionTimedOut && !staleRefreshCompleted) {
+          return await new Promise<Response>((resolve, reject) => {
+            const timer = window.setTimeout(() => {
+              staleRefreshCompleted = true;
+              resolve(Response.json(state));
+            }, 1_500);
+            init?.signal?.addEventListener("abort", () => {
+              window.clearTimeout(timer);
+              reject(new DOMException("The operation was aborted", "AbortError"));
+            }, { once: true });
+          });
+        }
+        return new Response(JSON.stringify(state), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url === "/api/auth/provision-runtime") {
+        provisionTimedOut = true;
+        throw new DOMException("The operation timed out", "TimeoutError");
+      }
+      return new Response("{}", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    await answerAcquisitionSource();
+    fireEvent.click(await screen.findByRole("button", { name: "Build VPS" }));
+
+    expect(await screen.findByText("Building your Matrix computer", {}, { timeout: 8_000 })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/journey")).length).toBeGreaterThan(1);
+  });
+
   it("accepts only a recognized provisioning conflict before the immediate session handoff", async () => {
     const journeyState: JourneyState = {
       phase: "install_choices_required",

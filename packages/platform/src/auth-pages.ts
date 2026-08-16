@@ -1128,6 +1128,11 @@ export function getAuthPage(
         })
         .catch(function(err) {
           console.error('[matrix] Runtime provisioning failed', err instanceof Error ? err.name : String(typeof err));
+          if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+            billingConfirmationPolls = 0;
+            continueWithClerkSession(true);
+            return;
+          }
           showProvisionRetryError();
         });
     }

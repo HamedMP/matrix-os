@@ -430,25 +430,22 @@ straightforward billing, and one-owner-per-VPS isolation.
   FR-018 for an eligible release, provided those resources cannot serve customers and
   follow their mandatory cleanup lifecycle.
 - **FR-021**: Before creating the VPS, the system MUST resolve the exact target host
-  bundle and choose only a ready, non-quarantined, compatible snapshot that is not newer
-  than the target. Older/newer ordering MUST compare the chronological instants in the
-  immutable host-bundle release `build_time` provenance, normalized before comparison;
-  version labels, release registration time, and snapshot creation time MUST NOT define
-  ordering.
+  bundle and choose only a ready, non-quarantined, compatible snapshot whose immutable
+  bundle SHA-256 exactly matches the target. When no exact image exists, the system MUST
+  use the clean Ubuntu path.
 - **FR-022**: Snapshot compatibility MUST account for architecture, base-system and boot
   compatibility, minimum disk requirement, and any release-declared activation
   constraint.
-- **FR-023**: The platform SHOULD prefer an exact-version compatible snapshot; otherwise
-  it MAY select the newest compatible older snapshot that can safely activate to the
-  exact target version.
+- **FR-023**: The platform MUST NOT select an older or merely compatible snapshot for a
+  different target bundle.
 - **FR-024**: A new VPS MUST receive customer identity and secrets only during its own
   activation, never from the shared snapshot.
 - **FR-025**: Customer-specific configuration MUST become visible atomically to services,
   and partial activation MUST NOT start customer-facing services.
 - **FR-026**: The machine MUST NOT be marked running or become routable until it reports
   the exact target bundle version and passes the established runtime health checks.
-- **FR-027**: A snapshot clone that contains an older version MUST complete a verified
-  update before health registration; failure MUST leave the machine unavailable.
+- **FR-027**: A target without an exact snapshot MUST use clean-image provisioning rather
+  than updating a different snapshot during first boot.
 - **FR-028**: A snapshot newer than the requested release MUST NOT be selected or
   downgraded in place.
 - **FR-029**: Recovery MUST preserve existing backup-availability, ownership, restore,

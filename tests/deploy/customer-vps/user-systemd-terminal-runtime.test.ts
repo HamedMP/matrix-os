@@ -88,15 +88,21 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(generationId).not.toContain("sha256sum \"$@\"");
   });
 
-  it("keeps the production adapter dormant behind one exact activation flag", () => {
+  it("activates the production adapter from the rollback-scoped bundle marker", () => {
     const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf8");
+    const build = readFileSync(join(root, "scripts/build-host-bundle.sh"), "utf8");
 
-    expect(server).toContain('process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED === "1"');
+    expect(server).toContain("resolveUserSystemdTerminalActivation");
+    expect(server).toContain("process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED");
+    expect(build).toContain('TERMINAL_USER_SYSTEMD_ENABLED');
+    expect(build).toContain('printf \'1\\n\' > "$STAGE_DIR/app/TERMINAL_USER_SYSTEMD_ENABLED"');
     expect(server).toContain('const terminalAcceptanceEnabled = /^pr-[1-9][0-9]{0,9}$/.test(runtimeHandle)');
     expect(server).toContain('process.env.MATRIX_RUNTIME_SLOT === runtimeHandle');
+    expect(server).toContain('secret: () => process.env.UPGRADE_TOKEN ?? ""');
     expect(server).toContain("loadInstalledTerminalRuntimeGeneration");
     expect(server).toContain("createUserSystemdZellijRuntime");
     expect(server).toContain("createUserSystemdZellijAdapter");
+    expect(server).toContain("await userSystemdTerminalController.assertInstallationReady()");
     expect(server).not.toContain('MATRIX_TERMINAL_USER_SYSTEMD_ENABLED !== "0"');
   });
 
@@ -148,6 +154,26 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(updater).not.toMatch(/systemctl restart[^\n]*(matrix-zellij|matrix-terminal\.slice|user@)/);
     expect(decision).toContain("ordered content digests");
     expect(decision).toContain("exact-version reapply");
+  });
+
+  it("documents separate fail-closed rollout paths for new and existing VPSes", () => {
+    const activation = readFileSync(
+      join(root, "docs/dev/user-systemd-terminal-activation.md"),
+      "utf8",
+    );
+    const decision = readFileSync(
+      join(root, "specs/109-persist-terminal-sessions/user-systemd-alternative.md"),
+      "utf8",
+    );
+
+    expect(activation).toContain("Activation never falls back to the legacy");
+    expect(activation).toContain("### New signups");
+    expect(activation).toContain("### Existing users");
+    expect(activation).toContain("two-stage migration");
+    expect(activation).toContain("commits `/opt/matrix/release.json` only after health succeeds");
+    expect(activation).toContain("active `/opt/matrix/app/BUNDLE_VERSION`");
+    expect(decision).toContain("A direct jump to activation is intentionally rejected and rolled back");
+    expect(decision).toContain("it never falls back to the legacy terminal owner");
   });
 
   it("gates exact-head disposable-VPS acceptance behind an explicit same-repository label", () => {
@@ -418,7 +444,7 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(acceptance).toContain('classify_installed_updater_protocol');
     expect(acceptance).toContain('systemctl show matrix-sync-agent.service -p NRestarts --value');
     expect(acceptance).toContain('case "$error_code" in');
-    expect(acceptance).toContain('download_failed|download_metadata_changed|update_target_mismatch|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown)');
+    expect(acceptance).toContain('download_failed|download_metadata_changed|update_target_mismatch|insufficient_disk_space|checksum_mismatch|bundle_extract_failed|bundle_layout_invalid|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_service_start_failed|post_install_health_failed|post_install_rollback_failed|apply_failed|apply_interrupted|unknown)');
     expect(acceptance).not.toContain("journalctl -u matrix-sync-agent");
     expect(workflow).toContain("Acceptance stalled at ${state:-unavailable}");
     expect(workflow).toContain("Acceptance failed at ${state}");

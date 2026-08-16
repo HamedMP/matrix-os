@@ -197,14 +197,17 @@ export function createAppSessionRoutes(opts: {
           ? checkoutAttempt.developerTools
           : undefined
       );
-      const provisioned = await opts.customerVpsService.provision({
-        handle: identity.handle,
-        clerkUserId: result.userId,
-        runtimeSlot: parsed.data.runtime,
-        ...(developerTools ? { developerTools } : {}),
-        ...(parsed.data.serverType ? { serverType: parsed.data.serverType } : {}),
-        ...(parsed.data.location ? { location: parsed.data.location } : {}),
-      });
+      const provisioned = await opts.customerVpsService.provision(
+        {
+          handle: identity.handle,
+          clerkUserId: result.userId,
+          runtimeSlot: parsed.data.runtime,
+          ...(developerTools ? { developerTools } : {}),
+          ...(parsed.data.serverType ? { serverType: parsed.data.serverType } : {}),
+          ...(parsed.data.location ? { location: parsed.data.location } : {}),
+        },
+        { dispatch: 'detached' },
+      );
       await opts.ensureProvisionedPlatformUser(opts.db, {
         clerkUserId: result.userId,
         handle: identity.handle,

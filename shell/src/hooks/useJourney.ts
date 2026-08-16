@@ -51,12 +51,15 @@ const ACTIVE_PHASES = new Set<JourneyPhase>(["payment_settling", "provisioning"]
 
 /**
  * Polls GET /api/journey for the signed-in user. Polls only while the phase is
- * still moving (settling/provisioning) and stops in terminal phases; on a 503 or
- * network failure it reports `unreachable` rather than guessing a phase. The
- * request is same-origin (proxied to the platform) and Clerk-bearer authed.
+ * still moving (settling/provisioning), or while a caller explicitly requests
+ * reconciliation polling, and stops in terminal phases otherwise. Each poll is
+ * scheduled only after the preceding request settles. On a 503 or network
+ * failure it reports `unreachable` rather than guessing a phase. The request is
+ * same-origin (proxied to the platform) and Clerk-bearer authed.
  */
-export function useJourney(options: { enabled?: boolean } = {}): UseJourneyResult {
+export function useJourney(options: { enabled?: boolean; keepPolling?: boolean } = {}): UseJourneyResult {
   const enabled = options.enabled ?? true;
+  const keepPolling = options.keepPolling ?? false;
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [state, setState] = useState<JourneyState | null>(null);
   const [status, setStatus] = useState<JourneyStatus>("loading");
@@ -107,7 +110,7 @@ export function useJourney(options: { enabled?: boolean } = {}): UseJourneyResul
         if (disposed) return;
         setState(body);
         setStatus("ready");
-        if (ACTIVE_PHASES.has(body.phase)) scheduleNext(ACTIVE_POLL_MS);
+        if (keepPolling || ACTIVE_PHASES.has(body.phase)) scheduleNext(ACTIVE_POLL_MS);
       } catch (err: unknown) {
         if (disposed) return;
         // Network/timeout/abort -> unreachable; keep trying while mounted.
@@ -133,7 +136,7 @@ export function useJourney(options: { enabled?: boolean } = {}): UseJourneyResul
       if (pollTimer !== undefined) window.clearTimeout(pollTimer);
       inFlightController?.abort();
     };
-  }, [enabled, isLoaded, isSignedIn, getToken, nonce]);
+  }, [enabled, isLoaded, isSignedIn, getToken, keepPolling, nonce]);
 
   return { state, status, refreshJourney };
 }

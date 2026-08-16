@@ -386,6 +386,52 @@ jobs:
               -H "content-type: application/json" \
               -d "{\"version\":\"${VERSION}\",\"handle\":\"${HANDLE}\"}"
           }
+          runtime_token="$(PLATFORM_SIGNING_SECRET="$PLATFORM_SECRET" node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.env.PLATFORM_SIGNING_SECRET).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE")"
+          echo "::add-mask::$runtime_token"
+          send_runtime_command() {
+            local body="$1" response="$2"
+            curl --fail --silent --show-error --max-time 45 --insecure \
+              --resolve "app.matrix-os.com:443:${address}" \
+              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${runtime_token}" \
+              -H 'content-type: application/json' --data-binary "$body" &&
+              jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
+                "$response" >/dev/null
+          }
+          probe_active_bundle_version() {
+            local body response=/tmp/preview-active-bundle-version.json probe_script
+            read -r -d '' probe_script <<'PYTHON' || true
+          import os
+          import re
+          import stat
+
+          path = "/opt/matrix/app/BUNDLE_VERSION"
+          fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+          try:
+              metadata = os.fstat(fd)
+              if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 2 or metadata.st_size > 256:
+                  raise ValueError("invalid bundle version marker")
+              value = os.read(fd, 257).decode("utf-8").strip()
+              if not re.fullmatch(r"(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}", value):
+                  raise ValueError("invalid bundle version")
+              print(value)
+          finally:
+              os.close(fd)
+          PYTHON
+            body="$(jq -cn --arg script "$probe_script" \
+              '{command:["/usr/bin/python3","-c",$script],timeoutMs:10000}')"
+            send_runtime_command "$body" "$response"
+            jq -er '.stdout | select(test("^(v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}\\n$")) | rtrimstr("\n")' \
+              "$response"
+          }
+          restart_preview_sync_agent() {
+            local body response=/tmp/preview-sync-agent-restart.json
+            body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"],"timeoutMs":30000}'
+            send_runtime_command "$body" "$response"
+          }
           code="$(attempt)"
           if [ "$code" != "200" ]; then
             echo "Deploy returned HTTP ${code}; retrying once in 30s..."
@@ -401,6 +447,7 @@ jobs:
 
           echo "Waiting for ${HANDLE} to install ${VERSION}"
           deadline=$((SECONDS + 600))
+          transition_repair_attempted=false
           while true; do
             runtime="$(curl -fsS --max-time 30 \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
@@ -419,12 +466,43 @@ jobs:
             status="$(jq -r '.status' <<< "$runtime")"
             healthy="$(jq -r '.healthy == true' <<< "$runtime")"
             runtime_version="$(jq -r '.runtimeVersion // "pending"' <<< "$runtime")"
+            address="$(jq -r '.publicIPv4 // ""' <<< "$runtime")"
             echo "Runtime for ${HANDLE}: status=${status} healthy=${healthy} version=${runtime_version}"
 
             if jq -e --arg v "$VERSION" \
               '.healthy == true and .runtimeVersion == $v' <<< "$runtime" > /dev/null; then
-              echo "Preview ready: ${HANDLE} is healthy on ${VERSION}"
-              break
+              if ! printf '%s' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+                echo "Preview runtime address is invalid." >&2
+                exit 1
+              fi
+              active_bundle_version=""
+              if active_bundle_version="$(probe_active_bundle_version 2>/dev/null)"; then
+                echo "Active app version for ${HANDLE}: ${active_bundle_version:-unavailable}"
+                if [ "$active_bundle_version" = "$VERSION" ]; then
+                  echo "Preview ready: ${HANDLE} is healthy on ${VERSION}"
+                  break
+                fi
+                if [ "$active_bundle_version" != "$VERSION" ]; then
+                  if ! [[ "$HANDLE" =~ ^pr-[1-9][0-9]{0,9}$ ]] || [ "$transition_repair_attempted" != false ]; then
+                    echo "Preview release metadata diverged from its active app after bounded repair." >&2
+                    exit 1
+                  fi
+                  echo "Recovering the disposable preview from a pre-terminal-runtime updater transition."
+                  restart_preview_sync_agent
+                  transition_repair_attempted=true
+                  sleep 10
+                  code="$(attempt)"
+                  if [ "$code" != "200" ]; then
+                    echo "Exact-version transition repair deploy failed with HTTP ${code}." >&2
+                    exit 1
+                  fi
+                  deadline=$((SECONDS + 600))
+                  sleep 15
+                  continue
+                fi
+              else
+                echo "Active app version for ${HANDLE}: unavailable"
+              fi
             fi
             if [ "$status" = "failed" ]; then
               echo "Preview ${HANDLE} failed while installing ${VERSION}." >&2

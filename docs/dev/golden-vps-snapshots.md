@@ -6,9 +6,8 @@ The approved product invariants and policy are defined by [spec 109](../../specs
 
 ## V1 Invariants
 
-- Build a new sanitized candidate for each eligible immutable main or tag host bundle. Do not keep running or powered-off warm customer VPSes.
-- Select an exact snapshot first. A compatible older snapshot may be used only when first boot updates it to the requested exact bundle before health, registration, or routing succeeds.
-- Never select a newer snapshot for an older requested bundle.
+- Build a new sanitized candidate only when an eligible immutable host bundle is promoted to `stable`. Do not keep running or powered-off warm customer VPSes.
+- Select only a snapshot whose immutable bundle SHA-256 exactly matches the requested bundle. Otherwise use clean Ubuntu.
 - Keep snapshot building, publication, existing-fleet deployment, and customer provisioning as separate failure domains.
 - Fall back to the existing clean Ubuntu/full cloud-init path whenever lookup, compatibility, cloning, activation, or validation is definitely unsafe.
 - Do not issue a second provider create after an ambiguous timeout. Reconcile exact immutable labels first.
@@ -22,6 +21,8 @@ The feature ships disabled. `GOLDEN_SNAPSHOT_BUILDS_ENABLED` controls candidate 
 Platform Postgres is authoritative for immutable bundle provenance, snapshot state, build attempts, leases, cleanup work, and release/channel protection. Hetzner holds provider resources but is not the lifecycle source of truth. R2 holds immutable host-bundle bytes and checksums.
 
 Each logical image is keyed by the host bundle SHA-256 plus a compatibility key containing provider, architecture, region policy, base image/generation, boot mode, activation ABI, and minimum disk size. Re-registering a channel does not create a new identity. Preview/PR artifacts are not eligible for the release hook.
+
+The stable channel promotion is the forward-only build trigger. Stable releases default to snapshot-eligible and may explicitly opt out. Dev, canary, beta, preview, and register-only releases default to ineligible. The platform commits the stable pointer, exact eligibility value, and build enqueue in one transaction. A newer stable promotion quarantines unfinished older production builds and queues exact-resource cleanup. Startup workers do not scan or backfill release history, so releases that predate this contract remain historical unless promoted again through an explicitly authorized operation.
 
 The durable lifecycle is:
 
@@ -41,9 +42,9 @@ Related state changes use Postgres transactions. Provider requests are always ou
 
 ## Build and Validation
 
-The release workflow enqueues the immutable bundle version only after publication and only when the GitHub Actions variable `GOLDEN_SNAPSHOT_BUILDS_ENABLED` is exactly `true`. The platform deployment workflow passes the same variable to both candidate and production roles, defaults it to `false`, and keeps snapshot selection disabled with rollout `0%`. Enqueue failure is non-blocking, and the existing `deploy` job does not depend on snapshot success.
+The release publisher registers immutable metadata after upload. When that same operation promotes the bundle to `stable`, the platform transaction records eligibility and enqueues the exact bundle build. The release workflow has no separate enqueue job, and platform startup performs no historical lookback. `GOLDEN_SNAPSHOT_BUILDS_ENABLED` gates worker claims, not durable stable-promotion enqueue. The platform deployment workflow defaults workers to `false` and keeps snapshot selection disabled with rollout `0%`.
 
-The worker uses bounded batches and leases. Ephemeral builders and validation clones carry exact labels for build ID, snapshot ID, and role. Those labels are also the only allowed basis for adopting a resource after an ambiguous create result. Zero matches means wait; multiple exact matches quarantine the build. Cleanup verifies the recorded resource ID and labels before deletion.
+The worker uses bounded batches and leases and claims production capacity only for the current eligible stable release. Ephemeral builders and validation clones carry exact labels for build ID, snapshot ID, and role. Those labels are also the only allowed basis for adopting a resource after an ambiguous create result. Zero matches means wait; multiple exact matches quarantine the build. Cleanup verifies the recorded resource ID and labels before deletion.
 
 The sanitizer must remove or reset all of the following before shutdown:
 
@@ -68,7 +69,7 @@ Validation callbacks use a short-lived per-phase token stored only as a hash. Fa
 
 ## Provisioning and Recovery
 
-Selection order is exact compatible image, compatible older image, then clean Ubuntu. Compatibility includes architecture, region policy, boot mode, activation ABI, minimum disk, and base generation. A compatible older image is not healthy until exact-bundle activation completes.
+Selection order is exact compatible image, then clean Ubuntu. Compatibility includes the exact bundle SHA-256, architecture, region policy, boot mode, activation ABI, minimum disk, and base generation. Older or merely compatible bundle snapshots are never selected for a different target release.
 
 The snapshot lease remains active while the provider clone is in flight. Owner identity, platform registration material, tunnel credentials, TLS material, and runtime secrets are injected only through first-boot cloud-init after the clone. First boot regenerates machine ID, SSH host keys, cloud-init instance state, and runtime registration before routing.
 
