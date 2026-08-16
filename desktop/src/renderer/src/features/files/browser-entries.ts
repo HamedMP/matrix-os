@@ -18,6 +18,13 @@ export type BrowserSortDirection = "asc" | "desc";
 // hostile or runaway listing can buffer into renderer memory.
 export const MAX_BROWSER_ENTRIES = 1000;
 
+// Mirrors the Gateway's protected top-level owner/tool state for presentation.
+// This is only a renderer hint; the Gateway remains the security authority.
+export function isManagedBrowserPath(path: string): boolean {
+  const firstSegment = path.replace(/^\/+/, "").split("/")[0];
+  return firstSegment === "system" || firstSegment === "agents" || firstSegment?.startsWith(".") === true;
+}
+
 export function parseBrowserEntries(value: unknown): BrowserEntry[] {
   if (!Array.isArray(value)) return [];
   const entries: BrowserEntry[] = [];

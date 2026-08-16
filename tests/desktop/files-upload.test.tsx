@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ComputerFileBrowser from "../../desktop/src/renderer/src/features/files/ComputerFileBrowser";
 import { createFileUploadController } from "../../desktop/src/renderer/src/features/files/file-upload-controller";
@@ -171,9 +171,8 @@ describe("ComputerFileBrowser uploads", () => {
     await screen.findByRole("button", { name: "Open projects" });
     const listing = container.querySelector("[data-files-listing]") as HTMLElement;
     const file = new File(["clipboard"], "pasted.txt", { type: "text/plain" });
-    const filePaste = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(filePaste, "clipboardData", { value: { files: [file] } });
-    listing.dispatchEvent(filePaste);
+    const filePaste = createEvent.paste(listing, { clipboardData: { files: [file] } });
+    fireEvent(listing, filePaste);
 
     await waitFor(() => expect(putBytes).toHaveBeenCalledWith(
       "/api/files/blob?path=pasted.txt",
@@ -183,9 +182,8 @@ describe("ComputerFileBrowser uploads", () => {
     ));
     expect(filePaste.defaultPrevented).toBe(true);
 
-    const textPaste = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(textPaste, "clipboardData", { value: { files: [] } });
-    listing.dispatchEvent(textPaste);
+    const textPaste = createEvent.paste(listing, { clipboardData: { files: [] } });
+    fireEvent(listing, textPaste);
     expect(textPaste.defaultPrevented).toBe(false);
   });
 

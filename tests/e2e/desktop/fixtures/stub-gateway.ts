@@ -728,6 +728,15 @@ export async function startStubGateway(): Promise<StubGateway> {
       json(res, 200, { entries });
       return;
     }
+    if (req.method === "GET" && path === "/api/files/stat") {
+      json(res, 200, { size: 58 });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/files/blob") {
+      res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
+      res.end("# Matrix OS\n\nMatrix OS is your AI operating system.\n");
+      return;
+    }
     if (path === "/api/projects/matrix-os/tasks" && req.method === "GET") {
       json(res, 200, { tasks, nextCursor: null });
       return;

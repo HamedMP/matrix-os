@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ComputerFileBrowser from "../../desktop/src/renderer/src/features/files/ComputerFileBrowser";
 import {
@@ -307,6 +307,43 @@ describe("ComputerFileBrowser view options", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Matrix home" }));
     expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
+  });
+
+  it("navigates backward and forward through folder history", async () => {
+    renderBrowser();
+    const back = await screen.findByRole("button", { name: "Back" });
+    const forward = screen.getByRole("button", { name: "Forward" });
+    expect(back.hasAttribute("disabled")).toBe(true);
+    expect(forward.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
+    expect(await screen.findByRole("button", { name: "Open app.ts" })).toBeTruthy();
+    expect(back.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(back);
+    expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
+    expect(forward.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(forward);
+    expect(await screen.findByRole("button", { name: "Open app.ts" })).toBeTruthy();
+  });
+
+  it("marks managed Matrix folders and makes their browser surface read-only", async () => {
+    const protectedApi = {
+      get: vi.fn(async (path: string) => path === "/api/files/list?path="
+        ? { entries: [{ name: "system", type: "directory", children: 2 }] }
+        : { entries: [{ name: "config.json", type: "file", size: 128 }] }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    useConnection.setState({ api: protectedApi as never });
+    renderBrowser();
+
+    const system = await screen.findByRole("button", { name: "Open system" });
+    expect(within(system).getByText("Managed")).toBeTruthy();
+    fireEvent.doubleClick(system);
+
+    expect(await screen.findByText("Read only")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Upload files" })).toBeNull();
   });
 
   it("supports arrow, Enter, and Backspace keyboard navigation in list view", async () => {
