@@ -80,7 +80,7 @@ describe("E2E: Conversation Management", () => {
     });
     expect(res.status).toBe(404);
     const body = await res.json();
-    expect(body.error).toBe("Not found");
+    expect(body.error).toEqual({ code: "conversation_not_found" });
   });
 
   it("conversation list shrinks after delete", async () => {
