@@ -71,6 +71,7 @@ required_clean_evidence=(
   /root/.zsh_history
   /root/.npmrc
   /root/.netrc
+  /var/lib/systemd/linger/matrix
   /var/lib/systemd/random-seed
   /var/lib/cloud
   /var/lib/dhcp

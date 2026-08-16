@@ -184,6 +184,26 @@ exit 99
     expect(swapIndex).toBeLessThan(aptIndex);
   });
 
+  it('quiesces inherited matrix user processes before changing the clone home', () => {
+    const cloudInit = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/cloud-init.yaml'),
+      'utf8',
+    );
+    const disableLinger = cloudInit.indexOf('loginctl disable-linger matrix');
+    const terminateUser = cloudInit.indexOf('loginctl terminate-user matrix');
+    const stopUserManager = cloudInit.indexOf('systemctl stop "user@${matrix_uid}.service"');
+    const verifyStopped = cloudInit.indexOf('matrix-host: matrix user quiescence failed');
+    const changeHome = cloudInit.indexOf('usermod -d /home/matrix/home matrix');
+
+    expect(disableLinger).toBeGreaterThan(-1);
+    expect(terminateUser).toBeGreaterThan(disableLinger);
+    expect(stopUserManager).toBeGreaterThan(terminateUser);
+    expect(verifyStopped).toBeGreaterThan(stopUserManager);
+    expect(changeHome).toBeGreaterThan(verifyStopped);
+    expect(cloudInit).toContain('timeout --kill-after=5 30 loginctl disable-linger matrix');
+    expect(cloudInit).toContain('pgrep -u matrix');
+  });
+
   it('ships matrix-ensure-swap in the host bundle and runs it from the sync agent', () => {
     const root = process.cwd();
     const ensureSwap = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-ensure-swap'), 'utf8');

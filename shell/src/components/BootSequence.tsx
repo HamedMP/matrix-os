@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useAuth, RedirectToSignIn } from "@clerk/nextjs";
 import { palette as c, fonts, lightFg } from "@matrix-os/brand";
 import {
@@ -16,6 +16,7 @@ import { MatrixBootMark } from "@/components/MatrixBootMark";
 import {
   PROVISIONING_RETRY_ERROR,
   isAcceptedProvisionResponse,
+  isAmbiguousProvisioningTimeout,
 } from "@/lib/provisioning-handoff";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "@/components/Settings";
@@ -24,6 +25,7 @@ import { navigateForOnboarding } from "@/lib/onboarding-navigation";
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
 // ready is the running shell. BootSequence only renders the billing/build steps.
 const PASSTHROUGH_PHASES = new Set<JourneyState["phase"]>(["first_run", "ready"]);
+const AMBIGUOUS_PROVISIONING_WINDOW_MS = 30_000;
 
 const STAGE_LABEL: Record<string, string> = {
   creating_server: "Creating your server",
@@ -142,9 +144,31 @@ export function BootSequence({
 
 function BootSequenceInner({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
-  const { state, status, refreshJourney } = useJourney({ enabled: isLoaded && isSignedIn });
+  const [provisioningOutcomeAmbiguous, setProvisioningOutcomeAmbiguous] = useState(false);
+  const { state, status, refreshJourney } = useJourney({
+    enabled: isLoaded && isSignedIn,
+    keepPolling: provisioningOutcomeAmbiguous,
+  });
   const [working, setWorking] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!provisioningOutcomeAmbiguous) return;
+    if (state?.phase !== "install_choices_required") {
+      // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- authoritative journey state has resolved the previously ambiguous request outcome.
+      setProvisioningOutcomeAmbiguous(false);
+      setWorking(false);
+      return;
+    }
+    const timeoutTimer = window.setTimeout(() => {
+      setProvisioningOutcomeAmbiguous(false);
+      setWorking(false);
+      setInstallError(PROVISIONING_RETRY_ERROR);
+    }, AMBIGUOUS_PROVISIONING_WINDOW_MS);
+    return () => {
+      window.clearTimeout(timeoutTimer);
+    };
+  }, [provisioningOutcomeAmbiguous, state?.phase]);
 
   async function startProvision(developerTools: DeveloperToolId[]): Promise<void> {
     setWorking(true);
@@ -185,6 +209,11 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       finishProvision();
     } catch (err: unknown) {
       console.warn("[boot] provision start failed", err instanceof Error ? err.name : typeof err);
+      if (isAmbiguousProvisioningTimeout(err)) {
+        setProvisioningOutcomeAmbiguous(true);
+        refreshJourney();
+        return;
+      }
       finishProvision(PROVISIONING_RETRY_ERROR);
     }
   }
