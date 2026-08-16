@@ -34,6 +34,17 @@ import {
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 const RECENT_ACTIVITY_THROTTLE_MS = 30_000;
 
+function applyTerminalSurfaceTheme(element: HTMLElement | undefined, background: string): void {
+  if (!element) return;
+  element.style.width = "100%";
+  element.style.height = "100%";
+  element.style.backgroundColor = background;
+  for (const selector of [".xterm-viewport", ".xterm-scrollable-element"]) {
+    const surface = element.querySelector<HTMLElement>(selector);
+    if (surface) surface.style.backgroundColor = background;
+  }
+}
+
 interface TerminalViewProps {
   sessionName: string;
   // When false, the xterm stays mounted (buffer preserved) but the live socket
@@ -44,6 +55,12 @@ interface TerminalViewProps {
 
 export default function TerminalView({ sessionName, active = true, onRecreate }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
+  const appearanceMode = useAppearance((state) => state.mode);
+  const appearanceThemeId = useAppearance((state) => state.themeId);
+  const terminalBackground = getThemeTerminalColors(
+    appearanceThemeId,
+    resolveThemeMode(appearanceMode),
+  ).background;
   const hostRef = useRef<HTMLDivElement>(null);
   const [stateSessionName, setStateSessionName] = useState(sessionName);
   const termRef = useRef<Terminal | null>(null);
@@ -97,6 +114,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     terminal.loadAddon(fit);
     terminal.loadAddon(serialize);
     terminal.open(host);
+    applyTerminalSurfaceTheme(terminal.element, theme.background);
     const linkProviderDisposable = terminal.registerLinkProvider(
       new DesktopWebLinkProvider(terminal, (link) => {
         hoveredLinkRef.current = link;
@@ -143,7 +161,9 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     // writes (hydration) must not reassign the palette.
     const unsubscribeAppearance = useAppearance.subscribe((state, previous) => {
       if (state.themeId === previous.themeId && state.mode === previous.mode) return;
-      terminal.options.theme = getThemeTerminalColors(state.themeId, resolveThemeMode(state.mode));
+      const nextTheme = getThemeTerminalColors(state.themeId, resolveThemeMode(state.mode));
+      terminal.options.theme = nextTheme;
+      applyTerminalSurfaceTheme(terminal.element, nextTheme.background);
     });
 
     let rafId: number | null = null;
@@ -317,8 +337,16 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   })();
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col" style={{ background: "#0d1017" }}>
-      <div ref={hostRef} className="min-h-0 flex-1 px-2 pt-1.5" data-terminal-viewport data-selectable />
+    <div
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      style={{ backgroundColor: terminalBackground }}
+    >
+      <div
+        ref={hostRef}
+        className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"
+        data-terminal-viewport
+        data-selectable
+      />
       {pasteError ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-3" aria-live="polite">
           <span className="rounded-md px-3 py-1.5 text-xs" style={{ background: "var(--danger-muted)", color: "var(--danger)" }}>

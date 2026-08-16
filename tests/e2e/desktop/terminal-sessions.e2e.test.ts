@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { _electron, type ElectronApplication, type Page } from "playwright";
+import { _electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
 const REPOSITORY_ROOT = resolve(__dirname, "../../..");
@@ -13,6 +13,75 @@ const desktopRequire = createRequire(join(DESKTOP_ROOT, "package.json"));
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = join(REPOSITORY_ROOT, "docs/review-assets");
 const DEBUG_PORT = 9232;
+
+interface TerminalViewportGeometry {
+  frameBackground: string;
+  headerBottom: number;
+  hostBottom: number;
+  hostHeight: number;
+  hostLeft: number;
+  hostPaddingLeft: string;
+  hostPaddingTop: string;
+  hostTop: number;
+  hostWidth: number;
+  rootBackground: string;
+  rootBottom: number;
+  rootHeight: number;
+  rootLeft: number;
+  rootTop: number;
+  rootWidth: number;
+  viewportBackground: string;
+}
+
+async function readTerminalViewportGeometry(viewport: Locator): Promise<TerminalViewportGeometry> {
+  await viewport.locator(".xterm").waitFor();
+  return viewport.evaluate((host) => {
+    const frame = host.parentElement;
+    const header = frame?.previousElementSibling;
+    const root = host.querySelector<HTMLElement>(".xterm");
+    const xtermViewport = host.querySelector<HTMLElement>(".xterm-viewport");
+    if (!(frame instanceof HTMLElement) || !(header instanceof HTMLElement) || !root || !xtermViewport) {
+      throw new Error("terminal viewport geometry is incomplete");
+    }
+    const headerRect = header.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const hostStyle = getComputedStyle(host);
+    return {
+      frameBackground: getComputedStyle(frame).backgroundColor,
+      headerBottom: headerRect.bottom,
+      hostBottom: hostRect.bottom,
+      hostHeight: hostRect.height,
+      hostLeft: hostRect.left,
+      hostPaddingLeft: hostStyle.paddingLeft,
+      hostPaddingTop: hostStyle.paddingTop,
+      hostTop: hostRect.top,
+      hostWidth: hostRect.width,
+      rootBackground: getComputedStyle(root).backgroundColor,
+      rootBottom: rootRect.bottom,
+      rootHeight: rootRect.height,
+      rootLeft: rootRect.left,
+      rootTop: rootRect.top,
+      rootWidth: rootRect.width,
+      viewportBackground: getComputedStyle(xtermViewport).backgroundColor,
+    };
+  });
+}
+
+async function expectTerminalViewportToFill(viewport: Locator): Promise<TerminalViewportGeometry> {
+  const geometry = await readTerminalViewportGeometry(viewport);
+  expect(Math.abs(geometry.hostTop - geometry.headerBottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootTop - geometry.hostTop)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootLeft - geometry.hostLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootBottom - geometry.hostBottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootWidth - geometry.hostWidth)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootHeight - geometry.hostHeight)).toBeLessThanOrEqual(1);
+  expect(geometry.hostPaddingLeft).toBe("0px");
+  expect(geometry.hostPaddingTop).toBe("0px");
+  expect(geometry.rootBackground).toBe(geometry.frameBackground);
+  expect(geometry.viewportBackground).toBe(geometry.frameBackground);
+  return geometry;
+}
 
 const suite = existsSync(DESKTOP_MAIN) ? describe : describe.skip;
 
@@ -64,7 +133,7 @@ suite("Desktop terminal session handoff", () => {
     }).toBe(true);
   });
 
-  it("renders the Figma-aligned list and preserves the mounted terminal buffer across list-detail navigation", async () => {
+  it("fills and refits the terminal detail while preserving its mounted buffer across navigation", async () => {
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
     await page.getByText("Active", { exact: true }).waitFor();
@@ -77,11 +146,39 @@ suite("Desktop terminal session handoff", () => {
     await page.getByText(/Started at .*main computer/).waitFor();
     const viewport = page.locator("[data-terminal-viewport]");
     await viewport.evaluate((element) => { element.setAttribute("data-mat-300-identity", "preserved"); });
+    const initialGeometry = await expectTerminalViewportToFill(viewport);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-detail.png") });
+
+    await page.getByRole("button", { name: "Collapse sidebar" }).click();
+    await expect.poll(async () => (await readTerminalViewportGeometry(viewport)).hostWidth)
+      .toBeGreaterThan(initialGeometry.hostWidth + 20);
+    const collapsedGeometry = await expectTerminalViewportToFill(viewport);
+
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (!window) throw new Error("desktop window is unavailable");
+      const [width, height] = window.getSize();
+      window.setSize(Math.max(900, width - 140), Math.max(650, height - 100));
+    });
+    await expect.poll(async () => {
+      const resized = await readTerminalViewportGeometry(viewport);
+      return Math.abs(resized.hostWidth - collapsedGeometry.hostWidth)
+        + Math.abs(resized.hostHeight - collapsedGeometry.hostHeight);
+    }).toBeGreaterThan(20);
+    await expectTerminalViewportToFill(viewport);
 
     await page.getByRole("button", { name: "Back to terminal sessions" }).click();
     await page.getByRole("heading", { name: "Terminal" }).waitFor();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await expect.poll(() => viewport.getAttribute("data-mat-300-identity")).toBe("preserved");
+    await expectTerminalViewportToFill(viewport);
+
+    await page.getByRole("button", { name: "Back to terminal sessions" }).click();
+    await page.getByRole("button", { name: "New shell" }).click();
+    const newSessionViewport = page.locator(
+      'section[aria-hidden="false"] [data-terminal-viewport]',
+    );
+    await newSessionViewport.waitFor();
+    await expectTerminalViewportToFill(newSessionViewport);
   }, 30_000);
 });

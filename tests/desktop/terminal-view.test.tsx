@@ -15,7 +15,9 @@ import {
 
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
-const { createdTerminals } = vi.hoisted(() => ({
+const attachmentResize = vi.fn();
+const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoisted(() => ({
+  createdFitAddons: [] as Array<{ fitCalls: number }>,
   createdTerminals: [] as Array<{
     initialOptions: {
       linkHandler?: {
@@ -26,7 +28,9 @@ const { createdTerminals } = vi.hoisted(() => ({
     registeredProviders: unknown[];
     dataCallback?: (data: string) => void;
     element: HTMLElement | null;
+    focusCalls: number;
   }>,
+  resizeObserverCallbacks: [] as ResizeObserverCallback[],
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -53,6 +57,7 @@ vi.mock("@xterm/xterm", () => ({
       };
     };
     registeredProviders: unknown[] = [];
+    focusCalls = 0;
 
     constructor(options: FakeTerminal["initialOptions"]) {
       this.initialOptions = options;
@@ -61,11 +66,22 @@ vi.mock("@xterm/xterm", () => ({
 
     loadAddon(): void {}
     open(host: HTMLElement): void {
-      this.element = host;
+      const root = document.createElement("div");
+      root.className = "xterm";
+      const viewport = document.createElement("div");
+      viewport.className = "xterm-viewport";
+      const scrollable = document.createElement("div");
+      scrollable.className = "xterm-scrollable-element";
+      viewport.append(scrollable);
+      root.append(viewport);
+      host.append(root);
+      this.element = root;
     }
     write(): void {}
     clear(): void {}
-    focus(): void {}
+    focus(): void {
+      this.focusCalls += 1;
+    }
     dispose(): void {}
     onData(callback: (data: string) => void): { dispose: () => void } {
       this.dataCallback = callback;
@@ -80,7 +96,15 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class FakeFitAddon {
-    fit(): void {}
+    fitCalls = 0;
+
+    constructor() {
+      createdFitAddons.push(this);
+    }
+
+    fit(): void {
+      this.fitCalls += 1;
+    }
   },
 }));
 
@@ -108,12 +132,17 @@ vi.mock("@desktop/renderer/src/features/terminal/terminal-runtime", () => ({
 
 describe("TerminalView session switching", () => {
   beforeEach(() => {
+    createdFitAddons.length = 0;
+    createdTerminals.length = 0;
+    resizeObserverCallbacks.length = 0;
     attachMock.mockReset();
     attachMock.mockImplementation((_sessionName: string, _events: ShellSocketEvents) => ({
-      resize: vi.fn(),
+      resize: attachmentResize,
       write: attachmentWrite,
     }));
+    attachmentResize.mockReset();
     attachmentWrite.mockReset();
+    useAppearance.setState({ mode: "dark", themeId: "operator", hydrated: true });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -126,6 +155,9 @@ describe("TerminalView session switching", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class FakeResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          resizeObserverCallbacks.push(callback);
+        }
         observe(): void {}
         disconnect(): void {}
       },
@@ -135,6 +167,64 @@ describe("TerminalView session switching", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("fills the terminal content area without an inset or mismatched xterm surface", () => {
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    const frame = host.parentElement!;
+    const root = host.querySelector<HTMLElement>(".xterm")!;
+    const viewport = host.querySelector<HTMLElement>(".xterm-viewport")!;
+    const scrollable = host.querySelector<HTMLElement>(".xterm-scrollable-element")!;
+    const background = getThemeTerminalColors("operator", "dark").background;
+    const colorProbe = document.createElement("div");
+    colorProbe.style.backgroundColor = background;
+
+    expect(host.className).not.toMatch(/\b(?:px-2|pt-1\.5)\b/);
+    expect(host.className).toContain("overflow-hidden");
+    expect(frame.className).toContain("overflow-hidden");
+    expect(frame.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(root.style.width).toBe("100%");
+    expect(root.style.height).toBe("100%");
+    expect(root.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(viewport.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(scrollable.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+  });
+
+  it("refits the existing viewport and forwards its dimensions after a host resize", () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    render(<TerminalView sessionName="alpha" />);
+    const fit = createdFitAddons.at(-1)!;
+    const fitCallsBeforeResize = fit.fitCalls;
+    attachmentResize.mockClear();
+
+    act(() => {
+      resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver);
+    });
+
+    expect(fit.fitCalls).toBe(fitCallsBeforeResize + 1);
+    expect(attachmentResize).toHaveBeenCalledOnce();
+    expect(attachmentResize).toHaveBeenCalledWith(80, 24);
+  });
+
+  it("keeps xterm mounted and refits it when the terminal becomes active again", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" active />);
+    const terminal = createdTerminals.at(-1)!;
+    const fit = createdFitAddons.at(-1)!;
+    const fitCallsBeforeNavigation = fit.fitCalls;
+
+    rerender(<TerminalView sessionName="alpha" active={false} />);
+    rerender(<TerminalView sessionName="alpha" active />);
+
+    expect(createdTerminals).toHaveLength(1);
+    expect(fit.fitCalls).toBe(fitCallsBeforeNavigation + 1);
+    expect(terminal.focusCalls).toBe(2);
+    expect(attachMock).toHaveBeenCalledTimes(2);
+    expect(attachmentResize).toHaveBeenCalledTimes(2);
   });
 
   it("clears the ended banner before the next session emits state", () => {
@@ -218,9 +308,13 @@ describe("TerminalView session switching", () => {
     act(() => {
       useAppearance.setState({ themeId: "dracula" });
     });
-    expect(terminal.options.theme).toMatchObject({
-      background: getThemeTerminalColors("dracula", "dark").background,
-    });
+    const background = getThemeTerminalColors("dracula", "dark").background;
+    const colorProbe = document.createElement("div");
+    colorProbe.style.backgroundColor = background;
+    expect(terminal.options.theme).toMatchObject({ background });
+    expect(terminal.element?.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(terminal.element?.querySelector<HTMLElement>(".xterm-viewport")?.style.backgroundColor)
+      .toBe(colorProbe.style.backgroundColor);
   });
 
   it("overrides xterm OSC activation and registers plain-text URL detection", () => {
