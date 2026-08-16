@@ -37,7 +37,7 @@ import { capabilityEnabled } from "../coding-agents/capabilities";
 import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
 import { CreatedThreadHandleList, ThreadList } from "../coding-agents/AgentThreadLists";
 import { ReviewList, reviewHunkFollowUpDraft } from "../coding-agents/AgentReviewPanel";
-import { openCodingAgentThread } from "../../lib/project-chat";
+import { loadCodingAgentConversation, openCodingAgentThread } from "../../lib/project-chat";
 import { ProjectChatDraft } from "./ProjectChatDraft";
 import { ProjectThreadList } from "./ProjectThreadList";
 
@@ -66,7 +66,6 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const reviewFocusRequestId = useCodingAgentWorkspace((s) => s.reviewFocusRequestId);
   const reviewFocusConsumedId = useCodingAgentWorkspace((s) => s.reviewFocusConsumedId);
   const consumeReviewFocusRequest = useCodingAgentWorkspace((s) => s.consumeReviewFocusRequest);
-  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const composerFocusRequestId = useCodingAgentWorkspace((s) => s.composerFocusRequestId);
   const workspaceEntry = useProjectWorkspaces((s) => s.entries[projectId]);
@@ -343,8 +342,13 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
 
   // Global Recents owns cross-surface conversation navigation. Same-project
   // selections stay local, while cross-project selections use the canonical
-  // launcher. Both paths record the stable thread id and a bounded title.
-  const openListedThread = (threadId: string, threadProjectId?: string, threadTitle?: string) => {
+  // launcher. Both paths record the stable thread id only after the owning
+  // project and matching snapshot have loaded successfully.
+  const openListedThread = async (
+    threadId: string,
+    threadProjectId?: string,
+    threadTitle?: string,
+  ): Promise<void> => {
     newChatRequestIdRef.current += 1;
     setComposerSeed(null);
     const listedTitle = threadTitle ?? [
@@ -353,14 +357,13 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       ...(workspace?.projectThreads.items ?? []),
       ...(workspace?.taskThreads.items ?? []),
     ].find((thread) => thread.id === threadId)?.title ?? "Agent conversation";
-    recordRecentConversation(threadId, listedTitle);
     if (threadProjectId && threadProjectId !== projectId) {
-      void openCodingAgentThread(threadId);
+      await openCodingAgentThread(threadId);
       return;
     }
     setSelectedThread(projectId, threadId);
-    if (useCodingAgentWorkspace.getState().activeThreadId !== threadId) {
-      void loadThreadSnapshot(threadId);
+    if (await loadCodingAgentConversation(projectId, threadId)) {
+      recordRecentConversation(threadId, listedTitle);
     }
   };
 

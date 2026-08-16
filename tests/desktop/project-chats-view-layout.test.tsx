@@ -25,6 +25,7 @@ import { useProjectView } from "../../desktop/src/renderer/src/stores/project-vi
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 
@@ -179,6 +180,7 @@ function resetStores() {
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {} });
   useProjectChatLauncher.setState({ composerRequest: null });
+  useTabs.setState(useTabs.getInitialState(), true);
   useInspectorLayout.setState({ entries: {}, runtimeScope: null, hydratedScope: null });
   useCodingAgentWorkspace.setState({
     status: "idle",
@@ -280,6 +282,35 @@ describe("ProjectChatsView hero layout", () => {
     expect(await screen.findByTestId("inspector-split")).toBeTruthy();
     expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Hide conversation tools" })).toBeTruthy();
+  });
+
+  it("does not record a rail selection when its snapshot fails to load", async () => {
+    mockOperator();
+    const loadThreadSnapshot = vi.fn(async (threadId: string) => {
+      useCodingAgentWorkspace.setState({
+        activeThreadId: threadId,
+        threadSnapshotStatus: "error",
+        threadSnapshot: null,
+        threadSnapshotError: "Thread state unavailable",
+      });
+    });
+    useCodingAgentWorkspace.setState({ loadThreadSnapshot });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByTestId("inspector-split");
+
+    act(() => {
+      useProjectView.getState().setSelectedThread("matrix-os", null);
+      useTabs.setState({ recentViews: [] });
+    });
+    await screen.findByText("What should we work on?");
+    loadThreadSnapshot.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
+
+    await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_plan"));
+    expect(useTabs.getState().recentViews).not.toContainEqual(
+      expect.objectContaining({ kind: "conversation", id: "thread_plan" }),
+    );
   });
 
   it("collapses to a full-width hero transcript and persists the choice", async () => {

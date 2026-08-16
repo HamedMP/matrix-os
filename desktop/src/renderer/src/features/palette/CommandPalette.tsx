@@ -300,7 +300,7 @@ export default function CommandPalette() {
                       // Reviews surface in the Changes tab of their project's
                       // Chats view; the review focus request forces the pane.
                       const projectId = review.projectId ?? defaultProjectId();
-                      if (projectId) openProjectChat(projectId);
+                      if (projectId) void openProjectChat(projectId);
                       void selectReview(review.id);
                     })
                   }

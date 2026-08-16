@@ -14,7 +14,11 @@ function readableAttachmentName(storedName: string): string {
   const decoded = (() => {
     try {
       return decodeURIComponent(storedName);
-    } catch {
+    } catch (error: unknown) {
+      console.warn(
+        "[chat-resources] attachment name decode failed:",
+        error instanceof URIError ? error.name : "Unknown error",
+      );
       return storedName;
     }
   })();

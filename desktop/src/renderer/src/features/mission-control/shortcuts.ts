@@ -142,7 +142,7 @@ export function handleNewAgentRunShortcut(
   // project's Chats view still opens either way.
   const canCompose = canRequestAgentComposerFocus(workspace.summary);
   if (canCompose) workspace.requestComposerFocus();
-  openProjectChat(projectId, { compose: canCompose });
+  void openProjectChat(projectId, { compose: canCompose });
 }
 
 export function useGlobalShortcuts(): void {

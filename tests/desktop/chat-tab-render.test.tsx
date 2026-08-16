@@ -4,7 +4,10 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
-import { sharedConversationResources } from "../../desktop/src/renderer/src/features/chat/ChatResourcesPanel";
+import {
+  conversationMessageDisplay,
+  sharedConversationResources,
+} from "../../desktop/src/renderer/src/features/chat/ChatResourcesPanel";
 import { useIntegrations } from "../../desktop/src/renderer/src/features/integrations/integrations-store";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -195,6 +198,20 @@ describe("ChatTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Resources" }));
     expect(screen.getByRole("complementary", { name: "Resources" }).textContent)
       .toContain("final report.pdf");
+  });
+
+  it("reports malformed attachment-name encoding before using a safe fallback", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(conversationMessageDisplay(
+      "Review this\n\nAttached files (available on your Matrix computer):\n"
+      + "- ~/temporary/desktop-chat/abc-report%ZZ.pdf "
+      + "(/home/matrix/home/temporary/desktop-chat/abc-report%ZZ.pdf)",
+    )).toEqual({ text: "Review this", attachments: ["report%ZZ.pdf"] });
+    expect(warn).toHaveBeenCalledWith(
+      "[chat-resources] attachment name decode failed:",
+      "URIError",
+    );
   });
 
   it("states unavailable and failed connected-tool Gateway capabilities explicitly", () => {
