@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -6,6 +7,8 @@ import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
 const DESKTOP_MAIN = resolve(__dirname, "../../../desktop/out/main/index.js");
+const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/package.json"));
+const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../desktop/screenshots");
 const suite = existsSync(DESKTOP_MAIN) ? describe : describe.skip;
 
@@ -20,6 +23,7 @@ suite("native Desktop Terminal links", () => {
     gateway = await startStubGateway();
     userDataDir = mkdtempSync(join(tmpdir(), "operator-terminal-links-"));
     app = await _electron.launch({
+      executablePath: ELECTRON_EXECUTABLE,
       args: [DESKTOP_MAIN],
       env: {
         ...process.env,
@@ -28,10 +32,11 @@ suite("native Desktop Terminal links", () => {
       },
     });
     page = await app.firstWindow();
-    await page.getByRole("button", { name: /continue with github/i }).click();
+    await page.getByRole("button", { name: /continue in browser/i }).click();
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
-    await page.getByText("Shells").first().waitFor({ timeout: 10_000 });
+    await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await page.locator(".xterm-helper-textarea").last().focus();
   }, 60_000);
 
