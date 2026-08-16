@@ -1,3 +1,4 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Check,
   Filter,
@@ -5,7 +6,8 @@ import {
   MessageCircle,
   SquareTerminal,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { openCodingAgentThread } from "../../lib/project-chat";
 import {
   useTabs,
@@ -30,39 +32,25 @@ function RecentIcon({ kind }: { kind: RecentView["kind"] }) {
 }
 
 export default function RecentViews() {
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const [filterOpen, setFilterOpen] = useState(false);
   const recentViews = useTabs((state) => state.recentViews);
   const recentFilter = useTabs((state) => state.recentFilter);
   const setRecentFilter = useTabs((state) => state.setRecentFilter);
   const tabs = useTabs((state) => state.tabs);
+  const activeTabId = useTabs((state) => state.activeTabId);
   const openTab = useTabs((state) => state.openTab);
   const requestTerminalSession = useTabs((state) => state.requestTerminalSession);
   const api = useConnection((state) => state.api);
   const threads = useThreads((state) => state.threads);
+  const activeThreadId = useThreads((state) => state.activeThreadId);
   const setActiveThread = useThreads((state) => state.setActiveThread);
   const openHermesConversation = useHermesChat((state) => state.openConversation);
   const showHermesIndex = useHermesChat((state) => state.showIndex);
+  const hermesSessionId = useHermesChat((state) => state.sessionId);
+  const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const visible = useMemo(
     () => recentViews.filter((recent) => recentFilter === "all" || recent.kind === recentFilter).slice(0, 8),
     [recentFilter, recentViews],
   );
-
-  useEffect(() => {
-    if (!filterOpen) return;
-    const closeOnPointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setFilterOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFilterOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnPointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnPointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [filterOpen]);
 
   const openRecent = (recent: RecentView) => {
     if (recent.kind === "project") {
@@ -103,66 +91,102 @@ export default function RecentViews() {
     }
   };
 
+  const isActive = (recent: RecentView) => {
+    if (recent.kind === "project") {
+      return activeTab?.kind === "project" && activeTab.projectSlug === recent.id;
+    }
+    if (recent.kind === "terminal") {
+      return activeTab?.kind === "terminal" && activeTab.sessionName === recent.id;
+    }
+    return activeTab?.kind === "chat"
+      && (recent.id === activeThreadId || recent.id === hermesSessionId);
+  };
+
   return (
-    <div ref={rootRef} className="relative mt-4">
+    <div className="relative mt-4">
       <div className="flex items-center justify-between px-2.5 pb-1">
         <span className="text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>
           Recents
         </span>
-        <button
-          type="button"
-          aria-label="Filter recents"
-          aria-haspopup="menu"
-          aria-expanded={filterOpen}
-          className="flex h-5 w-5 items-center justify-center rounded hover:bg-[var(--bg-hover)]"
-          style={{ color: recentFilter === "all" ? "var(--text-tertiary)" : "var(--accent)" }}
-          onClick={() => setFilterOpen((value) => !value)}
-        >
-          <Filter size={12} />
-        </button>
-      </div>
-
-      {filterOpen ? (
-        <div
-          role="menu"
-          aria-label="Recent type"
-          className="absolute right-1 top-6 z-20 w-40 rounded-lg border p-1 shadow-lg"
-          style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
-        >
-          {FILTER_OPTIONS.map((option) => (
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
             <button
-              key={option.filter}
               type="button"
-              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-[var(--bg-hover)]"
-              style={{ color: "var(--text-primary)" }}
-              onClick={() => {
-                setRecentFilter(option.filter);
-                setFilterOpen(false);
+              aria-label="Filter recents"
+              className="flex h-5 w-5 items-center justify-center rounded outline-none hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
+              style={{ color: recentFilter === "all" ? "var(--text-tertiary)" : "var(--accent)" }}
+            >
+              <Filter size={12} aria-hidden="true" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              aria-label="Recent type"
+              aria-labelledby={undefined}
+              align="end"
+              sideOffset={4}
+              className="w-40 rounded-lg border p-1 shadow-lg outline-none"
+              style={{
+                zIndex: DESKTOP_Z_INDEX.popover,
+                borderColor: "var(--border-default)",
+                background: "var(--bg-overlay)",
+                boxShadow: "var(--shadow-2)",
               }}
             >
-              <span className="flex w-3 items-center justify-center">
-                {recentFilter === option.filter ? <Check size={12} /> : null}
-              </span>
-              {option.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+              <DropdownMenu.RadioGroup
+                value={recentFilter}
+                onValueChange={(value) => setRecentFilter(value as RecentViewFilter)}
+              >
+                {FILTER_OPTIONS.map((option) => (
+                  <DropdownMenu.RadioItem
+                    key={option.filter}
+                    value={option.filter}
+                    className="flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-xs outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+                    style={{ color: "var(--text-primary)" }}
+                  >
+                    <span className="flex w-3 items-center justify-center">
+                      <DropdownMenu.ItemIndicator>
+                        <Check size={12} aria-hidden="true" />
+                      </DropdownMenu.ItemIndicator>
+                    </span>
+                    {option.label}
+                  </DropdownMenu.RadioItem>
+                ))}
+              </DropdownMenu.RadioGroup>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
 
       <div className="flex flex-col gap-0.5">
-        {visible.map((recent) => (
-          <button
-            key={`${recent.kind}:${recent.id}`}
-            type="button"
-            aria-label={`Open recent ${recent.label}`}
-            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-[var(--bg-hover)]"
-            style={{ color: "var(--text-secondary)" }}
-            onClick={() => openRecent(recent)}
-          >
-            <span className="shrink-0" style={{ color: "var(--text-tertiary)" }}><RecentIcon kind={recent.kind} /></span>
-            <span className="min-w-0 flex-1 truncate">{recent.label}</span>
-          </button>
-        ))}
+        {visible.map((recent) => {
+          const active = isActive(recent);
+          return (
+            <button
+              key={`${recent.kind}:${recent.id}`}
+              type="button"
+              aria-label={`Open recent ${recent.label}`}
+              aria-current={active ? "page" : undefined}
+              data-active={active ? "true" : "false"}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 text-left text-sm outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
+              style={{
+                height: "var(--sidebar-row-height)",
+                color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                background: active ? "var(--bg-selected)" : undefined,
+              }}
+              onClick={() => openRecent(recent)}
+            >
+              <span
+                aria-hidden="true"
+                className="shrink-0"
+                style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }}
+              >
+                <RecentIcon kind={recent.kind} />
+              </span>
+              <span className="min-w-0 flex-1 truncate">{recent.label}</span>
+            </button>
+          );
+        })}
         {visible.length === 0 ? (
           <span className="px-2.5 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
             No recent {recentFilter === "all" ? "views" : FILTER_OPTIONS.find((option) => option.filter === recentFilter)?.label.toLowerCase()}.

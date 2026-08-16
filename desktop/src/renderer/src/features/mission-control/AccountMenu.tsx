@@ -1,3 +1,4 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronRight,
   CircleHelp,
@@ -5,7 +6,8 @@ import {
   LogOut,
   Settings,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
@@ -37,32 +39,30 @@ function AccountAvatar({
 function MenuRow({
   icon,
   label,
-  onClick,
+  onSelect,
   trailing = false,
   danger = false,
 }: {
   icon: React.ReactNode;
   label: string;
-  onClick: () => void;
+  onSelect: () => void;
   trailing?: boolean;
   danger?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] hover:bg-[var(--bg-hover)]"
+    <DropdownMenu.Item
+      className="flex h-9 cursor-default items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]"
       style={{ color: danger ? "var(--danger)" : "var(--text-primary)" }}
-      onClick={onClick}
+      onSelect={onSelect}
     >
-      <span style={{ color: danger ? "var(--danger)" : "var(--text-tertiary)" }}>{icon}</span>
+      <span aria-hidden="true" style={{ color: danger ? "var(--danger)" : "var(--text-tertiary)" }}>{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {trailing ? <ChevronRight size={13} style={{ color: "var(--text-tertiary)" }} /> : null}
-    </button>
+      {trailing ? <ChevronRight aria-hidden="true" size={13} style={{ color: "var(--text-tertiary)" }} /> : null}
+    </DropdownMenu.Item>
   );
 }
 
 export default function AccountMenu({ collapsed }: { collapsed: boolean }) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const handle = useConnection((state) => state.handle);
   const displayName = useConnection((state) => state.displayName);
@@ -73,22 +73,6 @@ export default function AccountMenu({ collapsed }: { collapsed: boolean }) {
   const primaryLabel = displayName ?? (handle ? `@${handle}` : "Signed in");
   const secondaryLabel = displayName && handle ? `@${handle}` : null;
 
-  useEffect(() => {
-    if (!open) return;
-    const closeOnPointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnPointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnPointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
   const openSettings = (section: "account" | "billing") => {
     setOpen(false);
     requestSettingsSection(section);
@@ -96,43 +80,74 @@ export default function AccountMenu({ collapsed }: { collapsed: boolean }) {
   };
 
   return (
-    <div ref={rootRef} className="relative p-2 pt-1">
-      {open ? (
-        <div
-          role="menu"
-          aria-label="Account"
-          className="absolute bottom-full left-2 mb-1 w-56 rounded-xl border p-1 shadow-lg"
-          style={{ zIndex: 30, borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
-        >
-          <div className="px-2 py-2">
-            <span className="block text-[10px] font-semibold uppercase tracking-[0.1em]" style={{ color: "var(--text-tertiary)" }}>
-              Personal account
+    <div className="p-2 pt-1">
+      <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+        <DropdownMenu.Trigger asChild>
+          <button
+            type="button"
+            aria-label="Open account menu"
+            title={collapsed ? primaryLabel : undefined}
+            className={`flex h-10 w-full items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center" : "gap-2 px-1"}`}
+          >
+            <span
+              className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold"
+              style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+            >
+              <AccountAvatar key={imageUrl} imageUrl={imageUrl} label={primaryLabel} />
             </span>
-            <span className="block truncate text-xs" style={{ color: "var(--text-secondary)" }}>
-              {secondaryLabel ?? primaryLabel}
-            </span>
-          </div>
-          <div className="border-t p-1" style={{ borderColor: "var(--border-subtle)" }}>
-            <MenuRow icon={<Settings size={14} />} label="Settings" trailing onClick={() => openSettings("account")} />
+            {!collapsed ? (
+              <span className="min-w-0 flex-1 text-left leading-tight">
+                <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
+                {secondaryLabel ? (
+                  <span className="block truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span>
+                ) : null}
+              </span>
+            ) : null}
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            aria-label="Account"
+            aria-labelledby={undefined}
+            side="top"
+            align="start"
+            sideOffset={4}
+            className="rounded-xl border p-1 outline-none"
+            style={{
+              zIndex: DESKTOP_Z_INDEX.popover,
+              width: "var(--sidebar-account-menu-width)",
+              borderColor: "var(--border-default)",
+              background: "var(--bg-overlay)",
+              boxShadow: "var(--shadow-2)",
+            }}
+          >
+            <DropdownMenu.Label className="px-2 py-2">
+              <span className="block text-[10px] font-semibold uppercase tracking-[0.1em]" style={{ color: "var(--text-tertiary)" }}>
+                Personal account
+              </span>
+              <span className="block truncate text-xs" style={{ color: "var(--text-secondary)" }}>
+                {secondaryLabel ?? primaryLabel}
+              </span>
+            </DropdownMenu.Label>
+            <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
+            <MenuRow icon={<Settings size={14} />} label="Settings" trailing onSelect={() => openSettings("account")} />
             <MenuRow
               icon={<CircleHelp size={14} />}
               label="Get help"
               trailing
-              onClick={() => {
+              onSelect={() => {
                 setOpen(false);
                 void invoke("shell:open-external", { url: "https://matrix-os.com/docs" });
               }}
             />
-          </div>
-          <div className="border-t p-1" style={{ borderColor: "var(--border-subtle)" }}>
-            <MenuRow icon={<CreditCard size={14} />} label="View all plans" onClick={() => openSettings("billing")} />
-          </div>
-          <div className="border-t p-1" style={{ borderColor: "var(--border-subtle)" }}>
+            <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
+            <MenuRow icon={<CreditCard size={14} />} label="View all plans" onSelect={() => openSettings("billing")} />
+            <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
             <MenuRow
               icon={<LogOut size={14} />}
               label="Log out"
               danger
-              onClick={() => {
+              onSelect={() => {
                 setOpen(false);
                 void signOut().catch((error: unknown) => {
                   console.warn(
@@ -142,34 +157,9 @@ export default function AccountMenu({ collapsed }: { collapsed: boolean }) {
                 });
               }}
             />
-          </div>
-        </div>
-      ) : null}
-
-      <button
-        type="button"
-        aria-label="Open account menu"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={collapsed ? primaryLabel : undefined}
-        className={`flex w-full items-center rounded-md hover:bg-[var(--bg-hover)] ${collapsed ? "h-9 justify-center" : "gap-2 px-1 py-1"}`}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span
-          className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold"
-          style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
-        >
-          <AccountAvatar key={imageUrl} imageUrl={imageUrl} label={primaryLabel} />
-        </span>
-        {!collapsed ? (
-          <span className="min-w-0 flex-1 text-left leading-tight">
-            <span className="block truncate text-sm" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
-            {secondaryLabel ? (
-              <span className="block truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span>
-            ) : null}
-          </span>
-        ) : null}
-      </button>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
     </div>
   );
 }

@@ -83,7 +83,7 @@ describe("Desktop sidebar navigation shell", () => {
     return render(<Tooltip.Provider><Sidebar /></Tooltip.Provider>);
   }
 
-  it("filters bounded Recents by conversation, terminal, and project type", () => {
+  it("filters bounded Recents by conversation, terminal, and project type", async () => {
     renderSidebar();
 
     expect(screen.getByText("Fix navigation")).toBeTruthy();
@@ -93,8 +93,8 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByRole("button", { name: "Open recent dev" }).querySelector(".lucide-square-terminal")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open recent Matrix OS" }).querySelector(".lucide-folder-kanban")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Filter recents" }));
-    fireEvent.click(screen.getByRole("button", { name: "Terminals" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Filter recents" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Terminals" }));
 
     expect(screen.queryByText("Fix navigation")).toBeNull();
     expect(screen.getByText("dev")).toBeTruthy();
@@ -175,25 +175,77 @@ describe("Desktop sidebar navigation shell", () => {
       .toBe(false);
   });
 
-  it("offers the approved account actions and routes them through current behavior", () => {
+  it("exposes the persistent navigation hierarchy and selected row semantics", () => {
+    useBoard.setState({
+      projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "scratch" }],
+    });
+    renderSidebar();
+
+    const sidebar = screen.getByRole("complementary", { name: "Matrix OS navigation" });
+    expect(sidebar.getAttribute("data-sidebar-state")).toBe("expanded");
+    expect(sidebar.style.width).toBe("var(--sidebar-expanded-width)");
+    expect(screen.getByTestId("matrix-sidebar-logo")).toBeTruthy();
+
+    expect(screen.getByRole("button", { name: "Terminal" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBeNull();
+
+    const projects = screen.getByRole("button", { name: "Projects" });
+    expect(projects.getAttribute("aria-expanded")).toBe("true");
+    expect(projects.getAttribute("aria-controls")).toBe("sidebar-projects");
+    expect(screen.getByRole("button", { name: "Open Matrix OS" })).toBeTruthy();
+
+    fireEvent.click(projects);
+    expect(projects.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Open Matrix OS" })).toBeNull();
+  });
+
+  it("keeps the collapsed rail labelled while hiding expanded-only chrome", () => {
+    useUi.setState({ sidebarCollapsed: true });
+    renderSidebar();
+
+    const sidebar = screen.getByRole("complementary", { name: "Matrix OS navigation" });
+    expect(sidebar.getAttribute("data-sidebar-state")).toBe("collapsed");
+    expect(sidebar.style.width).toBe("var(--sidebar-collapsed-width)");
+    expect(screen.queryByTestId("matrix-sidebar-logo")).toBeNull();
+    expect(screen.queryByText("Recents")).toBeNull();
+    expect(screen.queryByText("Projects")).toBeNull();
+    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
+  });
+
+  it("opens Recents and account menus from the keyboard", async () => {
+    renderSidebar();
+
+    const recentsTrigger = screen.getByRole("button", { name: "Filter recents" });
+    fireEvent.keyDown(recentsTrigger, { key: "ArrowDown" });
+    expect(await screen.findByRole("menu", { name: "Recent type" })).toBeTruthy();
+    fireEvent.keyDown(document.activeElement ?? document, { key: "Escape" });
+
+    const accountTrigger = screen.getByRole("button", { name: "Open account menu" });
+    fireEvent.keyDown(accountTrigger, { key: "ArrowDown" });
+    expect(await screen.findByRole("menu", { name: "Account" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeTruthy();
+  });
+
+  it("offers the approved account actions and routes them through current behavior", async () => {
     renderSidebar();
     const trigger = screen.getByRole("button", { name: "Open account menu" });
 
-    fireEvent.click(trigger);
-    expect(screen.getByText("ada operator", { exact: false })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    expect(await screen.findByText("ada operator", { exact: false })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)).toMatchObject({ kind: "settings" });
 
-    fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("button", { name: "View all plans" }));
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "View all plans" }));
     expect(useUi.getState().requestedSettingsSection).toBe("billing");
 
-    fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("button", { name: "Get help" }));
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Get help" }));
     expect(invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://matrix-os.com/docs" });
 
-    fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Log out" }));
     expect(signOut).toHaveBeenCalledOnce();
   });
 });

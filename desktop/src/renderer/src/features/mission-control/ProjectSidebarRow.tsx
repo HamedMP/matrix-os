@@ -1,5 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Archive, MoreHorizontal, Trash2 } from "lucide-react";
+import { Archive, Folder, MoreHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import type { Project } from "../../stores/board";
@@ -49,17 +49,19 @@ export default function ProjectSidebarRow({
   return (
     <>
       <div
-        className="group/project-row flex w-full items-center rounded-md transition-colors duration-100"
+        data-active={active ? "true" : "false"}
+        className="group/project-row flex w-full items-center rounded-md transition-colors duration-100 hover:bg-[var(--bg-hover)]"
         style={{ background: active ? "var(--bg-selected)" : "transparent" }}
       >
         <button
           type="button"
-          aria-label={`Open ${project.name}`}
-          className="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2.5 text-sm font-medium"
-          style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
+          aria-label={`Open ${project.name || project.slug}`}
+          aria-current={active ? "page" : undefined}
+          className="flex min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-sm font-medium outline-none"
+          style={{ height: "var(--sidebar-row-height)", color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
           onClick={onOpen}
         >
-          <span className="text-xs" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }}>▣</span>
+          <Folder size={14} aria-hidden="true" className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />
           <span className="min-w-0 flex-1 truncate text-left">{project.name || project.slug}</span>
           {attention > 0 ? (
             <span className="rounded-full px-1.5 text-xs" style={{ background: "var(--highlight-muted)", color: "var(--highlight)" }}>

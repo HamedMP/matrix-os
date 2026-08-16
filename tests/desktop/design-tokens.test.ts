@@ -136,6 +136,18 @@ describe("tailwind text scale bridge", () => {
   });
 });
 
+describe("Desktop sidebar geometry tokens", () => {
+  const tokensCss = readRendererFile("design", "tokens.css");
+  const root = themeBlock(tokensCss, ":root");
+
+  it("defines the shared expanded, collapsed, row, and menu geometry", () => {
+    expect(tokenValue(root, "--sidebar-expanded-width")).toBe("240px");
+    expect(tokenValue(root, "--sidebar-collapsed-width")).toBe("56px");
+    expect(tokenValue(root, "--sidebar-row-height")).toBe("32px");
+    expect(tokenValue(root, "--sidebar-menu-width")).toBe("248px");
+  });
+});
+
 describe("tertiary text contrast (WCAG AA)", () => {
   const MIN_AA_CONTRAST = 4.5;
   const tokensCss = readRendererFile("design", "tokens.css");

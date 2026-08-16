@@ -70,12 +70,34 @@ describe("sidebar computer menu", () => {
     render(<RuntimeComputerMenu collapsed={false} />);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Change computer, currently Main Computer" })).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "Change computer, currently Main Computer" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Change computer, currently Main Computer" }), { button: 0, ctrlKey: false });
 
-    expect(screen.getByRole("listbox", { name: "Choose computer" })).not.toBeNull();
-    expect(screen.getByRole("option", { name: /Main Computer.*Current/i })).not.toBeNull();
-    expect(screen.getByRole("option", { name: /Additional Computer.*Available/i })).not.toBeNull();
-    expect(screen.getByRole("option", { name: /Preview Computer.*Starting/i }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("menu", { name: "Choose computer" })).not.toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: /Main Computer.*Current/i }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemradio", { name: /Additional Computer.*Available/i })).not.toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: /Preview Computer.*Starting/i }).hasAttribute("data-disabled")).toBe(true);
+  });
+
+  it("opens from the keyboard and traverses computer choices", async () => {
+    const selectRuntime = vi.fn(async () => undefined);
+    useConnection.setState({ selectRuntime });
+    render(<RuntimeComputerMenu collapsed={false} />);
+
+    const trigger = await screen.findByRole("button", { name: /Change computer, currently Main Computer/i });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+
+    const menu = await screen.findByRole("menu", { name: "Choose computer" });
+    expect(menu).toBeTruthy();
+    const choices = screen.getAllByRole("menuitemradio");
+    expect(choices).toHaveLength(3);
+    expect(choices[0]?.getAttribute("aria-checked")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(choices[0]));
+
+    fireEvent.keyDown(choices[0]!, { key: "ArrowDown" });
+    await waitFor(() => expect(document.activeElement).toBe(choices[1]));
+    fireEvent.keyDown(choices[1]!, { key: "Enter" });
+    await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("review"));
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("switches through trusted runtime selection and closes the menu", async () => {
@@ -83,11 +105,11 @@ describe("sidebar computer menu", () => {
     useConnection.setState({ selectRuntime });
     render(<RuntimeComputerMenu collapsed={false} />);
     await waitFor(() => expect(screen.getByText("Main Computer")).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: /Change computer/i }));
-    fireEvent.click(screen.getByRole("option", { name: /Additional Computer.*Available/i }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Change computer/i }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Additional Computer.*Available/i }));
 
     await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("review"));
-    expect(screen.queryByRole("listbox", { name: "Choose computer" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Choose computer" })).toBeNull();
   });
 
   it("keeps failures safe and offers an inline retry", async () => {
@@ -96,10 +118,10 @@ describe("sidebar computer menu", () => {
     });
     render(<RuntimeComputerMenu collapsed={false} />);
     await waitFor(() => expect(screen.getByRole("button", { name: /Computer list unavailable/i })).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: /Computer list unavailable/i }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Computer list unavailable/i }), { button: 0, ctrlKey: false });
 
     expect(screen.getByText("Computers unavailable")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Retry computers" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Retry computers" })).not.toBeNull();
     expect(screen.queryByText(/raw-secret|\/home\/matrix/i)).toBeNull();
   });
 
@@ -186,11 +208,11 @@ describe("sidebar computer menu", () => {
 
     render(<RuntimeComputerMenu collapsed={false} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Change computer, currently Additional Computer" })).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: /Change computer/i }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Change computer/i }), { button: 0, ctrlKey: false });
 
-    expect(screen.getByRole("option", { name: /Additional Computer.*Current/i }).hasAttribute("disabled")).toBe(true);
-    const staleProfileOption = screen.getByRole("option", { name: /Main Computer.*Available/i });
-    expect(staleProfileOption.hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("menuitemradio", { name: /Additional Computer.*Current/i }).getAttribute("aria-checked")).toBe("true");
+    const staleProfileOption = screen.getByRole("menuitemradio", { name: /Main Computer.*Available/i });
+    expect(staleProfileOption.hasAttribute("data-disabled")).toBe(false);
     fireEvent.click(staleProfileOption);
     await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("primary"));
   });
@@ -214,23 +236,22 @@ describe("sidebar computer menu", () => {
 
     render(<RuntimeComputerMenu collapsed={false} />);
     await waitFor(() => expect(screen.getByText("operator-0")).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: /Change computer/i }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Change computer/i }), { button: 0, ctrlKey: false });
 
-    const listbox = screen.getByRole("listbox", { name: "Choose computer" });
-    const scrollRegion = listbox.querySelector(".overflow-y-auto");
+    const menu = screen.getByRole("menu", { name: "Choose computer" });
+    const scrollRegion = menu.querySelector(".overflow-y-auto");
     expect(scrollRegion).not.toBeNull();
     expect(scrollRegion?.className).toMatch(/max-h-/);
-    expect(screen.getAllByRole("option")).toHaveLength(20);
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(20);
   });
 
   it("keeps the collapsed rail menu wide enough to read computer labels", async () => {
     render(<RuntimeComputerMenu collapsed />);
     await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("runtime:list-computers", {}));
-    fireEvent.click(screen.getByRole("button", { name: /Change computer/i }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Change computer/i }), { button: 0, ctrlKey: false });
 
-    const listbox = screen.getByRole("listbox", { name: "Choose computer" });
-    expect(listbox.className).toMatch(/w-64/);
-    expect(listbox.className).not.toMatch(/right-2/);
+    const menu = screen.getByRole("menu", { name: "Choose computer" });
+    expect(menu.style.width).toBe("var(--sidebar-menu-width)");
   });
 
   it("clears owner-scoped inventory when a signed-in session is replaced in place", async () => {
