@@ -702,7 +702,31 @@ export async function startStubGateway(): Promise<StubGateway> {
       return;
     }
     if (path === "/api/terminal/sessions") {
-      json(res, 200, { sessions: [{ name: "matrix-task-1", status: "active" }] });
+      json(res, 200, {
+        sessions: [
+          {
+            name: "matrix-task-1",
+            status: "active",
+            visualStatus: "running",
+            createdAt: "2026-07-08T08:30:00.000Z",
+            updatedAt: NOW,
+          },
+          {
+            name: "matrix-review",
+            status: "degraded",
+            visualStatus: "waiting",
+            createdAt: "2026-07-08T08:15:00.000Z",
+            updatedAt: NOW,
+          },
+          {
+            name: "matrix-closed",
+            status: "exited",
+            visualStatus: "finished",
+            createdAt: "2026-07-08T07:45:00.000Z",
+            updatedAt: NOW,
+          },
+        ],
+      });
       return;
     }
     if (req.method === "GET" && path === "/api/auth/ws-token") {

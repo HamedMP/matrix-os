@@ -164,6 +164,20 @@ describe("TerminalView session switching", () => {
     expect(attachMock).toHaveBeenCalledTimes(1);
   });
 
+  it("announces reconnecting, disconnected, and ended lifecycle states", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
+
+    act(() => events.onState("reconnecting"));
+    expect(screen.getByRole("status").textContent).toContain("Reconnecting…");
+
+    act(() => events.onState("connection-lost"));
+    expect(screen.getByRole("status").textContent).toContain("Connection lost. Reconnecting…");
+
+    act(() => events.onState("fatal"));
+    expect(screen.getByRole("status").textContent).toContain("This session has ended on your computer.");
+  });
+
   it("re-themes live terminals only when the theme actually changes", () => {
     useAppearance.setState({ mode: "dark", themeId: "operator", hydrated: false });
     render(<TerminalView sessionName="alpha" />);

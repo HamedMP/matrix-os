@@ -54,6 +54,21 @@ const RUNTIME_INSTALL: Record<AgentRuntimeId, ProviderSetupCommand> = {
   },
 };
 
+const RUNTIME_RESTART: Record<AgentRuntimeId, ProviderSetupCommand> = {
+  hermes: {
+    key: "hermes:restart",
+    label: "Restart Hermes",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control switch hermes",
+    sessionName: "matrix-restart-hermes",
+  },
+  openclaw: {
+    key: "openclaw:restart",
+    label: "Restart OpenClaw",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control switch openclaw",
+    sessionName: "matrix-restart-openclaw",
+  },
+};
+
 const CLAUDE_SETUP: ProviderSetupCommand = {
   key: "claude:login",
   label: "Claude login",
@@ -104,10 +119,16 @@ function RuntimeOptions({
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
       {view.runtime.options.map((runtime) => {
         const selected = runtime.id === view.runtime.selected;
+        const active = selected
+          && runtime.installState === "installed"
+          && runtime.selectionState === "active";
         const usable = runtime.installState === "installed"
           && runtime.selectionState !== "unavailable";
         const canInstall = runtime.installState !== "installed"
           && runtime.setupAction === "install";
+        const canRestart = selected
+          && runtime.installState === "installed"
+          && runtime.selectionState === "action_required";
         return (
           <article
             key={runtime.id}
@@ -132,7 +153,7 @@ function RuntimeOptions({
               </span>
             </div>
             <div className="mt-3">
-              {selected ? (
+              {active ? (
                 <span className="text-xs font-medium" style={{ color: "var(--success)" }}>
                   {runtime.displayName} is active
                 </span>
@@ -145,6 +166,19 @@ function RuntimeOptions({
                 >
                   <SquareTerminal size={13} />Install {runtime.displayName}
                 </Button>
+              ) : canRestart ? (
+                <Button
+                  variant="subtle"
+                  disabled={busy}
+                  aria-label={`Restart ${runtime.displayName}`}
+                  onClick={() => void onOpenSetup(RUNTIME_RESTART[runtime.id])}
+                >
+                  <SquareTerminal size={13} />Restart {runtime.displayName}
+                </Button>
+              ) : selected ? (
+                <span className="text-xs font-medium" style={{ color: "var(--warning)" }}>
+                  {runtime.displayName} is selected · {statusLabel(runtime.selectionState)}
+                </span>
               ) : (
                 <Button
                   variant="subtle"
@@ -385,7 +419,11 @@ export default function AgentRuntimeSettingsCard() {
         if (targetRuntime && mutationError instanceof AppError && mutationError.category === "timeout") {
           try {
             const config = normalizeAgentConfig(await api.get<unknown>(AGENT_PATH));
-            if (config.extended?.runtime.selected === targetRuntime) {
+            const target = config.extended?.runtime.options.find((runtime) =>
+              runtime.id === targetRuntime);
+            if (config.extended?.runtime.selected === targetRuntime
+              && target?.installState === "installed"
+              && target.selectionState === "active") {
               setView(config.extended);
               setLegacy(config.runtimeUpdateRequired);
               return;

@@ -495,7 +495,11 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(AgentSettingsViewSchema.safeParse(data).success).toBe(true);
       expect(data.runtime.selected).toBe("hermes");
       expect(data.runtime.options).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: "hermes", selectionState: "active" }),
+        expect.objectContaining({
+          id: "hermes",
+          installState: "unknown",
+          selectionState: "action_required",
+        }),
         expect.objectContaining({ id: "openclaw", installState: "missing" }),
       ]));
     });
