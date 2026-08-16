@@ -330,6 +330,80 @@ describe("openProjectChat", () => {
     });
   });
 
+  it("does not record a Recent when the project refreshes while the thread snapshot loads", async () => {
+    let resolveWorkspace!: (workspace: ProjectAgentWorkspace) => void;
+    let markThreadSnapshotStarted!: () => void;
+    let resolveThreadSnapshot!: () => void;
+    const workspaceResponse = new Promise<ProjectAgentWorkspace>((resolve) => {
+      resolveWorkspace = resolve;
+    });
+    const threadSnapshotResponse = new Promise<void>((resolve) => {
+      resolveThreadSnapshot = resolve;
+    });
+    const threadSnapshotStarted = new Promise<void>((resolve) => {
+      markThreadSnapshotStarted = resolve;
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel === "runtime:get-project-workspace") return workspaceResponse;
+          if (channel === "state:set") return { ok: true };
+          throw new Error(`unexpected channel ${channel}`);
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
+    const workspace = {
+      project: summaryWithThreads().projects.items[0]!,
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: summaryWithThreads().activeThreads.items, hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+      updatedAt: NOW,
+    } satisfies ProjectAgentWorkspace;
+    useProjectWorkspaces.setState({
+      entries: {
+        "matrix-os": {
+          status: "ready",
+          workspace,
+          error: null,
+          fetchedAt: 1,
+        },
+      },
+    });
+    useCodingAgentWorkspace.setState({
+      summary: summaryWithThreads(),
+      status: "ready",
+      loadThreadSnapshot: vi.fn(async (threadId: string) => {
+        markThreadSnapshotStarted();
+        await threadSnapshotResponse;
+        useCodingAgentWorkspace.setState({
+          activeThreadId: threadId,
+          threadSnapshotStatus: "ready",
+          threadSnapshot: {
+            thread: summaryWithThreads().activeThreads.items[0]!,
+            events: { items: [], hasMore: false, limit: 200 },
+          },
+        });
+      }),
+    });
+
+    const openingConversation = openProjectChat("matrix-os", { threadId: "thread_alpha" });
+    await threadSnapshotStarted;
+    const replacementLoad = useProjectWorkspaces.getState().refresh("matrix-os");
+    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.status).toBe("loading");
+
+    resolveThreadSnapshot();
+    const opened = await openingConversation;
+
+    resolveWorkspace(workspace);
+    await replacementLoad;
+    expect(opened).toBe(false);
+    expect(useTabs.getState().recentViews).not.toContainEqual(
+      expect.objectContaining({ kind: "conversation", id: "thread_alpha" }),
+    );
+  });
+
   it("does not reload the snapshot for the already-active thread", () => {
     const loadThreadSnapshot = vi.fn(async () => undefined);
     useCodingAgentWorkspace.setState({ loadThreadSnapshot, activeThreadId: "thread_alpha" });

@@ -102,16 +102,12 @@ export async function loadCodingAgentConversation(
   threadId: string,
 ): Promise<boolean> {
   const runtimeGeneration = captureRuntimeGeneration();
-  let workspaceReady = false;
   try {
     await useProjectWorkspaces.getState().ensure(projectId);
   } catch (err: unknown) {
     console.warn("[project-chat] project workspace open failed:", diagnosticErrorKind(err));
   }
   if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
-  const projectWorkspace = useProjectWorkspaces.getState().entries[projectId];
-  workspaceReady = projectWorkspace?.status === "ready"
-    && projectWorkspace.workspace?.project.id === projectId;
 
   const current = useCodingAgentWorkspace.getState();
   const alreadyLoaded = current.activeThreadId === threadId
@@ -126,8 +122,14 @@ export async function loadCodingAgentConversation(
     }
   }
   if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
+  // A same-project refresh can supersede the workspace after ensure() settles
+  // while the thread snapshot is still loading. Re-read the authoritative
+  // entry here so a transient loading/error state cannot persist a broken
+  // conversation Recent.
+  const projectWorkspace = useProjectWorkspaces.getState().entries[projectId];
   const loaded = useCodingAgentWorkspace.getState();
-  return workspaceReady
+  return projectWorkspace?.status === "ready"
+    && projectWorkspace.workspace?.project.id === projectId
     && loaded.activeThreadId === threadId
     && loaded.threadSnapshotStatus === "ready"
     && loaded.threadSnapshot?.thread.id === threadId
