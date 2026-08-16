@@ -21,6 +21,8 @@ import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServe
 import { logTerminalDebug } from "./terminal-debug.js";
 import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { createConversationLifecycle } from "./conversation-lifecycle.js";
+import { createConversationMutationLock } from "./conversation-mutation-lock.js";
 import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
 import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
@@ -467,8 +469,16 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const watcher: Watcher = createWatcher(homePath);
-  const conversations: ConversationStore = createConversationStore(homePath);
+  const conversationMutationLock = createConversationMutationLock({ maxKeys: 64 });
+  const conversations: ConversationStore = createConversationStore(homePath, {
+    mutationLock: conversationMutationLock,
+  });
   const conversationRuns = new ConversationRunRegistry();
+  const conversationLifecycle = createConversationLifecycle({
+    mutationLock: conversationMutationLock,
+    conversations,
+    conversationRuns,
+  });
   const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
@@ -1355,9 +1365,9 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
-  function finalizeWithSummary(sid: string) {
-    conversations.finalize(sid);
+  async function finalizeWithSummary(sid: string) {
     try {
+      await conversationLifecycle.finalize(sid);
       const conv = conversations.get(sid);
       if (conv && conv.messages.length > 0) {
         const summaryMessages = conv.messages
@@ -2093,46 +2103,68 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           if (parsed.type === "message") {
-            clearConversationRunAttachment();
-            pendingText = parsed.displayText ?? parsed.text;
-            const requestId = parsed.requestId;
-            let lastToolName: string | undefined;
-            captureGatewayProductEvent("agent_task_started", {
-              shell_surface: "gateway_ws",
-              request_id_present: Boolean(requestId),
-              session_id_present: Boolean(parsed.sessionId),
-            });
+            const requestedSessionId = parsed.sessionId;
+            let admittedExistingConversation = false;
+            void (async () => {
+              const admittedSessionId = requestedSessionId;
+              if (admittedSessionId) {
+                const admission = await conversationLifecycle.admitExisting(admittedSessionId);
+                if (admission !== "admitted") {
+                  sendClientAck(ws, parsed, "rejected", admission === "busy");
+                  send(ws, {
+                    type: "kernel:error",
+                    message: admission === "busy"
+                      ? "Conversation already has an active turn."
+                      : "Conversation is unavailable. Refresh and try again.",
+                  });
+                  return;
+                }
+                admittedExistingConversation = true;
+                activeSessionId = admittedSessionId;
+              } else {
+                activeSessionId = undefined;
+              }
+
+              clearConversationRunAttachment();
+              pendingText = parsed.displayText ?? parsed.text;
+              const requestId = parsed.requestId;
+              let lastToolName: string | undefined;
+              captureGatewayProductEvent("agent_task_started", {
+                shell_surface: "gateway_ws",
+                request_id_present: Boolean(requestId),
+                session_id_present: Boolean(parsed.sessionId),
+              });
 
             // Register abort controller so the user can stop this run.
             // Skip if no requestId (legacy clients) -- they can't target
             // a specific run anyway.
-            const abortController = requestId ? new AbortController() : undefined;
-            if (requestId && abortController) {
-              abortControllers.set(requestId, abortController);
-              replaceReconnectableAbortEntry(reconnectableAbortControllers, requestId, {
-                controller: abortController,
-                sessionId: parsed.sessionId,
-                abortTimer: null,
-              }, {
-                maxEntries: MAX_RECONNECTABLE_ABORT_CONTROLLERS,
-              });
-            }
-            sendClientAck(ws, parsed, "accepted", false);
-            let runEventSeq = 0;
-            const replayRequestId = requestId ?? `legacy-${randomUUID()}`;
-            const withReplayId = (msg: ServerMessage): ServerMessage => {
-              if (!msg.type.startsWith("kernel:")) return msg;
-              const replaySessionId = msg.type === "kernel:init"
-                ? msg.sessionId
-                : activeSessionId ?? parsed.sessionId ?? "pending";
-              return {
-                ...msg,
-                eventId: `${replaySessionId}:${replayRequestId}:${runEventSeq++}`,
-              } as ServerMessage;
-            };
+              const abortController = requestId ? new AbortController() : undefined;
+              if (requestId && abortController) {
+                abortControllers.set(requestId, abortController);
+                replaceReconnectableAbortEntry(reconnectableAbortControllers, requestId, {
+                  controller: abortController,
+                  sessionId: parsed.sessionId,
+                  abortTimer: null,
+                }, {
+                  maxEntries: MAX_RECONNECTABLE_ABORT_CONTROLLERS,
+                });
+              }
+              sendClientAck(ws, parsed, "accepted", false);
+              let runEventSeq = 0;
+              const replayRequestId = requestId ?? `legacy-${randomUUID()}`;
+              const withReplayId = (msg: ServerMessage): ServerMessage => {
+                if (!msg.type.startsWith("kernel:")) return msg;
+                const replaySessionId = msg.type === "kernel:init"
+                  ? msg.sessionId
+                  : activeSessionId ?? parsed.sessionId ?? "pending";
+                return {
+                  ...msg,
+                  eventId: `${replaySessionId}:${replayRequestId}:${runEventSeq++}`,
+                } as ServerMessage;
+              };
 
-            dispatcher
-              .dispatch(parsed.text, parsed.sessionId, (event) => {
+              dispatcher
+                .dispatch(parsed.text, parsed.sessionId, (event) => {
                 const msg = withReplayId(kernelEventToServerMessage(event, requestId));
                 send(ws, msg);
 
@@ -2142,9 +2174,14 @@ export async function createGateway(config: GatewayConfig) {
                     const reconnectable = reconnectableAbortControllers.get(requestId);
                     if (reconnectable) reconnectable.sessionId = msg.sessionId;
                   }
-                  conversationRuns.begin(msg.sessionId);
+                  if (!admittedSessionId || admittedSessionId !== msg.sessionId) {
+                    if (admittedSessionId) {
+                      void finalizeWithSummary(admittedSessionId);
+                    }
+                    conversationRuns.begin(msg.sessionId);
+                    conversations.begin(msg.sessionId);
+                  }
                   publishConversationRunMessage(msg.sessionId, msg);
-                  conversations.begin(msg.sessionId);
                   if (pendingText) {
                     conversations.addUserMessage(msg.sessionId, pendingText);
                     pendingText = undefined;
@@ -2165,8 +2202,7 @@ export async function createGateway(config: GatewayConfig) {
                     request_id_present: Boolean(requestId),
                   });
                   publishConversationRunMessage(activeSessionId, msg);
-                  finalizeWithSummary(activeSessionId);
-                  conversationRuns.complete(activeSessionId);
+                  void finalizeWithSummary(activeSessionId);
                 } else if (msg.type === "kernel:error" && activeSessionId) {
                   captureGatewayProductEvent("agent_task_failed", {
                     shell_surface: "gateway_ws",
@@ -2176,12 +2212,10 @@ export async function createGateway(config: GatewayConfig) {
                     ...msg,
                     message: CLIENT_KERNEL_ERROR_MESSAGE,
                   });
-                  finalizeWithSummary(activeSessionId);
-                  conversationRuns.complete(activeSessionId);
+                  void finalizeWithSummary(activeSessionId);
                 } else if (msg.type === "kernel:aborted" && activeSessionId) {
                   publishConversationRunMessage(activeSessionId, msg);
-                  finalizeWithSummary(activeSessionId);
-                  conversationRuns.complete(activeSessionId);
+                  void finalizeWithSummary(activeSessionId);
                 }
               }, undefined, abortController, {
                 model: parsed.model,
@@ -2204,8 +2238,7 @@ export async function createGateway(config: GatewayConfig) {
                     activeSessionId,
                     failureReplay.runMessage as ConversationRunMessage,
                   );
-                  finalizeWithSummary(activeSessionId);
-                  conversationRuns.complete(activeSessionId);
+                  void finalizeWithSummary(activeSessionId);
                 }
                 send(ws, failureReplay.liveMessage);
               })
@@ -2216,7 +2249,15 @@ export async function createGateway(config: GatewayConfig) {
                   if (reconnectable?.abortTimer) clearTimeout(reconnectable.abortTimer);
                   reconnectableAbortControllers.delete(requestId);
                 }
-              });
+                });
+            })().catch((error: unknown) => {
+              console.error("[gateway] Conversation admission failed:", error);
+              if (admittedExistingConversation && requestedSessionId) {
+                void finalizeWithSummary(requestedSessionId);
+              }
+              sendClientAck(ws, parsed, "rejected", true);
+              send(ws, { type: "kernel:error", message: CLIENT_KERNEL_ERROR_MESSAGE });
+            });
           }
         },
 
@@ -3395,7 +3436,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  registerConversationHistoryRoutes(app, { conversations, conversationRuns });
+  registerConversationHistoryRoutes(app, { conversations, conversationLifecycle });
 
   app.get("/api/conversations", (c) => {
     return c.json(conversations.list());

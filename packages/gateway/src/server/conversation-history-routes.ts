@@ -6,7 +6,7 @@ import {
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import type { ConversationRunRegistry } from "../conversation-run-registry.js";
+import type { ConversationLifecycle } from "../conversation-lifecycle.js";
 import type { ConversationStore } from "../conversations.js";
 
 const MAX_HISTORY_CONTENT_CHARS = 32_000;
@@ -18,7 +18,7 @@ const deleteBodyLimit = bodyLimit({
 
 export interface ConversationHistoryRouteDeps {
   conversations: ConversationStore;
-  conversationRuns: Pick<ConversationRunRegistry, "isActive">;
+  conversationLifecycle: Pick<ConversationLifecycle, "deleteIfIdle">;
 }
 
 export function registerConversationHistoryRoutes(
@@ -83,12 +83,11 @@ export function registerConversationHistoryRoutes(
       return c.json({ error: { code: "invalid_conversation_id" } }, 400);
     }
 
-    if (deps.conversationRuns.isActive(id.data)) {
-      return c.json({ error: { code: "conversation_busy" } }, 409);
-    }
-
     try {
-      const result = await deps.conversations.delete(id.data);
+      const result = await deps.conversationLifecycle.deleteIfIdle(id.data);
+      if (result === "busy") {
+        return c.json({ error: { code: "conversation_busy" } }, 409);
+      }
       if (result === "not_found") {
         return c.json({ error: { code: "conversation_not_found" } }, 404);
       }

@@ -354,6 +354,38 @@ describe("ConversationStore", () => {
       await Promise.all([blocker, deletion, finalization]);
       expect(store.get(id)).toBeNull();
     });
+
+    it("checks active-run state inside the mutation lock before deleting", async () => {
+      const mutationLock = createConversationMutationLock({ maxKeys: 2 });
+      const store = createConversationStore(homePath, { mutationLock });
+      const id = store.create();
+      let active = false;
+      const gate = deferred();
+
+      const admission = mutationLock.run(id, async () => {
+        active = true;
+        gate.resolve();
+      });
+      await gate.promise;
+
+      await expect(store.delete(id, () => active)).resolves.toBe("busy");
+      await admission;
+      expect(store.get(id)).not.toBeNull();
+    });
+
+    it("runs completion only after durable finalization while still locked", async () => {
+      const mutationLock = createConversationMutationLock({ maxKeys: 2 });
+      const store = createConversationStore(homePath, { mutationLock });
+      const id = store.create();
+      store.appendAssistantText(id, "durable response");
+      const observed: string[] = [];
+
+      await store.finalize(id, () => {
+        observed.push(store.get(id)?.messages.at(-1)?.content ?? "missing");
+      });
+
+      expect(observed).toEqual(["durable response"]);
+    });
   });
 
   describe("eviction", () => {

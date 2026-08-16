@@ -47,11 +47,14 @@ export interface ConversationStore {
   appendAssistantText(sessionId: string, text: string): void;
   addToolStart(sessionId: string, tool: string): void;
   addToolEnd(sessionId: string, tool: string, input?: Record<string, unknown>): void;
-  finalize(sessionId: string): Promise<void>;
+  finalize(sessionId: string, onFinalized?: () => void): Promise<void>;
   list(): ConversationMeta[];
   get(id: string): ConversationFile | null;
   create(channel?: string): string;
-  delete(id: KernelConversationId): Promise<"deleted" | "not_found">;
+  delete(
+    id: KernelConversationId,
+    isActive?: () => boolean,
+  ): Promise<"deleted" | "not_found" | "busy">;
   search(query: string, opts?: { limit?: number }): SearchResult[];
 }
 
@@ -202,10 +205,13 @@ export function createConversationStore(
       writeToDisk(conv);
     },
 
-    finalize(sessionId) {
+    finalize(sessionId, onFinalized) {
       return mutationLock.run(sessionId, async () => {
         const conv = active.get(sessionId);
-        if (!conv) return;
+        if (!conv) {
+          onFinalized?.();
+          return;
+        }
 
         const buffered = buffers.get(sessionId);
         if (buffered) {
@@ -221,6 +227,7 @@ export function createConversationStore(
         writeToDisk(conv);
         active.delete(sessionId);
         lastTouched.delete(sessionId);
+        onFinalized?.();
       });
     },
 
@@ -265,9 +272,13 @@ export function createConversationStore(
       return id;
     },
 
-    delete(id) {
+    delete(id, isActive) {
       const path = filePath(id);
       return mutationLock.run(id, async () => {
+        if (isActive?.()) {
+          return "busy";
+        }
+
         let stats: fs.Stats;
         try {
           stats = await lstat(path);

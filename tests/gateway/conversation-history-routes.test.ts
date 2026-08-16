@@ -35,7 +35,12 @@ function createApp(
 ) {
   const app = new Hono();
   app.use("*", authMiddleware(TOKEN));
-  registerConversationHistoryRoutes(app, { conversations: store, conversationRuns });
+  registerConversationHistoryRoutes(app, {
+    conversations: store,
+    conversationLifecycle: {
+      deleteIfIdle: (id) => store.delete(id, () => conversationRuns.isActive(id)),
+    },
+  });
   return app;
 }
 
@@ -194,7 +199,8 @@ describe("kernel conversation history route", () => {
   });
 
   it("rejects deletion while the authoritative run is active", async () => {
-    const remove = vi.fn(async () => "deleted" as const);
+    const remove = vi.fn(async (_id, isActive: () => boolean) =>
+      isActive() ? "busy" as const : "deleted" as const);
     const runs = new ConversationRunRegistry();
     runs.begin("conversation-1");
     const app = createApp(createStore({ delete: remove }), runs);
@@ -206,7 +212,8 @@ describe("kernel conversation history route", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ error: { code: "conversation_busy" } });
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledWith("conversation-1", expect.any(Function));
   });
 
   it("maps deleted and stale records to bounded responses", async () => {
