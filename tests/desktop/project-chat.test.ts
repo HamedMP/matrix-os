@@ -267,6 +267,69 @@ describe("openProjectChat", () => {
     });
   });
 
+  it("waits for the authoritative replacement when an in-flight workspace load is superseded", async () => {
+    const workspaceResolvers: Array<(workspace: ProjectAgentWorkspace) => void> = [];
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel === "runtime:get-project-workspace") {
+            return new Promise<ProjectAgentWorkspace>((resolve) => {
+              workspaceResolvers.push(resolve);
+            });
+          }
+          if (channel === "state:set") return { ok: true };
+          throw new Error(`unexpected channel ${channel}`);
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
+    useCodingAgentWorkspace.setState({
+      summary: summaryWithThreads(),
+      status: "ready",
+      loadThreadSnapshot: vi.fn(async (threadId: string) => {
+        useCodingAgentWorkspace.setState({
+          activeThreadId: threadId,
+          threadSnapshotStatus: "ready",
+          threadSnapshot: {
+            thread: summaryWithThreads().activeThreads.items[0]!,
+            events: { items: [], hasMore: false, limit: 200 },
+          },
+        });
+      }),
+    });
+    const workspace = {
+      project: summaryWithThreads().projects.items[0]!,
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: summaryWithThreads().activeThreads.items, hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+      updatedAt: NOW,
+    } satisfies ProjectAgentWorkspace;
+
+    const firstLoad = useProjectWorkspaces.getState().refresh("matrix-os");
+    const openingConversation = openProjectChat("matrix-os", { threadId: "thread_alpha" });
+    let openSettled = false;
+    void openingConversation.then(() => {
+      openSettled = true;
+    });
+    const replacementLoad = useProjectWorkspaces.getState().refresh("matrix-os");
+
+    workspaceResolvers[0]!(workspace);
+    await firstLoad;
+    await Promise.resolve();
+    const settledBeforeReplacement = openSettled;
+
+    workspaceResolvers[1]!(workspace);
+    await Promise.all([replacementLoad, openingConversation]);
+
+    expect(settledBeforeReplacement).toBe(false);
+    expect(useTabs.getState().recentViews[0]).toMatchObject({
+      kind: "conversation",
+      id: "thread_alpha",
+      label: "Fix settings route",
+    });
+  });
+
   it("does not reload the snapshot for the already-active thread", () => {
     const loadThreadSnapshot = vi.fn(async () => undefined);
     useCodingAgentWorkspace.setState({ loadThreadSnapshot, activeThreadId: "thread_alpha" });

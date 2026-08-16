@@ -194,12 +194,17 @@ export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) 
   ensure: async (projectId) => {
     const entry = get().entries[projectId];
     if (entry?.status === "ready") return;
-    const activeLoad = activeLoadPromises[projectId];
-    if (activeLoad) {
-      await activeLoad;
+    let joinedLoad = activeLoadPromises[projectId];
+    if (!joinedLoad) {
+      await loadWorkspace(projectId);
       return;
     }
-    await loadWorkspace(projectId);
+    while (joinedLoad) {
+      await joinedLoad;
+      const authoritativeLoad = activeLoadPromises[projectId];
+      if (!authoritativeLoad || authoritativeLoad === joinedLoad) return;
+      joinedLoad = authoritativeLoad;
+    }
   },
 
   refresh: async (projectId) => {
