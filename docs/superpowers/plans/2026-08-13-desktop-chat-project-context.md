@@ -4,7 +4,7 @@
 
 **Goal:** Make Desktop Chat’s Add to project and Repository controls truthful and persistent by resolving one canonical `projectId` into a validated per-turn Kernel working directory.
 
-**Architecture:** Conversation records persist only a project reference. The Gateway derives safe display context and a validated internal working directory from the canonical owner-scoped ProjectManager; Desktop never sends a path, and Kernel keeps `homePath` for identity/system data while using an optional `cwd` for the current dispatch.
+**Architecture:** Conversation records persist only a project reference. A Gateway lifecycle coordinator serializes existing-session admission and active-run registration with context mutation, delete, and finalization. The Gateway derives safe display context and a validated internal working directory from the canonical owner-scoped ProjectManager before provider start; Desktop never sends a path, and Kernel keeps `homePath` for identity/system data while using an optional `cwd` for the current dispatch.
 
 **Tech Stack:** TypeScript 5.5+ strict ESM, React 19, Zustand, Hono, Zod 4 via `zod/v4`, Claude Agent SDK V1 `query()` with `resume`, Vitest, Electron, Flox, pnpm 10, bun.
 
@@ -15,7 +15,7 @@
 - `Add to project` and `Repository` converge on the same `projectId`; one Matrix project currently owns at most one repository/folder root.
 - Context affects future turns only and never rewrites history.
 - Gateway resolves ProjectConfig at mutation and dispatch time; invalid, archived, deleting, missing, or inaccessible context blocks send with no silent Matrix-home fallback.
-- Context mutation is rejected while the conversation has an active run and is serialized with finalize/delete under the bounded conversation mutation lock.
+- Context mutation is rejected while the conversation has an active run and is serialized with run admission/registration, finalize/completion, and delete under the bounded conversation mutation lock.
 - The WebSocket client message schema gains no path field.
 - Kernel `homePath` remains the identity/system root; only SDK `cwd` changes for the dispatch.
 - TDD is mandatory: every implementation step follows Red -> Green -> Refactor.
@@ -32,7 +32,7 @@
 - `packages/gateway/src/server/conversation-history-routes.ts`: `PATCH /api/conversations/:id/context` plus safe projection in reads.
 - `packages/gateway/src/dispatcher.ts`: optional internal `workingDirectory` dispatch value.
 - `packages/kernel/src/options.ts`: optional `workingDirectory` on `KernelConfig`, used as SDK `cwd` while `homePath` remains unchanged.
-- `packages/gateway/src/server.ts`: ProjectManager/context resolver injection and dispatch-time lookup before registering an active run.
+- `packages/gateway/src/server.ts`: ProjectManager/context resolver and lifecycle coordinator injection; dispatch-time lookup and active registration occur atomically before provider start.
 - `desktop/src/renderer/src/stores/hermes-chat.ts`: validated context projection and runtime-safe context mutation.
 - `desktop/src/renderer/src/features/chat/ConversationContextPicker.tsx`: active project picker with loading/empty/error/stale states.
 - `desktop/src/renderer/src/features/chat/ChatTab.tsx`: real project/repository controls and send blocking/recovery actions.
@@ -248,7 +248,7 @@ expect(response.status).toBe(200);
 expect(await response.json()).toEqual({ context: readyProjection });
 ```
 
-Cover strict-body rejection of `localPath`, 413 body limit, invalid conversation/project IDs, 404 conversation/project, 409 active run, 503 storage failure, clearing with null, safe unavailable projection on list/history, and response JSON never containing absolute paths.
+Cover strict-body rejection of `localPath`, 413 body limit, invalid conversation/project IDs, 404 conversation/project, 409 active run, 503 storage failure, clearing with null, safe unavailable projection on list/history, and response JSON never containing absolute paths. Add both race orders against admission: PATCH wins the serializer and admission uses the new context, or admission fixes the old context and registers active before PATCH returns 409.
 
 - [ ] **Step 2: Run route tests and verify Red**
 
@@ -258,14 +258,15 @@ Expected: FAIL because PATCH and projected read context are absent.
 
 - [ ] **Step 3: Register the route with exact mutation ordering**
 
-Apply `bodyLimit({maxSize:4096})`, parse ID/body before dependency access, reject an active run, resolve an active project before persistence, then call `updateContext`. Clearing skips project resolution. Return only `{context: projection}` or `{context:null}`.
+Apply `bodyLimit({maxSize:4096})`, parse ID/body before dependency access, resolve the requested project to an owner-scoped stable reference, then call `conversationLifecycle.updateContextIfIdle`. That coordinator acquires the shared conversation serializer, revalidates the project reference when setting context, checks the active-run registry, and persists the update in the same critical section. Clearing skips project resolution. Return only `{context: projection}` or `{context:null}`. The route must not pre-check `isActive` outside the lock.
 
 ```ts
 const body = KernelConversationContextUpdateSchema.safeParse(await c.req.json());
 if (!body.success) return c.json({ error: { code: "invalid_conversation_context" } }, 400);
-if (deps.conversationRuns.isActive(id.data)) return c.json({ error: { code: "conversation_busy" } }, 409);
 const resolved = body.data.projectId ? await deps.contextResolver.resolve(body.data.projectId) : null;
 if (body.data.projectId && !resolved) return c.json({ error: { code: "project_unavailable" } }, 404);
+const result = await deps.conversationLifecycle.updateContextIfIdle(id.data, body.data.projectId, resolved);
+if (result === "busy") return c.json({ error: { code: "conversation_busy" } }, 409);
 ```
 
 - [ ] **Step 4: Project context in list/history without changing their ownership model**

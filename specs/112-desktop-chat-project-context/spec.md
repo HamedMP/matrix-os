@@ -191,10 +191,13 @@ The Gateway:
 1. validates conversation ID and the strict update object with Zod 4 under
    `bodyLimit`;
 2. gets the verified runtime principal from existing auth;
-3. loads the conversation and confirms no active run;
-4. loads the project through the canonical owner-scoped ProjectManager;
-5. rejects missing, archived, deleting, or unauthorized projects;
-6. updates only `projectId` atomically under the conversation mutation lock;
+3. resolves the requested project through the canonical owner-scoped
+   ProjectManager and rejects missing, archived, deleting, or unauthorized
+   projects;
+4. acquires the bounded conversation serializer;
+5. reloads the canonical conversation and confirms no active run;
+6. revalidates the project reference and updates only `projectId` atomically
+   inside that same critical section;
 7. returns a safe derived projection; and
 8. emits or triggers the existing conversation refresh path so other shells
    converge.
@@ -222,9 +225,13 @@ working context. `KernelConfig` gains an optional `cwd`; `kernelOptions` uses
 `cwd ?? homePath` for the Agent SDK while preserving `homePath` for SOUL,
 memory, protected paths, IPC tools, configuration, and owner identity.
 
-The project root is resolved once at dispatch admission and remains fixed for
-that turn. A project lifecycle transition must use existing active-work guards
-to reject archive/delete while the turn is running.
+For an existing conversation, dispatch admission acquires the same keyed
+serializer used by context PATCH and delete, resolves the canonical record and
+project root, and registers the active run before releasing the lock and
+starting the provider. The project root remains fixed for that turn. If PATCH
+wins first, admission sees the new context; if admission wins first, PATCH sees
+the active marker and returns busy. A project lifecycle transition must use
+existing active-work guards to reject archive/delete while the turn is running.
 
 ## HTTP and Auth Matrix
 
@@ -257,8 +264,10 @@ errors, database errors, and filesystem failures are logged server-side only.
 
 - **Source of truth**: Gateway conversation record contains only `projectId`;
   ProjectManager remains authoritative for project metadata and local path.
-- **Lock scope**: Context update, conversation delete, and finalization serialize
-  per conversation. The lock registry is bounded and evicted.
+- **Lock scope**: Existing-session admission plus active registration, context
+  update, conversation delete, and durable finalization plus completion
+  serialize per conversation. The lock registry is bounded and evicted. No
+  external provider call occurs while the lock is held.
 - **Run scope**: Project eligibility and working root are fixed when a turn is
   admitted. Context cannot change mid-turn.
 - **Renderer state**: Project picker state is ephemeral; persisted selection is

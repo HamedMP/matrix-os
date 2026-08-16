@@ -4,7 +4,7 @@
 
 **Goal:** Complete MAT-299 with the Figma-approved Chats index, bounded local search, and safe row-level deletion of idle Hermes conversations.
 
-**Architecture:** The Gateway `ConversationStore` remains canonical and owns deletion, active-run checks, filesystem safety, and per-conversation serialization. Desktop derives search results locally from the bounded Gateway index and mutates its cache only after an authenticated delete succeeds for the current runtime generation.
+**Architecture:** The Gateway `ConversationStore` remains canonical. A Gateway lifecycle coordinator shares one capped per-conversation serializer across existing-session run admission, active-run registration, deletion, finalization, and future context mutation. Desktop derives search results locally from the bounded Gateway index and mutates its cache only after an authenticated delete succeeds for the current runtime generation.
 
 **Tech Stack:** TypeScript 5.5+ strict ESM, React 19, Zustand, Hono, Zod 4 via `zod/v4`, Vitest, Electron, Flox, pnpm 10, bun.
 
@@ -14,7 +14,7 @@
 - Gateway ConversationStore is the source of truth; Desktop is a bounded cache and must not add renderer-owned persistence.
 - Search is case-insensitive over the loaded title and preview only; it is not full-transcript search.
 - Delete is row-level on hover and keyboard focus; there is no Select mode, bulk delete, archive, or rename.
-- A running conversation cannot be deleted; the Gateway active-run registry is authoritative.
+- A running conversation cannot be deleted; the Gateway active-run registry is authoritative, and its begin/complete transitions participate in the same per-conversation critical section as destructive mutations.
 - Every mutating route uses `bodyLimit`, Zod boundary validation, bounded safe error codes, and authenticated existing Gateway routing.
 - Filesystem mutation is async, atomic where writing is involved, symlink-safe, and serialized with finalize/context mutation under a capped keyed lock.
 - TDD is mandatory: every implementation step follows Red -> Green -> Refactor.
@@ -26,11 +26,11 @@
 ## File Structure
 
 - `packages/contracts/src/index.ts`: shared conversation delete response and safe error-code schemas.
-- `packages/gateway/src/conversation-mutation-lock.ts`: capped, idle-evicted per-conversation async serializer shared by delete/finalize and future context mutations.
+- `packages/gateway/src/conversation-mutation-lock.ts`: capped, idle-evicted per-conversation async serializer shared by run admission, delete, finalize, and future context mutations.
 - `packages/gateway/src/conversations.ts`: async conversation persistence and symlink-safe delete operation.
 - `packages/gateway/src/server/conversation-history-routes.ts`: validated GET/DELETE conversation routes and response mapping.
 - `packages/gateway/src/conversation-run-registry.ts`: authoritative `isActive(sessionId)` query.
-- `packages/gateway/src/server.ts`: dependency wiring only; remove the inline DELETE route.
+- `packages/gateway/src/server.ts`: inject the shared serializer, admit an existing-session run under it before provider dispatch, keep the run active through finalization, and remove the inline DELETE route.
 - `desktop/src/renderer/src/stores/hermes-chat.ts`: runtime-safe delete mutation and bounded safe error state.
 - `desktop/src/renderer/src/features/chat/conversation-search.ts`: pure query normalization/filter helper.
 - `desktop/src/renderer/src/features/chat/DeleteConversationDialog.tsx`: focused confirmation/pending/error UI.
@@ -223,7 +223,7 @@ registry.complete("conversation-1");
 expect(registry.isActive("conversation-1")).toBe(false);
 ```
 
-Route cases must assert 400 invalid ID, 409 active run without calling delete, 404 stale record, 200 `{ok:true}`, 413 oversized DELETE body, and 503 with `{error:{code:"conversation_delete_unavailable"}}` on internal failure.
+Route cases must assert 400 invalid ID, 409 active run without unlinking, 404 stale record, 200 `{ok:true}`, 413 oversized DELETE body, and 503 with `{error:{code:"conversation_delete_unavailable"}}` on internal failure. Add both race orders: delete holds the serializer before admission (admission fails because the record is gone), and admission registers the run before delete (delete returns 409).
 
 - [ ] **Step 2: Run focused route tests and verify Red**
 
@@ -242,15 +242,15 @@ isActive(sessionId: string): boolean {
 
 - [ ] **Step 4: Register DELETE beside history GET**
 
-Extend route dependencies with `conversationRuns`, apply `bodyLimit({maxSize: 512})`, validate `:id` before registry/store access, and map only bounded codes.
+Extend route dependencies with the lifecycle coordinator, apply `bodyLimit({maxSize: 512})`, validate `:id` before coordinator access, and map only bounded codes. `deleteIfIdle` must acquire the shared serializer and perform the authoritative active-run check and filesystem mutation inside that one critical section; the route must not pre-check `isActive` outside the lock.
 
 ```ts
 app.delete("/api/conversations/:id", deleteBodyLimit, async (c) => {
   const id = KernelConversationIdSchema.safeParse(c.req.param("id"));
   if (!id.success) return c.json({ error: { code: "invalid_conversation_id" } }, 400);
-  if (deps.conversationRuns.isActive(id.data)) return c.json({ error: { code: "conversation_busy" } }, 409);
   try {
-    const result = await deps.conversations.delete(id.data);
+    const result = await deps.conversationLifecycle.deleteIfIdle(id.data);
+    if (result === "busy") return c.json({ error: { code: "conversation_busy" } }, 409);
     if (result === "not_found") return c.json({ error: { code: "conversation_not_found" } }, 404);
     return c.json(KernelConversationDeleteResponseSchema.parse({ ok: true }));
   } catch (error) {
@@ -260,9 +260,9 @@ app.delete("/api/conversations/:id", deleteBodyLimit, async (c) => {
 });
 ```
 
-- [ ] **Step 5: Remove the inline `server.ts` DELETE and inject both dependencies once**
+- [ ] **Step 5: Serialize existing-session admission and completion**
 
-Change `registerConversationHistoryRoutes(app, { conversations })` to pass `conversationRuns`, then delete the old unvalidated `app.delete` block.
+Inject the same serializer into the conversation store and lifecycle coordinator. Before dispatching a turn with an existing `sessionId`, acquire its key, confirm the canonical record still exists, resolve required execution context, and call `conversationRuns.begin` before releasing the lock. New conversations have no deletable canonical ID before `kernel:init`; register their generated ID synchronously before exposing it to mutations. On every terminal path, finalize durable state and call `conversationRuns.complete` inside one serialized operation, keeping the run active until persistence settles. Then delete the old unvalidated inline DELETE route.
 
 - [ ] **Step 6: Run route, auth, and metrics tests and verify Green**
 

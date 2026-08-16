@@ -174,21 +174,28 @@ filtered projection. Search never becomes a second source of truth.
 Move destructive route behavior behind an async ConversationStore operation:
 
 ```ts
-delete(id: KernelConversationId): Promise<"deleted" | "not_found" | "busy">
+deleteIfIdle(id: KernelConversationId): Promise<"deleted" | "not_found" | "busy">
 ```
 
-The route and store must:
+The route and Gateway lifecycle coordinator must:
 
 - validate `:id` with the shared Zod 4 conversation ID schema;
 - install `bodyLimit` before the DELETE handler even though the body is unused;
-- check the authoritative active-run registry before filesystem mutation;
-- serialize delete against finalization and context mutation for the same ID;
+- acquire the capped per-conversation serializer before checking the authoritative active-run registry;
+- serialize existing-session run admission, active registration, delete, finalization, completion, and context mutation for the same ID;
+- reject admission if a preceding delete removed the canonical record, and reject delete if a preceding admission registered an active run;
 - use async, symlink-safe filesystem operations;
 - remove active buffers only after the persisted record is removed; and
 - map internal errors to bounded client codes while logging detail server-side.
 
 The keyed serialization registry must be capped and evicted after idle use. No
 new unbounded Map is permitted.
+
+The provider must not start an existing-session turn until admission has
+resolved the canonical record/context and registered the active run inside the
+critical section. The critical section ends before the external provider call;
+the active marker remains set until durable finalization completes under the
+same key. This makes both delete-first and admission-first races deterministic.
 
 ## HTTP and Auth Matrix
 
