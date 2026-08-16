@@ -48,6 +48,7 @@ export interface BrowserSelection {
 }
 
 const NO_ENTRIES: BrowserEntry[] = [];
+const DIRECTORY_PREVIEW_DELAY_MS = 500;
 
 function joinPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
@@ -105,6 +106,7 @@ export default function ComputerFileBrowser({
   const [sortKey, setSortKey] = useState<BrowserSortKey>("name");
   const [sortDirection, setSortDirection] = useState<BrowserSortDirection>("asc");
   const requestGeneration = useRef(0);
+  const directoryPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entryRefs = useRef<Array<HTMLButtonElement | null>>([]);
   // Navigating into a directory or switching between the grid and list
   // branches unmounts the focused row. Without restoring focus it falls to
@@ -118,6 +120,11 @@ export default function ComputerFileBrowser({
   const markFocusForRestore = useCallback(() => {
     const active = document.activeElement;
     restoreFocusRef.current = entryRefs.current.some((el) => el !== null && el === active);
+  }, []);
+  const cancelPendingDirectoryPreview = useCallback(() => {
+    if (directoryPreviewTimer.current === null) return;
+    clearTimeout(directoryPreviewTimer.current);
+    directoryPreviewTimer.current = null;
   }, []);
   const gridRef = useRef<HTMLDivElement | null>(null);
   // Listings belong to one computer/session. Derive the rendered view
@@ -201,21 +208,28 @@ export default function ComputerFileBrowser({
     setSelectedPath(null);
     void load("");
     return () => {
+      cancelPendingDirectoryPreview();
       requestGeneration.current += 1;
     };
-  }, [browserScope, load, resetHistory]);
+  }, [browserScope, cancelPendingDirectoryPreview, load, resetHistory]);
 
-  const commitNavigation = useCallback((path: string) => {
+  const commitNavigation = useCallback((path: string, entry?: BrowserEntry) => {
+    cancelPendingDirectoryPreview();
     markFocusForRestore();
     setCandidatePath(path);
     setSelectedPath(null);
-    onSelectionChange?.(null);
+    onSelectionChange?.(path
+      ? {
+          path,
+          entry: entry ?? { name: path.split("/").pop() ?? path, type: "directory" },
+        }
+      : null);
     void load(path);
-  }, [load, markFocusForRestore, onSelectionChange]);
+  }, [cancelPendingDirectoryPreview, load, markFocusForRestore, onSelectionChange]);
 
-  const navigate = useCallback((path: string) => {
+  const navigate = useCallback((path: string, entry?: BrowserEntry) => {
     pushPath(path);
-    commitNavigation(path);
+    commitNavigation(path, entry);
   }, [commitNavigation, pushPath]);
 
   const goBack = useCallback(() => {
@@ -238,14 +252,25 @@ export default function ComputerFileBrowser({
   // browser/preview split behaves like a Finder column with Quick Look.
   const selectEntry = useCallback((entry: BrowserEntry, path: string) => {
     setSelectedPath(path);
-    onSelectionChange?.({ path, entry });
-    if (entry.type === "directory") setCandidatePath(path);
-    else onOpenFile?.(path);
-  }, [onOpenFile, onSelectionChange]);
+    cancelPendingDirectoryPreview();
+    if (entry.type === "directory") {
+      setCandidatePath(path);
+      // Defer the overview-to-split reflow until the platform double-click
+      // window closes. Otherwise the first click narrows the row before the
+      // second click lands, so a native double-click can miss the folder.
+      directoryPreviewTimer.current = setTimeout(() => {
+        directoryPreviewTimer.current = null;
+        onSelectionChange?.({ path, entry });
+      }, DIRECTORY_PREVIEW_DELAY_MS);
+    } else {
+      onSelectionChange?.({ path, entry });
+      onOpenFile?.(path);
+    }
+  }, [cancelPendingDirectoryPreview, onOpenFile, onSelectionChange]);
 
   // Double-click or Enter "opens": directories navigate, files preview.
   const activateEntry = useCallback((entry: BrowserEntry, path: string) => {
-    if (entry.type === "directory") navigate(path);
+    if (entry.type === "directory") navigate(path, entry);
     else onOpenFile?.(path);
   }, [navigate, onOpenFile]);
 
@@ -362,7 +387,7 @@ export default function ComputerFileBrowser({
           }}
           onSelect={() => selectEntry(entry, path)}
           onNavigate={() => {
-            if (entry.type === "directory") navigate(path);
+            if (entry.type === "directory") navigate(path, entry);
           }}
           onKeyDown={(event) => onEntryKeyDown(event, entry, path, index)}
           onDropFiles={mode === "browse" && entry.type === "directory" && !isManagedBrowserPath(path)

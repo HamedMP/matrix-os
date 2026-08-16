@@ -24,10 +24,20 @@ const LIST: Record<string, { entries: Array<{ name: string; type: string }> }> =
   "/api/files/list?path=empty": { entries: [] },
   "/api/files/list?path=workspaces": {
     entries: [
+      { name: "matrix-os", type: "directory" },
       { name: "hero.png", type: "file" },
       { name: "app.ts", type: "file" },
       { name: "util.ts", type: "file" },
     ],
+  },
+  "/api/files/list?path=workspaces%2Fmatrix-os": {
+    entries: [
+      { name: "packages", type: "directory" },
+      { name: "package.json", type: "file" },
+    ],
+  },
+  "/api/files/list?path=workspaces%2Fmatrix-os%2Fpackages": {
+    entries: [{ name: "gateway", type: "directory" }],
   },
 };
 
@@ -112,7 +122,7 @@ describe("Files workspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open workspaces" }));
 
-    expect(panes.getAttribute("data-layout")).toBe("split");
+    await waitFor(() => expect(panes.getAttribute("data-layout")).toBe("split"));
     expect(await within(panes).findByRole("region", { name: "File preview" })).toBeTruthy();
     expect(within(panes).getByRole("heading", { name: "workspaces" })).toBeTruthy();
     await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces"));
@@ -189,6 +199,44 @@ describe("Files workspace", () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces"));
     expect(screen.getByRole("button", { name: "Matrix home" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "workspaces" })).not.toBeNull();
+  });
+
+  it("keeps the Preview pane mounted while navigating root to child to grandchild", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const panes = screen.getByTestId("files-workspace-panes");
+
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+    fireEvent.doubleClick(workspaces);
+
+    const matrixOs = await screen.findByRole("button", { name: "Open matrix-os" });
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    expect(within(panes).getByRole("region", { name: "File preview" })).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "workspaces" })).toBeTruthy();
+
+    fireEvent.doubleClick(matrixOs);
+
+    const packages = await screen.findByRole("button", { name: "Open packages" });
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "matrix-os" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "workspaces" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "matrix-os" })).toBeTruthy();
+
+    fireEvent.doubleClick(packages);
+
+    expect(await screen.findByRole("button", { name: "Open gateway" })).toBeTruthy();
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "packages" })).toBeTruthy();
+    expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces%2Fmatrix-os%2Fpackages");
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("button", { name: "Open package.json" })).toBeTruthy();
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "matrix-os" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+    expect(await screen.findByRole("button", { name: "Open gateway" })).toBeTruthy();
+    expect(panes.getAttribute("data-layout")).toBe("split");
+    expect(within(screen.getByRole("region", { name: "File preview" })).getByRole("heading", { name: "packages" })).toBeTruthy();
   });
 
   it("previews bounded code as selectable text", async () => {

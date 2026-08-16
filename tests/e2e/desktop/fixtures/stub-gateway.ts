@@ -713,7 +713,17 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
     if (req.method === "GET" && path === "/api/files/list") {
       const folder = url.searchParams.get("path") ?? "";
-      const entries = folder === "workspaces"
+      const entries = folder === "workspaces/matrix-os/packages"
+        ? [
+            { name: "gateway", type: "directory", children: 14, modified: NOW },
+            { name: "kernel", type: "directory", children: 9, modified: NOW },
+          ]
+        : folder === "workspaces/matrix-os"
+        ? [
+            { name: "packages", type: "directory", children: 2, modified: NOW },
+            { name: "package.json", type: "file", size: 9_420, modified: NOW },
+          ]
+        : folder === "workspaces"
         ? [
             { name: "matrix-os", type: "directory", children: 18, modified: NOW },
             { name: "t3code", type: "directory", children: 12, modified: "2026-07-30T17:00:00.000Z" },

@@ -59,6 +59,35 @@ suite("MAT-298 Files handoff in Electron", () => {
     await page.screenshot({ path: join(EVIDENCE_DIR, "mat-298-files-grid.png") });
   });
 
+  it("keeps nested directory navigation and Preview continuity", async () => {
+    const filesWorkspace = page.getByTestId("files-workspace-panes");
+    await filesWorkspace.getByRole("button", { name: "List view" }).click();
+    await page.getByRole("button", { name: "Open workspaces" }).dblclick();
+    await page.getByRole("button", { name: "Open matrix-os" }).waitFor();
+    await page.getByRole("region", { name: "File preview" }).getByRole("heading", { name: "workspaces" }).waitFor();
+
+    await page.getByRole("button", { name: "Open matrix-os" }).dblclick();
+    await page.getByRole("button", { name: "Open packages" }).waitFor();
+    await page.getByRole("region", { name: "File preview" }).getByRole("heading", { name: "matrix-os" }).waitFor();
+
+    await page.getByRole("button", { name: "Open packages" }).dblclick();
+    await page.getByRole("button", { name: "Open gateway" }).waitFor();
+    await page.getByRole("region", { name: "File preview" }).getByRole("heading", { name: "packages" }).waitFor();
+    expect(await page.getByRole("region", { name: "File preview" }).count()).toBe(1);
+    await page.screenshot({ path: join(EVIDENCE_DIR, "mat-326-files-nested-preview.png") });
+
+    await filesWorkspace.getByRole("button", { name: "Back" }).click();
+    await page.getByRole("button", { name: "Open package.json" }).waitFor();
+    await page.getByRole("region", { name: "File preview" }).getByRole("heading", { name: "matrix-os" }).waitFor();
+
+    await filesWorkspace.getByRole("button", { name: "Forward" }).click();
+    await page.getByRole("button", { name: "Open gateway" }).waitFor();
+    await page.getByRole("region", { name: "File preview" }).getByRole("heading", { name: "packages" }).waitFor();
+
+    await page.getByRole("button", { name: "Matrix home" }).click();
+    await page.getByRole("button", { name: "Open SOUL.md" }).waitFor();
+  });
+
   it("captures selected-folder preview and managed read-only states", async () => {
     await page.getByRole("button", { name: "Open workspaces" }).click();
     await page.getByRole("region", { name: "File preview" }).waitFor();
