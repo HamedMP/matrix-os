@@ -58,8 +58,42 @@ const READINESS_TIMEOUT_MS = 10_000;
 const READINESS_INTERVAL_MS = 100;
 const INACTIVE_RECOVERY_RETRY_DELAY_MS = 250;
 const MAX_RUNTIME_DESCRIPTORS = 256;
-export async function loadInstalledTerminalRuntimeGeneration(appDir = "/opt/matrix/app"): Promise<string> {
+const MAX_TERMINAL_RUNTIME_ASSET_BYTES = 256 * 1024 * 1024;
+const MAX_USER_UNIT_BYTES = 64 * 1024;
+
+async function requireInstalledDirectory(path: string): Promise<void> {
+  const stats = await lstat(path);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new TerminalRuntimeUnavailableError();
+  }
+}
+
+async function requireInstalledFile(
+  path: string,
+  options: { executable?: boolean; maxBytes: number },
+): Promise<void> {
+  const stats = await lstat(path);
+  if (
+    !stats.isFile()
+    || stats.isSymbolicLink()
+    || stats.size < 1
+    || stats.size > options.maxBytes
+    || (options.executable === true && (stats.mode & 0o111) === 0)
+  ) {
+    throw new TerminalRuntimeUnavailableError();
+  }
+}
+
+export async function loadInstalledTerminalRuntimeGeneration(
+  appDir = "/opt/matrix/app",
+  options: {
+    terminalRuntimeRoot?: string;
+    userUnitRoot?: string;
+  } = {},
+): Promise<string> {
   const markerPath = join(resolve(appDir), "TERMINAL_RUNTIME_GENERATION");
+  const terminalRuntimeRoot = resolve(options.terminalRuntimeRoot ?? "/opt/matrix/terminal-runtime");
+  const userUnitRoot = resolve(options.userUnitRoot ?? "/etc/systemd/user");
   try {
     const stats = await lstat(markerPath);
     if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 256) {
@@ -67,6 +101,43 @@ export async function loadInstalledTerminalRuntimeGeneration(appDir = "/opt/matr
     }
     const parsed = GenerationSchema.safeParse((await readFile(markerPath, "utf8")).trim());
     if (!parsed.success) throw new TerminalRuntimeUnavailableError();
+
+    const generationDir = join(terminalRuntimeRoot, "generations", parsed.data);
+    await Promise.all([
+      requireInstalledDirectory(terminalRuntimeRoot),
+      requireInstalledDirectory(join(terminalRuntimeRoot, "generations")),
+      requireInstalledDirectory(generationDir),
+      requireInstalledDirectory(userUnitRoot),
+      requireInstalledFile(join(generationDir, "zellij"), {
+        executable: true,
+        maxBytes: MAX_TERMINAL_RUNTIME_ASSET_BYTES,
+      }),
+      requireInstalledFile(join(generationDir, "matrix-terminal-user-keeper.mjs"), {
+        executable: true,
+        maxBytes: MAX_TERMINAL_RUNTIME_ASSET_BYTES,
+      }),
+      requireInstalledFile(join(generationDir, "matrix-terminal-attach.mjs"), {
+        executable: true,
+        maxBytes: MAX_TERMINAL_RUNTIME_ASSET_BYTES,
+      }),
+      requireInstalledFile(join(generationDir, "GENERATION"), { maxBytes: 256 }),
+      requireInstalledFile(join(userUnitRoot, "matrix-zellij@.service"), {
+        maxBytes: MAX_USER_UNIT_BYTES,
+      }),
+      requireInstalledFile(join(userUnitRoot, "matrix-terminal.slice"), {
+        maxBytes: MAX_USER_UNIT_BYTES,
+      }),
+    ]);
+    if ((await readFile(join(generationDir, "GENERATION"), "utf8")).trim() !== parsed.data) {
+      throw new TerminalRuntimeUnavailableError();
+    }
+    const currentStats = await lstat(join(terminalRuntimeRoot, "current"));
+    if (!currentStats.isSymbolicLink()) throw new TerminalRuntimeUnavailableError();
+    const [currentReal, generationReal] = await Promise.all([
+      realpath(join(terminalRuntimeRoot, "current")),
+      realpath(generationDir),
+    ]);
+    if (currentReal !== generationReal) throw new TerminalRuntimeUnavailableError();
     return parsed.data;
   } catch (err: unknown) {
     if (err instanceof TerminalRuntimeUnavailableError) throw err;
@@ -493,6 +564,25 @@ export function createUserSystemdTerminalRuntime(options: {
   }
 
   return {
+    async assertInstallationReady(): Promise<void> {
+      const { stdout } = await runSystemctl([
+        "list-unit-files",
+        "matrix-zellij@.service",
+        "matrix-terminal.slice",
+        "--no-legend",
+        "--no-pager",
+      ]);
+      const loadedUnits = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/)[0]);
+      if (
+        !loadedUnits.includes("matrix-zellij@.service")
+        || !loadedUnits.includes("matrix-terminal.slice")
+      ) {
+        throw new TerminalRuntimeUnavailableError();
+      }
+    },
+
     async create(input: CreateUserSystemdRuntimeInput): Promise<UserSystemdRuntimeResult> {
       const parsed = z.object({
         runtimeId: RuntimeIdSchema,

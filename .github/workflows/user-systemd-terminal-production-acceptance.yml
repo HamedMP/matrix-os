@@ -429,7 +429,7 @@ jobs:
           PYTHON
             )"
             case "$error" in
-              apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch) ;;
+              apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_rollback_failed|post_install_service_start_failed|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch) ;;
               *) error=invalid ;;
             esac
           fi
@@ -438,7 +438,7 @@ jobs:
             body="$(jq -cn --arg script "$diagnostic_script" \
               '{command:["/usr/bin/sudo","/bin/bash","-c",$script],timeoutMs:45000}')"
             send_signed_command "$body" "$response"
-            jq -er '.stdout | select(test("^phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid) error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_rollback_failed|post_install_service_start_failed|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)\\n$")) | rtrimstr("\n")' \
+            jq -er '.stdout | select(test("^phase=(idle|prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health|invalid) error=(none|apply_failed|apply_interrupted|bundle_extract_failed|bundle_layout_invalid|checksum_mismatch|download_failed|download_metadata_changed|insufficient_disk_space|post_install_health_failed|post_install_host_bin_failed|post_install_release_metadata_failed|post_install_rollback_failed|post_install_service_start_failed|release_metadata_invalid|terminal_runtime_helper_install_failed|terminal_runtime_install_failed|update_target_mismatch|invalid)\\n$")) | rtrimstr("\n")' \
               "$response"
           }
           response="$RUNNER_TEMP/user-systemd-recovery.json"
