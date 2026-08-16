@@ -497,6 +497,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
           launchTargetId={win.id}
           embeddedChrome
           canvasZoom={isFullscreen ? 1 : zoom}
+          suspended={hidden}
           windowControls={{
             close: () => closeWindow(win.id),
             minimize: animateMinimize,
