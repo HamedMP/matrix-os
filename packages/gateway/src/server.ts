@@ -49,6 +49,7 @@ import { createWorkspaceEventStore } from "./workspace-events.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createUserSystemdZellijRuntime } from "./user-systemd-zellij-runtime.js";
+import { resolveUserSystemdTerminalActivation } from "./terminal-user-systemd-activation.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
@@ -358,9 +359,13 @@ export async function createGateway(config: GatewayConfig) {
     persistPath: terminalSessionsPersistPath,
     autoRestore: false,
   });
-  const userSystemdTerminalsEnabled = process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED === "1";
+  const appDir = process.env.MATRIX_APP_DIR ?? process.cwd();
+  const userSystemdTerminalsEnabled = await resolveUserSystemdTerminalActivation({
+    appDir,
+    envValue: process.env.MATRIX_TERMINAL_USER_SYSTEMD_ENABLED,
+  });
   const terminalRuntimeGeneration = userSystemdTerminalsEnabled
-    ? await loadInstalledTerminalRuntimeGeneration(process.env.MATRIX_APP_DIR ?? process.cwd())
+    ? await loadInstalledTerminalRuntimeGeneration(appDir)
     : null;
   const userSystemdTerminalController = terminalRuntimeGeneration
     ? createUserSystemdTerminalRuntime({
@@ -369,6 +374,9 @@ export async function createGateway(config: GatewayConfig) {
         generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
       })
     : null;
+  if (userSystemdTerminalController) {
+    await userSystemdTerminalController.assertInstallationReady();
+  }
   const workspaceZellijRuntime = userSystemdTerminalController && terminalRuntimeGeneration
     ? createUserSystemdZellijRuntime({
         homePath,
@@ -1783,7 +1791,7 @@ export async function createGateway(config: GatewayConfig) {
     && process.env.MATRIX_RUNTIME_SLOT === runtimeHandle;
   if (terminalAcceptanceEnabled) {
     app.route("/api/internal/terminal-acceptance", createTerminalAcceptanceRoutes({
-      secret: process.env.UPGRADE_TOKEN ?? "",
+      secret: () => process.env.UPGRADE_TOKEN ?? "",
       run: (input) => shellCommandRunner.run(input),
     }));
   }

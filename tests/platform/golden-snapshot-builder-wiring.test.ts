@@ -27,5 +27,6 @@ describe('golden snapshot builder orchestration wiring', () => {
       'timeout --kill-after=30 1200 /opt/matrix/bin/matrix-golden-snapshot-activate validation',
     );
     expect(service).toContain('/run/matrix-golden-activation-stage');
+    expect(service).toContain("'activation_terminal_runtime'");
   });
 });
