@@ -163,6 +163,18 @@ describe("Desktop sidebar navigation shell", () => {
     expect(useThreads.getState().activeThreadId).toBeNull();
   });
 
+  it("marks only the active conversation type current when retained identifiers coexist", () => {
+    useTabs.getState().recordRecentHermesConversation("conversation-two", "Trip planning");
+    useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
+    useThreads.setState({ activeThreadId: "thread-1" });
+    useHermesChat.setState({ view: "conversation", sessionId: "conversation-two" });
+
+    renderSidebar();
+
+    expect(screen.getByRole("button", { name: "Open recent Fix navigation" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "Open recent Trip planning" }).getAttribute("aria-current")).toBeNull();
+  });
+
   it("uses the global Chat navigation to return to the canonical inbox", () => {
     useHermesChat.setState({ view: "conversation", sessionId: "conversation-two" });
     renderSidebar();

@@ -15,6 +15,7 @@ import {
   type RecentViewFilter,
 } from "../../stores/tabs";
 import { useConnection } from "../../stores/connection";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat } from "../../stores/hermes-chat";
 import { useThreads } from "../../stores/threads";
 
@@ -42,6 +43,7 @@ export default function RecentViews() {
   const api = useConnection((state) => state.api);
   const threads = useThreads((state) => state.threads);
   const activeThreadId = useThreads((state) => state.activeThreadId);
+  const activeCodingAgentThreadId = useCodingAgentWorkspace((state) => state.activeThreadId);
   const setActiveThread = useThreads((state) => state.setActiveThread);
   const openHermesConversation = useHermesChat((state) => state.openConversation);
   const showHermesIndex = useHermesChat((state) => state.showIndex);
@@ -98,8 +100,13 @@ export default function RecentViews() {
     if (recent.kind === "terminal") {
       return activeTab?.kind === "terminal" && activeTab.sessionName === recent.id;
     }
-    return activeTab?.kind === "chat"
-      && (recent.id === activeThreadId || recent.id === hermesSessionId);
+    if (recent.conversationType === "coding-agent") {
+      return activeTab?.kind === "project" && recent.id === activeCodingAgentThreadId;
+    }
+    if (recent.conversationType === "hermes") {
+      return activeTab?.kind === "chat" && activeThreadId === null && recent.id === hermesSessionId;
+    }
+    return activeTab?.kind === "chat" && recent.id === activeThreadId;
   };
 
   return (

@@ -1,6 +1,6 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronUp, LoaderCircle, Monitor, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useRuntimeComputers } from "../../stores/runtime-computers";
@@ -30,6 +30,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
   const refresh = useRuntimeComputers((state) => state.refresh);
   const select = useRuntimeComputers((state) => state.select);
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   // The token can be on a different slot than the persisted profile (stale
   // profile write); the inventory response's selectedSlot is authoritative.
   const selectedSlot = serverSelectedSlot ?? runtimeSlot;
@@ -47,12 +48,21 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
   const buttonLabel = loadStatus === "error"
     ? "Computer list unavailable"
     : `Change computer, currently ${currentLabel}`;
+  const switchComputer = async (runtimeSlotValue: string) => {
+    const computer = computers.find((candidate) => candidate.runtimeSlot === runtimeSlotValue);
+    if (!computer || runtimeSlotValue === selectedSlot || computer.availability !== "available" || switchingSlot) return;
+    if (await select(runtimeSlotValue)) {
+      setOpen(false);
+      triggerRef.current?.focus();
+    }
+  };
 
   return (
     <div className="px-2 py-1">
       <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <DropdownMenu.Trigger asChild>
           <button
+            ref={triggerRef}
             type="button"
             aria-label={buttonLabel}
             title={collapsed ? currentLabel : undefined}
@@ -118,12 +128,6 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
             <DropdownMenu.RadioGroup
               value={selectedSlot}
               className="max-h-72 overflow-y-auto"
-              onValueChange={(runtimeSlotValue) => {
-                const computer = computers.find((candidate) => candidate.runtimeSlot === runtimeSlotValue);
-                if (!computer || runtimeSlotValue === selectedSlot || computer.availability !== "available" || switchingSlot) return;
-                setOpen(false);
-                void select(runtimeSlotValue);
-              }}
             >
               {computers.map((computer) => {
                 const selected = computer.runtimeSlot === selectedSlot;
@@ -135,6 +139,10 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
                     value={computer.runtimeSlot}
                     disabled={disabled}
                     className="flex cursor-default items-center gap-2 rounded-lg px-2 py-2 text-left outline-none data-[disabled]:opacity-60 data-[highlighted]:bg-[var(--bg-hover)]"
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      void switchComputer(computer.runtimeSlot);
+                    }}
                   >
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md" style={{ background: selected ? "var(--accent-muted)" : "var(--bg-hover)", color: selected ? "var(--accent)" : "var(--text-secondary)" }}>
                       {switching ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}

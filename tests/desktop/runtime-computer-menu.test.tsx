@@ -97,7 +97,7 @@ describe("sidebar computer menu", () => {
     await waitFor(() => expect(document.activeElement).toBe(choices[1]));
     fireEvent.keyDown(choices[1]!, { key: "Enter" });
     await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("review"));
-    expect(document.activeElement).toBe(trigger);
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
   it("switches through trusted runtime selection and closes the menu", async () => {
@@ -110,6 +110,21 @@ describe("sidebar computer menu", () => {
 
     await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("review"));
     expect(screen.queryByRole("menu", { name: "Choose computer" })).toBeNull();
+  });
+
+  it("keeps the menu open with generic feedback when runtime selection fails", async () => {
+    const selectRuntime = vi.fn(async () => {
+      throw new Error("/home/matrix/private token=raw-secret");
+    });
+    useConnection.setState({ selectRuntime });
+    render(<RuntimeComputerMenu collapsed={false} />);
+    await waitFor(() => expect(screen.getByText("Main Computer")).not.toBeNull());
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Change computer/i }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Additional Computer.*Available/i }));
+
+    expect(await screen.findByText("Couldn't switch computers. Try again.")).not.toBeNull();
+    expect(screen.getByRole("menu", { name: "Choose computer" })).not.toBeNull();
+    expect(screen.queryByText(/raw-secret|\/home\/matrix/i)).toBeNull();
   });
 
   it("keeps failures safe and offers an inline retry", async () => {
