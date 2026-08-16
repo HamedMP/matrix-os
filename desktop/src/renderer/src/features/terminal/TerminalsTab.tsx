@@ -212,7 +212,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     if (!terminalSessionRequest) return;
     const requestedShell = shells.find((shell) => shell.name === terminalSessionRequest.sessionName);
     if (!requestedShell) {
-      if (!loading && !error && loadSequence > 0) {
+      if (!loading && !creating && !error && loadSequence > 0) {
         consumeTerminalSessionRequest(terminalSessionRequest.requestId);
       }
       return;
@@ -221,6 +221,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     consumeTerminalSessionRequest(terminalSessionRequest.requestId);
   }, [
     consumeTerminalSessionRequest,
+    creating,
     error,
     loading,
     loadSequence,

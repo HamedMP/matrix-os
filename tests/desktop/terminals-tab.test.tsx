@@ -216,6 +216,39 @@ describe("TerminalsTab", () => {
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 
+  it("keeps a requested Recent pending during a create-triggered canonical refresh", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().requestTerminalSession("matrix-created");
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      loading: false,
+      creating: true,
+      error: null,
+      loadSequence: 2,
+    });
+
+    renderTab();
+
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({
+      sessionName: "matrix-created",
+    });
+
+    act(() => {
+      useShellSessions.setState({
+        sessions: [
+          { name: "matrix-created", status: "active", placement: "active" },
+          { name: "matrix-main", status: "active", placement: "active" },
+        ],
+        creating: false,
+      });
+    });
+
+    expect(screen.getByRole("navigation", { name: "Terminal breadcrumb" }).textContent).toContain(
+      "matrix-created",
+    );
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
   it("retires a missing Recent after canonical loading completes so a reused name does not open", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().requestTerminalSession("matrix-deleted");
