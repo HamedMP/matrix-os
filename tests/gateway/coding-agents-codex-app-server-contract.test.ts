@@ -18,6 +18,9 @@ describe("Codex app-server contract", () => {
         "0.146.0": {
           schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
+        "0.147.0": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
       },
       requiredServerMethods: [
         "item/commandExecution/requestApproval",
@@ -45,9 +48,13 @@ describe("Codex app-server contract", () => {
       status: "verified",
       version: "0.146.0",
     });
-    expect(codexAppServerContractStatus("codex-cli 0.146.1")).toEqual({
+    expect(codexAppServerContractStatus("codex-cli 0.147.0")).toEqual({
+      status: "verified",
+      version: "0.147.0",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.147.1")).toEqual({
       status: "unverified_newer",
-      version: "0.146.1",
+      version: "0.147.1",
     });
     expect(codexAppServerContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",
