@@ -9,6 +9,8 @@ import NavigationHeader, {
   breadcrumbsForTab,
 } from "../../desktop/src/renderer/src/features/mission-control/NavigationHeader";
 import { useTabs, type Tab } from "../../desktop/src/renderer/src/stores/tabs";
+import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
+import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 describe("Desktop navigation header", () => {
@@ -16,6 +18,8 @@ describe("Desktop navigation header", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().ensureNavigationScope("runtime-a");
     useUi.setState({ sidebarCollapsed: false });
+    useThreads.setState(useThreads.getInitialState(), true);
+    useHermesChat.setState(useHermesChat.getInitialState(), true);
   });
 
   afterEach(() => cleanup());
@@ -96,5 +100,26 @@ describe("Desktop navigation header", () => {
 
     act(() => useUi.getState().toggleSidebar());
     expect(useUi.getState().sidebarCollapsed).toBe(false);
+  });
+
+  it("shows the active canonical Hermes conversation in the Chat breadcrumb", () => {
+    useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
+    useHermesChat.setState({
+      sessionId: "conversation-two",
+      view: "conversation",
+      conversations: [{
+        id: "conversation-two",
+        title: "Trip planning",
+        preview: "Plan a trip",
+        messageCount: 2,
+        createdAt: 1,
+        updatedAt: 2,
+      }],
+    });
+
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent)
+      .toContain("ChatTrip planning");
   });
 });

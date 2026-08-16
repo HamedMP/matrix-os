@@ -7,6 +7,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { Fragment } from "react";
+import { useHermesChat } from "../../stores/hermes-chat";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
@@ -103,9 +104,15 @@ export default function NavigationHeader() {
   const toggleSidebar = useUi((state) => state.toggleSidebar);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const activeThreadId = useThreads((state) => state.activeThreadId);
-  const activeConversationTitle = useThreads((state) =>
+  const activeThreadTitle = useThreads((state) =>
     state.threads.find((thread) => thread.id === activeThreadId)?.title,
   );
+  const hermesSessionId = useHermesChat((state) => state.sessionId);
+  const hermesConversations = useHermesChat((state) => state.conversations);
+  const hermesConversationTitle = hermesSessionId
+    ? hermesConversations.find((conversation) => conversation.id === hermesSessionId)?.title
+    : undefined;
+  const activeConversationTitle = activeThreadTitle ?? hermesConversationTitle;
   const breadcrumbs = breadcrumbItemsForTab(activeTab, activeConversationTitle);
 
   return (

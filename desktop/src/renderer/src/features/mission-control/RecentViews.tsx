@@ -12,6 +12,8 @@ import {
   type RecentView,
   type RecentViewFilter,
 } from "../../stores/tabs";
+import { useConnection } from "../../stores/connection";
+import { useHermesChat } from "../../stores/hermes-chat";
 import { useThreads } from "../../stores/threads";
 
 const FILTER_OPTIONS: Array<{ filter: RecentViewFilter; label: string }> = [
@@ -34,8 +36,11 @@ export default function RecentViews() {
   const recentFilter = useTabs((state) => state.recentFilter);
   const setRecentFilter = useTabs((state) => state.setRecentFilter);
   const openTab = useTabs((state) => state.openTab);
+  const api = useConnection((state) => state.api);
   const threads = useThreads((state) => state.threads);
   const setActiveThread = useThreads((state) => state.setActiveThread);
+  const openHermesConversation = useHermesChat((state) => state.openConversation);
+  const showHermesIndex = useHermesChat((state) => state.showIndex);
   const visible = useMemo(
     () => recentViews.filter((recent) => recentFilter === "all" || recent.kind === recentFilter).slice(0, 8),
     [recentFilter, recentViews],
@@ -71,8 +76,18 @@ export default function RecentViews() {
       return;
     }
     const thread = threads.find((candidate) => candidate.id === recent.id);
-    setActiveThread(thread?.id ?? null);
+    if (thread) {
+      setActiveThread(thread.id);
+      openTab({ kind: "chat", title: "Hermes", closable: false });
+      return;
+    }
+    setActiveThread(null);
     openTab({ kind: "chat", title: "Hermes", closable: false });
+    if (api) {
+      void openHermesConversation(api, recent.id);
+    } else {
+      showHermesIndex();
+    }
   };
 
   return (

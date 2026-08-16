@@ -8,6 +8,7 @@ import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sid
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
@@ -18,12 +19,14 @@ vi.mock("../../desktop/src/renderer/src/features/runtime/RuntimeComputerMenu", (
 
 const invoke = vi.fn(async () => ({ ok: true }));
 const signOut = vi.fn(async () => undefined);
+const openConversation = vi.fn(async () => true);
 
 describe("Desktop sidebar navigation shell", () => {
   beforeEach(() => {
     window.operator = { invoke, on: vi.fn(() => () => undefined) };
     invoke.mockClear();
     signOut.mockClear();
+    openConversation.mockClear();
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -32,9 +35,11 @@ describe("Desktop sidebar navigation shell", () => {
       platformHost: "https://app.matrix-os.com",
       runtimeSlot: "primary",
       authGeneration: 7,
-      api: null,
+      api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
       signOut,
     });
+    useHermesChat.setState(useHermesChat.getInitialState(), true);
+    useHermesChat.setState({ openConversation });
     useBoard.setState({ projects: [], activeProjectSlug: null, cardsByProject: {} });
     useCodingAgentWorkspace.setState({ summary: null, activeThreadId: null, reviews: null });
     useThreads.setState({
@@ -91,6 +96,19 @@ describe("Desktop sidebar navigation shell", () => {
 
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)).toMatchObject({ kind: "chat" });
     expect(useThreads.getState().activeThreadId).toBe("thread-1");
+  });
+
+  it("opens a canonical Hermes recent through the Gateway-backed loader", () => {
+    useTabs.getState().recordRecentConversation("conversation-two", "Trip planning");
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open recent Trip planning" }));
+
+    expect(openConversation).toHaveBeenCalledWith(
+      useConnection.getState().api,
+      "conversation-two",
+    );
+    expect(useThreads.getState().activeThreadId).toBeNull();
   });
 
   it("offers the approved account actions and routes them through current behavior", () => {
