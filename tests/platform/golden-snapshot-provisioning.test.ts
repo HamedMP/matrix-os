@@ -143,14 +143,16 @@ describe('golden snapshot provisioning activation', () => {
       .resolves.toMatchObject({ snapshotCreateIntentId: intentId });
   });
 
-  it('uses only a compatible older snapshot and records that exact update is required', async () => {
+  it('falls back to a clean image when no exact snapshot exists', async () => {
     await readySnapshot('v1', 301);
     const selected = await chooseProvisioningImage(db, config, {
       jobId: '50000000-0000-4000-8000-000000000001', machineId: '30000000-0000-4000-8000-000000000001',
       targetBundleVersion: 'v2', serverType: 'cpx22', purpose: 'provision',
       leaseId: '40000000-0000-4000-8000-000000000001', now: '2026-07-03T00:01:00.000Z',
     });
-    expect(selected).toMatchObject({ imageSource: 'snapshot', providerImageId: 301, exact: false, requiresExactUpdate: true });
+    expect(selected).toEqual({
+      imageSource: 'clean_image', targetBundleVersion: 'v2', targetBundleSha256: '2'.repeat(64),
+    });
   });
 
   it('never selects a snapshot outside the configured freshness window', async () => {
@@ -664,7 +666,7 @@ describe('golden snapshot provisioning activation', () => {
   });
 
   it('enforces exact bundle provenance when a snapshot recovery registers', async () => {
-    await readySnapshot('v1', 301);
+    await readySnapshot('v2', 302);
     const machineId = '30000000-0000-4000-8000-000000000009';
     const decision = await chooseRecoveryImage(db, config, {
       machineId, targetBundleVersion: 'v2', serverType: 'cpx22', purpose: 'recover',

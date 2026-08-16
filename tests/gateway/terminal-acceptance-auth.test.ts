@@ -5,30 +5,58 @@ import { createTerminalAcceptanceRoutes } from "../../packages/gateway/src/shell
 
 const SECRET = "acceptance-secret-that-is-never-sent";
 
-function sign(body: string, timestamp: string, nonce: string): string {
+function sign(body: string, timestamp: string, nonce: string, secret = SECRET): string {
   const digest = createHash("sha256").update(body).digest("hex");
-  return createHmac("sha256", SECRET)
+  return createHmac("sha256", secret)
     .update(`v1\n${timestamp}\n${nonce}\n${digest}`)
     .digest("hex");
 }
 
-function request(body: string, timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString("hex")) {
+function request(
+  body: string,
+  timestamp = String(Math.floor(Date.now() / 1000)),
+  nonce = randomBytes(16).toString("hex"),
+  secret = SECRET,
+) {
   return new Request("http://localhost/run", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-matrix-acceptance-timestamp": timestamp,
       "x-matrix-acceptance-nonce": nonce,
-      "x-matrix-acceptance-signature": sign(body, timestamp, nonce),
+      "x-matrix-acceptance-signature": sign(body, timestamp, nonce, secret),
     },
     body,
   });
 }
 
 describe("terminal production acceptance request authentication", () => {
+  it("resolves a reconciled host secret at request time", async () => {
+    let activeSecret = "stale-host-secret";
+    const run = vi.fn(async () => ({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      truncated: false,
+    }));
+    const app = new Hono().route("/", createTerminalAcceptanceRoutes({
+      secret: () => activeSecret,
+      run,
+    }));
+    activeSecret = SECRET;
+    const body = JSON.stringify({ command: ["/usr/bin/true"] });
+
+    const response = await app.request(request(body));
+
+    expect(response.status).toBe(200);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
   it("authenticates a bounded command without transmitting the reusable secret and signs the response", async () => {
     const run = vi.fn(async () => ({ stdout: "ok\n", stderr: "", exitCode: 0, signal: null, timedOut: false, truncated: false }));
-    const app = new Hono().route("/", createTerminalAcceptanceRoutes({ secret: SECRET, run }));
+    const app = new Hono().route("/", createTerminalAcceptanceRoutes({ secret: () => SECRET, run }));
     const body = JSON.stringify({ command: ["/usr/bin/true"], timeoutMs: 1_000 });
     const requestTimestamp = String(Math.floor(Date.now() / 1000));
     const nonce = randomBytes(16).toString("hex");
@@ -45,7 +73,7 @@ describe("terminal production acceptance request authentication", () => {
 
   it("rejects stale, forged, and replayed requests before command execution", async () => {
     const run = vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0, signal: null, timedOut: false, truncated: false }));
-    const app = new Hono().route("/", createTerminalAcceptanceRoutes({ secret: SECRET, run }));
+    const app = new Hono().route("/", createTerminalAcceptanceRoutes({ secret: () => SECRET, run }));
     const body = JSON.stringify({ command: ["/usr/bin/true"] });
     const valid = request(body);
     expect((await app.request(valid.clone())).status).toBe(200);
@@ -66,7 +94,7 @@ describe("terminal production acceptance request authentication", () => {
       timedOut: false,
       truncated: false,
     }));
-    const app = new Hono().route("/", createTerminalAcceptanceRoutes({ secret: SECRET, run }));
+    const app = new Hono().route("/", createTerminalAcceptanceRoutes({ secret: () => SECRET, run }));
     const body = JSON.stringify({ command: ["/usr/bin/true"] });
     const valid = request(body);
 

@@ -34,11 +34,42 @@ remove_path() {
 
 patterns_file=""
 dd_error_file=""
+zero_fill=""
+reserved_clusters_file=""
+reserved_clusters_original=""
+reserved_clusters_changed=0
+
+restore_reserved_clusters() {
+  local restored
+  [ "$reserved_clusters_changed" -eq 1 ] || return 0
+  if ! printf '%s\n' "$reserved_clusters_original" > "$reserved_clusters_file"; then
+    return 1
+  fi
+  restored="$(<"$reserved_clusters_file")" || return 1
+  [ "$restored" = "$reserved_clusters_original" ] || return 1
+  reserved_clusters_changed=0
+}
+
 cleanup_runtime_evidence() {
+  local exit_status=$? cleanup_status=0
+  trap - EXIT HUP INT TERM
+  set +e
+  [ -z "$zero_fill" ] || rm -f -- "$zero_fill"
+  [ "$?" -eq 0 ] || cleanup_status=1
+  restore_reserved_clusters
+  [ "$?" -eq 0 ] || cleanup_status=1
   [ -z "$patterns_file" ] || rm -f -- "$patterns_file"
+  [ "$?" -eq 0 ] || cleanup_status=1
   [ -z "$dd_error_file" ] || rm -f -- "$dd_error_file"
+  [ "$?" -eq 0 ] || cleanup_status=1
+  if [ "$cleanup_status" -ne 0 ]; then
+    echo "golden snapshot free-block overwrite cleanup failed" >&2
+    exit 70
+  fi
+  exit "$exit_status"
 }
 trap cleanup_runtime_evidence EXIT
+trap 'exit 70' HUP INT TERM
 
 # Production builders seed one synthetic disk canary before deleting cloud-init
 # state. Both it and the phase callback token must be absent from the raw root
@@ -89,6 +120,7 @@ remove_targets=(
   root/.zsh_history
   root/.npmrc
   root/.netrc
+  var/lib/systemd/linger/matrix
   var/lib/systemd/random-seed
   var/lib/cloud
   var/lib/dhcp
@@ -149,6 +181,24 @@ sensitive_targets=(
   var/crash
   var/lib/systemd/coredump
 )
+
+if [ "$root" = "/" ] && id matrix >/dev/null 2>&1; then
+  matrix_uid="$(id -u matrix)"
+  if ! timeout --kill-after=5 30 loginctl disable-linger matrix; then
+    echo "golden snapshot matrix user quiescence failed" >&2
+    exit 67
+  fi
+  timeout --kill-after=5 30 loginctl terminate-user matrix >/dev/null 2>&1 || true
+  timeout --kill-after=5 30 systemctl stop "user@${matrix_uid}.service" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    pgrep -u matrix >/dev/null 2>&1 || break
+    sleep 1
+  done
+  if pgrep -u matrix >/dev/null 2>&1; then
+    echo "golden snapshot matrix user quiescence failed" >&2
+    exit 67
+  fi
+fi
 
 if [ "$root" = "/" ]; then
   swapoff -a
@@ -246,6 +296,54 @@ if [ "$root" = "/" ]; then
     exit 69
   fi
 
+  root_device_major_minor="$(findmnt -n -r -o MAJ:MIN --target /)"
+  case "$root_device_major_minor" in
+    ""|*[!0-9:]*|:*|*:|*:*:*)
+      echo "golden snapshot free-block overwrite setup failed" >&2
+      exit 70
+      ;;
+  esac
+  if ! root_device_sysfs="$(readlink -f -- "/sys/dev/block/$root_device_major_minor")"; then
+    echo "golden snapshot free-block overwrite setup failed" >&2
+    exit 70
+  fi
+  root_device_name="${root_device_sysfs##*/}"
+  case "$root_device_name" in
+    ""|*[!a-zA-Z0-9._-]*)
+      echo "golden snapshot free-block overwrite setup failed" >&2
+      exit 70
+      ;;
+  esac
+  reserved_clusters_file="/sys/fs/ext4/$root_device_name/reserved_clusters"
+  if [ ! -f "$reserved_clusters_file" ] || [ -L "$reserved_clusters_file" ]; then
+    echo "golden snapshot free-block overwrite setup failed" >&2
+    exit 70
+  fi
+  if ! reserved_clusters_original="$(<"$reserved_clusters_file")"; then
+    echo "golden snapshot free-block overwrite setup failed" >&2
+    exit 70
+  fi
+  case "$reserved_clusters_original" in
+    ""|*[!0-9]*)
+      echo "golden snapshot free-block overwrite setup failed" >&2
+      exit 70
+      ;;
+  esac
+
+  # ext4's runtime reserved_clusters pool is separate from tune2fs reserved
+  # blocks and remains untouched when a normal fill reaches ENOSPC. Expose it
+  # only for this overwrite, then restore the exact value before raw scanning.
+  reserved_clusters_changed=1
+  if ! printf '0\n' > "$reserved_clusters_file"; then
+    echo "golden snapshot free-block overwrite setup failed" >&2
+    exit 70
+  fi
+  reserved_clusters_current="$(<"$reserved_clusters_file")" || reserved_clusters_current=""
+  if [ "$reserved_clusters_current" != 0 ]; then
+    echo "golden snapshot free-block overwrite setup failed" >&2
+    exit 70
+  fi
+
   zero_fill=/var/lib/matrix-golden-snapshot-zero-fill
   dd_error_file=/run/matrix-golden-snapshot-zero-fill.err
   set +e
@@ -254,7 +352,12 @@ if [ "$root" = "/" ]; then
   set -e
   sync
   rm -f -- "$zero_fill"
+  zero_fill=""
   sync
+  if ! restore_reserved_clusters; then
+    echo "golden snapshot free-block overwrite cleanup failed" >&2
+    exit 70
+  fi
   if [ "$dd_status" -eq 0 ] || ! grep -Fq 'No space left on device' "$dd_error_file"; then
     echo "golden snapshot free-block overwrite failed" >&2
     exit 70

@@ -39,7 +39,7 @@ function signatureMatches(actual: string | undefined, expected: string): boolean
 }
 
 export function createTerminalAcceptanceRoutes(options: {
-  secret: string;
+  secret: () => string;
   run: (input: ShellCommandRunInput) => Promise<ShellCommandRunResult | Record<string, unknown>>;
   now?: () => number;
 }): Hono {
@@ -48,7 +48,8 @@ export function createTerminalAcceptanceRoutes(options: {
   const now = options.now ?? Date.now;
 
   app.post("/run", bodyLimit({ maxSize: ACCEPTANCE_BODY_LIMIT }), async (c) => {
-    if (!options.secret) return c.json({ error: "Acceptance authentication unavailable" }, 503);
+    const secret = options.secret();
+    if (!secret) return c.json({ error: "Acceptance authentication unavailable" }, 503);
     const timestamp = c.req.header("x-matrix-acceptance-timestamp") ?? "";
     const nonce = c.req.header("x-matrix-acceptance-nonce") ?? "";
     const signature = c.req.header("x-matrix-acceptance-signature");
@@ -65,7 +66,7 @@ export function createTerminalAcceptanceRoutes(options: {
     }
 
     const rawBody = await c.req.text();
-    if (!signatureMatches(signature, requestSignature(options.secret, timestamp, nonce, rawBody))) {
+    if (!signatureMatches(signature, requestSignature(secret, timestamp, nonce, rawBody))) {
       return c.json({ error: "Unauthorized" }, 401);
     }
     let parsedBody: unknown;
@@ -98,7 +99,7 @@ export function createTerminalAcceptanceRoutes(options: {
           "content-type": "application/json; charset=UTF-8",
           "cache-control": "no-store",
           "x-matrix-acceptance-response-signature": responseSignature(
-            options.secret,
+            secret,
             timestamp,
             nonce,
             responseBody,
