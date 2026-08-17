@@ -106,6 +106,7 @@ export function ExistingFolderStepFields({
   folderPath,
   projects,
   onChooseFolder,
+  onCreateFolder,
   onOpenProject,
   submitting,
 }: {
@@ -114,6 +115,7 @@ export function ExistingFolderStepFields({
   folderPath: string;
   projects: Project[];
   onChooseFolder: (path: string) => void;
+  onCreateFolder: (path: string) => void;
   onOpenProject: (slug: string) => void;
   submitting: boolean;
 }) {
@@ -162,6 +164,7 @@ export function ExistingFolderStepFields({
           compact
           mode="folder-picker"
           onChooseFolder={onChooseFolder}
+          onCreateFolder={onCreateFolder}
           resolveFolderChoice={resolveFolderChoice}
           onAlternateFolderAction={(path) => {
             const project = projectForRegistryPath(path);

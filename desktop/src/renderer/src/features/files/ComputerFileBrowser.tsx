@@ -65,6 +65,7 @@ export default function ComputerFileBrowser({
   onOpenFile,
   onSelectionChange,
   onChooseFolder,
+  onCreateFolder,
   resolveFolderChoice,
   onAlternateFolderAction,
 }: {
@@ -79,6 +80,7 @@ export default function ComputerFileBrowser({
   onOpenFile?: (path: string) => void;
   onSelectionChange?: (selection: BrowserSelection | null) => void;
   onChooseFolder?: (path: string) => void;
+  onCreateFolder?: (path: string) => void;
   resolveFolderChoice?: (path: string) => FolderPickerChoice;
   onAlternateFolderAction?: (path: string) => void;
 }) {
@@ -349,7 +351,7 @@ export default function ComputerFileBrowser({
   // Name flexes (minmax(0,1fr) + truncate); Size/Modified are fixed-width
   // right-aligned columns sized to the format.ts outputs, so long names only
   // truncate once the pane is genuinely out of room.
-  const listColumns = compact ? "minmax(0,1fr) 64px 88px" : "minmax(0,1fr) 72px 104px";
+  const listColumns = compact ? "minmax(0,1fr) 56px 80px" : "minmax(0,1fr) 72px 104px";
 
   let content: ReactNode;
   if (viewStatus === "loading") {
@@ -380,6 +382,7 @@ export default function ComputerFileBrowser({
           entry={entry}
           grid={view === "grid"}
           listColumns={listColumns}
+          compact={compact}
           selected={viewSelectedPath === path || isCandidate}
           pressed={mode === "folder-picker" && entry.type === "directory" ? isCandidate : undefined}
           managed={isManagedBrowserPath(path)}
@@ -405,7 +408,7 @@ export default function ComputerFileBrowser({
       ) : (
         <div>
           <div
-            className="sticky top-0 z-10 grid items-center gap-2 border-b px-2 pb-1 text-[11px] font-medium"
+            className={`sticky top-0 z-10 grid items-center ${compact ? "gap-1" : "gap-2"} border-b px-2 pb-1 text-[11px] font-medium`}
             style={{
               gridTemplateColumns: listColumns,
               borderColor: "var(--border-subtle)",
@@ -514,6 +517,9 @@ export default function ComputerFileBrowser({
           message={folderChoice && folderChoice.kind !== "choose" ? folderChoice.message : undefined}
           actionLabel={folderChoice?.kind === "alternate" ? folderChoice.label : `Choose ${chosenName}`}
           disabled={folderChoice?.kind === "alternate" ? false : !viewCandidatePath || folderChoice?.kind === "blocked"}
+          onCreateFolder={onCreateFolder && folderChoice?.kind === "choose"
+            ? () => onCreateFolder(viewCandidatePath)
+            : undefined}
           onAction={() => folderChoice?.kind === "alternate"
             ? onAlternateFolderAction?.(viewCandidatePath)
             : onChooseFolder(viewCandidatePath)}

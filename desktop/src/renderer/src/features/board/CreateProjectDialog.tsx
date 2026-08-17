@@ -170,6 +170,19 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     [authGeneration, runtimeSlot],
   );
 
+  const startNewFolderAt = useCallback(
+    (chosen: string) => {
+      setName("");
+      setNameTouched(false);
+      setFolderSelection(null);
+      setParentSelection({ slot: runtimeSlot, authGeneration, path: chosen });
+      setParentPickerOpen(false);
+      setError(null);
+      setStep("scratch");
+    },
+    [authGeneration, runtimeSlot],
+  );
+
   const canSubmit = (() => {
     if (step === "folder") return name.trim().length > 0 && folderPath.length > 0;
     if (step === "github") {
@@ -350,6 +363,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
           folderPath={folderPath}
           projects={projects}
           onChooseFolder={chooseFolder}
+          onCreateFolder={startNewFolderAt}
           onOpenProject={(slug) => void runSubmission((ctx) => openExistingProject(ctx, slug))}
           submitting={submitting}
         />

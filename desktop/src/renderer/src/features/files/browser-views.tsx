@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ChevronUp,
   Home,
+  FolderPlus,
   LayoutGrid,
   List,
   RefreshCw,
@@ -150,6 +151,7 @@ export function EntryButton({
   entry,
   grid,
   listColumns,
+  compact = false,
   selected,
   pressed,
   managed,
@@ -162,6 +164,7 @@ export function EntryButton({
   entry: BrowserEntry;
   grid: boolean;
   listColumns: string;
+  compact?: boolean;
   selected: boolean;
   pressed: boolean | undefined;
   managed?: boolean;
@@ -223,7 +226,7 @@ export function EntryButton({
       type="button"
       aria-label={`Open ${entry.name}`}
       aria-pressed={pressed}
-      className="grid h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+      className={`grid h-9 w-full items-center ${compact ? "gap-1" : "gap-2"} rounded-md px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]`}
       style={{
         gridTemplateColumns: listColumns,
         background: selected ? "var(--bg-selected)" : "transparent",
@@ -384,12 +387,14 @@ export function FolderPickerFooter({
   actionLabel,
   disabled,
   onAction,
+  onCreateFolder,
 }: {
   path: string;
   message?: string;
   actionLabel: string;
   disabled: boolean;
   onAction: () => void;
+  onCreateFolder?: () => void;
 }) {
   return (
     <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
@@ -399,7 +404,19 @@ export function FolderPickerFooter({
         </div>
         {message ? <div className="mt-0.5 text-[11px]" style={{ color: "var(--text-tertiary)" }}>{message}</div> : null}
       </div>
-      <Button variant="primary" disabled={disabled} onClick={onAction}>{actionLabel}</Button>
+      <div className="flex shrink-0 items-center gap-2">
+        {onCreateFolder ? (
+          <Button
+            variant="subtle"
+            aria-label={`New folder in ${path}`}
+            onClick={onCreateFolder}
+          >
+            <FolderPlus size={13} aria-hidden />
+            New folder here
+          </Button>
+        ) : null}
+        <Button variant="primary" disabled={disabled} onClick={onAction}>{actionLabel}</Button>
+      </div>
     </div>
   );
 }

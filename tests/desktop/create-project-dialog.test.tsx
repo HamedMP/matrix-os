@@ -113,6 +113,26 @@ describe("CreateProjectDialog", () => {
     }));
   });
 
+  it("starts the safe new-folder flow from the existing-folder picker", async () => {
+    const get = vi.fn(async (requestPath: string) => {
+      if (requestPath === "/api/files/list?path=") {
+        return { entries: [{ name: "workspaces", type: "directory" }] };
+      }
+      return { entries: [] };
+    });
+    useConnection.setState({ api: { post: vi.fn(), get, baseUrl: "https://gateway.test" } as never });
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+
+    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+    fireEvent.click(workspaces);
+    fireEvent.click(screen.getByRole("button", { name: "New folder in workspaces" }));
+
+    expect(screen.getByText("New folder")).toBeTruthy();
+    expect(screen.getByText("Create in: workspaces")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Project name")).toHaveProperty("value", "");
+  });
+
   it("opens a project when the selected folder is already connected", async () => {
     const existingProject = {
       slug: "matrix-os",
