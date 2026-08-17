@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,8 @@ describe("preview-manager", () => {
       slug: "repo",
       name: "repo",
       localPath: join(homePath, "projects", "repo"),
+      addedAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z",
       ownerScope: { type: "user", id: "user_a" },
     });
   });
@@ -98,6 +100,45 @@ describe("preview-manager", () => {
       preview: { lastStatus: "failed" },
     });
     expect(probeUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps legacy previews readable and adopts valid records into the registry", async () => {
+    const legacy = {
+      id: "prev_legacy123",
+      projectSlug: "repo",
+      label: "Legacy preview",
+      url: "http://localhost:3000",
+      lastStatus: "ok",
+      displayPreference: "panel",
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:00:00.000Z",
+    };
+    await atomicWriteJson(join(homePath, "projects", "repo", "previews", `${legacy.id}.json`), legacy);
+    const manager = createPreviewManager({ homePath, probeUrl: vi.fn(async () => ({ ok: true as const })) });
+
+    await expect(manager.listPreviews("repo")).resolves.toMatchObject({
+      ok: true,
+      previews: [expect.objectContaining({ id: legacy.id, label: "Legacy preview" })],
+    });
+    await expect(readFile(
+      join(homePath, "system", "projects", "repo", "previews", `${legacy.id}.json`),
+      "utf-8",
+    )).resolves.toContain("Legacy preview");
+    await expect(manager.deletePreview("repo", legacy.id)).resolves.toEqual({ ok: true });
+    await expect(manager.listPreviews("repo")).resolves.toMatchObject({ previews: [] });
+  });
+
+  it("rejects preview mutations from a different owner scope", async () => {
+    const manager = createPreviewManager({
+      homePath,
+      probeUrl: vi.fn(async () => ({ ok: true as const })),
+    });
+
+    await expect(manager.createPreview(
+      "repo",
+      { label: "Do not create", url: "http://localhost:3000" },
+      { type: "user", id: "user_b" },
+    )).resolves.toMatchObject({ ok: false, status: 404, error: { code: "not_found" } });
   });
 
   it("enforces project and task preview caps and detects preview URLs from session output", async () => {

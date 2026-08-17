@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "./project-manager.js";
-import { atomicCreateJson, atomicWriteJson, readJsonFile, withProjectLock } from "./state-ops.js";
+import { atomicCreateJson, atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
 import { createProjectRegistry } from "./project-registry.js";
 
 export interface WorktreeRecord {
@@ -121,8 +121,33 @@ async function readProject(homePath: string, projectSlug: string): Promise<Proje
   return await createProjectRegistry({ homePath }).readConfig<ProjectConfig>(projectSlug);
 }
 
-function worktreePath(homePath: string, projectSlug: string, id: string): string {
-  return join(homePath, "projects", projectSlug, "worktrees", id);
+export function managedWorktreePath(homePath: string, projectSlug: string, id: string): string {
+  if (!SlugSchema.safeParse(projectSlug).success || !WorktreeIdSchema.safeParse(id).success) {
+    throw new Error("Invalid managed worktree identity");
+  }
+  return join(resolve(homePath), "worktrees", projectSlug, id);
+}
+
+function legacyWorktreePath(homePath: string, projectSlug: string, id: string): string {
+  return join(resolve(homePath), "projects", projectSlug, "worktrees", id);
+}
+
+export async function resolveWorktreeCheckoutPath(
+  homePath: string,
+  projectSlug: string,
+  id: string,
+): Promise<string | null> {
+  const candidates = [
+    managedWorktreePath(homePath, projectSlug, id),
+    legacyWorktreePath(homePath, projectSlug, id),
+  ];
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  // Preserve the pre-separation deterministic path for legacy callers and
+  // test doubles that resolve the filesystem later. New manager-created
+  // worktrees always materialize the canonical candidate first.
+  return candidates[1]!;
 }
 
 function worktreeRecordPath(homePath: string, projectSlug: string, id: string): string {
@@ -134,7 +159,7 @@ function worktreeLeasePath(homePath: string, projectSlug: string, id: string): s
 }
 
 function legacyWorktreeMetadataPath(homePath: string, projectSlug: string, id: string, name: string): string {
-  return join(worktreePath(homePath, projectSlug, id), ".matrix", name);
+  return join(legacyWorktreePath(homePath, projectSlug, id), ".matrix", name);
 }
 
 async function migrateLegacyMetadata<T extends { id: string }>(input: {
@@ -200,8 +225,20 @@ export function createWorktreeManager(options: {
   const runCommand = options.runCommand ?? defaultRunCommand;
 
   return {
+    async getWorktree(projectSlug: string, id: string): Promise<{ ok: true; worktree: WorktreeRecord } | Failure> {
+      if (!SlugSchema.safeParse(projectSlug).success || !WorktreeIdSchema.safeParse(id).success) {
+        return failure(400, "invalid_ref", "Worktree reference is invalid");
+      }
+      const project = await readProject(homePath, projectSlug);
+      const worktree = project ? await readWorktree(homePath, projectSlug, id) : null;
+      return worktree
+        ? { ok: true, worktree }
+        : failure(404, "not_found", "Worktree was not found");
+    },
+
     async createWorktree(input: {
       projectSlug: string;
+      ownerScope?: OwnerScope;
       branch?: string;
       createBranch?: boolean;
       baseRef?: string;
@@ -224,11 +261,14 @@ export function createWorktreeManager(options: {
       }
       return withProjectLock(input.projectSlug, async () => {
         const project = await readProject(homePath, input.projectSlug);
-        if (!project) return failure(404, "not_found", "Project was not found");
+        if (!project || (input.ownerScope
+          && (project.ownerScope.type !== input.ownerScope.type || project.ownerScope.id !== input.ownerScope.id))) {
+          return failure(404, "not_found", "Project was not found");
+        }
 
         const source = typeof input.pr === "number" ? `pull/${input.pr}/head` : input.branch!;
         const id = worktreeId(input.projectSlug, source);
-        const path = worktreePath(homePath, input.projectSlug, id);
+        const path = managedWorktreePath(homePath, input.projectSlug, id);
         const currentBranch = typeof input.pr === "number" ? `pr-${input.pr}` : input.branch!;
         const configuredBaseRef = input.baseRef ?? project.defaultBranch ?? "main";
         const baseRef = BranchSchema.safeParse(configuredBaseRef).success ? configuredBaseRef : "main";
@@ -279,9 +319,14 @@ export function createWorktreeManager(options: {
       });
     },
 
-    async listWorktrees(projectSlug: string): Promise<{ ok: true; worktrees: WorktreeRecord[] } | Failure> {
+    async listWorktrees(projectSlug: string, ownerScope?: OwnerScope): Promise<{ ok: true; worktrees: WorktreeRecord[] } | Failure> {
       if (!SlugSchema.safeParse(projectSlug).success) {
         return failure(400, "invalid_slug", "Project slug is invalid");
+      }
+      const project = await readProject(homePath, projectSlug);
+      if (!project || (ownerScope
+        && (project.ownerScope.type !== ownerScope.type || project.ownerScope.id !== ownerScope.id))) {
+        return failure(404, "not_found", "Project was not found");
       }
       const roots = [
         createProjectRegistry({ homePath }).worktreesDir(projectSlug),
@@ -395,17 +440,27 @@ export function createWorktreeManager(options: {
       projectSlug: string;
       worktreeId: string;
       confirmDirtyDelete?: boolean;
+      ownerScope?: OwnerScope;
     }): Promise<{ ok: true } | Failure> {
       if (!SlugSchema.safeParse(input.projectSlug).success || !WorktreeIdSchema.safeParse(input.worktreeId).success) {
         return failure(400, "invalid_ref", "Branch or PR reference is invalid");
       }
       return withProjectLock(input.projectSlug, async () => {
-        const path = worktreePath(homePath, input.projectSlug, input.worktreeId);
         const project = await readProject(homePath, input.projectSlug);
         const record = await readWorktree(homePath, input.projectSlug, input.worktreeId);
-        if (!project || !record || !await pathExists(path)) {
+        const allowedPaths = project ? new Set([
+          managedWorktreePath(homePath, input.projectSlug, input.worktreeId),
+          legacyWorktreePath(homePath, input.projectSlug, input.worktreeId),
+        ]) : new Set<string>();
+        if (!project
+          || (input.ownerScope
+            && (project.ownerScope.type !== input.ownerScope.type || project.ownerScope.id !== input.ownerScope.id))
+          || !record
+          || !allowedPaths.has(resolve(record.path))
+          || !await pathExists(record.path)) {
           return failure(404, "not_found", "Worktree was not found");
         }
+        const path = resolve(record.path);
         const lease = await readLease(homePath, input.projectSlug, input.worktreeId);
         if (lease) return failure(409, "worktree_locked", "Worktree is locked");
 

@@ -22,6 +22,8 @@ cannot distinguish that owner folder from the registry.
   link to owner code wherever that code already lives.
 - Existing `~/projects/<slug>/config.json` homes remain readable and migrate
   idempotently without moving or deleting project code.
+- New Matrix-created Git worktrees live below `~/worktrees/<project-slug>`;
+  existing worktrees below `~/projects/<slug>/worktrees` remain readable.
 - Agent cwd and writable roots are derived only from the selected config's
   `localPath`; the registry and sibling workspaces are never exposed.
 
@@ -50,6 +52,9 @@ interface.
    config into the canonical registry as `legacy-config.json` for rollback.
 5. If records conflict, keep both, prefer canonical, and leave the legacy file
    untouched for operator recovery.
+6. Valid legacy task, preview, worktree, lease, and deletion-tombstone records
+   remain readable and are copied into canonical registry state lazily. Owner
+   files that do not match the bounded Matrix record schemas are untouched.
 
 Migration is lazy and retry-safe. No workspace directory or repository is
 moved. Existing managed checkouts at `~/projects/<slug>/repo` keep that path.
@@ -61,6 +66,9 @@ moved. Existing managed checkouts at `~/projects/<slug>/repo` keep that path.
 - A project may not select the canonical registry or an ancestor containing it.
 - Direct folders under `~/projects` are no longer rejected merely because of
   their location.
+- A canonical folder-project record does not turn its `localPath` into a
+  managed container; idempotent retries and unrelated same-slug folders remain
+  selectable.
 - Owner scope checks happen against the canonical/compatibility record before
   lifecycle, task, worktree, preview, export, or delete mutations.
 - No new HTTP route is introduced; existing workspace route authentication and
@@ -77,7 +85,19 @@ registry classification after the Gateway behavior is available.
 
 - Direct checkout: `~/projects/<folder>` connects and no `config.json` is
   written into the checkout.
+- Owner `config.json` files remain untouched even when they contain generic
+  `id` and `slug` fields; only a complete legacy Matrix project record is
+  eligible for adoption.
 - Legacy home: existing config is readable, adopted once, and backed up.
+- Legacy worktree metadata remains visible to existing terminal sessions while
+  it is lazily adopted into the canonical registry.
+- Legacy task, preview, and deletion-tombstone records remain readable and are
+  present in owner exports before or after lazy adoption.
+- New worktrees and coding-agent file/source-control/review reads use the
+  separated checkout root or the canonical project's `localPath`, while legacy
+  worktree paths remain a compatibility fallback.
+- Legacy project records without an explicit `kind` never authorize recursive
+  deletion of a potentially owner-controlled source directory.
 - Conflict/retry: canonical winner is stable and legacy data is not destroyed.
 - Existing managed checkout: `localPath` and project ID are unchanged.
 - Protected paths, symlink aliases, owner-scope mismatch, and sibling access

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { constants, type Dirent } from "node:fs";
+import { constants } from "node:fs";
 import { access, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -235,8 +235,13 @@ async function isManagedProjectContainer(homePath: string, resolvedPath: string)
   const segments = rel.split(sep);
   if (rel === "" || rel.startsWith("..") || segments.length < 1) return false;
   const registry = createProjectRegistry({ homePath });
-  const projectExists = await registry.readConfig<ProjectConfig | Omit<ProjectConfig, "kind">>(segments[0]!) !== null;
-  if (!projectExists) return false;
+  const project = await registry.readConfig<ProjectConfig | Omit<ProjectConfig, "kind">>(segments[0]!);
+  if (!project) return false;
+  const kind = normalizeProjectConfig(homePath, project).kind;
+  if (kind === "folder") return false;
+  const managedRoot = join(resolve(homePath), "projects", segments[0]!);
+  const localPath = resolve(project.localPath);
+  if (localPath !== managedRoot && !localPath.startsWith(`${managedRoot}${sep}`)) return false;
   // A legacy managed container and its managed worktree roots stay behind
   // the project/worktree APIs. An unrelated owner checkout is not blocked
   // merely because one of its own directories happens to be named worktrees.
@@ -268,17 +273,9 @@ async function readProjectConfig(homePath: string, slug: string): Promise<Projec
 }
 
 async function readProjectDeletionTombstone(homePath: string, slug: string): Promise<ProjectConfig | null> {
-  try {
-    const config = await readJsonFile<ProjectConfig | Omit<ProjectConfig, "kind">>(
-      createProjectRegistry({ homePath }).tombstonePath(slug),
-    );
-    return normalizeProjectConfig(homePath, config);
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
+  const config = await createProjectRegistry({ homePath })
+    .readTombstone<ProjectConfig | Omit<ProjectConfig, "kind">>(slug);
+  return config ? normalizeProjectConfig(homePath, config) : null;
 }
 
 function normalizePr(raw: unknown): PullRequestSummary | null {
@@ -583,19 +580,7 @@ export function createProjectManager(options: {
         const project = await readProjectConfig(homePath, slug);
         if (project?.deletingAt) projects.push(project);
       }
-      let tombstoneEntries: Dirent[];
-      try {
-        tombstoneEntries = await readdir(registry.tombstoneDir(), { withFileTypes: true });
-      } catch (err: unknown) {
-        if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
-          throw err;
-        }
-        tombstoneEntries = [];
-      }
-      for (const entry of tombstoneEntries) {
-        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-        const slug = entry.name.slice(0, -".json".length);
-        if (!PROJECT_SLUG_REGEX.test(slug)) continue;
+      for (const slug of await registry.listTombstoneSlugs()) {
         const project = await readProjectDeletionTombstone(homePath, slug);
         if (!project?.deletingAt) continue;
         const duplicateIndex = projects.findIndex((candidate) => candidate.slug === project.slug);
@@ -654,9 +639,9 @@ export function createProjectManager(options: {
       }
       await registry.writeConfig(input.slug, updated);
       if (updated.deletingAt) {
-        await atomicWriteJson(registry.tombstonePath(input.slug), updated);
+        await registry.writeTombstone(input.slug, updated);
       } else {
-        await rm(registry.tombstonePath(input.slug), { force: true });
+        await registry.removeTombstone(input.slug);
       }
       return { ok: true, project: updated };
     },
@@ -668,16 +653,13 @@ export function createProjectManager(options: {
       const current = await this.getProjectForLifecycle(input);
       if (!current.ok) return current;
       if (current.project.deletingAt) {
-        await atomicWriteJson(
-          registry.tombstonePath(input.slug),
-          current.project,
-        );
+        await registry.writeTombstone(input.slug, current.project);
       }
       if (current.project.kind !== "folder") {
         await rm(projectPath(homePath, input.slug), { recursive: true, force: true });
       }
       await registry.removeConfig(input.slug);
-      await rm(registry.tombstonePath(input.slug), { force: true });
+      await registry.removeTombstone(input.slug);
       return { ok: true };
     },
 

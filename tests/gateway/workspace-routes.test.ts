@@ -218,6 +218,7 @@ describe("workspace API routes", () => {
       projectSlug: "repo",
       worktreeId: "wt_abc123def456",
       confirmDirtyDelete: undefined,
+      ownerScope: { type: "user", id: "default" },
     });
   });
 
@@ -235,6 +236,7 @@ describe("workspace API routes", () => {
       projectSlug: "repo",
       worktreeId: "wt_abc123def456",
       confirmDirtyDelete: undefined,
+      ownerScope: { type: "user", id: "default" },
     });
   });
 
@@ -281,7 +283,12 @@ describe("workspace API routes", () => {
     expect(projectManager.listManagedProjects).toHaveBeenCalled();
     const res = await app.request(jsonRequest("/api/projects/repo/worktrees", { branch: "main" }));
     expect(res.status).toBe(201);
-    expect(worktreeManager.createWorktree).toHaveBeenCalledWith({ projectSlug: "repo", branch: "main" });
+    expect(worktreeManager.createWorktree).toHaveBeenCalledWith({
+      projectSlug: "repo",
+      branch: "main",
+      pr: undefined,
+      ownerScope: { type: "user", id: "default" },
+    });
   });
 
   it("derives project owner scope from the injected principal owner scope", async () => {
@@ -681,7 +688,11 @@ exit 1
 
     const createdTask = await app.request(jsonRequest("/api/projects/repo/tasks", { title: "Fix auth", priority: "high" }));
     expect(createdTask.status).toBe(201);
-    expect(taskManager.createTask).toHaveBeenCalledWith("repo", { title: "Fix auth", priority: "high" });
+    expect(taskManager.createTask).toHaveBeenCalledWith(
+      "repo",
+      { title: "Fix auth", priority: "high" },
+      { type: "user", id: "default" },
+    );
     expect(eventStore.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "task.created" }));
     await expect((await app.request("/api/projects/repo/tasks?includeArchived=true")).json()).resolves.toMatchObject({
       tasks: [expect.objectContaining({ id: "task_abc123" })],
@@ -697,7 +708,11 @@ exit 1
       url: "http://localhost:3000",
     }));
     expect(createdPreview.status).toBe(201);
-    expect(previewManager.createPreview).toHaveBeenCalledWith("repo", expect.objectContaining({ url: "http://localhost:3000" }));
+    expect(previewManager.createPreview).toHaveBeenCalledWith(
+      "repo",
+      expect.objectContaining({ url: "http://localhost:3000" }),
+      { type: "user", id: "default" },
+    );
     await expect((await app.request("/api/projects/repo/previews?taskId=task_abc123")).json()).resolves.toMatchObject({
       previews: [expect.objectContaining({ id: "prev_abc123" })],
     });

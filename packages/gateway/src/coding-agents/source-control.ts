@@ -14,6 +14,7 @@ import {
 } from "@matrix-os/contracts";
 import { GIT_ENV } from "../git-env.js";
 import type { RequestPrincipal } from "../request-principal.js";
+import { resolveWorktreeCheckoutPath } from "../worktree-manager.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -67,10 +68,6 @@ function isWithin(base: string, target: string): boolean {
 }
 
 type SourceControlWorktreeRequest = Pick<SourceControlPrepareCommitRequest, "projectId" | "worktreeId">;
-
-function worktreeRootFor(homePath: string, request: SourceControlWorktreeRequest): string {
-  return resolve(homePath, "projects", request.projectId, "worktrees", request.worktreeId);
-}
 
 function fsErrorCode(err: unknown): string {
   return typeof err === "object" && err !== null && "code" in err ? String(err.code) : "";
@@ -221,7 +218,14 @@ export function createCodingAgentSourceControlStore(options: {
   }
 
   async function resolveWorktree(request: SourceControlWorktreeRequest): Promise<string> {
-    const worktreeRoot = worktreeRootFor(homePath, request);
+    const worktreeRoot = await resolveWorktreeCheckoutPath(
+      homePath,
+      request.projectId,
+      request.worktreeId,
+    );
+    if (!worktreeRoot) {
+      throw new CodingAgentSourceControlError("source_control_not_found");
+    }
     if (!isWithin(homePath, worktreeRoot)) {
       throw new CodingAgentSourceControlError("source_control_not_found");
     }

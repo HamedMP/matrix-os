@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { resolveWithinHome } from "./path-security.js";
 
 export type OwnerScope = { type: "user" | "org"; id: string };
@@ -155,6 +155,16 @@ async function listOwnedProjectFiles(
       files.push(relative(homePath, legacyConfigPath));
     }
 
+    for (const tombstonePath of [
+      join(registryRoot, ".deleting", `${slug}.json`),
+      join(projectsRoot, ".deleting", `${slug}.json`),
+    ]) {
+      if (await pathExists(tombstonePath)
+        && ownerMatches(await readOwnerScope(tombstonePath), ownerScope)) {
+        files.push(relative(homePath, tombstonePath));
+      }
+    }
+
     let config: Record<string, unknown> | null = null;
     try {
       const value = await readJsonFile(configPath);
@@ -164,6 +174,19 @@ async function listOwnedProjectFiles(
     }
     const localPath = typeof config?.localPath === "string" ? resolve(config.localPath) : null;
     if (!localPath) continue;
+    const legacyProjectRoot = join(projectsRoot, slug);
+    const legacyManaged = config?.kind === "scratch"
+      || config?.kind === "github"
+      || (config?.kind === undefined
+        && (localPath === legacyProjectRoot || localPath.startsWith(`${legacyProjectRoot}${sep}`)));
+    if (legacyManaged) {
+      for (const stateName of ["tasks", "previews"]) {
+        const legacyStateDir = join(legacyProjectRoot, stateName);
+        if (await pathExists(legacyStateDir)) {
+          files.push(...await listFilesRecursive(legacyStateDir, homePath));
+        }
+      }
+    }
     const resolvedHome = resolve(homePath);
     const rel = relative(resolvedHome, localPath);
     if (rel.startsWith("..") || rel === "" || resolve(rel) === rel || !await pathExists(localPath)) continue;
@@ -334,9 +357,11 @@ export function createStateOps(options: { homePath: string; now?: () => string }
         };
       }
       const config = await readJsonFile<Record<string, unknown>>(configPath);
-      if (config.kind !== "folder") {
+      if (config.kind === "scratch" || config.kind === "github") {
         await rm(legacyProjectPath, { recursive: true, force: true });
       } else if (configPath === legacyConfigPath) {
+        // Missing kind is legacy ambiguous state. Prefer leaving owner source
+        // behind over guessing that the whole directory is Matrix-managed.
         await rm(legacyConfigPath, { force: true });
       }
       await rm(registryPath, { recursive: true, force: true });

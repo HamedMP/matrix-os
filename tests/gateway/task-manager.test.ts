@@ -16,6 +16,8 @@ describe("task-manager", () => {
       slug: "repo",
       name: "repo",
       localPath: join(homePath, "projects", "repo"),
+      addedAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z",
       ownerScope: { type: "user", id: "user_a" },
     });
   });
@@ -114,5 +116,42 @@ describe("task-manager", () => {
     if (!created.ok) return;
 
     await expect(readFile(join(homePath, "system", "projects", "repo", "tasks", `${created.task.id}.json`), "utf-8")).resolves.toContain("Export me");
+  });
+
+  it("keeps legacy project tasks readable and adopts valid records into the registry", async () => {
+    const legacy = {
+      id: "task_legacy123",
+      projectSlug: "repo",
+      title: "Legacy task",
+      status: "todo",
+      priority: "normal",
+      order: 0,
+      previewIds: [],
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:00:00.000Z",
+    };
+    await atomicWriteJson(join(homePath, "projects", "repo", "tasks", `${legacy.id}.json`), legacy);
+    const manager = createTaskManager({ homePath });
+
+    await expect(manager.listTasks("repo", { includeArchived: true })).resolves.toMatchObject({
+      ok: true,
+      tasks: [expect.objectContaining({ id: legacy.id, title: "Legacy task" })],
+    });
+    await expect(readFile(
+      join(homePath, "system", "projects", "repo", "tasks", `${legacy.id}.json`),
+      "utf-8",
+    )).resolves.toContain("Legacy task");
+    await expect(manager.deleteTask("repo", legacy.id)).resolves.toEqual({ ok: true });
+    await expect(manager.listTasks("repo", { includeArchived: true })).resolves.toMatchObject({ tasks: [] });
+  });
+
+  it("rejects task mutations from a different owner scope", async () => {
+    const manager = createTaskManager({ homePath });
+
+    await expect(manager.createTask(
+      "repo",
+      { title: "Do not create" },
+      { type: "user", id: "user_b" },
+    )).resolves.toMatchObject({ ok: false, status: 404, error: { code: "not_found" } });
   });
 });

@@ -275,6 +275,27 @@ describe("project-manager", () => {
     expect(config).toMatchObject({ slug: "matrix-os-repo", localPath: await realpath(checkout) });
   });
 
+  it("allows an idempotent retry after connecting a checkout directly under projects", async () => {
+    const checkout = join(homePath, "projects", "retry-repo");
+    await mkdir(checkout, { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const request = {
+      mode: "folder" as const,
+      name: "Retry repo",
+      slug: "retry-repo",
+      path: "projects/retry-repo",
+      ownerScope: { type: "user" as const, id: "user_123" },
+      clientRequestId: "req_retry_repo",
+    };
+
+    await expect(manager.createProject(request)).resolves.toMatchObject({ ok: true, status: 201 });
+    await expect(manager.createProject(request)).resolves.toMatchObject({
+      ok: true,
+      status: 200,
+      project: { slug: "retry-repo", kind: "folder", localPath: await realpath(checkout) },
+    });
+  });
+
   it("does not mistake an owner repository config.json for legacy Matrix metadata", async () => {
     const checkout = join(homePath, "projects", "configured-repo");
     await mkdir(checkout, { recursive: true });
@@ -294,6 +315,34 @@ describe("project-manager", () => {
       .resolves.toContain("compilerOptions");
     await expect(manager.listManagedProjects({ ownerScope: { type: "user", id: "user_123" } }))
       .resolves.toMatchObject({ projects: [{ slug: "configured-repo" }] });
+  });
+
+  it("preserves an owner config.json that happens to contain id and slug fields", async () => {
+    const checkout = join(homePath, "projects", "configured-app");
+    const ownerConfig = {
+      id: "configured-app",
+      slug: "configured-app",
+      theme: "dark",
+    };
+    await mkdir(checkout, { recursive: true });
+    await writeFile(join(checkout, "config.json"), JSON.stringify(ownerConfig));
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    const created = await manager.createProject({
+      mode: "folder",
+      name: "Configured app",
+      slug: "configured-app",
+      path: "projects/configured-app",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+
+    expect(created).toMatchObject({ ok: true, status: 201 });
+    await expect(readFile(join(checkout, "config.json"), "utf-8"))
+      .resolves.toBe(JSON.stringify(ownerConfig));
+    await expect(readFile(
+      join(homePath, "system", "projects", "configured-app", "config.json"),
+      "utf-8",
+    )).resolves.toContain('"kind": "folder"');
   });
 
   it("returns owner-scoped active and archived project projections without exposing deletion tombstones", async () => {
@@ -413,6 +462,30 @@ describe("project-manager", () => {
     await expect(
       readFile(join(homePath, "system", "projects", "legacy-repo", "legacy-config.json"), "utf-8"),
     ).resolves.toContain("proj_legacy_repo");
+  });
+
+  it("keeps legacy deletion tombstones recoverable and adopts them into the registry", async () => {
+    const tombstone = {
+      id: "proj_deleting_legacy",
+      name: "Deleting legacy",
+      slug: "deleting-legacy",
+      kind: "scratch" as const,
+      localPath: join(homePath, "projects", "deleting-legacy", "repo"),
+      addedAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      deletingAt: "2026-08-17T00:00:00.000Z",
+      ownerScope: { type: "user" as const, id: "user_123" },
+    };
+    await atomicWriteJson(join(homePath, "projects", ".deleting", "deleting-legacy.json"), tombstone);
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.listDeletingProjects()).resolves.toMatchObject({
+      projects: [expect.objectContaining({ slug: "deleting-legacy", deletingAt: tombstone.deletingAt })],
+    });
+    await expect(readFile(
+      join(homePath, "system", "projects", ".deleting", "deleting-legacy.json"),
+      "utf-8",
+    )).resolves.toContain("Deleting legacy");
   });
 
   it("keeps a conflicting legacy record for operator recovery while preferring canonical state", async () => {

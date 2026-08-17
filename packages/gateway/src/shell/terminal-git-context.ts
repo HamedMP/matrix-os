@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { createProjectRegistry } from "../project-registry.js";
 import { PROJECT_SLUG_REGEX } from "../project-manager.js";
+import { createWorktreeManager } from "../worktree-manager.js";
 
 const MAX_CACHE_ENTRIES = 128;
 const MAX_SESSION_FILES = 256;
@@ -222,11 +223,15 @@ export class TerminalGitContextResolver {
       if (!project.success) return null;
       let worktree: z.infer<typeof WorktreeMetadataSchema> | undefined;
       if (parsed.data.worktreeId) {
-        const value = await readJson(join(
-          registry.worktreesDir(parsed.data.projectSlug),
-          parsed.data.worktreeId,
-          "worktree.json",
-        ));
+        // WorktreeManager owns both canonical registry reads and lazy adoption
+        // of legacy projects/<slug>/worktrees/<id>/.matrix metadata. Reading
+        // the new path directly here would make existing terminal sessions
+        // lose branch/PR context until another feature happened to migrate it.
+        const selected = await createWorktreeManager({
+          homePath: this.homePath,
+          runCommand: this.runCommand,
+        }).getWorktree(parsed.data.projectSlug, parsed.data.worktreeId);
+        const value = selected.ok ? selected.worktree : undefined;
         const parsedWorktree = WorktreeMetadataSchema.safeParse(value);
         if (parsedWorktree.success) worktree = parsedWorktree.data;
       }

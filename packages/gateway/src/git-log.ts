@@ -114,10 +114,8 @@ interface ProjectRepoConfig {
 
 async function readProjectRepoConfig(homePath: string, slug: string): Promise<ProjectRepoConfig | null> {
   const raw = await createProjectRegistry({ homePath })
-    .readConfig<{ id: string; slug: string; localPath?: unknown }>(slug);
-  if (typeof raw !== "object" || raw === null) return null;
-  const localPath = (raw as Record<string, unknown>).localPath;
-  return typeof localPath === "string" && localPath.length > 0 ? { localPath } : null;
+    .readConfig(slug);
+  return raw ? { localPath: raw.localPath } : null;
 }
 
 function parseRefList(raw: string): { refs: string[]; tags: string[]; head: boolean } {

@@ -115,6 +115,33 @@ describe("state-ops", () => {
     await expect(readFile(join(homePath, "system", "projects", "keep", "config.json"), "utf-8")).resolves.toContain("keep");
   });
 
+  it("preserves owner source when deleting a legacy folder record without kind", async () => {
+    const source = join(homePath, "projects", "legacy-folder");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "README.md"), "owner source");
+    await atomicWriteJson(join(homePath, "system", "projects", "legacy-folder", "config.json"), {
+      id: "proj_legacy_folder",
+      name: "Legacy folder",
+      slug: "legacy-folder",
+      localPath: source,
+      addedAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z",
+      ownerScope: { type: "user", id: "user_a" },
+    });
+    const ops = createStateOps({ homePath });
+
+    await expect(ops.deleteWorkspaceData({
+      scope: "project",
+      projectSlug: "legacy-folder",
+      ownerScope: { type: "user", id: "user_a" },
+      confirmation: "delete project workspace data",
+    })).resolves.toEqual({ ok: true });
+
+    await expect(readFile(join(source, "README.md"), "utf-8")).resolves.toBe("owner source");
+    await expect(stat(join(homePath, "system", "projects", "legacy-folder")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("exports all owner-scoped workspace data for full backups", async () => {
     await atomicWriteJson(join(homePath, "system", "sessions", "sess_abc123.json"), {
       id: "sess_abc123",
@@ -169,5 +196,37 @@ describe("state-ops", () => {
 
     expect(manifest.files).toContain("system/projects/external/config.json");
     expect(manifest.files).toContain("workspaces/external-checkout/README.md");
+  });
+
+  it("exports legacy Matrix task, preview, and tombstone state before lazy adoption", async () => {
+    const projectRoot = join(homePath, "projects", "legacy-state");
+    const config = {
+      id: "proj_legacy_state",
+      name: "Legacy state",
+      slug: "legacy-state",
+      kind: "scratch",
+      localPath: join(projectRoot, "repo"),
+      addedAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z",
+      ownerScope: { type: "user", id: "user_a" },
+    };
+    await atomicWriteJson(join(homePath, "system", "projects", "legacy-state", "config.json"), config);
+    await atomicWriteJson(join(projectRoot, "tasks", "task_legacy123.json"), { id: "task_legacy123" });
+    await atomicWriteJson(join(projectRoot, "previews", "prev_legacy123.json"), { id: "prev_legacy123" });
+    await atomicWriteJson(join(homePath, "projects", ".deleting", "legacy-state.json"), {
+      ...config,
+      deletingAt: "2026-04-27T00:00:00.000Z",
+    });
+    const ops = createStateOps({ homePath });
+
+    const manifest = await ops.exportWorkspace({
+      scope: "project",
+      projectSlug: "legacy-state",
+      ownerScope: { type: "user", id: "user_a" },
+    });
+
+    expect(manifest.files).toContain("projects/legacy-state/tasks/task_legacy123.json");
+    expect(manifest.files).toContain("projects/legacy-state/previews/prev_legacy123.json");
+    expect(manifest.files).toContain("projects/.deleting/legacy-state.json");
   });
 });

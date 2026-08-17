@@ -8,6 +8,7 @@ import { createCodingAgentFileStore } from "../../packages/gateway/src/coding-ag
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = "2026-07-06T12:00:00.000Z";
@@ -106,6 +107,34 @@ describe("coding agent file read route", () => {
         metadata: { path: "src/primary.ts", kind: "file" },
         content: "export const checkout = 'primary';\n",
       });
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the canonical project localPath for a directly connected owner folder", async () => {
+    const harness = await createRouteHarness({ ownerIds: [testPrincipal.userId] });
+    const directRoot = join(harness.homePath, "projects", "direct-checkout");
+    try {
+      await mkdir(join(directRoot, "src"), { recursive: true });
+      await writeFile(join(directRoot, "src", "direct.ts"), "export const direct = true;\n");
+      await atomicWriteJson(join(harness.homePath, "system", "projects", projectId, "config.json"), {
+        id: "proj_matrix_os",
+        name: "Matrix OS",
+        slug: projectId,
+        kind: "folder",
+        localPath: directRoot,
+        addedAt: now,
+        updatedAt: now,
+        ownerScope: { type: "user", id: testPrincipal.userId },
+      });
+
+      const read = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&path=src%2Fdirect.ts`,
+      );
+
+      expect(read.status).toBe(200);
+      expect(await read.json()).toMatchObject({ content: "export const direct = true;\n" });
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }

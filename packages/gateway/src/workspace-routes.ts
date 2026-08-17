@@ -548,8 +548,11 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/projects/:slug/worktrees", limited, async (c) => {
     const body = await parseJson(c, CreateWorktreeSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
     const result = await worktreeManager.createWorktree({
       projectSlug: c.req.param("slug"),
+      ownerScope,
       branch: body.value.branch,
       pr: body.value.pr,
     });
@@ -558,7 +561,9 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.get("/api/projects/:slug/worktrees", async (c) => {
-    const result = await worktreeManager.listWorktrees(c.req.param("slug"));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await worktreeManager.listWorktrees(c.req.param("slug"), ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ worktrees: result.worktrees });
   });
@@ -570,10 +575,13 @@ export function createWorkspaceRoutes(options: {
       if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
       confirmDirtyDelete = body.value.confirmDirtyDelete;
     }
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
     const result = await worktreeManager.deleteWorktree({
       projectSlug: c.req.param("slug"),
       worktreeId: c.req.param("worktreeId"),
       confirmDirtyDelete,
+      ownerScope,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });
@@ -583,19 +591,23 @@ export function createWorkspaceRoutes(options: {
     const body = await parseJson(c, CreateTaskSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const projectSlug = c.req.param("slug");
-    const result = await taskManager.createTask(projectSlug, body.value);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await taskManager.createTask(projectSlug, body.value, ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     await eventPublisher.publishTaskCreated(result.task);
     return c.json({ task: result.task }, status(result.status ?? 201));
   });
 
   app.get("/api/projects/:slug/tasks", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
     const limitRaw = c.req.query("limit");
     const result = await taskManager.listTasks(c.req.param("slug"), {
       includeArchived: c.req.query("includeArchived") === "true",
       limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
       cursor: c.req.query("cursor"),
-    });
+    }, ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ tasks: result.tasks, nextCursor: result.nextCursor });
   });
@@ -604,7 +616,9 @@ export function createWorkspaceRoutes(options: {
     const body = await parseJson(c, UpdateTaskSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const projectSlug = c.req.param("slug");
-    const result = await taskManager.updateTask(projectSlug, c.req.param("taskId"), body.value);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await taskManager.updateTask(projectSlug, c.req.param("taskId"), body.value, ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     await eventPublisher.publishTaskUpdated(result.task);
     return c.json({ task: result.task });
@@ -615,7 +629,9 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const projectSlug = c.req.param("slug");
     const taskId = c.req.param("taskId");
-    const result = await taskManager.deleteTask(projectSlug, taskId);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await taskManager.deleteTask(projectSlug, taskId, ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     await eventPublisher.publishTaskDeleted(projectSlug, taskId);
     return c.json({ ok: true });
@@ -625,20 +641,24 @@ export function createWorkspaceRoutes(options: {
     const body = await parseJson(c, CreatePreviewSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const projectSlug = c.req.param("slug");
-    const result = await previewManager.createPreview(projectSlug, body.value);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await previewManager.createPreview(projectSlug, body.value, ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     await eventPublisher.publishPreviewCreated(result.preview);
     return c.json({ preview: result.preview }, status(result.status ?? 201));
   });
 
   app.get("/api/projects/:slug/previews", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
     const limitRaw = c.req.query("limit");
     const result = await previewManager.listPreviews(c.req.param("slug"), {
       taskId: c.req.query("taskId"),
       sessionId: c.req.query("sessionId"),
       limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
       cursor: c.req.query("cursor"),
-    });
+    }, ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ previews: result.previews, nextCursor: result.nextCursor });
   });
@@ -647,7 +667,9 @@ export function createWorkspaceRoutes(options: {
     const body = await parseJson(c, UpdatePreviewSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const projectSlug = c.req.param("slug");
-    const result = await previewManager.updatePreview(projectSlug, c.req.param("previewId"), body.value);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await previewManager.updatePreview(projectSlug, c.req.param("previewId"), body.value, ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     await eventPublisher.publishPreviewUpdated(result.preview);
     return c.json({ preview: result.preview });
@@ -658,7 +680,9 @@ export function createWorkspaceRoutes(options: {
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const projectSlug = c.req.param("slug");
     const previewId = c.req.param("previewId");
-    const result = await previewManager.deletePreview(projectSlug, previewId);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await previewManager.deletePreview(projectSlug, previewId, ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     await eventPublisher.publishPreviewDeleted(projectSlug, previewId);
     return c.json({ ok: true });

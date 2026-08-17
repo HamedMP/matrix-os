@@ -64,6 +64,9 @@ describe("worktree-manager", () => {
       "utf-8",
     ));
     expect(metadata.pr.number).toBe(42);
+    expect(first.worktree.path).toBe(join(homePath, "worktrees", "repo", first.worktree.id));
+    await expect(stat(join(homePath, "projects", "repo", "worktrees")))
+      .rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("fetches GitHub PR refs before creating a PR worktree", async () => {
@@ -133,6 +136,18 @@ describe("worktree-manager", () => {
     });
   });
 
+  it("reads one canonical worktree without scanning sibling records", async () => {
+    const manager = createWorktreeManager({ homePath, runCommand: successfulRunCommand() });
+    const created = await manager.createWorktree({ projectSlug: "repo", branch: "feature/one" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    await expect(manager.getWorktree("repo", created.worktree.id)).resolves.toEqual({
+      ok: true,
+      worktree: created.worktree,
+    });
+  });
+
   it("serializes concurrent creation for the same worktree", async () => {
     const runCommand = successfulRunCommand();
     const manager = createWorktreeManager({ homePath, runCommand });
@@ -155,6 +170,18 @@ describe("worktree-manager", () => {
     const result = await manager.createWorktree({ projectSlug: "repo", branch: "feature;rm -rf /" });
 
     expect(result).toMatchObject({ ok: false, status: 400, error: { code: "invalid_ref" } });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects worktree creation from a different owner scope", async () => {
+    const runCommand = successfulRunCommand();
+    const manager = createWorktreeManager({ homePath, runCommand });
+
+    await expect(manager.createWorktree({
+      projectSlug: "repo",
+      branch: "main",
+      ownerScope: { type: "user", id: "user_b" },
+    })).resolves.toMatchObject({ ok: false, status: 404, error: { code: "not_found" } });
     expect(runCommand).not.toHaveBeenCalled();
   });
 

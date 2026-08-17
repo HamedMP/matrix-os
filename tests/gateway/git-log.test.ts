@@ -72,7 +72,15 @@ async function seedProject(homePath: string, slug: string, localPath: string): P
   await mkdir(join(homePath, "projects", slug), { recursive: true });
   await writeFile(
     join(homePath, "projects", slug, "config.json"),
-    JSON.stringify({ id: "proj_1", name: slug, slug, localPath, addedAt: NOW, updatedAt: NOW }),
+    JSON.stringify({
+      id: "proj_1",
+      name: slug,
+      slug,
+      localPath,
+      addedAt: NOW,
+      updatedAt: NOW,
+      ownerScope: { type: "user", id: "user_a" },
+    }),
   );
 }
 

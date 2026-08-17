@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { constants } from "node:fs";
 import { isIP } from "node:net";
-import { access, readdir, rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type WorkspaceError } from "./project-manager.js";
-import { atomicWriteJson, readJsonFile } from "./state-ops.js";
+import { atomicCreateJson, atomicWriteJson, readJsonFile, type OwnerScope } from "./state-ops.js";
 import { createProjectRegistry } from "./project-registry.js";
 
 export type PreviewStatus = "unknown" | "ok" | "failed";
@@ -67,6 +66,19 @@ const ListPreviewSchema = z.object({
   limit: z.number().int().min(1).max(100).default(100),
 });
 
+const PreviewRecordSchema = z.object({
+  id: PreviewIdSchema,
+  projectSlug: ProjectSlugSchema,
+  taskId: TaskIdSchema.optional(),
+  sessionId: SessionIdSchema.optional(),
+  label: z.string().min(1).max(120),
+  url: z.string().min(1).max(2_048),
+  lastStatus: z.enum(["unknown", "ok", "failed"]),
+  displayPreference: z.enum(["panel", "external"]),
+  createdAt: z.string().min(1).max(64),
+  updatedAt: z.string().min(1).max(64),
+});
+
 function paginatePreviews(
   previews: PreviewRecord[],
   query: z.infer<typeof ListPreviewSchema>,
@@ -86,23 +98,15 @@ function failure(status: number, code: string, message: string): Failure {
 }
 
 function previewsDir(homePath: string, projectSlug: string): string {
-  return join(createProjectRegistry({ homePath }).recordDir(projectSlug), "previews");
+  return createProjectRegistry({ homePath }).previewsDir(projectSlug);
 }
 
 function previewPath(homePath: string, projectSlug: string, previewId: string): string {
   return join(previewsDir(homePath, projectSlug), `${previewId}.json`);
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw err;
-  }
+function legacyPreviewPath(homePath: string, projectSlug: string, previewId: string): string {
+  return join(createProjectRegistry({ homePath }).legacyPreviewsDir(projectSlug), `${previewId}.json`);
 }
 
 function parsePreviewUrl(value: string): URL | null {
@@ -190,32 +194,44 @@ async function defaultProbeUrl(url: string, options: { timeoutMs: number }): Pro
 }
 
 async function readPreview(homePath: string, projectSlug: string, previewId: string): Promise<PreviewRecord | null> {
-  try {
-    return await readJsonFile<PreviewRecord>(previewPath(homePath, projectSlug, previewId));
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
+  for (const path of [
+    previewPath(homePath, projectSlug, previewId),
+    legacyPreviewPath(homePath, projectSlug, previewId),
+  ]) {
+    try {
+      const parsed = PreviewRecordSchema.safeParse(await readJsonFile(path));
+      if (!parsed.success || parsed.data.projectSlug !== projectSlug || parsed.data.id !== previewId) continue;
+      if (path === legacyPreviewPath(homePath, projectSlug, previewId)) {
+        await atomicCreateJson(previewPath(homePath, projectSlug, previewId), parsed.data);
+      }
+      return parsed.data;
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      if (err instanceof SyntaxError) continue;
+      throw err;
     }
-    throw err;
   }
+  return null;
 }
 
 async function listPreviewRecords(homePath: string, projectSlug: string): Promise<PreviewRecord[]> {
-  let entries;
-  try {
-    entries = await readdir(previewsDir(homePath, projectSlug), { withFileTypes: true });
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+  const ids = new Set<string>();
+  for (const root of [previewsDir(homePath, projectSlug), createProjectRegistry({ homePath }).legacyPreviewsDir(projectSlug)]) {
+    try {
+      const entries = await readdir(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith(".json")) continue;
+        const previewId = entry.name.slice(0, -".json".length);
+        if (PreviewIdSchema.safeParse(previewId).success) ids.add(previewId);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
     }
-    throw err;
   }
 
   const previews: PreviewRecord[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const previewId = entry.name.slice(0, -".json".length);
-    if (!PreviewIdSchema.safeParse(previewId).success) continue;
+  for (const previewId of ids) {
     const preview = await readPreview(homePath, projectSlug, previewId);
     if (preview) previews.push(preview);
   }
@@ -228,8 +244,10 @@ function validateProjectSlug(projectSlug: string): Failure | null {
     : failure(400, "invalid_project_slug", "Project slug is invalid");
 }
 
-async function requireProject(homePath: string, projectSlug: string): Promise<Failure | null> {
-  return await createProjectRegistry({ homePath }).readConfig(projectSlug)
+async function requireProject(homePath: string, projectSlug: string, ownerScope?: OwnerScope): Promise<Failure | null> {
+  const project = await createProjectRegistry({ homePath }).readConfig(projectSlug);
+  return project && (!ownerScope
+    || (project.ownerScope.type === ownerScope.type && project.ownerScope.id === ownerScope.id))
     ? null
     : failure(404, "not_found", "Project was not found");
 }
@@ -266,10 +284,10 @@ export function createPreviewManager(options: {
   return {
     detectPreviewUrls,
 
-    async createPreview(projectSlug: string, input: unknown): Promise<Result<{ preview: PreviewRecord }> | Failure> {
+    async createPreview(projectSlug: string, input: unknown, ownerScope?: OwnerScope): Promise<Result<{ preview: PreviewRecord }> | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
-      const missingProject = await requireProject(homePath, projectSlug);
+      const missingProject = await requireProject(homePath, projectSlug, ownerScope);
       if (missingProject) return missingProject;
       const parsed = CreatePreviewSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_preview", "Preview payload is invalid");
@@ -304,12 +322,12 @@ export function createPreviewManager(options: {
       return { ok: true, status: 201, preview };
     },
 
-    async listPreviews(projectSlug: string, input: unknown = {}): Promise<
+    async listPreviews(projectSlug: string, input: unknown = {}, ownerScope?: OwnerScope): Promise<
       Result<{ previews: PreviewRecord[]; nextCursor: string | null }> | Failure
     > {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
-      const missingProject = await requireProject(homePath, projectSlug);
+      const missingProject = await requireProject(homePath, projectSlug, ownerScope);
       if (missingProject) return missingProject;
       const parsed = ListPreviewSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_preview_query", "Preview query is invalid");
@@ -342,10 +360,10 @@ export function createPreviewManager(options: {
       return { ok: true, ...paginatePreviews(previews, query) };
     },
 
-    async updatePreview(projectSlug: string, previewId: string, input: unknown): Promise<Result<{ preview: PreviewRecord }> | Failure> {
+    async updatePreview(projectSlug: string, previewId: string, input: unknown, ownerScope?: OwnerScope): Promise<Result<{ preview: PreviewRecord }> | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
-      const missingProject = await requireProject(homePath, projectSlug);
+      const missingProject = await requireProject(homePath, projectSlug, ownerScope);
       if (missingProject) return missingProject;
       const previewError = validatePreviewId(previewId);
       if (previewError) return previewError;
@@ -370,16 +388,20 @@ export function createPreviewManager(options: {
       return { ok: true, preview };
     },
 
-    async deletePreview(projectSlug: string, previewId: string): Promise<{ ok: true } | Failure> {
+    async deletePreview(projectSlug: string, previewId: string, ownerScope?: OwnerScope): Promise<{ ok: true } | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
-      const missingProject = await requireProject(homePath, projectSlug);
+      const missingProject = await requireProject(homePath, projectSlug, ownerScope);
       if (missingProject) return missingProject;
       const previewError = validatePreviewId(previewId);
       if (previewError) return previewError;
-      const path = previewPath(homePath, projectSlug, previewId);
-      if (!await pathExists(path)) return failure(404, "not_found", "Preview was not found");
-      await rm(path, { force: true });
+      if (!await readPreview(homePath, projectSlug, previewId)) {
+        return failure(404, "not_found", "Preview was not found");
+      }
+      await Promise.all([
+        rm(previewPath(homePath, projectSlug, previewId), { force: true }),
+        rm(legacyPreviewPath(homePath, projectSlug, previewId), { force: true }),
+      ]);
       return { ok: true };
     },
   };
