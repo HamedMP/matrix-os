@@ -165,8 +165,10 @@ describe("TerminalsTab", () => {
     const terminalDetail = screen.getByTestId("terminal-view-matrix-main")
       .closest("[data-terminal-detail]");
     expect(terminalDetail?.className).toContain("p-3");
-    expect(screen.getByTestId("terminal-view-matrix-main")
-      .closest("[data-terminal-viewport]")?.className).toContain("rounded-lg");
+    const terminalViewport = screen.getByTestId("terminal-view-matrix-main")
+      .closest("[data-terminal-viewport]");
+    expect(terminalViewport?.className).toContain("rounded-lg");
+    expect(terminalViewport?.className).toContain("flex");
 
     fireEvent.click(screen.getByRole("button", { name: "Switch to matrix-other" }));
     expect(screen.getByTestId("terminal-view-matrix-other").getAttribute("data-active")).toBe("true");

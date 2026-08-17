@@ -575,7 +575,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
               ) : null}
               <div
                 data-terminal-viewport
-                className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border"
+                className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border"
                 style={{ borderColor: "var(--border-subtle)", background: "var(--bg-app)" }}
               >
                 <TerminalView sessionName={sessionName} active={active && liveSessionName === sessionName} />
