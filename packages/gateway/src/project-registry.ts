@@ -19,6 +19,13 @@ function isProjectRecord(value: unknown, slug: string): value is ProjectRecord {
     && PROJECT_SLUG_REGEX.test(slug);
 }
 
+function validatedSlug(slug: string): string {
+  if (!PROJECT_SLUG_REGEX.test(slug)) {
+    throw new Error("Invalid project registry slug");
+  }
+  return slug;
+}
+
 function isErrnoCode(error: unknown, code: string): boolean {
   return error instanceof Error
     && "code" in error
@@ -65,12 +72,12 @@ export function createProjectRegistry(options: { homePath: string }) {
   const root = join(homePath, "system", "projects");
   const ownerProjectsRoot = join(homePath, "projects");
 
-  const recordDir = (slug: string) => join(root, slug);
+  const recordDir = (slug: string) => join(root, validatedSlug(slug));
   const configPath = (slug: string) => join(recordDir(slug), "config.json");
-  const legacyConfigPath = (slug: string) => join(ownerProjectsRoot, slug, "config.json");
+  const legacyConfigPath = (slug: string) => join(ownerProjectsRoot, validatedSlug(slug), "config.json");
   const legacyBackupPath = (slug: string) => join(recordDir(slug), "legacy-config.json");
   const tombstoneDir = () => join(root, ".deleting");
-  const tombstonePath = (slug: string) => join(tombstoneDir(), `${slug}.json`);
+  const tombstonePath = (slug: string) => join(tombstoneDir(), `${validatedSlug(slug)}.json`);
   const tasksDir = (slug: string) => join(recordDir(slug), "tasks");
   const worktreesDir = (slug: string) => join(recordDir(slug), "worktrees");
 
