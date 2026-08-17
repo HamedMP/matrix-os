@@ -148,6 +148,36 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
+  it("switches retained sessions from a collapsible rail with a terminal gutter", () => {
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-main", status: "active", placement: "active" },
+        { name: "matrix-other", status: "active", placement: "active" },
+      ],
+    });
+
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+
+    expect(screen.getByRole("navigation", { name: "Terminal session switcher" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Switch to matrix-main" }).getAttribute("aria-current"))
+      .toBe("page");
+    const terminalDetail = screen.getByTestId("terminal-view-matrix-main")
+      .closest("[data-terminal-detail]");
+    expect(terminalDetail?.className).toContain("p-3");
+    expect(screen.getByTestId("terminal-view-matrix-main")
+      .closest("[data-terminal-viewport]")?.className).toContain("rounded-lg");
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to matrix-other" }));
+    expect(screen.getByTestId("terminal-view-matrix-other").getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse terminal sessions" }));
+    expect(screen.queryByRole("navigation", { name: "Terminal session switcher" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show terminal sessions" }));
+    expect(screen.getByRole("navigation", { name: "Terminal session switcher" })).toBeTruthy();
+  });
+
   it("fully contains cached session chrome and terminal output while the Terminal route is inactive", () => {
     useShellSessions.setState({
       sessions: [{
