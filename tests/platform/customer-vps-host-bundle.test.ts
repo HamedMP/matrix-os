@@ -1233,6 +1233,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('rm -f "$temp_file"');
     expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
+    expect(syncAgent).toContain([
+      'if [ -f "$extract_dir/systemd/matrix-sync-agent.service" ]; then',
+      '      if sudo systemctl enable matrix-sync-agent.service; then',
+      '        log "Sync agent service enabled"',
+      '      else',
+      '        log "WARN: failed to enable matrix-sync-agent.service"',
+      '      fi',
+      '    fi',
+    ].join('\n'));
     expect(syncAgent).toContain('sudo systemctl enable matrix-code-server.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
     expect(syncAgent).toContain('sudo systemctl enable matrix-developer-tools.service');
@@ -1245,8 +1254,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
     const daemonReload = syncAgent.indexOf('sudo systemctl daemon-reload');
     const gatewayStart = syncAgent.indexOf('sudo systemctl start matrix-gateway matrix-shell', daemonReload);
+    const mainLoop = syncAgent.indexOf('# ── Main loop');
+    const startupEnable = syncAgent.indexOf('sudo systemctl enable matrix-sync-agent.service', mainLoop);
     expect(daemonReload).toBeGreaterThan(-1);
     expect(gatewayStart).toBeGreaterThan(daemonReload);
+    expect(startupEnable).toBeGreaterThan(mainLoop);
   });
 
   it('bounds the terminal user-manager reload before app replacement', () => {

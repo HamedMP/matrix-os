@@ -181,12 +181,12 @@ Reuses the spec 066 sync engine. Runs as `matrix-sync-agent.service`. Two respon
 - **Files**: bidirectional sync of `~/home` and `~/projects` against `{userId}/manifest.json`, exactly per 066.
 - **System state**: pushes `system/vps-meta.json` heartbeat every 5 min, updates `lastSyncAt`. DB backup goes through `matrix-db-backup.timer` (separate unit) but writes into the same R2 prefix.
 
-On boot, sync agent runs a **restore-or-fresh** decision:
-1. Fetch `system/vps-meta.json`. If absent: fresh user, mark complete, signal gateway to start.
-2. If present, check `system/db/latest`. If absent: file-only user, sync files, signal gateway.
-3. If both present: stop postgres if running, download latest snapshot, `pg_restore`, write `/var/run/matrix-restore-complete`, signal gateway.
+Before gateway startup, `matrix-restore.service` runs a **restore-or-fresh** decision:
+1. If the durable regular `/opt/matrix/restore-complete` marker exists, preserve it and keep the machine-local Postgres volume authoritative. Ordinary reboots and bundle updates do not contact R2 or replay an older snapshot.
+2. If the marker is absent on a sanitized clean or replacement host, fetch `system/vps-meta.json` and `system/db/latest`. Confirmed absence initializes from local state; an available snapshot is restored with `pg_restore`.
+3. Atomically write the marker only after the fresh/restore decision succeeds. Reject invalid marker types and fail closed on operational R2 or restore errors.
 
-Gateway systemd unit has `ConditionPathExists=/var/run/matrix-restore-complete` so it cannot serve traffic mid-restore.
+Gateway systemd units require `matrix-restore.service` and use `ConditionPathExists=/opt/matrix/restore-complete`, so they cannot serve traffic during a clean/replacement restore.
 
 ### 5. DB backup (customer VPS)
 

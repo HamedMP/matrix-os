@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -103,16 +103,27 @@ describe('platform/customer-vps-cloud-init', () => {
 
   function runRestoreWithFakeMatrixctl(
     existsStatus: number | { vpsMeta: number; latestPointer: number },
+    options: { preexistingRestoreFlag?: 'file' | 'symlink' } = {},
   ) {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'second-restore-r2-'));
     const fakeMatrixctlPath = join(tempDir, 'matrixctl');
     const restorePath = join(tempDir, 'matrix-restore.sh');
     const restoreFlag = join(tempDir, 'restore-complete');
+    const matrixctlCalls = join(tempDir, 'matrixctl-calls');
+
+    if (options.preexistingRestoreFlag === 'file') {
+      writeFileSync(restoreFlag, 'completed\n');
+    } else if (options.preexistingRestoreFlag === 'symlink') {
+      const symlinkTarget = join(tempDir, 'restore-marker-target');
+      writeFileSync(symlinkTarget, 'untrusted\n');
+      symlinkSync(symlinkTarget, restoreFlag);
+    }
 
     writeFileSync(
       fakeMatrixctlPath,
       `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> ${JSON.stringify(matrixctlCalls)}
 if [ "$1" = "r2" ] && [ "$2" = "exists" ]; then
   if [ "$3" = "system/vps-meta.json" ]; then
     exit ${typeof existsStatus === 'number' ? existsStatus : existsStatus.vpsMeta}
@@ -150,6 +161,7 @@ exit 99
       return {
         result,
         restoreFlagExists: existsSync(restoreFlag),
+        matrixctlCalls: existsSync(matrixctlCalls) ? readFileSync(matrixctlCalls, 'utf8') : '',
       };
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -702,11 +714,15 @@ exit 99
       expect(script).toContain('local status');
       expect(script).toMatch(/else\n\s+status="\$[?]"/);
       expect(script).toContain('if [ "$status" -eq 44 ]; then');
-      expect(script).toContain('touch "$restore_flag"');
+      expect(script).toContain('mark_restore_complete()');
+      expect(script).toContain('mv -Tf -- "$incoming" "$restore_flag"');
+      expect(script).toContain('trap cleanup_restore_marker EXIT');
+      expect(script).toContain("trap 'cleanup_restore_marker; exit 1' HUP INT TERM");
       expect(script).toContain('matrix-restore: failed to check');
       expect(script).not.toContain('if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then');
       expect(script).not.toContain('if ! /opt/matrix/bin/matrixctl r2 exists "$latest_pointer_key"; then');
     }
+    expect(bundled).toBe(restore);
   });
 
   it('executes restore skip only for not-found R2 exists status', () => {
@@ -736,6 +752,22 @@ exit 99
     expect(backupWithoutMetadata.result.status).toBe(1);
     expect(backupWithoutMetadata.restoreFlagExists).toBe(false);
     expect(backupWithoutMetadata.result.stderr).toContain('matrix-restore: failed to fetch latest pointer');
+  });
+
+  it('keeps a completed local restore authoritative across ordinary reboots', () => {
+    const reboot = runRestoreWithFakeMatrixctl(1, { preexistingRestoreFlag: 'file' });
+
+    expect(reboot.result.status, reboot.result.stderr).toBe(0);
+    expect(reboot.restoreFlagExists).toBe(true);
+    expect(reboot.matrixctlCalls).toBe('');
+  });
+
+  it('rejects a symlinked restore marker without contacting R2', () => {
+    const reboot = runRestoreWithFakeMatrixctl(1, { preexistingRestoreFlag: 'symlink' });
+
+    expect(reboot.result.status).toBe(1);
+    expect(reboot.result.stderr).toContain('matrix-restore: invalid restore completion marker');
+    expect(reboot.matrixctlCalls).toBe('');
   });
 
   it('fails customer-host R2 operations for unreadable config or a non-EU endpoint', () => {

@@ -52,7 +52,7 @@ Secrets under `/opt/matrix/env/` must be owned by `root:matrix` and mode `0640` 
 
 | Unit | Type | Required Ordering |
 |------|------|-------------------|
-| `matrix-restore.service` | oneshot | Runs before gateway/shell; writes restore-complete flag. |
+| `matrix-restore.service` | oneshot | Runs before gateway/shell; preserves or atomically writes the durable restore-complete flag. |
 | `matrix-gateway.service` | service | Requires restore-complete flag and Postgres container. |
 | `matrix-shell.service` | service | Starts after gateway dependencies. |
 | `matrix-sync-agent.service` | service | Starts on boot; handles files and heartbeat. |
@@ -85,13 +85,16 @@ The callback must retry with bounded exponential backoff for transient network f
 
 ## Restore-Or-Fresh Contract
 
-On every boot before gateway start:
+Before gateway start:
 
-1. Fetch `system/vps-meta.json`.
-2. If absent, create fresh home/projects dirs and write restore-complete flag.
-3. If present, sync files from spec 066 layout.
-4. If `system/db/latest` exists, download latest snapshot, stop Postgres if needed, restore DB, and only then write restore-complete flag.
-5. If restore fails, do not start gateway. Log locally and expose failure through status/heartbeat when possible.
+1. Treat a regular `/opt/matrix/restore-complete` file as durable proof that this installed host already completed its restore-or-fresh decision. Preserve it and use the machine-local Postgres volume without contacting R2.
+2. Reject symlinked or non-regular completion markers and keep the gateway stopped.
+3. When the marker is absent on a sanitized clean or replacement image, fetch `system/vps-meta.json` and `system/db/latest`.
+4. If neither object exists, or registration exists before the first backup, initialize from the machine-local state and atomically write the completion marker.
+5. If a latest snapshot exists, download it, restore Postgres, and atomically write the completion marker only after `pg_restore` succeeds.
+6. If the first-boot/replacement restore fails, do not start the gateway. Log locally and expose failure through status/heartbeat when possible.
+
+Golden-image sanitization must remove the completion marker. Ordinary service restarts, host reboots, and bundle updates must not remove it or replace newer local state with an older remote snapshot.
 
 ## Backup Contract
 

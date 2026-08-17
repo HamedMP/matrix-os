@@ -828,6 +828,13 @@ apply_update() {
     sudo find "$extract_dir/systemd" -maxdepth 1 -name 'matrix-*.service' -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
     sudo systemctl daemon-reload
     log "Installed systemd units"
+    if [ -f "$extract_dir/systemd/matrix-sync-agent.service" ]; then
+      if sudo systemctl enable matrix-sync-agent.service; then
+        log "Sync agent service enabled"
+      else
+        log "WARN: failed to enable matrix-sync-agent.service"
+      fi
+    fi
     if [ -f "$extract_dir/systemd/matrix-code-server.service" ]; then
       sudo systemctl enable matrix-code-server.service
       sudo systemctl start --no-block matrix-code-server.service || true
@@ -1121,6 +1128,11 @@ maybe_clean_staging() {
 
 # ── Main loop ────────────────────────────────────────────────────────
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
+if sudo systemctl enable matrix-sync-agent.service; then
+  log "Sync agent boot persistence ensured"
+else
+  log "WARN: failed to enable matrix-sync-agent.service"
+fi
 if [ -x "$BIN_DIR/matrix-ensure-swap" ]; then
   sudo "$BIN_DIR/matrix-ensure-swap" || log "WARN: swap ensure failed (non-fatal)"
 fi

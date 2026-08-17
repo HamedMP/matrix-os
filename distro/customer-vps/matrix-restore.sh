@@ -21,8 +21,39 @@ else
   snapshot_key_pattern="system/runtime-slots/${runtime_slot}/db/snapshots/*.dump"
 fi
 
+if [ -L "$restore_flag" ] || { [ -e "$restore_flag" ] && [ ! -f "$restore_flag" ]; }; then
+  echo "matrix-restore: invalid restore completion marker" >&2
+  exit 1
+fi
+if [ -f "$restore_flag" ]; then
+  echo "matrix-restore: local restore already completed"
+  exit 0
+fi
+
 mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
-rm -f "$restore_flag"
+
+mark_restore_complete() {
+  local incoming=""
+  cleanup_restore_marker() {
+    if [ -n "$incoming" ]; then
+      rm -f -- "$incoming"
+    fi
+  }
+  trap cleanup_restore_marker EXIT
+  trap 'cleanup_restore_marker; exit 1' HUP INT TERM
+  incoming="$(mktemp "${restore_flag}.incoming.XXXXXX")" || {
+    echo "matrix-restore: failed to create restore completion marker" >&2
+    exit 1
+  }
+  chmod 0644 "$incoming"
+  if ! mv -Tf -- "$incoming" "$restore_flag"; then
+    rm -f -- "$incoming"
+    echo "matrix-restore: failed to commit restore completion marker" >&2
+    exit 1
+  fi
+  incoming=""
+  trap - EXIT HUP INT TERM
+}
 
 check_r2_exists() {
   local key="$1"
@@ -47,13 +78,13 @@ check_r2_exists "$latest_pointer_key" "latest snapshot pointer" || latest_pointe
 
 if [ "$vps_meta_status" -eq 44 ] && [ "$latest_pointer_status" -eq 44 ]; then
   # First installation: neither registration metadata nor a backup exists.
-  touch "$restore_flag"
+  mark_restore_complete
   exit 0
 fi
 if [ "$vps_meta_status" -eq 0 ] && [ "$latest_pointer_status" -eq 44 ]; then
   # A registered host may reboot before its first scheduled backup. Its local
   # Postgres volume remains authoritative until the first pointer is written.
-  touch "$restore_flag"
+  mark_restore_complete
   exit 0
 fi
 
@@ -121,4 +152,4 @@ if ! timeout 300 pg_restore \
   exit 1
 fi
 
-touch "$restore_flag"
+mark_restore_complete
