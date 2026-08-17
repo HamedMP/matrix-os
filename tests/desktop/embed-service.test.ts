@@ -101,6 +101,107 @@ describe("EmbedService", () => {
     expect(reload).toHaveBeenCalledWith("new-shell");
   });
 
+  it("does not attach a stale hosted-shell open after runtime reset", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      performHostedShellHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      scheduleHostedShellSessionRefresh: (gatewayOrigin: string) => void;
+      manager: {
+        open: (
+          kind: string,
+          slug: string | null,
+          bounds: Bounds,
+          url: string,
+          options: { id?: string },
+        ) => string;
+      };
+    };
+    const handoffResolvers: Array<(result: HandoffResult) => void> = [];
+    const handoff = vi
+      .spyOn(internals, "performHostedShellHandoff")
+      .mockImplementation(
+        () => new Promise((resolve) => { handoffResolvers.push(resolve); }),
+      );
+    const open = vi
+      .spyOn(internals.manager, "open")
+      .mockImplementation((_kind, _slug, _bounds, _url, options) => options.id ?? "missing");
+    vi.spyOn(internals, "scheduleHostedShellSessionRefresh").mockImplementation(() => {});
+
+    const oldOpen = service.open({ kind: "hosted-shell", bounds: BOUNDS });
+    service.closeAll();
+    const newOpen = service.open({ kind: "hosted-shell", bounds: BOUNDS });
+
+    expect(handoff).toHaveBeenCalledTimes(1);
+    handoffResolvers[0]?.({ ok: true });
+    await expect(oldOpen).resolves.toEqual(expect.objectContaining({ state: "failed" }));
+    expect(open).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => expect(handoff).toHaveBeenCalledTimes(2));
+    handoffResolvers[1]?.({ ok: true });
+    await expect(newOpen).resolves.toEqual(expect.objectContaining({ state: "loading" }));
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not attach a stale hosted-shell auth retry after runtime reset", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      pendingHostedShells: Map<string, Bounds>;
+      performHostedShellHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      scheduleHostedShellSessionRefresh: (gatewayOrigin: string) => void;
+      manager: {
+        open: (
+          kind: string,
+          slug: string | null,
+          bounds: Bounds,
+          url: string,
+          options: { id?: string },
+        ) => string;
+      };
+    };
+    const handoffResolvers: Array<(result: HandoffResult) => void> = [];
+    const handoff = vi
+      .spyOn(internals, "performHostedShellHandoff")
+      .mockImplementation(
+        () => new Promise((resolve) => { handoffResolvers.push(resolve); }),
+      );
+    const open = vi
+      .spyOn(internals.manager, "open")
+      .mockImplementation((_kind, _slug, _bounds, _url, options) => options.id ?? "missing");
+    vi.spyOn(internals, "scheduleHostedShellSessionRefresh").mockImplementation(() => {});
+
+    internals.pendingHostedShells.set("old-shell", BOUNDS);
+    const oldRetry = service.retryAuth("old-shell");
+    service.closeAll();
+    internals.pendingHostedShells.set("new-shell", BOUNDS);
+    const newRetry = service.retryAuth("new-shell");
+
+    expect(handoff).toHaveBeenCalledTimes(1);
+    handoffResolvers[0]?.({ ok: true });
+    await expect(oldRetry).resolves.toBe(false);
+    expect(open).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => expect(handoff).toHaveBeenCalledTimes(2));
+    handoffResolvers[1]?.({ ok: true });
+    await expect(newRetry).resolves.toBe(true);
+    expect(open).toHaveBeenCalledWith(
+      "hosted-shell",
+      null,
+      BOUNDS,
+      "https://gateway.test/",
+      expect.objectContaining({ id: "new-shell" }),
+    );
+  });
+
   it("honors pending hosted-shell inactive state when retry auth finishes", async () => {
     const emitState = vi.fn();
     const service = new EmbedService({
