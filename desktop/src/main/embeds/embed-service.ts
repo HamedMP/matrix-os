@@ -59,7 +59,9 @@ export class EmbedService {
   private readonly hostedShellIds = new Set<string>();
   private hostedShellRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private hostedShellRefreshInFlight: Promise<HandoffResult> | null = null;
+  private hostedShellRefreshInFlightGeneration: number | null = null;
   private hostedShellRefreshGatewayOrigin: string | null = null;
+  private hostedShellGeneration = 0;
 
   constructor(deps: EmbedServiceDeps) {
     this.deps = deps;
@@ -104,8 +106,12 @@ export class EmbedService {
 
   async reload(embedId: string): Promise<boolean> {
     if (this.hostedShellIds.has(embedId)) {
+      const generation = this.hostedShellGeneration;
       const refreshed = await this.refreshHostedShellSession(this.deps.getGatewayOrigin());
       if (!refreshed.ok) return false;
+      if (generation !== this.hostedShellGeneration || !this.hostedShellIds.has(embedId)) {
+        return false;
+      }
     }
     return this.manager.reload(embedId);
   }
@@ -114,14 +120,16 @@ export class EmbedService {
     const wasPending = this.pendingHostedShells.delete(embedId);
     const wasPendingApp = this.pendingApps.delete(embedId);
     this.pendingActive.delete(embedId);
-    this.hostedShellIds.delete(embedId);
-    if (this.hostedShellIds.size === 0) {
+    const wasHostedShell = this.hostedShellIds.delete(embedId);
+    if (wasHostedShell && this.hostedShellIds.size === 0) {
+      this.hostedShellGeneration += 1;
       this.clearHostedShellRefreshTimer();
     }
     return this.manager.close(embedId) || wasPending || wasPendingApp;
   }
 
   closeAll(): void {
+    this.hostedShellGeneration += 1;
     this.pendingHostedShells.clear();
     this.pendingApps.clear();
     this.pendingActive.clear();
@@ -283,20 +291,24 @@ export class EmbedService {
   }
 
   private scheduleHostedShellSessionRefresh(gatewayOrigin: string, delayMs?: number): void {
+    const generation = this.hostedShellGeneration;
     this.hostedShellRefreshGatewayOrigin = gatewayOrigin;
     if (this.hostedShellRefreshTimer) clearTimeout(this.hostedShellRefreshTimer);
     this.hostedShellRefreshTimer = null;
     if (this.hostedShellIds.size === 0) return;
 
     if (delayMs !== undefined) {
-      this.armHostedShellRefreshTimer(gatewayOrigin, delayMs);
+      this.armHostedShellRefreshTimer(gatewayOrigin, delayMs, generation);
       return;
     }
 
     void this.readHostedShellRefreshDelay()
       .then((delay) => {
-        if (this.hostedShellRefreshGatewayOrigin === gatewayOrigin) {
-          this.armHostedShellRefreshTimer(gatewayOrigin, delay);
+        if (
+          generation === this.hostedShellGeneration &&
+          this.hostedShellRefreshGatewayOrigin === gatewayOrigin
+        ) {
+          this.armHostedShellRefreshTimer(gatewayOrigin, delay, generation);
         }
       })
       .catch((err: unknown) => {
@@ -304,16 +316,30 @@ export class EmbedService {
           "[embed-service] unable to read hosted-shell session expiry:",
           err instanceof Error ? err.message : String(err),
         );
-        if (this.hostedShellRefreshGatewayOrigin === gatewayOrigin) {
-          this.armHostedShellRefreshTimer(gatewayOrigin, HOSTED_SHELL_SESSION_REFRESH_RETRY_MS);
+        if (
+          generation === this.hostedShellGeneration &&
+          this.hostedShellRefreshGatewayOrigin === gatewayOrigin
+        ) {
+          this.armHostedShellRefreshTimer(
+            gatewayOrigin,
+            HOSTED_SHELL_SESSION_REFRESH_RETRY_MS,
+            generation,
+          );
         }
       });
   }
 
-  private armHostedShellRefreshTimer(gatewayOrigin: string, delayMs: number): void {
+  private armHostedShellRefreshTimer(
+    gatewayOrigin: string,
+    delayMs: number,
+    generation = this.hostedShellGeneration,
+  ): void {
+    if (generation !== this.hostedShellGeneration || this.hostedShellIds.size === 0) return;
     if (this.hostedShellRefreshTimer) clearTimeout(this.hostedShellRefreshTimer);
     this.hostedShellRefreshTimer = setTimeout(() => {
-      void this.refreshHostedShellSession(gatewayOrigin);
+      if (generation === this.hostedShellGeneration) {
+        void this.refreshHostedShellSession(gatewayOrigin);
+      }
     }, Math.max(0, delayMs));
   }
 
@@ -329,15 +355,39 @@ export class EmbedService {
   }
 
   private async refreshHostedShellSession(gatewayOrigin: string): Promise<HandoffResult> {
-    if (this.hostedShellRefreshInFlight) return this.hostedShellRefreshInFlight;
+    const generation = this.hostedShellGeneration;
+    if (
+      this.hostedShellRefreshInFlight &&
+      this.hostedShellRefreshInFlightGeneration === generation
+    ) {
+      return this.hostedShellRefreshInFlight;
+    }
     if (this.hostedShellIds.size === 0) {
       this.clearHostedShellRefreshTimer();
       return { ok: false, reason: "unavailable" };
     }
+    const priorRefresh = this.hostedShellRefreshInFlight;
+    const priorGeneration = this.hostedShellRefreshInFlightGeneration;
     let refresh!: Promise<HandoffResult>;
     refresh = (async () => {
       try {
+        if (priorRefresh && priorGeneration !== generation) {
+          try {
+            await priorRefresh;
+          } catch (err: unknown) {
+            console.warn(
+              "[embed-service] prior hosted-shell refresh failed during runtime reset:",
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          if (generation !== this.hostedShellGeneration || this.hostedShellIds.size === 0) {
+            return { ok: false, reason: "unavailable" };
+          }
+        }
         const result = await this.performHostedShellHandoff(gatewayOrigin);
+        if (generation !== this.hostedShellGeneration || this.hostedShellIds.size === 0) {
+          return { ok: false, reason: "unavailable" };
+        }
         if (result.ok) {
           this.scheduleHostedShellSessionRefresh(gatewayOrigin);
         } else if (result.reason === "unavailable") {
@@ -350,10 +400,12 @@ export class EmbedService {
       } finally {
         if (this.hostedShellRefreshInFlight === refresh) {
           this.hostedShellRefreshInFlight = null;
+          this.hostedShellRefreshInFlightGeneration = null;
         }
       }
     })();
     this.hostedShellRefreshInFlight = refresh;
+    this.hostedShellRefreshInFlightGeneration = generation;
     return refresh;
   }
 
