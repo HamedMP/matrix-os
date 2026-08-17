@@ -89,7 +89,7 @@ describe("useShellSessions", () => {
       return { sessions: [] };
     });
 
-    await useShellSessions.getState().load(makeApi({ get }));
+    const accepted = await useShellSessions.getState().load(makeApi({ get }));
 
     expect(get).toHaveBeenCalledTimes(1);
     expect(get).toHaveBeenCalledWith("/api/terminal/sessions");
@@ -108,6 +108,39 @@ describe("useShellSessions", () => {
       branch: "codex/session-context",
       pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
     });
+    expect(accepted?.map((session) => session.name)).toEqual(["matrix-main"]);
+  });
+
+  it("preserves the last authoritative snapshot when the sessions payload is malformed", async () => {
+    const previous = [{ name: "matrix-existing", status: "active" as const }];
+    useShellSessions.setState({ sessions: previous });
+
+    const accepted = await useShellSessions.getState().load(makeApi({
+      get: vi.fn().mockResolvedValue({ sessions: null }),
+    }));
+
+    expect(accepted).toBeNull();
+    expect(useShellSessions.getState()).toMatchObject({
+      sessions: previous,
+      loading: false,
+      error: "server",
+    });
+  });
+
+  it("preserves the last authoritative snapshot when loading fails", async () => {
+    const previous = [{ name: "matrix-existing", status: "active" as const }];
+    useShellSessions.setState({ sessions: previous });
+
+    const accepted = await useShellSessions.getState().load(makeApi({
+      get: vi.fn().mockRejectedValue(new AppError("offline")),
+    }));
+
+    expect(accepted).toBeNull();
+    expect(useShellSessions.getState()).toMatchObject({
+      sessions: previous,
+      loading: false,
+      error: "offline",
+    });
   });
 
   it("ignores stale load results with a resettable store sequence", async () => {
@@ -118,11 +151,13 @@ describe("useShellSessions", () => {
       .mockResolvedValueOnce({ sessions: [{ name: "matrix-fresh" }] });
 
     const staleLoad = useShellSessions.getState().load(makeApi({ get }));
-    await useShellSessions.getState().load(makeApi({ get }));
+    const freshResult = await useShellSessions.getState().load(makeApi({ get }));
     staleResponse.resolve({ sessions: [{ name: "matrix-stale" }] });
-    await staleLoad;
+    const staleResult = await staleLoad;
 
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-fresh"]);
+    expect(freshResult?.map((session) => session.name)).toEqual(["matrix-fresh"]);
+    expect(staleResult).toBeNull();
 
     useShellSessions.setState(useShellSessions.getInitialState(), true);
     await useShellSessions.getState().load(makeApi({
@@ -130,6 +165,24 @@ describe("useShellSessions", () => {
     }));
 
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-reset"]);
+  });
+
+  it("drops an in-flight load from the previous runtime without clearing the current snapshot", async () => {
+    const oldRuntimeResponse = deferred<{ sessions: Array<{ name: string }> }>();
+    const pending = useShellSessions.getState().load(makeApi({
+      get: vi.fn().mockReturnValue(oldRuntimeResponse.promise),
+    }));
+
+    advanceRuntimeGeneration();
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-current", status: "active" }],
+      loading: false,
+      error: null,
+    });
+    oldRuntimeResponse.resolve({ sessions: [{ name: "matrix-old" }] });
+
+    expect(await pending).toBeNull();
+    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-current"]);
   });
 
   it("creates shell sessions with two-word names, projects cwd, and retries one 409 conflict", async () => {

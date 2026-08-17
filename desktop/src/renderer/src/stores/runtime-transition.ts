@@ -80,6 +80,7 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     creating: false,
     error: null,
     loadSequence: state.loadSequence + 1,
+    authoritativeRevision: 0,
   }));
   useGit.setState({
     branches: [],

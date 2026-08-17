@@ -28,6 +28,10 @@ import {
 } from "../../stores/shell-sessions";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import {
+  reconcileShellSessionSnapshot,
+  syncShellSessions,
+} from "../../lib/shell-session-sync";
 import TerminalView from "./TerminalView";
 
 const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
@@ -101,7 +105,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const creating = useShellSessions((s) => s.creating);
   const error = useShellSessions((s) => s.error);
   const loadSequence = useShellSessions((s) => s.loadSequence);
-  const load = useShellSessions((s) => s.load);
+  const authoritativeRevision = useShellSessions((s) => s.authoritativeRevision);
   const create = useShellSessions((s) => s.create);
   const deleteSession = useShellSessions((s) => s.deleteSession);
   const rename = useShellSessions((s) => s.rename);
@@ -110,7 +114,6 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const tabs = useTabs((s) => s.tabs);
   const openTab = useTabs((s) => s.openTab);
   const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
-  const removeRecentView = useTabs((s) => s.removeRecentView);
   const reconcileRecentTerminals = useTabs((s) => s.reconcileRecentTerminals);
   const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
   const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
@@ -130,13 +133,16 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const draggingPlacementRef = useRef<ShellSessionPlacement | null>(null);
 
   useEffect(() => {
-    if (api) void load(api);
-  }, [api, load]);
-
-  useEffect(() => {
-    if (loading || error || loadSequence === 0) return;
-    reconcileRecentTerminals(shells.map((shell) => shell.name));
-  }, [error, loading, loadSequence, reconcileRecentTerminals, shells]);
+    if (loading || error || authoritativeRevision === 0) return;
+    const liveNames = new Set(shells.map((shell) => shell.name));
+    reconcileRecentTerminals([...liveNames]);
+    setOpenedSessionNames((current) => {
+      const retained = current.filter((name) => liveNames.has(name));
+      return retained.length === current.length ? current : retained;
+    });
+    setLiveSessionName((current) => current && liveNames.has(current) ? current : null);
+    setSelectedName((current) => current && liveNames.has(current) ? current : null);
+  }, [authoritativeRevision, error, loading, reconcileRecentTerminals, shells]);
 
   const openShellNames = useMemo(
     () => new Set([
@@ -321,7 +327,9 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
       setActionError("Could not delete shell");
       return;
     }
-    removeRecentView("terminal", name);
+    reconcileShellSessionSnapshot(
+      useShellSessions.getState().sessions.filter((session) => session.name !== name),
+    );
     if (selectedRef.current === name) {
       setSelectedName(null);
     }
@@ -383,6 +391,13 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
             >
               <Search size={14} />
             </IconButton>
+            <IconButton
+              label="Refresh terminal sessions"
+              disabled={!api || loading}
+              onClick={() => api && void syncShellSessions(api)}
+            >
+              <RefreshCw size={14} />
+            </IconButton>
             <Button variant="primary" disabled={!api || creating} onClick={() => void createShell()} aria-label="New shell">
               <Plus size={13} />
               {creating ? "Starting" : "New"}
@@ -425,7 +440,12 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
                 headline="Terminal sessions unavailable"
                 description={categoryMessage(error)}
                 action={
-                  <Button variant="subtle" aria-label="Retry terminal sessions" disabled={!api} onClick={() => api && void load(api)}>
+                  <Button
+                    variant="subtle"
+                    aria-label="Retry terminal sessions"
+                    disabled={!api}
+                    onClick={() => api && void syncShellSessions(api)}
+                  >
                     <RefreshCw size={13} />
                     Retry
                   </Button>

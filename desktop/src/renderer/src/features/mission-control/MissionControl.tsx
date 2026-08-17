@@ -18,6 +18,7 @@ import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import DesktopUpdateExperience from "../updates/DesktopUpdateExperience";
+import { useShellSessionSync } from "../../lib/shell-session-sync";
 
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
@@ -32,6 +33,7 @@ export default function MissionControl() {
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
 
   useGlobalShortcuts();
+  useShellSessionSync(api, `${runtimeScope}|${authGeneration}|${runtimeSlot}`);
 
   useEffect(() => {
     const { configure, hydrate } = useWorkspace.getState();

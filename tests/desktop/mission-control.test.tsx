@@ -8,6 +8,7 @@ import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-p
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useBoard, type Project } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 vi.mock("../../desktop/src/renderer/src/features/mission-control/Sidebar", () => ({
@@ -53,6 +54,10 @@ vi.mock("../../desktop/src/renderer/src/lib/kernel-wiring", () => ({
 describe("MissionControl", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useShellSessions.setState({
+      ...useShellSessions.getInitialState(),
+      load: vi.fn().mockResolvedValue([]),
+    });
   });
 
   afterEach(() => {
@@ -120,6 +125,45 @@ describe("MissionControl", () => {
       "[mission-control] restore last project failed:",
       "project refresh failed",
     );
+  });
+
+  it("loads canonical shell sessions immediately for the signed-in desktop", async () => {
+    const api = { get: vi.fn() };
+    const load = vi.fn().mockResolvedValue([]);
+    useShellSessions.setState({ load });
+    useBoard.setState({ loadProjects: vi.fn(async () => undefined) });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: api as never,
+    });
+
+    render(<MissionControl />);
+
+    await waitFor(() => expect(load).toHaveBeenCalledWith(api));
+  });
+
+  it("restarts shell synchronization when the selected runtime changes", async () => {
+    const api = { get: vi.fn() };
+    const load = vi.fn().mockResolvedValue([]);
+    useShellSessions.setState({ load });
+    useBoard.setState({ loadProjects: vi.fn(async () => undefined) });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: api as never,
+    });
+
+    render(<MissionControl />);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+
+    act(() => useConnection.setState({ runtimeSlot: "preview" }));
+
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   });
 
   it("selects a valid project from the new runtime instead of restoring a stale slug", async () => {
