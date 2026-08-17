@@ -152,4 +152,18 @@ describe("EmbedHost", () => {
       );
     });
   });
+
+  it("reloads the retained native embed when the host receives a refresh request", async () => {
+    const view = render(<EmbedHost kind="hosted-shell" refreshRequest={0} />);
+    await act(async () => {
+      openResolve?.({ embedId: "embed-1", state: "loading" });
+    });
+    vi.mocked(invoke).mockClear();
+
+    view.rerender(<EmbedHost kind="hosted-shell" refreshRequest={1} />);
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:reload", { embedId: "embed-1" });
+    });
+  });
 });

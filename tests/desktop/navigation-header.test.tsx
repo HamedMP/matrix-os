@@ -17,7 +17,7 @@ describe("Desktop navigation header", () => {
   beforeEach(() => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().ensureNavigationScope("runtime-a");
-    useUi.setState({ sidebarCollapsed: false });
+    useUi.setState(useUi.getInitialState(), true);
     useThreads.setState(useThreads.getInitialState(), true);
     useHermesChat.setState(useHermesChat.getInitialState(), true);
   });
@@ -100,6 +100,19 @@ describe("Desktop navigation header", () => {
 
     act(() => useUi.getState().toggleSidebar());
     expect(useUi.getState().sidebarCollapsed).toBe(false);
+  });
+
+  it("shows a refresh control only for Home and requests a hosted-shell reload", () => {
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Home" }));
+    expect(useUi.getState().homeRefreshRequest).toBe(1);
+
+    act(() => {
+      useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+    });
+    expect(screen.queryByRole("button", { name: "Refresh Home" })).toBeNull();
   });
 
   it("shows the active canonical Hermes conversation in the Chat breadcrumb", () => {

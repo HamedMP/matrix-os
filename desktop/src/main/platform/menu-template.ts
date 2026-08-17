@@ -34,6 +34,11 @@ export function createAppMenuTemplate({
       accelerator: "Cmd+Alt+T",
       click: () => send("menu:navigate", { kind: "terminals" }),
     },
+    {
+      label: "Refresh Home",
+      accelerator: "CmdOrCtrl+R",
+      click: () => send("menu:action", { action: "refresh-home" }),
+    },
   ];
 
   viewSubmenu.push(
@@ -60,7 +65,7 @@ export function createAppMenuTemplate({
     { role: "togglefullscreen" },
     ...(isPackaged
       ? []
-      : ([{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[])),
+      : ([{ type: "separator" }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[])),
   );
 
   return [

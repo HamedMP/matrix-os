@@ -12,15 +12,18 @@ export default function EmbedHost({
   kind,
   slug,
   active = true,
+  refreshRequest,
 }: {
   kind: "hosted-shell" | "app";
   slug?: string;
   active?: boolean;
+  refreshRequest?: number;
 }) {
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
+  const lastRefreshRequestRef = useRef(refreshRequest);
   activeRef.current = active;
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
 
@@ -110,6 +113,24 @@ export default function EmbedHost({
     if (active) reportBounds();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
+
+  useEffect(() => {
+    if (refreshRequest === undefined || refreshRequest === lastRefreshRequestRef.current) return;
+    lastRefreshRequestRef.current = refreshRequest;
+    const id = embedIdRef.current;
+    if (!id || !activeRef.current) return;
+    setState("loading");
+    void invoke("embed:reload", { embedId: id })
+      .then((result) => {
+        if (embedIdRef.current !== id) return;
+        if (result.ok) reportBounds();
+        else setState("failed");
+      })
+      .catch(() => {
+        if (embedIdRef.current === id) setState("failed");
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshRequest]);
 
   return (
     <div ref={hostRef} className="relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>

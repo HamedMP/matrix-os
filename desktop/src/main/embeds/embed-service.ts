@@ -102,6 +102,13 @@ export class EmbedService {
     return this.manager.setActive(embedId, active) || pending;
   }
 
+  reload(embedId: string): boolean {
+    if (this.hostedShellIds.has(embedId)) {
+      this.scheduleHostedShellSessionRefresh(this.deps.getGatewayOrigin());
+    }
+    return this.manager.reload(embedId);
+  }
+
   close(embedId: string): boolean {
     const wasPending = this.pendingHostedShells.delete(embedId);
     const wasPendingApp = this.pendingApps.delete(embedId);

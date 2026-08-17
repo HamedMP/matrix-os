@@ -42,6 +42,7 @@ describe("IPC contract", () => {
       "state:set",
       "embed:open",
       "embed:set-bounds",
+      "embed:reload",
       "embed:close",
       "embed:retry-auth",
       "notify",
@@ -858,6 +859,15 @@ describe("IPC contract", () => {
     expect(
       schema.safeParse({ embedId: "e1", bounds: { x: 0.5, y: 0, width: 10, height: 10 } }).success,
     ).toBe(false);
+  });
+
+  it("bounds embed reload identifiers", () => {
+    const schema = INVOKE_CHANNELS["embed:reload"].request;
+
+    expect(schema.safeParse({ embedId: "embed-1" }).success).toBe(true);
+    expect(schema.safeParse({ embedId: "" }).success).toBe(false);
+    expect(schema.safeParse({ embedId: "x".repeat(65) }).success).toBe(false);
+    expect(schema.safeParse({ embedId: "embed-1", extra: true }).success).toBe(false);
   });
 
   it("requires embed:open to return the initial embed state", () => {

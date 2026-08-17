@@ -18,6 +18,22 @@ describe("EmbedService", () => {
     vi.restoreAllMocks();
   });
 
+  it("reloads a live embed through the existing bounded manager", () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      manager: { reload: (embedId: string) => boolean };
+    };
+    const reload = vi.spyOn(internals.manager, "reload").mockReturnValue(true);
+
+    expect(service.reload("embed-shell")).toBe(true);
+    expect(reload).toHaveBeenCalledWith("embed-shell");
+  });
+
   it("honors pending hosted-shell inactive state when retry auth finishes", async () => {
     const emitState = vi.fn();
     const service = new EmbedService({

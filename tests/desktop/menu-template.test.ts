@@ -2,6 +2,32 @@ import { describe, expect, it, vi } from "vitest";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
 
 describe("createAppMenuTemplate", () => {
+  it("maps Cmd+R to hosted Home refresh in packaged and development builds", () => {
+    for (const isPackaged of [true, false]) {
+      const send = vi.fn();
+      const template = createAppMenuTemplate({
+        appName: "Matrix OS",
+        isPackaged,
+        openExternal: vi.fn(),
+        send,
+        adjustZoom: vi.fn(),
+      });
+      const viewMenu = template.find((item) => item.label === "View");
+      const submenu = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
+      const refreshItem = submenu.find((item) => "label" in item && item.label === "Refresh Home");
+
+      expect(refreshItem).toBeTruthy();
+      expect(refreshItem && "accelerator" in refreshItem ? refreshItem.accelerator : null)
+        .toBe("CmdOrCtrl+R");
+      expect(submenu.some((item) => "role" in item && item.role === "reload")).toBe(false);
+      if (!refreshItem || !("click" in refreshItem) || typeof refreshItem.click !== "function") {
+        throw new Error("Refresh Home menu item is not clickable");
+      }
+      refreshItem.click({} as never, {} as never, {} as never);
+      expect(send).toHaveBeenCalledWith("menu:action", { action: "refresh-home" });
+    }
+  });
+
   it("adds a Terminal menu entry that navigates to the terminal workspace", () => {
     const send = vi.fn();
     const template = createAppMenuTemplate({
