@@ -229,16 +229,24 @@ describe("HermesConversationIndex", () => {
     render(<HermesConversationIndex api={api()} />);
 
     const launch = screen.getByRole("button", { name: "Launch plan conversation" });
+    const remove = screen.getByRole("button", { name: "Delete Launch plan" });
     const row = launch.closest("[data-conversation-row]");
     const metadata = row?.querySelector("[data-conversation-metadata]");
 
+    launch.focus();
+    expect(document.activeElement).toBe(launch);
     expect(metadata).not.toBeNull();
     expect(metadata?.textContent).toContain("Hermes");
     expect(metadata?.querySelector("time")).not.toBeNull();
     expect(metadata?.className).not.toContain("group-hover:opacity-0");
     expect(metadata?.className).not.toContain("group-focus-within:opacity-0");
-    expect(screen.getByRole("button", { name: "Delete Launch plan" }).className)
-      .toContain("group-hover:opacity-100");
+    expect(remove.className).toContain("group-hover:opacity-100");
+
+    remove.focus();
+    expect(document.activeElement).toBe(remove);
+    expect(remove.className).toContain("focus:opacity-100");
+    expect(metadata?.textContent).toContain("Hermes");
+    expect(metadata?.querySelector("time")).not.toBeNull();
   });
 
   it("does not promote a canonical Gateway conversation when it is only opened", async () => {
