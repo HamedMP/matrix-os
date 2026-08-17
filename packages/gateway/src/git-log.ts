@@ -1,16 +1,16 @@
 // Bounded git history/diff reads for project repositories (desktop commit DAG).
 // Mirrors project-manager.ts patterns: injectable CommandRunner (execFile with
 // timeout + maxBuffer, arg arrays only), slug/config resolution from
-// `<home>/projects/<slug>/config.json`, not-a-git-repo degradation to empty
+// the canonical project registry (with lazy legacy adoption), not-a-git-repo degradation to empty
 // results, and generic client-facing error messages with server-side logging.
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX } from "./project-manager.js";
-import { readJsonFile } from "./state-ops.js";
+import { createProjectRegistry } from "./project-registry.js";
 
 export interface GitCommitSummary {
   sha: string;
@@ -113,15 +113,8 @@ interface ProjectRepoConfig {
 }
 
 async function readProjectRepoConfig(homePath: string, slug: string): Promise<ProjectRepoConfig | null> {
-  let raw: unknown;
-  try {
-    raw = await readJsonFile<unknown>(join(homePath, "projects", slug, "config.json"));
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
+  const raw = await createProjectRegistry({ homePath })
+    .readConfig<{ id: string; slug: string; localPath?: unknown }>(slug);
   if (typeof raw !== "object" || raw === null) return null;
   const localPath = (raw as Record<string, unknown>).localPath;
   return typeof localPath === "string" && localPath.length > 0 ? { localPath } : null;

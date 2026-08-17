@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "./project-manager.js";
-import { atomicWriteJson, readJsonFile, withProjectLock } from "./state-ops.js";
+import { atomicCreateJson, atomicWriteJson, readJsonFile, withProjectLock } from "./state-ops.js";
+import { createProjectRegistry } from "./project-registry.js";
 
 export interface WorktreeRecord {
   id: string;
@@ -116,43 +117,76 @@ function worktreeId(projectSlug: string, source: string): string {
   return `wt_${createHash("sha256").update(`${projectSlug}:${source}`).digest("hex").slice(0, 16)}`;
 }
 
-function projectConfigPath(homePath: string, projectSlug: string): string {
-  return join(homePath, "projects", projectSlug, "config.json");
-}
-
 async function readProject(homePath: string, projectSlug: string): Promise<ProjectConfig | null> {
-  try {
-    return await readJsonFile<ProjectConfig>(projectConfigPath(homePath, projectSlug));
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
+  return await createProjectRegistry({ homePath }).readConfig<ProjectConfig>(projectSlug);
 }
 
 function worktreePath(homePath: string, projectSlug: string, id: string): string {
   return join(homePath, "projects", projectSlug, "worktrees", id);
 }
 
+function worktreeRecordPath(homePath: string, projectSlug: string, id: string): string {
+  return join(createProjectRegistry({ homePath }).worktreesDir(projectSlug), id, "worktree.json");
+}
+
+function worktreeLeasePath(homePath: string, projectSlug: string, id: string): string {
+  return join(createProjectRegistry({ homePath }).worktreesDir(projectSlug), id, "lease.json");
+}
+
+function legacyWorktreeMetadataPath(homePath: string, projectSlug: string, id: string, name: string): string {
+  return join(worktreePath(homePath, projectSlug, id), ".matrix", name);
+}
+
+async function migrateLegacyMetadata<T extends { id: string }>(input: {
+  legacyPath: string;
+  canonicalPath: string;
+  backupName: string;
+}): Promise<T | null> {
+  let stats;
+  try {
+    stats = await lstat(input.legacyPath);
+  } catch (err: unknown) {
+    if (isErrnoCode(err, "ENOENT")) return null;
+    throw err;
+  }
+  if (!stats.isFile() || stats.isSymbolicLink()) return null;
+
+  const legacy = await readJsonFile<T>(input.legacyPath);
+  const created = await atomicCreateJson(input.canonicalPath, legacy);
+  const canonical = created ? legacy : await readJsonFile<T>(input.canonicalPath);
+  if (canonical.id !== legacy.id) return canonical;
+
+  const backupPath = join(dirname(input.canonicalPath), input.backupName);
+  await atomicCreateJson(backupPath, legacy);
+  await unlink(input.legacyPath).catch((err: unknown) => {
+    if (!isErrnoCode(err, "ENOENT")) throw err;
+  });
+  return canonical;
+}
+
 async function readWorktree(homePath: string, projectSlug: string, id: string): Promise<WorktreeRecord | null> {
   try {
-    return await readJsonFile<WorktreeRecord>(join(worktreePath(homePath, projectSlug, id), ".matrix", "worktree.json"));
+    return await readJsonFile<WorktreeRecord>(worktreeRecordPath(homePath, projectSlug, id));
   } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
+    if (isErrnoCode(err, "ENOENT")) return await migrateLegacyMetadata<WorktreeRecord>({
+      legacyPath: legacyWorktreeMetadataPath(homePath, projectSlug, id, "worktree.json"),
+      canonicalPath: worktreeRecordPath(homePath, projectSlug, id),
+      backupName: "legacy-worktree.json",
+    });
     throw err;
   }
 }
 
-async function readLease(path: string): Promise<WorktreeLease | null> {
+async function readLease(homePath: string, projectSlug: string, id: string): Promise<WorktreeLease | null> {
+  const path = worktreeLeasePath(homePath, projectSlug, id);
   try {
     return await readJsonFile<WorktreeLease>(path);
   } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
+    if (isErrnoCode(err, "ENOENT")) return await migrateLegacyMetadata<WorktreeLease>({
+      legacyPath: legacyWorktreeMetadataPath(homePath, projectSlug, id, "lease.json"),
+      canonicalPath: path,
+      backupName: "legacy-lease.json",
+    });
     throw err;
   }
 }
@@ -240,7 +274,7 @@ export function createWorktreeManager(options: {
           dirtyState: "unknown",
           createdAt: timestamp,
         };
-        await atomicWriteJson(join(path, ".matrix", "worktree.json"), record);
+        await atomicWriteJson(worktreeRecordPath(homePath, input.projectSlug, id), record);
         return { ok: true, status: 201, worktree: record };
       });
     },
@@ -249,20 +283,24 @@ export function createWorktreeManager(options: {
       if (!SlugSchema.safeParse(projectSlug).success) {
         return failure(400, "invalid_slug", "Project slug is invalid");
       }
-      const root = join(homePath, "projects", projectSlug, "worktrees");
-      let entries;
-      try {
-        entries = await readdir(root, { withFileTypes: true });
-      } catch (err: unknown) {
-        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-          return { ok: true, worktrees: [] };
+      const roots = [
+        createProjectRegistry({ homePath }).worktreesDir(projectSlug),
+        join(homePath, "projects", projectSlug, "worktrees"),
+      ];
+      const ids = new Set<string>();
+      for (const root of roots) {
+        try {
+          const entries = await readdir(root, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && !entry.isSymbolicLink()) ids.add(entry.name);
+          }
+        } catch (err: unknown) {
+          if (!isErrnoCode(err, "ENOENT")) throw err;
         }
-        throw err;
       }
       const worktrees: WorktreeRecord[] = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const record = await readWorktree(homePath, projectSlug, entry.name);
+      for (const id of ids) {
+        const record = await readWorktree(homePath, projectSlug, id);
         if (record) worktrees.push(record);
       }
       return { ok: true, worktrees };
@@ -274,7 +312,7 @@ export function createWorktreeManager(options: {
       const leases: WorktreeLease[] = [];
       const timestamp = nowIso(options.now);
       for (const worktree of listed.worktrees) {
-        const lease = await readLease(join(worktree.path, ".matrix", "lease.json"));
+        const lease = await readLease(homePath, projectSlug, worktree.id);
         if (lease && !isLeaseStale(lease, timestamp)) leases.push(lease);
       }
       return { ok: true, leases };
@@ -290,9 +328,9 @@ export function createWorktreeManager(options: {
         return failure(400, "invalid_ref", "Branch or PR reference is invalid");
       }
       return withProjectLock(input.projectSlug, async () => {
-        const leasePath = join(worktreePath(homePath, input.projectSlug, input.worktreeId), ".matrix", "lease.json");
+        const leasePath = worktreeLeasePath(homePath, input.projectSlug, input.worktreeId);
         const timestamp = nowIso(options.now);
-        const existing = await readLease(leasePath);
+        const existing = await readLease(homePath, input.projectSlug, input.worktreeId);
         if (existing) {
           if (existing.holderId !== input.holderId && !isLeaseStale(existing, timestamp)) {
             return { ok: false, status: 409, holderId: existing.holderId };
@@ -324,7 +362,7 @@ export function createWorktreeManager(options: {
           return { ok: true, lease };
         } catch (err: unknown) {
           if (!isErrnoCode(err, "EEXIST")) throw err;
-          const winner = await readLease(leasePath);
+          const winner = await readLease(homePath, input.projectSlug, input.worktreeId);
           if (winner?.holderId === input.holderId) return { ok: true, lease: winner };
           return { ok: false, status: 409, holderId: winner?.holderId ?? "unknown" };
         }
@@ -340,8 +378,8 @@ export function createWorktreeManager(options: {
         return failure(400, "invalid_ref", "Branch or PR reference is invalid");
       }
       return withProjectLock(input.projectSlug, async () => {
-        const leasePath = join(worktreePath(homePath, input.projectSlug, input.worktreeId), ".matrix", "lease.json");
-        const existing = await readLease(leasePath);
+        const leasePath = worktreeLeasePath(homePath, input.projectSlug, input.worktreeId);
+        const existing = await readLease(homePath, input.projectSlug, input.worktreeId);
         if (existing && existing.holderId !== input.holderId) {
           return failure(409, "worktree_locked", "Worktree is locked");
         }
@@ -363,8 +401,12 @@ export function createWorktreeManager(options: {
       }
       return withProjectLock(input.projectSlug, async () => {
         const path = worktreePath(homePath, input.projectSlug, input.worktreeId);
-        if (!await pathExists(path)) return failure(404, "not_found", "Worktree was not found");
-        const lease = await readLease(join(path, ".matrix", "lease.json"));
+        const project = await readProject(homePath, input.projectSlug);
+        const record = await readWorktree(homePath, input.projectSlug, input.worktreeId);
+        if (!project || !record || !await pathExists(path)) {
+          return failure(404, "not_found", "Worktree was not found");
+        }
+        const lease = await readLease(homePath, input.projectSlug, input.worktreeId);
         if (lease) return failure(409, "worktree_locked", "Worktree is locked");
 
         let dirtyCount = 0;
@@ -386,7 +428,7 @@ export function createWorktreeManager(options: {
         }
         try {
           await runCommand("git", ["worktree", "remove", "--force", "--", path], {
-            cwd: join(homePath, "projects", input.projectSlug, "repo"),
+            cwd: project.localPath,
             timeout: DEFAULT_TIMEOUT_MS,
           });
           if (await pathExists(path)) await rm(path, { recursive: true, force: true });
@@ -394,6 +436,10 @@ export function createWorktreeManager(options: {
           if (err instanceof Error) console.warn("[worktree-manager] Failed to remove git worktree metadata:", err.message);
           await rm(path, { recursive: true, force: true });
         }
+        await rm(join(createProjectRegistry({ homePath }).worktreesDir(input.projectSlug), input.worktreeId), {
+          recursive: true,
+          force: true,
+        });
         return { ok: true };
       });
     },

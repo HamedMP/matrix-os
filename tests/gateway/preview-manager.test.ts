@@ -11,9 +11,11 @@ describe("preview-manager", () => {
 
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "matrix-preview-manager-"));
-    await atomicWriteJson(join(homePath, "projects", "repo", "config.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "repo", "config.json"), {
+      id: "proj_repo",
       slug: "repo",
       name: "repo",
+      localPath: join(homePath, "projects", "repo"),
       ownerScope: { type: "user", id: "user_a" },
     });
   });
@@ -65,7 +67,7 @@ describe("preview-manager", () => {
       preview: { label: "External app", displayPreference: "external", lastStatus: "failed" },
     });
     await expect(manager.deletePreview("repo", created.preview.id)).resolves.toMatchObject({ ok: true });
-    await expect(stat(join(homePath, "projects", "repo", "previews", `${created.preview.id}.json`))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(homePath, "system", "projects", "repo", "previews", `${created.preview.id}.json`))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects unsafe preview URLs and exposes probe failures as recoverable status", async () => {
@@ -128,7 +130,7 @@ describe("preview-manager", () => {
   it("lists recent previews newest-first across large project history", async () => {
     const manager = createPreviewManager({ homePath });
     for (let index = 0; index < 260; index += 1) {
-      await atomicWriteJson(join(homePath, "projects", "repo", "previews", `prev_old_${index}.json`), {
+      await atomicWriteJson(join(homePath, "system", "projects", "repo", "previews", `prev_old_${index}.json`), {
         id: `prev_old_${index}`,
         projectSlug: "repo",
         label: `Old preview ${index}`,
@@ -139,7 +141,7 @@ describe("preview-manager", () => {
         updatedAt: new Date(Date.UTC(2026, 3, 26, 0, 0, index % 60)).toISOString(),
       });
     }
-    await atomicWriteJson(join(homePath, "projects", "repo", "previews", "prev_newest.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "repo", "previews", "prev_newest.json"), {
       id: "prev_newest",
       projectSlug: "repo",
       label: "Newest preview",

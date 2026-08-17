@@ -200,7 +200,7 @@ describe("project lifecycle", () => {
       join(homePath, "projects", "customer-app", "repo", "residual.txt"),
       "partial deletion residue",
     );
-    await rm(join(homePath, "projects", "customer-app", "config.json"));
+    await rm(join(homePath, "system", "projects", "customer-app", "config.json"));
 
     const cleanupRelatedState = vi.fn(async () => undefined);
     const service = createProjectLifecycleService({

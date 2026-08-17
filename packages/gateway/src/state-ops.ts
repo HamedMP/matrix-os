@@ -113,27 +113,63 @@ async function listFilesRecursive(root: string, homePath: string): Promise<strin
   return files;
 }
 
-async function listOwnedProjectFiles(homePath: string, ownerScope?: OwnerScope): Promise<string[]> {
+async function listOwnedProjectFiles(
+  homePath: string,
+  ownerScope?: OwnerScope,
+  projectSlug?: string,
+): Promise<string[]> {
+  const registryRoot = join(homePath, "system", "projects");
   const projectsRoot = join(homePath, "projects");
-  let entries;
-  try {
-    entries = await readdir(projectsRoot, { withFileTypes: true });
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+  const slugs = projectSlug && PROJECT_SLUG_REGEX.test(projectSlug)
+    ? new Set([projectSlug])
+    : new Set<string>();
+  if (!projectSlug) {
+    for (const root of [registryRoot, projectsRoot]) {
+      try {
+        const entries = await readdir(root, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && !entry.isSymbolicLink() && PROJECT_SLUG_REGEX.test(entry.name)) {
+            slugs.add(entry.name);
+          }
+        }
+      } catch (err: unknown) {
+        if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+          throw err;
+        }
+      }
     }
-    throw err;
   }
 
   const files: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith(".")) continue;
-    const projectPath = join(projectsRoot, entry.name);
-    const owner = await readOwnerScope(join(projectPath, "config.json"));
+  for (const slug of slugs) {
+    const canonicalDir = join(registryRoot, slug);
+    const canonicalConfigPath = join(canonicalDir, "config.json");
+    const legacyConfigPath = join(projectsRoot, slug, "config.json");
+    const configPath = await pathExists(canonicalConfigPath) ? canonicalConfigPath : legacyConfigPath;
+    const owner = await readOwnerScope(configPath);
     if (!ownerMatches(owner, ownerScope)) continue;
-    files.push(...await listFilesRecursive(projectPath, homePath));
+
+    if (await pathExists(canonicalDir)) {
+      files.push(...await listFilesRecursive(canonicalDir, homePath));
+    } else if (await pathExists(legacyConfigPath)) {
+      files.push(relative(homePath, legacyConfigPath));
+    }
+
+    let config: Record<string, unknown> | null = null;
+    try {
+      const value = await readJsonFile(configPath);
+      config = isRecord(value) ? value : null;
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) throw err;
+    }
+    const localPath = typeof config?.localPath === "string" ? resolve(config.localPath) : null;
+    if (!localPath) continue;
+    const resolvedHome = resolve(homePath);
+    const rel = relative(resolvedHome, localPath);
+    if (rel.startsWith("..") || rel === "" || resolve(rel) === rel || !await pathExists(localPath)) continue;
+    files.push(...await listFilesRecursive(localPath, homePath));
   }
-  return files;
+  return [...new Set(files)];
 }
 
 async function readOwnerScope(configPath: string): Promise<OwnerScope | null> {
@@ -245,22 +281,15 @@ export function createStateOps(options: { homePath: string; now?: () => string }
       if (request.scope === "all") {
         const systemPath = resolveWithinHome(homePath, "system");
         if (systemPath && await pathExists(systemPath)) {
-          files.push(...await listFilesRecursive(systemPath, homePath));
+          files.push(...(await listFilesRecursive(systemPath, homePath))
+            .filter((path) => !path.startsWith("system/projects/")));
         }
         files.push(...await listOwnedProjectFiles(homePath, request.ownerScope));
       } else if (request.scope === "project") {
         if (!request.projectSlug) {
           return { id: `export_${randomUUID()}`, createdAt, scope: request.scope, files };
         }
-        const projectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);
-        if (!projectPath || !await pathExists(projectPath)) {
-          return { id: `export_${randomUUID()}`, createdAt, scope: request.scope, files };
-        }
-        const owner = await readOwnerScope(join(projectPath, "config.json"));
-        if (!ownerMatches(owner, request.ownerScope)) {
-          return { id: `export_${randomUUID()}`, createdAt, scope: request.scope, files };
-        }
-        files.push(...await listFilesRecursive(projectPath, homePath));
+        files.push(...await listOwnedProjectFiles(homePath, request.ownerScope, request.projectSlug));
       }
 
       files.sort();
@@ -284,15 +313,19 @@ export function createStateOps(options: { homePath: string; now?: () => string }
           error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
         };
       }
-      const projectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);
-      if (!projectPath) {
+      const registryPath = resolveWithinHome(homePath, `system/projects/${request.projectSlug}`);
+      const legacyProjectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);
+      if (!registryPath || !legacyProjectPath) {
         return {
           ok: false,
           status: 400,
           error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
         };
       }
-      const owner = await readOwnerScope(join(projectPath, "config.json"));
+      const canonicalConfigPath = join(registryPath, "config.json");
+      const legacyConfigPath = join(legacyProjectPath, "config.json");
+      const configPath = await pathExists(canonicalConfigPath) ? canonicalConfigPath : legacyConfigPath;
+      const owner = await readOwnerScope(configPath);
       if (!ownerMatches(owner, request.ownerScope)) {
         return {
           ok: false,
@@ -300,7 +333,13 @@ export function createStateOps(options: { homePath: string; now?: () => string }
           error: { code: "not_found", message: "Workspace data was not found" },
         };
       }
-      await rm(projectPath, { recursive: true, force: true });
+      const config = await readJsonFile<Record<string, unknown>>(configPath);
+      if (config.kind !== "folder") {
+        await rm(legacyProjectPath, { recursive: true, force: true });
+      } else if (configPath === legacyConfigPath) {
+        await rm(legacyConfigPath, { force: true });
+      }
+      await rm(registryPath, { recursive: true, force: true });
       return { ok: true };
     },
   };

@@ -11,9 +11,11 @@ describe("task-manager", () => {
 
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "matrix-task-manager-"));
-    await atomicWriteJson(join(homePath, "projects", "repo", "config.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "repo", "config.json"), {
+      id: "proj_repo",
       slug: "repo",
       name: "repo",
+      localPath: join(homePath, "projects", "repo"),
       ownerScope: { type: "user", id: "user_a" },
     });
   });
@@ -81,7 +83,7 @@ describe("task-manager", () => {
       tasks: [expect.objectContaining({ title: "Review previews" })],
     });
     await expect(manager.deleteTask("repo", first.task.id)).resolves.toMatchObject({ ok: true });
-    await expect(stat(join(homePath, "projects", "repo", "tasks", `${first.task.id}.json`))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(homePath, "system", "projects", "repo", "tasks", `${first.task.id}.json`))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("validates project and task identifiers before filesystem access", async () => {
@@ -111,6 +113,6 @@ describe("task-manager", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    await expect(readFile(join(homePath, "projects", "repo", "tasks", `${created.task.id}.json`), "utf-8")).resolves.toContain("Export me");
+    await expect(readFile(join(homePath, "system", "projects", "repo", "tasks", `${created.task.id}.json`), "utf-8")).resolves.toContain("Export me");
   });
 });

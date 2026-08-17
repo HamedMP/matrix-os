@@ -51,33 +51,39 @@ describe("state-ops", () => {
   it("exports and deletes only the requested owner-scoped project data", async () => {
     await mkdir(join(homePath, "projects", "keep"), { recursive: true });
     await mkdir(join(homePath, "projects", "drop"), { recursive: true });
-    await atomicWriteJson(join(homePath, "projects", "keep", "config.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "keep", "config.json"), {
       slug: "keep",
+      kind: "folder",
+      localPath: join(homePath, "projects", "keep"),
       ownerScope: { type: "user", id: "user_a" },
     });
-    await atomicWriteJson(join(homePath, "projects", "drop", "config.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "drop", "config.json"), {
       slug: "drop",
+      kind: "folder",
+      localPath: join(homePath, "projects", "drop"),
       ownerScope: { type: "user", id: "user_a" },
     });
-    await atomicWriteJson(join(homePath, "projects", "drop", "tasks", "task_abc123.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "drop", "tasks", "task_abc123.json"), {
       id: "task_abc123",
       title: "Exported task",
     });
-    await atomicWriteJson(join(homePath, "projects", "drop", "previews", "prev_abc123.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "drop", "previews", "prev_abc123.json"), {
       id: "prev_abc123",
       url: "http://localhost:3000",
     });
+    await writeFile(join(homePath, "projects", "drop", "README.md"), "owner workspace");
     const outside = await mkdtemp(join(tmpdir(), "matrix-state-outside-"));
     await writeFile(join(outside, "secret.txt"), "secret");
     await symlink(outside, join(homePath, "projects", "drop", "outside-link"));
     const ops = createStateOps({ homePath });
 
     const manifest = await ops.exportWorkspace({ scope: "project", projectSlug: "drop", ownerScope: { type: "user", id: "user_a" } });
-    expect(manifest.files).toContain("projects/drop/config.json");
-    expect(manifest.files).toContain("projects/drop/tasks/task_abc123.json");
-    expect(manifest.files).toContain("projects/drop/previews/prev_abc123.json");
+    expect(manifest.files).toContain("system/projects/drop/config.json");
+    expect(manifest.files).toContain("system/projects/drop/tasks/task_abc123.json");
+    expect(manifest.files).toContain("system/projects/drop/previews/prev_abc123.json");
+    expect(manifest.files).toContain("projects/drop/README.md");
     expect(manifest.files).not.toContain("projects/drop/outside-link/secret.txt");
-    expect(manifest.files).not.toContain("projects/keep/config.json");
+    expect(manifest.files).not.toContain("system/projects/keep/config.json");
 
     await expect(ops.deleteWorkspaceData({
       scope: "project",
@@ -85,12 +91,13 @@ describe("state-ops", () => {
       ownerScope: { type: "user", id: "user_a" },
       confirmation: "delete project workspace data",
     })).resolves.toMatchObject({ ok: true });
-    await expect(stat(join(homePath, "projects", "drop"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(readFile(join(homePath, "projects", "keep", "config.json"), "utf-8")).resolves.toContain("keep");
+    await expect(readFile(join(homePath, "projects", "drop", "README.md"), "utf-8")).resolves.toBe("owner workspace");
+    await expect(stat(join(homePath, "system", "projects", "drop"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(homePath, "system", "projects", "keep", "config.json"), "utf-8")).resolves.toContain("keep");
   });
 
   it("rejects invalid project slugs before deleting workspace data", async () => {
-    await atomicWriteJson(join(homePath, "projects", "keep", "config.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "keep", "config.json"), {
       slug: "keep",
       ownerScope: { type: "user", id: "user_a" },
     });
@@ -105,7 +112,7 @@ describe("state-ops", () => {
       status: 400,
       error: { code: "delete_scope_invalid" },
     });
-    await expect(readFile(join(homePath, "projects", "keep", "config.json"), "utf-8")).resolves.toContain("keep");
+    await expect(readFile(join(homePath, "system", "projects", "keep", "config.json"), "utf-8")).resolves.toContain("keep");
   });
 
   it("exports all owner-scoped workspace data for full backups", async () => {
@@ -113,18 +120,22 @@ describe("state-ops", () => {
       id: "sess_abc123",
       status: "running",
     });
-    await atomicWriteJson(join(homePath, "projects", "owned", "config.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "owned", "config.json"), {
       slug: "owned",
+      kind: "folder",
+      localPath: join(homePath, "projects", "owned"),
       ownerScope: { type: "user", id: "user_a" },
     });
-    await atomicWriteJson(join(homePath, "projects", "owned", "tasks", "task_abc123.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "owned", "tasks", "task_abc123.json"), {
       id: "task_abc123",
     });
-    await atomicWriteJson(join(homePath, "projects", "other", "config.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "other", "config.json"), {
       slug: "other",
+      kind: "folder",
+      localPath: join(homePath, "projects", "other"),
       ownerScope: { type: "user", id: "user_b" },
     });
-    await atomicWriteJson(join(homePath, "projects", "other", "tasks", "task_def456.json"), {
+    await atomicWriteJson(join(homePath, "system", "projects", "other", "tasks", "task_def456.json"), {
       id: "task_def456",
     });
     const ops = createStateOps({ homePath });
@@ -132,9 +143,31 @@ describe("state-ops", () => {
     const manifest = await ops.exportWorkspace({ scope: "all", ownerScope: { type: "user", id: "user_a" } });
 
     expect(manifest.files).toContain("system/sessions/sess_abc123.json");
-    expect(manifest.files).toContain("projects/owned/config.json");
-    expect(manifest.files).toContain("projects/owned/tasks/task_abc123.json");
-    expect(manifest.files).not.toContain("projects/other/config.json");
-    expect(manifest.files).not.toContain("projects/other/tasks/task_def456.json");
+    expect(manifest.files).toContain("system/projects/owned/config.json");
+    expect(manifest.files).toContain("system/projects/owned/tasks/task_abc123.json");
+    expect(manifest.files).not.toContain("system/projects/other/config.json");
+    expect(manifest.files).not.toContain("system/projects/other/tasks/task_def456.json");
+  });
+
+  it("exports an owner workspace outside the projects registry path", async () => {
+    const workspacePath = join(homePath, "workspaces", "external-checkout");
+    await mkdir(workspacePath, { recursive: true });
+    await writeFile(join(workspacePath, "README.md"), "external owner workspace");
+    await atomicWriteJson(join(homePath, "system", "projects", "external", "config.json"), {
+      slug: "external",
+      kind: "folder",
+      localPath: workspacePath,
+      ownerScope: { type: "user", id: "user_a" },
+    });
+    const ops = createStateOps({ homePath });
+
+    const manifest = await ops.exportWorkspace({
+      scope: "project",
+      projectSlug: "external",
+      ownerScope: { type: "user", id: "user_a" },
+    });
+
+    expect(manifest.files).toContain("system/projects/external/config.json");
+    expect(manifest.files).toContain("workspaces/external-checkout/README.md");
   });
 });

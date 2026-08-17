@@ -117,30 +117,35 @@ export function ExistingFolderStepFields({
   onOpenProject: (slug: string) => void;
   submitting: boolean;
 }) {
-  const projectForRegistryPath = (path: string): Project | undefined => {
-    const segments = path.replace(/^\.\/+/, "").replace(/\/+$/, "").split("/");
+  const normalizePath = (path: string) => path.replaceAll("\\", "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+  const projectForPath = (path: string): Project | undefined => {
+    const normalized = normalizePath(path);
+    const exact = projects.find((project) => {
+      const localPath = normalizePath(project.localPath ?? "");
+      return localPath === normalized || localPath.endsWith(`/${normalized}`);
+    });
+    if (exact) return exact;
+
+    // Compatibility only: before MAT-340, projects/<slug> held Matrix-owned
+    // metadata while the real checkout lived below it. Keep the Open action
+    // for those already-connected legacy projects during lazy migration.
+    const segments = normalized.split("/");
     if (segments.length !== 2 || segments[0] !== "projects") return undefined;
     return projects.find((project) => project.slug === segments[1]);
   };
   const resolveFolderChoice = (path: string): FolderPickerChoice => {
-    const normalized = path.replace(/^\.\/+/, "").replace(/\/+$/, "");
-    const segments = normalized.split("/");
-    if (segments[0] !== "projects") return { kind: "choose" };
-    // projects/<slug> is Matrix-owned registry state. Only the repo checkout
-    // beneath it (and its descendants) is a user workspace.
-    if (segments.length >= 3 && segments[2] === "repo") return { kind: "choose" };
-    const project = projectForRegistryPath(normalized);
+    const project = projectForPath(path);
     if (project) {
       return {
         kind: "alternate",
         label: `Open ${project.name}`,
-        message: "This folder contains Matrix project data, not a workspace.",
+        message: "This folder is already connected to Matrix OS.",
       };
     }
-    return {
-      kind: "blocked",
-      message: "This folder is managed by Matrix and can't be used as a workspace.",
-    };
+    // Matrix-owned project metadata now lives in system/projects. Every
+    // ordinary owner folder is selectable here; the Gateway remains the
+    // authority for protected paths and managed worktree boundaries.
+    return { kind: "choose" };
   };
 
   return (
@@ -164,7 +169,7 @@ export function ExistingFolderStepFields({
           onChooseFolder={onChooseFolder}
           resolveFolderChoice={resolveFolderChoice}
           onAlternateFolderAction={(path) => {
-            const project = projectForRegistryPath(path);
+            const project = projectForPath(path);
             if (project) onOpenProject(project.slug);
           }}
         />

@@ -5,10 +5,11 @@ import { access, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/pro
 import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { atomicCreateJson, atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
+import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
 import { containsDeniedFileApiPath, resolveExistingFileApiPath } from "./path-security.js";
+import { createProjectRegistry, PROJECT_SLUG_REGEX } from "./project-registry.js";
 
-export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export { PROJECT_SLUG_REGEX } from "./project-registry.js";
 
 export type ProjectKind = "scratch" | "github" | "folder";
 export type ProjectVisibility = "active" | "archived" | "all";
@@ -209,14 +210,6 @@ function projectPath(homePath: string, slug: string): string {
   return join(homePath, "projects", slug);
 }
 
-function projectDeletionTombstoneDir(homePath: string): string {
-  return join(homePath, "projects", ".deleting");
-}
-
-function projectDeletionTombstonePath(homePath: string, slug: string): string {
-  return join(projectDeletionTombstoneDir(homePath), `${slug}.json`);
-}
-
 // OS-owned subtrees that must never become an agent-accessible project root.
 // A folder project's localPath is handed to shells and coding-agent sandboxes
 // as a workspace cwd, so granting these would expose kernel/agent state.
@@ -231,7 +224,23 @@ function isProtectedFolderProjectPath(homePath: string, resolvedPath: string): b
   // state (.trash, .hermes, .claude, .codex, .ssh, ...), never a user
   // workspace; deny the whole class instead of chasing individual names.
   if (firstSegment.startsWith(".")) return true;
+  // Selecting the whole workspace root would make every sibling project
+  // writable. Direct children remain valid owner workspaces.
+  if (rel === "projects") return true;
   return PROTECTED_FOLDER_PROJECT_PREFIXES.includes(firstSegment);
+}
+
+async function isManagedProjectContainer(homePath: string, resolvedPath: string): Promise<boolean> {
+  const rel = relative(join(resolve(homePath), "projects"), resolvedPath);
+  const segments = rel.split(sep);
+  if (rel === "" || rel.startsWith("..") || segments.length < 1) return false;
+  const registry = createProjectRegistry({ homePath });
+  const projectExists = await registry.readConfig<ProjectConfig | Omit<ProjectConfig, "kind">>(segments[0]!) !== null;
+  if (!projectExists) return false;
+  // A legacy managed container and its managed worktree roots stay behind
+  // the project/worktree APIs. An unrelated owner checkout is not blocked
+  // merely because one of its own directories happens to be named worktrees.
+  return segments.length === 1 || segments[1] === "worktrees";
 }
 
 function classifyLegacyProject(homePath: string, config: Omit<ProjectConfig, "kind">): ProjectKind {
@@ -253,23 +262,15 @@ function ownerScopeMatches(actual: OwnerScope, expected?: OwnerScope): boolean {
 }
 
 async function readProjectConfig(homePath: string, slug: string): Promise<ProjectConfig | null> {
-  try {
-    const config = await readJsonFile<ProjectConfig | Omit<ProjectConfig, "kind">>(
-      join(projectPath(homePath, slug), "config.json"),
-    );
-    return normalizeProjectConfig(homePath, config);
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
+  const config = await createProjectRegistry({ homePath })
+    .readConfig<ProjectConfig | Omit<ProjectConfig, "kind">>(slug);
+  return config ? normalizeProjectConfig(homePath, config) : null;
 }
 
 async function readProjectDeletionTombstone(homePath: string, slug: string): Promise<ProjectConfig | null> {
   try {
     const config = await readJsonFile<ProjectConfig | Omit<ProjectConfig, "kind">>(
-      projectDeletionTombstonePath(homePath, slug),
+      createProjectRegistry({ homePath }).tombstonePath(slug),
     );
     return normalizeProjectConfig(homePath, config);
   } catch (err: unknown) {
@@ -304,6 +305,7 @@ export function createProjectManager(options: {
 }) {
   const homePath = resolve(options.homePath);
   const runCommand = options.runCommand ?? defaultRunCommand;
+  const registry = createProjectRegistry({ homePath });
 
   return {
     async createProject(input: {
@@ -351,20 +353,16 @@ export function createProjectManager(options: {
           return genericError(400, "invalid_project_path", "Project folder is invalid");
         }
         // Check the lexical path AND the fully resolved path against the same
-        // rules so a symlinked ancestor cannot alias a protected subtree, and
-        // reject any root that would contain the project registry: metadata
-        // (config.json, sibling projects) must never live inside an
-        // agent-writable workspace.
+        // rules so a symlinked ancestor cannot alias a protected subtree. The
+        // registry now lives under system/projects, so ordinary owner folders
+        // below projects are valid workspaces.
         for (const candidate of [
           { base: homePath, path: localPath },
           { base: realHomePath, path: realLocalPath },
         ]) {
-          const registryEntry = join(candidate.base, "projects", slug);
           if (
-            candidate.path === registryEntry
-            || candidate.path.startsWith(`${registryEntry}${sep}`)
-            || registryEntry.startsWith(`${candidate.path}${sep}`)
-            || isProtectedFolderProjectPath(candidate.base, candidate.path)
+            isProtectedFolderProjectPath(candidate.base, candidate.path)
+            || await isManagedProjectContainer(candidate.base, candidate.path)
             // An ancestor of a denied subtree (data/browser-profiles holds
             // persistent browser login state) would expose it as part of the
             // agent-writable workspace.
@@ -372,27 +370,13 @@ export function createProjectManager(options: {
           ) {
             return genericError(400, "invalid_project_path", "Project folder is invalid");
           }
-          // Inside the registry only the repo checkout (projects/<slug>/repo
-          // and below) is user content. The project root holds config.json,
-          // and worktrees/ holds Matrix-owned leases and .matrix metadata;
-          // none of it may become an agent-writable workspace root.
-          const relFromRegistry = relative(join(candidate.base, "projects"), candidate.path);
-          const insideRegistry = relFromRegistry !== "" && !relFromRegistry.startsWith("..");
-          if (insideRegistry) {
-            const segments = relFromRegistry.split(sep);
-            if (segments.length === 1 || segments[1] !== "repo") {
-              return genericError(400, "invalid_project_path", "Project folder is invalid");
-            }
-          }
         }
-        const metadataPath = projectPath(homePath, slug);
         const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
         const fingerprint = createRequestFingerprint({ mode, slug, name, localPath: realLocalPath, ownerScope });
         return withProjectLock(slug, async () => {
-          if (await pathExists(projectDeletionTombstonePath(homePath, slug))) {
+          if (await registry.hasTombstone(slug)) {
             return genericError(409, "slug_conflict", "Project slug already exists");
           }
-          await mkdir(metadataPath, { recursive: true });
           const timestamp = nowIso(options.now);
           const project: ProjectConfig = {
             id: `proj_${randomUUID()}`,
@@ -410,7 +394,7 @@ export function createProjectManager(options: {
             createRequestId: input.clientRequestId,
             createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           };
-          const created = await atomicCreateJson(join(metadataPath, "config.json"), project);
+          const created = await registry.createConfig(slug, project);
           if (!created) {
             const existing = await readProjectConfig(homePath, slug);
             const idempotentProject = isIdempotentProjectRetry({
@@ -441,7 +425,7 @@ export function createProjectManager(options: {
           const targetProjectPath = projectPath(homePath, slug);
           if (
             await pathExists(targetProjectPath)
-            || await pathExists(projectDeletionTombstonePath(homePath, slug))
+            || await registry.hasTombstone(slug)
           ) {
             const existing = await readProjectConfig(homePath, slug);
             const idempotentProject = isIdempotentProjectRetry({
@@ -469,7 +453,7 @@ export function createProjectManager(options: {
             createRequestId: input.clientRequestId,
             createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           };
-          await atomicWriteJson(join(targetProjectPath, "config.json"), project);
+          await registry.writeConfig(slug, project);
           return { ok: true, status: 201, project };
         });
       }
@@ -497,7 +481,7 @@ export function createProjectManager(options: {
         const targetProjectPath = projectPath(homePath, slug);
         if (
           await pathExists(targetProjectPath)
-          || await pathExists(projectDeletionTombstonePath(homePath, slug))
+          || await registry.hasTombstone(slug)
         ) {
           const existing = await readProjectConfig(homePath, slug);
           const idempotentProject = isIdempotentProjectRetry({
@@ -570,7 +554,7 @@ export function createProjectManager(options: {
             authState: "ok",
           },
         };
-        await atomicWriteJson(join(targetProjectPath, "config.json"), project);
+        await registry.writeConfig(slug, project);
         return { ok: true, status: 201, project };
       });
     },
@@ -579,21 +563,10 @@ export function createProjectManager(options: {
       visibility?: ProjectVisibility;
       ownerScope?: OwnerScope;
     } = {}): Promise<{ projects: ProjectConfig[]; nextCursor: null }> {
-      let entries;
-      try {
-        entries = await readdir(join(homePath, "projects"), { withFileTypes: true });
-      } catch (err: unknown) {
-        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-          return { projects: [], nextCursor: null };
-        }
-        throw err;
-      }
-
       const projects: ProjectConfig[] = [];
       const visibility = input.visibility ?? "active";
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-        const project = await readProjectConfig(homePath, entry.name);
+      for (const slug of await registry.listSlugs()) {
+        const project = await readProjectConfig(homePath, slug);
         if (!project || !ownerScopeMatches(project.ownerScope, input.ownerScope) || project.deletingAt) continue;
         const archived = project.archivedAt !== undefined;
         if (visibility === "active" && archived) continue;
@@ -605,24 +578,14 @@ export function createProjectManager(options: {
     },
 
     async listDeletingProjects(): Promise<{ projects: ProjectConfig[]; nextCursor: null }> {
-      let entries;
-      try {
-        entries = await readdir(join(homePath, "projects"), { withFileTypes: true });
-      } catch (err: unknown) {
-        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-          return { projects: [], nextCursor: null };
-        }
-        throw err;
-      }
       const projects: ProjectConfig[] = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-        const project = await readProjectConfig(homePath, entry.name);
+      for (const slug of await registry.listSlugs()) {
+        const project = await readProjectConfig(homePath, slug);
         if (project?.deletingAt) projects.push(project);
       }
       let tombstoneEntries: Dirent[];
       try {
-        tombstoneEntries = await readdir(projectDeletionTombstoneDir(homePath), { withFileTypes: true });
+        tombstoneEntries = await readdir(registry.tombstoneDir(), { withFileTypes: true });
       } catch (err: unknown) {
         if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
           throw err;
@@ -689,11 +652,11 @@ export function createProjectManager(options: {
         if (input.deletingAt === null) delete updated.deletingAt;
         else updated.deletingAt = input.deletingAt;
       }
-      await atomicWriteJson(join(projectPath(homePath, input.slug), "config.json"), updated);
+      await registry.writeConfig(input.slug, updated);
       if (updated.deletingAt) {
-        await atomicWriteJson(projectDeletionTombstonePath(homePath, input.slug), updated);
+        await atomicWriteJson(registry.tombstonePath(input.slug), updated);
       } else {
-        await rm(projectDeletionTombstonePath(homePath, input.slug), { force: true });
+        await rm(registry.tombstonePath(input.slug), { force: true });
       }
       return { ok: true, project: updated };
     },
@@ -706,12 +669,15 @@ export function createProjectManager(options: {
       if (!current.ok) return current;
       if (current.project.deletingAt) {
         await atomicWriteJson(
-          projectDeletionTombstonePath(homePath, input.slug),
+          registry.tombstonePath(input.slug),
           current.project,
         );
       }
-      await rm(projectPath(homePath, input.slug), { recursive: true, force: true });
-      await rm(projectDeletionTombstonePath(homePath, input.slug), { force: true });
+      if (current.project.kind !== "folder") {
+        await rm(projectPath(homePath, input.slug), { recursive: true, force: true });
+      }
+      await registry.removeConfig(input.slug);
+      await rm(registry.tombstonePath(input.slug), { force: true });
       return { ok: true };
     },
 

@@ -9,6 +9,20 @@ import { createWorktreeManager } from "../../packages/gateway/src/worktree-manag
 describe("worktree-manager", () => {
   let homePath: string;
 
+  async function materializeAddedWorktree(args: string[]): Promise<void> {
+    if (args[0] !== "worktree" || args[1] !== "add") return;
+    const separator = args.indexOf("--");
+    const path = separator >= 0 ? args[separator + 1] : undefined;
+    if (path) await mkdir(path, { recursive: true });
+  }
+
+  function successfulRunCommand(stdout = "") {
+    return vi.fn(async (_command: string, args: string[]) => {
+      await materializeAddedWorktree(args);
+      return { stdout, stderr: "" };
+    });
+  }
+
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "matrix-worktree-manager-"));
     await mkdir(join(homePath, "projects", "repo", "repo", ".git"), { recursive: true });
@@ -31,6 +45,7 @@ describe("worktree-manager", () => {
   it("creates stable opaque worktree IDs for PR and branch refs", async () => {
     const runCommand = vi.fn(async (_command: string, args: string[]) => {
       expect(args.join(" ")).not.toContain(";rm");
+      await materializeAddedWorktree(args);
       return { stdout: "", stderr: "" };
     });
     const manager = createWorktreeManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
@@ -44,12 +59,15 @@ describe("worktree-manager", () => {
     expect(first.worktree.id).toMatch(/^wt_[a-z0-9]+$/);
     expect(first.worktree.id).toBe(second.worktree.id);
     expect(first.worktree.currentBranch).toBe("pr-42");
-    const metadata = JSON.parse(await readFile(join(first.worktree.path, ".matrix", "worktree.json"), "utf-8"));
+    const metadata = JSON.parse(await readFile(
+      join(homePath, "system", "projects", "repo", "worktrees", first.worktree.id, "worktree.json"),
+      "utf-8",
+    ));
     expect(metadata.pr.number).toBe(42);
   });
 
   it("fetches GitHub PR refs before creating a PR worktree", async () => {
-    const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const runCommand = successfulRunCommand();
     const manager = createWorktreeManager({ homePath, runCommand });
 
     const result = await manager.createWorktree({ projectSlug: "repo", pr: 42 });
@@ -62,6 +80,7 @@ describe("worktree-manager", () => {
   it("creates a missing branch worktree from the project base ref when requested", async () => {
     const runCommand = vi.fn(async (_command: string, args: string[]) => {
       if (args[0] === "rev-parse") throw new Error("missing branch");
+      await materializeAddedWorktree(args);
       return { stdout: "", stderr: "" };
     });
     const manager = createWorktreeManager({ homePath, runCommand });
@@ -77,6 +96,7 @@ describe("worktree-manager", () => {
   it("tracks an existing remote branch when creating a missing local branch worktree", async () => {
     const runCommand = vi.fn(async (_command: string, args: string[]) => {
       if (args[0] === "rev-parse" && args[3] === "refs/heads/symphony/mat-1") throw new Error("missing local branch");
+      await materializeAddedWorktree(args);
       return { stdout: "", stderr: "" };
     });
     const manager = createWorktreeManager({ homePath, runCommand });
@@ -93,7 +113,7 @@ describe("worktree-manager", () => {
     const now = () => "2026-04-26T00:00:00.000Z";
     const manager = createWorktreeManager({
       homePath,
-      runCommand: vi.fn(async () => ({ stdout: "", stderr: "" })),
+      runCommand: successfulRunCommand(),
       now,
     });
     const created = await manager.createWorktree({ projectSlug: "repo", branch: "feature/lifecycle" });
@@ -114,7 +134,7 @@ describe("worktree-manager", () => {
   });
 
   it("serializes concurrent creation for the same worktree", async () => {
-    const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const runCommand = successfulRunCommand();
     const manager = createWorktreeManager({ homePath, runCommand });
 
     const results = await Promise.all([
@@ -139,7 +159,7 @@ describe("worktree-manager", () => {
   });
 
   it("enforces write leases and allows the holder to release them", async () => {
-    const manager = createWorktreeManager({ homePath, runCommand: vi.fn(async () => ({ stdout: "", stderr: "" })) });
+    const manager = createWorktreeManager({ homePath, runCommand: successfulRunCommand() });
     const created = await manager.createWorktree({ projectSlug: "repo", branch: "main" });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
@@ -165,7 +185,7 @@ describe("worktree-manager", () => {
   });
 
   it("allows only one concurrent writer to acquire a new worktree lease", async () => {
-    const manager = createWorktreeManager({ homePath, runCommand: vi.fn(async () => ({ stdout: "", stderr: "" })) });
+    const manager = createWorktreeManager({ homePath, runCommand: successfulRunCommand() });
     const created = await manager.createWorktree({ projectSlug: "repo", branch: "race" });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
@@ -182,7 +202,7 @@ describe("worktree-manager", () => {
   });
 
   it("requires explicit confirmation before deleting dirty worktrees", async () => {
-    const runCommand = vi.fn(async () => ({ stdout: " M file.ts\n", stderr: "" }));
+    const runCommand = successfulRunCommand(" M file.ts\n");
     const manager = createWorktreeManager({ homePath, runCommand });
     const created = await manager.createWorktree({ projectSlug: "repo", branch: "dirty" });
     expect(created.ok).toBe(true);
@@ -207,6 +227,7 @@ describe("worktree-manager", () => {
   it("fails closed when dirty-state inspection fails without confirmation", async () => {
     const runCommand = vi.fn(async (_command: string, args: string[]) => {
       if (args[0] === "status") throw new Error("git status timed out");
+      await materializeAddedWorktree(args);
       return { stdout: "", stderr: "" };
     });
     const manager = createWorktreeManager({ homePath, runCommand });

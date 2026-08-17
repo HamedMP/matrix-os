@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
+import { createProjectRegistry } from "./project-registry.js";
 
 export type PreviewStatus = "unknown" | "ok" | "failed";
 export type PreviewDisplayPreference = "panel" | "external";
@@ -85,15 +86,11 @@ function failure(status: number, code: string, message: string): Failure {
 }
 
 function previewsDir(homePath: string, projectSlug: string): string {
-  return join(homePath, "projects", projectSlug, "previews");
+  return join(createProjectRegistry({ homePath }).recordDir(projectSlug), "previews");
 }
 
 function previewPath(homePath: string, projectSlug: string, previewId: string): string {
   return join(previewsDir(homePath, projectSlug), `${previewId}.json`);
-}
-
-function projectConfigPath(homePath: string, projectSlug: string): string {
-  return join(homePath, "projects", projectSlug, "config.json");
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -232,7 +229,7 @@ function validateProjectSlug(projectSlug: string): Failure | null {
 }
 
 async function requireProject(homePath: string, projectSlug: string): Promise<Failure | null> {
-  return await pathExists(projectConfigPath(homePath, projectSlug))
+  return await createProjectRegistry({ homePath }).readConfig(projectSlug)
     ? null
     : failure(404, "not_found", "Project was not found");
 }

@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
+import { createProjectRegistry } from "../project-registry.js";
 import { PROJECT_SLUG_REGEX } from "../project-manager.js";
 
 const MAX_CACHE_ENTRIES = 128;
@@ -215,18 +216,15 @@ export class TerminalGitContextResolver {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
       const parsed = WorkspaceSessionMetadataSchema.safeParse(await readJson(join(sessionsDir, entry.name)));
       if (!parsed.success || parsed.data.runtime.zellijSession !== sessionName || !parsed.data.projectSlug) continue;
-      const projectValue = await readJson(join(this.homePath, "projects", parsed.data.projectSlug, "config.json"));
+      const registry = createProjectRegistry({ homePath: this.homePath });
+      const projectValue = await registry.readConfig(parsed.data.projectSlug);
       const project = ProjectMetadataSchema.safeParse(projectValue);
       if (!project.success) return null;
       let worktree: z.infer<typeof WorktreeMetadataSchema> | undefined;
       if (parsed.data.worktreeId) {
         const value = await readJson(join(
-          this.homePath,
-          "projects",
-          parsed.data.projectSlug,
-          "worktrees",
+          registry.worktreesDir(parsed.data.projectSlug),
           parsed.data.worktreeId,
-          ".matrix",
           "worktree.json",
         ));
         const parsedWorktree = WorktreeMetadataSchema.safeParse(value);

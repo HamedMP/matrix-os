@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
+import { createProjectRegistry } from "./project-registry.js";
 
 export type TaskStatus = "todo" | "running" | "waiting" | "blocked" | "complete" | "archived";
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
@@ -85,15 +86,11 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 function tasksDir(homePath: string, projectSlug: string): string {
-  return join(homePath, "projects", projectSlug, "tasks");
+  return createProjectRegistry({ homePath }).tasksDir(projectSlug);
 }
 
 function taskPath(homePath: string, projectSlug: string, taskId: string): string {
   return join(tasksDir(homePath, projectSlug), `${taskId}.json`);
-}
-
-function projectConfigPath(homePath: string, projectSlug: string): string {
-  return join(homePath, "projects", projectSlug, "config.json");
 }
 
 function validateProjectSlug(projectSlug: string): Failure | null {
@@ -103,7 +100,7 @@ function validateProjectSlug(projectSlug: string): Failure | null {
 }
 
 async function requireProject(homePath: string, projectSlug: string): Promise<Failure | null> {
-  return await pathExists(projectConfigPath(homePath, projectSlug))
+  return await createProjectRegistry({ homePath }).readConfig(projectSlug)
     ? null
     : failure(404, "not_found", "Project was not found");
 }

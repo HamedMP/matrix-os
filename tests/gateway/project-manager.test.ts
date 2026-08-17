@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectManager, validateGitHubUrl } from "../../packages/gateway/src/project-manager.js";
+import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 
 describe("project-manager", () => {
   let homePath: string;
@@ -65,7 +66,7 @@ describe("project-manager", () => {
       github: { owner: "Owner", repo: "Repo", authState: "ok" },
     });
     await expect(stat(join(homePath, "projects", "repo", "repo", ".git"))).resolves.toBeTruthy();
-    const config = JSON.parse(await readFile(join(homePath, "projects", "repo", "config.json"), "utf-8"));
+    const config = JSON.parse(await readFile(join(homePath, "system", "projects", "repo", "config.json"), "utf-8"));
     expect(config.localPath).toBe(join(homePath, "projects", "repo", "repo"));
   });
 
@@ -92,7 +93,7 @@ describe("project-manager", () => {
     expect(result.project.remote).toBeUndefined();
     expect(result.project.github).toBeUndefined();
     await expect(stat(join(homePath, "projects", "empty-workspace", "repo"))).resolves.toBeTruthy();
-    const config = JSON.parse(await readFile(join(homePath, "projects", "empty-workspace", "config.json"), "utf-8"));
+    const config = JSON.parse(await readFile(join(homePath, "system", "projects", "empty-workspace", "config.json"), "utf-8"));
     expect(config.localPath).toBe(join(homePath, "projects", "empty-workspace", "repo"));
   });
 
@@ -247,6 +248,54 @@ describe("project-manager", () => {
     await expect(readFile(join(existing, "README.md"), "utf-8")).resolves.toBe("owner data");
   });
 
+  it("connects a checkout directly under projects while keeping registry metadata in system", async () => {
+    const checkout = join(homePath, "projects", "matrix-os-repo");
+    await mkdir(checkout, { recursive: true });
+    await writeFile(join(checkout, "README.md"), "owner checkout");
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    const created = await manager.createProject({
+      mode: "folder",
+      name: "Matrix OS repo",
+      slug: "matrix-os-repo",
+      path: "projects/matrix-os-repo",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+
+    expect(created).toMatchObject({
+      ok: true,
+      status: 201,
+      project: { localPath: await realpath(checkout) },
+    });
+    await expect(readFile(join(checkout, "README.md"), "utf-8")).resolves.toBe("owner checkout");
+    await expect(stat(join(checkout, "config.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    const config = JSON.parse(
+      await readFile(join(homePath, "system", "projects", "matrix-os-repo", "config.json"), "utf-8"),
+    );
+    expect(config).toMatchObject({ slug: "matrix-os-repo", localPath: await realpath(checkout) });
+  });
+
+  it("does not mistake an owner repository config.json for legacy Matrix metadata", async () => {
+    const checkout = join(homePath, "projects", "configured-repo");
+    await mkdir(checkout, { recursive: true });
+    await writeFile(join(checkout, "config.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    const created = await manager.createProject({
+      mode: "folder",
+      name: "Configured repo",
+      slug: "configured-repo",
+      path: "projects/configured-repo",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+
+    expect(created).toMatchObject({ ok: true, status: 201 });
+    await expect(readFile(join(checkout, "config.json"), "utf-8"))
+      .resolves.toContain("compilerOptions");
+    await expect(manager.listManagedProjects({ ownerScope: { type: "user", id: "user_123" } }))
+      .resolves.toMatchObject({ projects: [{ slug: "configured-repo" }] });
+  });
+
   it("returns owner-scoped active and archived project projections without exposing deletion tombstones", async () => {
     const projects = [
       {
@@ -334,6 +383,74 @@ describe("project-manager", () => {
     expect(result.projects).toMatchObject([{ slug: "legacy-scratch", kind: "scratch" }]);
   });
 
+  it("adopts a legacy registry record once without moving its workspace", async () => {
+    const root = join(homePath, "projects", "legacy-repo");
+    const workspace = join(root, "repo");
+    await mkdir(workspace, { recursive: true });
+    const legacy = {
+      id: "proj_legacy_repo",
+      name: "Legacy repo",
+      slug: "legacy-repo",
+      kind: "github" as const,
+      localPath: workspace,
+      addedAt: "2026-08-01T10:00:00.000Z",
+      updatedAt: "2026-08-01T10:00:00.000Z",
+      ownerScope: { type: "user" as const, id: "user_123" },
+    };
+    await writeFile(join(root, "config.json"), JSON.stringify(legacy));
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    const first = await manager.getProject("legacy-repo");
+    const second = await manager.getProject("legacy-repo");
+
+    expect(first).toMatchObject({ ok: true, project: { id: "proj_legacy_repo", localPath: workspace } });
+    expect(second).toEqual(first);
+    await expect(stat(workspace)).resolves.toBeTruthy();
+    await expect(stat(join(root, "config.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(join(homePath, "system", "projects", "legacy-repo", "config.json"), "utf-8"),
+    ).resolves.toContain("proj_legacy_repo");
+    await expect(
+      readFile(join(homePath, "system", "projects", "legacy-repo", "legacy-config.json"), "utf-8"),
+    ).resolves.toContain("proj_legacy_repo");
+  });
+
+  it("keeps a conflicting legacy record for operator recovery while preferring canonical state", async () => {
+    const legacyRoot = join(homePath, "projects", "conflicted-repo");
+    const workspace = join(legacyRoot, "repo");
+    await mkdir(workspace, { recursive: true });
+    await atomicWriteJson(join(legacyRoot, "config.json"), {
+      id: "proj_legacy_conflict",
+      name: "Legacy conflict",
+      slug: "conflicted-repo",
+      kind: "github",
+      localPath: workspace,
+      addedAt: "2026-08-01T10:00:00.000Z",
+      updatedAt: "2026-08-01T10:00:00.000Z",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    await atomicWriteJson(join(homePath, "system", "projects", "conflicted-repo", "config.json"), {
+      id: "proj_canonical_conflict",
+      name: "Canonical conflict",
+      slug: "conflicted-repo",
+      kind: "folder",
+      localPath: workspace,
+      addedAt: "2026-08-02T10:00:00.000Z",
+      updatedAt: "2026-08-02T10:00:00.000Z",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.getProject("conflicted-repo")).resolves.toMatchObject({
+      ok: true,
+      project: { id: "proj_canonical_conflict", name: "Canonical conflict" },
+    });
+    await expect(readFile(join(legacyRoot, "config.json"), "utf-8"))
+      .resolves.toContain("proj_legacy_conflict");
+    await expect(stat(join(homePath, "system", "projects", "conflicted-repo", "legacy-config.json")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("updates lifecycle state only for the owning scope and persists legacy kind classification", async () => {
     const root = join(homePath, "projects", "legacy-owned");
     await mkdir(join(root, "repo"), { recursive: true });
@@ -371,7 +488,10 @@ describe("project-manager", () => {
       },
     });
 
-    const persisted = JSON.parse(await readFile(join(root, "config.json"), "utf-8"));
+    const persisted = JSON.parse(await readFile(
+      join(homePath, "system", "projects", "legacy-owned", "config.json"),
+      "utf-8",
+    ));
     expect(persisted).toMatchObject({ kind: "scratch", archivedAt: "2026-08-06T12:00:00.000Z" });
   });
 
@@ -456,7 +576,16 @@ describe("project-manager", () => {
 
   it("rejects other managed project roots as folder projects", async () => {
     await mkdir(join(homePath, "projects", "other"), { recursive: true });
-    await writeFile(join(homePath, "projects", "other", "config.json"), "{}");
+    await atomicWriteJson(join(homePath, "system", "projects", "other", "config.json"), {
+      id: "proj_other",
+      name: "Other",
+      slug: "other",
+      kind: "scratch",
+      localPath: join(homePath, "projects", "other"),
+      addedAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      ownerScope: { type: "user", id: "local" },
+    });
     const manager = createProjectManager({ homePath, runCommand: vi.fn() });
 
     await expect(manager.createProject({
@@ -506,6 +635,16 @@ describe("project-manager", () => {
 
   it("rejects managed worktree and metadata areas as folder project roots", async () => {
     await mkdir(join(homePath, "projects", "other", "worktrees", "wt-1"), { recursive: true });
+    await atomicWriteJson(join(homePath, "system", "projects", "other", "config.json"), {
+      id: "proj_other",
+      name: "Other",
+      slug: "other",
+      kind: "scratch",
+      localPath: join(homePath, "projects", "other"),
+      addedAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      ownerScope: { type: "user", id: "local" },
+    });
     const manager = createProjectManager({ homePath, runCommand: vi.fn() });
 
     for (const path of ["projects/other/worktrees", "projects/other/worktrees/wt-1"]) {
