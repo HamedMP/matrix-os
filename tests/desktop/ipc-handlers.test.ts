@@ -187,7 +187,7 @@ describe("registerIpcHandlers", () => {
 
   it("reloads an existing embed through the trusted core", async () => {
     const harness = makeHarness();
-    vi.mocked(harness.ctx.embeds.reload).mockReturnValue(true);
+    vi.mocked(harness.ctx.embeds.reload).mockResolvedValue(true);
 
     await expect(harness.invoke("embed:reload", { embedId: "embed-1" })).resolves.toEqual({
       ok: true,

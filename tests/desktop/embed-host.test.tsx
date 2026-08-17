@@ -17,6 +17,7 @@ describe("EmbedHost", () => {
   let rect = { left: 10, top: 20, width: 300, height: 200 };
 
   beforeEach(() => {
+    vi.mocked(invoke).mockClear();
     useConnection.setState(useConnection.getInitialState(), true);
     useConnection.setState({ runtimeSlot: "primary" });
     openResolve = null;
@@ -161,6 +162,36 @@ describe("EmbedHost", () => {
     vi.mocked(invoke).mockClear();
 
     view.rerender(<EmbedHost kind="hosted-shell" refreshRequest={1} />);
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:reload", { embedId: "embed-1" });
+    });
+  });
+
+  it("keeps a refresh request pending until the retained embed finishes opening", async () => {
+    const view = render(<EmbedHost kind="hosted-shell" refreshRequest={0} />);
+    view.rerender(<EmbedHost kind="hosted-shell" refreshRequest={1} />);
+    expect(invoke).not.toHaveBeenCalledWith("embed:reload", expect.anything());
+
+    await act(async () => {
+      openResolve?.({ embedId: "embed-1", state: "loading" });
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:reload", { embedId: "embed-1" });
+    });
+  });
+
+  it("keeps a refresh request pending while the retained embed is inactive", async () => {
+    const view = render(<EmbedHost kind="hosted-shell" active={false} refreshRequest={0} />);
+    await act(async () => {
+      openResolve?.({ embedId: "embed-1", state: "loading" });
+    });
+    vi.mocked(invoke).mockClear();
+
+    view.rerender(<EmbedHost kind="hosted-shell" active={false} refreshRequest={1} />);
+    expect(invoke).not.toHaveBeenCalledWith("embed:reload", expect.anything());
+    view.rerender(<EmbedHost kind="hosted-shell" active refreshRequest={1} />);
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("embed:reload", { embedId: "embed-1" });

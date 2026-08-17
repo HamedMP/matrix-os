@@ -18,7 +18,7 @@ describe("EmbedService", () => {
     vi.restoreAllMocks();
   });
 
-  it("reloads a live embed through the existing bounded manager", () => {
+  it("reloads a live embed through the existing bounded manager", async () => {
     const service = new EmbedService({
       getWindow: () => null,
       getGatewayOrigin: () => "https://gateway.test",
@@ -30,7 +30,34 @@ describe("EmbedService", () => {
     };
     const reload = vi.spyOn(internals.manager, "reload").mockReturnValue(true);
 
-    expect(service.reload("embed-shell")).toBe(true);
+    await expect(service.reload("embed-shell")).resolves.toBe(true);
+    expect(reload).toHaveBeenCalledWith("embed-shell");
+  });
+
+  it("refreshes hosted-shell cookies before navigating the retained embed", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      hostedShellIds: Set<string>;
+      refreshHostedShellSession: (gatewayOrigin: string) => Promise<HandoffResult>;
+      manager: { reload: (embedId: string) => boolean };
+    };
+    let resolveRefresh!: (result: HandoffResult) => void;
+    vi.spyOn(internals, "refreshHostedShellSession").mockImplementation(
+      () => new Promise((resolve) => { resolveRefresh = resolve; }),
+    );
+    const reload = vi.spyOn(internals.manager, "reload").mockReturnValue(true);
+    internals.hostedShellIds.add("embed-shell");
+
+    const result = service.reload("embed-shell");
+    expect(reload).not.toHaveBeenCalled();
+    resolveRefresh({ ok: true });
+
+    await expect(result).resolves.toBe(true);
     expect(reload).toHaveBeenCalledWith("embed-shell");
   });
 

@@ -58,7 +58,7 @@ export class EmbedService {
   private readonly pendingActive = new Map<string, boolean>();
   private readonly hostedShellIds = new Set<string>();
   private hostedShellRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-  private hostedShellRefreshInFlight = false;
+  private hostedShellRefreshInFlight: Promise<HandoffResult> | null = null;
   private hostedShellRefreshGatewayOrigin: string | null = null;
 
   constructor(deps: EmbedServiceDeps) {
@@ -102,9 +102,10 @@ export class EmbedService {
     return this.manager.setActive(embedId, active) || pending;
   }
 
-  reload(embedId: string): boolean {
+  async reload(embedId: string): Promise<boolean> {
     if (this.hostedShellIds.has(embedId)) {
-      this.scheduleHostedShellSessionRefresh(this.deps.getGatewayOrigin());
+      const refreshed = await this.refreshHostedShellSession(this.deps.getGatewayOrigin());
+      if (!refreshed.ok) return false;
     }
     return this.manager.reload(embedId);
   }
@@ -328,26 +329,32 @@ export class EmbedService {
   }
 
   private async refreshHostedShellSession(gatewayOrigin: string): Promise<HandoffResult> {
-    if (this.hostedShellRefreshInFlight) return { ok: false, reason: "unavailable" };
+    if (this.hostedShellRefreshInFlight) return this.hostedShellRefreshInFlight;
     if (this.hostedShellIds.size === 0) {
       this.clearHostedShellRefreshTimer();
       return { ok: false, reason: "unavailable" };
     }
-    this.hostedShellRefreshInFlight = true;
-    try {
-      const result = await this.performHostedShellHandoff(gatewayOrigin);
-      if (result.ok) {
-        this.scheduleHostedShellSessionRefresh(gatewayOrigin);
-      } else if (result.reason === "unavailable") {
-        this.scheduleHostedShellSessionRefresh(gatewayOrigin, HOSTED_SHELL_SESSION_REFRESH_RETRY_MS);
-      } else {
-        this.clearHostedShellRefreshTimer();
-        this.emitHostedShellAuthRequired();
+    let refresh!: Promise<HandoffResult>;
+    refresh = (async () => {
+      try {
+        const result = await this.performHostedShellHandoff(gatewayOrigin);
+        if (result.ok) {
+          this.scheduleHostedShellSessionRefresh(gatewayOrigin);
+        } else if (result.reason === "unavailable") {
+          this.scheduleHostedShellSessionRefresh(gatewayOrigin, HOSTED_SHELL_SESSION_REFRESH_RETRY_MS);
+        } else {
+          this.clearHostedShellRefreshTimer();
+          this.emitHostedShellAuthRequired();
+        }
+        return result;
+      } finally {
+        if (this.hostedShellRefreshInFlight === refresh) {
+          this.hostedShellRefreshInFlight = null;
+        }
       }
-      return result;
-    } finally {
-      this.hostedShellRefreshInFlight = false;
-    }
+    })();
+    this.hostedShellRefreshInFlight = refresh;
+    return refresh;
   }
 
   private async openApp(gatewayOrigin: string, slug: string, bounds: Bounds, active: boolean): Promise<OpenResult> {

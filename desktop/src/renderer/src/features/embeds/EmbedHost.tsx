@@ -25,6 +25,7 @@ export default function EmbedHost({
   const activeRef = useRef(active);
   const lastRefreshRequestRef = useRef(refreshRequest);
   activeRef.current = active;
+  const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
 
   function reportBounds(): void {
@@ -75,6 +76,7 @@ export default function EmbedHost({
           return;
         }
         embedIdRef.current = embedId;
+        setOpenedEmbedRevision((revision) => revision + 1);
         setState(pendingStates.get(embedId) ?? initialState);
         pendingStates.delete(embedId);
         // Apply the current active state (handles a tab switch mid-open).
@@ -116,9 +118,9 @@ export default function EmbedHost({
 
   useEffect(() => {
     if (refreshRequest === undefined || refreshRequest === lastRefreshRequestRef.current) return;
-    lastRefreshRequestRef.current = refreshRequest;
     const id = embedIdRef.current;
     if (!id || !activeRef.current) return;
+    lastRefreshRequestRef.current = refreshRequest;
     setState("loading");
     void invoke("embed:reload", { embedId: id })
       .then((result) => {
@@ -130,7 +132,7 @@ export default function EmbedHost({
         if (embedIdRef.current === id) setState("failed");
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshRequest]);
+  }, [active, openedEmbedRevision, refreshRequest]);
 
   return (
     <div ref={hostRef} className="relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
