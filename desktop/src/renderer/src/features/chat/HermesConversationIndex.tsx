@@ -69,7 +69,11 @@ function ConversationRow({
           <span className="min-w-0 flex-1 truncate text-base font-medium" style={{ color: "var(--text-primary)" }}>
             {conversation.title}
           </span>
-          <span className="flex shrink-0 items-center gap-5 text-xs transition-opacity group-hover:opacity-0 group-focus-within:opacity-0" style={{ color: "var(--text-tertiary)" }}>
+          <span
+            data-conversation-metadata
+            className="flex shrink-0 items-center gap-5 text-xs"
+            style={{ color: "var(--text-tertiary)" }}
+          >
             <span className="rounded-full border px-2 py-1 font-medium" style={{ borderColor: "var(--border-default)" }}>Hermes</span>
             {running ? (
               <span className="flex items-center gap-1.5" style={{ color: "var(--accent)" }}>

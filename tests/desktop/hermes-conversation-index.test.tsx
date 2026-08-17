@@ -225,6 +225,22 @@ describe("HermesConversationIndex", () => {
     expect(dialog.style.transform).toBe("translate(-50%, -50%)");
   });
 
+  it("keeps harness and activity metadata visible when delete is revealed", () => {
+    render(<HermesConversationIndex api={api()} />);
+
+    const launch = screen.getByRole("button", { name: "Launch plan conversation" });
+    const row = launch.closest("[data-conversation-row]");
+    const metadata = row?.querySelector("[data-conversation-metadata]");
+
+    expect(metadata).not.toBeNull();
+    expect(metadata?.textContent).toContain("Hermes");
+    expect(metadata?.querySelector("time")).not.toBeNull();
+    expect(metadata?.className).not.toContain("group-hover:opacity-0");
+    expect(metadata?.className).not.toContain("group-focus-within:opacity-0");
+    expect(screen.getByRole("button", { name: "Delete Launch plan" }).className)
+      .toContain("group-hover:opacity-100");
+  });
+
   it("does not promote a canonical Gateway conversation when it is only opened", async () => {
     const openConversation = vi.fn(async () => true);
     useHermesChat.setState({ openConversation });
