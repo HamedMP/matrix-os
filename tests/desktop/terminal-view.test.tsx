@@ -13,6 +13,7 @@ import {
   terminalPasteFiles,
 } from "@desktop/renderer/src/features/terminal/terminal-rich-paste";
 
+const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const attachmentResize = vi.fn();
@@ -30,6 +31,9 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     element: HTMLElement | null;
     focus: ReturnType<typeof vi.fn>;
     blur: ReturnType<typeof vi.fn>;
+    selection: string;
+    customKeyEventHandler?: (event: KeyboardEvent) => boolean;
+    selectAll: ReturnType<typeof vi.fn>;
   }>,
   resizeObserverCallbacks: [] as ResizeObserverCallback[],
 }));
@@ -58,6 +62,9 @@ vi.mock("@xterm/xterm", () => ({
       };
     };
     registeredProviders: unknown[] = [];
+    selection = "";
+    customKeyEventHandler?: (event: KeyboardEvent) => boolean;
+    selectAll = vi.fn();
 
     constructor(options: FakeTerminal["initialOptions"]) {
       this.initialOptions = options;
@@ -85,6 +92,15 @@ vi.mock("@xterm/xterm", () => ({
     onData(callback: (data: string) => void): { dispose: () => void } {
       this.dataCallback = callback;
       return { dispose: () => {} };
+    }
+    attachCustomKeyEventHandler(callback: (event: KeyboardEvent) => boolean): void {
+      this.customKeyEventHandler = callback;
+    }
+    hasSelection(): boolean {
+      return this.selection.length > 0;
+    }
+    getSelection(): string {
+      return this.selection;
     }
     registerLinkProvider(provider: unknown): { dispose: () => void } {
       this.registeredProviders.push(provider);
@@ -166,6 +182,11 @@ describe("TerminalView session switching", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    if (originalClipboardDescriptor) {
+      Object.defineProperty(navigator, "clipboard", originalClipboardDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 
   it("fills the terminal content area without an inset or mismatched xterm surface", () => {
@@ -377,6 +398,65 @@ describe("TerminalView session switching", () => {
       "_blank",
       "noopener,noreferrer",
     );
+  });
+
+  it("copies the xterm selection with the desktop copy shortcut", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "HTTP/1.1 401 Unauthorized";
+    const preventDefault = vi.fn();
+
+    const handled = terminal.customKeyEventHandler?.({
+      type: "keydown",
+      key: "c",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledWith("HTTP/1.1 401 Unauthorized");
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
+  it("opens terminal actions on right click and copies the xterm selection", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    terminal.selection = "content-type: application/json";
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+
+    expect(fireEvent.contextMenu(host, { clientX: 120, clientY: 80 })).toBe(false);
+    expect(screen.getByRole("menu", { name: "Terminal actions" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
+
+    expect(writeText).toHaveBeenCalledWith("content-type: application/json");
+  });
+
+  it("opens terminal actions without a selection and can select the buffer", () => {
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+
+    expect(fireEvent.contextMenu(host, { clientX: 120, clientY: 80 })).toBe(false);
+    expect((screen.getByRole("menuitem", { name: "Copy" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select All" }));
+
+    expect(terminal.selectAll).toHaveBeenCalledOnce();
   });
 
   it("filters terminal files to supported image formats and strips nested paste markers", () => {
