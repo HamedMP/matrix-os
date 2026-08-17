@@ -452,6 +452,27 @@ describe("ComputerFileBrowser view options", () => {
     expect(onCreateFolder).toHaveBeenCalledWith("workspaces");
   });
 
+  it("does not offer managed owner state as a new-folder parent", async () => {
+    const managedApi = {
+      get: vi.fn(async (path: string) => path === "/api/files/list?path="
+        ? { entries: [{ name: "system", type: "directory", children: 1 }] }
+        : { entries: [] }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    useConnection.setState({ api: managedApi as never });
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder: vi.fn(),
+    });
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open system" }));
+    await waitFor(() => expect(managedApi.get).toHaveBeenCalledWith("/api/files/list?path=system"));
+
+    expect(screen.queryByRole("button", { name: "New folder in system" })).toBeNull();
+  });
+
   it("shows the empty state in grid view too", async () => {
     const emptyApi = { get: vi.fn(async () => ({ entries: [] })), baseUrl: "https://app.matrix-os.com" };
     useConnection.setState({ api: emptyApi as never });

@@ -517,7 +517,7 @@ export default function ComputerFileBrowser({
           message={folderChoice && folderChoice.kind !== "choose" ? folderChoice.message : undefined}
           actionLabel={folderChoice?.kind === "alternate" ? folderChoice.label : `Choose ${chosenName}`}
           disabled={folderChoice?.kind === "alternate" ? false : !viewCandidatePath || folderChoice?.kind === "blocked"}
-          onCreateFolder={onCreateFolder && folderChoice?.kind === "choose"
+          onCreateFolder={onCreateFolder && folderChoice?.kind === "choose" && !isManagedBrowserPath(viewCandidatePath)
             ? () => onCreateFolder(viewCandidatePath)
             : undefined}
           onAction={() => folderChoice?.kind === "alternate"
