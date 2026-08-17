@@ -164,7 +164,7 @@ export default function NavigationHeader() {
       </nav>
 
       {activeTab?.kind === "home" ? (
-        <div className="no-drag ml-auto">
+        <div className="no-drag ml-1 shrink-0">
           <HeaderButton label="Refresh Home" onClick={requestHomeRefresh}>
             <RefreshCw size={15} />
           </HeaderButton>

@@ -106,7 +106,12 @@ describe("Desktop navigation header", () => {
     useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh Home" }));
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    const refresh = screen.getByRole("button", { name: "Refresh Home" });
+    expect(breadcrumb.nextElementSibling).toContain(refresh);
+    expect(refresh.parentElement?.className).not.toContain("ml-auto");
+
+    fireEvent.click(refresh);
     expect(useUi.getState().homeRefreshRequest).toBe(1);
 
     act(() => {
