@@ -22,7 +22,11 @@ let sharp;
 let dependencyRoot;
 for (const candidateRoot of candidateRoots) {
   const packagePath = resolve(candidateRoot, "node_modules/sharp/package.json");
-  if (existsSync(packagePath)) {
+  const fontPath = resolve(
+    candidateRoot,
+    "node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff2",
+  );
+  if (existsSync(packagePath) && existsSync(fontPath)) {
     sharp = createRequire(packagePath)("sharp");
     dependencyRoot = candidateRoot;
     break;
@@ -31,7 +35,7 @@ for (const candidateRoot of candidateRoots) {
 
 if (!sharp || !dependencyRoot) {
   throw new Error(
-    "sharp is not installed in this worktree. Run `pnpm install`, or set MATRIX_REPO_ROOT to a checkout that has dependencies installed.",
+    "The DMG generator dependencies are not installed in this worktree. Run `pnpm install`, or set MATRIX_REPO_ROOT to a checkout that has both sharp and Instrument Serif installed.",
   );
 }
 

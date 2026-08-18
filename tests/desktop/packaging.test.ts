@@ -75,6 +75,7 @@ describe("desktop packaging", () => {
     expect(generator).toContain("displayFontFamily = resolveCssFontFamily(brandFonts.display)");
     expect(generator).toContain("@fontsource/instrument-serif/files");
     expect(generator).toContain("instrument-serif-latin-400-normal.woff2");
+    expect(generator).toContain("existsSync(packagePath) && existsSync(fontPath)");
     expect(generator).not.toContain("instrument-sans");
     expect(generator.match(/<text class="display"/g)).toHaveLength(3);
     expect(generator).not.toContain('<text class="sans"');
