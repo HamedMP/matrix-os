@@ -531,11 +531,11 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
                 {shellStatusLabel(shell)}
               </span>
             </header>
-            <div data-terminal-detail className="flex min-h-0 flex-1 gap-3">
+            <div data-terminal-detail className="flex min-h-0 flex-1">
               {sessionRailOpen ? (
                 <nav
                   aria-label="Terminal session switcher"
-                  className="flex w-48 shrink-0 flex-col overflow-hidden rounded-lg border"
+                  className="flex w-48 shrink-0 flex-col overflow-hidden border-r"
                   style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}
                 >
                   <div
@@ -575,8 +575,8 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
               ) : null}
               <div
                 data-terminal-viewport
-                className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border"
-                style={{ borderColor: "var(--border-subtle)", background: "var(--bg-app)" }}
+                className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
+                style={{ background: "var(--bg-app)" }}
               >
                 <TerminalView sessionName={sessionName} active={active && liveSessionName === sessionName} />
               </div>

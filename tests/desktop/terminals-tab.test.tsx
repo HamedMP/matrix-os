@@ -148,7 +148,7 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
-  it("switches retained sessions from a collapsible rail with a terminal gutter", () => {
+  it("switches retained sessions from a flush collapsible rail", () => {
     useShellSessions.setState({
       sessions: [
         { name: "matrix-main", status: "active", placement: "active" },
@@ -165,9 +165,15 @@ describe("TerminalsTab", () => {
     const terminalDetail = screen.getByTestId("terminal-view-matrix-main")
       .closest("[data-terminal-detail]");
     expect(terminalDetail?.className.split(/\s+/)).not.toContain("p-3");
+    expect(terminalDetail?.className.split(/\s+/)).not.toContain("gap-3");
+    const terminalRail = screen.getByRole("navigation", { name: "Terminal session switcher" });
+    expect(terminalRail.className.split(/\s+/)).not.toContain("rounded-lg");
+    expect(terminalRail.className.split(/\s+/)).not.toContain("border");
+    expect(terminalRail.className.split(/\s+/)).toContain("border-r");
     const terminalViewport = screen.getByTestId("terminal-view-matrix-main")
       .closest("[data-terminal-viewport]");
-    expect(terminalViewport?.className).toContain("rounded-lg");
+    expect(terminalViewport?.className.split(/\s+/)).not.toContain("rounded-lg");
+    expect(terminalViewport?.className.split(/\s+/)).not.toContain("border");
     expect(terminalViewport?.className).toContain("flex");
 
     fireEvent.click(screen.getByRole("button", { name: "Switch to matrix-other" }));
