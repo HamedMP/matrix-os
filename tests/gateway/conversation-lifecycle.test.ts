@@ -87,6 +87,37 @@ describe("conversation lifecycle", () => {
     await expect(lifecycle.admitExisting(id)).resolves.toBe("busy");
   });
 
+  it("prepares project context under the admission lock before registering the run", async () => {
+    const { conversations, conversationRuns, lifecycle } = setup();
+    const id = conversations.create();
+    await conversations.updateContext(id, "matrix-os");
+    const states: boolean[] = [];
+
+    const admission = await lifecycle.admitExistingPrepared(id, async (conversation) => {
+      states.push(conversationRuns.isActive(id));
+      return conversation.context?.projectId === "matrix-os"
+        ? { workingDirectory: "/validated/matrix-os" }
+        : null;
+    });
+
+    expect(admission).toEqual({
+      status: "admitted",
+      prepared: { workingDirectory: "/validated/matrix-os" },
+    });
+    expect(states).toEqual([false]);
+    expect(conversationRuns.isActive(id)).toBe(true);
+  });
+
+  it("does not register a run when project context preparation is unavailable", async () => {
+    const { conversations, conversationRuns, lifecycle } = setup();
+    const id = conversations.create();
+
+    await expect(
+      lifecycle.admitExistingPrepared(id, async () => null),
+    ).resolves.toEqual({ status: "unavailable" });
+    expect(conversationRuns.isActive(id)).toBe(false);
+  });
+
   it("completes the run only after finalization persists buffered text", async () => {
     const { conversations, conversationRuns, lifecycle } = setup();
     const id = conversations.create();

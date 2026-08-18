@@ -92,7 +92,12 @@ import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
 } from "./auth.js";
-import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
+import {
+  isRequestPrincipalError,
+  mapRequestPrincipalError,
+  ownerScopeFromPrincipal,
+  requireRequestPrincipal,
+} from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
@@ -593,6 +598,7 @@ export async function createGateway(config: GatewayConfig) {
     (id): id is string => Boolean(id),
   );
   const codingAgentProjectManager = createProjectManager({ homePath });
+  const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentFileStore = createCodingAgentFileStore({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
@@ -1891,8 +1897,11 @@ export async function createGateway(config: GatewayConfig) {
       // stashed claims if a JWT was presented.
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
+      let conversationOwnerScope: ReturnType<typeof ownerScopeFromPrincipal> | undefined;
       try {
-        const wsSyncUserId = requireRequestPrincipal(c).userId;
+        const wsPrincipal = requireRequestPrincipal(c);
+        const wsSyncUserId = wsPrincipal.userId;
+        conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
           ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
               send: (data: string) => syncPeerSocket?.send(data),
@@ -2108,19 +2117,37 @@ export async function createGateway(config: GatewayConfig) {
             let admittedExistingConversation = false;
             void (async () => {
               const admittedSessionId = requestedSessionId;
+              let workingDirectory: string | undefined;
               if (admittedSessionId) {
-                const admission = await conversationLifecycle.admitExisting(admittedSessionId);
-                if (admission !== "admitted") {
-                  sendClientAck(ws, parsed, "rejected", admission === "busy");
+                const admission = await conversationLifecycle.admitExistingPrepared(
+                  admittedSessionId,
+                  async (conversation) => {
+                    if (!conversation.context) {
+                      return { workingDirectory: undefined };
+                    }
+                    const resolvedContext = await conversationContextResolver.resolve(
+                      conversation.context.projectId,
+                      conversationOwnerScope,
+                    );
+                    return resolvedContext
+                      ? { workingDirectory: resolvedContext.workingDirectory }
+                      : null;
+                  },
+                );
+                if (admission.status !== "admitted") {
+                  sendClientAck(ws, parsed, "rejected", admission.status === "busy");
                   send(ws, {
                     type: "kernel:error",
-                    message: admission === "busy"
+                    message: admission.status === "busy"
                       ? "Conversation already has an active turn."
-                      : "Conversation is unavailable. Refresh and try again.",
+                      : admission.status === "unavailable"
+                        ? "conversation_context_unavailable"
+                        : "Conversation is unavailable. Refresh and try again.",
                   });
                   return;
                 }
                 admittedExistingConversation = true;
+                workingDirectory = admission.prepared.workingDirectory;
                 activeSessionId = admittedSessionId;
               } else {
                 activeSessionId = undefined;
@@ -2221,6 +2248,7 @@ export async function createGateway(config: GatewayConfig) {
               }, undefined, abortController, {
                 model: parsed.model,
                 effort: parsed.effort,
+                workingDirectory,
               })
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
@@ -3441,7 +3469,7 @@ export async function createGateway(config: GatewayConfig) {
     conversations,
     conversationLifecycle,
     conversationRuns,
-    contextResolver: createConversationContextResolver(codingAgentProjectManager),
+    contextResolver: conversationContextResolver,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   });
 
