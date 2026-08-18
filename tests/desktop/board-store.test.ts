@@ -108,7 +108,14 @@ describe("createProject", () => {
 
     expect(useBoard.getState().projects).toEqual([
       { slug: "folder", name: "Folder", kind: "folder", localPath: "/home/matrix/home/workspaces/folder", githubBacked: false },
-      { slug: "repo", name: "Repo", kind: "github", localPath: "/home/matrix/home/projects/repo/repo", githubBacked: true },
+      {
+        slug: "repo",
+        name: "Repo",
+        kind: "github",
+        localPath: "/home/matrix/home/projects/repo/repo",
+        githubBacked: true,
+        github: { owner: "o", repo: "r" },
+      },
     ]);
   });
 
