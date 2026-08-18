@@ -27,6 +27,9 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml"');
     expect(workflow).toContain("Smoke test macOS DMG mount");
     expect(workflow).toContain('hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly');
+    expect(workflow).toContain('[ ! -L "$mount_dir/Applications" ]');
+    expect(workflow).toContain('applications_target="$(readlink "$mount_dir/Applications")"');
+    expect(workflow).toContain('[ "$applications_target" != "/Applications" ]');
     expect(workflow).toContain('ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"');
     expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.AppImage" -print -quit');
     expect(workflow).toContain("[ ! -f desktop/dist/latest-linux.yml ]");

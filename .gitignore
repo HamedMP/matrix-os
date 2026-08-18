@@ -2,6 +2,10 @@ node_modules/
 .pnpm-store/
 dist/
 build/
+!desktop/build/
+desktop/build/*
+!desktop/build/dmg-background.png
+!desktop/build/dmg-background@2x.png
 .next/
 *.tsbuildinfo
 .build-stamp
