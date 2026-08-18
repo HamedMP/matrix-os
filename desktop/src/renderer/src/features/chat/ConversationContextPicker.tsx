@@ -1,6 +1,6 @@
 import * as Popover from "@radix-ui/react-popover";
 import type { KernelConversationContextProjection } from "@matrix-os/contracts";
-import { Check, FolderOpen, Plus, X } from "lucide-react";
+import { Check, FolderGit2, FolderOpen, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useBoard, type Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -11,6 +11,7 @@ type ProjectListStatus = "idle" | "loading" | "ready" | "error";
 export interface ConversationContextPickerProps {
   context: KernelConversationContextProjection | null;
   disabled?: boolean;
+  kind?: "project" | "repository";
   onSelect: (projectId: string) => void;
   onRemove: () => void;
   triggerLabel?: string;
@@ -35,6 +36,7 @@ function optionLabel(project: Project): string {
 export default function ConversationContextPicker({
   context,
   disabled = false,
+  kind = "project",
   onSelect,
   onRemove,
   triggerLabel,
@@ -79,11 +81,21 @@ export default function ConversationContextPicker({
     setListStatus(loaded ? "ready" : "error");
   };
 
-  const selectedLabel = context
-    ? `Project ${context.projectName}${context.status === "unavailable" ? ", unavailable" : ""}`
-    : "Add to project";
+  const unavailableSuffix = context?.status === "unavailable" ? ", unavailable" : "";
+  const selectedLabel = kind === "repository"
+    ? context?.repositoryLabel
+      ? `Repository ${context.repositoryLabel}${unavailableSuffix}`
+      : context
+        ? `Repository unavailable for ${context.projectName}`
+        : "Choose repository"
+    : context
+      ? `Project ${context.projectName}${unavailableSuffix}`
+      : "Add to project";
   const accessibleTriggerLabel = triggerLabel ?? selectedLabel;
-  const visibleTriggerText = triggerText ?? (context?.projectName ?? "Add to project");
+  const visibleTriggerText = triggerText ?? (kind === "repository"
+    ? context?.repositoryLabel ?? (context ? "No repository" : "Choose repository")
+    : context?.projectName ?? "Add to project");
+  const TriggerIcon = kind === "repository" ? FolderGit2 : context ? FolderOpen : Plus;
 
   const closeAndRestoreFocus = () => {
     setOpen(false);
@@ -107,8 +119,8 @@ export default function ConversationContextPicker({
           type="button"
           aria-label={accessibleTriggerLabel}
           disabled={disabled}
-          className="inline-flex h-7 max-w-56 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+          className="inline-flex h-7 min-w-0 max-w-[min(18rem,45vw)] items-center gap-1.5 rounded-md px-1.5 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+          style={{ color: "var(--text-secondary)" }}
           onKeyDown={(event) => {
             if (event.key !== "ArrowDown" || disabled) return;
             event.preventDefault();
@@ -116,7 +128,7 @@ export default function ConversationContextPicker({
             setOpen(true);
           }}
         >
-          {context ? <FolderOpen size={13} aria-hidden /> : <Plus size={13} aria-hidden />}
+          <TriggerIcon size={13} aria-hidden style={{ color: "var(--text-tertiary)" }} />
           <span className="truncate">{visibleTriggerText}</span>
         </button>
       </Popover.Trigger>

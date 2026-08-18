@@ -9,12 +9,22 @@ export type ConversationPreparedAdmissionResult<T> =
   | { status: "admitted"; prepared: T }
   | { status: "not_found" | "busy" | "unavailable" };
 
+export function providerResumeSessionId(
+  conversation: Pick<ConversationFile, "id" | "messages">,
+): string | undefined {
+  return conversation.messages.length > 0 ? conversation.id : undefined;
+}
+
 export interface ConversationLifecycle {
   admitExisting(id: KernelConversationId): Promise<ConversationAdmissionResult>;
   admitExistingPrepared<T>(
     id: KernelConversationId,
     prepare: (conversation: ConversationFile) => Promise<T | null>,
   ): Promise<ConversationPreparedAdmissionResult<T>>;
+  adoptProviderSession(
+    id: KernelConversationId,
+    providerSessionId: KernelConversationId,
+  ): Promise<"adopted" | "not_found" | "conflict">;
   deleteIfIdle(id: KernelConversationId): Promise<ConversationDeleteResult>;
   finalize(id: string): Promise<void>;
 }
@@ -22,7 +32,7 @@ export interface ConversationLifecycle {
 export function createConversationLifecycle(deps: {
   mutationLock: ConversationMutationLock;
   conversations: ConversationStore;
-  conversationRuns: Pick<ConversationRunRegistry, "begin" | "complete" | "isActive">;
+  conversationRuns: Pick<ConversationRunRegistry, "begin" | "complete" | "has" | "isActive" | "rekey">;
 }): ConversationLifecycle {
   return {
     admitExisting(id) {
@@ -59,6 +69,19 @@ export function createConversationLifecycle(deps: {
         deps.conversationRuns.begin(id);
         return { status: "admitted", prepared };
       });
+    },
+
+    async adoptProviderSession(id, providerSessionId) {
+      if (!deps.conversationRuns.isActive(id)) return "conflict";
+      if (id !== providerSessionId && deps.conversationRuns.has(providerSessionId)) {
+        return "conflict";
+      }
+      const moved = await deps.conversations.rekey(id, providerSessionId);
+      if (moved !== "moved") return moved;
+      if (!deps.conversationRuns.rekey(id, providerSessionId)) {
+        throw new Error("Conversation run could not adopt provider session");
+      }
+      return "adopted";
     },
 
     deleteIfIdle(id) {

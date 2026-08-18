@@ -237,11 +237,6 @@ function HermesPane() {
       >
         <GitBranch size={15} aria-hidden />
       </button>
-      <ConversationContextControls
-        context={conversationContext}
-        disabled={contextControlsDisabled}
-        onUpdate={updateProjectContext}
-      />
     </>
   );
   const harnessBadge = (
@@ -259,13 +254,20 @@ function HermesPane() {
       <option value="codex">Codex</option>
     </select>
   );
-  const contextFeedback = (
-    <ConversationContextFeedback
-      context={conversationContext}
-      disabled={contextControlsDisabled}
-      error={contextError}
-      onUpdate={updateProjectContext}
-    />
+  const contextFooter = (
+    <div className="flex min-w-0 flex-1 flex-col gap-2">
+      <ConversationContextControls
+        context={conversationContext}
+        disabled={contextControlsDisabled}
+        onUpdate={updateProjectContext}
+      />
+      <ConversationContextFeedback
+        context={conversationContext}
+        disabled={contextControlsDisabled}
+        error={contextError}
+        onUpdate={updateProjectContext}
+      />
+    </div>
   );
   const renderComposer = (placeholder: string, autoFocus = false) => (
     <>
@@ -288,7 +290,7 @@ function HermesPane() {
         busy={status !== "idle" || uploadingAttachments}
         disabled={uploadingAttachments}
         canSubmit={composerReady}
-        footer={contextFeedback}
+        footer={contextFooter}
         attachments={attachmentPreviews}
         autoFocus={autoFocus}
         placeholder={placeholder}

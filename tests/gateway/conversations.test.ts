@@ -283,6 +283,24 @@ describe("ConversationStore", () => {
   });
 
   describe("project context", () => {
+    it("moves a pre-created context record to the provider session id", async () => {
+      const store = createConversationStore(homePath);
+      const pendingId = store.create();
+      await store.updateContext(pendingId, "matrix-os");
+
+      await expect(store.rekey(pendingId, "provider-session"))
+        .resolves.toBe("moved");
+      expect(store.get(pendingId)).toBeNull();
+      expect(store.get("provider-session")).toMatchObject({
+        id: "provider-session",
+        context: { projectId: "matrix-os" },
+      });
+
+      store.addUserMessage("provider-session", "first turn");
+      const reopened = createConversationStore(homePath);
+      expect(reopened.get("provider-session")?.messages[0]?.content).toBe("first turn");
+    });
+
     it("persists and clears only the canonical project reference across restarts", async () => {
       const store = createConversationStore(homePath);
       const id = store.create();

@@ -71,7 +71,7 @@ export interface Dispatcher {
   dispatch(
     message: string,
     sessionId: string | undefined,
-    onEvent: (event: KernelEvent) => void,
+    onEvent: (event: KernelEvent) => void | Promise<void>,
     context?: DispatchContext,
     /** Optional abort controller. Caller (gateway) passes this so it can
         stop the in-flight kernel run on user request. */
@@ -92,7 +92,7 @@ type InternalEntry =
       kind: "serial";
       message: string;
       sessionId: string | undefined;
-      onEvent: (event: KernelEvent) => void;
+      onEvent: (event: KernelEvent) => void | Promise<void>;
       context?: DispatchContext;
       abortController?: AbortController;
       kernelOverrides?: KernelDispatchOverrides;
@@ -195,7 +195,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       };
 
       for await (const event of spawnFn(message, config, entry.abortController)) {
-        entry.onEvent(event);
+        await entry.onEvent(event);
         if (event.type === "init") {
           resultSessionId = event.sessionId;
         } else if (event.type === "tool_start") {

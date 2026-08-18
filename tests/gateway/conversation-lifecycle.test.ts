@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createConversationLifecycle } from
   "../../packages/gateway/src/conversation-lifecycle.js";
+import { providerResumeSessionId } from
+  "../../packages/gateway/src/conversation-lifecycle.js";
 import { createConversationMutationLock } from
   "../../packages/gateway/src/conversation-mutation-lock.js";
 import { ConversationRunRegistry } from
@@ -41,6 +43,22 @@ describe("conversation lifecycle", () => {
     });
     return { mutationLock, conversations, conversationRuns, lifecycle };
   }
+
+  it("starts a provider session for an empty pre-created conversation", () => {
+    const empty = {
+      id: "pending-session",
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [],
+    };
+    const resumed = {
+      ...empty,
+      messages: [{ role: "user" as const, content: "hello", timestamp: 2 }],
+    };
+
+    expect(providerResumeSessionId(empty)).toBeUndefined();
+    expect(providerResumeSessionId(resumed)).toBe("pending-session");
+  });
 
   it("keeps a deleted conversation deleted when delete wins admission", async () => {
     const { mutationLock, conversations, lifecycle } = setup();
@@ -116,6 +134,35 @@ describe("conversation lifecycle", () => {
       lifecycle.admitExistingPrepared(id, async () => null),
     ).resolves.toEqual({ status: "unavailable" });
     expect(conversationRuns.isActive(id)).toBe(false);
+  });
+
+  it("adopts the provider session id without losing project context", async () => {
+    const { conversations, conversationRuns, lifecycle } = setup();
+    const pendingId = conversations.create();
+    await conversations.updateContext(pendingId, "matrix-os");
+    await lifecycle.admitExisting(pendingId);
+
+    await expect(lifecycle.adoptProviderSession(pendingId, "provider-session"))
+      .resolves.toBe("adopted");
+    expect(conversations.get(pendingId)).toBeNull();
+    expect(conversations.get("provider-session")?.context)
+      .toEqual({ projectId: "matrix-os" });
+    expect(conversationRuns.isActive(pendingId)).toBe(false);
+    expect(conversationRuns.isActive("provider-session")).toBe(true);
+  });
+
+  it("keeps the pending record intact when the provider session already exists", async () => {
+    const { conversations, conversationRuns, lifecycle } = setup();
+    const pendingId = conversations.create();
+    await conversations.updateContext(pendingId, "matrix-os");
+    await lifecycle.admitExisting(pendingId);
+    conversationRuns.begin("provider-session");
+
+    await expect(lifecycle.adoptProviderSession(pendingId, "provider-session"))
+      .resolves.toBe("conflict");
+    expect(conversations.get(pendingId)?.context)
+      .toEqual({ projectId: "matrix-os" });
+    expect(conversations.get("provider-session")).toBeNull();
   });
 
   it("completes the run only after finalization persists buffered text", async () => {

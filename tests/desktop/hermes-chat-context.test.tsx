@@ -55,12 +55,16 @@ describe("Hermes chat project context", () => {
     vi.restoreAllMocks();
   });
 
-  it("selects a canonical project and renders truthful project and repository controls", async () => {
+  it("keeps project-backed context in a dedicated composer strip", async () => {
     const patch = vi.fn().mockResolvedValue({ context: matrixContext });
     useConnection.setState({ api: { patch } as never });
     render(<ChatTab />);
 
+    const contextStrip = screen.getByRole("group", { name: "Conversation context" });
     expect(screen.getByRole("button", { name: "Add to project" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Repository/ })).toBeNull();
+    expect(contextStrip.compareDocumentPosition(screen.getByRole("textbox", { name: "Reply to Hermes…" }))
+      & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(screen.queryByText("main")).toBeNull();
     expect(screen.queryByText("On VPS")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Add to project" }));

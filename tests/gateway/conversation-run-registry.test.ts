@@ -52,6 +52,23 @@ describe("ConversationRunRegistry", () => {
     expect(registry.isActive("sess-1")).toBe(false);
   });
 
+  it("moves an admitted run to the provider session id", () => {
+    const registry = new ConversationRunRegistry();
+    const received: ConversationRunMessage[] = [];
+    registry.begin("pending-session");
+    registry.attach("pending-session", (message) => received.push(message), {
+      replayBuffered: false,
+    });
+
+    expect(registry.rekey("pending-session", "provider-session")).toBe(true);
+    expect(registry.isActive("pending-session")).toBe(false);
+    expect(registry.isActive("provider-session")).toBe(true);
+
+    const message: ConversationRunMessage = { type: "kernel:text", text: "hello" };
+    registry.publish("provider-session", message);
+    expect(received).toEqual([message]);
+  });
+
   it("keeps only the tail of large runs", () => {
     const registry = new ConversationRunRegistry({
       maxRuns: 5,

@@ -94,4 +94,31 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs[1]).toMatchObject({ homePath });
     expect(configs[1].workingDirectory).toBeUndefined();
   });
+
+  it("waits for async event admission before consuming the next kernel event", async () => {
+    const order: string[] = [];
+    const gate = Promise.withResolvers<void>();
+    const spawn = vi.fn<SpawnFn>(async function* () {
+      yield { type: "init", sessionId: "provider-session" };
+      order.push("kernel-next");
+      yield resultEvent();
+    });
+    const dispatcher = createDispatcher({
+      homePath: makeHomePath(),
+      spawnFn: spawn,
+      maxConcurrency: 1,
+    });
+
+    const dispatched = dispatcher.dispatch("first turn", "pending-session", async (event) => {
+      if (event.type !== "init") return;
+      order.push("adoption-start");
+      await gate.promise;
+      order.push("adoption-finished");
+    });
+    await vi.waitFor(() => expect(order).toEqual(["adoption-start"]));
+    gate.resolve();
+    await dispatched;
+
+    expect(order).toEqual(["adoption-start", "adoption-finished", "kernel-next"]);
+  });
 });

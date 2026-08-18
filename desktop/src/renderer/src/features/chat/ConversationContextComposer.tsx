@@ -14,7 +14,11 @@ export function ConversationContextControls({
   onUpdate,
 }: Omit<ConversationContextComposerProps, "error">) {
   return (
-    <>
+    <div
+      role="group"
+      aria-label="Conversation context"
+      className="flex min-w-0 flex-1 items-center justify-between gap-3"
+    >
       <ConversationContextPicker
         context={context}
         disabled={disabled}
@@ -25,13 +29,12 @@ export function ConversationContextControls({
         <ConversationContextPicker
           context={context}
           disabled={disabled}
-          triggerLabel={`Repository ${context.repositoryLabel}`}
-          triggerText={context.repositoryLabel}
+          kind="repository"
           onSelect={onUpdate}
           onRemove={() => onUpdate(null)}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
