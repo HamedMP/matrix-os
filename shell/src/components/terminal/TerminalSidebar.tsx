@@ -258,7 +258,7 @@ function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: Workspac
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 16 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree/agent-status UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
-export function LocalTerminalSidebar() {
+export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number } = {}) {
   const ctx = useTerminalAppContext();
   const [tab, setTab] = useState<SidebarTab>("shells");
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -1246,6 +1246,7 @@ export function LocalTerminalSidebar() {
           <ShellSessionGroup
             label="Active"
             shells={activeShells}
+            canvasZoom={canvasZoom}
             pending={creatingShell}
             deletingShellNames={deletingShellNames}
             foreground
@@ -1266,6 +1267,7 @@ export function LocalTerminalSidebar() {
           <ShellSessionGroup
             label="Background"
             shells={backgroundShells}
+            canvasZoom={canvasZoom}
             expanded={backgroundSessionsExpanded}
             onToggleExpanded={() => setBackgroundSessionsExpanded((expanded) => !expanded)}
             deletingShellNames={deletingShellNames}

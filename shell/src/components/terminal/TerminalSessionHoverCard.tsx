@@ -80,9 +80,12 @@ function formatAgentUpdatedAt(value: string | undefined): string {
   return `Updated ${Math.floor(elapsedHours / 24)}d ago`;
 }
 
-function canOpenToRight(card: HTMLElement | null): boolean {
+function canOpenToRight(card: HTMLElement | null, canvasZoom: number): boolean {
   if (!card || typeof window === "undefined") return false;
-  return card.getBoundingClientRect().right + HOVER_CARD_GAP + HOVER_CARD_WIDTH <= window.innerWidth - 12;
+  return card.getBoundingClientRect().right
+    + HOVER_CARD_GAP * canvasZoom
+    + HOVER_CARD_WIDTH * canvasZoom
+    <= window.innerWidth - 12;
 }
 
 function safePullRequestUrl(value: string | undefined): string | null {
@@ -121,6 +124,7 @@ export function TerminalSessionHoverCard({
   shell,
   displayName,
   cardRef,
+  canvasZoom = 1,
   open,
   suppressed,
   onOpenChange,
@@ -129,6 +133,7 @@ export function TerminalSessionHoverCard({
   shell: ShellSessionSummary;
   displayName: string;
   cardRef: RefObject<HTMLDivElement | null>;
+  canvasZoom?: number;
   open: boolean;
   suppressed: boolean;
   onOpenChange: (open: boolean) => void;
@@ -140,7 +145,7 @@ export function TerminalSessionHoverCard({
   const updatedAt = shell.agent ? shell.agentUpdatedAt : shell.updatedAt;
   const pullRequestUrl = safePullRequestUrl(shell.pullRequest?.url);
   const hasProjectContext = Boolean(shell.project || shell.repository || shell.branch || shell.pullRequest);
-  const canDisplay = open && !suppressed && canOpenToRight(cardRef.current);
+  const canDisplay = open && !suppressed && canOpenToRight(cardRef.current, canvasZoom);
   useEffect(() => {
     if (canDisplay) setTheme(readHoverCardTheme(cardRef.current));
   }, [canDisplay, cardRef]);
@@ -148,7 +153,7 @@ export function TerminalSessionHoverCard({
     <HoverCardPrimitive.Root
       open={canDisplay}
       onOpenChange={(nextOpen) => {
-        const canOpen = nextOpen && canOpenToRight(cardRef.current);
+        const canOpen = nextOpen && canOpenToRight(cardRef.current, canvasZoom);
         if (canOpen) setTheme(readHoverCardTheme(cardRef.current));
         onOpenChange(canOpen);
       }}
@@ -172,6 +177,8 @@ export function TerminalSessionHoverCard({
             border: `1px solid ${theme.border}`,
             boxShadow: `0 18px 42px ${theme.shadow}`,
             color: theme.foreground,
+            transform: `scale(${canvasZoom})`,
+            transformOrigin: "left top",
           }}
         >
           <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", gap: 12 }}>
