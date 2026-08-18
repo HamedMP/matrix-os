@@ -17,6 +17,7 @@ const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../desktop/screenshots");
 const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
 const MAT_327_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-327");
+const MAT_348_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-348");
 const hasBuild = existsSync(DESKTOP_MAIN);
 
 const suite = hasBuild ? describe : describe.skip;
@@ -42,6 +43,17 @@ async function openSettings(page: Page): Promise<void> {
     .waitFor({ timeout: 10_000 });
 }
 
+async function ensureSignedIn(page: Page): Promise<void> {
+  const continueButton = page.getByRole("button", { name: /continue in browser/i });
+  const terminalNavigation = page.locator("aside button", { hasText: "Terminal" }).first();
+  const bootState = await Promise.race([
+    continueButton.waitFor({ state: "visible", timeout: 15_000 }).then(() => "signed-out" as const),
+    terminalNavigation.waitFor({ state: "visible", timeout: 15_000 }).then(() => "signed-in" as const),
+  ]);
+  if (bootState === "signed-out") await continueButton.click();
+  await terminalNavigation.waitFor({ timeout: 15_000 });
+}
+
 suite("operator desktop e2e", () => {
   let gateway: StubGateway;
   let app: ElectronApplication;
@@ -59,6 +71,7 @@ suite("operator desktop e2e", () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_322_SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_327_SCREENSHOT_DIR, { recursive: true });
+    mkdirSync(MAT_348_SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
     userDataDir = mkdtempSync(join(tmpdir(), "operator-e2e-"));
     app = await _electron.launch({
@@ -188,6 +201,46 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05-project-chats-composer.png") });
     await page.locator("span:visible", { hasText: /^Done$/ }).first().waitFor({ timeout: 10_000 });
   }, 30_000);
+
+  it("validates MAT-348 tool hierarchy and composer in built Electron", async () => {
+    await ensureSignedIn(page);
+    await page.locator("aside button", { hasText: "Matrix OS" }).first().click();
+    await page.getByRole("button", { name: "Chats" }).click();
+    await page.getByRole("button", { name: "New chat in Matrix OS" }).click();
+
+    const prompt = "MAT-348: validate a long tool-heavy agent turn";
+    await page.getByLabel("Message new chat").fill(prompt);
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const toolSummary = page.getByRole("button", { name: "9 tool calls, completed" });
+    await toolSummary.waitFor({ timeout: 10_000 });
+    await page.getByText("Historical tool activity is grouped", { exact: false }).waitFor();
+    expect(await toolSummary.getAttribute("aria-expanded")).toBe("false");
+    expect(await page.getByRole("button", { name: "Tool call Read conversation renderer" }).count()).toBe(0);
+    expect(await page.getByLabel("Agent provider").textContent()).toBe("Codex");
+    await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "01-settled-tool-group.png") });
+
+    await toolSummary.click();
+    await page.getByRole("button", { name: "Tool call Read conversation renderer" }).waitFor();
+    await page.getByRole("button", { name: "Tool call Summarize validation" }).waitFor();
+    await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "02-expanded-tool-group.png") });
+
+    await toolSummary.click();
+    await page.setViewportSize({ width: 820, height: 720 });
+    await toolSummary.scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "03-settled-tool-group-narrow.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await page.getByRole("button", { name: "Chat Investigate auth callback" }).click();
+    const busyDraft = page.getByLabel("Message conversation");
+    await busyDraft.fill("Draft this follow-up while the agent is working");
+    await busyDraft.press("Enter");
+    expect(await busyDraft.inputValue()).toBe("Draft this follow-up while the agent is working");
+    await page.getByRole("button", { name: "Stop" }).waitFor();
+    await page.getByText("Agent is working — draft now, send when this turn finishes").waitFor();
+    await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "04-running-composer-draft.png") });
+  }, 40_000);
 
   it("shows provider and integration settings for the selected computer", async () => {
     await openSettings(page);

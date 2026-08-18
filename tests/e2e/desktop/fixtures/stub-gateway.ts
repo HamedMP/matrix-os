@@ -273,6 +273,82 @@ export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): Agen
   });
 }
 
+function codingAgentToolHeavySnapshot(prompt: string): AgentThreadSnapshot {
+  const thread = codingAgentThread(prompt);
+  const toolEvents = Array.from({ length: 9 }, (_, index) => {
+    const toolCallId = `tool_mat_348_${index}`;
+    const displayNames = [
+      "Read conversation renderer",
+      "Search transcript tests",
+      "Inspect shared contracts",
+      "Run focused tests",
+      "Review composer states",
+      "Check accessibility labels",
+      "Build Desktop renderer",
+      "Verify narrow viewport",
+      "Summarize validation",
+    ];
+    return [
+      {
+        type: "tool.started" as const,
+        eventId: `evt_mat_348_tool_${index}_started`,
+        threadId: thread.id,
+        occurredAt: NOW,
+        toolCallId,
+        displayName: displayNames[index],
+        kind: index === 3 || index === 6 ? "shell" : "read",
+      },
+      {
+        type: "tool.completed" as const,
+        eventId: `evt_mat_348_tool_${index}_completed`,
+        threadId: thread.id,
+        occurredAt: NOW,
+        toolCallId,
+        outcome: "success" as const,
+      },
+    ];
+  }).flat();
+  return AgentThreadSnapshotSchema.parse({
+    thread,
+    events: {
+      items: [
+        { type: "thread.created", eventId: "evt_mat_348_created", threadId: thread.id, occurredAt: NOW, thread },
+        {
+          type: "user.message",
+          eventId: "evt_mat_348_user",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_mat_348_user",
+          text: prompt,
+          clientRequestId: "req_mat_348_user",
+        },
+        {
+          type: "assistant.text.delta",
+          eventId: "evt_mat_348_intro",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_mat_348_intro",
+          delta: "I’ll trace the current transcript hierarchy and composer behavior, then validate the result in the built Desktop app.",
+        },
+        { type: "assistant.text.completed", eventId: "evt_mat_348_intro_done", threadId: thread.id, occurredAt: NOW, messageId: "msg_mat_348_intro" },
+        ...toolEvents,
+        {
+          type: "assistant.text.delta",
+          eventId: "evt_mat_348_result",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_mat_348_result",
+          delta: "The focused tests and production Desktop build pass. Historical tool activity is grouped, while the final result remains visible and selectable.",
+        },
+        { type: "assistant.text.completed", eventId: "evt_mat_348_result_done", threadId: thread.id, occurredAt: NOW, messageId: "msg_mat_348_result" },
+        { type: "thread.completed", eventId: "evt_mat_348_completed", threadId: thread.id, occurredAt: NOW, outcome: "completed" },
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  });
+}
+
 function codingAgentTaskSnapshot(
   id: string,
   taskId: string,
@@ -954,7 +1030,8 @@ export async function startStubGateway(): Promise<StubGateway> {
     if (req.method === "POST" && path === "/api/coding-agents/threads") {
       const body = await readBody(req);
       state.codingAgentCreates.push(body);
-      json(res, 201, codingAgentSnapshot(typeof body.prompt === "string" ? body.prompt : undefined));
+      const prompt = typeof body.prompt === "string" ? body.prompt : undefined;
+      json(res, 201, prompt?.startsWith("MAT-348:") ? codingAgentToolHeavySnapshot(prompt) : codingAgentSnapshot(prompt));
       return;
     }
     if (req.method === "GET" && path === "/api/coding-agents/threads/thread_operator_1") {
