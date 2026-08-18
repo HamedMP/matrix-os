@@ -61,6 +61,7 @@ describe("Hermes chat project context", () => {
     render(<ChatTab />);
 
     const contextStrip = screen.getByRole("group", { name: "Conversation context" });
+    expect(contextStrip.closest(".prompt-card")).toBeNull();
     expect(screen.getByRole("button", { name: "Add to project" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Repository/ })).toBeNull();
     expect(contextStrip.compareDocumentPosition(screen.getByRole("textbox", { name: "Reply to Hermes…" }))

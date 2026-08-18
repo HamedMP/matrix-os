@@ -116,7 +116,7 @@ export function PromptInput({
         </div>
       </div>
       {footer ? (
-        <div className="flex min-w-0 items-center gap-3 border-t px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}>
+        <div className="flex items-center gap-3 border-t px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}>
           {footer}
         </div>
       ) : null}

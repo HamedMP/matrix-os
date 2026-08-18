@@ -254,8 +254,11 @@ function HermesPane() {
       <option value="codex">Codex</option>
     </select>
   );
-  const contextFooter = (
-    <div className="flex min-w-0 flex-1 flex-col gap-2">
+  const contextStrip = (
+    <div
+      className="flex min-w-0 flex-col gap-2 px-1 text-sm"
+      style={{ color: "var(--text-tertiary)" }}
+    >
       <ConversationContextControls
         context={conversationContext}
         disabled={contextControlsDisabled}
@@ -282,22 +285,24 @@ function HermesPane() {
           event.currentTarget.value = "";
         }}
       />
-      <PromptInput
-        value={draft}
-        onChange={setDraft}
-        onSubmit={() => void submit()}
-        onAbort={status !== "idle" ? abort : undefined}
-        busy={status !== "idle" || uploadingAttachments}
-        disabled={uploadingAttachments}
-        canSubmit={composerReady}
-        footer={contextFooter}
-        attachments={attachmentPreviews}
-        autoFocus={autoFocus}
-        placeholder={placeholder}
-        ariaLabel={placeholder}
-        controls={composerControls}
-        trailingControls={harnessBadge}
-      />
+      <div className="flex min-w-0 flex-col gap-2">
+        <PromptInput
+          value={draft}
+          onChange={setDraft}
+          onSubmit={() => void submit()}
+          onAbort={status !== "idle" ? abort : undefined}
+          busy={status !== "idle" || uploadingAttachments}
+          disabled={uploadingAttachments}
+          canSubmit={composerReady}
+          attachments={attachmentPreviews}
+          autoFocus={autoFocus}
+          placeholder={placeholder}
+          ariaLabel={placeholder}
+          controls={composerControls}
+          trailingControls={harnessBadge}
+        />
+        {contextStrip}
+      </div>
     </>
   );
 
