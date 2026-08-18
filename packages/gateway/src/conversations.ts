@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { readFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
-import { lstat, unlink } from "node:fs/promises";
+import { lstat, open, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { KernelConversationId } from "@matrix-os/contracts";
@@ -22,6 +22,11 @@ export interface ConversationFile {
   createdAt: number;
   updatedAt: number;
   messages: ConversationMessage[];
+  context?: ConversationContext;
+}
+
+export interface ConversationContext {
+  projectId: string;
 }
 
 export interface ConversationMeta {
@@ -51,6 +56,10 @@ export interface ConversationStore {
   list(): ConversationMeta[];
   get(id: string): ConversationFile | null;
   create(channel?: string): string;
+  updateContext(
+    id: KernelConversationId,
+    projectId: string | null,
+  ): Promise<"updated" | "not_found">;
   delete(
     id: KernelConversationId,
     isActive?: () => boolean,
@@ -114,6 +123,36 @@ export function createConversationStore(
       writeFileNow(filePath(conv.id), JSON.stringify(conv, null, 2));
     } catch (err: unknown) {
       console.warn("[conversations] Could not persist conversation:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function writeToDiskAtomically(conv: ConversationFile): Promise<void> {
+    const targetPath = filePath(conv.id);
+    const temporaryPath = join(dir, `.${conv.id}.${randomUUID()}.tmp`);
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await open(temporaryPath, "wx", 0o600);
+      await handle.writeFile(JSON.stringify(conv, null, 2), "utf-8");
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await rename(temporaryPath, targetPath);
+    } catch (error: unknown) {
+      if (handle) {
+        try {
+          await handle.close();
+        } catch (closeError: unknown) {
+          console.warn("[conversations] Could not close failed context write:", closeError);
+        }
+      }
+      try {
+        await unlink(temporaryPath);
+      } catch (cleanupError: unknown) {
+        if (!(cleanupError instanceof Error && "code" in cleanupError && cleanupError.code === "ENOENT")) {
+          console.warn("[conversations] Could not clean failed context write:", cleanupError);
+        }
+      }
+      throw error;
     }
   }
 
@@ -270,6 +309,26 @@ export function createConversationStore(
       touch(id);
       writeToDisk(conv);
       return id;
+    },
+
+    updateContext(id, projectId) {
+      return mutationLock.run(id, async () => {
+        const current = active.get(id) ?? readFromDisk(id);
+        if (!current) return "not_found";
+
+        const { context: _previousContext, ...record } = current;
+        const next: ConversationFile = {
+          ...record,
+          updatedAt: Date.now(),
+          ...(projectId ? { context: { projectId } } : {}),
+        };
+        await writeToDiskAtomically(next);
+        if (active.has(id)) {
+          active.set(id, next);
+          touch(id);
+        }
+        return "updated";
+      });
     },
 
     delete(id, isActive) {

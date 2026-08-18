@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -278,6 +279,66 @@ describe("ConversationStore", () => {
       store.create();
 
       expect(store.list()).toHaveLength(2);
+    });
+  });
+
+  describe("project context", () => {
+    it("persists and clears only the canonical project reference across restarts", async () => {
+      const store = createConversationStore(homePath);
+      const id = store.create();
+
+      await expect(store.updateContext(id, "matrix-os")).resolves.toBe("updated");
+      expect(store.get(id)?.context).toEqual({ projectId: "matrix-os" });
+
+      const reopened = createConversationStore(homePath);
+      expect(reopened.get(id)?.context).toEqual({ projectId: "matrix-os" });
+      const recordPath = join(homePath, "system", "conversations", `${id}.json`);
+      const persisted = JSON.parse(readFileSync(recordPath, "utf-8")) as ConversationFile;
+      expect(persisted.context).toEqual({ projectId: "matrix-os" });
+      expect(JSON.stringify(persisted.context)).not.toContain(homePath);
+
+      await expect(reopened.updateContext(id, null)).resolves.toBe("updated");
+      expect(createConversationStore(homePath).get(id)?.context).toBeUndefined();
+      await expect(reopened.updateContext("missing", "matrix-os"))
+        .resolves.toBe("not_found");
+    });
+
+    it("preserves the previous record when the atomic write fails", async () => {
+      const store = createConversationStore(homePath);
+      const id = store.create();
+      await store.updateContext(id, "project-a");
+      const conversationDir = join(homePath, "system", "conversations");
+
+      chmodSync(conversationDir, 0o500);
+      try {
+        await expect(store.updateContext(id, "project-b")).rejects.toThrow();
+      } finally {
+        chmodSync(conversationDir, 0o700);
+      }
+
+      expect(store.get(id)?.context).toEqual({ projectId: "project-a" });
+      expect(createConversationStore(homePath).get(id)?.context)
+        .toEqual({ projectId: "project-a" });
+    });
+
+    it("serializes context update, finalization, and deletion for one conversation", async () => {
+      const mutationLock = createConversationMutationLock({ maxKeys: 2 });
+      const store = createConversationStore(homePath, { mutationLock });
+      const id = store.create();
+      store.appendAssistantText(id, "finished response");
+      const gate = deferred();
+
+      const blocker = mutationLock.run(id, async () => {
+        await gate.promise;
+      });
+      const update = store.updateContext(id, "matrix-os");
+      const finalize = store.finalize(id);
+      const deletion = store.delete(id);
+
+      gate.resolve();
+      await expect(Promise.all([blocker, update, finalize, deletion]))
+        .resolves.toEqual([undefined, "updated", undefined, "deleted"]);
+      expect(store.get(id)).toBeNull();
     });
   });
 
