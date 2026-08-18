@@ -120,6 +120,76 @@ describe("project workspaces store", () => {
     expect(loads).toHaveLength(1);
   });
 
+  it("appends the next bounded workspace pages using canonical cursors", async () => {
+    const first = workspace("matrix-os", "task_auth", "thread_task");
+    first.projectThreads = {
+      items: [{
+        id: "thread_page_1",
+        providerId: "codex",
+        title: "Newest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: true,
+      nextCursor: "thread_page_1",
+      limit: 1,
+    };
+    const second = workspace("matrix-os", "task_auth", "thread_task");
+    second.tasks = { items: [], hasMore: false, limit: 1 };
+    second.projectThreads = {
+      items: [{
+        id: "thread_page_2",
+        providerId: "codex",
+        title: "Older project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: false,
+      limit: 1,
+    };
+    second.taskThreads = { items: [], hasMore: false, limit: 1 };
+    let call = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "runtime:get-project-workspace") {
+        call += 1;
+        return call === 1 ? first : second;
+      }
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useProjectWorkspaces.getState().ensure("matrix-os");
+    await useProjectWorkspaces.getState().loadMore("matrix-os");
+
+    expect(invoke).toHaveBeenNthCalledWith(2, "runtime:get-project-workspace", {
+      projectId: "matrix-os",
+      taskCursor: "task_auth",
+      taskLimit: 1,
+      projectThreadCursor: "thread_page_1",
+      projectThreadLimit: 1,
+      taskThreadCursor: "thread_task",
+      taskThreadLimit: 1,
+    });
+    expect(
+      useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.projectThreads.items
+        .map((thread) => thread.id),
+    ).toEqual(["thread_page_1", "thread_page_2"]);
+    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.tasks.items)
+      .toHaveLength(1);
+    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.taskThreads.items)
+      .toHaveLength(1);
+  });
+
   it("keeps project workspaces isolated per project", async () => {
     mockOperator({
       "matrix-os": workspace("matrix-os", "task_auth", "thread_plan"),

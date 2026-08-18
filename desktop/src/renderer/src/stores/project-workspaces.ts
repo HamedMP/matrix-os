@@ -5,6 +5,7 @@
 // eviction; refreshes are stale-while-revalidate so a failed reload keeps the
 // last projection visible with an explicit error.
 import type { ProjectAgentWorkspace } from "@matrix-os/contracts";
+import type { CodingAgentProjectWorkspaceRequest } from "../../../shared/coding-agent-project-workspace";
 import { create } from "zustand";
 import {
   reconcileProjectChatSelection,
@@ -36,6 +37,7 @@ interface ProjectWorkspacesState {
   ensureRuntimeScope: (scope: string) => void;
   ensure: (projectId: string) => Promise<void>;
   refresh: (projectId: string) => Promise<void>;
+  loadMore: (projectId: string) => Promise<void>;
   resolveNewChatTarget: (
     projectId: string,
     taskId?: string,
@@ -49,6 +51,14 @@ const loadGenerations: Record<string, number> = {};
 // ensure() joins the authoritative in-flight request instead of treating a
 // transient `loading` projection as either success or failure.
 const activeLoadPromises: Record<string, Promise<void> | undefined> = {};
+const MAX_WORKSPACE_PAGE_ITEMS = 100;
+
+interface WorkspacePage<T extends { id: string }> {
+  items: T[];
+  hasMore: boolean;
+  nextCursor?: string;
+  limit: number;
+}
 
 
 function nextGeneration(projectId: string): number {
@@ -111,7 +121,70 @@ function isStaleLoad(projectId: string, runtimeGeneration: number, generation: n
   return !isCurrentRuntimeGeneration(runtimeGeneration) || loadGenerations[projectId] !== generation;
 }
 
-async function performWorkspaceLoad(projectId: string): Promise<void> {
+function canLoadMoreWorkspace(workspace: ProjectAgentWorkspace): boolean {
+  return [workspace.tasks, workspace.projectThreads, workspace.taskThreads]
+    .some((page) => page.hasMore && page.items.length < MAX_WORKSPACE_PAGE_ITEMS);
+}
+
+function pageCursor<T extends { id: string }>(page: WorkspacePage<T>): string | undefined {
+  return page.nextCursor ?? page.items.at(-1)?.id;
+}
+
+function pageLimit<T extends { id: string }>(page: WorkspacePage<T>): number {
+  if (!page.hasMore) return 1;
+  return Math.max(1, Math.min(page.limit, MAX_WORKSPACE_PAGE_ITEMS - page.items.length));
+}
+
+function loadMoreRequest(
+  projectId: string,
+  workspace: ProjectAgentWorkspace,
+): CodingAgentProjectWorkspaceRequest {
+  const taskCursor = pageCursor(workspace.tasks);
+  const projectThreadCursor = pageCursor(workspace.projectThreads);
+  const taskThreadCursor = pageCursor(workspace.taskThreads);
+  return {
+    projectId,
+    ...(taskCursor ? { taskCursor } : {}),
+    taskLimit: pageLimit(workspace.tasks),
+    ...(projectThreadCursor ? { projectThreadCursor } : {}),
+    projectThreadLimit: pageLimit(workspace.projectThreads),
+    ...(taskThreadCursor ? { taskThreadCursor } : {}),
+    taskThreadLimit: pageLimit(workspace.taskThreads),
+  };
+}
+
+function mergePage<T extends { id: string }>(
+  current: WorkspacePage<T>,
+  next: WorkspacePage<T>,
+): WorkspacePage<T> {
+  const knownIds = new Set(current.items.map((item) => item.id));
+  const remaining = MAX_WORKSPACE_PAGE_ITEMS - current.items.length;
+  const appended = next.items.filter((item) => !knownIds.has(item.id)).slice(0, remaining);
+  return {
+    items: [...current.items, ...appended],
+    hasMore: next.hasMore,
+    ...(next.nextCursor ? { nextCursor: next.nextCursor } : {}),
+    limit: next.limit,
+  };
+}
+
+function mergeWorkspacePages(
+  current: ProjectAgentWorkspace,
+  next: ProjectAgentWorkspace,
+): ProjectAgentWorkspace {
+  return {
+    project: next.project,
+    tasks: mergePage(current.tasks, next.tasks),
+    projectThreads: mergePage(current.projectThreads, next.projectThreads),
+    taskThreads: mergePage(current.taskThreads, next.taskThreads),
+    updatedAt: next.updatedAt,
+  };
+}
+
+async function performWorkspaceLoad(projectId: string, append = false): Promise<void> {
+  const previousWorkspace = useProjectWorkspaces.getState().entries[projectId]?.workspace ?? null;
+  const shouldAppend = append && previousWorkspace !== null;
+  if (shouldAppend && !canLoadMoreWorkspace(previousWorkspace)) return;
   const runtimeGeneration = captureRuntimeGeneration();
   const generation = nextGeneration(projectId);
   useProjectWorkspaces.setState((state) => ({
@@ -127,8 +200,12 @@ async function performWorkspaceLoad(projectId: string): Promise<void> {
     },
   }));
   try {
-    const workspace = await invoke("runtime:get-project-workspace", { projectId });
+    const page = await invoke(
+      "runtime:get-project-workspace",
+      shouldAppend ? loadMoreRequest(projectId, previousWorkspace) : { projectId },
+    );
     if (isStaleLoad(projectId, runtimeGeneration, generation)) return;
+    const workspace = shouldAppend ? mergeWorkspacePages(previousWorkspace, page) : page;
     useProjectWorkspaces.setState((state) => ({
       entries: capEntries({
         ...state.entries,
@@ -168,8 +245,8 @@ async function performWorkspaceLoad(projectId: string): Promise<void> {
   }
 }
 
-function loadWorkspace(projectId: string): Promise<void> {
-  const pending = performWorkspaceLoad(projectId).finally(() => {
+function loadWorkspace(projectId: string, append = false): Promise<void> {
+  const pending = performWorkspaceLoad(projectId, append).finally(() => {
     if (activeLoadPromises[projectId] === pending) {
       delete activeLoadPromises[projectId];
     }
@@ -209,6 +286,10 @@ export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) 
 
   refresh: async (projectId) => {
     await loadWorkspace(projectId);
+  },
+
+  loadMore: async (projectId) => {
+    await loadWorkspace(projectId, true);
   },
 
   resolveNewChatTarget: async (projectId, taskId) => {
