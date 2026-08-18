@@ -345,7 +345,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
 
   return (
     <div
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden py-2 pl-3 pr-2"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2"
       data-terminal-surface
       style={{ backgroundColor: terminalBackground }}
     >
