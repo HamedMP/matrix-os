@@ -51,6 +51,8 @@ export interface DispatchContext {
 export interface KernelDispatchOverrides {
   model?: KernelModel;
   effort?: KernelEffort;
+  /** Internal, validated execution root. Never accepted from client frames. */
+  workingDirectory?: string;
 }
 
 export interface BatchEntry {
@@ -187,6 +189,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         sessionId: entry.sessionId,
         model: dispatchModel,
         effort: entry.kernelOverrides?.effort,
+        workingDirectory: entry.kernelOverrides?.workingDirectory,
         maxTurns: opts.maxTurns,
         env: await buildKernelEnv(homePath),
       };

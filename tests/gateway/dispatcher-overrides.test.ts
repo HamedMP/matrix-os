@@ -62,4 +62,36 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs[1]).toMatchObject({ model: "claude-opus-4-6" });
     expect(configs[1].effort).toBeUndefined();
   });
+
+  it("passes a validated working directory to only the selected queued dispatch", async () => {
+    const homePath = makeHomePath();
+    const workingDirectory = resolve(homePath, "projects", "matrix-os", "repo");
+    mkdirSync(workingDirectory, { recursive: true });
+    const configs: KernelConfig[] = [];
+    const spawn = vi.fn<SpawnFn>(async function* (_message, config) {
+      configs.push(config);
+      yield resultEvent();
+    });
+    const dispatcher = createDispatcher({
+      homePath,
+      spawnFn: spawn,
+      maxConcurrency: 1,
+    });
+
+    const first = dispatcher.dispatch(
+      "work in the selected project",
+      "session-one",
+      () => {},
+      undefined,
+      undefined,
+      { workingDirectory },
+    );
+    const second = dispatcher.dispatch("use the home directory", "session-two", () => {});
+    await Promise.all([first, second]);
+
+    expect(configs).toHaveLength(2);
+    expect(configs[0]).toMatchObject({ homePath, workingDirectory });
+    expect(configs[1]).toMatchObject({ homePath });
+    expect(configs[1].workingDirectory).toBeUndefined();
+  });
 });
