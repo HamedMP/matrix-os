@@ -183,7 +183,8 @@ describe("TerminalView session switching", () => {
     expect(host.className).toContain("overflow-hidden");
     expect(frame.getAttribute("data-terminal-surface")).not.toBeNull();
     expect(frame.className).toContain("py-2");
-    expect(frame.className).toContain("pl-4");
+    expect(frame.className).toContain("pl-3");
+    expect(frame.className).not.toContain("pl-4");
     expect(frame.className).toContain("pr-2");
     expect(frame.className).toContain("overflow-hidden");
     expect(frame.style.backgroundColor).toBe(colorProbe.style.backgroundColor);

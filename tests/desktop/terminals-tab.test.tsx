@@ -164,7 +164,7 @@ describe("TerminalsTab", () => {
       .toBe("page");
     const terminalDetail = screen.getByTestId("terminal-view-matrix-main")
       .closest("[data-terminal-detail]");
-    expect(terminalDetail?.className).toContain("p-3");
+    expect(terminalDetail?.className.split(/\s+/)).not.toContain("p-3");
     const terminalViewport = screen.getByTestId("terminal-view-matrix-main")
       .closest("[data-terminal-viewport]");
     expect(terminalViewport?.className).toContain("rounded-lg");

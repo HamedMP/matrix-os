@@ -531,7 +531,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
                 {shellStatusLabel(shell)}
               </span>
             </header>
-            <div data-terminal-detail className="flex min-h-0 flex-1 gap-3 p-3">
+            <div data-terminal-detail className="flex min-h-0 flex-1 gap-3">
               {sessionRailOpen ? (
                 <nav
                   aria-label="Terminal session switcher"
