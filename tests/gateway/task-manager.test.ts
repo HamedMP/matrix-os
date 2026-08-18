@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,6 +145,22 @@ describe("task-manager", () => {
     await expect(manager.listTasks("repo", { includeArchived: true })).resolves.toMatchObject({ tasks: [] });
   });
 
+  it("preserves an unvalidated owner file that collides with a canonical task id", async () => {
+    const manager = createTaskManager({ homePath });
+    const created = await manager.createTask("repo", { title: "Canonical task" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const ownerFile = join(homePath, "projects", "repo", "tasks", `${created.task.id}.json`);
+    await atomicWriteJson(ownerFile, { ownerNote: "keep me" });
+
+    await expect(manager.deleteTask("repo", created.task.id)).resolves.toEqual({ ok: true });
+    await expect(readFile(ownerFile, "utf-8")).resolves.toContain("keep me");
+    await expect(stat(
+      join(homePath, "system", "projects", "repo", "tasks", `${created.task.id}.json`),
+    )).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects task mutations from a different owner scope", async () => {
     const manager = createTaskManager({ homePath });
 
@@ -153,5 +169,20 @@ describe("task-manager", () => {
       { title: "Do not create" },
       { type: "user", id: "user_b" },
     )).resolves.toMatchObject({ ok: false, status: 404, error: { code: "not_found" } });
+  });
+
+  it("fails safely when task identifier discovery exceeds its memory bound", async () => {
+    const directory = join(homePath, "system", "projects", "repo", "tasks");
+    await mkdir(directory, { recursive: true });
+    await Promise.all(Array.from({ length: 513 }, (_, index) => (
+      writeFile(join(directory, `task_untrusted_${index}.json`), "{}", "utf-8")
+    )));
+    const manager = createTaskManager({ homePath });
+
+    await expect(manager.listTasks("repo", { includeArchived: true })).resolves.toMatchObject({
+      ok: false,
+      status: 409,
+      error: { code: "task_limit_exceeded" },
+    });
   });
 });

@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { readdir, rm } from "node:fs/promises";
+import { opendir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type WorkspaceError } from "./project-manager.js";
 import { atomicCreateJson, atomicWriteJson, readJsonFile, type OwnerScope } from "./state-ops.js";
 import { createProjectRegistry } from "./project-registry.js";
+import {
+  projectStateRecoveryDir,
+  readBoundedJsonFileWithIdentity,
+  removeFileIfUnchanged,
+} from "./bounded-json-file.js";
 
 export type TaskStatus = "todo" | "running" | "waiting" | "blocked" | "complete" | "archived";
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
@@ -40,6 +45,8 @@ const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const WorktreeIdSchema = z.string().regex(/^wt_[A-Za-z0-9_-]{1,128}$/);
 const PreviewIdSchema = z.string().regex(/^prev_[A-Za-z0-9_-]{1,128}$/);
+const MAX_LEGACY_TASK_RECORD_BYTES = 256 * 1024;
+const MAX_TASK_DISCOVERY_IDS = 512;
 
 const CreateTaskSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -143,15 +150,33 @@ async function readTask(homePath: string, projectSlug: string, taskId: string): 
   return null;
 }
 
-async function listTaskRecords(homePath: string, projectSlug: string): Promise<TaskRecord[]> {
+async function removeValidatedLegacyTask(
+  homePath: string,
+  projectSlug: string,
+  taskId: string,
+): Promise<void> {
+  const path = legacyTaskPath(homePath, projectSlug, taskId);
+  const candidate = await readBoundedJsonFileWithIdentity(path, MAX_LEGACY_TASK_RECORD_BYTES);
+  if (!candidate) return;
+  const parsed = TaskRecordSchema.safeParse(candidate.value);
+  if (!parsed.success || parsed.data.projectSlug !== projectSlug || parsed.data.id !== taskId) return;
+  await removeFileIfUnchanged(path, candidate.identity, {
+    recoveryDir: projectStateRecoveryDir(homePath),
+  });
+}
+
+async function listTaskRecords(homePath: string, projectSlug: string): Promise<TaskRecord[] | null> {
   const ids = new Set<string>();
   for (const root of [tasksDir(homePath, projectSlug), createProjectRegistry({ homePath }).legacyTasksDir(projectSlug)]) {
+    let directory: Awaited<ReturnType<typeof opendir>>;
     try {
-      const entries = await readdir(root, { withFileTypes: true });
-      for (const entry of entries) {
+      directory = await opendir(root);
+      for await (const entry of directory) {
         if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith(".json")) continue;
         const taskId = entry.name.slice(0, -".json".length);
-        if (TaskIdSchema.safeParse(taskId).success) ids.add(taskId);
+        if (!TaskIdSchema.safeParse(taskId).success || ids.has(taskId)) continue;
+        if (ids.size >= MAX_TASK_DISCOVERY_IDS) return null;
+        ids.add(taskId);
       }
     } catch (err: unknown) {
       if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
@@ -214,7 +239,9 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
       if (!parsed.success) return failure(400, "invalid_task_query", "Task query is invalid");
 
       const query = parsed.data;
-      const allTasks = (await listTaskRecords(homePath, projectSlug))
+      const records = await listTaskRecords(homePath, projectSlug);
+      if (!records) return failure(409, "task_limit_exceeded", "Task limit exceeded");
+      const allTasks = records
         .filter((task) => query.includeArchived || task.status !== "archived")
         .sort((a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
       const startIndex = query.cursor ? allTasks.findIndex((task) => task.id === query.cursor) + 1 : 0;
@@ -258,10 +285,8 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
       if (!await readTask(homePath, projectSlug, taskId)) {
         return failure(404, "not_found", "Task was not found");
       }
-      await Promise.all([
-        rm(taskPath(homePath, projectSlug, taskId), { force: true }),
-        rm(legacyTaskPath(homePath, projectSlug, taskId), { force: true }),
-      ]);
+      await rm(taskPath(homePath, projectSlug, taskId), { force: true });
+      await removeValidatedLegacyTask(homePath, projectSlug, taskId);
       return { ok: true };
     },
   };

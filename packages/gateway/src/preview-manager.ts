@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { readdir, rm } from "node:fs/promises";
+import { opendir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type WorkspaceError } from "./project-manager.js";
 import { atomicCreateJson, atomicWriteJson, readJsonFile, type OwnerScope } from "./state-ops.js";
 import { createProjectRegistry } from "./project-registry.js";
+import {
+  projectStateRecoveryDir,
+  readBoundedJsonFileWithIdentity,
+  removeFileIfUnchanged,
+} from "./bounded-json-file.js";
 
 export type PreviewStatus = "unknown" | "ok" | "failed";
 export type PreviewDisplayPreference = "panel" | "external";
@@ -39,6 +44,8 @@ type Result<T> = { ok: true; status?: number } & T;
 const DEFAULT_PROJECT_CAP = 100;
 const DEFAULT_TASK_CAP = 20;
 const PROBE_TIMEOUT_MS = 10_000;
+const MAX_LEGACY_PREVIEW_RECORD_BYTES = 256 * 1024;
+const MAX_PREVIEW_DISCOVERY_IDS = 512;
 
 const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const PreviewIdSchema = z.string().regex(/^prev_[A-Za-z0-9_-]{1,128}$/);
@@ -214,15 +221,33 @@ async function readPreview(homePath: string, projectSlug: string, previewId: str
   return null;
 }
 
-async function listPreviewRecords(homePath: string, projectSlug: string): Promise<PreviewRecord[]> {
+async function removeValidatedLegacyPreview(
+  homePath: string,
+  projectSlug: string,
+  previewId: string,
+): Promise<void> {
+  const path = legacyPreviewPath(homePath, projectSlug, previewId);
+  const candidate = await readBoundedJsonFileWithIdentity(path, MAX_LEGACY_PREVIEW_RECORD_BYTES);
+  if (!candidate) return;
+  const parsed = PreviewRecordSchema.safeParse(candidate.value);
+  if (!parsed.success || parsed.data.projectSlug !== projectSlug || parsed.data.id !== previewId) return;
+  await removeFileIfUnchanged(path, candidate.identity, {
+    recoveryDir: projectStateRecoveryDir(homePath),
+  });
+}
+
+async function listPreviewRecords(homePath: string, projectSlug: string): Promise<PreviewRecord[] | null> {
   const ids = new Set<string>();
   for (const root of [previewsDir(homePath, projectSlug), createProjectRegistry({ homePath }).legacyPreviewsDir(projectSlug)]) {
+    let directory: Awaited<ReturnType<typeof opendir>>;
     try {
-      const entries = await readdir(root, { withFileTypes: true });
-      for (const entry of entries) {
+      directory = await opendir(root);
+      for await (const entry of directory) {
         if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith(".json")) continue;
         const previewId = entry.name.slice(0, -".json".length);
-        if (PreviewIdSchema.safeParse(previewId).success) ids.add(previewId);
+        if (!PreviewIdSchema.safeParse(previewId).success || ids.has(previewId)) continue;
+        if (ids.size >= MAX_PREVIEW_DISCOVERY_IDS) return null;
+        ids.add(previewId);
       }
     } catch (err: unknown) {
       if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
@@ -297,6 +322,7 @@ export function createPreviewManager(options: {
       }
 
       const existing = await listPreviewRecords(homePath, projectSlug);
+      if (!existing) return failure(409, "preview_limit_exceeded", "Preview limit exceeded");
       if (existing.length >= projectCap) {
         return failure(409, "preview_limit_exceeded", "Preview limit exceeded");
       }
@@ -332,7 +358,9 @@ export function createPreviewManager(options: {
       const parsed = ListPreviewSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_preview_query", "Preview query is invalid");
       const query = parsed.data;
-      const previews = (await listPreviewRecords(homePath, projectSlug))
+      const records = await listPreviewRecords(homePath, projectSlug);
+      if (!records) return failure(409, "preview_limit_exceeded", "Preview limit exceeded");
+      const previews = records
         .filter((preview) => !query.taskId || preview.taskId === query.taskId)
         .filter((preview) => !query.sessionId || preview.sessionId === query.sessionId)
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
@@ -349,7 +377,9 @@ export function createPreviewManager(options: {
       const parsed = ListPreviewSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_preview_query", "Preview query is invalid");
       const query = parsed.data;
-      const previews = (await listPreviewRecords(homePath, projectSlug))
+      const records = await listPreviewRecords(homePath, projectSlug);
+      if (!records) return failure(409, "preview_limit_exceeded", "Preview limit exceeded");
+      const previews = records
         .filter((preview) => !query.taskId || preview.taskId === query.taskId)
         .filter((preview) => !query.sessionId || preview.sessionId === query.sessionId)
         .sort((a, b) =>
@@ -398,10 +428,8 @@ export function createPreviewManager(options: {
       if (!await readPreview(homePath, projectSlug, previewId)) {
         return failure(404, "not_found", "Preview was not found");
       }
-      await Promise.all([
-        rm(previewPath(homePath, projectSlug, previewId), { force: true }),
-        rm(legacyPreviewPath(homePath, projectSlug, previewId), { force: true }),
-      ]);
+      await rm(previewPath(homePath, projectSlug, previewId), { force: true });
+      await removeValidatedLegacyPreview(homePath, projectSlug, previewId);
       return { ok: true };
     },
   };

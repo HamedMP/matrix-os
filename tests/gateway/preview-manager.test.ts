@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -128,6 +128,28 @@ describe("preview-manager", () => {
     await expect(manager.listPreviews("repo")).resolves.toMatchObject({ previews: [] });
   });
 
+  it("preserves an unvalidated owner file that collides with a canonical preview id", async () => {
+    const manager = createPreviewManager({
+      homePath,
+      probeUrl: vi.fn(async () => ({ ok: true as const })),
+    });
+    const created = await manager.createPreview("repo", {
+      label: "Canonical preview",
+      url: "http://localhost:3000",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const ownerFile = join(homePath, "projects", "repo", "previews", `${created.preview.id}.json`);
+    await atomicWriteJson(ownerFile, { ownerNote: "keep me" });
+
+    await expect(manager.deletePreview("repo", created.preview.id)).resolves.toEqual({ ok: true });
+    await expect(readFile(ownerFile, "utf-8")).resolves.toContain("keep me");
+    await expect(stat(
+      join(homePath, "system", "projects", "repo", "previews", `${created.preview.id}.json`),
+    )).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects preview mutations from a different owner scope", async () => {
     const manager = createPreviewManager({
       homePath,
@@ -202,6 +224,21 @@ describe("preview-manager", () => {
     expect(result.ok && result.previews[0]).toMatchObject({
       id: "prev_newest",
       label: "Newest preview",
+    });
+  });
+
+  it("fails safely when preview identifier discovery exceeds its memory bound", async () => {
+    const directory = join(homePath, "system", "projects", "repo", "previews");
+    await mkdir(directory, { recursive: true });
+    await Promise.all(Array.from({ length: 513 }, (_, index) => (
+      writeFile(join(directory, `prev_untrusted_${index}.json`), "{}", "utf-8")
+    )));
+    const manager = createPreviewManager({ homePath });
+
+    await expect(manager.listPreviews("repo")).resolves.toMatchObject({
+      ok: false,
+      status: 409,
+      error: { code: "preview_limit_exceeded" },
     });
   });
 });
