@@ -17,4 +17,9 @@ describe("canSubmitChatDraft", () => {
     expect(canSubmitChatDraft("", "idle", 1)).toBe(true);
     expect(canSubmitChatDraft("", "thinking", 1)).toBe(false);
   });
+
+  it("blocks submissions when persisted project context is unavailable", () => {
+    expect(canSubmitChatDraft("build this", "idle", 0, true)).toBe(false);
+    expect(canSubmitChatDraft("build this", "idle", 0, false)).toBe(true);
+  });
 });

@@ -63,13 +63,21 @@ export default function ConversationContextPicker({
 
     let current = true;
     setListStatus("loading");
-    void loadProjects(api).then((loaded) => {
+    void (async () => {
+      const loaded = await loadProjects(api);
       if (current) setListStatus(loaded ? "ready" : "error");
-    });
+    })();
     return () => {
       current = false;
     };
-  }, [api, loadProjects, open]);
+  }, [activeProjects.length, api, loadProjects, open]);
+
+  const retryProjects = async () => {
+    if (!api) return;
+    setListStatus("loading");
+    const loaded = await loadProjects(api);
+    setListStatus(loaded ? "ready" : "error");
+  };
 
   const selectedLabel = context
     ? `Project ${context.projectName}${context.status === "unavailable" ? ", unavailable" : ""}`
@@ -152,10 +160,7 @@ export default function ConversationContextPicker({
                   type="button"
                   className="mt-2 font-medium hover:underline"
                   style={{ color: "var(--accent)" }}
-                  onClick={() => {
-                    setListStatus("loading");
-                    void loadProjects(api).then((loaded) => setListStatus(loaded ? "ready" : "error"));
-                  }}
+                  onClick={() => void retryProjects()}
                 >
                   Retry projects
                 </button>
