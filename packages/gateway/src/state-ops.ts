@@ -1,8 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { resolveWithinHome } from "./path-security.js";
+import { isMatrixManagedProjectSource } from "./project-registry-layout.js";
+import type { ProjectRegistry } from "./project-registry.js";
+import {
+  listValidatedLegacyProjectStateFiles,
+  removeValidatedLegacyProjectState,
+} from "./legacy-project-state.js";
+import { projectStateRecoveryDir } from "./bounded-json-file.js";
 
 export type OwnerScope = { type: "user" | "org"; id: string };
 
@@ -43,12 +50,15 @@ const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 const projectLocks = new Map<string, Promise<unknown>>();
 
-function nowIso(now?: () => string): string {
-  return now ? now() : new Date().toISOString();
+export class ProjectLockCapacityError extends Error {
+  constructor() {
+    super("Project operation capacity reached");
+    this.name = "ProjectLockCapacityError";
+  }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function nowIso(now?: () => string): string {
+  return now ? now() : new Date().toISOString();
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -118,75 +128,43 @@ async function listOwnedProjectFiles(
   ownerScope?: OwnerScope,
   projectSlug?: string,
 ): Promise<string[]> {
-  const registryRoot = join(homePath, "system", "projects");
+  const registry = await getProjectRegistry(homePath);
   const projectsRoot = join(homePath, "projects");
   const slugs = projectSlug && PROJECT_SLUG_REGEX.test(projectSlug)
     ? new Set([projectSlug])
-    : new Set<string>();
-  if (!projectSlug) {
-    for (const root of [registryRoot, projectsRoot]) {
-      try {
-        const entries = await readdir(root, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isDirectory() && !entry.isSymbolicLink() && PROJECT_SLUG_REGEX.test(entry.name)) {
-            slugs.add(entry.name);
-          }
-        }
-      } catch (err: unknown) {
-        if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
-          throw err;
-        }
-      }
-    }
-  }
+    : new Set([
+        ...await registry.listSlugs(),
+        ...await registry.listTombstoneSlugs(),
+      ]);
 
   const files: string[] = [];
   for (const slug of slugs) {
-    const canonicalDir = join(registryRoot, slug);
-    const canonicalConfigPath = join(canonicalDir, "config.json");
-    const legacyConfigPath = join(projectsRoot, slug, "config.json");
-    const configPath = await pathExists(canonicalConfigPath) ? canonicalConfigPath : legacyConfigPath;
-    const owner = await readOwnerScope(configPath);
-    if (!ownerMatches(owner, ownerScope)) continue;
+    const config = await registry.readConfig(slug);
+    const tombstone = await registry.readTombstone(slug);
+    const configOwned = config && ownerMatches(config.ownerScope, ownerScope);
+    const tombstoneOwned = tombstone && ownerMatches(tombstone.ownerScope, ownerScope);
+    if (!configOwned && !tombstoneOwned) continue;
 
-    if (await pathExists(canonicalDir)) {
+    const canonicalDir = registry.recordDir(slug);
+    if (configOwned && await pathExists(canonicalDir)) {
       files.push(...await listFilesRecursive(canonicalDir, homePath));
-    } else if (await pathExists(legacyConfigPath)) {
-      files.push(relative(homePath, legacyConfigPath));
     }
 
-    for (const tombstonePath of [
-      join(registryRoot, ".deleting", `${slug}.json`),
-      join(projectsRoot, ".deleting", `${slug}.json`),
-    ]) {
-      if (await pathExists(tombstonePath)
-        && ownerMatches(await readOwnerScope(tombstonePath), ownerScope)) {
-        files.push(relative(homePath, tombstonePath));
-      }
+    const canonicalTombstonePath = registry.tombstonePath(slug);
+    if (tombstoneOwned && await pathExists(canonicalTombstonePath)) {
+      files.push(relative(homePath, canonicalTombstonePath));
     }
 
-    let config: Record<string, unknown> | null = null;
-    try {
-      const value = await readJsonFile(configPath);
-      config = isRecord(value) ? value : null;
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) throw err;
+    if (!configOwned) continue;
+
+    for (const legacyStatePath of await listValidatedLegacyProjectStateFiles({
+      projectSlug: slug,
+      tasksDir: registry.legacyTasksDir(slug),
+      previewsDir: registry.legacyPreviewsDir(slug),
+    })) {
+      files.push(relative(homePath, legacyStatePath));
     }
-    const localPath = typeof config?.localPath === "string" ? resolve(config.localPath) : null;
-    if (!localPath) continue;
-    const legacyProjectRoot = join(projectsRoot, slug);
-    const legacyManaged = config?.kind === "scratch"
-      || config?.kind === "github"
-      || (config?.kind === undefined
-        && (localPath === legacyProjectRoot || localPath.startsWith(`${legacyProjectRoot}${sep}`)));
-    if (legacyManaged) {
-      for (const stateName of ["tasks", "previews"]) {
-        const legacyStateDir = join(legacyProjectRoot, stateName);
-        if (await pathExists(legacyStateDir)) {
-          files.push(...await listFilesRecursive(legacyStateDir, homePath));
-        }
-      }
-    }
+    const localPath = resolve(config.localPath);
     const resolvedHome = resolve(homePath);
     const rel = relative(resolvedHome, localPath);
     if (rel.startsWith("..") || rel === "" || resolve(rel) === rel || !await pathExists(localPath)) continue;
@@ -195,27 +173,12 @@ async function listOwnedProjectFiles(
   return [...new Set(files)];
 }
 
-async function readOwnerScope(configPath: string): Promise<OwnerScope | null> {
-  try {
-    const config = await readJsonFile(configPath);
-    if (
-      isRecord(config) &&
-      isRecord(config.ownerScope) &&
-      (config.ownerScope.type === "user" || config.ownerScope.type === "org") &&
-      typeof config.ownerScope.id === "string"
-    ) {
-      return { type: config.ownerScope.type, id: config.ownerScope.id };
-    }
-  } catch (err: unknown) {
-    if (err instanceof SyntaxError) {
-      return null;
-    }
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
-  return null;
+async function getProjectRegistry(homePath: string): Promise<ProjectRegistry> {
+  // project-registry owns validation and compatibility adoption, while it
+  // imports the atomic JSON primitives above. Resolve it lazily to avoid a
+  // runtime module cycle without duplicating the project-record schema here.
+  const { createProjectRegistry } = await import("./project-registry.js");
+  return createProjectRegistry({ homePath });
 }
 
 function ownerMatches(actual: OwnerScope | null, expected?: OwnerScope): boolean {
@@ -223,20 +186,17 @@ function ownerMatches(actual: OwnerScope | null, expected?: OwnerScope): boolean
   return actual?.type === expected.type && actual.id === expected.id;
 }
 
-function evictOldestLockIfNeeded(): void {
-  if (projectLocks.size < MAX_LOCKS) return;
-  const oldest = projectLocks.keys().next().value as string | undefined;
-  if (oldest) projectLocks.delete(oldest);
-}
-
 export async function withProjectLock<T>(projectSlug: string, callback: () => Promise<T>): Promise<T> {
-  const previous = projectLocks.get(projectSlug) ?? Promise.resolve();
+  const existing = projectLocks.get(projectSlug);
+  if (!existing && projectLocks.size >= MAX_LOCKS) {
+    throw new ProjectLockCapacityError();
+  }
+  const previous = existing ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolveRelease) => {
     release = resolveRelease;
   });
   const chained = previous.then(() => current);
-  evictOldestLockIfNeeded();
   projectLocks.set(projectSlug, chained);
 
   try {
@@ -336,36 +296,42 @@ export function createStateOps(options: { homePath: string; now?: () => string }
           error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
         };
       }
-      const registryPath = resolveWithinHome(homePath, `system/projects/${request.projectSlug}`);
-      const legacyProjectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);
-      if (!registryPath || !legacyProjectPath) {
-        return {
-          ok: false,
-          status: 400,
-          error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
-        };
-      }
-      const canonicalConfigPath = join(registryPath, "config.json");
-      const legacyConfigPath = join(legacyProjectPath, "config.json");
-      const configPath = await pathExists(canonicalConfigPath) ? canonicalConfigPath : legacyConfigPath;
-      const owner = await readOwnerScope(configPath);
-      if (!ownerMatches(owner, request.ownerScope)) {
-        return {
-          ok: false,
-          status: 404,
-          error: { code: "not_found", message: "Workspace data was not found" },
-        };
-      }
-      const config = await readJsonFile<Record<string, unknown>>(configPath);
-      if (config.kind === "scratch" || config.kind === "github") {
-        await rm(legacyProjectPath, { recursive: true, force: true });
-      } else if (configPath === legacyConfigPath) {
-        // Missing kind is legacy ambiguous state. Prefer leaving owner source
-        // behind over guessing that the whole directory is Matrix-managed.
-        await rm(legacyConfigPath, { force: true });
-      }
-      await rm(registryPath, { recursive: true, force: true });
-      return { ok: true };
+      return await withProjectLock(request.projectSlug, async () => {
+        const registry = await getProjectRegistry(homePath);
+        const config = await registry.readConfig(request.projectSlug);
+        const tombstone = await registry.readTombstone(request.projectSlug);
+        if (
+          (!config && !tombstone)
+          || (config && !ownerMatches(config.ownerScope, request.ownerScope))
+          || (tombstone && !ownerMatches(tombstone.ownerScope, request.ownerScope))
+        ) {
+          return {
+            ok: false as const,
+            status: 404,
+            error: { code: "not_found", message: "Workspace data was not found" },
+          };
+        }
+        const legacyProjectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);
+        if (!legacyProjectPath) {
+          return {
+            ok: false as const,
+            status: 400,
+            error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
+          };
+        }
+        if (config && isMatrixManagedProjectSource(homePath, config)) {
+          await rm(legacyProjectPath, { recursive: true, force: true });
+        }
+        await removeValidatedLegacyProjectState({
+          projectSlug: request.projectSlug,
+          tasksDir: registry.legacyTasksDir(request.projectSlug),
+          previewsDir: registry.legacyPreviewsDir(request.projectSlug),
+          recoveryDir: projectStateRecoveryDir(homePath),
+        });
+        await registry.removeConfig(request.projectSlug);
+        await registry.removeTombstone(request.projectSlug, tombstone ?? config!);
+        return { ok: true as const };
+      });
     },
   };
 }

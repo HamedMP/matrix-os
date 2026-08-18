@@ -1,8 +1,20 @@
-import { constants } from "node:fs";
-import { access, link, lstat, mkdir, readdir, rm, unlink } from "node:fs/promises";
+import { constants, type Dirent } from "node:fs";
+import { access, link, lstat, mkdir, opendir, realpath, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
-import { atomicCreateJson, atomicWriteJson, readJsonFile } from "./state-ops.js";
+import { atomicCreateJson, atomicWriteJson } from "./state-ops.js";
+import {
+  projectStateRecoveryDir,
+  readBoundedJsonFileWithIdentity,
+  removeFileIfUnchanged,
+  type FileIdentity,
+} from "./bounded-json-file.js";
+import {
+  containsDeniedFileApiPath,
+  isProtectedHomeSubpath,
+  resolveWithinHome,
+  resolveWritableFileApiPath,
+} from "./path-security.js";
 
 export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -24,6 +36,7 @@ const ProjectRecordSchema = z.object({
   deletingAt: z.string().max(64).optional(),
   createRequestId: z.string().max(132).optional(),
   createRequestFingerprint: z.string().max(128).optional(),
+  legacyKindInferred: z.literal(true).optional(),
   github: z.object({
     owner: z.string().min(1).max(256),
     repo: z.string().min(1).max(256),
@@ -32,7 +45,10 @@ const ProjectRecordSchema = z.object({
     lastPrRefreshAt: z.string().max(64).optional(),
     lastBranchRefreshAt: z.string().max(64).optional(),
   }).optional(),
-}).passthrough();
+});
+
+const MAX_PROJECT_RECORD_BYTES = 256 * 1024;
+const MAX_PROJECT_DISCOVERY_ENTRIES = 10_000;
 
 export interface ProjectRecord {
   id: string;
@@ -49,6 +65,7 @@ export interface ProjectRecord {
   deletingAt?: string;
   createRequestId?: string;
   createRequestFingerprint?: string;
+  legacyKindInferred?: true;
   github?: {
     owner: string;
     repo: string;
@@ -59,9 +76,45 @@ export interface ProjectRecord {
   };
 }
 
-function isProjectRecord(value: unknown, slug: string): value is ProjectRecord {
+async function parseProjectRecord(
+  value: unknown,
+  slug: string,
+  homePath: string,
+): Promise<ProjectRecord | null> {
   const parsed = ProjectRecordSchema.safeParse(value);
-  return parsed.success && parsed.data.slug === slug;
+  if (!parsed.success || parsed.data.slug !== slug) return null;
+  const localPath = resolve(parsed.data.localPath);
+  const realHomePath = await realpath(homePath);
+  const validationBase = resolveWithinHome(homePath, localPath)
+    ? homePath
+    : resolveWithinHome(realHomePath, localPath)
+      ? realHomePath
+      : null;
+  if (
+    !validationBase
+    || isProtectedHomeSubpath(validationBase, localPath)
+    || containsDeniedFileApiPath(validationBase, localPath)
+    || !resolveWritableFileApiPath(validationBase, localPath)
+  ) {
+    return null;
+  }
+  try {
+    const stats = await lstat(localPath);
+    if (stats.isSymbolicLink()) return null;
+    const realLocalPath = await realpath(localPath);
+    if (
+      !resolveWithinHome(realHomePath, realLocalPath)
+      || isProtectedHomeSubpath(realHomePath, realLocalPath)
+      || containsDeniedFileApiPath(realHomePath, realLocalPath)
+    ) {
+      return null;
+    }
+  } catch (error: unknown) {
+    // Missing owner code stays representable for recovery and diagnostics;
+    // existing paths must resolve inside the owner-controlled Matrix home.
+    if (!isErrnoCode(error, "ENOENT")) throw error;
+  }
+  return parsed.data;
 }
 
 function validatedSlug(slug: string): string {
@@ -88,36 +141,43 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function readIfPresent<T>(path: string): Promise<T | null> {
+  const candidate = await readBoundedJsonFileWithIdentity(path, MAX_PROJECT_RECORD_BYTES);
+  return candidate ? candidate.value as T : null;
+}
+
+async function listBoundedNames(
+  path: string,
+  include: (entry: Dirent) => boolean,
+  mapName: (name: string) => string = (name) => name,
+): Promise<string[]> {
   try {
-    return await readJsonFile<T>(path);
+    const directory = await opendir(path);
+    const names: string[] = [];
+    let visited = 0;
+    for await (const entry of directory) {
+      visited += 1;
+      if (visited > MAX_PROJECT_DISCOVERY_ENTRIES) {
+        throw new Error("Project registry discovery limit exceeded");
+      }
+      if (include(entry)) names.push(mapName(entry.name));
+    }
+    return names;
   } catch (error: unknown) {
-    if (isErrnoCode(error, "ENOENT")) return null;
+    if (isErrnoCode(error, "ENOENT")) return [];
     throw error;
   }
 }
 
 async function listDirectoryNames(path: string): Promise<string[]> {
-  try {
-    const entries = await readdir(path, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
-      .map((entry) => entry.name);
-  } catch (error: unknown) {
-    if (isErrnoCode(error, "ENOENT")) return [];
-    throw error;
-  }
+  return await listBoundedNames(path, (entry) => entry.isDirectory() && !entry.isSymbolicLink());
 }
 
 async function listJsonNames(path: string): Promise<string[]> {
-  try {
-    const entries = await readdir(path, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.endsWith(".json"))
-      .map((entry) => entry.name.slice(0, -".json".length));
-  } catch (error: unknown) {
-    if (isErrnoCode(error, "ENOENT")) return [];
-    throw error;
-  }
+  return await listBoundedNames(
+    path,
+    (entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.endsWith(".json"),
+    (name) => name.slice(0, -".json".length),
+  );
 }
 
 /**
@@ -143,80 +203,114 @@ export function createProjectRegistry(options: { homePath: string }) {
   const legacyPreviewsDir = (slug: string) => join(ownerProjectsRoot, validatedSlug(slug), "previews");
   const worktreesDir = (slug: string) => join(recordDir(slug), "worktrees");
 
-  const readLegacyConfig = async <T extends ProjectRecord = ProjectRecord>(slug: string): Promise<T | null> => {
+  const readLegacyConfigCandidate = async <T extends ProjectRecord = ProjectRecord>(slug: string): Promise<{
+    record: T;
+    identity: FileIdentity;
+  } | null> => {
     const legacyPath = legacyConfigPath(slug);
-    let stats;
-    try {
-      stats = await lstat(legacyPath);
-    } catch (error: unknown) {
-      if (isErrnoCode(error, "ENOENT")) return null;
-      throw error;
-    }
-    if (!stats.isFile() || stats.isSymbolicLink()) return null;
-    let value: unknown;
-    try {
-      value = await readJsonFile(legacyPath);
-    } catch (error: unknown) {
-      // projects/<folder> is owner space. A same-named application config is
-      // legacy Matrix metadata only when it has the expected record identity.
-      if (error instanceof SyntaxError) return null;
-      throw error;
-    }
-    return isProjectRecord(value, slug) ? value as T : null;
+    const candidate = await readBoundedJsonFileWithIdentity(legacyPath, MAX_PROJECT_RECORD_BYTES);
+    if (!candidate) return null;
+    const parsed = await parseProjectRecord(candidate.value, slug, homePath);
+    return parsed ? { record: parsed as T, identity: candidate.identity } : null;
   };
+
+  const readLegacyConfig = async <T extends ProjectRecord = ProjectRecord>(slug: string): Promise<T | null> =>
+    (await readLegacyConfigCandidate<T>(slug))?.record ?? null;
+
+  const readLegacyTombstoneCandidate = async (slug: string): Promise<{
+    record: ProjectRecord;
+    identity: FileIdentity;
+  } | null> => {
+    const candidate = await readBoundedJsonFileWithIdentity(
+      legacyTombstonePath(slug),
+      MAX_PROJECT_RECORD_BYTES,
+    );
+    if (!candidate) return null;
+    const parsed = await parseProjectRecord(candidate.value, slug, homePath);
+    return parsed ? { record: parsed, identity: candidate.identity } : null;
+  };
+
+  const readCanonicalTombstoneCandidate = async (slug: string): Promise<{
+    record: ProjectRecord;
+    identity: FileIdentity;
+  } | null> => {
+    const candidate = await readBoundedJsonFileWithIdentity(tombstonePath(slug), MAX_PROJECT_RECORD_BYTES);
+    if (!candidate) return null;
+    const parsed = await parseProjectRecord(candidate.value, slug, homePath);
+    return parsed ? { record: parsed, identity: candidate.identity } : null;
+  };
+
+  const sameProjectOwner = (record: ProjectRecord, expected: ProjectRecord): boolean => (
+    record.id === expected.id
+    && record.ownerScope.type === expected.ownerScope.type
+    && record.ownerScope.id === expected.ownerScope.id
+  );
 
   const archiveMatchingLegacy = async (slug: string, canonical: ProjectRecord): Promise<void> => {
     const legacyPath = legacyConfigPath(slug);
-    let stats;
-    try {
-      stats = await lstat(legacyPath);
-    } catch (error: unknown) {
-      if (isErrnoCode(error, "ENOENT")) return;
-      throw error;
-    }
-    if (!stats.isFile() || stats.isSymbolicLink()) return;
-    const legacy = await readLegacyConfig<ProjectRecord>(slug);
-    if (!legacy || legacy.id !== canonical.id || legacy.slug !== canonical.slug) return;
+    const candidate = await readLegacyConfigCandidate<ProjectRecord>(slug);
+    if (!candidate) return;
+    const legacy = candidate.record;
+    if (legacy.id !== canonical.id || legacy.slug !== canonical.slug) return;
 
     await mkdir(recordDir(slug), { recursive: true });
     const backupPath = legacyBackupPath(slug);
+    let createdBackup = false;
     try {
       await link(legacyPath, backupPath);
+      createdBackup = true;
     } catch (error: unknown) {
       if (!isErrnoCode(error, "EEXIST")) throw error;
-      const backup = await readIfPresent<ProjectRecord>(backupPath);
-      if (!backup || backup.id !== legacy.id || backup.slug !== legacy.slug) return;
     }
-    await unlink(legacyPath).catch((error: unknown) => {
-      if (!isErrnoCode(error, "ENOENT")) throw error;
+    const backupCandidate = await readBoundedJsonFileWithIdentity(backupPath, MAX_PROJECT_RECORD_BYTES);
+    const backup = backupCandidate
+      ? await parseProjectRecord(backupCandidate.value, slug, homePath)
+      : null;
+    if (!backup || backup.id !== legacy.id || backup.slug !== legacy.slug) {
+      if (createdBackup && backupCandidate) {
+        await removeFileIfUnchanged(backupPath, backupCandidate.identity, {
+          recoveryDir: projectStateRecoveryDir(homePath),
+        });
+      }
+      return;
+    }
+    await removeFileIfUnchanged(legacyPath, candidate.identity, {
+      recoveryDir: projectStateRecoveryDir(homePath),
     });
   };
 
   const readConfig = async <T extends ProjectRecord = ProjectRecord>(slug: string): Promise<T | null> => {
     const canonical = await readIfPresent<unknown>(configPath(slug));
     if (canonical) {
-      if (!isProjectRecord(canonical, slug)) return null;
-      await archiveMatchingLegacy(slug, canonical);
-      return canonical as T;
+      const parsed = await parseProjectRecord(canonical, slug, homePath);
+      if (!parsed) return null;
+      await archiveMatchingLegacy(slug, parsed);
+      return parsed as T;
     }
 
-    const legacy = await readLegacyConfig<T>(slug);
-    if (!legacy) return null;
+    const legacyCandidate = await readLegacyConfigCandidate<T>(slug);
+    if (!legacyCandidate) return null;
+    const legacy = legacyCandidate.record;
     const created = await atomicCreateJson(configPath(slug), legacy);
-    const winner: unknown = created ? legacy : await readJsonFile(configPath(slug));
-    if (!isProjectRecord(winner, slug)) return null;
-    await archiveMatchingLegacy(slug, winner);
-    return winner as T;
+    const winner: unknown = created ? legacy : await readIfPresent(configPath(slug));
+    const parsed = await parseProjectRecord(winner, slug, homePath);
+    if (!parsed) return null;
+    await archiveMatchingLegacy(slug, parsed);
+    return parsed as T;
   };
 
   const readTombstone = async <T extends ProjectRecord = ProjectRecord>(slug: string): Promise<T | null> => {
     const canonical = await readIfPresent<unknown>(tombstonePath(slug));
-    if (canonical) return isProjectRecord(canonical, slug) ? canonical as T : null;
-    const legacy = await readIfPresent<unknown>(legacyTombstonePath(slug));
-    if (!legacy || !isProjectRecord(legacy, slug)) return null;
-    const created = await atomicCreateJson(tombstonePath(slug), legacy);
-    const winner: unknown = created ? legacy : await readJsonFile(tombstonePath(slug));
-    return isProjectRecord(winner, slug) ? winner as T : null;
+    if (canonical) {
+      const parsed = await parseProjectRecord(canonical, slug, homePath);
+      return parsed ? parsed as T : null;
+    }
+    const legacyCandidate = await readLegacyTombstoneCandidate(slug);
+    if (!legacyCandidate) return null;
+    const created = await atomicCreateJson(tombstonePath(slug), legacyCandidate.record);
+    const winner: unknown = created ? legacyCandidate.record : await readIfPresent(tombstonePath(slug));
+    const parsedWinner = await parseProjectRecord(winner, slug, homePath);
+    return parsedWinner ? parsedWinner as T : null;
   };
 
   return {
@@ -238,14 +332,16 @@ export function createProjectRegistry(options: { homePath: string }) {
     readConfig,
 
     async createConfig<T extends ProjectRecord>(slug: string, value: T): Promise<boolean> {
-      if (!isProjectRecord(value, slug)) throw new Error("Invalid project registry record");
-      return await atomicCreateJson(configPath(slug), value);
+      const parsed = await parseProjectRecord(value, slug, homePath);
+      if (!parsed) throw new Error("Invalid project registry record");
+      return await atomicCreateJson(configPath(slug), parsed);
     },
 
     async writeConfig<T extends ProjectRecord>(slug: string, value: T): Promise<void> {
-      if (!isProjectRecord(value, slug)) throw new Error("Invalid project registry record");
-      await atomicWriteJson(configPath(slug), value);
-      await archiveMatchingLegacy(slug, value);
+      const parsed = await parseProjectRecord(value, slug, homePath);
+      if (!parsed) throw new Error("Invalid project registry record");
+      await atomicWriteJson(configPath(slug), parsed);
+      await archiveMatchingLegacy(slug, parsed);
     },
 
     async removeConfig(slug: string): Promise<void> {
@@ -259,16 +355,30 @@ export function createProjectRegistry(options: { homePath: string }) {
     readTombstone,
 
     async writeTombstone<T extends ProjectRecord>(slug: string, value: T): Promise<void> {
-      if (!isProjectRecord(value, slug)) throw new Error("Invalid project tombstone record");
-      await atomicWriteJson(tombstonePath(slug), value);
-      await rm(legacyTombstonePath(slug), { force: true });
+      const parsed = await parseProjectRecord(value, slug, homePath);
+      if (!parsed) throw new Error("Invalid project tombstone record");
+      const legacy = await readLegacyTombstoneCandidate(slug);
+      await atomicWriteJson(tombstonePath(slug), parsed);
+      if (legacy && sameProjectOwner(legacy.record, parsed)) {
+        await removeFileIfUnchanged(legacyTombstonePath(slug), legacy.identity, {
+          recoveryDir: projectStateRecoveryDir(homePath),
+        });
+      }
     },
 
-    async removeTombstone(slug: string): Promise<void> {
-      await Promise.all([
-        rm(tombstonePath(slug), { force: true }),
-        rm(legacyTombstonePath(slug), { force: true }),
-      ]);
+    async removeTombstone(slug: string, expected: ProjectRecord): Promise<void> {
+      const canonical = await readCanonicalTombstoneCandidate(slug);
+      const legacy = await readLegacyTombstoneCandidate(slug);
+      if (canonical && sameProjectOwner(canonical.record, expected)) {
+        await removeFileIfUnchanged(tombstonePath(slug), canonical.identity, {
+          recoveryDir: projectStateRecoveryDir(homePath),
+        });
+      }
+      if (legacy && sameProjectOwner(legacy.record, expected)) {
+        await removeFileIfUnchanged(legacyTombstonePath(slug), legacy.identity, {
+          recoveryDir: projectStateRecoveryDir(homePath),
+        });
+      }
     },
 
     async listTombstoneSlugs(): Promise<string[]> {

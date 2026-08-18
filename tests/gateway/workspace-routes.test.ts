@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 import { createZellijRuntime } from "../../packages/gateway/src/zellij-runtime.js";
 
 function jsonRequest(path: string, body: unknown): Request {
@@ -204,6 +205,64 @@ describe("workspace API routes", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("owner-scopes project detail, pull-request, and branch reads", async () => {
+    const ownerScope = { type: "user" as const, id: "user_workspace" };
+    const getProject = vi.fn(async () => ({ ok: true as const, project: { slug: "repo" } }));
+    const listPullRequests = vi.fn(async () => ({ ok: true as const, prs: [], refreshedAt: "2026-08-18T00:00:00.000Z" }));
+    const listBranches = vi.fn(async () => ({ ok: true as const, branches: [], refreshedAt: "2026-08-18T00:00:00.000Z" }));
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject,
+      deleteProject: vi.fn(),
+      listPullRequests,
+      listBranches,
+    };
+    const app = createWorkspaceRoutes({ homePath, projectManager, getOwnerScope: () => ownerScope });
+
+    expect((await app.request("/api/projects/repo")).status).toBe(200);
+    expect((await app.request("/api/projects/repo/prs")).status).toBe(200);
+    expect((await app.request("/api/projects/repo/branches")).status).toBe(200);
+
+    expect(getProject).toHaveBeenCalledWith("repo", ownerScope);
+    expect(listPullRequests).toHaveBeenCalledWith("repo", ownerScope);
+    expect(listBranches).toHaveBeenCalledWith("repo", ownerScope);
+  });
+
+  it("rejects commit reads before touching git when the principal does not own the project", async () => {
+    const getProject = vi.fn(async () => ({
+      ok: false as const,
+      status: 404,
+      error: { code: "not_found", message: "Project was not found" },
+    }));
+    const listCommits = vi.fn();
+    const getCommitDiff = vi.fn();
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject,
+      deleteProject: vi.fn(),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      gitLog: { listCommits, getCommitDiff },
+      getOwnerScope: () => ({ type: "user", id: "user_a" }),
+    });
+
+    const commits = await app.request("/api/projects/repo/commits");
+    const diff = await app.request("/api/projects/repo/commits/abcdef1/diff");
+
+    expect(commits.status).toBe(404);
+    expect(diff.status).toBe(404);
+    expect(listCommits).not.toHaveBeenCalled();
+    expect(getCommitDiff).not.toHaveBeenCalled();
+  });
+
   it("allows bodyless worktree deletes even when clients send JSON headers", async () => {
     const worktreeManager = {
       createWorktree: vi.fn(),
@@ -252,6 +311,46 @@ describe("workspace API routes", () => {
 
     expect(res.status).toBe(400);
     await expect(stat(join(homePath, "projects", "keep"))).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+  });
+
+  it("derives workspace export and delete ownership from the authenticated principal", async () => {
+    const source = join(homePath, "projects", "repo");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "README.md"), "owner workspace");
+    await atomicWriteJson(join(homePath, "system", "projects", "repo", "config.json"), {
+      id: "proj_repo",
+      name: "Repo",
+      slug: "repo",
+      kind: "folder",
+      localPath: source,
+      addedAt: "2026-08-18T00:00:00.000Z",
+      updatedAt: "2026-08-18T00:00:00.000Z",
+      ownerScope: { type: "user", id: "owner_from_principal" },
+    });
+    const app = createWorkspaceRoutes({
+      homePath,
+      getOwnerScope: () => ({ type: "user", id: "owner_from_principal" }),
+    });
+
+    const exported = await app.request(jsonRequest("/api/workspace/export", {
+      scope: "project",
+      projectSlug: "repo",
+      ownerScope: { type: "user", id: "attacker" },
+    }));
+    const deleted = await app.request(deleteJsonRequest("/api/workspace/data", {
+      scope: "project",
+      projectSlug: "repo",
+      confirmation: "delete project workspace data",
+      ownerScope: { type: "user", id: "attacker" },
+    }));
+
+    expect(exported.status).toBe(202);
+    await expect(exported.json()).resolves.toMatchObject({
+      export: { files: expect.arrayContaining(["system/projects/repo/config.json"]) },
+    });
+    expect(deleted.status).toBe(200);
+    await expect(stat(join(homePath, "system", "projects", "repo"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(source, "README.md"))).resolves.toMatchObject({ isFile: expect.any(Function) });
   });
 
   it("routes GitHub status and worktree creation through injected managers", async () => {

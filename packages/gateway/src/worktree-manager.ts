@@ -1,12 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdir, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "./project-manager.js";
-import { atomicCreateJson, atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
+import { atomicCreateJson, atomicWriteJson, withProjectLock, type OwnerScope } from "./state-ops.js";
+import {
+  projectStateRecoveryDir,
+  readBoundedJsonFileWithIdentity,
+  removeFileIfUnchanged,
+} from "./bounded-json-file.js";
 import { createProjectRegistry } from "./project-registry.js";
 
 export interface WorktreeRecord {
@@ -55,8 +60,41 @@ const BranchSchema = z.string()
   .refine((value) => !value.includes("..") && !value.endsWith("/") && !value.endsWith(".lock"));
 const SlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/);
+const TimestampSchema = z.string()
+  .min(1)
+  .max(64)
+  .refine((value) => Number.isFinite(Date.parse(value)));
+const WorktreeRecordSchema = z.object({
+  id: WorktreeIdSchema,
+  projectSlug: SlugSchema,
+  path: z.string().min(1).max(4_096),
+  sourceBranch: BranchSchema,
+  currentBranch: BranchSchema,
+  pr: z.object({
+    number: z.number().int().positive().max(10_000_000),
+    title: z.string().max(500).optional(),
+    headRef: BranchSchema.optional(),
+    baseRef: BranchSchema.optional(),
+  }).optional(),
+  dirtyState: z.enum(["unknown", "clean", "dirty"]),
+  dirtyCount: z.number().int().nonnegative().max(1_000_000).optional(),
+  createdAt: TimestampSchema,
+  lastGitRefreshAt: TimestampSchema.optional(),
+});
+const WorktreeLeaseSchema = z.object({
+  id: z.string().regex(/^lease_[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+  projectSlug: SlugSchema,
+  worktreeId: WorktreeIdSchema,
+  holderType: z.enum(["session", "review"]),
+  holderId: z.string().min(1).max(256),
+  mode: z.literal("write"),
+  acquiredAt: TimestampSchema,
+  heartbeatAt: TimestampSchema,
+  recoverableAfter: TimestampSchema.optional(),
+});
 const DEFAULT_TIMEOUT_MS = 10_000;
 const LEASE_TTL_MS = 30 * 60_000;
+const MAX_WORKTREE_RECORD_BYTES = 256 * 1024;
 
 const execFileAsync = promisify(execFile);
 
@@ -86,6 +124,16 @@ async function pathExists(path: string): Promise<boolean> {
     if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
       return false;
     }
+    throw err;
+  }
+}
+
+async function pathEntryExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (err: unknown) {
+    if (isErrnoCode(err, "ENOENT")) return false;
     throw err;
   }
 }
@@ -162,58 +210,128 @@ function legacyWorktreeMetadataPath(homePath: string, projectSlug: string, id: s
   return join(legacyWorktreePath(homePath, projectSlug, id), ".matrix", name);
 }
 
+function parseWorktreeRecord(
+  value: unknown,
+  homePath: string,
+  projectSlug: string,
+  id: string,
+): WorktreeRecord | null {
+  const parsed = WorktreeRecordSchema.safeParse(value);
+  if (!parsed.success || parsed.data.projectSlug !== projectSlug || parsed.data.id !== id) return null;
+  const recordPath = resolve(parsed.data.path);
+  const allowedPaths = [
+    managedWorktreePath(homePath, projectSlug, id),
+    legacyWorktreePath(homePath, projectSlug, id),
+  ];
+  return allowedPaths.includes(recordPath) ? parsed.data : null;
+}
+
+function parseWorktreeLease(
+  value: unknown,
+  projectSlug: string,
+  worktreeId: string,
+): WorktreeLease | null {
+  const parsed = WorktreeLeaseSchema.safeParse(value);
+  if (
+    !parsed.success
+    || parsed.data.projectSlug !== projectSlug
+    || parsed.data.worktreeId !== worktreeId
+  ) {
+    return null;
+  }
+  return parsed.data;
+}
+
 async function migrateLegacyMetadata<T extends { id: string }>(input: {
+  homePath: string;
   legacyPath: string;
   canonicalPath: string;
   backupName: string;
+  parse: (value: unknown) => T | null;
 }): Promise<T | null> {
-  let stats;
-  try {
-    stats = await lstat(input.legacyPath);
-  } catch (err: unknown) {
-    if (isErrnoCode(err, "ENOENT")) return null;
-    throw err;
-  }
-  if (!stats.isFile() || stats.isSymbolicLink()) return null;
-
-  const legacy = await readJsonFile<T>(input.legacyPath);
+  const legacyCandidate = await readBoundedJsonFileWithIdentity(
+    input.legacyPath,
+    MAX_WORKTREE_RECORD_BYTES,
+  );
+  if (!legacyCandidate) return null;
+  const legacy = input.parse(legacyCandidate.value);
+  if (!legacy) return null;
   const created = await atomicCreateJson(input.canonicalPath, legacy);
-  const canonical = created ? legacy : await readJsonFile<T>(input.canonicalPath);
+  const canonicalCandidate = created
+    ? { value: legacy }
+    : await readBoundedJsonFileWithIdentity(input.canonicalPath, MAX_WORKTREE_RECORD_BYTES);
+  const canonical = input.parse(canonicalCandidate?.value);
+  if (!canonical) return null;
   if (canonical.id !== legacy.id) return canonical;
 
   const backupPath = join(dirname(input.canonicalPath), input.backupName);
   await atomicCreateJson(backupPath, legacy);
-  await unlink(input.legacyPath).catch((err: unknown) => {
-    if (!isErrnoCode(err, "ENOENT")) throw err;
+  await removeFileIfUnchanged(input.legacyPath, legacyCandidate.identity, {
+    recoveryDir: projectStateRecoveryDir(input.homePath),
   });
   return canonical;
 }
 
 async function readWorktree(homePath: string, projectSlug: string, id: string): Promise<WorktreeRecord | null> {
-  try {
-    return await readJsonFile<WorktreeRecord>(worktreeRecordPath(homePath, projectSlug, id));
-  } catch (err: unknown) {
-    if (isErrnoCode(err, "ENOENT")) return await migrateLegacyMetadata<WorktreeRecord>({
-      legacyPath: legacyWorktreeMetadataPath(homePath, projectSlug, id, "worktree.json"),
-      canonicalPath: worktreeRecordPath(homePath, projectSlug, id),
-      backupName: "legacy-worktree.json",
-    });
-    throw err;
-  }
+  const canonicalPath = worktreeRecordPath(homePath, projectSlug, id);
+  const candidate = await readBoundedJsonFileWithIdentity(canonicalPath, MAX_WORKTREE_RECORD_BYTES);
+  if (candidate) return parseWorktreeRecord(candidate.value, homePath, projectSlug, id);
+  if (await pathEntryExists(canonicalPath)) return null;
+  return await migrateLegacyMetadata<WorktreeRecord>({
+    homePath,
+    legacyPath: legacyWorktreeMetadataPath(homePath, projectSlug, id, "worktree.json"),
+    canonicalPath,
+    backupName: "legacy-worktree.json",
+    parse: (value) => parseWorktreeRecord(value, homePath, projectSlug, id),
+  });
 }
 
 async function readLease(homePath: string, projectSlug: string, id: string): Promise<WorktreeLease | null> {
   const path = worktreeLeasePath(homePath, projectSlug, id);
+  const candidate = await readBoundedJsonFileWithIdentity(path, MAX_WORKTREE_RECORD_BYTES);
+  if (candidate) return parseWorktreeLease(candidate.value, projectSlug, id);
+  if (await pathEntryExists(path)) return null;
+  return await migrateLegacyMetadata<WorktreeLease>({
+    homePath,
+    legacyPath: legacyWorktreeMetadataPath(homePath, projectSlug, id, "lease.json"),
+    canonicalPath: path,
+    backupName: "legacy-lease.json",
+    parse: (value) => parseWorktreeLease(value, projectSlug, id),
+  });
+}
+
+async function recoverInvalidLeaseUnderLock(
+  homePath: string,
+  projectSlug: string,
+  id: string,
+): Promise<WorktreeLease | null> {
+  const path = worktreeLeasePath(homePath, projectSlug, id);
+  const quarantinePath = join(dirname(path), `.lease-${randomUUID()}.quarantine`);
   try {
-    return await readJsonFile<WorktreeLease>(path);
+    await rename(path, quarantinePath);
   } catch (err: unknown) {
-    if (isErrnoCode(err, "ENOENT")) return await migrateLegacyMetadata<WorktreeLease>({
-      legacyPath: legacyWorktreeMetadataPath(homePath, projectSlug, id, "lease.json"),
-      canonicalPath: path,
-      backupName: "legacy-lease.json",
-    });
+    if (isErrnoCode(err, "ENOENT")) return null;
     throw err;
   }
+
+  let quarantined: WorktreeLease | null = null;
+  const candidate = await readBoundedJsonFileWithIdentity(
+    quarantinePath,
+    MAX_WORKTREE_RECORD_BYTES,
+  );
+  if (candidate) quarantined = parseWorktreeLease(candidate.value, projectSlug, id);
+
+  if (!quarantined) {
+    await rm(quarantinePath, { force: true });
+    return null;
+  }
+
+  // A valid lease may have replaced the invalid pathname after the pure read.
+  // Restore it exclusively; if another process already published a winner,
+  // observe that winner instead of overwriting it.
+  const restored = await atomicCreateJson(path, quarantined);
+  await rm(quarantinePath, { force: true });
+  return restored ? quarantined : await readLease(homePath, projectSlug, id);
 }
 
 export function createWorktreeManager(options: {
@@ -274,6 +392,9 @@ export function createWorktreeManager(options: {
         const baseRef = BranchSchema.safeParse(configuredBaseRef).success ? configuredBaseRef : "main";
         const existing = await readWorktree(homePath, input.projectSlug, id);
         if (existing) return { ok: true, status: 200, worktree: existing };
+        if (await pathEntryExists(path)) {
+          return failure(409, "worktree_path_conflict", "Worktree checkout requires recovery");
+        }
 
         try {
           if (typeof input.pr === "number") {
@@ -300,7 +421,9 @@ export function createWorktreeManager(options: {
         } catch (err: unknown) {
           if (err instanceof Error) console.warn("[worktree-manager] Failed to add worktree:", err.message);
           else console.warn("[worktree-manager] Failed to add worktree:", err);
-          await rm(path, { recursive: true, force: true });
+          // Git may have left a recoverable checkout, or another actor may
+          // have created the deterministic path after our preflight. Never
+          // recursively delete an unproven path from this failure boundary.
           return failure(502, "checkout_failed", "Worktree checkout failed");
         }
         const timestamp = nowIso(options.now);
@@ -375,7 +498,10 @@ export function createWorktreeManager(options: {
       return withProjectLock(input.projectSlug, async () => {
         const leasePath = worktreeLeasePath(homePath, input.projectSlug, input.worktreeId);
         const timestamp = nowIso(options.now);
-        const existing = await readLease(homePath, input.projectSlug, input.worktreeId);
+        let existing = await readLease(homePath, input.projectSlug, input.worktreeId);
+        if (!existing && await pathEntryExists(leasePath)) {
+          existing = await recoverInvalidLeaseUnderLock(homePath, input.projectSlug, input.worktreeId);
+        }
         if (existing) {
           if (existing.holderId !== input.holderId && !isLeaseStale(existing, timestamp)) {
             return { ok: false, status: 409, holderId: existing.holderId };
@@ -424,7 +550,10 @@ export function createWorktreeManager(options: {
       }
       return withProjectLock(input.projectSlug, async () => {
         const leasePath = worktreeLeasePath(homePath, input.projectSlug, input.worktreeId);
-        const existing = await readLease(homePath, input.projectSlug, input.worktreeId);
+        let existing = await readLease(homePath, input.projectSlug, input.worktreeId);
+        if (!existing && await pathEntryExists(leasePath)) {
+          existing = await recoverInvalidLeaseUnderLock(homePath, input.projectSlug, input.worktreeId);
+        }
         if (existing && existing.holderId !== input.holderId) {
           return failure(409, "worktree_locked", "Worktree is locked");
         }
@@ -461,7 +590,10 @@ export function createWorktreeManager(options: {
           return failure(404, "not_found", "Worktree was not found");
         }
         const path = resolve(record.path);
-        const lease = await readLease(homePath, input.projectSlug, input.worktreeId);
+        let lease = await readLease(homePath, input.projectSlug, input.worktreeId);
+        if (!lease && await pathEntryExists(worktreeLeasePath(homePath, input.projectSlug, input.worktreeId))) {
+          lease = await recoverInvalidLeaseUnderLock(homePath, input.projectSlug, input.worktreeId);
+        }
         if (lease) return failure(409, "worktree_locked", "Worktree is locked");
 
         let dirtyCount = 0;

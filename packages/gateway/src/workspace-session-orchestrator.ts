@@ -63,10 +63,11 @@ function failure(status: number, code: string, message: string): Failure {
 
 async function resolveRequestedWorktree(
   worktreeManager: WorktreeManager,
+  ownerScope: OwnerScope,
   projectSlug: string,
   worktreeId: string,
 ): Promise<{ ok: true; worktree: WorktreeRecord } | Failure> {
-  const listed = await worktreeManager.listWorktrees(projectSlug);
+  const listed = await worktreeManager.listWorktrees(projectSlug, ownerScope);
   if (!listed.ok) return listed;
   const worktree = listed.worktrees.find((entry) => entry.id === worktreeId);
   return worktree ? { ok: true, worktree } : failure(404, "not_found", "Worktree was not found");
@@ -80,7 +81,7 @@ async function resolveAgentWorkspaceRoot(
   worktreeId: string | undefined,
 ): Promise<{ ok: true; path: string; worktreeId?: string } | Failure> {
   if (worktreeId) {
-    const resolved = await resolveRequestedWorktree(worktreeManager, projectSlug, worktreeId);
+    const resolved = await resolveRequestedWorktree(worktreeManager, ownerScope, projectSlug, worktreeId);
     return resolved.ok
       ? { ok: true, path: resolved.worktree.path, worktreeId: resolved.worktree.id }
       : resolved;

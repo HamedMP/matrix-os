@@ -7,7 +7,10 @@ import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
 import { containsDeniedFileApiPath, resolveExistingFileApiPath } from "./path-security.js";
+import { isMatrixManagedProjectSource } from "./project-registry-layout.js";
 import { createProjectRegistry, PROJECT_SLUG_REGEX } from "./project-registry.js";
+import { removeValidatedLegacyProjectState } from "./legacy-project-state.js";
+import { projectStateRecoveryDir } from "./bounded-json-file.js";
 
 export { PROJECT_SLUG_REGEX } from "./project-registry.js";
 
@@ -29,6 +32,7 @@ export interface ProjectConfig {
   deletingAt?: string;
   createRequestId?: string;
   createRequestFingerprint?: string;
+  legacyKindInferred?: true;
   github?: {
     owner: string;
     repo: string;
@@ -259,7 +263,7 @@ function normalizeProjectConfig(homePath: string, config: ProjectConfig | Omit<P
   if ("kind" in config && (config.kind === "scratch" || config.kind === "github" || config.kind === "folder")) {
     return config;
   }
-  return { ...config, kind: classifyLegacyProject(homePath, config) };
+  return { ...config, kind: classifyLegacyProject(homePath, config), legacyKindInferred: true };
 }
 
 function ownerScopeMatches(actual: OwnerScope, expected?: OwnerScope): boolean {
@@ -591,12 +595,12 @@ export function createProjectManager(options: {
       return { projects, nextCursor: null };
     },
 
-    async getProject(slug: string): Promise<Result<{ project: ProjectConfig }> | Failure> {
+    async getProject(slug: string, ownerScope?: OwnerScope): Promise<Result<{ project: ProjectConfig }> | Failure> {
       if (!SlugSchema.safeParse(slug).success) {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
       const project = await readProjectConfig(homePath, slug);
-      if (!project || project.archivedAt || project.deletingAt) {
+      if (!project || !ownerScopeMatches(project.ownerScope, ownerScope) || project.archivedAt || project.deletingAt) {
         return genericError(404, "not_found", "Project was not found");
       }
       return { ok: true, project };
@@ -641,7 +645,7 @@ export function createProjectManager(options: {
       if (updated.deletingAt) {
         await registry.writeTombstone(input.slug, updated);
       } else {
-        await registry.removeTombstone(input.slug);
+        await registry.removeTombstone(input.slug, current.project);
       }
       return { ok: true, project: updated };
     },
@@ -655,11 +659,17 @@ export function createProjectManager(options: {
       if (current.project.deletingAt) {
         await registry.writeTombstone(input.slug, current.project);
       }
-      if (current.project.kind !== "folder") {
+      if (isMatrixManagedProjectSource(homePath, current.project)) {
         await rm(projectPath(homePath, input.slug), { recursive: true, force: true });
       }
+      await removeValidatedLegacyProjectState({
+        projectSlug: input.slug,
+        tasksDir: registry.legacyTasksDir(input.slug),
+        previewsDir: registry.legacyPreviewsDir(input.slug),
+        recoveryDir: projectStateRecoveryDir(homePath),
+      });
       await registry.removeConfig(input.slug);
-      await registry.removeTombstone(input.slug);
+      await registry.removeTombstone(input.slug, current.project);
       return { ok: true };
     },
 
@@ -683,8 +693,8 @@ export function createProjectManager(options: {
       }
     },
 
-    async listPullRequests(slug: string): Promise<Result<{ prs: PullRequestSummary[]; refreshedAt: string }> | Failure> {
-      const projectResult = await this.getProject(slug);
+    async listPullRequests(slug: string, ownerScope?: OwnerScope): Promise<Result<{ prs: PullRequestSummary[]; refreshedAt: string }> | Failure> {
+      const projectResult = await this.getProject(slug, ownerScope);
       if (!projectResult.ok) return projectResult;
       const project = projectResult.project;
       if (!project.github) {
@@ -708,8 +718,8 @@ export function createProjectManager(options: {
       }
     },
 
-    async listBranches(slug: string): Promise<Result<{ branches: BranchSummary[]; refreshedAt: string }> | Failure> {
-      const projectResult = await this.getProject(slug);
+    async listBranches(slug: string, ownerScope?: OwnerScope): Promise<Result<{ branches: BranchSummary[]; refreshedAt: string }> | Failure> {
+      const projectResult = await this.getProject(slug, ownerScope);
       if (!projectResult.ok) return projectResult;
       const refreshedAt = nowIso(options.now);
       // Probe Git itself instead of checking for a local .git entry: a folder

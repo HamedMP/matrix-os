@@ -14,7 +14,7 @@ import {
 } from "@matrix-os/contracts";
 import { GIT_ENV } from "../git-env.js";
 import type { RequestPrincipal } from "../request-principal.js";
-import { resolveWorktreeCheckoutPath } from "../worktree-manager.js";
+import { resolveOwnedWorktree, type OwnerScopedWorktreeSource } from "./owned-worktree.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -136,6 +136,7 @@ export function createCodingAgentSourceControlStore(options: {
   gitCommand?: string;
   ghCommand?: string;
   maxQueueDepth?: number;
+  worktrees?: OwnerScopedWorktreeSource;
 }): CodingAgentSourceControlStore {
   const homePath = resolve(options.homePath);
   const ownerIds = ownerIdsFor(options);
@@ -217,15 +218,22 @@ export function createCodingAgentSourceControlStore(options: {
     });
   }
 
-  async function resolveWorktree(request: SourceControlWorktreeRequest): Promise<string> {
-    const worktreeRoot = await resolveWorktreeCheckoutPath(
-      homePath,
+  async function resolveWorktree(
+    principal: RequestPrincipal,
+    request: SourceControlWorktreeRequest,
+  ): Promise<string> {
+    const owned = await resolveOwnedWorktree(
+      options.worktrees,
+      principal,
       request.projectId,
       request.worktreeId,
     );
-    if (!worktreeRoot) {
-      throw new CodingAgentSourceControlError("source_control_not_found");
+    if (!owned.ok) {
+      throw new CodingAgentSourceControlError(
+        owned.reason === "unavailable" ? "source_control_unavailable" : "source_control_not_found",
+      );
     }
+    const worktreeRoot = resolve(owned.path);
     if (!isWithin(homePath, worktreeRoot)) {
       throw new CodingAgentSourceControlError("source_control_not_found");
     }
@@ -361,7 +369,7 @@ export function createCodingAgentSourceControlStore(options: {
         throw new CodingAgentSourceControlError("source_control_not_found");
       }
       const request = SourceControlPrepareCommitRequestSchema.parse(rawRequest);
-      const root = await resolveWorktree(request);
+      const root = await resolveWorktree(principal, request);
       const pathspecs = pathspecsFor(root, request);
 
       return withSourceControlLock(locks, root, maxQueueDepth, async () => {
@@ -419,7 +427,7 @@ export function createCodingAgentSourceControlStore(options: {
         throw new CodingAgentSourceControlError("source_control_not_found");
       }
       const request = SourceControlCreatePullRequestRequestSchema.parse(rawRequest);
-      const root = await resolveWorktree(request);
+      const root = await resolveWorktree(principal, request);
 
       return withSourceControlLock(locks, root, maxQueueDepth, async () => {
         let branch: string;

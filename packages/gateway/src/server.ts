@@ -592,6 +592,7 @@ export async function createGateway(config: GatewayConfig) {
     (id): id is string => Boolean(id),
   );
   const codingAgentProjectManager = createProjectManager({ homePath });
+  const codingAgentWorktreeManager = createWorktreeManager({ homePath });
   const codingAgentFileStore = createCodingAgentFileStore({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
@@ -599,11 +600,13 @@ export async function createGateway(config: GatewayConfig) {
     projects: {
       getProjectBySlug: (projectSlug) => codingAgentProjectManager.getProject(projectSlug),
     },
+    worktrees: codingAgentWorktreeManager,
   });
   const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
+    worktrees: codingAgentWorktreeManager,
   });
   const codingAgentNotificationPreferenceStore = createCodingAgentNotificationPreferenceStore({ homePath });
   const workspaceEventPublisher = createWorkspaceEventPublisher({
@@ -617,7 +620,6 @@ export async function createGateway(config: GatewayConfig) {
     codexEventBridge = codexExecutable
       ? createCodexEventBridge({ homePath, codexExecutable })
       : undefined;
-    const codingAgentWorktreeManager = createWorktreeManager({ homePath });
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: codingAgentWorktreeManager,

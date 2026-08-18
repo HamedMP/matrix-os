@@ -88,7 +88,10 @@ describe("workspace session orchestrator", () => {
     });
 
     expect(result).toMatchObject({ ok: true, status: 201, session: { id: "sess_fixed" } });
-    expect(d.worktreeManager.listWorktrees).toHaveBeenCalledWith("repo");
+    expect(d.worktreeManager.listWorktrees).toHaveBeenCalledWith("repo", {
+      type: "user",
+      id: "user_workspace",
+    });
     expect(d.agentSandbox.preflight).toHaveBeenCalledWith({
       agent: "codex",
       sessionId: "sess_fixed",
@@ -163,6 +166,32 @@ describe("workspace session orchestrator", () => {
     });
 
     expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+    expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects a requested worktree when its project owner does not match", async () => {
+    const listWorktrees = vi.fn(async (
+      _projectSlug: string,
+      ownerScope?: { type: "user" | "org"; id: string },
+    ) => ownerScope?.id === "owner_a"
+      ? { ok: true as const, worktrees: [worktree] }
+      : { ok: false as const, status: 404, error: { code: "not_found", message: "Project was not found" } });
+    const d = deps({ worktreeManager: { listWorktrees } });
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "owner_b" },
+      request: {
+        projectSlug: "repo",
+        worktreeId: worktree.id,
+        kind: "agent",
+        agent: "codex",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(listWorktrees).toHaveBeenCalledWith("repo", { type: "user", id: "owner_b" });
     expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
     expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
   });

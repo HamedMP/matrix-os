@@ -41,6 +41,7 @@ async function createRouteHarness(options: {
   gitCommandFactory?: (homePath: string) => Promise<string>;
   ghCommandFactory?: (homePath: string) => Promise<string>;
   maxQueueDepth?: number;
+  projectOwnerId?: string;
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-source-control-"));
   const worktreeRoot = join(homePath, "projects", projectId, "worktrees", worktreeId);
@@ -62,6 +63,13 @@ async function createRouteHarness(options: {
       gitCommand,
       ghCommand,
       maxQueueDepth: options.maxQueueDepth,
+      worktrees: {
+        listWorktrees: async (_projectSlug, ownerScope) => (
+          ownerScope.id === (options.projectOwnerId ?? testPrincipal.userId)
+            ? { ok: true as const, worktrees: [{ id: worktreeId, path: worktreeRoot }] }
+            : { ok: false as const, status: 404, error: { code: "not_found" } }
+        ),
+      },
     }),
     getPrincipal: () => {
       if (options.principal === null) throw new MissingRequestPrincipalError();
@@ -290,6 +298,37 @@ describe("coding agent source-control route", () => {
     } finally {
       await rm(ownerHarness.homePath, { recursive: true, force: true });
       await rm(otherHarness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects prepare-commit when the project belongs to another owner", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      projectOwnerId: "other_project_owner",
+    });
+    try {
+      const filePath = join(harness.worktreeRoot, "src", "index.ts");
+      await writeFile(filePath, "export const answer = 99;\n");
+
+      const response = await harness.app.request("/api/coding-agents/source-control/prepare-commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          message: "fix: cross owner attempt",
+          paths: ["src/index.ts"],
+          clientRequestId: "req_cross_owner_commit",
+        }),
+      });
+
+      expect(response.status).toBe(404);
+      expect(execFileSync("git", ["status", "--porcelain"], {
+        cwd: harness.worktreeRoot,
+        encoding: "utf8",
+      })).toContain("src/index.ts");
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
     }
   });
 

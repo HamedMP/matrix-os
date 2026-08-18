@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -148,6 +149,37 @@ describe("worktree-manager", () => {
     });
   });
 
+  it("rejects malformed canonical worktree metadata", async () => {
+    const manager = createWorktreeManager({ homePath, runCommand: successfulRunCommand() });
+    const created = await manager.createWorktree({ projectSlug: "repo", branch: "main" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const metadataPath = join(
+      homePath,
+      "system",
+      "projects",
+      "repo",
+      "worktrees",
+      created.worktree.id,
+      "worktree.json",
+    );
+    await atomicWriteJson(metadataPath, {
+      id: created.worktree.id,
+      projectSlug: "repo",
+      path: created.worktree.path,
+      sourceBranch: "main",
+      currentBranch: "main",
+      dirtyState: "not-a-real-state",
+      createdAt: "2026-04-26T00:00:00.000Z",
+    });
+
+    await expect(manager.getWorktree("repo", created.worktree.id)).resolves.toMatchObject({
+      ok: false,
+      status: 404,
+      error: { code: "not_found" },
+    });
+  });
+
   it("serializes concurrent creation for the same worktree", async () => {
     const runCommand = successfulRunCommand();
     const manager = createWorktreeManager({ homePath, runCommand });
@@ -161,6 +193,26 @@ describe("worktree-manager", () => {
     expect(results.filter((result) => result.ok && result.status === 200)).toHaveLength(1);
     expect(runCommand).toHaveBeenCalledTimes(1);
     expect(runCommand).toHaveBeenCalledWith("git", ["worktree", "add", "--", expect.any(String), "feature/concurrent"], expect.any(Object));
+  });
+
+  it("preserves a pre-existing worktree directory when metadata is missing", async () => {
+    const branch = "feature/recovery";
+    const id = `wt_${createHash("sha256").update(`repo:${branch}`).digest("hex").slice(0, 16)}`;
+    const existingPath = join(homePath, "worktrees", "repo", id);
+    await mkdir(existingPath, { recursive: true });
+    await writeFile(join(existingPath, "UNCOMMITTED.txt"), "owner changes");
+    const runCommand = vi.fn(async () => {
+      throw new Error("destination already exists");
+    });
+    const manager = createWorktreeManager({ homePath, runCommand });
+
+    await expect(manager.createWorktree({ projectSlug: "repo", branch })).resolves.toMatchObject({
+      ok: false,
+      status: 409,
+      error: { code: "worktree_path_conflict" },
+    });
+    await expect(readFile(join(existingPath, "UNCOMMITTED.txt"), "utf-8")).resolves.toBe("owner changes");
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it("rejects invalid refs before invoking git", async () => {
@@ -209,6 +261,87 @@ describe("worktree-manager", () => {
       worktreeId: created.worktree.id,
       holderId: "sess_1",
     })).resolves.toMatchObject({ ok: true });
+  });
+
+  it("ignores malformed lease metadata so it cannot block a worktree forever", async () => {
+    const manager = createWorktreeManager({
+      homePath,
+      runCommand: successfulRunCommand(),
+      now: () => "2026-04-26T01:00:00.000Z",
+    });
+    const created = await manager.createWorktree({ projectSlug: "repo", branch: "lease-validation" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const leasePath = join(
+      homePath,
+      "system",
+      "projects",
+      "repo",
+      "worktrees",
+      created.worktree.id,
+      "lease.json",
+    );
+    await atomicWriteJson(leasePath, {
+      id: "lease_00000000-0000-4000-8000-000000000000",
+      projectSlug: "repo",
+      worktreeId: created.worktree.id,
+      holderType: "session",
+      holderId: "sess_stuck",
+      mode: "write",
+      acquiredAt: "2026-04-26T00:00:00.000Z",
+      heartbeatAt: "not-a-timestamp",
+    });
+
+    await expect(manager.listActiveLeases("repo")).resolves.toEqual({ ok: true, leases: [] });
+    await expect(stat(leasePath)).resolves.toMatchObject({ isFile: expect.any(Function) });
+    await expect(manager.acquireLease({
+      projectSlug: "repo",
+      worktreeId: created.worktree.id,
+      holderType: "session",
+      holderId: "sess_recovered",
+    })).resolves.toMatchObject({ ok: true, lease: { holderId: "sess_recovered" } });
+    await expect(manager.listActiveLeases("repo")).resolves.toMatchObject({
+      ok: true,
+      leases: [{ holderId: "sess_recovered" }],
+    });
+  });
+
+  it("discards oversized lease metadata without parsing it during recovery", async () => {
+    const manager = createWorktreeManager({
+      homePath,
+      runCommand: successfulRunCommand(),
+      now: () => "2026-04-26T01:00:00.000Z",
+    });
+    const created = await manager.createWorktree({ projectSlug: "repo", branch: "oversized-lease" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const leasePath = join(
+      homePath,
+      "system",
+      "projects",
+      "repo",
+      "worktrees",
+      created.worktree.id,
+      "lease.json",
+    );
+    await writeFile(leasePath, JSON.stringify({
+      id: "lease_00000000-0000-4000-8000-000000000000",
+      projectSlug: "repo",
+      worktreeId: created.worktree.id,
+      holderType: "session",
+      holderId: "sess_oversized",
+      mode: "write",
+      acquiredAt: "2026-04-26T00:00:00.000Z",
+      heartbeatAt: "2026-04-26T01:00:00.000Z",
+      padding: "x".repeat(300 * 1024),
+    }));
+
+    await expect(manager.acquireLease({
+      projectSlug: "repo",
+      worktreeId: created.worktree.id,
+      holderType: "session",
+      holderId: "sess_recovered",
+    })).resolves.toMatchObject({ ok: true, lease: { holderId: "sess_recovered" } });
   });
 
   it("allows only one concurrent writer to acquire a new worktree lease", async () => {

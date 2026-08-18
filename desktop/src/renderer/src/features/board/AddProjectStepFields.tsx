@@ -131,7 +131,13 @@ export function ExistingFolderStepFields({
     // for those already-connected legacy projects during lazy migration.
     const segments = normalized.split("/");
     if (segments.length !== 2 || segments[0] !== "projects") return undefined;
-    return projects.find((project) => project.slug === segments[1]);
+    return projects.find((project) => {
+      if (project.slug !== segments[1] || project.kind === "folder") return false;
+      const localPath = normalizePath(project.localPath ?? "");
+      return localPath === normalized
+        || localPath.endsWith(`/${normalized}`)
+        || localPath.includes(`/${normalized}/`);
+    });
   };
   const resolveFolderChoice = (path: string): FolderPickerChoice => {
     const project = projectForPath(path);

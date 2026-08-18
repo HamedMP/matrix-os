@@ -159,8 +159,9 @@ describe("CreateProjectDialog", () => {
     const existingProject = {
       slug: "matrix-os",
       name: "Matrix OS",
-      localPath: "/home/matrix/home/apps/matrix-os",
-      githubBacked: false,
+      kind: "github" as const,
+      localPath: "/home/matrix/home/projects/matrix-os/repo",
+      githubBacked: true,
     };
     const get = vi.fn(async (requestPath: string) => {
       if (requestPath === "/api/files/list?path=") {
@@ -197,6 +198,43 @@ describe("CreateProjectDialog", () => {
       title: "Matrix OS",
     });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("allows an unrelated same-slug folder under Projects to be connected", async () => {
+    const existingProject = {
+      slug: "foo",
+      name: "Foo",
+      kind: "folder" as const,
+      localPath: "/home/matrix/home/workspaces/foo",
+      githubBacked: false,
+    };
+    const get = vi.fn(async (requestPath: string) => {
+      if (requestPath === "/api/files/list?path=") {
+        return { entries: [{ name: "projects", type: "directory" }] };
+      }
+      if (requestPath === "/api/files/list?path=projects") {
+        return { entries: [{ name: "foo", type: "directory" }] };
+      }
+      return { entries: [] };
+    });
+    const createProject = vi.fn(async () => ({
+      slug: "projects-foo",
+      name: "Projects Foo",
+      kind: "folder" as const,
+      localPath: "/home/matrix/home/projects/foo",
+      githubBacked: false,
+    }));
+    useConnection.setState({ api: { post: vi.fn(), get, baseUrl: "https://gateway.test" } as never });
+    useBoard.setState({ projects: [existingProject], createProject, selectProject: vi.fn(async () => undefined) });
+
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open projects" })).not.toBeNull());
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open projects" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open foo" }));
+
+    expect(screen.queryByRole("button", { name: "Open Foo" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Choose foo" }).hasAttribute("disabled")).toBe(false);
   });
 
   it("connects an ordinary checkout directly under Projects", async () => {

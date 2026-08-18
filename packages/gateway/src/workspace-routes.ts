@@ -457,7 +457,9 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.get("/api/projects/:slug", async (c) => {
-    const result = await projectManager.getProject(c.req.param("slug"));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.getProject(c.req.param("slug"), ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ project: result.project });
   });
@@ -499,13 +501,17 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.get("/api/projects/:slug/prs", async (c) => {
-    const result = await projectManager.listPullRequests(c.req.param("slug"));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.listPullRequests(c.req.param("slug"), ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ prs: result.prs, refreshedAt: result.refreshedAt });
   });
 
   app.get("/api/projects/:slug/branches", async (c) => {
-    const result = await projectManager.listBranches(c.req.param("slug"));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.listBranches(c.req.param("slug"), ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ branches: result.branches, refreshedAt: result.refreshedAt });
   });
@@ -518,6 +524,10 @@ export function createWorkspaceRoutes(options: {
   app.get("/api/projects/:slug/commits", async (c) => {
     const query = ListCommitsQuerySchema.safeParse(c.req.query());
     if (!query.success) return c.json(errorBody("invalid_request", "Query parameters are invalid"), 400);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const project = await projectManager.getProject(c.req.param("slug"), ownerScope);
+    if (!project.ok) return c.json({ error: project.error }, status(project.status));
     const result = await gitLog.listCommits(c.req.param("slug"), {
       limit: query.data.limit,
       cursor: query.data.cursor,
@@ -537,6 +547,10 @@ export function createWorkspaceRoutes(options: {
     if (!sha.success || !query.success) {
       return c.json(errorBody("invalid_request", "Request parameters are invalid"), 400);
     }
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const project = await projectManager.getProject(c.req.param("slug"), ownerScope);
+    if (!project.ok) return c.json({ error: project.error }, status(project.status));
     const result = await gitLog.getCommitDiff(c.req.param("slug"), sha.data, {
       maxFiles: query.data.maxFiles,
       maxLines: query.data.maxLines,
@@ -852,14 +866,18 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/workspace/export", limited, async (c) => {
     const body = await parseJson(c, ExportWorkspaceSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const manifest = await stateOps.exportWorkspace(body.value);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const manifest = await stateOps.exportWorkspace({ ...body.value, ownerScope });
     return c.json({ export: { id: manifest.id, status: "complete", files: manifest.files } }, 202);
   });
 
   app.delete("/api/workspace/data", limited, async (c) => {
     const body = await parseJson(c, DeleteWorkspaceSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const result = await stateOps.deleteWorkspaceData(body.value);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await stateOps.deleteWorkspaceData({ ...body.value, ownerScope });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });
   });
