@@ -127,7 +127,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 // surface — with a hover-revealed footer, matching the reference chat anatomy.
 // The markdown pipeline (react-markdown + GFM + highlight + redaction) is
 // unchanged; Message/Bubble own layout only.
-function AssistantRow({ events }: { events: AssistantEvent[] }) {
+function AssistantRow({ events, showMeta }: { events: AssistantEvent[]; showMeta: boolean }) {
   const { text, completed } = useMemo(() => assistantText(events), [events]);
   if (!text) {
     return completed ? (
@@ -136,7 +136,7 @@ function AssistantRow({ events }: { events: AssistantEvent[] }) {
   }
   return (
     <Message>
-      <MessageContent>
+      <MessageContent className={showMeta ? "gap-1" : "gap-0"}>
         <Bubble variant="ghost">
           <BubbleContent className="overflow-visible">
             <div className={TRANSCRIPT_MARKDOWN_CLASS} style={{ color: "var(--text-primary)" }} data-selectable>
@@ -163,12 +163,14 @@ function AssistantRow({ events }: { events: AssistantEvent[] }) {
             </div>
           </BubbleContent>
         </Bubble>
-        <MessageFooter className="mt-1 gap-2 opacity-0 transition-opacity group-hover/message:opacity-100">
-          <CopyButton text={text} label="Copy assistant message" />
-          <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-            {occurredAtLabel(events[0]?.occurredAt ?? "")}
-          </span>
-        </MessageFooter>
+        {showMeta ? (
+          <MessageFooter className="gap-2 opacity-0 transition-opacity group-hover/message:opacity-100">
+            <CopyButton text={text} label="Copy assistant message" />
+            <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+              {occurredAtLabel(events[0]?.occurredAt ?? "")}
+            </span>
+          </MessageFooter>
+        ) : null}
       </MessageContent>
     </Message>
   );
@@ -224,7 +226,7 @@ function UserRow({ event }: { event: Extract<AgentThreadEvent, { type: "user.mes
   const collapsible = event.text.length > COLLAPSED_USER_MAX_CHARS || lines > COLLAPSED_USER_MAX_LINES;
   return (
     <Message align="end">
-      <MessageContent>
+      <MessageContent className="gap-0">
         <Bubble variant="secondary" align="end">
           <BubbleContent
             className="rounded-[var(--radius-xl)] rounded-br-md border-[var(--border-subtle)] px-3.5 whitespace-pre-wrap"
@@ -592,12 +594,14 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
 function TranscriptItem({
   item,
   settled,
+  showAssistantMeta = true,
   workedLabel,
   answeredInputs,
   resolvedApprovals,
 }: {
   item: TimelineItem;
   settled: boolean;
+  showAssistantMeta?: boolean;
   workedLabel: string | undefined;
   answeredInputs: ReadonlySet<string>;
   resolvedApprovals: ReadonlySet<string>;
@@ -607,7 +611,7 @@ function TranscriptItem({
     <Fragment>
       {item.kind === "assistant" ? (
         <ConversationItem messageId={item.key}>
-          <AssistantRow events={item.events} />
+          <AssistantRow events={item.events} showMeta={showAssistantMeta} />
         </ConversationItem>
       ) : item.kind === "tool-run" ? (
         <ConversationItem messageId={item.key}>
@@ -828,21 +832,29 @@ export function AgentConversationView({
                 />
               );
             }
+            const lastAgentOutputIndex = section.items.reduce(
+              (lastIndex, item, index) => item.kind === "assistant" || item.kind === "tool-run" ? index : lastIndex,
+              -1,
+            );
             return (
               <section
                 key={section.key}
                 aria-label="Conversation turn"
                 data-slot="agent-turn"
                 data-state={section.settled ? "settled" : "active"}
-                className="flex min-w-0 flex-col gap-5"
+                className="flex min-w-0 flex-col gap-2"
               >
-                {section.items.map((item) => {
+                {section.items.map((item, index) => {
                   const itemKey = item.kind === "event" ? `event:${item.event.eventId}` : item.key;
+                  // An assistant row followed by more assistant/tool output is
+                  // commentary, not the turn result. Keep its text selectable
+                  // without reserving a hidden copy/timestamp footer.
                   return (
                     <TranscriptItem
                       key={itemKey}
                       item={item}
                       settled={section.settled}
+                      showAssistantMeta={item.kind === "assistant" && index === lastAgentOutputIndex}
                       workedLabel={turnSummaryByItemKey.get(itemKey)}
                       answeredInputs={answeredInputs}
                       resolvedApprovals={resolvedApprovals}

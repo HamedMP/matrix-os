@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { _electron, type ElectronApplication, type Page } from "playwright";
+import { _electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { inspectDesktopHandoffBaseline } from "./handoff-electron-baseline";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
@@ -52,6 +52,12 @@ async function ensureSignedIn(page: Page): Promise<void> {
   ]);
   if (bootState === "signed-out") await continueButton.click();
   await terminalNavigation.waitFor({ timeout: 15_000 });
+}
+
+async function verticalGap(before: Locator, after: Locator): Promise<number> {
+  const [beforeBox, afterBox] = await Promise.all([before.boundingBox(), after.boundingBox()]);
+  if (!beforeBox || !afterBox) throw new Error("Could not measure transcript rows");
+  return afterBox.y - (beforeBox.y + beforeBox.height);
 }
 
 suite("operator desktop e2e", () => {
@@ -218,6 +224,30 @@ suite("operator desktop e2e", () => {
     expect(await toolSummary.getAttribute("aria-expanded")).toBe("false");
     expect(await page.getByRole("button", { name: "Tool call Read conversation renderer" }).count()).toBe(0);
     expect(await page.getByLabel("Agent provider").textContent()).toBe("Codex");
+
+    const userRow = page.locator('[data-message-id="user:msg_mat_348_user"]');
+    const introRow = page.locator('[data-message-id="assistant:msg_mat_348_intro"]');
+    const toolRow = toolSummary.locator('xpath=ancestor::*[@data-message-id][1]');
+    const resultRow = page.locator('[data-message-id="assistant:msg_mat_348_result"]');
+    const gaps = await Promise.all([
+      verticalGap(userRow, introRow),
+      verticalGap(introRow, toolRow),
+      verticalGap(toolRow, resultRow),
+    ]);
+    const visibleGaps = await Promise.all([
+      verticalGap(userRow.locator('[data-slot="bubble-content"]'), introRow.locator("[data-selectable]")),
+      verticalGap(introRow.locator("[data-selectable]"), toolSummary),
+      verticalGap(toolSummary, resultRow.locator("[data-selectable]")),
+    ]);
+    // T3's current timeline uses a 16px boundary after a user message and an
+    // 8px cadence for commentary/work/result rows. Matrix may preserve its
+    // own typography, but a settled turn must keep that compact hierarchy.
+    expect(gaps[0]).toBeLessThanOrEqual(20);
+    expect(gaps[1]).toBeLessThanOrEqual(12);
+    expect(gaps[2]).toBeLessThanOrEqual(12);
+    expect(visibleGaps[0]).toBeLessThanOrEqual(44);
+    expect(visibleGaps[1]).toBeLessThanOrEqual(20);
+    expect(visibleGaps[2]).toBeLessThanOrEqual(20);
     await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "01-settled-tool-group.png") });
 
     await toolSummary.click();

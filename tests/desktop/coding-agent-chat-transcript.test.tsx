@@ -288,6 +288,27 @@ describe("AgentConversationView transcript", () => {
     expect(screen.getByRole("button", { name: "Tool call Check 6" })).toBeTruthy();
   });
 
+  it("keeps message actions on the terminal result without spacing out commentary", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          userMessage("msg_user_meta", "Inspect the transcript", 1),
+          delta("msg_commentary", "I’ll inspect the renderer first.", 2),
+          completedEvent("msg_commentary"),
+          ...toolEvents("tc_meta", "Read renderer", "success"),
+          delta("msg_result", "The renderer is verified.", 20),
+          completedEvent("msg_result"),
+        ], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Copy assistant message" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Copy your message" })).toBeTruthy();
+  });
+
   it("keeps multiple turn sections in received chronology", () => {
     render(
       <AgentConversationView
