@@ -22,6 +22,7 @@ import { logTerminalDebug } from "./terminal-debug.js";
 import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { createConversationLifecycle } from "./conversation-lifecycle.js";
+import { createConversationContextResolver } from "./conversation-context.js";
 import { createConversationMutationLock } from "./conversation-mutation-lock.js";
 import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
 import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
@@ -3436,10 +3437,12 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  registerConversationHistoryRoutes(app, { conversations, conversationLifecycle });
-
-  app.get("/api/conversations", (c) => {
-    return c.json(conversations.list());
+  registerConversationHistoryRoutes(app, {
+    conversations,
+    conversationLifecycle,
+    conversationRuns,
+    contextResolver: createConversationContextResolver(codingAgentProjectManager),
+    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   });
 
   app.post("/api/conversations", conversationBodyLimit, async (c) => {

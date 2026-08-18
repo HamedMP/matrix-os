@@ -35,6 +35,7 @@ export interface ConversationMeta {
   messageCount: number;
   createdAt: number;
   updatedAt: number;
+  context?: ConversationContext;
 }
 
 export interface SearchResult {
@@ -59,7 +60,8 @@ export interface ConversationStore {
   updateContext(
     id: KernelConversationId,
     projectId: string | null,
-  ): Promise<"updated" | "not_found">;
+    isActive?: () => boolean,
+  ): Promise<"updated" | "not_found" | "busy">;
   delete(
     id: KernelConversationId,
     isActive?: () => boolean,
@@ -284,6 +286,7 @@ export function createConversationStore(
           messageCount: conv.messages.length,
           createdAt: conv.createdAt,
           updatedAt: conv.updatedAt,
+          ...(conv.context ? { context: conv.context } : {}),
         };
       });
     },
@@ -311,8 +314,9 @@ export function createConversationStore(
       return id;
     },
 
-    updateContext(id, projectId) {
+    updateContext(id, projectId, isActive) {
       return mutationLock.run(id, async () => {
+        if (isActive?.()) return "busy";
         const current = active.get(id) ?? readFromDisk(id);
         if (!current) return "not_found";
 

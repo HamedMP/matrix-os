@@ -311,9 +311,13 @@ export const KernelConversationDeleteResponseSchema = z.object({
 
 export const KernelConversationMutationErrorCodeSchema = z.enum([
   "invalid_conversation_id",
+  "invalid_conversation_context",
   "conversation_not_found",
   "conversation_busy",
   "conversation_delete_unavailable",
+  "project_unavailable",
+  "project_context_conflict",
+  "conversation_context_unavailable",
 ]);
 
 export type KernelConversationId = z.infer<typeof KernelConversationIdSchema>;
