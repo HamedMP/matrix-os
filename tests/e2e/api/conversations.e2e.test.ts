@@ -119,7 +119,7 @@ describe("E2E: Conversation project context dispatch", () => {
     gw = await startTestGateway({
       spawnFn: async function* (_message, config) {
         observedConfigs.push(config);
-        const sessionId = config.sessionId ?? "new-context-session";
+        const sessionId = config.sessionId ?? `new-context-session-${observedConfigs.length}`;
         yield { type: "init", sessionId } as KernelEvent;
         yield {
           type: "result",
