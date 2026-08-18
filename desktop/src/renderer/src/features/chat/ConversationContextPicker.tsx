@@ -127,7 +127,7 @@ export default function ConversationContextPicker({
           sideOffset={8}
           aria-label="Project context picker"
           className="z-50 w-72 rounded-xl border p-1.5 shadow-xl"
-          style={{ borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}
+          style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             if (!focusFirstOnOpen.current) return;
