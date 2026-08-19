@@ -384,6 +384,17 @@ describe('CI workflows', () => {
     expect(workflow).toContain('--min-instances "$min_instances"');
   });
 
+  it('allocates CPU outside requests for production background workers', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const productionRoleDeploy = workflow.match(
+      /- name: Deploy production-role revision[\s\S]*?- name: Promote revision/,
+    )?.[0] ?? '';
+
+    expect(productionRoleDeploy).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=true');
+    expect(productionRoleDeploy).toContain('--no-cpu-throttling');
+  });
+
   it('smokes the pre-VPS auth and onboarding shell surface before promotion', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
