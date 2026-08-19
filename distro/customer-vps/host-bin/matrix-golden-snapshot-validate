@@ -15,6 +15,15 @@ if [ -f "$version_file" ] && [ "$(tr -d '\r\n' < "$version_file")" = "$expected_
   exact_bundle=true
 fi
 
+fast_path_ready=false
+if MATRIX_IMAGE_SOURCE=snapshot \
+  MATRIX_IMAGE_VERSION="$expected_version" \
+  MATRIX_SNAPSHOT_SOURCE_VERSION="$expected_version" \
+  MATRIX_TARGET_BUNDLE_SHA256="$expected_sha256" \
+  /opt/matrix/bin/matrix-golden-snapshot-fast-path; then
+  fast_path_ready=true
+fi
+
 healthy=false
 if systemctl is-active --quiet matrix-gateway.service \
   && systemctl is-active --quiet matrix-shell.service \
@@ -185,6 +194,7 @@ print(json.dumps({
 }, separators=(",", ":")))
 PY
 
-[ "$exact_bundle" = true ] && [ "$healthy" = true ] && [ "$fresh_activation" = true ] \
+[ "$exact_bundle" = true ] && [ "$fast_path_ready" = true ] \
+  && [ "$healthy" = true ] && [ "$fresh_activation" = true ] \
   && [ "$unique_machine_id" = true ] && [ "$unique_ssh_host_key" = true ] \
   && [ "$forbidden_state_absent" = true ]

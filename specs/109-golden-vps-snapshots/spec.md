@@ -431,8 +431,11 @@ straightforward billing, and one-owner-per-VPS isolation.
   follow their mandatory cleanup lifecycle.
 - **FR-021**: Before creating the VPS, the system MUST resolve the exact target host
   bundle and choose only a ready, non-quarantined, compatible snapshot whose immutable
-  bundle SHA-256 exactly matches the target. When no exact image exists, the system MUST
-  use the clean Ubuntu path.
+  bundle SHA-256 exactly matches the target. Reusing baked host prerequisites or bundle
+  bytes during first boot MUST additionally require validation-clone-approved,
+  non-symlinked readiness evidence whose bundle version and digest exactly match the
+  request; missing or mismatched evidence MUST fall back to the full bootstrap. When no
+  exact image exists, the system MUST use the clean Ubuntu path.
 - **FR-022**: Snapshot compatibility MUST account for architecture, base-system and boot
   compatibility, minimum disk requirement, and any release-declared activation
   constraint.

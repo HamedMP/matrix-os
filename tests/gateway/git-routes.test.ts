@@ -3,9 +3,11 @@ import { mkdtemp } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
 
 const SHA = "a".repeat(40);
+const LOCAL_OWNER_SCOPE = { type: "user" as const, id: "local" };
 
 const COMMIT = {
   sha: SHA,
@@ -42,6 +44,11 @@ describe("git log routes", () => {
 
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "matrix-git-routes-"));
+    const projects = createProjectManager({ homePath });
+    for (const slug of ["repo", "missing"]) {
+      const created = await projects.createProject({ mode: "scratch", slug, name: slug });
+      if (!created.ok) throw new Error(`Failed to create ${slug} project fixture`);
+    }
   });
 
   afterEach(() => {
@@ -52,7 +59,7 @@ describe("git log routes", () => {
   describe("GET /api/projects/:slug/commits", () => {
     it("returns commits with defaults for limit and cursor", async () => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, getOwnerScope: () => LOCAL_OWNER_SCOPE });
 
       const res = await app.request("/api/projects/repo/commits");
 
@@ -67,7 +74,7 @@ describe("git log routes", () => {
 
     it("passes bounded limit and cursor through to the service", async () => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, getOwnerScope: () => LOCAL_OWNER_SCOPE });
 
       const cursor = `${"a".repeat(24)}.120`;
       const res = await app.request(`/api/projects/repo/commits?limit=50&cursor=${cursor}`);
@@ -84,7 +91,7 @@ describe("git log routes", () => {
       "/api/projects/repo/commits?cursor=-5",
     ])("rejects invalid query parameters: %s", async (path) => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, getOwnerScope: () => LOCAL_OWNER_SCOPE });
 
       const res = await app.request(path);
 
@@ -103,7 +110,7 @@ describe("git log routes", () => {
           error: { code: "not_found", message: "Project was not found" },
         })),
       });
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, getOwnerScope: () => LOCAL_OWNER_SCOPE });
 
       const res = await app.request("/api/projects/missing/commits");
 
@@ -115,7 +122,7 @@ describe("git log routes", () => {
   describe("GET /api/projects/:slug/commits/:sha/diff", () => {
     it("returns parsed diff files", async () => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, getOwnerScope: () => LOCAL_OWNER_SCOPE });
 
       const res = await app.request(`/api/projects/repo/commits/${SHA}/diff`);
 
@@ -130,7 +137,7 @@ describe("git log routes", () => {
 
     it("accepts bounded maxFiles and maxLines overrides", async () => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, getOwnerScope: () => LOCAL_OWNER_SCOPE });
 
       const res = await app.request(`/api/projects/repo/commits/${SHA}/diff?maxFiles=50&maxLines=100`);
 
@@ -146,7 +153,7 @@ describe("git log routes", () => {
       `/api/projects/repo/commits/${SHA}/diff?maxLines=2001`,
     ])("rejects invalid parameters: %s", async (path) => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, getOwnerScope: () => LOCAL_OWNER_SCOPE });
 
       const res = await app.request(path);
 
@@ -164,7 +171,7 @@ describe("git log routes", () => {
           error: { code: "not_found", message: "Commit was not found" },
         })),
       });
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, getOwnerScope: () => LOCAL_OWNER_SCOPE });
 
       const res = await app.request(`/api/projects/repo/commits/${SHA}/diff`);
 

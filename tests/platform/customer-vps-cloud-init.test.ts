@@ -453,6 +453,60 @@ exit 99
     expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256"');
   });
 
+  it('skips rebaking AWS and the host bundle only after exact snapshot validation', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const hostEnv = cloudInit.indexOf('. /opt/matrix/env/host.env');
+    const fastPath = cloudInit.indexOf('/opt/matrix/bin/matrix-golden-snapshot-fast-path');
+    const apt = cloudInit.indexOf('apt_get_update()', fastPath);
+    const awsSlowPath = cloudInit.indexOf('if [ "$exact_snapshot_fast_path" != true ]; then', apt);
+    const awsDownload = cloudInit.indexOf('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip', awsSlowPath);
+    const sharedSetup = cloudInit.indexOf('install -d -o root -g matrix -m 0770 /opt/matrix');
+    const bundleSlowPath = cloudInit.indexOf('if [ "$exact_snapshot_fast_path" != true ]; then', awsSlowPath + 1);
+    const bundleDownload = cloudInit.indexOf('"$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz', bundleSlowPath);
+
+    expect(hostEnv).toBeGreaterThan(-1);
+    expect(fastPath).toBeGreaterThan(hostEnv);
+    expect(apt).toBeGreaterThan(fastPath);
+    expect(awsSlowPath).toBeGreaterThan(apt);
+    expect(awsDownload).toBeGreaterThan(awsSlowPath);
+    expect(sharedSetup).toBeGreaterThan(awsDownload);
+    expect(bundleSlowPath).toBeGreaterThan(sharedSetup);
+    expect(bundleDownload).toBeGreaterThan(bundleSlowPath);
+    expect(cloudInit).toContain('matrix-host: exact golden snapshot fast path selected');
+    expect(cloudInit).toContain('matrix-host: full bootstrap required');
+  });
+
+  it('logs coarse monotonic bootstrap phases for live latency attribution', () => {
+    const cloudInit = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/cloud-init.yaml'),
+      'utf8',
+    );
+    const prerequisites = cloudInit.indexOf('log_bootstrap_phase system_prerequisites_ready');
+    const bundle = cloudInit.indexOf('log_bootstrap_phase host_bundle_ready');
+    const services = cloudInit.indexOf('log_bootstrap_phase core_services_started');
+
+    expect(cloudInit).toContain('bootstrap_started_at="$(date +%s)"');
+    expect(cloudInit).toContain('matrix-host-timing phase=%s elapsed_seconds=%s image_source=%s');
+    expect(prerequisites).toBeGreaterThan(-1);
+    expect(bundle).toBeGreaterThan(prerequisites);
+    expect(services).toBeGreaterThan(bundle);
+  });
+
+  it('keeps the reused app root writable for matrix-user update state', () => {
+    const cloudInit = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/cloud-init.yaml'),
+      'utf8',
+    );
+    const bundleReady = cloudInit.indexOf('log_bootstrap_phase host_bundle_ready');
+    const appOwnership = cloudInit.indexOf('chown root:matrix /opt/matrix/app', bundleReady);
+    const appWrites = cloudInit.indexOf('chmod g+rwx /opt/matrix/app', appOwnership);
+
+    expect(bundleReady).toBeGreaterThan(-1);
+    expect(appOwnership).toBeGreaterThan(bundleReady);
+    expect(appWrites).toBeGreaterThan(appOwnership);
+  });
+
   it('removes the baked release trees before activating a different bundle from a snapshot', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
