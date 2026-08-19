@@ -7,6 +7,9 @@ export const CustomerVpsStatusSchema = z.enum([
   'failed',
   'recovering',
   'resizing',
+  'suspending',
+  'suspended',
+  'resuming',
   'deleted',
 ]);
 

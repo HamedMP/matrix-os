@@ -21,7 +21,7 @@ export function BillingSection({
   checkoutReturnPath?: string;
   checkoutRuntimeSlot?: string;
 }) {
-  const { active, entitlement, accessReason, accessIssue } = useMatrixBillingAccess();
+  const { active, entitlement, trialOffer, accessReason, accessIssue } = useMatrixBillingAccess();
   const startsNewSubscription = mode === "add-computer" && entitlement?.source !== "override";
 
   return (
@@ -68,6 +68,7 @@ export function BillingSection({
       <BillingPanel
         active={active}
         entitlement={entitlement}
+        trialOffer={trialOffer}
         accessReason={accessReason}
         accessIssue={accessIssue}
         mode={mode}

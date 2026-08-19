@@ -30,6 +30,7 @@ import {
 import type {
   BillingAccessIssue,
   BillingEntitlementSummary,
+  BillingTrialOffer,
 } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
@@ -68,6 +69,7 @@ const includedHighlights = [
   "Change tier or cancel anytime in the billing portal",
 ] as const;
 const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const acceptedPaymentMarks = ["Visa", "Mastercard"] as const;
 const billingPlanNames: Record<string, string> = {
   matrix_starter: "Starter",
@@ -140,6 +142,7 @@ function CheckoutPanel({
   selectedRegion,
   billingInterval,
   onBillingIntervalChange,
+  trialDurationDays,
 }: {
   mode: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
@@ -152,11 +155,15 @@ function CheckoutPanel({
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
   billingInterval: BillingInterval;
   onBillingIntervalChange: (interval: BillingInterval) => void;
+  trialDurationDays: number | null;
 }) {
   const planSlug = selectedProfile.planSlug;
   const regionSlug = selectedRegion.featureSlug;
   const price = profilePrice(selectedProfile, billingInterval);
   const annualSavings = annualSavingsPercent(selectedProfile);
+  const trialEnd = trialDurationDays === null
+    ? null
+    : billingDateFormatter.format(new Date(Date.now() + trialDurationDays * DAY_MS));
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const telemetryPropertiesRef = useRef(telemetryProperties);
@@ -267,6 +274,8 @@ function CheckoutPanel({
           <p className="text-sm font-semibold text-[#FAFAF5]">
             {checkoutBypassed
               ? "Provision this computer"
+              : trialDurationDays !== null
+              ? `Start your ${trialDurationDays}-day free trial`
               : mode === "device-setup"
               ? "Billing settings"
               : "Start checkout & provision"}
@@ -274,6 +283,8 @@ function CheckoutPanel({
           <p className="mt-0.5 text-xs leading-5 text-cream/55">
             {checkoutBypassed
               ? "Your internal Matrix account covers this computer."
+              : trialDurationDays !== null
+              ? "Add your card in Stripe Checkout. You will not be charged today."
               : mode === "device-setup"
               ? "Review your plan and region here. Stripe opens only after you choose Continue to pay."
               : "Secure checkout opens before Matrix provisions this computer."}
@@ -325,18 +336,36 @@ function CheckoutPanel({
 
       {!checkoutBypassed && <div className="mt-4 flex items-end justify-between gap-3 border-t border-cream/12 pt-4">
         <div>
-          <span className="text-sm text-cream/55">Total</span>
-          {billingInterval === "annual" && annualSavings ? (
+          <span className="text-sm text-cream/55">
+            {trialDurationDays === null ? "Total" : "Today"}
+          </span>
+          {trialDurationDays !== null ? (
+            <span className="mt-0.5 block text-[11px] font-medium text-ember">Card required</span>
+          ) : billingInterval === "annual" && annualSavings ? (
             <span className="mt-0.5 block text-[11px] font-medium text-ember">
               Billed yearly · save {annualSavings}%
             </span>
           ) : null}
         </div>
         <span className="flex items-baseline gap-1">
-          <span className="text-3xl font-semibold tracking-tight text-[#FAFAF5]">${price}</span>
-          <span className="text-sm text-cream/55">{billingInterval === "annual" ? "/yr" : "/mo"}</span>
+          <span className="text-3xl font-semibold tracking-tight text-[#FAFAF5]">
+            {trialDurationDays === null ? `$${price}` : "$0 today"}
+          </span>
+          {trialDurationDays === null && (
+            <span className="text-sm text-cream/55">{billingInterval === "annual" ? "/yr" : "/mo"}</span>
+          )}
         </span>
       </div>}
+
+      {trialDurationDays !== null && trialEnd && (
+        <div className="mt-3 rounded-xl border border-cream/12 bg-black/15 p-3 text-xs leading-5">
+          <p className="font-semibold text-cream">
+            ${price}/{billingInterval === "annual" ? "year" : "month"} after your trial
+          </p>
+          <p className="mt-1 text-cream/65">First charge {trialEnd}</p>
+          <p className="text-cream/55">Cancel before {trialEnd} to avoid being charged.</p>
+        </div>
+      )}
 
       <button
         type="button"
@@ -349,7 +378,13 @@ function CheckoutPanel({
         ) : checkoutBypassed ? null : (
           <CreditCardIcon className="size-4" aria-hidden="true" />
         )}
-        {checkoutLoading ? "Opening checkout" : checkoutBypassed ? "Continue setup" : "Continue to pay"}
+        {checkoutLoading
+          ? "Opening checkout"
+          : checkoutBypassed
+          ? "Continue setup"
+          : trialDurationDays !== null
+          ? `Start ${trialDurationDays}-day trial`
+          : "Continue to pay"}
       </button>
 
       {!checkoutBypassed && <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-cream/55">
@@ -368,8 +403,8 @@ function CheckoutPanel({
           </span>
         ))}
       </div>}
-      {!checkoutBypassed && <p className="mt-3 text-center text-[11px] leading-5 text-cream/45">
-        No trial. Plan changes and coupons are handled in the billing portal.
+      {!checkoutBypassed && trialDurationDays === null && <p className="mt-3 text-center text-[11px] leading-5 text-cream/45">
+        Payment starts today. Plan changes and coupons are handled in the billing portal.
       </p>}
       {checkoutError && (
         <p className="mt-2 text-center text-xs text-red-300">{checkoutError}</p>
@@ -469,6 +504,13 @@ function ActiveBillingPanel({
   const includedComputers = entitlement?.includedRuntimeSlots ?? 1;
   const addonComputers = entitlement?.addonRuntimeSlots ?? 0;
   const graceLabel = entitlement?.gracePeriodEndsAt ? formatDate(entitlement.gracePeriodEndsAt) : null;
+  const isTrialing = entitlement?.status === "trialing" && Boolean(entitlement.trialEndsAt);
+  const trialEndLabel = entitlement?.trialEndsAt ? formatDate(entitlement.trialEndsAt) : null;
+  const trialProfile = MATRIX_BILLING_SERVER_PROFILES.find(
+    (profile) => profile.planSlug === entitlement?.planSlug,
+  );
+  const trialInterval = entitlement?.billingInterval === "annual" ? "annual" : "monthly";
+  const trialPrice = trialProfile ? profilePrice(trialProfile, trialInterval) : null;
 
   return (
     <div className="space-y-3">
@@ -476,17 +518,23 @@ function ActiveBillingPanel({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">
-              Current plan
+              {isTrialing ? "Free trial active" : "Current plan"}
             </p>
             <h3 className="mt-2 text-2xl font-semibold tracking-tight text-deep">
               {planName}
             </h3>
             <p className="mt-1 text-sm leading-6 text-forest/65">
-              {status}. Your Matrix computers stay available while billing is active
-              {graceLabel ? ` and through the grace period ending ${graceLabel}` : ""}.
+              {isTrialing && trialEndLabel && trialPrice
+                ? `Your first $${trialPrice} ${trialInterval} charge is on ${trialEndLabel}.`
+                : `${status}. Your Matrix computers stay available while billing is active${graceLabel ? ` and through the grace period ending ${graceLabel}` : ""}.`}
             </p>
+            {isTrialing && trialEndLabel && (
+              <p className="mt-1 text-sm font-medium text-ember">
+                Cancel before {trialEndLabel} to avoid being charged.
+              </p>
+            )}
           </div>
-          <BillingPortalButton entitlement={entitlement} />
+          <BillingPortalButton entitlement={entitlement} label={isTrialing ? "Manage trial" : undefined} />
         </div>
 
         <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -534,6 +582,30 @@ function ActiveBillingPanel({
         </div>
       </section>
     </div>
+  );
+}
+
+function TrialPaymentRecoveryPanel({
+  entitlement,
+}: {
+  entitlement: BillingEntitlementSummary;
+}) {
+  return (
+    <section className="rounded-[22px] border border-ember/30 bg-card p-4 sm:p-5" role="alert">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-ember">Trial ended</p>
+          <h3 className="mt-2 text-2xl font-semibold tracking-tight text-deep">Payment required</h3>
+          <p className="mt-1 text-sm leading-6 text-forest/65">
+            Runtime access is paused until the first payment succeeds.
+          </p>
+          <p className="mt-1 text-xs leading-5 text-forest/55">
+            Update your card in Stripe. Matrix restores access automatically after the paid invoice webhook arrives.
+          </p>
+        </div>
+        <BillingPortalButton entitlement={entitlement} label="Update payment method" />
+      </div>
+    </section>
   );
 }
 
@@ -1005,6 +1077,7 @@ function SelectionTriggerCards({
 export function BillingPanel({
   active,
   entitlement,
+  trialOffer,
   accessReason,
   accessIssue,
   mode = "settings",
@@ -1015,6 +1088,7 @@ export function BillingPanel({
 }: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
+  trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   mode?: BillingPanelMode;
@@ -1026,6 +1100,7 @@ export function BillingPanel({
   const props = {
     active,
     entitlement,
+    trialOffer,
     accessReason,
     accessIssue,
     mode,
@@ -1043,6 +1118,7 @@ export function BillingPanel({
 function ManagedBillingPanel(props: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
+  trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   mode: BillingPanelMode;
@@ -1058,6 +1134,7 @@ function ManagedBillingPanel(props: {
 function BillingPanelInner({
   active,
   entitlement,
+  trialOffer,
   accessReason,
   accessIssue,
   mode = "settings",
@@ -1069,6 +1146,7 @@ function BillingPanelInner({
 }: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
+  trialOffer?: BillingTrialOffer | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   mode?: BillingPanelMode;
@@ -1089,6 +1167,12 @@ function BillingPanelInner({
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
   const checkoutBypassed = mode === "add-computer" && entitlement?.source === "override";
+  const trialDurationDays = trialOffer?.eligible === true
+    && mode !== "add-computer"
+    && (checkoutRuntimeSlot === undefined || checkoutRuntimeSlot === "primary")
+    && !checkoutBypassed
+    ? trialOffer.durationDays
+    : null;
   const allowedProfiles = checkoutBypassed
     ? MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>
         entitlement.allowedServerTypes.some(
@@ -1194,6 +1278,15 @@ function BillingPanelInner({
     );
   }
 
+  if (
+    mode !== "add-computer"
+    && entitlement?.source === "stripe"
+    && Boolean(entitlement.firstTrialPaymentFailedAt)
+    && !entitlement.trialConvertedAt
+  ) {
+    return <TrialPaymentRecoveryPanel entitlement={entitlement} />;
+  }
+
   if (checkoutBypassed && allowedProfiles.length === 0) {
     return (
       <div className="rounded-xl border border-ember/25 bg-ember/10 p-4 text-sm text-deep" role="alert">
@@ -1264,6 +1357,7 @@ function BillingPanelInner({
           selectedRegion={selectedRegion}
           billingInterval={billingInterval}
           onBillingIntervalChange={handleBillingIntervalChange}
+          trialDurationDays={trialDurationDays}
         />
       </div>
     </div>

@@ -96,14 +96,23 @@ stripe listen --forward-to "localhost:${PLATFORM_PORT:-9000}/billing/webhooks/st
 bun run dev:platform
 ```
 
-Drive a checkout for a test plan, pay with `4242 4242 4242 4242`, and confirm:
+Set `MATRIX_CARD_TRIALS_ENABLED=true` for this test slice. Drive a checkout for
+a first primary computer with `4242 4242 4242 4242`, and confirm:
 
+- Stripe collects the card, creates a `trialing` subscription with an
+  authoritative seven-day `trial_end`, and charges `$0` initially;
 - the checkout attempt is recorded `open`, then flips to `paid` on
   `checkout.session.completed`;
 - a success redirect that **beats** the webhook lands the journey in
   `payment_settling` (not back at the billing wall) and advances once the
   webhook arrives — the checkout-success-vs-webhook race;
 - `checkout.session.expired` resolves the attempt to `expired`.
+
+Use a Stripe Test Clock to advance through `trial_will_end`, the first
+post-trial invoice, and both successful and declined card outcomes. Confirm a
+declined conversion gates runtime access immediately and enqueues one suspend
+action for 24 hours later; a recovery payment must cancel a pending suspend or
+enqueue resume when the machine is already stopping/stopped.
 
 ## Slice 4 — Disposable feature VPS
 
@@ -201,7 +210,9 @@ account and production platform env:
    Promotion Codes, not hardcoded discounts).
 5. Configure the production webhook endpoint
    (`https://app.matrix-os.com/billing/webhooks/stripe`) and subscribe to
-   `customer.subscription.created|updated|deleted`.
+   `customer.subscription.created|updated|deleted`,
+   `customer.subscription.trial_will_end`, `checkout.session.completed|expired`,
+   and `invoice.paid|payment_failed`.
 6. Store the production webhook signing secret as `STRIPE_WEBHOOK_SECRET`.
 7. Use a **restricted** production key for `STRIPE_SECRET_KEY` (Customers,
    Checkout Sessions, Billing Portal Sessions, Subscriptions, Prices, webhook
@@ -210,7 +221,12 @@ account and production platform env:
    `STRIPE_CHECKOUT_CANCEL_URL`, `STRIPE_PORTAL_RETURN_URL`).
 9. Set `MATRIX_BILLING_PROVIDER=stripe` or `MATRIX_STRIPE_BILLING_ENABLED=true`
    on the production platform.
-10. Rebuild the host bundle after changing any `NEXT_PUBLIC_*` value; build a
+10. Enable Stripe's customer trial-ending email and verify it uses the same
+    three-day reminder window as `customer.subscription.trial_will_end`.
+11. Set the GitHub environment variable `MATRIX_CARD_TRIALS_ENABLED=true` only
+    when the offer is ready to roll out. Returning it to `false` stops new
+    offers without changing subscriptions already in trial.
+12. Rebuild the host bundle after changing any `NEXT_PUBLIC_*` value; build a
     stable release from the merge commit for traceability.
 
 After production env is set, merge the stack, build a host bundle from `main`,

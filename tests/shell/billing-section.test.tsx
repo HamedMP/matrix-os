@@ -88,6 +88,123 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
+  it("explains the card-required seven-day trial before opening Checkout", async () => {
+    const trialEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const formattedTrialEnd = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(trialEnd);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false },
+        trialOffer: { eligible: true, durationDays: 7 },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+
+    await waitFor(() => expect(screen.getByText("Start your 7-day free trial")).toBeTruthy());
+    expect(screen.getByText("Card required")).toBeTruthy();
+    expect(screen.getByText("$0 today")).toBeTruthy();
+    expect(screen.getByText(`First charge ${formattedTrialEnd}`)).toBeTruthy();
+    expect(screen.getByText(`Cancel before ${formattedTrialEnd} to avoid being charged.`)).toBeTruthy();
+    expect(screen.getByText("$19/month after your trial")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start 7-day trial" })).toBeTruthy();
+  });
+
+  it("keeps immediate-payment language for additional computers", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false },
+        trialOffer: { eligible: true, durationDays: 7 },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="add-computer" checkoutRuntimeSlot="studio" />);
+
+    await waitFor(() => expect(screen.getByText("New subscription")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+    expect(screen.queryByText("Start your 7-day free trial")).toBeNull();
+  });
+
+  it("shows the authoritative end date and upcoming charge for an active trial", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: true, reason: "active" },
+        trialOffer: { eligible: false, durationDays: 7 },
+        entitlement: {
+          source: "stripe",
+          planSlug: "matrix_builder",
+          status: "trialing",
+          maxRuntimeSlots: 1,
+          includedRuntimeSlots: 1,
+          addonRuntimeSlots: 0,
+          defaultServerType: "cpx32",
+          allowedServerTypes: ["cpx22", "cpx32"],
+          stripeSubscriptionId: "sub_trial",
+          stripePriceId: "price_builder_monthly",
+          billingInterval: "monthly",
+          gracePeriodEndsAt: null,
+          trialStartedAt: "2026-08-19T00:00:00.000Z",
+          trialEndsAt: "2026-08-26T00:00:00.000Z",
+          trialConvertedAt: null,
+          firstTrialPaymentFailedAt: null,
+          effectiveFrom: "2026-08-19T00:00:00.000Z",
+          effectiveUntil: null,
+          updatedAt: "2026-08-19T00:00:00.000Z",
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Free trial active")).toBeTruthy());
+    expect(screen.getByText("Your first $19 monthly charge is on Aug 26, 2026.")).toBeTruthy();
+    expect(screen.getByText("Cancel before Aug 26, 2026 to avoid being charged.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Manage trial" })).toBeTruthy();
+  });
+
+  it("routes a failed trial conversion to payment recovery instead of a new checkout", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "payment_required" },
+        trialOffer: { eligible: false, durationDays: 7 },
+        entitlement: {
+          source: "stripe", planSlug: "matrix_builder", status: "past_due",
+          maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
+          defaultServerType: "cpx32", allowedServerTypes: ["cpx22", "cpx32"],
+          stripeSubscriptionId: "sub_trial", stripePriceId: "price_builder_monthly",
+          billingInterval: "monthly", gracePeriodEndsAt: null,
+          trialStartedAt: "2026-08-19T00:00:00.000Z", trialEndsAt: "2026-08-26T00:00:00.000Z",
+          trialConvertedAt: null, firstTrialPaymentFailedAt: "2026-08-26T00:00:00.000Z",
+          effectiveFrom: "2026-08-19T00:00:00.000Z", effectiveUntil: null,
+          updatedAt: "2026-08-26T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Payment required")).toBeTruthy());
+    expect(screen.getByText("Runtime access is paused until the first payment succeeds.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Update payment method" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Continue to pay" })).toBeNull();
+  });
+
   it("shows a reconnecting billing session state when signed-out app-session billing returns 401", async () => {
     clerkState.isLoaded = true;
     clerkState.isSignedIn = false;

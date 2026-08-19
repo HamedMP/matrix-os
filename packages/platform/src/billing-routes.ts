@@ -5,15 +5,23 @@ import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { z } from 'zod/v4';
 import { appOrigin, resolveReturnPath } from './origins.js';
 import {
+  claimCardTrialCheckoutAttempt,
   claimCheckoutAttempt,
+  cancelQueuedBillingRuntimeActions,
+  enqueueBillingRuntimeAction,
   finalizeCheckoutAttempt,
   getBillingCustomerByClerkUserId,
   getBillingCustomerByStripeCustomerId,
+  consumeCardTrial,
   getBillingEntitlement,
   getBillingEntitlementState,
   getBillingSubscription,
+  getBillingSubscriptionByStripeId,
   getSettlingCheckoutAttempt,
   insertBillingWebhookEvent,
+  isCardTrialOfferEligible,
+  markFirstTrialPaymentFailed,
+  markTrialConverted,
   resolveCheckoutAttempt,
   runBillingWebhookTransaction,
   listCurrentBillingSubscriptions,
@@ -44,6 +52,7 @@ import { RuntimeSlotSchema } from './customer-vps-schema.js';
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
 const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
+export const MATRIX_CARD_TRIAL_DAYS = 7;
 const CLERK_USER_ID_PATTERN = /^user_[A-Za-z0-9]{1,128}$/;
 const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
@@ -61,6 +70,11 @@ const BILLING_CHECKOUT_EXPIRED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_EXPIRED ?? 'matrix_billing_checkout_expired';
 const BILLING_SUBSCRIPTION_UPDATED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED ?? 'matrix_billing_subscription_updated';
+const BILLING_TRIAL_STARTED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_STARTED;
+const BILLING_TRIAL_WILL_END_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_WILL_END;
+const BILLING_TRIAL_CONVERTED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_CONVERTED;
+const BILLING_TRIAL_PAYMENT_FAILED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_PAYMENT_FAILED;
+const TRIAL_PAYMENT_SUSPEND_DELAY_MS = 24 * 60 * 60 * 1000;
 const BillingRegionSlugSchema = z.enum([
   'region_fsn1',
   'region_nbg1',
@@ -105,6 +119,8 @@ export interface StripeCheckoutSessionInput {
   allowPromotionCodes: boolean;
   regionSlug: string;
   runtimeSlot: string;
+  trialPeriodDays?: number | null;
+  paymentMethodMode?: 'card_required' | 'dynamic';
   successUrl: string;
   cancelUrl: string;
 }
@@ -235,6 +251,10 @@ export function createBillingRoutes(options: {
           stripeSubscriptionId: existingSubscription.stripeSubscriptionId,
           status: existingSubscription.status,
           currentPeriodEnd: existingSubscription.currentPeriodEnd,
+          trialStartedAt: existingSubscription.trialStartedAt,
+          trialEndsAt: existingSubscription.trialEndsAt,
+          trialConvertedAt: existingSubscription.trialConvertedAt,
+          firstTrialPaymentFailedAt: existingSubscription.firstTrialPaymentFailedAt,
           items: [{ priceId: existingSubscription.stripePriceId, quantity: 1 }],
         }, {
           priceCatalog: loadStripePriceCatalog(env),
@@ -276,10 +296,18 @@ export function createBillingRoutes(options: {
         regionSlug: parsed.data.regionSlug,
         ...(serverType ? { serverType } : {}),
       };
-      let attempt = await claimCheckoutAttempt(options.db, {
-        id: randomUUID(),
-        ...checkoutClaim,
-      });
+      const claimAttempt = () => env.MATRIX_CARD_TRIALS_ENABLED === 'true'
+        && parsed.data.runtimeSlot === 'primary'
+        ? claimCardTrialCheckoutAttempt(options.db, {
+            id: randomUUID(),
+            ...checkoutClaim,
+          }, MATRIX_CARD_TRIAL_DAYS)
+        : claimCheckoutAttempt(options.db, {
+            id: randomUUID(),
+            ...checkoutClaim,
+            trialPeriodDays: null,
+          });
+      let attempt = await claimAttempt();
       if (!attempt.claimed) {
         const isLegacyOpenAttempt = attempt.attempt.status === 'open'
           && attempt.attempt.stripeSessionId !== null
@@ -311,10 +339,7 @@ export function createBillingRoutes(options: {
               'expired',
               currentTime.toISOString(),
             );
-            attempt = await claimCheckoutAttempt(options.db, {
-              id: randomUUID(),
-              ...checkoutClaim,
-            });
+            attempt = await claimAttempt();
           } else {
             const recoveredPlan = session.priceId
               ? loadStripePriceCatalog(env).priceToPlan.get(session.priceId)
@@ -379,6 +404,8 @@ export function createBillingRoutes(options: {
         allowPromotionCodes: true,
         regionSlug: parsed.data.regionSlug,
         runtimeSlot: parsed.data.runtimeSlot,
+        trialPeriodDays: attempt.attempt.trialPeriodDays,
+        paymentMethodMode: attempt.attempt.trialPeriodDays ? 'card_required' : 'dynamic',
         successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
       });
@@ -461,6 +488,10 @@ export function createBillingRoutes(options: {
             stripeSubscriptionId: subscription.stripeSubscriptionId,
             status: subscription.status,
             currentPeriodEnd: subscription.currentPeriodEnd,
+            trialStartedAt: subscription.trialStartedAt,
+            trialEndsAt: subscription.trialEndsAt,
+            trialConvertedAt: subscription.trialConvertedAt,
+            firstTrialPaymentFailedAt: subscription.firstTrialPaymentFailedAt,
             items: [{ priceId: subscription.stripePriceId, quantity: 1 }],
           }, {
             priceCatalog: loadStripePriceCatalog(env),
@@ -475,7 +506,13 @@ export function createBillingRoutes(options: {
         now: currentTime,
       });
       const access = getRuntimeAccessDecision(entitlement, currentTime);
-      return c.json({ entitlement, access }, 200);
+      const trialOffer = {
+        eligible: env.MATRIX_CARD_TRIALS_ENABLED === 'true'
+          && (query.data.runtimeSlot ?? 'primary') === 'primary'
+          && await isCardTrialOfferEligible(options.db, clerkUserId),
+        durationDays: MATRIX_CARD_TRIAL_DAYS,
+      };
+      return c.json({ entitlement, access, trialOffer }, 200);
     } catch (err: unknown) {
       console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
@@ -525,6 +562,7 @@ export function createBillingRoutes(options: {
               sessionId,
               event.type === 'checkout.session.completed' ? 'paid' : 'expired',
               webhookProcessedAt.toISOString(),
+              true,
             );
           }
           emitTelemetry(
@@ -540,7 +578,62 @@ export function createBillingRoutes(options: {
         }
 
         if (!isSubscriptionEvent(event.type)) {
-          return { received: true, ignored: true };
+          if (event.type !== 'invoice.paid' && event.type !== 'invoice.payment_failed') {
+            return { received: true, ignored: true };
+          }
+          const invoice = readInvoiceProjection(event.data.object);
+          if (!invoice) return { received: true, ignored: true };
+          const subscription = await getBillingSubscriptionByStripeId(trx, invoice.stripeSubscriptionId);
+          if (!subscription || !isFirstPostTrialInvoice(invoice, subscription.trialEndsAt, subscription.trialConvertedAt)) {
+            return { received: true, ignored: true };
+          }
+          const paymentIsRecoveringFailedTrial = Boolean(subscription.firstTrialPaymentFailedAt);
+          const eventAt = epochSecondsToIso(event.created);
+          const updated = event.type === 'invoice.payment_failed'
+            ? await markFirstTrialPaymentFailed(trx, invoice.stripeSubscriptionId, eventAt)
+            : await markTrialConverted(trx, invoice.stripeSubscriptionId, eventAt);
+          if (!updated) return { received: true, ignored: true };
+          if (event.type === 'invoice.payment_failed') {
+            await enqueueBillingRuntimeAction(trx, {
+              clerkUserId: updated.clerkUserId,
+              runtimeSlot: updated.runtimeSlot,
+              stripeSubscriptionId: updated.stripeSubscriptionId,
+              action: 'suspend',
+              reason: 'trial_payment_failed',
+              executeAfter: new Date(Date.parse(eventAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS).toISOString(),
+              createdAt: webhookProcessedAt.toISOString(),
+            });
+            emitTelemetry(BILLING_TRIAL_PAYMENT_FAILED_EVENT, {
+              distinctId: updated.clerkUserId,
+              properties: { billing_interval: updated.billingInterval ?? undefined },
+            });
+          } else {
+            const canceledSuspensions = await cancelQueuedBillingRuntimeActions(
+              trx,
+              updated.stripeSubscriptionId,
+              'suspend',
+              webhookProcessedAt.toISOString(),
+            );
+            if (paymentIsRecoveringFailedTrial && canceledSuspensions === 0) {
+              await enqueueBillingRuntimeAction(trx, {
+                clerkUserId: updated.clerkUserId,
+                runtimeSlot: updated.runtimeSlot,
+                stripeSubscriptionId: updated.stripeSubscriptionId,
+                action: 'resume',
+                reason: 'payment_recovered',
+                executeAfter: webhookProcessedAt.toISOString(),
+                createdAt: webhookProcessedAt.toISOString(),
+              });
+            }
+            emitTelemetry(BILLING_TRIAL_CONVERTED_EVENT, {
+              distinctId: updated.clerkUserId,
+              properties: { billing_interval: updated.billingInterval ?? undefined },
+            });
+          }
+          const priceCatalog = loadStripePriceCatalog(env);
+          const summary = await recomputeStripeSummary(trx, updated.clerkUserId, priceCatalog, env, webhookProcessedAt);
+          if (summary) await persistEntitlement(trx, summary);
+          return { received: true, processed: true };
         }
 
         const projection = await projectSubscription(trx, event.data.object, webhookProcessedAt);
@@ -558,7 +651,7 @@ export function createBillingRoutes(options: {
         if (!priceEntry || !entitlement.stripePriceId) {
           return { received: true, ignored: true };
         }
-        await upsertBillingSubscription(trx, {
+        const projectionApplied = await upsertBillingSubscription(trx, {
           stripeSubscriptionId: projection.stripeSubscriptionId,
           stripeCustomerId: projection.stripeCustomerId,
           clerkUserId: projection.clerkUserId,
@@ -569,16 +662,53 @@ export function createBillingRoutes(options: {
           status: entitlement.status,
           currentPeriodEnd: projection.currentPeriodEnd ?? null,
           gracePeriodEndsAt: entitlement.gracePeriodEndsAt,
+          trialStartedAt: projection.trialStartedAt ?? null,
+          trialEndsAt: projection.trialEndsAt ?? null,
+          trialConvertedAt: projection.trialConvertedAt ?? null,
+          firstTrialPaymentFailedAt: projection.firstTrialPaymentFailedAt ?? null,
           latestEventCreatedAt: epochSecondsToIso(event.created),
           latestEventId: event.id,
           updatedAt: webhookProcessedAt.toISOString(),
         });
+        if (!projectionApplied) return { received: true, processed: true };
+        if (projection.status === 'trialing' && !projection.firstTrialPaymentFailedAt) {
+          await cancelQueuedBillingRuntimeActions(
+            trx,
+            projection.stripeSubscriptionId,
+            'suspend',
+            webhookProcessedAt.toISOString(),
+          );
+        }
         const summary = await recomputeStripeSummary(trx, projection.clerkUserId, priceCatalog, env, webhookProcessedAt);
         if (summary) await persistEntitlement(trx, summary);
         emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
           distinctId: entitlement.clerkUserId,
           properties: buildSubscriptionTelemetryProperties(entitlement, priceCatalog),
         });
+        if (event.type === 'customer.subscription.created' && projection.status === 'trialing') {
+          await consumeCardTrial(trx, projection.clerkUserId, webhookProcessedAt.toISOString());
+          emitTelemetry(BILLING_TRIAL_STARTED_EVENT, { distinctId: projection.clerkUserId });
+        }
+        if (event.type === 'customer.subscription.trial_will_end') {
+          emitTelemetry(BILLING_TRIAL_WILL_END_EVENT, { distinctId: projection.clerkUserId });
+        }
+        if (
+          projection.trialEndsAt
+          && !projection.trialConvertedAt
+          && (projection.status === 'canceled' || projection.status === 'unpaid' || projection.status === 'ended')
+        ) {
+          await enqueueBillingRuntimeAction(trx, {
+            clerkUserId: projection.clerkUserId,
+            runtimeSlot: projection.runtimeSlot,
+            stripeSubscriptionId: projection.stripeSubscriptionId,
+            action: 'suspend',
+            reason: 'trial_ended_unpaid',
+            executeAfter: new Date(
+              Date.parse(projection.trialEndsAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS,
+            ).toISOString(),
+            createdAt: webhookProcessedAt.toISOString(),
+          });
+        }
         return { received: true, processed: true };
       });
       return c.json(result, 200);
@@ -674,7 +804,8 @@ function isSubscriptionEvent(type: string): boolean {
   return (
     type === 'customer.subscription.created' ||
     type === 'customer.subscription.updated' ||
-    type === 'customer.subscription.deleted'
+    type === 'customer.subscription.deleted' ||
+    type === 'customer.subscription.trial_will_end'
   );
 }
 
@@ -689,6 +820,8 @@ async function projectSubscription(
     customer?: unknown;
     status?: unknown;
     current_period_end?: unknown;
+    trial_start?: unknown;
+    trial_end?: unknown;
     metadata?: unknown;
     items?: { data?: unknown };
   };
@@ -708,6 +841,7 @@ async function projectSubscription(
     if (!customer) return null;
   }
   const status = normalizeSubscriptionStatus(sub.status);
+  const existing = await getBillingSubscriptionByStripeId(db, sub.id);
   const runtimeSlot = readRuntimeSlotFromStripeMetadata(sub.metadata) ?? 'primary';
   const data = Array.isArray(sub.items?.data) ? sub.items.data : [];
   return {
@@ -719,6 +853,14 @@ async function projectSubscription(
     currentPeriodEnd: typeof sub.current_period_end === 'number'
       ? epochSecondsToIso(sub.current_period_end)
       : null,
+    trialStartedAt: typeof sub.trial_start === 'number'
+      ? epochSecondsToIso(sub.trial_start)
+      : (existing?.trialStartedAt ?? null),
+    trialEndsAt: typeof sub.trial_end === 'number'
+      ? epochSecondsToIso(sub.trial_end)
+      : (existing?.trialEndsAt ?? null),
+    trialConvertedAt: existing?.trialConvertedAt ?? null,
+    firstTrialPaymentFailedAt: existing?.firstTrialPaymentFailedAt ?? null,
     items: data.flatMap((item) => {
       if (!item || typeof item !== 'object') return [];
       const candidate = item as { price?: { id?: unknown }; quantity?: unknown };
@@ -755,6 +897,10 @@ async function recomputeStripeSummary(
       stripeSubscriptionId: subscription.stripeSubscriptionId,
       status: subscription.status,
       currentPeriodEnd: subscription.currentPeriodEnd,
+      trialStartedAt: subscription.trialStartedAt,
+      trialEndsAt: subscription.trialEndsAt,
+      trialConvertedAt: subscription.trialConvertedAt,
+      firstTrialPaymentFailedAt: subscription.firstTrialPaymentFailedAt,
       items: [{ priceId: subscription.stripePriceId, quantity: 1 }],
     }, { priceCatalog, runtimeCatalog, now }),
   }));
@@ -771,6 +917,53 @@ async function recomputeStripeSummary(
     addonRuntimeSlots: 0,
     updatedAt: now.toISOString(),
   };
+}
+
+interface StripeInvoiceProjection {
+  stripeSubscriptionId: string;
+  billingReason: string;
+  createdAt: string;
+}
+
+function readInvoiceProjection(value: unknown): StripeInvoiceProjection | null {
+  if (!value || typeof value !== 'object') return null;
+  const invoice = value as {
+    created?: unknown;
+    billing_reason?: unknown;
+    subscription?: unknown;
+    parent?: { subscription_details?: { subscription?: unknown } };
+  };
+  const subscription = readExpandableStripeId(
+    invoice.parent?.subscription_details?.subscription ?? invoice.subscription,
+  );
+  if (
+    !subscription
+    || typeof invoice.created !== 'number'
+    || typeof invoice.billing_reason !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    stripeSubscriptionId: subscription,
+    billingReason: invoice.billing_reason,
+    createdAt: epochSecondsToIso(invoice.created),
+  };
+}
+
+function isFirstPostTrialInvoice(
+  invoice: StripeInvoiceProjection,
+  trialEndsAt: string | null,
+  trialConvertedAt: string | null,
+): boolean {
+  return invoice.billingReason === 'subscription_cycle'
+    && trialEndsAt !== null
+    && trialConvertedAt === null
+    && Date.parse(invoice.createdAt) >= Date.parse(trialEndsAt);
+}
+
+function readExpandableStripeId(value: unknown): string | null {
+  if (typeof value === 'string' && value.length > 0) return value;
+  return readStripeObjectId(value);
 }
 
 function readStripeObjectId(value: unknown): string | null {

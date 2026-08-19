@@ -31,12 +31,26 @@ export function createStripeBillingClient(options: {
         cancel_url: input.cancelUrl,
         allow_promotion_codes: input.allowPromotionCodes,
         automatic_tax: { enabled: input.automaticTax },
+        ...(input.paymentMethodMode === 'card_required'
+          ? {
+            payment_method_types: ['card'] as const,
+            payment_method_collection: 'always' as const,
+          }
+          : {}),
         metadata: {
           clerk_user_id: input.clerkUserId,
           matrix_region_slug: input.regionSlug,
           matrix_runtime_slot: input.runtimeSlot,
         },
         subscription_data: {
+          ...(input.trialPeriodDays
+            ? {
+              trial_period_days: input.trialPeriodDays,
+              trial_settings: {
+                end_behavior: { missing_payment_method: 'cancel' as const },
+              },
+            }
+            : {}),
           metadata: {
             clerk_user_id: input.clerkUserId,
             matrix_region_slug: input.regionSlug,

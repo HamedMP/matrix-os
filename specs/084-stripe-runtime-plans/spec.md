@@ -5,6 +5,8 @@
 **Status**: Draft
 **Input**: Move Matrix paid plans from Clerk Billing to Stripe Billing while preserving Clerk identity, making plan changes safe for owner data and VPS machines, supporting internal engineer testing without payment, and leaving room for multiple machines as a paid feature.
 
+> **Superseded trial policy (2026-08-19):** `specs/115-card-required-runtime-trial/spec.md` replaces this specification's no-trial requirements and its dynamic-payment-method rule for eligible trial Checkout sessions. All other requirements remain in force.
+
 ## Summary
 
 Matrix needs paid plans that control real runtime capacity: whether a user can access Matrix and which Hetzner server type a particular VPS runtime can use. Clerk remains the identity/session provider. Stripe Billing becomes the money and subscription source of truth. Each customer computer has one independent Stripe subscription, associated by `(clerk_user_id, runtime_slot)`, and Matrix projects those subscriptions into platform Postgres so provisioning and routing never make live Stripe calls.

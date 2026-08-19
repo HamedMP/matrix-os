@@ -8,6 +8,10 @@ import type {
 import {
   claimUserMachineDelete,
   claimUserMachineRecovery,
+  claimRunningUserMachineBillingSuspend,
+  claimSuspendedUserMachineBillingResume,
+  completeUserMachineBillingResume,
+  completeUserMachineBillingSuspend,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
   getHostBundleRelease,
@@ -173,6 +177,8 @@ export interface CustomerVpsService {
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   resize(input: ResizeMachineRequest & { machineId: string }): Promise<ResizeResponse>;
+  suspendForBilling(machineId: string): Promise<void>;
+  resumeForBilling(machineId: string): Promise<void>;
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(target?: DeployTarget): Promise<DeployResult>;
@@ -256,6 +262,8 @@ const PROVIDER_DELETION_RETRY_BASE_MS = 60_000;
 const PROVIDER_DELETION_RETRY_MAX_MS = 60 * 60_000;
 const RESIZE_STATUS_POLL_INTERVAL_MS = 1_000;
 const RESIZE_STATUS_POLL_TIMEOUT_MS = 90_000;
+const BILLING_RUNTIME_HEALTH_POLL_INTERVAL_MS = 1_000;
+const BILLING_RUNTIME_HEALTH_POLL_TIMEOUT_MS = 90_000;
 const PROVISIONING_JOB_LEASE_MS = 5 * 60_000;
 const PROVISIONING_CREATE_ACTION_POLL_ATTEMPTS = 31;
 const PROVISIONING_CREATE_ACTION_POLL_INTERVAL_MS = 1_000;
@@ -603,6 +611,32 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         new Error(`expected ${expectedStatus}, got ${server.status}`),
       );
       await sleep(RESIZE_STATUS_POLL_INTERVAL_MS);
+    }
+  }
+
+  async function waitForRuntimeHealth(row: UserMachineRecord): Promise<void> {
+    if (!row.publicIPv4) {
+      throw new CustomerVpsError(500, 'invalid_state', 'Computer is unavailable');
+    }
+    const deadline = Date.now() + BILLING_RUNTIME_HEALTH_POLL_TIMEOUT_MS;
+    for (;;) {
+      try {
+        const response = await fetch(`https://${row.publicIPv4}:443/health`, {
+          signal: AbortSignal.timeout(3_000),
+          redirect: 'error',
+          ...(deps.fetchDispatcher ? { dispatcher: deps.fetchDispatcher } : {}),
+        } as RequestInit & { dispatcher?: import('undici').Dispatcher });
+        if (response.ok) return;
+      } catch (err: unknown) {
+        if (Date.now() >= deadline) {
+          throw new CustomerVpsError(500, 'provider_timeout', 'Computer is unavailable');
+        }
+        logCustomerVpsError(`billing resume health check failed machineId=${row.machineId}`, err);
+      }
+      if (Date.now() >= deadline) {
+        throw new CustomerVpsError(500, 'provider_timeout', 'Computer is unavailable');
+      }
+      await sleep(BILLING_RUNTIME_HEALTH_POLL_INTERVAL_MS);
     }
   }
 
@@ -2419,6 +2453,111 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         status: 'recovering',
         etaSeconds: deps.config.provisionEtaSeconds,
       };
+    },
+
+    async suspendForBilling(machineId) {
+      const current = await getUserMachine(deps.db, machineId);
+      if (!current || current.deletedAt) {
+        throw new CustomerVpsError(404, 'not_found', 'Machine not found');
+      }
+      if (current.status === 'suspended') return;
+      if (current.hetznerServerId === null) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
+      }
+      let claimed = current;
+      if (current.status === 'running') {
+        const transitioned = await claimRunningUserMachineBillingSuspend(
+          deps.db,
+          current.machineId,
+          current.hetznerServerId,
+        );
+        if (!transitioned) {
+          throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
+        }
+        claimed = transitioned;
+      } else if (current.status !== 'suspending') {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
+      }
+      const providerServerId = claimed.hetznerServerId;
+      if (providerServerId === null) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
+      }
+
+      const server = await deps.hetzner.getServer(providerServerId);
+      if (!server) {
+        throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+      }
+      if (server.status !== 'off') {
+        try {
+          await deps.hetzner.shutdownServer(providerServerId);
+          await waitForServerStatus(providerServerId, 'off', 'billing-shutdown');
+        } catch (err: unknown) {
+          logCustomerVpsError(`billing graceful shutdown failed machineId=${claimed.machineId}`, err);
+          await deps.hetzner.powerOffServer(providerServerId);
+          await waitForServerStatus(providerServerId, 'off', 'billing-poweroff');
+        }
+      }
+      const completed = await completeUserMachineBillingSuspend(
+        deps.db,
+        claimed.machineId,
+        providerServerId,
+      );
+      if (!completed) {
+        const latest = await getUserMachine(deps.db, claimed.machineId);
+        if (latest?.status !== 'suspended') {
+          throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
+        }
+      }
+    },
+
+    async resumeForBilling(machineId) {
+      const current = await getUserMachine(deps.db, machineId);
+      if (!current || current.deletedAt) {
+        throw new CustomerVpsError(404, 'not_found', 'Machine not found');
+      }
+      if (current.status === 'running') return;
+      if (current.hetznerServerId === null) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resume');
+      }
+      let claimed = current;
+      if (current.status === 'suspended' || current.status === 'suspending') {
+        const transitioned = await claimSuspendedUserMachineBillingResume(
+          deps.db,
+          current.machineId,
+          current.hetznerServerId,
+        );
+        if (!transitioned) {
+          throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resume');
+        }
+        claimed = transitioned;
+      } else if (current.status !== 'resuming') {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resume');
+      }
+      const providerServerId = claimed.hetznerServerId;
+      if (providerServerId === null) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resume');
+      }
+
+      const server = await deps.hetzner.getServer(providerServerId);
+      if (!server) {
+        throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+      }
+      if (server.status !== 'running') {
+        await deps.hetzner.powerOnServer(providerServerId);
+        await waitForServerStatus(providerServerId, 'running', 'billing-poweron');
+      }
+      await waitForRuntimeHealth(claimed);
+      const completed = await completeUserMachineBillingResume(
+        deps.db,
+        claimed.machineId,
+        providerServerId,
+      );
+      if (!completed) {
+        const latest = await getUserMachine(deps.db, claimed.machineId);
+        if (latest?.status !== 'running') {
+          throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resume');
+        }
+      }
     },
 
     async resize(input) {

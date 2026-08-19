@@ -86,6 +86,40 @@ describe('platform/stripe-billing', () => {
     });
   });
 
+  it('creates a card-required native Stripe trial when trial days are present', async () => {
+    const sessionsCreate = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/trial', id: 'cs_trial' });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { create: sessionsCreate } } }),
+    });
+
+    await client.createCheckoutSession({
+      clerkUserId: 'user_123',
+      idempotencyKey: 'attempt_trial',
+      priceId: 'price_builder_monthly',
+      mode: 'subscription',
+      automaticTax: true,
+      allowPromotionCodes: true,
+      regionSlug: 'region_fsn1',
+      runtimeSlot: 'primary',
+      trialPeriodDays: 7,
+      paymentMethodMode: 'card_required',
+      successUrl: 'https://app.matrix-os.com/?checkout=success',
+      cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
+    });
+
+    expect(sessionsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      payment_method_types: ['card'],
+      payment_method_collection: 'always',
+      subscription_data: expect.objectContaining({
+        trial_period_days: 7,
+        trial_settings: {
+          end_behavior: { missing_payment_method: 'cancel' },
+        },
+      }),
+    }), { idempotencyKey: 'attempt_trial' });
+  });
+
   it('retrieves the authoritative selection for a persisted checkout session', async () => {
     const sessionsRetrieve = vi.fn().mockResolvedValue({
       status: 'open',
