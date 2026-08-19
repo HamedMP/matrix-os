@@ -494,6 +494,8 @@ runcmd:
       && [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ] \
       && [ "${MATRIX_SNAPSHOT_SOURCE_VERSION:-}" = "${MATRIX_IMAGE_VERSION:-}" ] \
       && [ -x /opt/matrix/bin/matrix-prepare-host-prerequisites ] \
+      && [ -f /opt/matrix/HOST_PREREQUISITES_READY ] && [ ! -L /opt/matrix/HOST_PREREQUISITES_READY ] \
+      && [ "$(tr -d '\r\n' </opt/matrix/HOST_PREREQUISITES_READY)" = 'version=1' ] \
       && [ -f /opt/matrix/app/BUNDLE_VERSION ] && [ ! -L /opt/matrix/app/BUNDLE_VERSION ] \
       && [ -f /opt/matrix/app/BUNDLE_SHA256 ] && [ ! -L /opt/matrix/app/BUNDLE_SHA256 ] \
       && [ "$(tr -d '\r\n' </opt/matrix/app/BUNDLE_VERSION)" = "$MATRIX_IMAGE_VERSION" ] \

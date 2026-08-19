@@ -466,6 +466,9 @@ exit 99
 
     expect(exactSnapshot).toBeGreaterThan(-1);
     expect(cloudInit).toContain('[ -x /opt/matrix/bin/matrix-prepare-host-prerequisites ]');
+    expect(cloudInit).toContain('[ -f /opt/matrix/HOST_PREREQUISITES_READY ]');
+    expect(cloudInit).toContain('[ ! -L /opt/matrix/HOST_PREREQUISITES_READY ]');
+    expect(cloudInit).toContain('"$(tr -d \'\\r\\n\' </opt/matrix/HOST_PREREQUISITES_READY)" = \'version=1\'');
     expect(cloudInit).toContain('"$(tr -d \'\\r\\n\' </opt/matrix/app/BUNDLE_SHA256)" = "$MATRIX_TARGET_BUNDLE_SHA256"');
     expect(cloudInit).toContain('if [ "$matrix_exact_snapshot" -ne 1 ]; then');
     expect(bundleDownload).toBeGreaterThan(exactSnapshot);
