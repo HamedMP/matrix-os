@@ -1,8 +1,31 @@
 #cloud-config
 # Synthetic builder only. Customer/owner identity and credentials are forbidden.
+package_update: true
 packages:
+  - bubblewrap
+  - build-essential
+  - ca-certificates
+  - cmatrix
+  - curl
   - docker.io
+  - elixir
+  - erlang-base
+  - erlang-crypto
+  - erlang-inets
+  - erlang-public-key
+  - erlang-ssl
+  - erlang-tools
+  - file
+  - git
+  - nginx
+  - openssl
   - postgresql-client
+  - procps
+  - socat
+  - software-properties-common
+  - sudo
+  - unzip
+  - zsh
 
 write_files:
   - path: /etc/matrix/golden-snapshot-builder
@@ -59,11 +82,22 @@ runcmd:
     printf '%s\n' '{{bundleVersion}}' >/opt/matrix/app/BUNDLE_VERSION
     printf '%s\n' '{{bundleSha256}}' >/opt/matrix/app/BUNDLE_SHA256
     test "$(tr -d '\r\n' < /opt/matrix/app/BUNDLE_VERSION)" = '{{bundleVersion}}'
-    chmod 0755 /opt/matrix/bin/matrix-prepare-host-prerequisites /opt/matrix/bin/matrix-golden-snapshot-activate /opt/matrix/bin/matrix-golden-snapshot-sanitize /opt/matrix/bin/matrix-golden-snapshot-validate
+    chmod 0755 /opt/matrix/bin/matrix-prepare-host-prerequisites /opt/matrix/bin/matrix-aws-cli-smoke /opt/matrix/bin/matrix-golden-snapshot-activate /opt/matrix/bin/matrix-golden-snapshot-fast-path /opt/matrix/bin/matrix-golden-snapshot-sanitize /opt/matrix/bin/matrix-golden-snapshot-validate
     failureStage='host_prerequisites'
     timeout --kill-after=30 1800 /opt/matrix/bin/matrix-prepare-host-prerequisites
     failureStage='activation'
     timeout --kill-after=30 1200 /opt/matrix/bin/matrix-golden-snapshot-activate builder
+    chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+    if [ -d /opt/matrix/terminal-runtime ]; then
+      chown -R root:root /opt/matrix/terminal-runtime
+    fi
+    chmod -R g+rwX /opt/matrix/app
+    for required_command in aws bwrap cc cmatrix curl docker elixir erl file git nginx openssl psql socat sudo unzip zsh; do
+      command -v "$required_command" >/dev/null
+    done
+    timeout --kill-after=5 60 /opt/matrix/bin/matrix-aws-cli-smoke
+    printf '%s\n' matrix-host-prerequisites-v1 >/opt/matrix/golden-snapshot-system-ready
+    chmod 0644 /opt/matrix/golden-snapshot-system-ready
     builderMachineIdSha256="$(sha256sum /etc/machine-id | awk '{print $1}')"
     builderSshHostKeySha256="$(sha256sum /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1}')"
     failureStage='callback_delivery'

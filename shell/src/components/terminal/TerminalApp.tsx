@@ -266,6 +266,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
+  const [focusRequestId, setFocusRequestId] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_TERMINAL_SIDEBAR_WIDTH);
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
@@ -375,6 +376,21 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     loadGlobalShellThemePreference(setThemeId);
   }, [setThemeId]);
 
+  const requestPaneFocus = (paneId: string | null) => {
+    setFocusedPaneId(paneId);
+    if (paneId) setFocusRequestId((current) => current + 1);
+  };
+
+  const activateTab = (tabId: string) => {
+    const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    setActiveTabId(tabId);
+    setFocusedPaneId((current) => (
+      current && hasPaneId(tab.paneTree, current) ? current : getFirstPaneId(tab.paneTree)
+    ));
+    setFocusRequestId((current) => current + 1);
+  };
+
   const addTab = (cwd: string, label?: string, claude?: boolean, startupCommand?: string, sessionId?: string) => {
     const id = genId();
     const paneId = genId();
@@ -394,7 +410,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(id);
-    setFocusedPaneId(paneId);
+    requestPaneFocus(paneId);
     return id;
   };
 
@@ -419,7 +435,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(id);
-    setFocusedPaneId(paneId);
+    requestPaneFocus(paneId);
     return id;
   };
 
@@ -557,7 +573,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                 setTabs(applyCompatModeToTabs(data.tabs));
                 setActiveTabId(nextActiveTabId);
                 setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
-                setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+                requestPaneFocus(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
                 setInitialized(true);
                 return;
               }
@@ -705,15 +721,15 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       tabId,
       paneIds: tabsRef.current.find((tab) => tab.id === tabId)?.paneTree ? getAllPaneIds(tabsRef.current.find((tab) => tab.id === tabId)!.paneTree) : [],
     });
-    setTabs(prev => {
-      const next = prev.filter(t => t.id !== tabId);
-      setActiveTabId(curr => {
-        if (curr !== tabId) return curr;
-        const idx = prev.findIndex(t => t.id === tabId);
-        return next[Math.min(idx, next.length - 1)]?.id ?? "";
-      });
-      return next;
-    });
+    const prev = tabsRef.current;
+    const next = prev.filter((tab) => tab.id !== tabId);
+    setTabs(next);
+    if (activeTabIdRef.current === tabId) {
+      const idx = prev.findIndex((tab) => tab.id === tabId);
+      const replacement = next[Math.min(idx, next.length - 1)];
+      setActiveTabId(replacement?.id ?? "");
+      requestPaneFocus(replacement ? getFirstPaneId(replacement.paneTree) : null);
+    }
   };
 
   const splitPane = (paneId: string, dir: "horizontal" | "vertical") => {
@@ -739,11 +755,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       const newTree = closePaneInTree(tab.paneTree, paneId);
       if (!newTree) {
         const next = prev.filter(t => t.id !== activeTabId);
-        setActiveTabId(next[0]?.id ?? "");
-        setFocusedPaneId(null);
+        const replacement = next[0];
+        setActiveTabId(replacement?.id ?? "");
+        requestPaneFocus(replacement ? getFirstPaneId(replacement.paneTree) : null);
         return next;
       }
-      setFocusedPaneId(getFirstPaneId(newTree));
+      requestPaneFocus(getFirstPaneId(newTree));
       return prev.map(t => t.id === activeTabId ? { ...t, paneTree: newTree } : t);
     });
   };
@@ -884,7 +901,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     },
     setActiveTab: (tabId: string) => {
       markTerminalLayoutDirty();
-      setActiveTabId(tabId);
+      activateTab(tabId);
     },
     renameTab: (...args: Parameters<typeof renameTab>) => {
       markTerminalLayoutDirty();
@@ -970,6 +987,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                     paneTree={activeTab.paneTree}
                     theme={designTheme}
                     focusedPaneId={focusedPaneId}
+                    focusRequestId={focusRequestId}
                     onFocusPane={setFocusedPaneId}
                     onSessionAttached={handleSessionAttached}
                     shouldCachePane={shouldCachePane}
