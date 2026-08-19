@@ -898,10 +898,12 @@ export interface BillingWebhookEventRecord {
 export type NewBillingWebhookEvent = BillingWebhookEventRecord;
 
 export {
+  cancelOutstandingBillingRuntimeActions,
   cancelQueuedBillingRuntimeActions,
   claimBillingRuntimeAction,
   completeBillingRuntimeAction,
   enqueueBillingRuntimeAction,
+  isBillingRuntimeActionRunnable,
   listBillingRuntimeActions,
   listDispatchableBillingRuntimeActions,
   retryBillingRuntimeAction,

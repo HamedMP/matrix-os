@@ -1522,6 +1522,60 @@ describe('platform billing routes', () => {
     ]));
   });
 
+  it('revokes an in-flight recovery resume and makes its compensating suspension immediately due', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'resuming', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_failed_newer', 'invoice.payment_failed', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:02:00.000Z') / 1000,
+      });
+    const app = createApp(
+      null,
+      env,
+      undefined,
+      () => new Date('2026-05-30T00:03:00.000Z'),
+    );
+    await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    const resume = await enqueueBillingRuntimeAction(db, {
+      clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
+      action: 'resume', reason: 'payment_recovered', executeAfter: '2026-05-30T00:01:00.000Z',
+      createdAt: '2026-05-30T00:01:00.000Z',
+    });
+    expect(resume).toBeDefined();
+    await claimBillingRuntimeAction(
+      db,
+      resume!.id,
+      '2026-05-30T00:01:00.000Z',
+      '2026-05-30T00:06:00.000Z',
+      5,
+    );
+
+    const failed = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(failed.status).toBe(200);
+    const actions = await listBillingRuntimeActions(db, 'sub_trial');
+    expect(actions).toHaveLength(2);
+    expect(actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'resume', status: 'canceled' }),
+      expect.objectContaining({
+        action: 'suspend', status: 'queued', executeAfter: '2026-05-30T00:03:00.000Z',
+      }),
+    ]));
+  });
+
   it('updates stale customer links when a signed subscription webhook names a newer Stripe customer', async () => {
     await upsertBillingCustomer(db, {
       clerkUserId: 'user_123',

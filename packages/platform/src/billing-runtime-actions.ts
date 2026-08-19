@@ -1,6 +1,7 @@
 import {
   claimBillingRuntimeAction,
   completeBillingRuntimeAction,
+  isBillingRuntimeActionRunnable,
   listDispatchableBillingRuntimeActions,
   retryBillingRuntimeAction,
   type PlatformDB,
@@ -59,6 +60,7 @@ export async function dispatchBillingRuntimeActions(input: {
       BILLING_RUNTIME_ACTION_MAX_ATTEMPTS,
     );
     if (!claimed) continue;
+    if (!(await isBillingRuntimeActionRunnable(input.db, claimed.id))) continue;
 
     try {
       if (claimed.action === 'suspend') {

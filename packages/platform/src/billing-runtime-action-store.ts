@@ -120,6 +120,55 @@ export async function cancelQueuedBillingRuntimeActions(
   return rows.length;
 }
 
+export interface CanceledBillingRuntimeActionCounts {
+  queued: number;
+  running: number;
+}
+
+export async function cancelOutstandingBillingRuntimeActions(
+  db: PlatformDB,
+  stripeSubscriptionId: string,
+  action: BillingRuntimeAction,
+  canceledAt: string,
+): Promise<CanceledBillingRuntimeActionCounts> {
+  await db.ready;
+  const result = await sql<{ previous_status: 'queued' | 'running' }>`
+    WITH targets AS MATERIALIZED (
+      SELECT id, status AS previous_status
+      FROM billing_runtime_actions
+      WHERE stripe_subscription_id = ${stripeSubscriptionId}
+        AND action = ${action}
+        AND status IN ('queued', 'running')
+      FOR UPDATE
+    ), canceled AS (
+      UPDATE billing_runtime_actions AS pending
+      SET status = 'canceled', updated_at = ${canceledAt}, completed_at = ${canceledAt}
+      FROM targets
+      WHERE pending.id = targets.id
+      RETURNING targets.previous_status
+    )
+    SELECT previous_status FROM canceled
+  `.execute(db.executor);
+  return result.rows.reduce<CanceledBillingRuntimeActionCounts>((counts, row) => ({
+    ...counts,
+    [row.previous_status]: counts[row.previous_status] + 1,
+  }), { queued: 0, running: 0 });
+}
+
+export async function isBillingRuntimeActionRunnable(
+  db: PlatformDB,
+  id: string,
+): Promise<boolean> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_runtime_actions')
+    .select('id')
+    .where('id', '=', id)
+    .where('status', '=', 'running')
+    .executeTakeFirst();
+  return Boolean(row);
+}
+
 export async function listBillingRuntimeActions(
   db: PlatformDB,
   stripeSubscriptionId: string,

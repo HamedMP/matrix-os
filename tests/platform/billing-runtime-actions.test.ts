@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  cancelOutstandingBillingRuntimeActions,
   claimBillingRuntimeAction,
   completeBillingRuntimeAction,
   enqueueBillingRuntimeAction,
@@ -135,5 +136,72 @@ describe('billing runtime actions', () => {
       now: () => new Date('2026-05-31T00:00:03.000Z'),
     })).resolves.toMatchObject({ completed: 1 });
     expect(resumeForBilling).toHaveBeenCalledOnce();
+  });
+
+  it('does not execute a resume whose lease was revoked by newer billing state', async () => {
+    const resume = await enqueueBillingRuntimeAction(db, {
+      clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
+      action: 'resume', reason: 'payment_recovered', executeAfter: '2026-05-31T00:00:00.000Z',
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    expect(resume).toBeDefined();
+    await claimBillingRuntimeAction(
+      db, resume!.id, '2026-05-31T00:00:00.000Z', '2026-05-31T00:05:00.000Z', 5,
+    );
+    await cancelOutstandingBillingRuntimeActions(
+      db,
+      'sub_trial',
+      'resume',
+      '2026-05-31T00:00:01.000Z',
+    );
+    const resumeForBilling = vi.fn().mockResolvedValue(undefined);
+
+    await expect(dispatchBillingRuntimeActions({
+      db,
+      customerVpsService: { suspendForBilling: vi.fn(), resumeForBilling },
+      now: () => new Date('2026-05-31T00:06:00.000Z'),
+    })).resolves.toEqual({ checked: 0, completed: 0, failed: 0, retried: 0 });
+    expect(resumeForBilling).not.toHaveBeenCalled();
+  });
+
+  it('dispatches an immediate compensating suspend when delinquency arrives during a resume call', async () => {
+    await enqueueBillingRuntimeAction(db, {
+      clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
+      action: 'resume', reason: 'payment_recovered', executeAfter: '2026-05-31T00:00:00.000Z',
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    let releaseResume!: () => void;
+    const resumeWait = new Promise<void>((resolve) => {
+      releaseResume = resolve;
+    });
+    const resumeForBilling = vi.fn().mockReturnValue(resumeWait);
+    const suspendForBilling = vi.fn().mockResolvedValue(undefined);
+    const firstDispatch = dispatchBillingRuntimeActions({
+      db,
+      customerVpsService: { suspendForBilling, resumeForBilling },
+      now: () => new Date('2026-05-31T00:00:00.000Z'),
+    });
+    await vi.waitFor(() => expect(resumeForBilling).toHaveBeenCalledOnce());
+
+    await cancelOutstandingBillingRuntimeActions(
+      db,
+      'sub_trial',
+      'resume',
+      '2026-05-31T00:00:01.000Z',
+    );
+    await enqueueBillingRuntimeAction(db, {
+      clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
+      action: 'suspend', reason: 'trial_payment_failed', executeAfter: '2026-05-31T00:00:01.000Z',
+      createdAt: '2026-05-31T00:00:01.000Z',
+    });
+    releaseResume();
+
+    await expect(firstDispatch).resolves.toEqual({ checked: 1, completed: 0, failed: 0, retried: 0 });
+    await expect(dispatchBillingRuntimeActions({
+      db,
+      customerVpsService: { suspendForBilling, resumeForBilling },
+      now: () => new Date('2026-05-31T00:00:02.000Z'),
+    })).resolves.toMatchObject({ checked: 1, completed: 1 });
+    expect(suspendForBilling).toHaveBeenCalledOnce();
   });
 });

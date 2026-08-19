@@ -7,6 +7,7 @@ import { appOrigin, resolveReturnPath } from './origins.js';
 import {
   claimCardTrialCheckoutAttempt,
   claimCheckoutAttempt,
+  cancelOutstandingBillingRuntimeActions,
   cancelQueuedBillingRuntimeActions,
   enqueueBillingRuntimeAction,
   finalizeCheckoutAttempt,
@@ -600,7 +601,7 @@ export function createBillingRoutes(options: {
           if (!invoiceProjection.lifecycleChanged) return { received: true, processed: true };
           const updated = invoiceProjection.subscription;
           if (event.type === 'invoice.payment_failed') {
-            await cancelQueuedBillingRuntimeActions(
+            const canceledResumes = await cancelOutstandingBillingRuntimeActions(
               trx,
               updated.stripeSubscriptionId,
               'resume',
@@ -612,7 +613,9 @@ export function createBillingRoutes(options: {
               stripeSubscriptionId: updated.stripeSubscriptionId,
               action: 'suspend',
               reason: 'trial_payment_failed',
-              executeAfter: new Date(Date.parse(eventAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS).toISOString(),
+              executeAfter: canceledResumes.running > 0
+                ? webhookProcessedAt.toISOString()
+                : new Date(Date.parse(eventAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS).toISOString(),
               createdAt: webhookProcessedAt.toISOString(),
             });
             emitTelemetry(BILLING_TRIAL_PAYMENT_FAILED_EVENT, {
@@ -709,7 +712,7 @@ export function createBillingRoutes(options: {
           && !projection.trialConvertedAt
           && (projection.status === 'canceled' || projection.status === 'unpaid' || projection.status === 'ended')
         ) {
-          await cancelQueuedBillingRuntimeActions(
+          const canceledResumes = await cancelOutstandingBillingRuntimeActions(
             trx,
             projection.stripeSubscriptionId,
             'resume',
@@ -721,9 +724,11 @@ export function createBillingRoutes(options: {
             stripeSubscriptionId: projection.stripeSubscriptionId,
             action: 'suspend',
             reason: 'trial_ended_unpaid',
-            executeAfter: new Date(
-              Date.parse(projection.trialEndsAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS,
-            ).toISOString(),
+            executeAfter: canceledResumes.running > 0
+              ? webhookProcessedAt.toISOString()
+              : new Date(
+                Date.parse(projection.trialEndsAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS,
+              ).toISOString(),
             createdAt: webhookProcessedAt.toISOString(),
           });
         }
