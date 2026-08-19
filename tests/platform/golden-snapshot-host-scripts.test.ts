@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const sanitizePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-sanitize';
 const validatePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-validate';
 const activatePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-activate';
+const prerequisitesPath = 'distro/customer-vps/host-bin/matrix-prepare-host-prerequisites';
 
 describe('golden snapshot host scripts', () => {
   it('removes every forbidden-state category from an isolated synthetic root', async () => {
@@ -217,6 +218,31 @@ describe('golden snapshot host scripts', () => {
     expect(source).toContain("printf '%s\\n' '{{bundleSha256}}' >/opt/matrix/app/BUNDLE_SHA256");
     expect(source).not.toContain('{{clerkUserId}}');
     expect(source).not.toContain('{{registrationToken}}');
+  });
+
+  it('prepares immutable host prerequisites before snapshot activation', async () => {
+    const [builder, activation, prerequisites, buildScript, service] = await Promise.all([
+      readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8'),
+      readFile(activatePath, 'utf8'),
+      readFile(prerequisitesPath, 'utf8'),
+      readFile('scripts/build-host-bundle.sh', 'utf8'),
+      readFile('packages/platform/src/golden-snapshot-service.ts', 'utf8'),
+    ]);
+    const prepare = builder.indexOf('/opt/matrix/bin/matrix-prepare-host-prerequisites');
+    const activate = builder.indexOf('/opt/matrix/bin/matrix-golden-snapshot-activate builder');
+
+    expect(prepare).toBeGreaterThan(-1);
+    expect(prepare).toBeLessThan(activate);
+    expect(buildScript).toContain('$STAGE_DIR/bin/matrix-prepare-host-prerequisites');
+    expect(prerequisites).toContain('HOST_PREREQUISITES_VERSION=1');
+    expect(prerequisites).toContain('/opt/matrix/HOST_PREREQUISITES_READY');
+    expect(prerequisites).toContain('timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive');
+    expect(prerequisites).toContain('timeout --kill-after=30 120 add-apt-repository -y universe');
+    expect(prerequisites).toContain('curl --fail --location');
+    expect(prerequisites).toContain('--connect-timeout 10 --max-time 120');
+    expect(activation).toContain('/opt/matrix/HOST_PREREQUISITES_READY');
+    expect(activation).toContain('matrix host prerequisites are not ready');
+    expect(service).toContain("'host_prerequisites'");
   });
 
   it('defers final sanitation until after the builder cloud-final command exits', async () => {

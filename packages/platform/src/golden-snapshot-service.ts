@@ -31,6 +31,7 @@ const GoldenSnapshotFailureStageSchema = z.enum([
   'bundle_download',
   'bundle_verify',
   'bundle_extract',
+  'host_prerequisites',
   'identity_regeneration',
   'activation',
   'activation_preflight_evidence',

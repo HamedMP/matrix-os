@@ -59,7 +59,9 @@ runcmd:
     printf '%s\n' '{{bundleVersion}}' >/opt/matrix/app/BUNDLE_VERSION
     printf '%s\n' '{{bundleSha256}}' >/opt/matrix/app/BUNDLE_SHA256
     test "$(tr -d '\r\n' < /opt/matrix/app/BUNDLE_VERSION)" = '{{bundleVersion}}'
-    chmod 0755 /opt/matrix/bin/matrix-golden-snapshot-activate /opt/matrix/bin/matrix-golden-snapshot-sanitize /opt/matrix/bin/matrix-golden-snapshot-validate
+    chmod 0755 /opt/matrix/bin/matrix-prepare-host-prerequisites /opt/matrix/bin/matrix-golden-snapshot-activate /opt/matrix/bin/matrix-golden-snapshot-sanitize /opt/matrix/bin/matrix-golden-snapshot-validate
+    failureStage='host_prerequisites'
+    timeout --kill-after=30 1800 /opt/matrix/bin/matrix-prepare-host-prerequisites
     failureStage='activation'
     timeout --kill-after=30 1200 /opt/matrix/bin/matrix-golden-snapshot-activate builder
     builderMachineIdSha256="$(sha256sum /etc/machine-id | awk '{print $1}')"

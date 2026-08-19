@@ -453,6 +453,26 @@ exit 99
     expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256"');
   });
 
+  it('reuses an exact prepared snapshot instead of repeating immutable host setup', () => {
+    const cloudInit = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/cloud-init.yaml'),
+      'utf8',
+    );
+    const exactSnapshot = cloudInit.indexOf('matrix_exact_snapshot=1');
+    const bundleDownload = cloudInit.indexOf('"$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz');
+    const prerequisites = cloudInit.indexOf(
+      'timeout --kill-after=30 1800 /opt/matrix/bin/matrix-prepare-host-prerequisites',
+    );
+
+    expect(exactSnapshot).toBeGreaterThan(-1);
+    expect(cloudInit).toContain('[ -x /opt/matrix/bin/matrix-prepare-host-prerequisites ]');
+    expect(cloudInit).toContain('"$(tr -d \'\\r\\n\' </opt/matrix/app/BUNDLE_SHA256)" = "$MATRIX_TARGET_BUNDLE_SHA256"');
+    expect(cloudInit).toContain('if [ "$matrix_exact_snapshot" -ne 1 ]; then');
+    expect(bundleDownload).toBeGreaterThan(exactSnapshot);
+    expect(prerequisites).toBeGreaterThan(bundleDownload);
+    expect(cloudInit).toContain('/opt/matrix/bin/matrix-prepare-host-prerequisites');
+  });
+
   it('removes the baked release trees before activating a different bundle from a snapshot', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
