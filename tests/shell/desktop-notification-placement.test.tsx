@@ -115,6 +115,10 @@ vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => <div data-testid="runtime-identity-banner" />,
 }));
 
+vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
+  BillingTrialNotification: () => <div data-testid="billing-trial-notification" />,
+}));
+
 vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
   DeveloperModeDashboard: () => null,
 }));
@@ -171,23 +175,26 @@ describe("Desktop shell notifications", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders connection, runtime, and vocal notices in the shared top-right stack outside the dock", async () => {
+  it("renders connection, runtime, billing, and vocal notices in the shared top-right stack outside the dock", async () => {
     render(<Desktop />);
 
     const indicator = await screen.findByTestId("connection-indicator");
     const banner = screen.getByTestId("runtime-identity-banner");
+    const billingTrial = screen.getByTestId("billing-trial-notification");
     const stack = screen.getByTestId("shell-notification-stack");
     const vocalError = await screen.findByRole("alert");
 
     await waitFor(() => {
       expect(stack.contains(indicator)).toBe(true);
       expect(stack.contains(banner)).toBe(true);
+      expect(stack.contains(billingTrial)).toBe(true);
       expect(stack.contains(vocalError)).toBe(true);
     });
 
     const dock = document.querySelector("[data-dock]");
     expect(dock).toBeTruthy();
     expect(dock?.contains(indicator)).toBe(false);
+    expect(dock?.contains(billingTrial)).toBe(false);
     expect(vocalError.textContent).toContain("Aoede could not connect");
   });
 });

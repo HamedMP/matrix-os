@@ -98,6 +98,10 @@ vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
   RuntimeIdentityBanner: () => null,
 }));
 
+vi.mock("../../shell/src/components/BillingTrialNotification.js", () => ({
+  BillingTrialNotification: () => null,
+}));
+
 vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
   DeveloperModeDashboard: () => null,
 }));
