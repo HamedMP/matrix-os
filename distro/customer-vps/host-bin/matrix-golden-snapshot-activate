@@ -234,6 +234,7 @@ set_activation_stage activation_runtime_setup
 # is removed by matrix-golden-snapshot-sanitize before image creation.
 getent group matrix >/dev/null || groupadd --system matrix
 id matrix >/dev/null 2>&1 || useradd --system --gid matrix --home-dir /home/matrix --shell /bin/bash matrix
+install -d -o root -g matrix -m 0770 /opt/matrix
 install -d -o matrix -g matrix -m 0750 /home/matrix
 install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects
 install -d -o matrix -g matrix -m 0750 /opt/matrix/staging

@@ -637,6 +637,21 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     expect(source.indexOf(parentHome)).toBeLessThan(source.indexOf(ownerDirectories));
   });
 
+  it('restores matrix traversal access before starting synthetic services', async () => {
+    const source = await readFile(activatePath, 'utf8');
+    const matrixUser = source.indexOf(
+      'id matrix >/dev/null 2>&1 || useradd --system --gid matrix --home-dir /home/matrix --shell /bin/bash matrix',
+    );
+    const accessibleWorkingDirectory = source.indexOf(
+      'install -d -o root -g matrix -m 0770 /opt/matrix',
+    );
+    const serviceStart = source.indexOf('set_activation_stage activation_services_start');
+
+    expect(matrixUser).toBeGreaterThan(-1);
+    expect(accessibleWorkingDirectory).toBeGreaterThan(matrixUser);
+    expect(accessibleWorkingDirectory).toBeLessThan(serviceStart);
+  });
+
   it('installs activated user-systemd terminal prerequisites before starting the gateway', async () => {
     const source = await readFile(activatePath, 'utf8');
     const runtimeSetup = source.indexOf('set_activation_stage activation_terminal_runtime');
