@@ -174,13 +174,21 @@ describe('billing runtime actions', () => {
     const resumeWait = new Promise<void>((resolve) => {
       releaseResume = resolve;
     });
-    const resumeForBilling = vi.fn().mockReturnValue(resumeWait);
+    const resumeForBilling = vi.fn(async (
+      _machineId: string,
+      shouldContinue?: () => Promise<boolean>,
+    ) => {
+      await resumeWait;
+      expect(shouldContinue).toBeTypeOf('function');
+      await expect(shouldContinue!()).resolves.toBe(false);
+    });
     const suspendForBilling = vi.fn().mockResolvedValue(undefined);
     let currentTime = '2026-05-31T00:00:00.000Z';
     const firstDispatch = dispatchBillingRuntimeActions({
       db,
       customerVpsService: { suspendForBilling, resumeForBilling },
       now: () => new Date(currentTime),
+      batchSize: 1,
     });
     await vi.waitFor(() => expect(resumeForBilling).toHaveBeenCalledOnce());
 
@@ -222,7 +230,14 @@ describe('billing runtime actions', () => {
     const suspendWait = new Promise<void>((resolve) => {
       releaseSuspend = resolve;
     });
-    const suspendForBilling = vi.fn().mockReturnValue(suspendWait);
+    const suspendForBilling = vi.fn(async (
+      _machineId: string,
+      shouldContinue?: () => Promise<boolean>,
+    ) => {
+      await suspendWait;
+      expect(shouldContinue).toBeTypeOf('function');
+      await expect(shouldContinue!()).resolves.toBe(false);
+    });
     const resumeForBilling = vi.fn().mockResolvedValue(undefined);
     let currentTime = '2026-05-31T00:00:00.000Z';
     const firstDispatch = dispatchBillingRuntimeActions({

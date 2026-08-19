@@ -2252,6 +2252,51 @@ describe('platform/customer-vps', () => {
     });
   });
 
+  it('does not start a billing suspension after its durable action is superseded', async () => {
+    const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff133';
+    await insertUserMachine(db, {
+      machineId, clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const { service, hetzner } = createService();
+    const shouldContinue = vi.fn().mockResolvedValue(false);
+
+    await expect(service.suspendForBilling(machineId, shouldContinue)).resolves.toBeUndefined();
+
+    expect(shouldContinue).toHaveBeenCalledOnce();
+    expect(hetzner.shutdownServer).not.toHaveBeenCalled();
+    expect(hetzner.powerOffServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'running' });
+  });
+
+  it('suspends a delinquent machine left resuming by a superseded action', async () => {
+    const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff135';
+    await insertUserMachine(db, {
+      machineId, clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'resuming', imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        getServer: vi.fn()
+          .mockResolvedValueOnce({
+            id: 123456, status: 'running', serverType: 'cpx22',
+            publicIPv4: '203.0.113.10', publicIPv6: null,
+          })
+          .mockResolvedValue({
+            id: 123456, status: 'off', serverType: 'cpx22',
+            publicIPv4: '203.0.113.10', publicIPv6: null,
+          }),
+      }),
+    });
+
+    await expect(service.suspendForBilling(machineId)).resolves.toBeUndefined();
+
+    expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
+    await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'suspended' });
+  });
+
   it('resumes a suspended machine only after provider and runtime health recover', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff131',
@@ -2301,6 +2346,23 @@ describe('platform/customer-vps', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('does not start a billing resume after its durable action is superseded', async () => {
+    const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff134';
+    await insertUserMachine(db, {
+      machineId, clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'suspended', imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const { service, hetzner } = createService();
+    const shouldContinue = vi.fn().mockResolvedValue(false);
+
+    await expect(service.resumeForBilling(machineId, shouldContinue)).resolves.toBeUndefined();
+
+    expect(shouldContinue).toHaveBeenCalledOnce();
+    expect(hetzner.powerOnServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'suspended' });
   });
 
   it('recovers a paid machine left suspending after an interrupted shutdown', async () => {

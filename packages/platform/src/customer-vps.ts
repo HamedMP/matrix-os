@@ -177,8 +177,8 @@ export interface CustomerVpsService {
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   resize(input: ResizeMachineRequest & { machineId: string }): Promise<ResizeResponse>;
-  suspendForBilling(machineId: string): Promise<void>;
-  resumeForBilling(machineId: string): Promise<void>;
+  suspendForBilling(machineId: string, shouldContinue?: () => Promise<boolean>): Promise<void>;
+  resumeForBilling(machineId: string, shouldContinue?: () => Promise<boolean>): Promise<void>;
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(target?: DeployTarget): Promise<DeployResult>;
@@ -583,9 +583,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     serverId: number,
     expectedStatus: string,
     context: string,
-  ): Promise<void> {
+    shouldContinue?: () => Promise<boolean>,
+  ): Promise<boolean> {
     const deadline = Date.now() + RESIZE_STATUS_POLL_TIMEOUT_MS;
     for (;;) {
+      if (shouldContinue && !(await shouldContinue())) return false;
       let server: Awaited<ReturnType<typeof deps.hetzner.getServer>>;
       try {
         server = await deps.hetzner.getServer(serverId);
@@ -601,7 +603,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       if (server.status === expectedStatus) {
-        return;
+        return true;
       }
       if (Date.now() >= deadline) {
         throw new CustomerVpsError(500, 'provider_timeout', 'Provisioning provider unavailable');
@@ -614,19 +616,23 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
-  async function waitForRuntimeHealth(row: UserMachineRecord): Promise<void> {
+  async function waitForRuntimeHealth(
+    row: UserMachineRecord,
+    shouldContinue?: () => Promise<boolean>,
+  ): Promise<boolean> {
     if (!row.publicIPv4) {
       throw new CustomerVpsError(500, 'invalid_state', 'Computer is unavailable');
     }
     const deadline = Date.now() + BILLING_RUNTIME_HEALTH_POLL_TIMEOUT_MS;
     for (;;) {
+      if (shouldContinue && !(await shouldContinue())) return false;
       try {
         const response = await fetch(`https://${row.publicIPv4}:443/health`, {
           signal: AbortSignal.timeout(3_000),
           redirect: 'error',
           ...(deps.fetchDispatcher ? { dispatcher: deps.fetchDispatcher } : {}),
         } as RequestInit & { dispatcher?: import('undici').Dispatcher });
-        if (response.ok) return;
+        if (response.ok) return true;
       } catch (err: unknown) {
         if (Date.now() >= deadline) {
           throw new CustomerVpsError(500, 'provider_timeout', 'Computer is unavailable');
@@ -2455,7 +2461,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       };
     },
 
-    async suspendForBilling(machineId) {
+    async suspendForBilling(machineId, shouldContinue) {
+      if (shouldContinue && !(await shouldContinue())) return;
       const current = await getUserMachine(deps.db, machineId);
       if (!current || current.deletedAt) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
@@ -2464,8 +2471,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (current.hetznerServerId === null) {
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
       }
+      if (shouldContinue && !(await shouldContinue())) return;
       let claimed = current;
-      if (current.status === 'running') {
+      if (current.status === 'running' || current.status === 'resuming') {
         const transitioned = await claimRunningUserMachineBillingSuspend(
           deps.db,
           current.machineId,
@@ -2488,15 +2496,28 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       if (server.status !== 'off') {
+        if (shouldContinue && !(await shouldContinue())) return;
         try {
           await deps.hetzner.shutdownServer(providerServerId);
-          await waitForServerStatus(providerServerId, 'off', 'billing-shutdown');
+          if (!(await waitForServerStatus(
+            providerServerId,
+            'off',
+            'billing-shutdown',
+            shouldContinue,
+          ))) return;
         } catch (err: unknown) {
           logCustomerVpsError(`billing graceful shutdown failed machineId=${claimed.machineId}`, err);
+          if (shouldContinue && !(await shouldContinue())) return;
           await deps.hetzner.powerOffServer(providerServerId);
-          await waitForServerStatus(providerServerId, 'off', 'billing-poweroff');
+          if (!(await waitForServerStatus(
+            providerServerId,
+            'off',
+            'billing-poweroff',
+            shouldContinue,
+          ))) return;
         }
       }
+      if (shouldContinue && !(await shouldContinue())) return;
       const completed = await completeUserMachineBillingSuspend(
         deps.db,
         claimed.machineId,
@@ -2510,7 +2531,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
     },
 
-    async resumeForBilling(machineId) {
+    async resumeForBilling(machineId, shouldContinue) {
+      if (shouldContinue && !(await shouldContinue())) return;
       const current = await getUserMachine(deps.db, machineId);
       if (!current || current.deletedAt) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
@@ -2519,6 +2541,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (current.hetznerServerId === null) {
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resume');
       }
+      if (shouldContinue && !(await shouldContinue())) return;
       let claimed = current;
       if (current.status === 'suspended' || current.status === 'suspending') {
         const transitioned = await claimSuspendedUserMachineBillingResume(
@@ -2543,10 +2566,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       if (server.status !== 'running') {
+        if (shouldContinue && !(await shouldContinue())) return;
         await deps.hetzner.powerOnServer(providerServerId);
-        await waitForServerStatus(providerServerId, 'running', 'billing-poweron');
+        if (!(await waitForServerStatus(
+          providerServerId,
+          'running',
+          'billing-poweron',
+          shouldContinue,
+        ))) return;
       }
-      await waitForRuntimeHealth(claimed);
+      if (!(await waitForRuntimeHealth(claimed, shouldContinue))) return;
+      if (shouldContinue && !(await shouldContinue())) return;
       const completed = await completeUserMachineBillingResume(
         deps.db,
         claimed.machineId,

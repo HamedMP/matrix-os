@@ -3463,7 +3463,7 @@ export async function claimRunningUserMachineBillingSuspend(
     .set({ status: 'suspending', failure_code: null, failure_at: null })
     .where('machine_id', '=', machineId)
     .where('hetzner_server_id', '=', hetznerServerId)
-    .where('status', '=', 'running')
+    .where('status', 'in', ['running', 'resuming'])
     .where('deleted_at', 'is', null)
     .returningAll()
     .executeTakeFirst();

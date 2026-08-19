@@ -19,8 +19,8 @@ const BILLING_RUNTIME_ACTION_RETRY_DELAYS_MS = [
 ] as const;
 
 export interface BillingRuntimeActionService {
-  suspendForBilling(machineId: string): Promise<void>;
-  resumeForBilling(machineId: string): Promise<void>;
+  suspendForBilling(machineId: string, shouldContinue?: () => Promise<boolean>): Promise<void>;
+  resumeForBilling(machineId: string, shouldContinue?: () => Promise<boolean>): Promise<void>;
 }
 
 export interface BillingRuntimeActionDispatchResult {
@@ -53,21 +53,24 @@ export async function dispatchBillingRuntimeActions(input: {
   );
   const queue = [...actions];
   const queuedActionIds = new Set(queue.map((action) => action.id));
+  // Reserve one bounded compensation slot per initially claimed action so a
+  // state reversal never waits for the next scheduled worker batch.
+  const maxQueuedActions = batchSize * 2;
   let completed = 0;
   let retried = 0;
   let failed = 0;
   let checked = 0;
 
   const appendDueCompensation = async (machineId: string) => {
-    if (queue.length >= batchSize) return;
+    if (queue.length >= maxQueuedActions) return;
     const candidates = await listDispatchableBillingRuntimeActionsForMachine(
       input.db,
       machineId,
       now().toISOString(),
-      batchSize - queue.length,
+      maxQueuedActions - queue.length,
     );
     for (const candidate of candidates) {
-      if (queue.length >= batchSize) break;
+      if (queue.length >= maxQueuedActions) break;
       if (queuedActionIds.has(candidate.id)) continue;
       queuedActionIds.add(candidate.id);
       queue.push(candidate);
@@ -96,10 +99,11 @@ export async function dispatchBillingRuntimeActions(input: {
     }
 
     try {
+      const shouldContinue = () => isBillingRuntimeActionRunnable(input.db, claimed.id);
       if (claimed.action === 'suspend') {
-        await input.customerVpsService.suspendForBilling(claimed.machineId);
+        await input.customerVpsService.suspendForBilling(claimed.machineId, shouldContinue);
       } else {
-        await input.customerVpsService.resumeForBilling(claimed.machineId);
+        await input.customerVpsService.resumeForBilling(claimed.machineId, shouldContinue);
       }
       const finalStatus = await finalizeBillingRuntimeAction(input.db, claimed.id, now().toISOString());
       if (finalStatus === 'completed') {
