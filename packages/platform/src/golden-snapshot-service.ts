@@ -46,8 +46,11 @@ const GoldenSnapshotCallbackOutcomeSchema = z.object({
   serviceDiagnostics: GoldenSnapshotServiceDiagnosticsSchema.optional(),
 }).passthrough();
 
-export function readGoldenSnapshotServiceDiagnostics(input: unknown) {
-  return GoldenSnapshotCallbackOutcomeSchema.safeParse(input).data?.serviceDiagnostics;
+export function readGoldenSnapshotServiceDiagnosticsForOperator(input: unknown) {
+  const diagnostics = GoldenSnapshotCallbackOutcomeSchema.safeParse(input).data?.serviceDiagnostics;
+  if (!diagnostics) return undefined;
+  const { journalTail: _journalTail, ...coarseDiagnostics } = diagnostics;
+  return coarseDiagnostics;
 }
 
 export function normalizeCleanupProviderResourceId(input: unknown): number {

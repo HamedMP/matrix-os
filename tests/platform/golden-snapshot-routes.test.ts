@@ -148,7 +148,7 @@ describe('golden snapshot control-plane routes', () => {
     })).status).toBe(200);
   });
 
-  it('returns persisted service diagnostics only from the operator build-status route', async () => {
+  it('returns only coarse persisted service diagnostics from the operator build-status route', async () => {
     await app().request('/snapshot-builds', {
       method: 'POST', headers: { authorization: 'Bearer platform-secret', 'content-type': 'application/json' },
       body: JSON.stringify({ bundleVersion: 'v1' }),
@@ -172,7 +172,16 @@ describe('golden snapshot control-plane routes', () => {
       headers: { authorization: 'Bearer operator-secret' },
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ serviceDiagnostics });
+    const body = await response.json() as { serviceDiagnostics: Record<string, unknown> };
+    expect(body).toMatchObject({
+      serviceDiagnostics: {
+        unit: 'matrix-gateway.service', loadState: 'loaded', activeState: 'failed',
+        subState: 'failed', result: 'exit-code', conditionResult: true,
+        execMainCode: 'exited', execMainStatus: 1, nRestarts: 3,
+      },
+    });
+    expect(body.serviceDiagnostics).not.toHaveProperty('journalTail');
+    expect(JSON.stringify(body)).not.toContain('gateway failed');
   });
 
   it('reads the snapshot operator credential from the injected app environment', async () => {
