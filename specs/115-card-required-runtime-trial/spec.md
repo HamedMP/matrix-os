@@ -2,7 +2,7 @@
 
 **Feature Branch**: `codex/mat-362-card-required-trial`  
 **Created**: 2026-08-19  
-**Status**: In progress  
+**Status**: In review
 **Linear**: MAT-362
 
 ## Summary
@@ -93,11 +93,13 @@ Subscription events project `trial_start` and `trial_end`. A conversion invoice 
 | Payment recovered during/after suspend | Allowed | Queue immediate `resume` |
 | Converted/established renewal failure | Existing three-day grace | Existing policy |
 
-Duplicate and out-of-order events cannot clear a recorded conversion or regress a newer subscription projection.
+Duplicate and out-of-order events cannot clear a recorded conversion or regress a newer subscription projection. An invoice event older than the latest subscription event is accepted only when its outcome agrees with the newer subscription status (for example, a paid conversion invoice followed by `active`); a stale paid invoice cannot reopen a newer terminal subscription.
 
 ## Durable Runtime Actions
 
 `billing_runtime_actions` stores idempotent `suspend` and `resume` jobs with one active job per machine/action, an execution deadline, claim lease, bounded attempt count, exponential retry schedule, and allowlisted generic failure code. The webhook transaction only writes projection/action state. Hetzner and runtime health calls run asynchronously in the platform reconciliation worker.
+
+If billing reverses while a provider action is already running, the webhook records a durable cancellation request and queues the opposite action. The running action remains the per-machine fence until it returns or its bounded lease expires; only then can the compensating action be claimed. This prevents suspend and resume provider mutations from running concurrently while guaranteeing convergence to the newest webhook-projected billing state after a worker crash or payment/shutdown race.
 
 Machine transitions are guarded in their update statements:
 

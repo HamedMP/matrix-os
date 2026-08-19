@@ -8,7 +8,6 @@ import {
   claimCardTrialCheckoutAttempt,
   claimCheckoutAttempt,
   cancelOutstandingBillingRuntimeActions,
-  cancelQueuedBillingRuntimeActions,
   enqueueBillingRuntimeAction,
   finalizeCheckoutAttempt,
   getBillingCustomerByClerkUserId,
@@ -18,6 +17,7 @@ import {
   getBillingEntitlementState,
   getBillingSubscription,
   getBillingSubscriptionByStripeId,
+  getActiveUserMachineByClerkId,
   getSettlingCheckoutAttempt,
   insertBillingWebhookEvent,
   isCardTrialOfferEligible,
@@ -623,13 +623,21 @@ export function createBillingRoutes(options: {
               properties: { billing_interval: updated.billingInterval ?? undefined },
             });
           } else {
-            const canceledSuspensions = await cancelQueuedBillingRuntimeActions(
+            const canceledSuspensions = await cancelOutstandingBillingRuntimeActions(
               trx,
               updated.stripeSubscriptionId,
               'suspend',
               webhookProcessedAt.toISOString(),
             );
-            if (paymentIsRecoveringFailedTrial && canceledSuspensions === 0) {
+            const machine = paymentIsRecoveringFailedTrial
+              ? await getActiveUserMachineByClerkId(trx, updated.clerkUserId, updated.runtimeSlot)
+              : undefined;
+            const recoveryRequiresResume = paymentIsRecoveringFailedTrial && (
+              canceledSuspensions.running > 0
+              || machine?.status === 'suspended'
+              || machine?.status === 'suspending'
+            );
+            if (recoveryRequiresResume) {
               await enqueueBillingRuntimeAction(trx, {
                 clerkUserId: updated.clerkUserId,
                 runtimeSlot: updated.runtimeSlot,
@@ -687,12 +695,32 @@ export function createBillingRoutes(options: {
         });
         if (!projectionApplied) return { received: true, processed: true };
         if (projection.status === 'trialing' && !projection.firstTrialPaymentFailedAt) {
-          await cancelQueuedBillingRuntimeActions(
+          const canceledSuspensions = await cancelOutstandingBillingRuntimeActions(
             trx,
             projection.stripeSubscriptionId,
             'suspend',
             webhookProcessedAt.toISOString(),
           );
+          const machine = await getActiveUserMachineByClerkId(
+            trx,
+            projection.clerkUserId,
+            projection.runtimeSlot,
+          );
+          if (
+            canceledSuspensions.running > 0
+            || machine?.status === 'suspended'
+            || machine?.status === 'suspending'
+          ) {
+            await enqueueBillingRuntimeAction(trx, {
+              clerkUserId: projection.clerkUserId,
+              runtimeSlot: projection.runtimeSlot,
+              stripeSubscriptionId: projection.stripeSubscriptionId,
+              action: 'resume',
+              reason: 'billing_recovered',
+              executeAfter: webhookProcessedAt.toISOString(),
+              createdAt: webhookProcessedAt.toISOString(),
+            });
+          }
         }
         const summary = await recomputeStripeSummary(trx, projection.clerkUserId, priceCatalog, env, webhookProcessedAt);
         if (summary) await persistEntitlement(trx, summary);

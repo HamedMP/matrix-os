@@ -388,6 +388,7 @@ interface BillingRuntimeActionsTable {
   attempts: number;
   claimed_at: string | null;
   lease_expires_at: string | null;
+  cancel_requested_at: string | null;
   last_error_code: string | null;
   created_at: string;
   updated_at: string;
@@ -903,9 +904,11 @@ export {
   claimBillingRuntimeAction,
   completeBillingRuntimeAction,
   enqueueBillingRuntimeAction,
+  finalizeBillingRuntimeAction,
   isBillingRuntimeActionRunnable,
   listBillingRuntimeActions,
   listDispatchableBillingRuntimeActions,
+  listDispatchableBillingRuntimeActionsForMachine,
   retryBillingRuntimeAction,
 } from './billing-runtime-action-store.js';
 export type {
@@ -1413,12 +1416,14 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       attempts INTEGER NOT NULL DEFAULT 0,
       claimed_at TEXT,
       lease_expires_at TEXT,
+      cancel_requested_at TEXT,
       last_error_code TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       completed_at TEXT
     )
   `.execute(db);
+  await sql`ALTER TABLE billing_runtime_actions ADD COLUMN IF NOT EXISTS cancel_requested_at TEXT`.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_runtime_actions_active
     ON billing_runtime_actions(machine_id, action)
@@ -2878,6 +2883,22 @@ export async function projectTrialInvoiceEvent(
     .executeTakeFirst();
   if (!currentRow || currentRow.trial_ends_at === null) return undefined;
 
+  const subscriptionCursorIsNewer = currentRow.latest_event_created_at > input.eventCreatedAt
+    || (
+      currentRow.latest_event_created_at === input.eventCreatedAt
+      && currentRow.latest_event_id > input.eventId
+    );
+  if (
+    subscriptionCursorIsNewer
+    && !subscriptionStatusAcceptsOlderTrialInvoice(currentRow.status, input.type)
+  ) {
+    return {
+      applied: false,
+      lifecycleChanged: false,
+      subscription: mapBillingSubscription(currentRow),
+    };
+  }
+
   const eventIsNewer = currentRow.latest_invoice_event_created_at === null
     || currentRow.latest_invoice_event_created_at < input.eventCreatedAt
     || (
@@ -2935,6 +2956,20 @@ export async function projectTrialInvoiceEvent(
     lifecycleChanged,
     subscription: mapBillingSubscription(row),
   };
+}
+
+function subscriptionStatusAcceptsOlderTrialInvoice(
+  status: string,
+  type: 'invoice.paid' | 'invoice.payment_failed',
+): boolean {
+  if (type === 'invoice.paid') return status === 'active';
+  return status === 'past_due'
+    || status === 'unpaid'
+    || status === 'canceled'
+    || status === 'ended'
+    || status === 'incomplete'
+    || status === 'incomplete_expired'
+    || status === 'paused';
 }
 
 export async function listCurrentBillingSubscriptions(

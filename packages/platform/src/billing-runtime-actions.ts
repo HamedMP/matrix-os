@@ -1,8 +1,9 @@
 import {
   claimBillingRuntimeAction,
-  completeBillingRuntimeAction,
+  finalizeBillingRuntimeAction,
   isBillingRuntimeActionRunnable,
   listDispatchableBillingRuntimeActions,
+  listDispatchableBillingRuntimeActionsForMachine,
   retryBillingRuntimeAction,
   type PlatformDB,
 } from './db.js';
@@ -41,16 +42,40 @@ export async function dispatchBillingRuntimeActions(input: {
 }): Promise<BillingRuntimeActionDispatchResult> {
   const now = input.now ?? (() => new Date());
   const currentTime = now();
+  const batchSize = Math.max(
+    1,
+    Math.min(100, Math.trunc(input.batchSize ?? BILLING_RUNTIME_ACTION_BATCH_SIZE)),
+  );
   const actions = await listDispatchableBillingRuntimeActions(
     input.db,
     currentTime.toISOString(),
-    input.batchSize ?? BILLING_RUNTIME_ACTION_BATCH_SIZE,
+    batchSize,
   );
+  const queue = [...actions];
+  const queuedActionIds = new Set(queue.map((action) => action.id));
   let completed = 0;
   let retried = 0;
   let failed = 0;
+  let checked = 0;
 
-  for (const action of actions) {
+  const appendDueCompensation = async (machineId: string) => {
+    if (queue.length >= batchSize) return;
+    const candidates = await listDispatchableBillingRuntimeActionsForMachine(
+      input.db,
+      machineId,
+      now().toISOString(),
+      batchSize - queue.length,
+    );
+    for (const candidate of candidates) {
+      if (queue.length >= batchSize) break;
+      if (queuedActionIds.has(candidate.id)) continue;
+      queuedActionIds.add(candidate.id);
+      queue.push(candidate);
+    }
+  };
+
+  for (const action of queue) {
+    checked += 1;
     const claimedAt = now();
     const claimed = await claimBillingRuntimeAction(
       input.db,
@@ -60,7 +85,15 @@ export async function dispatchBillingRuntimeActions(input: {
       BILLING_RUNTIME_ACTION_MAX_ATTEMPTS,
     );
     if (!claimed) continue;
-    if (!(await isBillingRuntimeActionRunnable(input.db, claimed.id))) continue;
+    if (!(await isBillingRuntimeActionRunnable(input.db, claimed.id))) {
+      const finalStatus = await finalizeBillingRuntimeAction(
+        input.db,
+        claimed.id,
+        now().toISOString(),
+      );
+      if (finalStatus === 'canceled') await appendDueCompensation(claimed.machineId);
+      continue;
+    }
 
     try {
       if (claimed.action === 'suspend') {
@@ -68,7 +101,8 @@ export async function dispatchBillingRuntimeActions(input: {
       } else {
         await input.customerVpsService.resumeForBilling(claimed.machineId);
       }
-      if (await completeBillingRuntimeAction(input.db, claimed.id, now().toISOString())) {
+      const finalStatus = await finalizeBillingRuntimeAction(input.db, claimed.id, now().toISOString());
+      if (finalStatus === 'completed') {
         completed += 1;
         try {
           input.captureEvent?.(
@@ -83,6 +117,8 @@ export async function dispatchBillingRuntimeActions(input: {
             err instanceof Error ? err.name : typeof err,
           );
         }
+      } else if (finalStatus === 'canceled') {
+        await appendDueCompensation(claimed.machineId);
       }
     } catch (err: unknown) {
       console.error(
@@ -104,9 +140,16 @@ export async function dispatchBillingRuntimeActions(input: {
       if (updated) {
         if (exhausted) failed += 1;
         else retried += 1;
+      } else {
+        const finalStatus = await finalizeBillingRuntimeAction(
+          input.db,
+          claimed.id,
+          failedAt.toISOString(),
+        );
+        if (finalStatus === 'canceled') await appendDueCompensation(claimed.machineId);
       }
     }
   }
 
-  return { checked: actions.length, completed, failed, retried };
+  return { checked, completed, failed, retried };
 }

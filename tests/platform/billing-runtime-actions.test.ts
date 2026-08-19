@@ -164,7 +164,7 @@ describe('billing runtime actions', () => {
     expect(resumeForBilling).not.toHaveBeenCalled();
   });
 
-  it('dispatches an immediate compensating suspend when delinquency arrives during a resume call', async () => {
+  it('finishes an immediate compensating suspend before returning when delinquency arrives during a resume call', async () => {
     await enqueueBillingRuntimeAction(db, {
       clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
       action: 'resume', reason: 'payment_recovered', executeAfter: '2026-05-31T00:00:00.000Z',
@@ -176,10 +176,11 @@ describe('billing runtime actions', () => {
     });
     const resumeForBilling = vi.fn().mockReturnValue(resumeWait);
     const suspendForBilling = vi.fn().mockResolvedValue(undefined);
+    let currentTime = '2026-05-31T00:00:00.000Z';
     const firstDispatch = dispatchBillingRuntimeActions({
       db,
       customerVpsService: { suspendForBilling, resumeForBilling },
-      now: () => new Date('2026-05-31T00:00:00.000Z'),
+      now: () => new Date(currentTime),
     });
     await vi.waitFor(() => expect(resumeForBilling).toHaveBeenCalledOnce());
 
@@ -194,14 +195,62 @@ describe('billing runtime actions', () => {
       action: 'suspend', reason: 'trial_payment_failed', executeAfter: '2026-05-31T00:00:01.000Z',
       createdAt: '2026-05-31T00:00:01.000Z',
     });
-    releaseResume();
-
-    await expect(firstDispatch).resolves.toEqual({ checked: 1, completed: 0, failed: 0, retried: 0 });
+    currentTime = '2026-05-31T00:00:01.000Z';
     await expect(dispatchBillingRuntimeActions({
       db,
       customerVpsService: { suspendForBilling, resumeForBilling },
-      now: () => new Date('2026-05-31T00:00:02.000Z'),
-    })).resolves.toMatchObject({ checked: 1, completed: 1 });
+      now: () => new Date(currentTime),
+    })).resolves.toEqual({ checked: 0, completed: 0, failed: 0, retried: 0 });
+    expect(suspendForBilling).not.toHaveBeenCalled();
+    releaseResume();
+
+    await expect(firstDispatch).resolves.toEqual({ checked: 2, completed: 1, failed: 0, retried: 0 });
     expect(suspendForBilling).toHaveBeenCalledOnce();
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'resume', status: 'canceled' }),
+      expect.objectContaining({ action: 'suspend', status: 'completed' }),
+    ]);
+  });
+
+  it('keeps a recovery resume behind an in-flight suspension and completes the compensation before returning', async () => {
+    await enqueueBillingRuntimeAction(db, {
+      clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
+      action: 'suspend', reason: 'trial_payment_failed', executeAfter: '2026-05-31T00:00:00.000Z',
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    let releaseSuspend!: () => void;
+    const suspendWait = new Promise<void>((resolve) => {
+      releaseSuspend = resolve;
+    });
+    const suspendForBilling = vi.fn().mockReturnValue(suspendWait);
+    const resumeForBilling = vi.fn().mockResolvedValue(undefined);
+    let currentTime = '2026-05-31T00:00:00.000Z';
+    const firstDispatch = dispatchBillingRuntimeActions({
+      db,
+      customerVpsService: { suspendForBilling, resumeForBilling },
+      now: () => new Date(currentTime),
+    });
+    await vi.waitFor(() => expect(suspendForBilling).toHaveBeenCalledOnce());
+
+    await cancelOutstandingBillingRuntimeActions(
+      db,
+      'sub_trial',
+      'suspend',
+      '2026-05-31T00:00:01.000Z',
+    );
+    await enqueueBillingRuntimeAction(db, {
+      clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
+      action: 'resume', reason: 'payment_recovered', executeAfter: '2026-05-31T00:00:01.000Z',
+      createdAt: '2026-05-31T00:00:01.000Z',
+    });
+    currentTime = '2026-05-31T00:00:01.000Z';
+    releaseSuspend();
+
+    await expect(firstDispatch).resolves.toEqual({ checked: 2, completed: 1, failed: 0, retried: 0 });
+    expect(resumeForBilling).toHaveBeenCalledOnce();
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'suspend', status: 'canceled' }),
+      expect.objectContaining({ action: 'resume', status: 'completed' }),
+    ]);
   });
 });

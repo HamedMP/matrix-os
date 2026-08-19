@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import {
   claimBillingRuntimeAction,
+  completeBillingRuntimeAction,
   enqueueBillingRuntimeAction,
   getBillingEntitlement,
   getBillingSubscription,
@@ -1292,6 +1293,53 @@ describe('platform billing routes', () => {
     });
   });
 
+  it('requests cancellation and queues recovery when Stripe restores a trial during suspension', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'suspending', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    const trialStart = Date.parse('2026-05-30T00:00:00.000Z') / 1000;
+    const trialEnd = Date.parse('2026-06-06T00:00:00.000Z') / 1000;
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_canceled_running', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'canceled',
+        created: Date.parse('2026-06-06T00:00:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_restored_running', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        created: Date.parse('2026-06-07T00:02:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }));
+    const app = createApp(null, env, undefined, () => new Date('2026-06-07T00:03:00.000Z'));
+    await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    const suspend = (await listBillingRuntimeActions(db, 'sub_trial'))
+      .find((action) => action.action === 'suspend');
+    expect(suspend).toBeDefined();
+    await claimBillingRuntimeAction(
+      db,
+      suspend!.id,
+      '2026-06-07T00:00:00.000Z',
+      '2026-06-07T00:05:00.000Z',
+      5,
+    );
+
+    const restored = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(restored.status).toBe(200);
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({
+        action: 'suspend', status: 'running', cancelRequestedAt: '2026-06-07T00:03:00.000Z',
+      }),
+      expect.objectContaining({ action: 'resume', status: 'queued', reason: 'billing_recovered' }),
+    ]);
+  });
+
   it('does not schedule a suspension from an out-of-order canceled subscription event', async () => {
     await insertUserMachine(db, {
       machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
@@ -1359,6 +1407,49 @@ describe('platform billing routes', () => {
         trialConvertedAt: null,
         firstTrialPaymentFailedAt: '2026-05-30T00:02:00.000Z',
         latestEventId: 'evt_trial_started',
+      });
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'suspend', status: 'queued' }),
+    ]);
+  });
+
+  it('does not let an older paid invoice convert a trial after a newer terminal subscription event', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    const trialStart = Date.parse('2026-05-23T00:00:00.000Z') / 1000;
+    const trialEnd = Date.parse('2026-05-30T00:00:00.000Z') / 1000;
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        created: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_canceled_current', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'canceled',
+        created: Date.parse('2026-05-30T00:03:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_paid_stale_terminal', 'invoice.paid', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:02:00.000Z') / 1000,
+      });
+    const app = createApp(null);
+
+    for (let index = 0; index < 3; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:04:00.000Z')).resolves
+      .toMatchObject({
+        status: 'canceled',
+        trialConvertedAt: null,
+        latestEventId: 'evt_trial_canceled_current',
       });
     await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
       expect.objectContaining({ action: 'suspend', status: 'queued' }),
@@ -1435,7 +1526,7 @@ describe('platform billing routes', () => {
     await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toHaveLength(1);
   });
 
-  it('queues a resume when payment recovers after suspension has started', async () => {
+  it('requests cancellation and queues a resume when payment recovers after suspension has started', async () => {
     await insertUserMachine(db, {
       machineId: 'machine_trial',
       clerkUserId: 'user_123',
@@ -1462,7 +1553,8 @@ describe('platform billing routes', () => {
         method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
       });
     }
-    const [suspend] = await listBillingRuntimeActions(db, 'sub_trial');
+    const suspend = (await listBillingRuntimeActions(db, 'sub_trial'))
+      .find((action) => action.action === 'suspend');
     expect(suspend).toBeDefined();
     await claimBillingRuntimeAction(
       db,
@@ -1478,7 +1570,59 @@ describe('platform billing routes', () => {
 
     expect(paid.status).toBe(200);
     await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
-      expect.objectContaining({ action: 'suspend', status: 'running' }),
+      expect.objectContaining({ action: 'resume', status: 'canceled', reason: 'billing_recovered' }),
+      expect.objectContaining({
+        action: 'suspend',
+        status: 'running',
+        cancelRequestedAt: '2026-05-30T00:00:00.000Z',
+      }),
+      expect.objectContaining({ action: 'resume', status: 'queued', reason: 'payment_recovered' }),
+    ]);
+  });
+
+  it('queues a resume when payment recovers after suspension completed', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'suspended', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started_completed', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_failed_completed', 'invoice.payment_failed', 'sub_trial'))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_paid_completed', 'invoice.paid', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:01:00.000Z') / 1000,
+      });
+    const app = createApp(null);
+    for (let index = 0; index < 2; index += 1) {
+      await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+    }
+    const suspend = (await listBillingRuntimeActions(db, 'sub_trial'))
+      .find((action) => action.action === 'suspend');
+    expect(suspend).toBeDefined();
+    await claimBillingRuntimeAction(
+      db,
+      suspend!.id,
+      '2026-05-31T00:00:00.000Z',
+      '2026-05-31T00:05:00.000Z',
+      5,
+    );
+    await completeBillingRuntimeAction(db, suspend!.id, '2026-05-31T00:01:00.000Z');
+
+    const paid = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(paid.status).toBe(200);
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'resume', status: 'canceled', reason: 'billing_recovered' }),
+      expect.objectContaining({ action: 'suspend', status: 'completed' }),
       expect.objectContaining({ action: 'resume', status: 'queued', reason: 'payment_recovered' }),
     ]);
   });
@@ -1569,7 +1713,11 @@ describe('platform billing routes', () => {
     const actions = await listBillingRuntimeActions(db, 'sub_trial');
     expect(actions).toHaveLength(2);
     expect(actions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ action: 'resume', status: 'canceled' }),
+      expect.objectContaining({
+        action: 'resume',
+        status: 'running',
+        cancelRequestedAt: '2026-05-30T00:03:00.000Z',
+      }),
       expect.objectContaining({
         action: 'suspend', status: 'queued', executeAfter: '2026-05-30T00:03:00.000Z',
       }),

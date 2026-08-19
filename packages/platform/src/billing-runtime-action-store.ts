@@ -10,12 +10,13 @@ export interface BillingRuntimeActionRecord {
   machineId: string;
   stripeSubscriptionId: string;
   action: BillingRuntimeAction;
-  reason: 'trial_payment_failed' | 'trial_ended_unpaid' | 'payment_recovered';
+  reason: 'trial_payment_failed' | 'trial_ended_unpaid' | 'payment_recovered' | 'billing_recovered';
   status: BillingRuntimeActionStatus;
   executeAfter: string;
   attempts: number;
   claimedAt: string | null;
   leaseExpiresAt: string | null;
+  cancelRequestedAt: string | null;
   lastErrorCode: string | null;
   createdAt: string;
   updatedAt: string;
@@ -33,6 +34,7 @@ interface BillingRuntimeActionRow {
   attempts: number;
   claimed_at: string | null;
   lease_expires_at: string | null;
+  cancel_requested_at: string | null;
   last_error_code: string | null;
   created_at: string;
   updated_at: string;
@@ -51,6 +53,7 @@ function mapBillingRuntimeAction(row: BillingRuntimeActionRow): BillingRuntimeAc
     attempts: row.attempts,
     claimedAt: row.claimed_at,
     leaseExpiresAt: row.lease_expires_at,
+    cancelRequestedAt: row.cancel_requested_at,
     lastErrorCode: row.last_error_code,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -95,6 +98,7 @@ export async function enqueueBillingRuntimeAction(
       execute_after = LEAST(billing_runtime_actions.execute_after, EXCLUDED.execute_after),
       stripe_subscription_id = EXCLUDED.stripe_subscription_id,
       reason = EXCLUDED.reason,
+      cancel_requested_at = NULL,
       updated_at = EXCLUDED.updated_at
     RETURNING *
   `.execute(db.executor);
@@ -142,7 +146,20 @@ export async function cancelOutstandingBillingRuntimeActions(
       FOR UPDATE
     ), canceled AS (
       UPDATE billing_runtime_actions AS pending
-      SET status = 'canceled', updated_at = ${canceledAt}, completed_at = ${canceledAt}
+      SET
+        status = CASE
+          WHEN targets.previous_status = 'queued' THEN 'canceled'
+          ELSE pending.status
+        END,
+        cancel_requested_at = CASE
+          WHEN targets.previous_status = 'running' THEN ${canceledAt}
+          ELSE pending.cancel_requested_at
+        END,
+        updated_at = ${canceledAt},
+        completed_at = CASE
+          WHEN targets.previous_status = 'queued' THEN ${canceledAt}
+          ELSE pending.completed_at
+        END
       FROM targets
       WHERE pending.id = targets.id
       RETURNING targets.previous_status
@@ -165,6 +182,7 @@ export async function isBillingRuntimeActionRunnable(
     .select('id')
     .where('id', '=', id)
     .where('status', '=', 'running')
+    .where('cancel_requested_at', 'is', null)
     .executeTakeFirst();
   return Boolean(row);
 }
@@ -188,8 +206,34 @@ export async function listDispatchableBillingRuntimeActions(
   nowIso: string,
   limit: number,
 ): Promise<BillingRuntimeActionRecord[]> {
+  return listDispatchableBillingRuntimeActionsInternal(db, nowIso, limit);
+}
+
+export async function listDispatchableBillingRuntimeActionsForMachine(
+  db: PlatformDB,
+  machineId: string,
+  nowIso: string,
+  limit: number,
+): Promise<BillingRuntimeActionRecord[]> {
+  return listDispatchableBillingRuntimeActionsInternal(db, nowIso, limit, machineId);
+}
+
+async function listDispatchableBillingRuntimeActionsInternal(
+  db: PlatformDB,
+  nowIso: string,
+  limit: number,
+  machineId?: string,
+): Promise<BillingRuntimeActionRecord[]> {
   await db.ready;
   const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+  await db.executor
+    .updateTable('billing_runtime_actions')
+    .set({ status: 'canceled', updated_at: nowIso, completed_at: nowIso, lease_expires_at: null })
+    .where('status', '=', 'running')
+    .where('cancel_requested_at', 'is not', null)
+    .where('lease_expires_at', '<=', nowIso)
+    .$if(machineId !== undefined, (query) => query.where('machine_id', '=', machineId ?? ''))
+    .execute();
   const rows = await db.executor
     .selectFrom('billing_runtime_actions')
     .selectAll()
@@ -197,6 +241,15 @@ export async function listDispatchableBillingRuntimeActions(
       eb.and([eb('status', '=', 'queued'), eb('execute_after', '<=', nowIso)]),
       eb.and([eb('status', '=', 'running'), eb('lease_expires_at', '<=', nowIso)]),
     ]))
+    .where('cancel_requested_at', 'is', null)
+    .$if(machineId !== undefined, (query) => query.where('machine_id', '=', machineId ?? ''))
+    .where((eb) => eb.not(eb.exists(
+      eb.selectFrom('billing_runtime_actions as in_flight_opposite')
+        .select('in_flight_opposite.id')
+        .whereRef('in_flight_opposite.machine_id', '=', 'billing_runtime_actions.machine_id')
+        .whereRef('in_flight_opposite.action', '!=', 'billing_runtime_actions.action')
+        .where('in_flight_opposite.status', '=', 'running'),
+    )))
     .where((eb) => eb.or([
       eb('action', '!=', 'resume'),
       eb.not(eb.exists(
@@ -232,6 +285,7 @@ export async function claimBillingRuntimeAction(
     }))
     .where('id', '=', id)
     .where('attempts', '<', maxAttempts)
+    .where('cancel_requested_at', 'is', null)
     .where((eb) => eb.or([
       eb.and([eb('status', '=', 'queued'), eb('execute_after', '<=', nowIso)]),
       eb.and([eb('status', '=', 'running'), eb('lease_expires_at', '<=', nowIso)]),
@@ -246,18 +300,33 @@ export async function completeBillingRuntimeAction(
   id: string,
   completedAt: string,
 ): Promise<boolean> {
+  return (await finalizeBillingRuntimeAction(db, id, completedAt)) === 'completed';
+}
+
+export type BillingRuntimeActionFinalStatus = 'completed' | 'canceled';
+
+export async function finalizeBillingRuntimeAction(
+  db: PlatformDB,
+  id: string,
+  completedAt: string,
+): Promise<BillingRuntimeActionFinalStatus | undefined> {
   await db.ready;
-  const row = await db.executor
-    .updateTable('billing_runtime_actions')
-    .set({
-      status: 'completed', lease_expires_at: null, last_error_code: null,
-      updated_at: completedAt, completed_at: completedAt,
-    })
-    .where('id', '=', id)
-    .where('status', '=', 'running')
-    .returning('id')
-    .executeTakeFirst();
-  return Boolean(row);
+  const result = await sql<{ status: BillingRuntimeActionFinalStatus }>`
+    UPDATE billing_runtime_actions
+    SET
+      status = CASE
+        WHEN cancel_requested_at IS NULL THEN 'completed'
+        ELSE 'canceled'
+      END,
+      lease_expires_at = NULL,
+      last_error_code = NULL,
+      updated_at = ${completedAt},
+      completed_at = ${completedAt}
+    WHERE id = ${id}
+      AND status = 'running'
+    RETURNING status
+  `.execute(db.executor);
+  return result.rows[0]?.status;
 }
 
 export async function retryBillingRuntimeAction(
@@ -283,6 +352,7 @@ export async function retryBillingRuntimeAction(
     })
     .where('id', '=', input.id)
     .where('status', '=', 'running')
+    .where('cancel_requested_at', 'is', null)
     .returning('id')
     .executeTakeFirst();
   return Boolean(row);
