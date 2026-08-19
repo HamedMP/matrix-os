@@ -103,13 +103,19 @@ suite("desktop update experience", () => {
       (accountBox?.y ?? 0) + (accountBox?.height ?? 0),
     );
     expect(Math.abs((updateBox?.width ?? 0) - (updateBox?.height ?? 0))).toBeLessThanOrEqual(2);
+    expect(updateBox?.width ?? 0).toBeLessThanOrEqual(28);
+    const updateIconBox = await update.locator("svg").boundingBox();
+    expect(updateIconBox?.width ?? 0).toBeLessThanOrEqual(13);
+    expect(await update.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
+      "rgb(47, 155, 255)",
+    );
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-291-update-ready.png") });
 
     await page.getByRole("button", { name: "Collapse sidebar" }).click();
     const collapsedUpdateBox = await update.boundingBox();
     expect(collapsedUpdateBox).not.toBeNull();
     expect(Math.abs((collapsedUpdateBox?.width ?? 0) - (collapsedUpdateBox?.height ?? 0))).toBeLessThanOrEqual(2);
-    expect(collapsedUpdateBox?.width ?? 0).toBeLessThan(40);
+    expect(collapsedUpdateBox?.width ?? 0).toBeLessThanOrEqual(28);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-291-update-ready-collapsed.png") });
   }, 30_000);
 });

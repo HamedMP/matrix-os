@@ -19,11 +19,11 @@ export default function DesktopUpdateButton({ collapsed }: DesktopUpdateButtonPr
       aria-label={label}
       title={label}
       disabled={installing}
-      className="no-drag flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition-[transform,filter] duration-150 hover:brightness-110 active:scale-[0.97] disabled:cursor-wait disabled:opacity-80"
+      className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition-[transform,filter] duration-150 hover:brightness-110 active:scale-[0.97] disabled:cursor-wait disabled:opacity-80"
       style={{ background: "var(--update-action)" }}
       onClick={() => void install()}
     >
-      {installing ? <LoaderCircle size={15} className="animate-spin" /> : <Download size={15} />}
+      {installing ? <LoaderCircle size={13} className="animate-spin" /> : <Download size={13} />}
     </button>
   );
 
