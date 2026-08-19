@@ -473,6 +473,67 @@ describe("ComputerFileBrowser view options", () => {
     expect(screen.queryByRole("button", { name: "New folder in system" })).toBeNull();
   });
 
+  it("blocks denied browser profile state as a folder or new-folder parent", async () => {
+    const protectedApi = {
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/files/list?path=") {
+          return { entries: [{ name: "data", type: "directory", children: 1 }] };
+        }
+        if (path === "/api/files/list?path=data") {
+          return { entries: [{ name: "browser-profiles", type: "directory", children: 1 }] };
+        }
+        return { entries: [] };
+      }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    useConnection.setState({ api: protectedApi as never });
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder: vi.fn(),
+    });
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open data" }));
+    const browserProfiles = await screen.findByRole("button", { name: "Open browser-profiles" });
+    fireEvent.click(browserProfiles);
+
+    expect(screen.getByRole("button", { name: "Choose browser-profiles" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "New folder in data/browser-profiles" })).toBeNull();
+  });
+
+  it("keeps project checkout descendants available after registry separation", async () => {
+    const projectApi = {
+      get: vi.fn(async (path: string) => {
+        const name = decodeURIComponent(path.split("path=")[1] ?? "");
+        const children: Record<string, string> = {
+          "": "projects",
+          projects: "demo",
+          "projects/demo": "repo",
+          "projects/demo/repo": "src",
+        };
+        const child = children[name];
+        return { entries: child ? [{ name: child, type: "directory", children: 1 }] : [] };
+      }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    useConnection.setState({ api: projectApi as never });
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder: vi.fn(),
+    });
+
+    for (const name of ["projects", "demo", "repo"]) {
+      fireEvent.doubleClick(await screen.findByRole("button", { name: `Open ${name}` }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "Open src" }));
+
+    expect(screen.getByRole("button", { name: "Choose src" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "New folder in projects/demo/repo/src" })).toBeTruthy();
+  });
+
   it("shows the empty state in grid view too", async () => {
     const emptyApi = { get: vi.fn(async () => ({ entries: [] })), baseUrl: "https://app.matrix-os.com" };
     useConnection.setState({ api: emptyApi as never });
