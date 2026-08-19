@@ -257,6 +257,8 @@ const PROVIDER_DELETION_RETRY_MAX_MS = 60 * 60_000;
 const RESIZE_STATUS_POLL_INTERVAL_MS = 1_000;
 const RESIZE_STATUS_POLL_TIMEOUT_MS = 90_000;
 const PROVISIONING_JOB_LEASE_MS = 5 * 60_000;
+const PROVISIONING_CREATE_ACTION_POLL_ATTEMPTS = 31;
+const PROVISIONING_CREATE_ACTION_POLL_INTERVAL_MS = 1_000;
 const RECOVERY_CREATE_ACTION_POLL_ATTEMPTS = 6;
 const RECOVERY_CREATE_ACTION_POLL_INTERVAL_MS = 1_000;
 
@@ -642,6 +644,24 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
       if (attempt + 1 < RECOVERY_CREATE_ACTION_POLL_ATTEMPTS) {
         await sleep(RECOVERY_CREATE_ACTION_POLL_INTERVAL_MS);
+      }
+    }
+    return 'pending';
+  }
+
+  async function waitForProvisioningCreateAction(actionId: number): Promise<'success' | 'error' | 'pending'> {
+    for (let attempt = 0; attempt < PROVISIONING_CREATE_ACTION_POLL_ATTEMPTS; attempt += 1) {
+      let action;
+      try {
+        action = await deps.hetzner.getAction(actionId);
+      } catch (err: unknown) {
+        logCustomerVpsError(`provision create action refresh failed actionId=${actionId}`, err);
+        return 'pending';
+      }
+      if (action?.status === 'success') return 'success';
+      if (action?.status === 'error') return 'error';
+      if (attempt + 1 < PROVISIONING_CREATE_ACTION_POLL_ATTEMPTS) {
+        await sleep(PROVISIONING_CREATE_ACTION_POLL_INTERVAL_MS);
       }
     }
     return 'pending';
@@ -1441,15 +1461,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             }).where('job_id', '=', job.jobId).where('status', '=', 'running').executeTakeFirstOrThrow();
           });
         }
-        let action;
-        try {
-          action = await deps.hetzner.getAction(createActionId);
-        } catch (actionErr: unknown) {
-          logCustomerVpsError('provision create action refresh failed', actionErr);
-          return 'pending';
-        }
-        if (!action || action.status === 'running') return 'pending';
-        if (action.status === 'error') {
+        const createResult = await waitForProvisioningCreateAction(createActionId);
+        if (createResult === 'pending') return 'pending';
+        if (createResult === 'error') {
           if (imageDecision.imageSource !== 'snapshot') {
             throw new Error('Provider create action failed');
           }

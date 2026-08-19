@@ -70,7 +70,10 @@ describe('golden snapshot provisioning activation', () => {
     await db.executor.updateTable('provisioning_jobs').set({ status: 'running' })
       .where('job_id', '=', '50000000-0000-4000-8000-000000000001').execute();
   });
-  afterEach(async () => destroyTestPlatformDb(db));
+  afterEach(async () => {
+    vi.useRealTimers();
+    await destroyTestPlatformDb(db);
+  });
 
   async function readySnapshot(version: 'v1' | 'v2', imageId: number) {
     const suffix = version === 'v1' ? '1' : '2';
@@ -712,6 +715,7 @@ describe('golden snapshot provisioning activation', () => {
   });
 
   it('holds the leased exact image through create completion and releases it only after registration', async () => {
+    vi.useFakeTimers();
     await readySnapshot('v2', 302);
     let currentNow = new Date('2026-07-03T00:10:00.000Z');
     let created = false;
@@ -739,11 +743,14 @@ describe('golden snapshot provisioning activation', () => {
       now: () => currentNow,
     });
 
-    await service.provision({ clerkUserId: 'user_2', handle: 'bob', runtimeSlot: 'primary' });
+    const provisioning = service.provision({ clerkUserId: 'user_2', handle: 'bob', runtimeSlot: 'primary' });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await provisioning;
 
     expect(hetzner.createServer).toHaveBeenCalledWith(expect.objectContaining({ image: 302 }));
     expect(await getProvisioningJob(db, '50000000-0000-4000-8000-000000000002')).toMatchObject({
-      status: 'running', imageSource: 'snapshot', providerCreateActionId: 777,
+      status: 'completed', imageSource: 'snapshot', providerCreateActionId: 777,
+      activationStep: 'created',
     });
     expect((await db.executor.selectFrom('golden_snapshot_leases').selectAll()
       .where('machine_id', '=', '30000000-0000-4000-8000-000000000002').executeTakeFirstOrThrow()).released_at).toBeNull();
@@ -971,6 +978,7 @@ describe('golden snapshot provisioning activation', () => {
   });
 
   it('records clean fallback creation while the provider action is still running', async () => {
+    vi.useFakeTimers();
     await readySnapshot('v2', 302);
     const machineId = '30000000-0000-4000-8000-000000000023';
     const jobId = '50000000-0000-4000-8000-000000000023';
@@ -1000,7 +1008,11 @@ describe('golden snapshot provisioning activation', () => {
       now: () => new Date('2026-07-03T00:20:00.000Z'),
     });
 
-    await service.provision({ clerkUserId: 'user_23', handle: 'fallback-running', runtimeSlot: 'primary' });
+    const provisioning = service.provision({
+      clerkUserId: 'user_23', handle: 'fallback-running', runtimeSlot: 'primary',
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await provisioning;
 
     await expect(getProvisioningJob(db, jobId)).resolves.toMatchObject({
       status: 'running', imageSource: 'clean_image', activationStep: 'creating',
