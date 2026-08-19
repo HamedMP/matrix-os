@@ -473,6 +473,29 @@ describe("ComputerFileBrowser view options", () => {
     expect(screen.queryByRole("button", { name: "New folder in system" })).toBeNull();
   });
 
+  it("blocks choosing a denied subtree ancestor while allowing a safe child folder there", async () => {
+    const protectedApi = {
+      get: vi.fn(async (path: string) => path === "/api/files/list?path="
+        ? { entries: [{ name: "data", type: "directory", children: 1 }] }
+        : { entries: [] }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    const onCreateFolder = vi.fn();
+    useConnection.setState({ api: protectedApi as never });
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open data" }));
+
+    expect(screen.getByRole("button", { name: "Choose data" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "New folder in data" }));
+    expect(onCreateFolder).toHaveBeenCalledWith("data");
+  });
+
   it("blocks denied browser profile state as a folder or new-folder parent", async () => {
     const protectedApi = {
       get: vi.fn(async (path: string) => {

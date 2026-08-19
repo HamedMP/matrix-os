@@ -16,6 +16,7 @@ import { useConnection } from "../../stores/connection";
 import {
   parseBrowserEntries,
   isManagedBrowserPath,
+  isProtectedFolderCreationParentPath,
   isProtectedFolderPickerPath,
   sortBrowserEntries,
   type BrowserEntry,
@@ -346,13 +347,16 @@ export default function ComputerFileBrowser({
   }, [viewCurrentPath]);
 
   const chosenName = (viewCandidatePath.split("/").pop() || "Matrix home");
+  const resolvedFolderChoice = viewCandidatePath
+    ? resolveFolderChoice?.(viewCandidatePath) ?? { kind: "choose" as const }
+    : null;
   const folderChoice = viewCandidatePath
     ? isProtectedFolderPickerPath(viewCandidatePath)
       ? {
           kind: "blocked" as const,
           message: "This folder is protected by Matrix OS and can't be used as a workspace.",
         }
-      : resolveFolderChoice?.(viewCandidatePath) ?? { kind: "choose" as const }
+      : resolvedFolderChoice
     : null;
   // Name flexes (minmax(0,1fr) + truncate); Size/Modified are fixed-width
   // right-aligned columns sized to the format.ts outputs, so long names only
@@ -523,7 +527,7 @@ export default function ComputerFileBrowser({
           message={folderChoice && folderChoice.kind !== "choose" ? folderChoice.message : undefined}
           actionLabel={folderChoice?.kind === "alternate" ? folderChoice.label : `Choose ${chosenName}`}
           disabled={folderChoice?.kind === "alternate" ? false : !viewCandidatePath || folderChoice?.kind === "blocked"}
-          onCreateFolder={onCreateFolder && folderChoice?.kind === "choose" && !isProtectedFolderPickerPath(viewCandidatePath)
+          onCreateFolder={onCreateFolder && resolvedFolderChoice?.kind === "choose" && !isProtectedFolderCreationParentPath(viewCandidatePath)
             ? () => onCreateFolder(viewCandidatePath)
             : undefined}
           onAction={() => folderChoice?.kind === "alternate"

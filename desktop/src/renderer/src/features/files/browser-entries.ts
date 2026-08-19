@@ -29,11 +29,17 @@ export function isManagedBrowserPath(path: string): boolean {
 // ordinary owner workspace paths read-only in the Files browser. In
 // particular, MAT-340 deliberately makes projects/** selectable while browser
 // profile state remains unavailable as a workspace or folder parent.
-export function isProtectedFolderPickerPath(path: string): boolean {
+export function isProtectedFolderCreationParentPath(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
   return isManagedBrowserPath(normalized)
     || normalized === "data/browser-profiles"
     || normalized.startsWith("data/browser-profiles/");
+}
+
+export function isProtectedFolderPickerPath(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  return isProtectedFolderCreationParentPath(normalized)
+    || normalized === "data";
 }
 
 export function parseBrowserEntries(value: unknown): BrowserEntry[] {
