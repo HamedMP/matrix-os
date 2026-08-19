@@ -708,7 +708,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
         </CardHeader>
         <CardContent className="space-y-2">
           {[
-            ["Version", info.version ?? "0.1.0"],
+            ["Version", installedVersion ?? "0.1.0"],
             ["Host Bundle", info.release?.version],
             ["Channel", info.release?.channel],
             ["Build ID", formatReleaseBuildShortId(info.release?.gitCommit)],
