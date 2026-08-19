@@ -24,6 +24,32 @@ import {
 const UuidSchema = z.string().uuid();
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const CleanupProviderResourceIdSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const SystemdStateSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:@-]+$/);
+export const GoldenSnapshotServiceDiagnosticsSchema = z.object({
+  unit: z.enum([
+    'matrix-gateway.service',
+    'matrix-shell.service',
+    'matrix-sync-agent.service',
+  ]),
+  loadState: SystemdStateSchema,
+  activeState: SystemdStateSchema,
+  subState: SystemdStateSchema,
+  result: SystemdStateSchema,
+  conditionResult: z.boolean().nullable(),
+  execMainCode: SystemdStateSchema,
+  execMainStatus: z.number().int().nonnegative().max(2 ** 31 - 1),
+  nRestarts: z.number().int().nonnegative().max(10_000),
+  journalTail: z.array(z.string().max(512)).max(40),
+}).strict();
+const GoldenSnapshotCallbackOutcomeSchema = z.object({
+  accepted: z.literal(true),
+  serviceDiagnostics: GoldenSnapshotServiceDiagnosticsSchema.optional(),
+}).passthrough();
+
+export function readGoldenSnapshotServiceDiagnostics(input: unknown) {
+  return GoldenSnapshotCallbackOutcomeSchema.safeParse(input).data?.serviceDiagnostics;
+}
+
 export function normalizeCleanupProviderResourceId(input: unknown): number {
   return CleanupProviderResourceIdSchema.parse(input);
 }
@@ -116,6 +142,7 @@ export const GoldenSnapshotCallbackSchema = z.discriminatedUnion('phase', [
     stage: GoldenSnapshotFailureStageSchema,
     bundleVersion: GoldenSnapshotBundleVersionSchema,
     bundleSha256: Sha256Schema,
+    serviceDiagnostics: GoldenSnapshotServiceDiagnosticsSchema.optional(),
   }).strict(),
 ]);
 
@@ -561,6 +588,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
       phase: string;
       tokenDigest: string;
       payloadDigest: string;
+      serviceDiagnostics?: z.infer<typeof GoldenSnapshotServiceDiagnosticsSchema>;
     },
   ): Promise<boolean> {
     return deps.db.transaction(async (trx) => {
@@ -584,6 +612,16 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           fromState: priorSnapshot.state, toState: 'quarantined', reason: code, now: at,
         });
       }
+      const callbackEvidence = callbackReceipt ? {
+        callback_event_id: callbackReceipt.eventId,
+        callback_payload_sha256: callbackReceipt.payloadDigest,
+        callback_outcome: {
+          accepted: true,
+          ...(callbackReceipt.serviceDiagnostics
+            ? { serviceDiagnostics: callbackReceipt.serviceDiagnostics }
+            : {}),
+        },
+      } : {};
       await trx.executor.updateTable('golden_snapshot_builds').set({
         phase: 'failed', status: 'failed', last_error_code: code, updated_at: at,
         completed_at: at, lease_expires_at: null, callback_phase: null, callback_token_hash: null,
@@ -591,6 +629,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           ? addMilliseconds(at, ORPHAN_RECONCILIATION_DEADLINE_MS)
           : null,
         pending_operation: reconcileUnknownCreate ? build.pending_operation : null,
+        ...callbackEvidence,
       }).where('build_id', '=', buildId).where('phase', '=', expectedPhase)
         .where('status', '=', 'running').execute();
       const resources = [
@@ -1175,6 +1214,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         phase: payload.phase,
         tokenDigest,
         payloadDigest,
+        serviceDiagnostics: payload.serviceDiagnostics,
       })) {
         throw new GoldenSnapshotCallbackError('rejected');
       }

@@ -13,6 +13,28 @@ set_activation_stage() {
   printf '%s\n' "$1" >"$activation_stage_file"
 }
 
+capture_service_diagnostics() {
+  /opt/matrix/bin/matrix-golden-service-diagnostics "$1"
+}
+
+capture_activation_service_failure() {
+  local diagnostic_unit
+  if ! systemctl is-active --quiet matrix-gateway.service; then
+    set_activation_stage activation_gateway_ready
+    diagnostic_unit=matrix-gateway.service
+  elif ! systemctl is-active --quiet matrix-shell.service; then
+    set_activation_stage activation_shell_ready
+    diagnostic_unit=matrix-shell.service
+  elif ! systemctl is-active --quiet matrix-sync-agent.service; then
+    set_activation_stage activation_sync_agent_ready
+    diagnostic_unit=matrix-sync-agent.service
+  else
+    set_activation_stage activation_gateway_health
+    diagnostic_unit=matrix-gateway.service
+  fi
+  capture_service_diagnostics "$diagnostic_unit" || true
+}
+
 if [ "$mode" = validation ]; then
   set_activation_stage activation_preflight_evidence
   sanitation_evidence=/var/lib/matrix/golden-snapshot-sanitized
@@ -299,7 +321,10 @@ touch /opt/matrix/restore-complete
 rm -f /var/lib/matrix/golden-snapshot-sanitized
 set_activation_stage activation_services_start
 timeout --kill-after=30 60 systemctl daemon-reload
-timeout --kill-after=30 180 systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service
+if ! timeout --kill-after=30 180 systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service; then
+  capture_activation_service_failure
+  exit 1
+fi
 
 set_activation_stage activation_services_ready
 for _ in $(seq 1 90); do
@@ -314,14 +339,6 @@ for _ in $(seq 1 90); do
   sleep 2
 done
 
-if ! systemctl is-active --quiet matrix-gateway.service; then
-  set_activation_stage activation_gateway_ready
-elif ! systemctl is-active --quiet matrix-shell.service; then
-  set_activation_stage activation_shell_ready
-elif ! systemctl is-active --quiet matrix-sync-agent.service; then
-  set_activation_stage activation_sync_agent_ready
-else
-  set_activation_stage activation_gateway_health
-fi
+capture_activation_service_failure
 echo "golden snapshot synthetic activation did not become ready" >&2
 exit 1

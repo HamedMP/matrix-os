@@ -73,6 +73,21 @@ const secondValidationFingerprints = {
   validationMachineIdSha256: 'e'.repeat(64),
   validationSshHostKeySha256: 'f'.repeat(64),
 };
+const serviceDiagnostics = {
+  unit: 'matrix-gateway.service' as const,
+  loadState: 'loaded',
+  activeState: 'failed',
+  subState: 'failed',
+  result: 'exit-code',
+  conditionResult: true,
+  execMainCode: 'exited',
+  execMainStatus: 1,
+  nRestarts: 3,
+  journalTail: [
+    'gateway bootstrap failed with token=[REDACTED]',
+    'process exited with status 1',
+  ],
+};
 
 describe('golden snapshot build service', () => {
   let db: PlatformDB;
@@ -124,6 +139,23 @@ describe('golden snapshot build service', () => {
         bundleVersion: 'v1', bundleSha256: '1'.repeat(64),
       }).success).toBe(true);
     }
+  });
+
+  it('accepts bounded service diagnostics and rejects oversized journal evidence', () => {
+    const payload = {
+      eventId: randomUUID(), phase: 'failed', role: 'builder', stage: 'activation_gateway_ready',
+      bundleVersion: 'v1', bundleSha256: '1'.repeat(64), serviceDiagnostics,
+    };
+
+    expect(GoldenSnapshotCallbackSchema.safeParse(payload).success).toBe(true);
+    expect(GoldenSnapshotCallbackSchema.safeParse({
+      ...payload,
+      serviceDiagnostics: { ...serviceDiagnostics, journalTail: ['x'.repeat(513)] },
+    }).success).toBe(false);
+    expect(GoldenSnapshotCallbackSchema.safeParse({
+      ...payload,
+      serviceDiagnostics: { ...serviceDiagnostics, journalTail: Array(41).fill('bounded') },
+    }).success).toBe(false);
   });
 
   afterEach(async () => destroyTestPlatformDb(db));
@@ -240,6 +272,24 @@ describe('golden snapshot build service', () => {
       .resolves.toEqual(expect.arrayContaining([
         expect.objectContaining({ resourceType: 'builder_server', providerResourceId: 101 }),
       ]));
+  });
+
+  it('persists bounded service diagnostics from a failed builder callback', async () => {
+    const { enqueued, service } = await setup();
+    await service.runBuildStep(enqueued.build.buildId);
+    const eventId = randomUUID();
+
+    await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+      eventId,
+      phase: 'failed', role: 'builder', stage: 'activation_gateway_ready',
+      bundleVersion: 'v1', bundleSha256: '1'.repeat(64), serviceDiagnostics,
+    });
+
+    await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+      callbackEventId: eventId,
+      callbackOutcome: { accepted: true, serviceDiagnostics },
+      lastErrorCode: 'builder_activation_gateway_ready_failed',
+    });
   });
 
   it('quarantines and cleans up a validation clone that reports a coarse lifecycle failure', async () => {

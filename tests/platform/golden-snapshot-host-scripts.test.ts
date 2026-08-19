@@ -12,6 +12,7 @@ const activatePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-activa
 const fastPathPath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-fast-path';
 const awsCliSmokePath = 'distro/customer-vps/host-bin/matrix-aws-cli-smoke';
 const prerequisitesPath = 'distro/customer-vps/host-bin/matrix-prepare-host-prerequisites';
+const serviceDiagnosticsPath = 'distro/customer-vps/host-bin/matrix-golden-service-diagnostics';
 
 describe('golden snapshot host scripts', () => {
   it('allows the fast path only for a baked exact-bundle snapshot', async () => {
@@ -260,10 +261,11 @@ describe('golden snapshot host scripts', () => {
       .toBeLessThan(runCommands.indexOf('MATRIX_GOLDEN_SNAPSHOT_ROOT=/ /opt/matrix/bin/matrix-golden-snapshot-sanitize'));
     expect(runCommands).toContain('curl --config -');
     expect(runCommands).not.toContain('-H "authorization: Bearer $callbackToken"');
-    expect(runCommands).toContain('"phase":"failed"');
-    expect(runCommands).toContain('"role":"builder"');
-    expect(runCommands).toContain('"stage":"%s"');
-    expect(runCommands).toContain('"$failureStage"');
+    expect(runCommands).toContain("'phase': 'failed'");
+    expect(runCommands).toContain("'role': 'builder'");
+    expect(runCommands).toContain("'stage': reported_stage");
+    expect(runCommands).toContain("payload['serviceDiagnostics'] = diagnostics");
+    expect(runCommands).toContain('/run/matrix-golden-service-diagnostics.json');
     expect(runCommands).toContain('trap reportFailure EXIT');
     expect(runCommands).not.toContain('trap reportFailure ERR');
     expect(runCommands).toContain("failureStage='activation'");
@@ -282,10 +284,73 @@ describe('golden snapshot host scripts', () => {
     );
     expect(source).toContain('builderMachineIdSha256');
     expect(source).toContain('builderSshHostKeySha256');
+    expect(source).toContain('/opt/matrix/bin/matrix-golden-service-diagnostics');
     expect(source).toContain("printf '%s\\n' '{{bundleVersion}}' >/opt/matrix/app/BUNDLE_VERSION");
     expect(source).toContain("printf '%s\\n' '{{bundleSha256}}' >/opt/matrix/app/BUNDLE_SHA256");
     expect(source).not.toContain('{{clerkUserId}}');
     expect(source).not.toContain('{{registrationToken}}');
+  });
+
+  it('captures bounded redacted systemd diagnostics before a failed activation callback', async () => {
+    const [activation, builder, diagnosticsScript, buildScript] = await Promise.all([
+      readFile(activatePath, 'utf8'),
+      readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8'),
+      readFile(serviceDiagnosticsPath, 'utf8'),
+      readFile('scripts/build-host-bundle.sh', 'utf8'),
+    ]);
+
+    expect(activation).toContain('capture_service_diagnostics()');
+    expect(activation).toContain('/opt/matrix/bin/matrix-golden-service-diagnostics');
+    expect(diagnosticsScript).toContain("journalctl --unit \"$unit\"");
+    expect(diagnosticsScript).toContain("--lines=40");
+    expect(diagnosticsScript).toContain("line[:512]");
+    expect(diagnosticsScript).toContain("'[REDACTED]'");
+    expect(diagnosticsScript).toContain('matrix-golden-service-diagnostics.json');
+    expect(builder).toContain("payload['serviceDiagnostics'] = diagnostics");
+    expect(builder).not.toContain("payload['error']");
+    expect(buildScript).toContain('$STAGE_DIR/bin/matrix-golden-service-diagnostics');
+  });
+
+  it('redacts and bounds captured service diagnostics with fake systemd output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-diagnostics-'));
+    const fakeBin = join(root, 'bin');
+    await mkdir(fakeBin);
+    await writeFile(join(fakeBin, 'systemctl'), `#!/usr/bin/env bash
+cat <<'EOF'
+LoadState=loaded
+ActiveState=failed
+SubState=failed
+Result=exit-code
+ConditionResult=yes
+ExecMainCode=exited
+ExecMainStatus=1
+NRestarts=3
+EOF
+`);
+    const secret = 'a'.repeat(64);
+    await writeFile(join(fakeBin, 'journalctl'), `#!/usr/bin/env bash
+for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secret}@127.0.0.1/matrix %0600d\\n' "$i" 0; done
+`);
+    await chmod(join(fakeBin, 'systemctl'), 0o755);
+    await chmod(join(fakeBin, 'journalctl'), 0o755);
+    await chmod(serviceDiagnosticsPath, 0o755);
+
+    await execFileAsync(serviceDiagnosticsPath, ['matrix-gateway.service'], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_DIAGNOSTICS_ROOT: root,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      },
+    });
+    const diagnostics = JSON.parse(
+      await readFile(join(root, 'matrix-golden-service-diagnostics.json'), 'utf8'),
+    ) as { execMainStatus: number; nRestarts: number; journalTail: string[] };
+
+    expect(diagnostics).toMatchObject({ execMainStatus: 1, nRestarts: 3 });
+    expect(diagnostics.journalTail).toHaveLength(40);
+    expect(diagnostics.journalTail.every((line) => line.length <= 512)).toBe(true);
+    expect(diagnostics.journalTail.join('\n')).toContain('[REDACTED]');
+    expect(diagnostics.journalTail.join('\n')).not.toContain(secret);
   });
 
   it('bakes all clean-boot prerequisites before certifying a fast snapshot', async () => {
