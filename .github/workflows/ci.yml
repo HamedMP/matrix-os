@@ -22,7 +22,7 @@ jobs:
       should_run: ${{ steps.changed.outputs.should_run }}
       docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -100,7 +100,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping typecheck."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -109,7 +109,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -132,7 +132,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping shell production build."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -141,7 +141,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -173,7 +173,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping pattern scan."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           fetch-depth: 0
@@ -214,12 +214,12 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping React audit."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -274,13 +274,13 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping sync-client checks."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 20
@@ -316,7 +316,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping unit shard."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -325,7 +325,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -353,13 +353,13 @@ jobs:
         if: needs.changes.outputs.docs_contract_tests != 'true'
         run: echo "No docs-only changes detected; skipping docs contract tests."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.docs_contract_tests == 'true'
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.docs_contract_tests == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.docs_contract_tests == 'true'
         with:
           node-version: 24
@@ -382,7 +382,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping e2e tests."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -391,7 +391,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
