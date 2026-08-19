@@ -46,8 +46,9 @@ linux:
   target:
     - target: AppImage
       arch: [x64]
-# Update feed: GitHub releases by default. OPERATOR_UPDATE_FEED can still
-# override to a generic feed for break-glass or self-hosted release channels.
+# electron-builder emits update metadata; runtime discovery uses the
+# channel-scoped Generic GitHub release endpoints configured in update-config.ts.
+# OPERATOR_UPDATE_FEED can override that endpoint for break-glass validation.
 publish:
   - provider: github
     owner: HamedMP

@@ -16,8 +16,14 @@ export type UpdateStatus = DesktopUpdateStatus;
 interface UpdateEvents {
   onAvailable: (version: string) => void;
   onReady: (version: string) => void;
+  onUpToDate?: () => void;
+  onCheckError?: () => void;
   onStateChanged?: (snapshot: DesktopUpdateSnapshot) => void;
   onReleaseReady?: (release: DesktopReleaseNotes) => Promise<void> | void;
+}
+
+interface UpdateCheckOptions {
+  notifyWhenCurrent?: boolean;
 }
 
 const UPDATER_EVENT_NAMES = [
@@ -28,15 +34,50 @@ const UPDATER_EVENT_NAMES = [
   "error",
 ] as const;
 
-interface InstallableUpdater {
-  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+type ElectronAutoUpdater = typeof import("electron-updater")["autoUpdater"];
+
+interface ElectronUpdaterModuleNamespace {
+  autoUpdater?: unknown;
+  default?: unknown;
 }
 
 export interface Updater {
-  check(): Promise<void>;
+  check(options?: UpdateCheckOptions): Promise<void>;
   install(): Promise<boolean>;
+  isInstallStarted(): boolean;
   snapshot(): DesktopUpdateSnapshot;
   status(): UpdateStatus;
+}
+
+function hasAutoUpdaterShape(value: unknown): value is ElectronAutoUpdater {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.checkForUpdates === "function" &&
+    typeof candidate.quitAndInstall === "function" &&
+    typeof candidate.setFeedURL === "function" &&
+    typeof candidate.removeAllListeners === "function" &&
+    typeof candidate.once === "function" &&
+    typeof candidate.on === "function"
+  );
+}
+
+async function loadAutoUpdater(): Promise<ElectronAutoUpdater> {
+  const updaterModule = await import("electron-updater") as ElectronUpdaterModuleNamespace;
+  const directAutoUpdater = "autoUpdater" in updaterModule
+    ? updaterModule.autoUpdater
+    : undefined;
+  const defaultExport = "default" in updaterModule
+    ? updaterModule.default
+    : undefined;
+  const defaultAutoUpdater = defaultExport && typeof defaultExport === "object"
+    ? (defaultExport as Record<string, unknown>).autoUpdater
+    : undefined;
+  const autoUpdater = directAutoUpdater ?? defaultAutoUpdater;
+  if (!hasAutoUpdaterShape(autoUpdater)) {
+    throw new Error("Desktop updater module is unavailable");
+  }
+  return autoUpdater;
 }
 
 function readVersion(info: unknown): string | null {
@@ -84,8 +125,10 @@ function readRelease(info: unknown, version: string): DesktopReleaseNotes {
 
 export function createUpdater(events: UpdateEvents): Updater {
   let current: DesktopUpdateSnapshot = { status: "disabled" };
-  let activeAutoUpdater: InstallableUpdater | null = null;
+  let activeAutoUpdater: ElectronAutoUpdater | null = null;
   let pendingReleaseSave: Promise<void> = Promise.resolve();
+  let installStarted = false;
+  let notifyWhenCurrent = false;
   const feed = resolveUpdateFeedConfig(process.env, app.isPackaged);
 
   const setSnapshot = (next: DesktopUpdateSnapshot): void => {
@@ -93,35 +136,37 @@ export function createUpdater(events: UpdateEvents): Updater {
     events.onStateChanged?.({ ...current });
   };
 
+  const completeUserRequestedCheck = (callback?: () => void): void => {
+    const shouldNotify = notifyWhenCurrent;
+    notifyWhenCurrent = false;
+    if (shouldNotify) callback?.();
+  };
+
   const updater: Updater = {
-    async check() {
+    async check(options) {
       if (!feed.enabled) {
         setSnapshot({ status: "disabled" });
         return;
       }
-      if (
-        current.status === "checking" ||
-        current.status === "downloading" ||
-        current.status === "ready"
-      ) return;
+      if (current.status === "checking") {
+        notifyWhenCurrent ||= options?.notifyWhenCurrent === true;
+        return;
+      }
+      if (current.status === "downloading" || current.status === "ready") return;
 
+      notifyWhenCurrent = options?.notifyWhenCurrent === true;
       setSnapshot({ status: "checking" });
       try {
-        const { autoUpdater } = await import("electron-updater");
+        const autoUpdater = await loadAutoUpdater();
         activeAutoUpdater = autoUpdater;
         autoUpdater.autoDownload = true;
-        autoUpdater.autoInstallOnAppQuit = true;
+        autoUpdater.autoInstallOnAppQuit = false;
         autoUpdater.allowPrerelease = feed.allowPrerelease;
-        if (feed.provider === "generic") {
-          autoUpdater.setFeedURL({ provider: "generic", url: feed.url });
-        } else {
-          autoUpdater.setFeedURL({
-            provider: "github",
-            owner: feed.owner,
-            repo: feed.repo,
-            ...(feed.channel === "stable" ? {} : { channel: feed.channel }),
-          });
-        }
+        autoUpdater.setFeedURL({
+          provider: "generic",
+          url: feed.url,
+          channel: feed.channel === "stable" ? "latest" : feed.channel,
+        });
         for (const eventName of UPDATER_EVENT_NAMES) {
           autoUpdater.removeAllListeners(eventName);
         }
@@ -129,8 +174,10 @@ export function createUpdater(events: UpdateEvents): Updater {
           const version = readVersion(info);
           if (!version) {
             setSnapshot({ status: "error" });
+            completeUserRequestedCheck(events.onCheckError);
             return;
           }
+          completeUserRequestedCheck();
           setSnapshot({ status: "downloading", version, progress: 0 });
           events.onAvailable(version);
         });
@@ -159,7 +206,9 @@ export function createUpdater(events: UpdateEvents): Updater {
             });
         });
         autoUpdater.once("update-not-available", () => {
+          console.info("[updates] update check completed: up to date");
           setSnapshot({ status: "up-to-date" });
+          completeUserRequestedCheck(events.onUpToDate);
         });
         autoUpdater.once("error", (err) => {
           console.warn(
@@ -167,6 +216,7 @@ export function createUpdater(events: UpdateEvents): Updater {
             err instanceof Error ? err.message : String(err),
           );
           setSnapshot({ status: "error" });
+          completeUserRequestedCheck(events.onCheckError);
         });
         await autoUpdater.checkForUpdates();
       } catch (err: unknown) {
@@ -175,16 +225,24 @@ export function createUpdater(events: UpdateEvents): Updater {
           err instanceof Error ? err.message : String(err),
         );
         setSnapshot({ status: "error" });
+        completeUserRequestedCheck(events.onCheckError);
       }
     },
     async install() {
-      if (current.status !== "ready") return false;
-      await pendingReleaseSave;
-      const installable = activeAutoUpdater ?? (await import("electron-updater")).autoUpdater;
-      activeAutoUpdater = installable;
-      installable.quitAndInstall(false, true);
-      return true;
+      if (current.status !== "ready" || installStarted) return false;
+      installStarted = true;
+      try {
+        await pendingReleaseSave;
+        const installable = activeAutoUpdater ?? await loadAutoUpdater();
+        activeAutoUpdater = installable;
+        installable.quitAndInstall(false, true);
+        return true;
+      } catch (error: unknown) {
+        installStarted = false;
+        throw error;
+      }
     },
+    isInstallStarted: () => installStarted,
     snapshot: () => ({ ...current }),
     status: () => current.status,
   };

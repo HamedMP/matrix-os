@@ -190,16 +190,23 @@ jobs:
         shell: bash
         env:
           ARTIFACT_BASE: ${{ steps.mac_artifact.outputs.artifact_base }}
+          CHANNEL: ${{ inputs.channel }}
+          PACKAGE_VERSION: ${{ steps.mac_artifact.outputs.package_version }}
         run: |
           set -euo pipefail
           dmg_path="desktop/dist/${ARTIFACT_BASE}.dmg"
           mount_dir="$(mktemp -d)"
           copy_dir="$(mktemp -d)"
           app_pid=""
+          update_server_pid=""
           cleanup() {
             if [ -n "$app_pid" ]; then
               kill "$app_pid" 2>/dev/null || true
               wait "$app_pid" 2>/dev/null || true
+            fi
+            if [ -n "$update_server_pid" ]; then
+              kill "$update_server_pid" 2>/dev/null || true
+              wait "$update_server_pid" 2>/dev/null || true
             fi
             hdiutil detach "$mount_dir" -quiet || true
             rm -rf "$mount_dir" "$copy_dir"
@@ -220,20 +227,66 @@ jobs:
             echo "Copied macOS app is missing executable entrypoint" >&2
             exit 1
           fi
+          update_port_file="$copy_dir/update-fixture.port"
+          update_server_log="$copy_dir/update-fixture.log"
+          node scripts/release/desktop-update-fixture-server.mjs \
+            --channel "$CHANNEL" \
+            --version "$PACKAGE_VERSION" \
+            --port-file "$update_port_file" >"$update_server_log" 2>&1 &
+          update_server_pid=$!
+          for _ in {1..40}; do
+            if [ -s "$update_port_file" ]; then
+              break
+            fi
+            if ! kill -0 "$update_server_pid" 2>/dev/null; then
+              cat "$update_server_log"
+              echo "Desktop update fixture server exited before becoming ready" >&2
+              exit 1
+            fi
+            sleep 0.25
+          done
+          if [ ! -s "$update_port_file" ]; then
+            cat "$update_server_log"
+            echo "Desktop update fixture server did not become ready" >&2
+            exit 1
+          fi
+          update_port="$(tr -d '[:space:]' < "$update_port_file")"
+          if ! [[ "$update_port" =~ ^[0-9]+$ ]]; then
+            cat "$update_server_log"
+            echo "Desktop update fixture server returned an invalid port" >&2
+            exit 1
+          fi
           app_log="$copy_dir/matrix-os-launch.log"
           OPERATOR_USER_DATA_DIR="$copy_dir/user-data" \
+            OPERATOR_UPDATE_CHANNEL="$CHANNEL" \
+            OPERATOR_UPDATE_FEED="http://127.0.0.1:${update_port}/" \
             "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" --disable-gpu >"$app_log" 2>&1 &
           app_pid=$!
-          for _ in {1..10}; do
+          for _ in {1..20}; do
             if ! kill -0 "$app_pid" 2>/dev/null; then
               wait "$app_pid" || true
               cat "$app_log"
               echo "Packaged macOS app exited during launch smoke test" >&2
               exit 1
             fi
+            if grep -Fq "[updates] update check completed: up to date" "$app_log"; then
+              break
+            fi
             sleep 1
           done
-          if grep -q "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING" "$app_log"; then
+          if grep -Fq "[updates] check failed:" "$app_log"; then
+            cat "$app_log"
+            cat "$update_server_log"
+            echo "Packaged macOS updater failed its fixture feed check" >&2
+            exit 1
+          fi
+          if ! grep -Fq "[updates] update check completed: up to date" "$app_log"; then
+            cat "$app_log"
+            cat "$update_server_log"
+            echo "Packaged macOS updater did not complete its fixture feed check" >&2
+            exit 1
+          fi
+          if grep -Fq "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING" "$app_log"; then
             cat "$app_log"
             echo "Packaged macOS app attempted to load raw TypeScript from node_modules" >&2
             exit 1
@@ -313,6 +366,16 @@ jobs:
           if [ ! -f desktop/dist/latest-linux.yml ]; then
             echo "Missing Linux update manifest: desktop/dist/latest-linux.yml" >&2
             exit 1
+          fi
+
+      - name: Create Linux channel update manifest
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANNEL" != "stable" ]; then
+            cp desktop/dist/latest-linux.yml "desktop/dist/${CHANNEL}-linux.yml"
           fi
 
       - name: Upload Linux artifacts

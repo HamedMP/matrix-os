@@ -9,3 +9,20 @@ export function safeUrlTransform(url: string): string {
   }
   return "";
 }
+
+export function safeReleaseNotesUrlTransform(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.protocol === "https:" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.toString().length <= 2048
+    ) {
+      return url;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}

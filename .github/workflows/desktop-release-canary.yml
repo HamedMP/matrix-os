@@ -51,12 +51,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Move desktop-canary tag
-        run: |
-          set -euo pipefail
-          git tag -f desktop-canary "$GITHUB_SHA"
-          git push origin refs/tags/desktop-canary --force
-
       - uses: actions/download-artifact@v6
         with:
           pattern: ${{ needs.prepare.outputs.artifact_prefix }}-*
@@ -77,31 +71,66 @@ jobs:
 
       - name: Generate release manifest
         run: |
-          node scripts/release/generate-desktop-release-manifest.mjs desktop-release desktop-canary "${{ needs.prepare.outputs.version }}" canary "$GITHUB_SHA"
+          node scripts/release/generate-desktop-release-manifest.mjs desktop-release "desktop-v${{ needs.prepare.outputs.version }}" "${{ needs.prepare.outputs.version }}" canary "$GITHUB_SHA"
 
-      - name: Write release notes
-        run: |
-          printf 'Automated Matrix OS Desktop canary for %s.\n' "$GITHUB_SHA" > RELEASE_NOTES.md
-
-      - name: Remove previous desktop-canary release
+      - name: Generate Desktop release notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view desktop-canary >/dev/null 2>&1; then
-            gh release delete desktop-canary --yes
+          IMMUTABLE_TAG="desktop-v${{ needs.prepare.outputs.version }}"
+          if git ls-remote --exit-code --tags origin refs/tags/desktop-canary >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="$IMMUTABLE_TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f previous_tag_name=desktop-canary \
+              -q .body > RELEASE_NOTES.md
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="$IMMUTABLE_TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -q .body > RELEASE_NOTES.md
           fi
 
-      - name: Publish desktop-canary prerelease
+      - name: Prepare channel pointer manifests
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          node scripts/release/prepare-desktop-channel-manifests.mjs \
+            desktop-release desktop-channel "$owner" "$repo" \
+            "desktop-v${{ needs.prepare.outputs.version }}" canary RELEASE_NOTES.md
+
+      - name: Publish immutable canary release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: desktop-canary
-          name: Matrix OS Desktop Canary
+          tag_name: desktop-v${{ needs.prepare.outputs.version }}
+          name: Matrix OS Desktop ${{ needs.prepare.outputs.version }}
           target_commitish: ${{ github.sha }}
           body_path: RELEASE_NOTES.md
           prerelease: true
           draft: false
           make_latest: false
           files: desktop-release/**
+          fail_on_unmatched_files: true
+          overwrite_files: true
+
+      - name: Advance desktop-canary tag
+        run: |
+          set -euo pipefail
+          git tag -f desktop-canary "$GITHUB_SHA"
+          git push origin refs/tags/desktop-canary --force
+
+      - name: Publish desktop-canary channel pointer
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: desktop-canary
+          name: Matrix OS Desktop Canary Channel
+          target_commitish: ${{ github.sha }}
+          body_path: RELEASE_NOTES.md
+          prerelease: true
+          draft: false
+          make_latest: false
+          files: desktop-channel/**
           fail_on_unmatched_files: true
           overwrite_files: true

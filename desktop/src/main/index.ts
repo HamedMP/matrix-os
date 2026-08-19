@@ -36,6 +36,7 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
 import { createUpdater } from "./updates";
+import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
@@ -50,6 +51,7 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
+let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
   try {
@@ -234,6 +236,34 @@ if (!gotLock) {
             silent: false,
           }).show();
         },
+        onUpToDate: () => {
+          if (!Notification.isSupported()) return;
+          new Notification({
+            title: "Matrix OS is up to date",
+            body: `You're running version ${app.getVersion()}.`,
+            silent: true,
+          }).show();
+        },
+        onCheckError: () => {
+          if (!Notification.isSupported()) return;
+          new Notification({
+            title: "Unable to check for updates",
+            body: "Check your connection and try again.",
+            silent: true,
+          }).show();
+        },
+      });
+      handleUpdateBeforeQuit = createUpdateAwareBeforeQuit({
+        status: () => updater.status(),
+        isInstallStarted: () => updater.isInstallStarted(),
+        install: () => updater.install(),
+        quit: () => app.quit(),
+        reportError: (error) => {
+          console.warn(
+            "[updates] could not install ready update while quitting:",
+            error instanceof Error ? error.message : String(error),
+          );
+        },
       });
       const codingAgentThreadEvents = createCodingAgentThreadEventStreamer({
         auth,
@@ -347,7 +377,12 @@ if (!gotLock) {
       };
 
       await openMainWindow();
-      installAppMenu(() => mainWindow);
+      installAppMenu(
+        () => mainWindow,
+        () => {
+          void updater.check({ notifyWhenCurrent: true });
+        },
+      );
 
       void updater.check();
       updateCheckTimer = setInterval(() => {
@@ -364,13 +399,14 @@ if (!gotLock) {
       logMainError("failed to start app", err);
     });
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;
     }
     closeCodingAgentThreadEvents?.();
     closeCodingAgentThreadEvents = null;
+    handleUpdateBeforeQuit?.(event);
   });
 
   app.on("window-all-closed", () => {

@@ -33,7 +33,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: desktop-release-${{ github.ref_name || inputs.version }}-${{ inputs.channel || 'stable' }}
+  group: desktop-release-${{ inputs.channel || 'stable' }}
   cancel-in-progress: false
 
 jobs:
@@ -139,27 +139,51 @@ jobs:
         run: |
           node scripts/release/generate-desktop-release-manifest.mjs desktop-release "$TAG" "$VERSION" "$CHANNEL" "$GITHUB_SHA"
 
-      - name: Generate GitHub release notes
+      - name: Generate Desktop release notes
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="$TAG" \
-            -f target_commitish="$GITHUB_SHA" \
-            -q .body > RELEASE_NOTES.md
+          CHANNEL_TAG="desktop-$CHANNEL"
+          if git ls-remote --exit-code --tags origin "refs/tags/$CHANNEL_TAG" >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f previous_tag_name="$CHANNEL_TAG" \
+              -q .body > RELEASE_NOTES.md
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -q .body > RELEASE_NOTES.md
+          fi
+
+      - name: Prepare channel pointer manifests
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          node scripts/release/prepare-desktop-channel-manifests.mjs \
+            desktop-release desktop-channel "$owner" "$repo" \
+            "$TAG" "$CHANNEL" RELEASE_NOTES.md
 
       - name: Upload dry-run bundle
         if: ${{ needs.prepare.outputs.mode == 'dry-run' }}
         uses: actions/upload-artifact@v6
         with:
           name: desktop-release-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.channel }}
-          path: desktop-release/**
+          path: |
+            desktop-release/**
+            desktop-channel/**
           if-no-files-found: error
           retention-days: 30
 
-      - name: Create GitHub release
+      - name: Create immutable GitHub release
         if: ${{ needs.prepare.outputs.mode == 'publish' }}
         uses: softprops/action-gh-release@v3
         with:
@@ -169,7 +193,32 @@ jobs:
           body_path: RELEASE_NOTES.md
           prerelease: ${{ needs.prepare.outputs.prerelease }}
           draft: false
-          make_latest: ${{ needs.prepare.outputs.channel == 'stable' }}
+          make_latest: false
           files: desktop-release/**
+          fail_on_unmatched_files: true
+          overwrite_files: true
+
+      - name: Advance Desktop channel tag
+        if: ${{ needs.prepare.outputs.mode == 'publish' }}
+        env:
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+        run: |
+          set -euo pipefail
+          CHANNEL_TAG="desktop-$CHANNEL"
+          git tag -f "$CHANNEL_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$CHANNEL_TAG" --force
+
+      - name: Publish Desktop channel pointer
+        if: ${{ needs.prepare.outputs.mode == 'publish' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: desktop-${{ needs.prepare.outputs.channel }}
+          name: Matrix OS Desktop ${{ needs.prepare.outputs.channel }} Channel
+          target_commitish: ${{ github.sha }}
+          body_path: RELEASE_NOTES.md
+          prerelease: ${{ needs.prepare.outputs.prerelease }}
+          draft: false
+          make_latest: false
+          files: desktop-channel/**
           fail_on_unmatched_files: true
           overwrite_files: true

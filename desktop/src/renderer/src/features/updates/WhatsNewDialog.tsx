@@ -2,7 +2,7 @@ import { X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Dialog } from "../../design/primitives";
-import { safeUrlTransform } from "../../lib/markdown";
+import { safeReleaseNotesUrlTransform } from "../../lib/markdown";
 import { invoke } from "../../lib/operator";
 import { useDesktopUpdate } from "../../stores/desktop-update";
 
@@ -76,7 +76,7 @@ export default function WhatsNewDialog() {
           >
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
-              urlTransform={safeUrlTransform}
+              urlTransform={safeReleaseNotesUrlTransform}
               components={{
                 img: () => null,
                 a: ({ href, children }) => (

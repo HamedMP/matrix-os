@@ -26,6 +26,10 @@ describe("desktop release workflows", () => {
     expect(workflow).not.toContain('other_arch="x64"');
     expect(workflow).toContain('find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml"');
     expect(workflow).toContain("Smoke test macOS DMG mount");
+    expect(workflow).toContain("desktop-update-fixture-server.mjs");
+    expect(workflow).toContain('OPERATOR_UPDATE_FEED="http://127.0.0.1:${update_port}/"');
+    expect(workflow).toContain('grep -Fq "[updates] update check completed: up to date" "$app_log"');
+    expect(workflow).toContain('grep -Fq "[updates] check failed:" "$app_log"');
     expect(workflow).toContain('hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly');
     expect(workflow).toContain('[ ! -L "$mount_dir/Applications" ]');
     expect(workflow).toContain('applications_target="$(readlink "$mount_dir/Applications")"');
@@ -89,22 +93,43 @@ describe("desktop release workflows", () => {
     expect(workflow).not.toContain("version_suffix:");
   });
 
-  it("recreates the disposable canary release after preparing the complete artifact set", () => {
+  it("publishes an immutable canary before advancing the channel pointer", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
     const downloadIndex = workflow.indexOf("uses: actions/download-artifact@v6");
-    const manifestIndex = workflow.indexOf("name: Generate release manifest");
-    const notesIndex = workflow.indexOf("name: Write release notes");
-    const cleanupIndex = workflow.indexOf("name: Remove previous desktop-canary release");
-    const publishIndex = workflow.indexOf("name: Publish desktop-canary prerelease");
+    const notesIndex = workflow.indexOf("name: Generate Desktop release notes");
+    const channelManifestIndex = workflow.indexOf("name: Prepare channel pointer manifests");
+    const immutablePublishIndex = workflow.indexOf("name: Publish immutable canary release");
+    const channelTagIndex = workflow.indexOf("name: Advance desktop-canary tag");
+    const channelPublishIndex = workflow.indexOf("name: Publish desktop-canary channel pointer");
 
     expect(workflow).toContain("GH_TOKEN: ${{ github.token }}");
-    expect(workflow).toContain("gh release delete desktop-canary --yes");
-    expect(workflow).not.toContain("gh release delete desktop-canary --yes --cleanup-tag");
+    expect(workflow).toContain('IMMUTABLE_TAG="desktop-v${{ needs.prepare.outputs.version }}"');
+    expect(workflow).toContain("previous_tag_name=desktop-canary");
+    expect(workflow).toContain("scripts/release/prepare-desktop-channel-manifests.mjs");
+    expect(workflow).toContain("tag_name: desktop-v${{ needs.prepare.outputs.version }}");
+    expect(workflow).toContain("tag_name: desktop-canary");
+    expect(workflow).toContain("files: desktop-channel/**");
+    expect(workflow).not.toContain("gh release delete desktop-canary");
     expect(downloadIndex).toBeGreaterThan(-1);
-    expect(manifestIndex).toBeGreaterThan(downloadIndex);
-    expect(notesIndex).toBeGreaterThan(manifestIndex);
-    expect(cleanupIndex).toBeGreaterThan(notesIndex);
-    expect(publishIndex).toBeGreaterThan(cleanupIndex);
+    expect(notesIndex).toBeGreaterThan(downloadIndex);
+    expect(channelManifestIndex).toBeGreaterThan(notesIndex);
+    expect(immutablePublishIndex).toBeGreaterThan(channelManifestIndex);
+    expect(channelTagIndex).toBeGreaterThan(immutablePublishIndex);
+    expect(channelPublishIndex).toBeGreaterThan(channelTagIndex);
+  });
+
+  it("advances a channel pointer without taking over the repository-wide Latest release", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
+
+    expect(workflow).toContain("group: desktop-release-${{ inputs.channel || 'stable' }}");
+    expect(workflow).toContain('CHANNEL_TAG="desktop-$CHANNEL"');
+    expect(workflow).toContain('previous_tag_name="$CHANNEL_TAG"');
+    expect(workflow).toContain("scripts/release/prepare-desktop-channel-manifests.mjs");
+    expect(workflow).toContain("name: Advance Desktop channel tag");
+    expect(workflow).toContain("name: Publish Desktop channel pointer");
+    expect(workflow).toContain("files: desktop-channel/**");
+    expect(workflow).toContain("make_latest: false");
+    expect(workflow).not.toContain("make_latest: ${{ needs.prepare.outputs.channel == 'stable' }}");
   });
 
   it("patches exact release versions and validates notarization inputs before packaging", () => {
@@ -146,6 +171,15 @@ describe("desktop release workflows", () => {
     expect(release).toContain("- dev");
     expect(release).toContain("stable|beta|canary|dev");
     expect(release).toContain("Non-stable desktop channels require a prerelease semver version.");
+  });
+
+  it("publishes a Linux manifest for every prerelease channel", () => {
+    const build = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+
+    expect(build).toContain("Create Linux channel update manifest");
+    expect(build).toContain('if [ "$CHANNEL" != "stable" ]; then');
+    expect(build).toContain('cp desktop/dist/latest-linux.yml "desktop/dist/${CHANNEL}-linux.yml"');
+    expect(build).toContain("desktop/dist/*-linux.yml");
   });
 
   it("rejects prerelease desktop tags on the push release path", () => {

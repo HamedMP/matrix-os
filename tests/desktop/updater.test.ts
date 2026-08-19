@@ -128,6 +128,56 @@ describe("createUpdater", () => {
     expect(updater.status()).toBe("ready");
   });
 
+  it("logs a packaged smoke-test signal when the current version is up to date", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+    updaterMock.handlers.get("update-not-available")?.({ version: "1.2.3" });
+
+    expect(updater.status()).toBe("up-to-date");
+    expect(info).toHaveBeenCalledWith("[updates] update check completed: up to date");
+    info.mockRestore();
+  });
+
+  it("reports an up-to-date result only for a user-requested check", async () => {
+    const onUpToDate = vi.fn();
+    const updater = createUpdater({
+      onAvailable: vi.fn(),
+      onReady: vi.fn(),
+      onUpToDate,
+    });
+
+    await updater.check();
+    updaterMock.handlers.get("update-not-available")?.({ version: "1.2.3" });
+    expect(onUpToDate).not.toHaveBeenCalled();
+
+    await updater.check({ notifyWhenCurrent: true });
+    updaterMock.handlers.get("update-not-available")?.({ version: "1.2.3" });
+
+    expect(onUpToDate).toHaveBeenCalledOnce();
+  });
+
+  it("reports a failed user-requested check without notifying for background failures", async () => {
+    const onCheckError = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const updater = createUpdater({
+      onAvailable: vi.fn(),
+      onReady: vi.fn(),
+      onCheckError,
+    });
+
+    updaterMock.autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("background offline"));
+    await updater.check();
+    expect(onCheckError).not.toHaveBeenCalled();
+
+    updaterMock.autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("manual offline"));
+    await updater.check({ notifyWhenCurrent: true });
+
+    expect(onCheckError).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
+
   it("sets an error status when the update check fails", async () => {
     updaterMock.autoUpdater.checkForUpdates.mockRejectedValue(new Error("network down"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -159,7 +209,7 @@ describe("createUpdater", () => {
     warn.mockRestore();
   });
 
-  it("passes the resolved prerelease channel to the GitHub provider", async () => {
+  it("passes the resolved prerelease channel to the generic provider", async () => {
     delete process.env.OPERATOR_UPDATE_FEED;
     process.env.MATRIX_DESKTOP_UPDATE_CHANNEL = "beta";
     const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
@@ -167,10 +217,36 @@ describe("createUpdater", () => {
     await updater.check();
 
     expect(updaterMock.autoUpdater.setFeedURL).toHaveBeenCalledWith({
-      provider: "github",
-      owner: "HamedMP",
-      repo: "matrix-os",
+      provider: "generic",
+      url: "https://github.com/HamedMP/matrix-os/releases/download/desktop-beta/",
       channel: "beta",
+    });
+  });
+
+  it("uses electron-updater's latest manifest name for the stable channel", async () => {
+    delete process.env.OPERATOR_UPDATE_FEED;
+    process.env.MATRIX_DESKTOP_UPDATE_CHANNEL = "stable";
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+
+    expect(updaterMock.autoUpdater.setFeedURL).toHaveBeenCalledWith({
+      provider: "generic",
+      url: "https://github.com/HamedMP/matrix-os/releases/download/desktop-stable/",
+      channel: "latest",
+    });
+  });
+
+  it("preserves the selected channel for an overridden generic feed", async () => {
+    process.env.MATRIX_DESKTOP_UPDATE_CHANNEL = "canary";
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+
+    expect(updaterMock.autoUpdater.setFeedURL).toHaveBeenCalledWith({
+      provider: "generic",
+      url: "https://updates.example.com",
+      channel: "canary",
     });
   });
 

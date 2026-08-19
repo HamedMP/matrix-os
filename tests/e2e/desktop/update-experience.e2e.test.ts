@@ -93,19 +93,19 @@ suite("desktop update experience", () => {
     const update = page.getByRole("button", { name: "Update Matrix OS to 0.2.0" });
     await update.waitFor({ timeout: 10_000 });
     const settings = page.getByRole("button", { name: "Settings" });
-    const avatar = page.getByTitle("Manage account");
+    const account = page.getByRole("button", { name: "Open account menu" });
     const settingsBox = await settings.boundingBox();
     const updateBox = await update.boundingBox();
-    const avatarBox = await avatar.boundingBox();
+    const accountBox = await account.boundingBox();
     expect(settingsBox).not.toBeNull();
-    expect(avatarBox).not.toBeNull();
+    expect(accountBox).not.toBeNull();
     expect(updateBox).not.toBeNull();
     expect(updateBox?.y ?? 0).toBeGreaterThan((settingsBox?.y ?? 0) + (settingsBox?.height ?? 0));
-    expect((updateBox?.y ?? 0) + (updateBox?.height ?? 0)).toBeLessThanOrEqual(avatarBox?.y ?? 0);
-    expect(updateBox?.width ?? 0).toBeGreaterThan((avatarBox?.width ?? 0) * 4);
+    expect((updateBox?.y ?? 0) + (updateBox?.height ?? 0)).toBeLessThanOrEqual(accountBox?.y ?? 0);
+    expect(updateBox?.width ?? 0).toBeGreaterThan((accountBox?.width ?? 0) * 0.8);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-291-update-ready.png") });
 
-    await page.getByRole("button", { name: "Collapse sidebar (⌘B)" }).click();
+    await page.getByRole("button", { name: "Collapse sidebar" }).click();
     const collapsedUpdateBox = await update.boundingBox();
     expect(collapsedUpdateBox).not.toBeNull();
     expect(Math.abs((collapsedUpdateBox?.width ?? 0) - (collapsedUpdateBox?.height ?? 0))).toBeLessThanOrEqual(2);

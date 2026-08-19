@@ -9,6 +9,7 @@ interface AppMenuTemplateOptions {
   openExternal(url: string): void;
   send: MenuEventSender;
   adjustZoom(action: ZoomAction): void;
+  checkForUpdates(): void;
 }
 
 export function createAppMenuTemplate({
@@ -17,6 +18,7 @@ export function createAppMenuTemplate({
   openExternal,
   send,
   adjustZoom,
+  checkForUpdates,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const viewSubmenu: MenuItemConstructorOptions[] = [
     {
@@ -73,6 +75,14 @@ export function createAppMenuTemplate({
       label: appName,
       submenu: [
         { role: "about" },
+        ...(isPackaged
+          ? ([
+              {
+                label: "Check for Updates…",
+                click: () => checkForUpdates(),
+              },
+            ] as MenuItemConstructorOptions[])
+          : []),
         { type: "separator" },
         {
           label: "Settings…",

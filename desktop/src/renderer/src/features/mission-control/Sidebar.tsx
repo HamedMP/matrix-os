@@ -4,6 +4,7 @@ import {
   FolderTree,
   LayoutGrid,
   Plus,
+  Settings,
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
@@ -206,6 +207,13 @@ export default function Sidebar() {
 
       <div className="flex flex-col border-t" style={{ borderColor: "var(--border-subtle)" }}>
         <RuntimeComputerMenu collapsed={collapsed} />
+        <SidebarNavRow
+          icon={<Settings size={15} />}
+          label="Settings"
+          collapsed={collapsed}
+          active={activeTab?.kind === "settings"}
+          onClick={() => openTab({ kind: "settings", title: "Settings" })}
+        />
         <DesktopUpdateButton collapsed={collapsed} />
         <AccountMenu collapsed={collapsed} />
       </div>
