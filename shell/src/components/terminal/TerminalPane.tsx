@@ -55,6 +55,7 @@ import {
 import { createXtermLogger } from "./xterm-logger";
 import { createColdReplayVisibility, type ColdReplayVisibility } from "./cold-replay-visibility";
 import { parseTerminalServerMessage, stripTerminalControls } from "./terminal-server-message";
+import { useTerminalFocusRequest } from "./useTerminalFocusRequest";
 import type { TerminalCompatMode } from "@/stores/terminal-store";
 
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
@@ -305,6 +306,7 @@ interface TerminalPaneProps {
   cwd: string;
   theme: Theme;
   isFocused: boolean;
+  focusRequestId?: number;
   sessionId?: string;
   claudeMode?: boolean;
   startupCommand?: string;
@@ -333,6 +335,7 @@ export function TerminalPane({
   cwd,
   theme,
   isFocused,
+  focusRequestId = 0,
   sessionId: initialSessionId,
   claudeMode,
   startupCommand,
@@ -2065,11 +2068,7 @@ export function TerminalPane({
     theme,
   ]);
 
-  useEffect(() => {
-    if (isFocused && !suppressNativeKeyboard && termRef.current) {
-      (termRef.current as { focus: () => void }).focus();
-    }
-  }, [isFocused, suppressNativeKeyboard]);
+  useTerminalFocusRequest(termRef, focusRequestId, isFocused, suppressNativeKeyboard);
 
   // Re-fit the terminal whenever the visual viewport changes (soft keyboard
   // open/close, URL-bar collapse, orientation). The document viewport is
