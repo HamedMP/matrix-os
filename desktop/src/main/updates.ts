@@ -28,8 +28,11 @@ const UPDATER_EVENT_NAMES = [
   "error",
 ] as const;
 
-interface InstallableUpdater {
-  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+type ElectronAutoUpdater = typeof import("electron-updater")["autoUpdater"];
+
+interface ElectronUpdaterModuleNamespace {
+  autoUpdater?: unknown;
+  default?: unknown;
 }
 
 export interface Updater {
@@ -37,6 +40,37 @@ export interface Updater {
   install(): Promise<boolean>;
   snapshot(): DesktopUpdateSnapshot;
   status(): UpdateStatus;
+}
+
+function hasAutoUpdaterShape(value: unknown): value is ElectronAutoUpdater {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.checkForUpdates === "function" &&
+    typeof candidate.quitAndInstall === "function" &&
+    typeof candidate.setFeedURL === "function" &&
+    typeof candidate.removeAllListeners === "function" &&
+    typeof candidate.once === "function" &&
+    typeof candidate.on === "function"
+  );
+}
+
+async function loadAutoUpdater(): Promise<ElectronAutoUpdater> {
+  const updaterModule = await import("electron-updater") as ElectronUpdaterModuleNamespace;
+  const directAutoUpdater = "autoUpdater" in updaterModule
+    ? updaterModule.autoUpdater
+    : undefined;
+  const defaultExport = "default" in updaterModule
+    ? updaterModule.default
+    : undefined;
+  const defaultAutoUpdater = defaultExport && typeof defaultExport === "object"
+    ? (defaultExport as Record<string, unknown>).autoUpdater
+    : undefined;
+  const autoUpdater = directAutoUpdater ?? defaultAutoUpdater;
+  if (!hasAutoUpdaterShape(autoUpdater)) {
+    throw new Error("Desktop updater module is unavailable");
+  }
+  return autoUpdater;
 }
 
 function readVersion(info: unknown): string | null {
@@ -84,7 +118,7 @@ function readRelease(info: unknown, version: string): DesktopReleaseNotes {
 
 export function createUpdater(events: UpdateEvents): Updater {
   let current: DesktopUpdateSnapshot = { status: "disabled" };
-  let activeAutoUpdater: InstallableUpdater | null = null;
+  let activeAutoUpdater: ElectronAutoUpdater | null = null;
   let pendingReleaseSave: Promise<void> = Promise.resolve();
   const feed = resolveUpdateFeedConfig(process.env, app.isPackaged);
 
@@ -107,7 +141,7 @@ export function createUpdater(events: UpdateEvents): Updater {
 
       setSnapshot({ status: "checking" });
       try {
-        const { autoUpdater } = await import("electron-updater");
+        const autoUpdater = await loadAutoUpdater();
         activeAutoUpdater = autoUpdater;
         autoUpdater.autoDownload = true;
         autoUpdater.autoInstallOnAppQuit = true;
@@ -180,7 +214,7 @@ export function createUpdater(events: UpdateEvents): Updater {
     async install() {
       if (current.status !== "ready") return false;
       await pendingReleaseSave;
-      const installable = activeAutoUpdater ?? (await import("electron-updater")).autoUpdater;
+      const installable = activeAutoUpdater ?? await loadAutoUpdater();
       activeAutoUpdater = installable;
       installable.quitAndInstall(false, true);
       return true;
