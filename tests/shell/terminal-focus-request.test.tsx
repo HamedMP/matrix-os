@@ -20,6 +20,12 @@ function FocusHarness({
   return null;
 }
 
+function UnknownTerminalHarness({ terminal }: { terminal: unknown }) {
+  const terminalRef = useRef<unknown>(terminal);
+  useTerminalFocusRequest(terminalRef, 1, true, false);
+  return null;
+}
+
 describe("useTerminalFocusRequest", () => {
   it("refocuses an already-focused terminal only for a new focus request", () => {
     const focus = vi.fn();
@@ -45,5 +51,9 @@ describe("useTerminalFocusRequest", () => {
     );
 
     expect(focus).not.toHaveBeenCalled();
+  });
+
+  it("safely ignores a terminal ref that is not focusable yet", () => {
+    expect(() => render(<UnknownTerminalHarness terminal={{}} />)).not.toThrow();
   });
 });

@@ -6,15 +6,28 @@ interface FocusableTerminal {
   focus(): void;
 }
 
-export function useTerminalFocusRequest<T extends FocusableTerminal>(
-  terminalRef: RefObject<T | null>,
+function isFocusableTerminal(value: unknown): value is FocusableTerminal {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "focus" in value &&
+    typeof value.focus === "function"
+  );
+}
+
+export function useTerminalFocusRequest(
+  terminalRef: RefObject<unknown>,
   focusRequestId: number,
   isFocused: boolean,
   suppressNativeKeyboard: boolean,
 ) {
   useEffect(() => {
-    if (isFocused && !suppressNativeKeyboard) {
-      terminalRef.current?.focus();
+    if (
+      isFocused &&
+      !suppressNativeKeyboard &&
+      isFocusableTerminal(terminalRef.current)
+    ) {
+      terminalRef.current.focus();
     }
   }, [focusRequestId, isFocused, suppressNativeKeyboard, terminalRef]);
 }
