@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Exit successfully only when this clone contains the exact immutable bundle
+# and the builder certified the host-level prerequisites needed to skip the
+# clean-image bootstrap. Any legacy, partial, or mismatched snapshot falls
+# through to the existing full install path.
+root="${MATRIX_GOLDEN_SNAPSHOT_ROOT:-}"
+root="${root%/}"
+path() {
+  printf '%s%s\n' "$root" "$1"
+}
+
+[ "${MATRIX_IMAGE_SOURCE:-clean_image}" = snapshot ] || exit 1
+[ -n "${MATRIX_IMAGE_VERSION:-}" ] || exit 1
+[ "${MATRIX_SNAPSHOT_SOURCE_VERSION:-}" = "$MATRIX_IMAGE_VERSION" ] || exit 1
+[[ "${MATRIX_TARGET_BUNDLE_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] || exit 1
+
+readiness_file="$(path /opt/matrix/golden-snapshot-system-ready)"
+version_file="$(path /opt/matrix/app/BUNDLE_VERSION)"
+sha256_file="$(path /opt/matrix/app/BUNDLE_SHA256)"
+for evidence_file in "$readiness_file" "$version_file" "$sha256_file"; do
+  [ -f "$evidence_file" ] && [ ! -L "$evidence_file" ] || exit 1
+done
+
+[ "$(tr -d '\r\n' < "$readiness_file")" = matrix-host-prerequisites-v1 ] || exit 1
+[ "$(tr -d '\r\n' < "$version_file")" = "$MATRIX_IMAGE_VERSION" ] || exit 1
+[ "$(tr -d '\r\n' < "$sha256_file")" = "$MATRIX_TARGET_BUNDLE_SHA256" ] || exit 1

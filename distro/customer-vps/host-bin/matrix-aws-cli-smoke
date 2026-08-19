@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command -v aws >/dev/null
+command -v python3 >/dev/null
+
+smoke_root="$(mktemp -d)"
+server_pid=''
+cleanup() {
+  if [ -n "$server_pid" ]; then
+    kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" >/dev/null 2>&1 || true
+  fi
+  rm -rf -- "$smoke_root"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+printf '%s\n' matrix-aws-cli-smoke-v1 >"$smoke_root/expected"
+cat >"$smoke_root/server.py" <<'PY'
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
+import sys
+from urllib.parse import urlsplit
+
+PAYLOAD = b"matrix-aws-cli-smoke-v1\n"
+OBJECT_PATH = "/matrix-golden-smoke/probe"
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def serve_object(self, include_body: bool) -> None:
+        if urlsplit(self.path).path != OBJECT_PATH:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(PAYLOAD)))
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("ETag", '"matrix-golden-smoke-v1"')
+        self.send_header("Last-Modified", "Wed, 19 Aug 2026 00:00:00 GMT")
+        self.end_headers()
+        if include_body:
+            self.wfile.write(PAYLOAD)
+
+    def do_HEAD(self) -> None:
+        self.serve_object(False)
+
+    def do_GET(self) -> None:
+        self.serve_object(True)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+port_path = sys.argv[1]
+descriptor = os.open(port_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(descriptor, "w", encoding="utf-8") as port_file:
+    port_file.write(f"{server.server_port}\n")
+server.serve_forever(poll_interval=0.1)
+PY
+
+python3 "$smoke_root/server.py" "$smoke_root/port" &
+server_pid="$!"
+for _ in $(seq 1 50); do
+  [ -s "$smoke_root/port" ] && break
+  kill -0 "$server_pid" >/dev/null 2>&1 || exit 1
+  sleep 0.1
+done
+[ -s "$smoke_root/port" ]
+port="$(tr -d '\r\n' <"$smoke_root/port")"
+case "$port" in
+  ''|*[!0-9]*) exit 1 ;;
+esac
+
+cat >"$smoke_root/aws-config" <<'EOF'
+[default]
+region = us-east-1
+s3 =
+    addressing_style = path
+EOF
+export AWS_CONFIG_FILE="$smoke_root/aws-config"
+export AWS_ACCESS_KEY_ID=matrix-golden-smoke
+export AWS_SECRET_ACCESS_KEY=matrix-golden-smoke-secret
+export AWS_DEFAULT_REGION=us-east-1
+export AWS_EC2_METADATA_DISABLED=true
+export AWS_PAGER=''
+export NO_PROXY="127.0.0.1,${NO_PROXY:-}"
+export no_proxy="127.0.0.1,${no_proxy:-}"
+
+endpoint="http://127.0.0.1:${port}"
+timeout --preserve-status 20 aws --endpoint-url "$endpoint" s3api head-object \
+  --bucket matrix-golden-smoke --key probe >/dev/null
+timeout --preserve-status 20 aws --endpoint-url "$endpoint" s3 cp \
+  s3://matrix-golden-smoke/probe "$smoke_root/download" --only-show-errors
+cmp -s "$smoke_root/expected" "$smoke_root/download"
