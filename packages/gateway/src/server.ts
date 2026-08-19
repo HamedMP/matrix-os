@@ -176,7 +176,7 @@ import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.
 import { registerIconRoutes } from "./icon-routes.js";
 import { buildShellBootstrap } from "./shell-bootstrap.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
-import { getSystemInfo } from "./system-info.js";
+import { getSystemInfo, getVersion } from "./system-info.js";
 import { collectSystemActivity } from "./system-activity/collector.js";
 import { CleanupCandidateRegistry, executeCleanupAction } from "./system-activity/cleanup.js";
 import { ActivityHistoryStore, AutoCleanupPolicyStore } from "./system-activity/history.js";
@@ -381,6 +381,9 @@ const MAX_MAIN_WS_CLIENTS = 100;
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
+  const runningVersion = getVersion(
+    config.runningVersion ? { version: config.runningVersion } : undefined,
+  );
   let syncReportSent = false;
   const allowedOriginController = createAllowedOriginController({
     shellOrigin: process.env.SHELL_ORIGIN,
@@ -3876,13 +3879,13 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.get("/api/system/info", (c) => {
-    const info = getSystemInfo(homePath, { model: config.model });
+    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
     const today = new Date().toISOString().slice(0, 10);
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
   app.get("/api/system/update", async (c) => {
-    const info = getSystemInfo(homePath, { model: config.model });
+    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
     const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -3903,7 +3906,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.get("/api/system/releases", async (c) => {
-    const info = getSystemInfo(homePath, { model: config.model });
+    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
     const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -3938,7 +3941,7 @@ export async function createGateway(config: GatewayConfig) {
         console.warn("[system-update] Failed to parse update request:", err);
       }
     }
-    const info = getSystemInfo(homePath, { model: config.model });
+    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
     const parsedTarget = resolveInternalUpgradeStartTarget(body, {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -4367,6 +4370,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get("/health", (c) => c.json({
     status: "ok",
+    runningVersion,
     cronJobs: cronService.listJobs().length,
     channels: channelManager.status(),
     plugins: loadedPlugins.length,
