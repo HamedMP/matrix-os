@@ -110,7 +110,7 @@ describe("BillingSection", () => {
 
     await waitFor(() => expect(screen.getByText("Start your 7-day free trial")).toBeTruthy());
     expect(screen.getByText("Card required")).toBeTruthy();
-    expect(screen.getByText("$0 today")).toBeTruthy();
+    expect(screen.getByText("$0 today").classList.contains("text-cream")).toBe(true);
     expect(screen.getByText(`First charge ${formattedTrialEnd}`)).toBeTruthy();
     expect(screen.getByText(`Cancel before ${formattedTrialEnd} to avoid being charged.`)).toBeTruthy();
     expect(screen.getByText("$19/month after your trial")).toBeTruthy();

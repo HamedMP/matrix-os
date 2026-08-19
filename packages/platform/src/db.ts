@@ -346,6 +346,8 @@ interface BillingSubscriptionsTable {
   first_trial_payment_failed_at: string | null;
   latest_event_created_at: string;
   latest_event_id: string;
+  latest_invoice_event_created_at: string | null;
+  latest_invoice_event_id: string | null;
   updated_at: string;
 }
 
@@ -1238,6 +1240,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       first_trial_payment_failed_at TEXT,
       latest_event_created_at TEXT NOT NULL,
       latest_event_id TEXT NOT NULL,
+      latest_invoice_event_created_at TEXT,
+      latest_invoice_event_id TEXT,
       updated_at TEXT NOT NULL
     )
   `.execute(db);
@@ -1246,6 +1250,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS trial_ends_at TEXT`.execute(db);
   await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS trial_converted_at TEXT`.execute(db);
   await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS first_trial_payment_failed_at TEXT`.execute(db);
+  await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS latest_invoice_event_created_at TEXT`.execute(db);
+  await sql`ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS latest_invoice_event_id TEXT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_billing_subscriptions_user_slot ON billing_subscriptions(clerk_user_id, runtime_slot, latest_event_created_at DESC)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_billing_subscriptions_customer ON billing_subscriptions(stripe_customer_id)`.execute(db);
 
@@ -2446,6 +2452,8 @@ function toBillingSubscriptionRow(record: NewBillingSubscription): BillingSubscr
     first_trial_payment_failed_at: record.firstTrialPaymentFailedAt ?? null,
     latest_event_created_at: record.latestEventCreatedAt,
     latest_event_id: record.latestEventId,
+    latest_invoice_event_created_at: null,
+    latest_invoice_event_id: null,
     updated_at: record.updatedAt,
   };
 }
@@ -2835,48 +2843,96 @@ export async function getBillingSubscriptionByStripeId(
   return row ? mapBillingSubscription(row) : undefined;
 }
 
-export async function markFirstTrialPaymentFailed(
-  db: PlatformDB,
-  stripeSubscriptionId: string,
-  failedAt: string,
-): Promise<BillingSubscriptionRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('billing_subscriptions')
-    .set({
-      first_trial_payment_failed_at: failedAt,
-      grace_period_ends_at: null,
-      updated_at: failedAt,
-    })
-    .where('stripe_subscription_id', '=', stripeSubscriptionId)
-    .where('trial_ends_at', 'is not', null)
-    .where('trial_converted_at', 'is', null)
-    .where('first_trial_payment_failed_at', 'is', null)
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapBillingSubscription(row) : undefined;
+export interface TrialInvoiceEventProjectionResult {
+  applied: boolean;
+  lifecycleChanged: boolean;
+  subscription: BillingSubscriptionRecord;
 }
 
-export async function markTrialConverted(
+/**
+ * Projects a conversion-invoice event under a dedicated monotonic cursor with
+ * the same timestamp-and-ID ordering used by subscription webhooks. Keeping
+ * the cursors separate prevents a later subscription projection from hiding a
+ * valid invoice transition. Callers run this inside the webhook transaction,
+ * so the row lock also serializes competing invoice deliveries.
+ */
+export async function projectTrialInvoiceEvent(
   db: PlatformDB,
-  stripeSubscriptionId: string,
-  convertedAt: string,
-): Promise<BillingSubscriptionRecord | undefined> {
+  input: {
+    stripeSubscriptionId: string;
+    type: 'invoice.paid' | 'invoice.payment_failed';
+    eventCreatedAt: string;
+    eventId: string;
+    lifecycleAt: string;
+    updatedAt: string;
+  },
+): Promise<TrialInvoiceEventProjectionResult | undefined> {
   await db.ready;
+  const currentRow = await db.executor
+    .selectFrom('billing_subscriptions')
+    .selectAll()
+    .where('stripe_subscription_id', '=', input.stripeSubscriptionId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!currentRow || currentRow.trial_ends_at === null) return undefined;
+
+  const eventIsNewer = currentRow.latest_invoice_event_created_at === null
+    || currentRow.latest_invoice_event_created_at < input.eventCreatedAt
+    || (
+      currentRow.latest_invoice_event_created_at === input.eventCreatedAt
+      && (currentRow.latest_invoice_event_id === null || currentRow.latest_invoice_event_id < input.eventId)
+    );
+  if (!eventIsNewer) {
+    return {
+      applied: false,
+      lifecycleChanged: false,
+      subscription: mapBillingSubscription(currentRow),
+    };
+  }
+
+  const paymentFailed = input.type === 'invoice.payment_failed';
+  const lifecycleChanged = paymentFailed
+    ? currentRow.trial_converted_at === null && currentRow.first_trial_payment_failed_at === null
+    : currentRow.trial_converted_at === null;
+  const invoiceCursorCreatedAt = currentRow.latest_invoice_event_created_at;
+  const invoiceCursorId = currentRow.latest_invoice_event_id;
   const row = await db.executor
     .updateTable('billing_subscriptions')
     .set({
-      trial_converted_at: convertedAt,
-      first_trial_payment_failed_at: null,
-      updated_at: convertedAt,
+      trial_converted_at: !paymentFailed && lifecycleChanged
+        ? input.lifecycleAt
+        : currentRow.trial_converted_at,
+      first_trial_payment_failed_at: paymentFailed && lifecycleChanged
+        ? input.lifecycleAt
+        : (!paymentFailed && lifecycleChanged ? null : currentRow.first_trial_payment_failed_at),
+      grace_period_ends_at: paymentFailed && lifecycleChanged
+        ? null
+        : currentRow.grace_period_ends_at,
+      latest_invoice_event_created_at: input.eventCreatedAt,
+      latest_invoice_event_id: input.eventId,
+      updated_at: input.updatedAt,
     })
-    .where('stripe_subscription_id', '=', stripeSubscriptionId)
-    .where('trial_ends_at', 'is not', null)
-    .where('trial_converted_at', 'is', null)
+    .where('stripe_subscription_id', '=', input.stripeSubscriptionId)
+    .$if(invoiceCursorCreatedAt === null, (query) => (
+      query.where('latest_invoice_event_created_at', 'is', null)
+    ))
+    .$if(invoiceCursorCreatedAt !== null, (query) => (
+      query.where('latest_invoice_event_created_at', '=', invoiceCursorCreatedAt ?? '')
+    ))
+    .$if(invoiceCursorId === null, (query) => (
+      query.where('latest_invoice_event_id', 'is', null)
+    ))
+    .$if(invoiceCursorId !== null, (query) => (
+      query.where('latest_invoice_event_id', '=', invoiceCursorId ?? '')
+    ))
     .returningAll()
     .executeTakeFirst();
-  if (row) return mapBillingSubscription(row);
-  return getBillingSubscriptionByStripeId(db, stripeSubscriptionId);
+  if (!row) return undefined;
+  return {
+    applied: true,
+    lifecycleChanged,
+    subscription: mapBillingSubscription(row),
+  };
 }
 
 export async function listCurrentBillingSubscriptions(

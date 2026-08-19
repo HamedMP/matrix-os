@@ -348,7 +348,7 @@ function CheckoutPanel({
           ) : null}
         </div>
         <span className="flex items-baseline gap-1">
-          <span className="text-3xl font-semibold tracking-tight text-[#FAFAF5]">
+          <span className="text-3xl font-semibold tracking-tight text-cream">
             {trialDurationDays === null ? `$${price}` : "$0 today"}
           </span>
           {trialDurationDays === null && (

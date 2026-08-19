@@ -20,8 +20,7 @@ import {
   getSettlingCheckoutAttempt,
   insertBillingWebhookEvent,
   isCardTrialOfferEligible,
-  markFirstTrialPaymentFailed,
-  markTrialConverted,
+  projectTrialInvoiceEvent,
   resolveCheckoutAttempt,
   runBillingWebhookTransaction,
   listCurrentBillingSubscriptions,
@@ -589,11 +588,24 @@ export function createBillingRoutes(options: {
           }
           const paymentIsRecoveringFailedTrial = Boolean(subscription.firstTrialPaymentFailedAt);
           const eventAt = epochSecondsToIso(event.created);
-          const updated = event.type === 'invoice.payment_failed'
-            ? await markFirstTrialPaymentFailed(trx, invoice.stripeSubscriptionId, eventAt)
-            : await markTrialConverted(trx, invoice.stripeSubscriptionId, eventAt);
-          if (!updated) return { received: true, ignored: true };
+          const invoiceProjection = await projectTrialInvoiceEvent(trx, {
+            stripeSubscriptionId: invoice.stripeSubscriptionId,
+            type: event.type,
+            eventCreatedAt: eventAt,
+            eventId: event.id,
+            lifecycleAt: eventAt,
+            updatedAt: webhookProcessedAt.toISOString(),
+          });
+          if (!invoiceProjection?.applied) return { received: true, ignored: true };
+          if (!invoiceProjection.lifecycleChanged) return { received: true, processed: true };
+          const updated = invoiceProjection.subscription;
           if (event.type === 'invoice.payment_failed') {
+            await cancelQueuedBillingRuntimeActions(
+              trx,
+              updated.stripeSubscriptionId,
+              'resume',
+              webhookProcessedAt.toISOString(),
+            );
             await enqueueBillingRuntimeAction(trx, {
               clerkUserId: updated.clerkUserId,
               runtimeSlot: updated.runtimeSlot,
@@ -697,6 +709,12 @@ export function createBillingRoutes(options: {
           && !projection.trialConvertedAt
           && (projection.status === 'canceled' || projection.status === 'unpaid' || projection.status === 'ended')
         ) {
+          await cancelQueuedBillingRuntimeActions(
+            trx,
+            projection.stripeSubscriptionId,
+            'resume',
+            webhookProcessedAt.toISOString(),
+          );
           await enqueueBillingRuntimeAction(trx, {
             clerkUserId: projection.clerkUserId,
             runtimeSlot: projection.runtimeSlot,

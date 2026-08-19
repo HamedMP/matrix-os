@@ -57,7 +57,7 @@ export function BillingTrialNotification({
         headers: { accept: "application/json" },
         signal: controller.signal,
       });
-      const body = (await response.json().catch(() => null)) as { url?: unknown } | null;
+      const body = await response.json() as { url?: unknown } | null;
       if (!response.ok || typeof body?.url !== "string" || !URL.canParse(body.url)) {
         throw new Error("portal_unavailable");
       }
