@@ -135,6 +135,7 @@ export function getVersion(release?: HostBundleRelease): string {
 
 export interface SystemInfo {
   version: string;
+  runningVersion: string;
   channel?: string;
   updateChannel: string;
   model: string;
@@ -227,7 +228,7 @@ function readDiskUsage(path: string): { totalBytes: number; freeBytes: number } 
 
 export function getSystemInfo(
   homePath: string,
-  kernelOverrides: { model?: string } = {},
+  kernelOverrides: { model?: string; runningVersion?: string } = {},
 ): SystemInfo {
   const kernel = resolveKernelConfigFile(homePath);
   let modules = 0;
@@ -294,9 +295,12 @@ export function getSystemInfo(
     ?? parseReleaseChannel(process.env.MATRIX_UPDATE_CHANNEL)
     ?? channel
     ?? "stable";
+  const version = getVersion(release);
+  const runningVersion = parseSafeSystemVersion(kernelOverrides.runningVersion) ?? version;
 
   return {
-    version: getVersion(release),
+    version,
+    runningVersion,
     ...(channel ? { channel } : {}),
     updateChannel,
     model: kernelOverrides.model ?? kernel.model,
