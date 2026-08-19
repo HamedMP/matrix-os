@@ -66,7 +66,7 @@ suite("desktop update experience", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  it("shows What's New after launch and places Update below Settings", async () => {
+  it("shows What's New after launch and places Update at the right edge of the account row", async () => {
     await page.getByRole("heading", { name: "What's New", level: 1 }).waitFor({ timeout: 10_000 });
     await page.getByText("Automatic background downloads for Matrix OS updates").waitFor();
     await page.mouse.move(80, 400);
@@ -92,17 +92,17 @@ suite("desktop update experience", () => {
 
     const update = page.getByRole("button", { name: "Update Matrix OS to 0.2.0" });
     await update.waitFor({ timeout: 10_000 });
-    const settings = page.getByRole("button", { name: "Settings" });
     const account = page.getByRole("button", { name: "Open account menu" });
-    const settingsBox = await settings.boundingBox();
     const updateBox = await update.boundingBox();
     const accountBox = await account.boundingBox();
-    expect(settingsBox).not.toBeNull();
     expect(accountBox).not.toBeNull();
     expect(updateBox).not.toBeNull();
-    expect(updateBox?.y ?? 0).toBeGreaterThan((settingsBox?.y ?? 0) + (settingsBox?.height ?? 0));
-    expect((updateBox?.y ?? 0) + (updateBox?.height ?? 0)).toBeLessThanOrEqual(accountBox?.y ?? 0);
-    expect(updateBox?.width ?? 0).toBeGreaterThan((accountBox?.width ?? 0) * 0.8);
+    expect(updateBox?.x ?? 0).toBeGreaterThan((accountBox?.x ?? 0) + (accountBox?.width ?? 0));
+    expect(updateBox?.y ?? 0).toBeGreaterThanOrEqual(accountBox?.y ?? 0);
+    expect((updateBox?.y ?? 0) + (updateBox?.height ?? 0)).toBeLessThanOrEqual(
+      (accountBox?.y ?? 0) + (accountBox?.height ?? 0),
+    );
+    expect(Math.abs((updateBox?.width ?? 0) - (updateBox?.height ?? 0))).toBeLessThanOrEqual(2);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-291-update-ready.png") });
 
     await page.getByRole("button", { name: "Collapse sidebar" }).click();

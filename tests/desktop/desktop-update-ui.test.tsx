@@ -100,7 +100,7 @@ describe("desktop update experience", () => {
     expect(screen.queryByRole("button", { name: /Update Matrix OS/ })).toBeNull();
   });
 
-  it("renders a full update row when expanded and an icon-only control when collapsed", () => {
+  it("renders a compact icon-only update control in expanded and collapsed sidebars", () => {
     vi.stubGlobal("operator", { invoke: vi.fn(), on: vi.fn() });
     useDesktopUpdate.setState({
       snapshot: { status: "ready", version: "1.2.3", progress: 100 },
@@ -112,8 +112,12 @@ describe("desktop update experience", () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByText("Update")).toBeTruthy();
-    expect(screen.getByText("v1.2.3")).toBeTruthy();
+    const expandedButton = screen.getByRole("button", {
+      name: "Update Matrix OS to 1.2.3",
+    });
+    expect(expandedButton.getAttribute("title")).toBe("Update Matrix OS to 1.2.3");
+    expect(screen.queryByText("Update")).toBeNull();
+    expect(screen.queryByText("v1.2.3")).toBeNull();
 
     view.rerender(
       <Tooltip.Provider>

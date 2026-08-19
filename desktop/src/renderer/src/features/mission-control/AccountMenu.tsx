@@ -6,7 +6,7 @@ import {
   LogOut,
   Settings,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
@@ -62,7 +62,13 @@ function MenuRow({
   );
 }
 
-export default function AccountMenu({ collapsed }: { collapsed: boolean }) {
+export default function AccountMenu({
+  collapsed,
+  trailingAction = null,
+}: {
+  collapsed: boolean;
+  trailingAction?: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const handle = useConnection((state) => state.handle);
   const displayName = useConnection((state) => state.displayName);
@@ -80,14 +86,14 @@ export default function AccountMenu({ collapsed }: { collapsed: boolean }) {
   };
 
   return (
-    <div className="p-2 pt-1">
+    <div className={`p-2 pt-1 ${collapsed ? "" : "flex items-center gap-1"}`}>
       <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <DropdownMenu.Trigger asChild>
           <button
             type="button"
             aria-label="Open account menu"
             title={collapsed ? primaryLabel : undefined}
-            className={`flex h-10 w-full items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center" : "gap-2 px-1"}`}
+            className={`flex h-10 min-w-0 items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "w-full justify-center" : "flex-1 gap-2 px-1"}`}
           >
             <span
               className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold"
@@ -160,6 +166,7 @@ export default function AccountMenu({ collapsed }: { collapsed: boolean }) {
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {trailingAction}
     </div>
   );
 }
