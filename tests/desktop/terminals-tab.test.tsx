@@ -71,7 +71,7 @@ describe("TerminalsTab", () => {
     });
     useShellSessions.setState({
       ...useShellSessions.getInitialState(),
-      load: vi.fn().mockResolvedValue(undefined),
+      load: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockResolvedValue({ name: "matrix-created", status: "active" }),
       deleteSession: vi.fn().mockResolvedValue(true),
       rename: vi.fn().mockResolvedValue(true),
@@ -114,6 +114,50 @@ describe("TerminalsTab", () => {
     expect(screen.queryByText("Workspace Only")).toBeNull();
   });
 
+  it("leaves loading ownership to MissionControl and reconciles a manual retry", async () => {
+    const load = vi.fn().mockResolvedValue([]);
+    useShellSessions.setState({ sessions: [], loading: false, error: "network", load });
+    useTabs.setState(useTabs.getInitialState(), true);
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    useTabs.getState().openTab({
+      kind: "terminal",
+      sessionName: "matrix-deleted",
+      title: "matrix-deleted",
+    });
+
+    renderTab();
+
+    expect(load).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry terminal sessions" }));
+
+    await waitFor(() => expect(load).toHaveBeenCalledOnce());
+    expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([home]);
+    expect(useTabs.getState().activeTabId).toBe(home);
+  });
+
+  it("routes the list refresh button through authoritative tab reconciliation", async () => {
+    const load = vi.fn().mockResolvedValue([{ name: "matrix-live", status: "active" }]);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-live", status: "active" }],
+      loading: false,
+      error: null,
+      load,
+    });
+    useTabs.setState(useTabs.getInitialState(), true);
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    useTabs.getState().openTab({
+      kind: "terminal",
+      sessionName: "matrix-deleted",
+      title: "matrix-deleted",
+    });
+
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh terminal sessions" }));
+
+    await waitFor(() => expect(load).toHaveBeenCalledOnce());
+    expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([home]);
+  });
+
   it("opens the Figma-aligned session detail and releases its live attachment while preserving the mounted terminal on return", () => {
     useShellSessions.setState({
       sessions: [{
@@ -146,6 +190,44 @@ describe("TerminalsTab", () => {
 
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
     expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("switches retained sessions from a flush collapsible rail", () => {
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-main", status: "active", placement: "active" },
+        { name: "matrix-other", status: "active", placement: "active" },
+      ],
+    });
+
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+
+    expect(screen.getByRole("navigation", { name: "Terminal session switcher" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Switch to matrix-main" }).getAttribute("aria-current"))
+      .toBe("page");
+    const terminalDetail = screen.getByTestId("terminal-view-matrix-main")
+      .closest("[data-terminal-detail]");
+    expect(terminalDetail?.className.split(/\s+/)).not.toContain("p-3");
+    expect(terminalDetail?.className.split(/\s+/)).not.toContain("gap-3");
+    const terminalRail = screen.getByRole("navigation", { name: "Terminal session switcher" });
+    expect(terminalRail.className.split(/\s+/)).not.toContain("rounded-lg");
+    expect(terminalRail.className.split(/\s+/)).not.toContain("border");
+    expect(terminalRail.className.split(/\s+/)).toContain("border-r");
+    const terminalViewport = screen.getByTestId("terminal-view-matrix-main")
+      .closest("[data-terminal-viewport]");
+    expect(terminalViewport?.className.split(/\s+/)).not.toContain("rounded-lg");
+    expect(terminalViewport?.className.split(/\s+/)).not.toContain("border");
+    expect(terminalViewport?.className).toContain("flex");
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to matrix-other" }));
+    expect(screen.getByTestId("terminal-view-matrix-other").getAttribute("data-active")).toBe("true");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse terminal sessions" }));
+    expect(screen.queryByRole("navigation", { name: "Terminal session switcher" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show terminal sessions" }));
+    expect(screen.getByRole("navigation", { name: "Terminal session switcher" })).toBeTruthy();
   });
 
   it("fully contains cached session chrome and terminal output while the Terminal route is inactive", () => {
@@ -301,6 +383,7 @@ describe("TerminalsTab", () => {
       loading: false,
       error: null,
       loadSequence: 1,
+      authoritativeRevision: 1,
     });
 
     renderTab();
@@ -338,6 +421,33 @@ describe("TerminalsTab", () => {
     for (let index = 2; index <= 9; index += 1) {
       expect(screen.getByTestId(`terminal-view-matrix-${index}`)).toBeTruthy();
     }
+  });
+
+  it("unmounts cached terminal detail after an authoritative snapshot deletes it", async () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      loading: false,
+      error: null,
+      loadSequence: 1,
+      authoritativeRevision: 1,
+    });
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+
+    act(() => {
+      useShellSessions.setState({
+        sessions: [],
+        loading: false,
+        error: null,
+        loadSequence: 2,
+        authoritativeRevision: 2,
+      });
+    });
+
+    await waitFor(() => expect(screen.queryByTestId("terminal-view-matrix-main")).toBeNull());
+    expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(terminalMounts.get("matrix-main")).toBe(0);
   });
 
   it("uses the Figma list toolbar and reveals a bounded search-empty state", () => {
@@ -588,6 +698,34 @@ describe("TerminalsTab", () => {
     await waitFor(() => expect(useTabs.getState().recentViews).toEqual([]));
   });
 
+  it("reconciles open terminal tabs after a successful desktop deletion", async () => {
+    const deleteSession = vi.fn(async () => {
+      useShellSessions.setState({
+        sessions: [{ name: "matrix-live", status: "active", placement: "active" }],
+      });
+      return true;
+    });
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-live", status: "active", placement: "active" },
+        { name: "matrix-delete", status: "active", placement: "active" },
+      ],
+      deleteSession,
+    });
+    useTabs.setState(useTabs.getInitialState(), true);
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-delete", title: "matrix-delete" });
+
+    renderTab();
+    openShellActions("matrix-delete");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() => expect(deleteSession).toHaveBeenCalledOnce());
+    await waitFor(() => expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([home]));
+    expect(useTabs.getState().activeTabId).toBe(home);
+  });
+
   it("removes stale terminal Recents after an authoritative session load", async () => {
     useTabs.getState().recordRecentTerminal("matrix-live", "matrix-live");
     useTabs.getState().recordRecentTerminal("matrix-deleted", "matrix-deleted");
@@ -596,6 +734,7 @@ describe("TerminalsTab", () => {
       loading: false,
       error: null,
       loadSequence: 1,
+      authoritativeRevision: 1,
     });
 
     renderTab();

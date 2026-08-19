@@ -14,11 +14,12 @@ import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
 import { getAttachManager } from "./terminal-runtime";
-import TerminalLinkContextMenu, { type DesktopTerminalLinkMenuState } from "./TerminalLinkContextMenu";
+import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./TerminalLinkContextMenu";
 import {
   DesktopWebLinkProvider,
   activateDesktopTerminalLink,
   copyDesktopTerminalLink,
+  copyDesktopTerminalText,
   findDesktopTerminalLinkAtPointer,
   openDesktopTerminalLink,
   resolveDesktopTerminalLink,
@@ -71,8 +72,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
-  const [linkContextMenu, setLinkContextMenu] = useState<DesktopTerminalLinkMenuState | null>(null);
-  const closeLinkContextMenu = useCallback(() => setLinkContextMenu(null), []);
+  const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
+  const closeTerminalContextMenu = useCallback(() => setTerminalContextMenu(null), []);
   const [pasteError, setPasteError] = useState<string | null>(null);
 
   if (stateSessionName !== sessionName) {
@@ -114,6 +115,24 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     terminal.loadAddon(fit);
     terminal.loadAddon(serialize);
     terminal.open(host);
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown" || !terminal.hasSelection()) return true;
+      const key = event.key.toLowerCase();
+      const isMacCopy = key === "c"
+        && event.metaKey
+        && !event.ctrlKey
+        && !event.altKey
+        && !event.shiftKey;
+      const isTerminalCopy = key === "c"
+        && event.ctrlKey
+        && event.shiftKey
+        && !event.metaKey
+        && !event.altKey;
+      if (!isMacCopy && !isTerminalCopy) return true;
+      event.preventDefault();
+      copyDesktopTerminalText(terminal.getSelection());
+      return false;
+    });
     applyTerminalSurfaceTheme(terminal.element, theme.background);
     const linkProviderDisposable = terminal.registerLinkProvider(
       new DesktopWebLinkProvider(terminal, (link) => {
@@ -136,15 +155,19 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       event.stopPropagation();
       if (event.button === 0) openDesktopTerminalLink(link);
     };
-    const onLinkContextMenu = (event: MouseEvent) => {
+    const onTerminalContextMenu = (event: MouseEvent) => {
       const link = linkAtPointer(event);
-      if (!link) return;
       event.preventDefault();
       event.stopPropagation();
-      setLinkContextMenu({ x: event.clientX, y: event.clientY, link });
+      setTerminalContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        link,
+        selection: terminal.getSelection(),
+      });
     };
     host.addEventListener("mouseup", onLinkMouseUp, true);
-    host.addEventListener("contextmenu", onLinkContextMenu);
+    host.addEventListener("contextmenu", onTerminalContextMenu);
     try {
       terminal.loadAddon(new WebglAddon());
     } catch (err: unknown) {
@@ -178,10 +201,10 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     observer.observe(host);
 
     return () => {
-      closeLinkContextMenu();
+      closeTerminalContextMenu();
       hoveredLinkRef.current = null;
       host.removeEventListener("mouseup", onLinkMouseUp, true);
-      host.removeEventListener("contextmenu", onLinkContextMenu);
+      host.removeEventListener("contextmenu", onTerminalContextMenu);
       linkProviderDisposable.dispose();
       unsubscribeAppearance();
       observer.disconnect();
@@ -199,7 +222,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       terminal.dispose();
       termRef.current = null;
     };
-  }, [closeLinkContextMenu, sessionName]);
+  }, [closeTerminalContextMenu, sessionName]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
   useEffect(() => {
@@ -209,7 +232,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     if (!active) {
       terminal.blur();
       hoveredLinkRef.current = null;
-      closeLinkContextMenu();
+      closeTerminalContextMenu();
       return;
     }
     if (endedRef.current) return;
@@ -247,7 +270,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, active, closeLinkContextMenu]);
+  }, [sessionName, active, closeTerminalContextMenu]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -345,7 +368,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
 
   return (
     <div
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2"
+      data-terminal-surface
       style={{ backgroundColor: terminalBackground }}
     >
       <div
@@ -375,10 +399,12 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
         </div>
       ) : null}
       <TerminalLinkContextMenu
-        menu={linkContextMenu}
-        onClose={closeLinkContextMenu}
+        menu={terminalContextMenu}
+        onClose={closeTerminalContextMenu}
         onOpen={openDesktopTerminalLink}
         onCopy={copyDesktopTerminalLink}
+        onCopySelection={copyDesktopTerminalText}
+        onSelectAll={() => termRef.current?.selectAll()}
       />
     </div>
   );

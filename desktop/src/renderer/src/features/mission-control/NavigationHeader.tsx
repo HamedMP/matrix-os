@@ -5,6 +5,7 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  RefreshCw,
 } from "lucide-react";
 import { Fragment } from "react";
 import { useHermesChat } from "../../stores/hermes-chat";
@@ -102,6 +103,7 @@ export default function NavigationHeader() {
   const closeTab = useTabs((state) => state.closeTab);
   const collapsed = useUi((state) => state.sidebarCollapsed);
   const toggleSidebar = useUi((state) => state.toggleSidebar);
+  const requestHomeRefresh = useUi((state) => state.requestHomeRefresh);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const activeThreadId = useThreads((state) => state.activeThreadId);
   const activeThreadTitle = useThreads((state) =>
@@ -160,6 +162,14 @@ export default function NavigationHeader() {
           </Fragment>
         ))}
       </nav>
+
+      {activeTab?.kind === "home" ? (
+        <div className="no-drag ml-1 shrink-0">
+          <HeaderButton label="Refresh Home" onClick={requestHomeRefresh}>
+            <RefreshCw size={15} />
+          </HeaderButton>
+        </div>
+      ) : null}
 
       {activeTab?.closable ? (
         <DropdownMenu.Root>

@@ -126,6 +126,30 @@ describe("tabs store", () => {
     expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual(["thread-live"]);
   });
 
+  it("atomically closes every missing terminal tab and focuses the nearest retained tab", () => {
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    const live = useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-live", title: "matrix-live" });
+    const missing = useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-missing", title: "matrix-missing" });
+    const alsoMissing = useTabs.getState().openTab({
+      kind: "terminal",
+      sessionName: "matrix-also-missing",
+      title: "matrix-also-missing",
+    });
+    useTabs.getState().recordRecentTerminal("matrix-live", "matrix-live");
+    useTabs.getState().recordRecentTerminal("matrix-missing", "matrix-missing");
+    useTabs.getState().requestTerminalSession("matrix-missing");
+
+    useTabs.getState().reconcileTerminalSessions(["matrix-live"]);
+
+    expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([home, live]);
+    expect(useTabs.getState().activeTabId).toBe(live);
+    expect(useTabs.getState().viewHistory).not.toContain(missing);
+    expect(useTabs.getState().viewHistory).not.toContain(alsoMissing);
+    expect(useTabs.getState().recentViews.map((recent) => recent.id)).toEqual(["matrix-live"]);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
   it("seeds the safe Home root after a runtime transition changes navigation scope", () => {
     const homeId = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
 

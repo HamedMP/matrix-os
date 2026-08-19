@@ -25,6 +25,22 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   notarize: true
+dmg:
+  title: Matrix OS
+  background: build/dmg-background.png
+  icon: build/icon.icns
+  iconSize: 112
+  iconTextSize: 13
+  window:
+    width: 720
+    height: 520
+  contents:
+    - x: 190
+      y: 322
+    - x: 530
+      y: 322
+      type: link
+      path: /Applications
 linux:
   category: Utility
   target:

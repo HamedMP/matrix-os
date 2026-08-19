@@ -15,6 +15,7 @@ import {
 import { MAX_PROMPT_CONTENT_LENGTH, PromptContentSchema } from "./prompt-validation.js";
 import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
+import { createProjectRegistry } from "./project-registry.js";
 import type { createAgentLauncher } from "./agent-launcher.js";
 import type { createWorktreeManager, WorktreeRecord } from "./worktree-manager.js";
 import type { createZellijRuntime } from "./zellij-runtime.js";
@@ -175,14 +176,7 @@ function sessionPath(homePath: string, sessionId: string): string {
 }
 
 async function readProject(homePath: string, projectSlug: string): Promise<ProjectConfig | null> {
-  try {
-    return await readJsonFile<ProjectConfig>(join(homePath, "projects", projectSlug, "config.json"));
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
+  return await createProjectRegistry({ homePath }).readConfig<ProjectConfig>(projectSlug);
 }
 
 async function readSession(homePath: string, sessionId: string): Promise<WorkspaceSession | null> {

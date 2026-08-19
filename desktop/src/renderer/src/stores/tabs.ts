@@ -134,6 +134,7 @@ interface TabsState {
   removeRecentView(kind: RecentViewKind, id: string): void;
   reconcileRecentHermesConversations(ids: string[]): void;
   reconcileRecentTerminals(ids: string[]): void;
+  reconcileTerminalSessions(liveSessionNames: string[]): void;
   requestTerminalSession(sessionName: string): void;
   consumeTerminalSessionRequest(requestId: number): void;
   setRecentFilter(filter: RecentViewFilter): void;
@@ -329,10 +330,70 @@ export const useTabs = create<TabsState>()((set, get) => ({
 
   reconcileRecentTerminals: (ids) => set((state) => {
     const authoritativeIds = new Set(ids);
+    const hasStaleRecent = state.recentViews.some((recent) =>
+      recent.kind === "terminal" && !authoritativeIds.has(recent.id),
+    );
+    if (!hasStaleRecent) return state;
     return {
       recentViews: state.recentViews.filter((recent) =>
         recent.kind !== "terminal" || authoritativeIds.has(recent.id),
       ),
+    };
+  }),
+
+  reconcileTerminalSessions: (liveSessionNames) => set((state) => {
+    const liveNames = new Set(liveSessionNames);
+    const removedIds: Record<string, true> = {};
+    for (const tab of state.tabs) {
+      if (tab.kind === "terminal" && (!tab.sessionName || !liveNames.has(tab.sessionName))) {
+        removedIds[tab.id] = true;
+      }
+    }
+
+    const hasRemovedTabs = Object.keys(removedIds).length > 0;
+    const tabs = hasRemovedTabs
+      ? state.tabs.filter((tab) => !removedIds[tab.id])
+      : state.tabs;
+    let activeTabId = state.activeTabId;
+    if (activeTabId && removedIds[activeTabId]) {
+      const activeIndex = state.tabs.findIndex((tab) => tab.id === activeTabId);
+      const left = state.tabs
+        .slice(0, Math.max(0, activeIndex))
+        .reverse()
+        .find((tab) => !removedIds[tab.id]);
+      const right = state.tabs
+        .slice(Math.max(0, activeIndex + 1))
+        .find((tab) => !removedIds[tab.id]);
+      activeTabId = left?.id ?? right?.id ?? null;
+    }
+
+    const hasStaleRecent = state.recentViews.some((recent) =>
+      recent.kind === "terminal" && !liveNames.has(recent.id),
+    );
+    const recentViews = hasStaleRecent
+      ? state.recentViews.filter((recent) => recent.kind !== "terminal" || liveNames.has(recent.id))
+      : state.recentViews;
+    const terminalSessionRequest = state.terminalSessionRequest
+      && !liveNames.has(state.terminalSessionRequest.sessionName)
+      ? null
+      : state.terminalSessionRequest;
+    if (!hasRemovedTabs && !hasStaleRecent && terminalSessionRequest === state.terminalSessionRequest) {
+      return state;
+    }
+
+    const pruned = hasRemovedTabs
+      ? pruneHistory(state.viewHistory, state.historyIndex, removedIds)
+      : historyPatch(state.viewHistory, state.historyIndex);
+    const navigation = activeTabId
+      ? recordHistory(pruned.viewHistory, pruned.historyIndex, activeTabId)
+      : pruned;
+
+    return {
+      tabs,
+      activeTabId,
+      ...navigation,
+      recentViews,
+      terminalSessionRequest,
     };
   }),
 

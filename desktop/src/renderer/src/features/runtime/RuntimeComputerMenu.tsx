@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useRuntimeComputers } from "../../stores/runtime-computers";
+import { useUi } from "../../stores/ui";
 
 const STATUS_LABEL = {
   available: "Available",
@@ -29,6 +30,8 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
   const switchError = useRuntimeComputers((state) => state.switchError);
   const refresh = useRuntimeComputers((state) => state.refresh);
   const select = useRuntimeComputers((state) => state.select);
+  const acquireRendererOverlay = useUi((state) => state.acquireRendererOverlay);
+  const releaseRendererOverlay = useUi((state) => state.releaseRendererOverlay);
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   // The token can be on a different slot than the persisted profile (stale
@@ -38,6 +41,12 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
   useEffect(() => {
     void refresh();
   }, [authGeneration, connectionStatus, handle, platformHost, refresh, runtimeSlot]);
+
+  useEffect(() => {
+    if (!open) return;
+    acquireRendererOverlay();
+    return releaseRendererOverlay;
+  }, [acquireRendererOverlay, open, releaseRendererOverlay]);
 
   const current = useMemo(
     () => computers.find((computer) => computer.runtimeSlot === selectedSlot)

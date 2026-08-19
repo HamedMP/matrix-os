@@ -410,14 +410,14 @@ describe("project clone and mkdir routes", () => {
   });
 
   describe("POST /api/projects/mkdir", () => {
-    it("creates projects/<name>/repo by default", async () => {
+    it("creates an owner workspace directly under projects by default", async () => {
       const app = createWorkspaceRoutes({ homePath });
 
       const res = await app.request(jsonRequest("/api/projects/mkdir", { name: "fresh-app" }));
 
       expect(res.status).toBe(201);
-      await expect(res.json()).resolves.toEqual({ path: "projects/fresh-app/repo" });
-      const created = await stat(join(homePath, "projects", "fresh-app", "repo"));
+      await expect(res.json()).resolves.toEqual({ path: "projects/fresh-app" });
+      const created = await stat(join(homePath, "projects", "fresh-app"));
       expect(created.isDirectory()).toBe(true);
     });
 
@@ -449,9 +449,9 @@ describe("project clone and mkdir routes", () => {
 
     it("connects a custom-parent folder returned by mkdir as a project", async () => {
       await mkdir(join(homePath, "apps"), { recursive: true });
-      // A legacy/unmanaged directory may already occupy the registry slug.
-      // Folder binding should publish config.json into that slot instead of
-      // reporting a false slug conflict after mkdir has already succeeded.
+      // An owner directory may already use the same name as the registry key.
+      // Folder binding publishes Matrix metadata under system/projects rather
+      // than reporting a false slug conflict or writing into owner space.
       await mkdir(join(homePath, "projects", "matrix-os", "symphony-workspaces"), { recursive: true });
       const app = createWorkspaceRoutes({ homePath });
 
@@ -477,7 +477,7 @@ describe("project clone and mkdir routes", () => {
           localPath: expect.stringMatching(/[/\\]apps[/\\]matrix-os$/),
         },
       });
-      await expect(stat(join(homePath, "projects", "matrix-os", "config.json"))).resolves.toBeTruthy();
+      await expect(stat(join(homePath, "system", "projects", "matrix-os", "config.json"))).resolves.toBeTruthy();
     });
 
     it("returns the same custom folder for an idempotent mkdir retry", async () => {
@@ -617,13 +617,13 @@ describe("project clone and mkdir routes", () => {
       expect(body.error.code).toBe("folder_conflict");
     });
 
-    it("treats an explicit projects parent like the default registry layout", async () => {
+    it("treats an explicit projects parent like the default owner workspace root", async () => {
       const app = createWorkspaceRoutes({ homePath });
 
       const res = await app.request(jsonRequest("/api/projects/mkdir", { name: "fresh-app", parent: "projects" }));
 
       expect(res.status).toBe(201);
-      await expect(res.json()).resolves.toEqual({ path: "projects/fresh-app/repo" });
+      await expect(res.json()).resolves.toEqual({ path: "projects/fresh-app" });
     });
 
     it.each(["../outside", "/etc", "code/../../escape", "projects/foo", ".", "system", ".hermes", "agents", "data/browser-profiles"])(

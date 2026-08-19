@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RuntimeComputerMenu from "../../desktop/src/renderer/src/features/runtime/RuntimeComputerMenu";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useRuntimeComputers } from "../../desktop/src/renderer/src/stores/runtime-computers";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 const computers = {
   items: [
@@ -46,6 +47,7 @@ describe("sidebar computer menu", () => {
   beforeEach(() => {
     useConnection.setState(useConnection.getInitialState(), true);
     useRuntimeComputers.setState(useRuntimeComputers.getInitialState(), true);
+    useUi.setState(useUi.getInitialState(), true);
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -76,6 +78,19 @@ describe("sidebar computer menu", () => {
     expect(screen.getByRole("menuitemradio", { name: /Main Computer.*Current/i }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("menuitemradio", { name: /Additional Computer.*Available/i })).not.toBeNull();
     expect(screen.getByRole("menuitemradio", { name: /Preview Computer.*Starting/i }).hasAttribute("data-disabled")).toBe(true);
+  });
+
+  it("keeps native embeds detached while the computer menu crosses the sidebar edge", async () => {
+    render(<RuntimeComputerMenu collapsed={false} />);
+
+    const trigger = await screen.findByRole("button", { name: /Change computer, currently Main Computer/i });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+
+    await screen.findByRole("menu", { name: "Choose computer" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
   });
 
   it("opens from the keyboard and traverses computer choices", async () => {

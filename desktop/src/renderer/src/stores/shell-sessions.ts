@@ -40,7 +40,8 @@ interface ShellSessionsState {
   creating: boolean;
   error: AppErrorCategory | null;
   loadSequence: number;
-  load(api: ApiClient): Promise<void>;
+  authoritativeRevision: number;
+  load(api: ApiClient): Promise<ShellSessionSummary[] | null>;
   create(api: ApiClient): Promise<ShellSessionSummary | null>;
   deleteSession(api: ApiClient, name: string): Promise<boolean>;
   rename(api: ApiClient, name: string, nextName: string): Promise<boolean>;
@@ -220,7 +221,10 @@ function rollbackUiPatch(
 }
 
 async function fetchShellSessions(api: ApiClient): Promise<ShellSessionSummary[]> {
-  const response = await api.get<{ sessions: unknown }>("/api/terminal/sessions");
+  const response = await api.get<{ sessions?: unknown }>("/api/terminal/sessions");
+  if (!response || !Array.isArray(response.sessions)) {
+    throw new AppError("server", { detail: "invalid_sessions_response" });
+  }
   return parseShellSessions(response.sessions);
 }
 
@@ -230,18 +234,27 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
   creating: false,
   error: null,
   loadSequence: 0,
+  authoritativeRevision: 0,
 
   load: async (api) => {
+    const generation = captureRuntimeGeneration();
     const sequence = get().loadSequence + 1;
     set({ loading: true, error: null, loadSequence: sequence });
     try {
       const sessions = await fetchShellSessions(api);
-      if (sequence !== get().loadSequence) return;
-      set({ sessions, loading: false, error: null });
+      if (!isCurrentRuntimeGeneration(generation) || sequence !== get().loadSequence) return null;
+      set((state) => ({
+        sessions,
+        loading: false,
+        error: null,
+        authoritativeRevision: state.authoritativeRevision + 1,
+      }));
+      return sessions;
     } catch (err: unknown) {
-      if (sequence !== get().loadSequence) return;
+      if (!isCurrentRuntimeGeneration(generation) || sequence !== get().loadSequence) return null;
       console.error("[shell-sessions] Failed to load shell sessions:", err);
       set({ loading: false, error: errorCategory(err) });
+      return null;
     }
   },
 
@@ -279,6 +292,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
             creating: false,
             loading: false,
             error: null,
+            authoritativeRevision: state.authoritativeRevision + 1,
           }));
         } catch (refreshErr: unknown) {
           if (!isCurrentRuntimeGeneration(generation)) return null;

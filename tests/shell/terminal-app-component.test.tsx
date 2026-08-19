@@ -682,6 +682,26 @@ describe("TerminalApp", () => {
     expect(contentSurface.style.background).toBe("rgb(28, 32, 25)");
   });
 
+  it("unmounts only the pane grid while a Canvas terminal is suspended", async () => {
+    const { rerender } = render(
+      <TerminalApp initialSessionId="canvas-session-123" suspended />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("terminal-pane-grid")).toBeNull();
+    expect(screen.getByRole("application", { name: "Terminal" })).toBeTruthy();
+
+    act(() => {
+      rerender(<TerminalApp initialSessionId="canvas-session-123" suspended={false} />);
+    });
+
+    expect(screen.getByTestId("terminal-pane-grid")).toBeTruthy();
+  });
+
   it("uses the selected non-system terminal theme background for the flush content surface", async () => {
     terminalSettingsState.themeId = "dark";
 

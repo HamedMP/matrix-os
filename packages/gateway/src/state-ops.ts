@@ -3,6 +3,13 @@ import { constants } from "node:fs";
 import { access, link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { resolveWithinHome } from "./path-security.js";
+import { isMatrixManagedProjectSource } from "./project-registry-layout.js";
+import type { ProjectRegistry } from "./project-registry.js";
+import {
+  listValidatedLegacyProjectStateFiles,
+  removeValidatedLegacyProjectState,
+} from "./legacy-project-state.js";
+import { projectStateRecoveryDir } from "./bounded-json-file.js";
 
 export type OwnerScope = { type: "user" | "org"; id: string };
 
@@ -43,12 +50,15 @@ const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 const projectLocks = new Map<string, Promise<unknown>>();
 
-function nowIso(now?: () => string): string {
-  return now ? now() : new Date().toISOString();
+export class ProjectLockCapacityError extends Error {
+  constructor() {
+    super("Project operation capacity reached");
+    this.name = "ProjectLockCapacityError";
+  }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function nowIso(now?: () => string): string {
+  return now ? now() : new Date().toISOString();
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -113,50 +123,62 @@ async function listFilesRecursive(root: string, homePath: string): Promise<strin
   return files;
 }
 
-async function listOwnedProjectFiles(homePath: string, ownerScope?: OwnerScope): Promise<string[]> {
+async function listOwnedProjectFiles(
+  homePath: string,
+  ownerScope?: OwnerScope,
+  projectSlug?: string,
+): Promise<string[]> {
+  const registry = await getProjectRegistry(homePath);
   const projectsRoot = join(homePath, "projects");
-  let entries;
-  try {
-    entries = await readdir(projectsRoot, { withFileTypes: true });
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw err;
-  }
+  const slugs = projectSlug && PROJECT_SLUG_REGEX.test(projectSlug)
+    ? new Set([projectSlug])
+    : new Set([
+        ...await registry.listSlugs(),
+        ...await registry.listTombstoneSlugs(),
+      ]);
 
   const files: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith(".")) continue;
-    const projectPath = join(projectsRoot, entry.name);
-    const owner = await readOwnerScope(join(projectPath, "config.json"));
-    if (!ownerMatches(owner, ownerScope)) continue;
-    files.push(...await listFilesRecursive(projectPath, homePath));
+  for (const slug of slugs) {
+    const config = await registry.readConfig(slug);
+    const tombstone = await registry.readTombstone(slug);
+    const configOwned = config && ownerMatches(config.ownerScope, ownerScope);
+    const tombstoneOwned = tombstone && ownerMatches(tombstone.ownerScope, ownerScope);
+    if (!configOwned && !tombstoneOwned) continue;
+
+    const canonicalDir = registry.recordDir(slug);
+    if (configOwned && await pathExists(canonicalDir)) {
+      files.push(...await listFilesRecursive(canonicalDir, homePath));
+    }
+
+    const canonicalTombstonePath = registry.tombstonePath(slug);
+    if (tombstoneOwned && await pathExists(canonicalTombstonePath)) {
+      files.push(relative(homePath, canonicalTombstonePath));
+    }
+
+    if (!configOwned) continue;
+
+    for (const legacyStatePath of await listValidatedLegacyProjectStateFiles({
+      projectSlug: slug,
+      tasksDir: registry.legacyTasksDir(slug),
+      previewsDir: registry.legacyPreviewsDir(slug),
+    })) {
+      files.push(relative(homePath, legacyStatePath));
+    }
+    const localPath = resolve(config.localPath);
+    const resolvedHome = resolve(homePath);
+    const rel = relative(resolvedHome, localPath);
+    if (rel.startsWith("..") || rel === "" || resolve(rel) === rel || !await pathExists(localPath)) continue;
+    files.push(...await listFilesRecursive(localPath, homePath));
   }
-  return files;
+  return [...new Set(files)];
 }
 
-async function readOwnerScope(configPath: string): Promise<OwnerScope | null> {
-  try {
-    const config = await readJsonFile(configPath);
-    if (
-      isRecord(config) &&
-      isRecord(config.ownerScope) &&
-      (config.ownerScope.type === "user" || config.ownerScope.type === "org") &&
-      typeof config.ownerScope.id === "string"
-    ) {
-      return { type: config.ownerScope.type, id: config.ownerScope.id };
-    }
-  } catch (err: unknown) {
-    if (err instanceof SyntaxError) {
-      return null;
-    }
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
-  return null;
+async function getProjectRegistry(homePath: string): Promise<ProjectRegistry> {
+  // project-registry owns validation and compatibility adoption, while it
+  // imports the atomic JSON primitives above. Resolve it lazily to avoid a
+  // runtime module cycle without duplicating the project-record schema here.
+  const { createProjectRegistry } = await import("./project-registry.js");
+  return createProjectRegistry({ homePath });
 }
 
 function ownerMatches(actual: OwnerScope | null, expected?: OwnerScope): boolean {
@@ -164,20 +186,17 @@ function ownerMatches(actual: OwnerScope | null, expected?: OwnerScope): boolean
   return actual?.type === expected.type && actual.id === expected.id;
 }
 
-function evictOldestLockIfNeeded(): void {
-  if (projectLocks.size < MAX_LOCKS) return;
-  const oldest = projectLocks.keys().next().value as string | undefined;
-  if (oldest) projectLocks.delete(oldest);
-}
-
 export async function withProjectLock<T>(projectSlug: string, callback: () => Promise<T>): Promise<T> {
-  const previous = projectLocks.get(projectSlug) ?? Promise.resolve();
+  const existing = projectLocks.get(projectSlug);
+  if (!existing && projectLocks.size >= MAX_LOCKS) {
+    throw new ProjectLockCapacityError();
+  }
+  const previous = existing ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolveRelease) => {
     release = resolveRelease;
   });
   const chained = previous.then(() => current);
-  evictOldestLockIfNeeded();
   projectLocks.set(projectSlug, chained);
 
   try {
@@ -245,22 +264,15 @@ export function createStateOps(options: { homePath: string; now?: () => string }
       if (request.scope === "all") {
         const systemPath = resolveWithinHome(homePath, "system");
         if (systemPath && await pathExists(systemPath)) {
-          files.push(...await listFilesRecursive(systemPath, homePath));
+          files.push(...(await listFilesRecursive(systemPath, homePath))
+            .filter((path) => !path.startsWith("system/projects/")));
         }
         files.push(...await listOwnedProjectFiles(homePath, request.ownerScope));
       } else if (request.scope === "project") {
         if (!request.projectSlug) {
           return { id: `export_${randomUUID()}`, createdAt, scope: request.scope, files };
         }
-        const projectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);
-        if (!projectPath || !await pathExists(projectPath)) {
-          return { id: `export_${randomUUID()}`, createdAt, scope: request.scope, files };
-        }
-        const owner = await readOwnerScope(join(projectPath, "config.json"));
-        if (!ownerMatches(owner, request.ownerScope)) {
-          return { id: `export_${randomUUID()}`, createdAt, scope: request.scope, files };
-        }
-        files.push(...await listFilesRecursive(projectPath, homePath));
+        files.push(...await listOwnedProjectFiles(homePath, request.ownerScope, request.projectSlug));
       }
 
       files.sort();
@@ -284,24 +296,42 @@ export function createStateOps(options: { homePath: string; now?: () => string }
           error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
         };
       }
-      const projectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);
-      if (!projectPath) {
-        return {
-          ok: false,
-          status: 400,
-          error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
-        };
-      }
-      const owner = await readOwnerScope(join(projectPath, "config.json"));
-      if (!ownerMatches(owner, request.ownerScope)) {
-        return {
-          ok: false,
-          status: 404,
-          error: { code: "not_found", message: "Workspace data was not found" },
-        };
-      }
-      await rm(projectPath, { recursive: true, force: true });
-      return { ok: true };
+      return await withProjectLock(request.projectSlug, async () => {
+        const registry = await getProjectRegistry(homePath);
+        const config = await registry.readConfig(request.projectSlug);
+        const tombstone = await registry.readTombstone(request.projectSlug);
+        if (
+          (!config && !tombstone)
+          || (config && !ownerMatches(config.ownerScope, request.ownerScope))
+          || (tombstone && !ownerMatches(tombstone.ownerScope, request.ownerScope))
+        ) {
+          return {
+            ok: false as const,
+            status: 404,
+            error: { code: "not_found", message: "Workspace data was not found" },
+          };
+        }
+        const legacyProjectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);
+        if (!legacyProjectPath) {
+          return {
+            ok: false as const,
+            status: 400,
+            error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
+          };
+        }
+        if (config && isMatrixManagedProjectSource(homePath, config)) {
+          await rm(legacyProjectPath, { recursive: true, force: true });
+        }
+        await removeValidatedLegacyProjectState({
+          projectSlug: request.projectSlug,
+          tasksDir: registry.legacyTasksDir(request.projectSlug),
+          previewsDir: registry.legacyPreviewsDir(request.projectSlug),
+          recoveryDir: projectStateRecoveryDir(homePath),
+        });
+        await registry.removeConfig(request.projectSlug);
+        await registry.removeTombstone(request.projectSlug, tombstone ?? config!);
+        return { ok: true as const };
+      });
     },
   };
 }

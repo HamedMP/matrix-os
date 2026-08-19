@@ -72,7 +72,15 @@ async function seedProject(homePath: string, slug: string, localPath: string): P
   await mkdir(join(homePath, "projects", slug), { recursive: true });
   await writeFile(
     join(homePath, "projects", slug, "config.json"),
-    JSON.stringify({ id: "proj_1", name: slug, slug, localPath, addedAt: NOW, updatedAt: NOW }),
+    JSON.stringify({
+      id: "proj_1",
+      name: slug,
+      slug,
+      localPath,
+      addedAt: NOW,
+      updatedAt: NOW,
+      ownerScope: { type: "user", id: "user_a" },
+    }),
   );
 }
 
@@ -82,12 +90,12 @@ describe("git-log service", () => {
 
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "matrix-git-log-home-"));
-    repoPath = await mkdtemp(join(tmpdir(), "matrix-git-log-repo-"));
+    repoPath = join(homePath, "workspaces", "repo");
+    await mkdir(repoPath, { recursive: true });
   });
 
   afterEach(() => {
     rmSync(homePath, { recursive: true, force: true });
-    rmSync(repoPath, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
@@ -156,13 +164,19 @@ describe("git-log service", () => {
       expect(result).toEqual({ ok: true, commits: [], nextCursor: null, refreshedAt: NOW });
     });
 
-    it("never exposes the Matrix home repository history", async () => {
+    it("rejects a project record that points at the Matrix home repository", async () => {
       await seedProject(homePath, "homeish", homePath);
-      const gitLog = makeService(probeAwareRunCommand({ probe: { stdout: `${homePath}\n` } }));
+      const runCommand = probeAwareRunCommand({ probe: { stdout: `${homePath}\n` } });
+      const gitLog = makeService(runCommand);
 
       const result = await gitLog.listCommits("homeish", { limit: 10, offset: 0 });
 
-      expect(result).toEqual({ ok: true, commits: [], nextCursor: null, refreshedAt: NOW });
+      expect(result).toEqual({
+        ok: false,
+        status: 404,
+        error: { code: "not_found", message: "Project was not found" },
+      });
+      expect(runCommand).not.toHaveBeenCalled();
     });
 
     it("parses commits with parents, refs, tags, and HEAD markers", async () => {

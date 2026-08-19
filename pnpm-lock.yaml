@@ -318,6 +318,9 @@ importers:
       '@fontsource/instrument-sans':
         specifier: ^5.2.5
         version: 5.2.8
+      '@fontsource/instrument-serif':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/jetbrains-mono':
         specifier: ^5.2.5
         version: 5.2.8
@@ -3231,6 +3234,9 @@ packages:
 
   '@fontsource/instrument-sans@5.2.8':
     resolution: {integrity: sha512-TJRYVbjZPx4DGMMU5lb5eFKrP3iLe9h7rz8Pk+dP958IZKiyHjYGXXwQZapVbBXcQN+YOiviVhAWxrjv8g6Z6g==}
+
+  '@fontsource/instrument-serif@5.3.0':
+    resolution: {integrity: sha512-mDiaIg0u67sYV59fie92Wz4sM8UiVlbL7fLxnFPCKkX15DMASEnQTREbaP5S5/3DCcsoAOcQ0sV9E4AeY4QqYQ==}
 
   '@fontsource/jetbrains-mono@5.2.8':
     resolution: {integrity: sha512-6w8/SG4kqvIMu7xd7wt6x3idn1Qux3p9N62s6G3rfldOUYHpWcc2FKrqf+Vo44jRvqWj2oAtTHrZXEP23oSKwQ==}
@@ -17763,6 +17769,8 @@ snapshots:
   '@fontsource/fira-code@5.2.7': {}
 
   '@fontsource/instrument-sans@5.2.8': {}
+
+  '@fontsource/instrument-serif@5.3.0': {}
 
   '@fontsource/jetbrains-mono@5.2.8': {}
 

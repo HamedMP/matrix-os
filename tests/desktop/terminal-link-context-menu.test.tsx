@@ -14,23 +14,31 @@ const LINK = {
 };
 
 describe("Desktop TerminalLinkContextMenu", () => {
-  it("offers Open and Copy for the resolved URL without showing the full URL", () => {
+  it("offers terminal and link actions without showing the full URL", () => {
     const onOpen = vi.fn();
     const onCopy = vi.fn();
+    const onCopySelection = vi.fn();
+    const onSelectAll = vi.fn();
     render(
       <TerminalLinkContextMenu
-        menu={{ x: 120, y: 140, link: LINK }}
+        menu={{ x: 120, y: 140, link: LINK, selection: "selected output" }}
         onClose={vi.fn()}
         onOpen={onOpen}
         onCopy={onCopy}
+        onCopySelection={onCopySelection}
+        onSelectAll={onSelectAll}
       />,
     );
 
-    expect(screen.getByRole("menu", { name: "Link actions" })).toBeTruthy();
+    expect(screen.getByRole("menu", { name: "Terminal actions" })).toBeTruthy();
     expect(screen.queryByText(LINK.url)).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select All" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Open Link" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Copy Link" }));
 
+    expect(onCopySelection).toHaveBeenCalledWith("selected output");
+    expect(onSelectAll).toHaveBeenCalledOnce();
     expect(onOpen).toHaveBeenCalledWith(LINK);
     expect(onCopy).toHaveBeenCalledWith(LINK);
   });
@@ -41,6 +49,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
         menu={{
           x: 120,
           y: 140,
+          selection: "",
           link: {
             url: "https://auth.openai.com/codex/device",
             hostname: "auth.openai.com",
@@ -52,6 +61,8 @@ describe("Desktop TerminalLinkContextMenu", () => {
         onClose={vi.fn()}
         onOpen={vi.fn()}
         onCopy={vi.fn()}
+        onCopySelection={vi.fn()}
+        onSelectAll={vi.fn()}
       />,
     );
 
@@ -62,10 +73,12 @@ describe("Desktop TerminalLinkContextMenu", () => {
     const onClose = vi.fn();
     render(
       <TerminalLinkContextMenu
-        menu={{ x: 120, y: 140, link: LINK }}
+        menu={{ x: 120, y: 140, link: LINK, selection: "" }}
         onClose={onClose}
         onOpen={vi.fn()}
         onCopy={vi.fn()}
+        onCopySelection={vi.fn()}
+        onSelectAll={vi.fn()}
       />,
     );
 

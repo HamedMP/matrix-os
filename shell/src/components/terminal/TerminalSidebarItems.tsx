@@ -682,6 +682,7 @@ export function ShellSessionGroup({
   pending = false,
   expanded = true,
   onToggleExpanded,
+  canvasZoom = 1,
   deletingShellNames,
   foreground,
   selectedShellName,
@@ -701,6 +702,7 @@ export function ShellSessionGroup({
   pending?: boolean;
   expanded?: boolean;
   onToggleExpanded?: () => void;
+  canvasZoom?: number;
   deletingShellNames: string[];
   foreground: boolean;
   selectedShellName: string | null;
@@ -772,6 +774,7 @@ export function ShellSessionGroup({
               <ShellCard
                 key={`${label}-${shell.name}`}
                 shell={shell}
+                canvasZoom={canvasZoom}
                 foreground={foreground}
                 deleting={deletingShellNames.includes(shell.name)}
                 selected={shell.name === selectedShellName}
@@ -858,6 +861,7 @@ function ShellPendingCard() {
 
 function ShellCard({
   shell,
+  canvasZoom = 1,
   foreground,
   deleting,
   selected,
@@ -873,6 +877,7 @@ function ShellCard({
   onDragEnd,
 }: {
   shell: ShellSessionSummary;
+  canvasZoom?: number;
   foreground: boolean;
   deleting?: boolean;
   selected: boolean;
@@ -1469,6 +1474,7 @@ function ShellCard({
       shell={shell}
       displayName={displayName}
       cardRef={cardRef}
+      canvasZoom={canvasZoom}
       open={hoverCardOpen}
       suppressed={hoverSuppressed}
       onOpenChange={setHoverCardOpen}

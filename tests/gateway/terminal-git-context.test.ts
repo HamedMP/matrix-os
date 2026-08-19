@@ -25,10 +25,13 @@ describe("terminal Git context", () => {
     await mkdir(join(worktreePath, ".matrix"), { recursive: true });
     await mkdir(join(homePath, "system", "sessions"), { recursive: true });
     await writeFile(join(projectRoot, "config.json"), JSON.stringify({
-      id: "project_matrix",
+      id: "proj_matrix",
       name: "Matrix OS",
       slug: "matrix-os",
       localPath: join(projectRoot, "repo"),
+      addedAt: "2026-07-19T09:00:00.000Z",
+      updatedAt: "2026-07-19T09:00:00.000Z",
+      ownerScope: { type: "user", id: "local" },
       github: {
         owner: "HamedMP",
         repo: "matrix-os",

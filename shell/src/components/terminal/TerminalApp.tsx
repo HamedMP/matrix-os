@@ -226,10 +226,15 @@ interface TerminalAppProps {
    * mouse-to-cell mapping. Defaults to 1 (no correction needed).
    */
   canvasZoom?: number;
+  /**
+   * Keep Terminal app state mounted while releasing pane resources such as
+   * canonical-sizing WebSockets. Canvas uses this while a window is minimized.
+   */
+  suspended?: boolean;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal shell component; extraction tracked separately. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
-export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1 }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
@@ -936,7 +941,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
           style={{ background: "var(--terminal-app-body-bg)" }}
         >
-          <LocalTerminalSidebar />
+          <LocalTerminalSidebar canvasZoom={canvasZoom} />
           {activeTab ? (
             <div
               data-testid="terminal-content-surface"
@@ -960,18 +965,20 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                     }
                   : {})}
               >
-                <PaneGrid
-                  paneTree={activeTab.paneTree}
-                  theme={designTheme}
-                  focusedPaneId={focusedPaneId}
-                  onFocusPane={setFocusedPaneId}
-                  onSessionAttached={handleSessionAttached}
-                  shouldCachePane={shouldCachePane}
-                  shouldDestroyPane={shouldDestroyPane}
-                  allowRemoteResize={!mobile}
-                  suppressNativeKeyboard={mobile}
-                  canvasZoom={canvasZoom}
-                />
+                {!suspended ? (
+                  <PaneGrid
+                    paneTree={activeTab.paneTree}
+                    theme={designTheme}
+                    focusedPaneId={focusedPaneId}
+                    onFocusPane={setFocusedPaneId}
+                    onSessionAttached={handleSessionAttached}
+                    shouldCachePane={shouldCachePane}
+                    shouldDestroyPane={shouldDestroyPane}
+                    allowRemoteResize={!mobile}
+                    suppressNativeKeyboard={mobile}
+                    canvasZoom={canvasZoom}
+                  />
+                ) : null}
                 {mobile && (
                   <>
                     <MobileTerminalActions

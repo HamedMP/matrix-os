@@ -110,24 +110,28 @@ function tryFallbackCopy(text: string): void {
     fallbackCopy(text);
   } catch (err: unknown) {
     console.warn(
-      "Desktop terminal link fallback copy failed:",
+      "Desktop terminal fallback copy failed:",
       err instanceof Error ? err.message : err,
     );
   }
 }
 
-export function copyDesktopTerminalLink(link: TerminalLinkEntry): void {
+export function copyDesktopTerminalText(text: string): void {
   if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(link.url).catch((err: unknown) => {
+    navigator.clipboard.writeText(text).catch((err: unknown) => {
       console.warn(
         "Desktop terminal clipboard write failed, using fallback:",
         err instanceof Error ? err.message : err,
       );
-      tryFallbackCopy(link.url);
+      tryFallbackCopy(text);
     });
     return;
   }
-  tryFallbackCopy(link.url);
+  tryFallbackCopy(text);
+}
+
+export function copyDesktopTerminalLink(link: TerminalLinkEntry): void {
+  copyDesktopTerminalText(link.url);
 }
 
 export function activateDesktopTerminalLink(

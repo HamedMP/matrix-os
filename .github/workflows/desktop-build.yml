@@ -206,6 +206,15 @@ jobs:
           }
           trap cleanup EXIT
           hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly
+          if [ ! -L "$mount_dir/Applications" ]; then
+            echo "DMG is missing the Applications install link" >&2
+            exit 1
+          fi
+          applications_target="$(readlink "$mount_dir/Applications")"
+          if [ "$applications_target" != "/Applications" ]; then
+            echo "DMG Applications link points to an unexpected target" >&2
+            exit 1
+          fi
           ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"
           if [ ! -x "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" ]; then
             echo "Copied macOS app is missing executable entrypoint" >&2
