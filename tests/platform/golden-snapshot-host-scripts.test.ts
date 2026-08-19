@@ -220,7 +220,7 @@ describe('golden snapshot host scripts', () => {
 
   it('rejects a validation clone with baked matrix linger state before activation', async () => {
     const activationSource = await readFile(activatePath, 'utf8');
-    const preflight = activationSource.indexOf('set_activation_stage activation_preflight_runtime_state');
+    const preflight = activationSource.indexOf('set_activation_stage activation_preflight_user_state');
     const lingerMarker = activationSource.indexOf('/var/lib/systemd/linger/matrix', preflight);
     const lingerState = activationSource.indexOf('loginctl show-user matrix --property=Linger --value');
     const userManager = activationSource.indexOf('systemctl is-active --quiet "user@${matrix_uid}.service"');
@@ -311,7 +311,8 @@ describe('golden snapshot host scripts', () => {
     expect(prepare).toBeGreaterThan(-1);
     expect(prepare).toBeLessThan(activation);
     expect(prerequisites).toContain('HOST_PREREQUISITES_VERSION=1');
-    expect(prerequisites).toContain('/opt/matrix/HOST_PREREQUISITES_READY');
+    expect(prerequisites).toContain('matrix_dir=/opt/matrix');
+    expect(prerequisites).toContain('marker="$matrix_dir/HOST_PREREQUISITES_READY"');
     expect(prerequisites).toContain('timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive');
     expect(prerequisites).toContain('timeout --kill-after=30 120 add-apt-repository -y universe');
     expect(prerequisites).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
@@ -327,6 +328,46 @@ describe('golden snapshot host scripts', () => {
     const buildScript = await readFile('scripts/build-host-bundle.sh', 'utf8');
     expect(buildScript).toContain('matrix-golden-snapshot-fast-path');
     expect(buildScript).toContain('$STAGE_DIR/bin/matrix-prepare-host-prerequisites');
+  });
+
+  it('re-certifies host prerequisites after sanitation before requesting a snapshot', async () => {
+    const source = await readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8');
+    const sanitize = source.indexOf(
+      'MATRIX_GOLDEN_SNAPSHOT_ROOT=/ /opt/matrix/bin/matrix-golden-snapshot-sanitize',
+    );
+    const certify = source.indexOf(
+      '/opt/matrix/bin/matrix-prepare-host-prerequisites --certify-only',
+      sanitize,
+    );
+    const callback = source.indexOf("curl --config - --fail --silent --show-error", certify);
+
+    expect(sanitize).toBeGreaterThan(-1);
+    expect(certify).toBeGreaterThan(sanitize);
+    expect(callback).toBeGreaterThan(certify);
+  });
+
+  it('certifies prerequisite evidence without package or network work', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-host-prerequisites-'));
+    const fakeBin = join(root, 'bin');
+    await mkdir(fakeBin, { recursive: true });
+    for (const command of [
+      'add-apt-repository', 'apparmor_parser', 'aws', 'bwrap', 'cmatrix', 'curl', 'docker',
+      'elixir', 'erl', 'file', 'git', 'nginx', 'openssl', 'psql', 'socat', 'sudo', 'unzip', 'zsh',
+    ]) {
+      await symlink('/bin/true', join(fakeBin, command));
+    }
+    await chmod(prerequisitesPath, 0o755);
+
+    await execFileAsync(prerequisitesPath, ['--certify-only'], {
+      env: {
+        ...process.env,
+        MATRIX_HOST_PREREQUISITES_ROOT: root,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      },
+    });
+
+    expect(await readFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'utf8'))
+      .toBe('version=1\n');
   });
 
   it('functionally certifies the baked AWS CLI before snapshot readiness and validation', async () => {

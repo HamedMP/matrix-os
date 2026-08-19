@@ -2,7 +2,29 @@
 set -euo pipefail
 
 HOST_PREREQUISITES_VERSION=1
-marker=/opt/matrix/HOST_PREREQUISITES_READY
+root="${MATRIX_HOST_PREREQUISITES_ROOT:-/}"
+case "$root" in
+  /*) ;;
+  *) echo "matrix host prerequisites root must be absolute" >&2; exit 64 ;;
+esac
+root="${root%/}"
+[ -n "$root" ] || root="/"
+if [ -L "$root" ]; then
+  echo "matrix host prerequisites root must not be a symlink" >&2
+  exit 64
+fi
+
+if [ "$root" = / ]; then
+  matrix_dir=/opt/matrix
+else
+  matrix_dir="$root/opt/matrix"
+fi
+marker="$matrix_dir/HOST_PREREQUISITES_READY"
+mode="${1:-install}"
+case "$mode" in
+  install|--certify-only) ;;
+  *) echo "usage: matrix-prepare-host-prerequisites [--certify-only]" >&2; exit 64 ;;
+esac
 required_commands=(
   add-apt-repository
   apparmor_parser
@@ -24,15 +46,48 @@ required_commands=(
   zsh
 )
 
-prerequisites_ready() {
-  [ -f "$marker" ] && [ ! -L "$marker" ] \
-    && [ "$(tr -d '\r\n' <"$marker")" = "version=$HOST_PREREQUISITES_VERSION" ] \
-    || return 1
+prerequisites_present() {
   local command
   for command in "${required_commands[@]}"; do
     command -v "$command" >/dev/null 2>&1 || return 1
   done
 }
+
+write_readiness_marker() {
+  install -d -m 0770 "$matrix_dir"
+  if [ "$root" = / ]; then
+    chown root:root "$matrix_dir"
+  fi
+  local marker_tmp
+  marker_tmp="$(mktemp "$matrix_dir/.host-prerequisites.XXXXXX")"
+  trap 'rm -f -- "$marker_tmp"' EXIT HUP INT TERM
+  printf 'version=%s\n' "$HOST_PREREQUISITES_VERSION" >"$marker_tmp"
+  chmod 0644 "$marker_tmp"
+  mv -f -- "$marker_tmp" "$marker"
+  trap - EXIT HUP INT TERM
+}
+
+certify_prerequisites() {
+  local command
+  for command in "${required_commands[@]}"; do
+    command -v "$command" >/dev/null 2>&1 || {
+      echo "matrix host prerequisite missing: $command" >&2
+      return 1
+    }
+  done
+  write_readiness_marker
+}
+
+prerequisites_ready() {
+  [ -f "$marker" ] && [ ! -L "$marker" ] \
+    && [ "$(tr -d '\r\n' <"$marker")" = "version=$HOST_PREREQUISITES_VERSION" ] \
+    && prerequisites_present
+}
+
+if [ "$mode" = --certify-only ]; then
+  certify_prerequisites
+  exit 0
+fi
 
 if prerequisites_ready; then
   exit 0
@@ -94,17 +149,4 @@ if ! command -v aws >/dev/null 2>&1; then
   trap - EXIT HUP INT TERM
 fi
 
-for command in "${required_commands[@]}"; do
-  command -v "$command" >/dev/null 2>&1 || {
-    echo "matrix host prerequisite missing: $command" >&2
-    exit 1
-  }
-done
-
-install -d -o root -g root -m 0770 /opt/matrix
-marker_tmp="$(mktemp /opt/matrix/.host-prerequisites.XXXXXX)"
-trap 'rm -f -- "$marker_tmp"' EXIT HUP INT TERM
-printf 'version=%s\n' "$HOST_PREREQUISITES_VERSION" >"$marker_tmp"
-chmod 0644 "$marker_tmp"
-mv -f -- "$marker_tmp" "$marker"
-trap - EXIT HUP INT TERM
+certify_prerequisites

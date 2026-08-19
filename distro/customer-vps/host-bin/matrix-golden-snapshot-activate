@@ -112,13 +112,14 @@ EOF
     fi
     rmdir -- /root/.ssh
   fi
-  set_activation_stage activation_preflight_runtime_state
+  set_activation_stage activation_preflight_host_prerequisites
   if [ ! -f /opt/matrix/HOST_PREREQUISITES_READY ] \
     || [ -L /opt/matrix/HOST_PREREQUISITES_READY ] \
     || [ "$(tr -d '\r\n' </opt/matrix/HOST_PREREQUISITES_READY)" != 'version=1' ]; then
     echo "matrix host prerequisites are not ready" >&2
     exit 67
   fi
+  set_activation_stage activation_preflight_user_state
   matrix_uid="$(id -u matrix)"
   matrix_linger="$(loginctl show-user matrix --property=Linger --value 2>/dev/null || true)"
   if [ -e /var/lib/systemd/linger/matrix ] || [ -L /var/lib/systemd/linger/matrix ] \
@@ -127,6 +128,7 @@ EOF
     echo "golden snapshot inherited matrix linger state found" >&2
     exit 67
   fi
+  set_activation_stage activation_preflight_runtime_state
   for forbidden in \
     /etc/matrix \
     /opt/matrix/env \

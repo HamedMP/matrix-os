@@ -160,6 +160,11 @@ runcmd:
     systemctl disable docker.service containerd.service || true
     failureStage='sanitization'
     MATRIX_GOLDEN_SNAPSHOT_ROOT=/ /opt/matrix/bin/matrix-golden-snapshot-sanitize
+    # Re-certify the marker at the final disk boundary. Validation treats this
+    # as authoritative proof that the prerequisite binaries survived cleanup.
+    failureStage='host_prerequisites'
+    timeout --kill-after=10 60 /opt/matrix/bin/matrix-prepare-host-prerequisites --certify-only
+    sync
     failureStage='callback_delivery'
     printf 'header = "authorization: Bearer %s"\n' "$callbackToken" |
       curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/golden-snapshot-callback.json '{{callbackUrl}}'

@@ -98,6 +98,8 @@ describe('golden snapshot build service', () => {
     for (const stage of [
       'activation_preflight_evidence',
       'activation_preflight_forbidden_state',
+      'activation_preflight_host_prerequisites',
+      'activation_preflight_user_state',
       'activation_preflight_runtime_state',
       'activation_preflight_owner_state',
       'activation_preflight_root_ssh_state',
