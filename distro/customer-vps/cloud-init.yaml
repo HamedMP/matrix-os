@@ -494,7 +494,11 @@ runcmd:
     . /opt/matrix/env/host.env
     exact_snapshot_fast_path=false
     if [ -x /opt/matrix/bin/matrix-golden-snapshot-fast-path ] \
-      && /opt/matrix/bin/matrix-golden-snapshot-fast-path; then
+      && MATRIX_IMAGE_SOURCE="$MATRIX_IMAGE_SOURCE" \
+        MATRIX_IMAGE_VERSION="$MATRIX_IMAGE_VERSION" \
+        MATRIX_SNAPSHOT_SOURCE_VERSION="$MATRIX_SNAPSHOT_SOURCE_VERSION" \
+        MATRIX_TARGET_BUNDLE_SHA256="$MATRIX_TARGET_BUNDLE_SHA256" \
+        /opt/matrix/bin/matrix-golden-snapshot-fast-path; then
       exact_snapshot_fast_path=true
       echo "matrix-host: exact golden snapshot fast path selected"
     else

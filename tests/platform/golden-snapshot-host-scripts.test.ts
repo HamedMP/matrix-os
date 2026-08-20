@@ -944,6 +944,10 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     expect(source).toContain('ssh-keygen -A');
     expect(source).toMatch(/if \[ "\$\{MATRIX_IMAGE_SOURCE:-clean_image\}" = "snapshot" \]; then[\s\S]*systemctl enable --now docker\.service containerd\.service[\s\S]*fi/);
     expect(source).toContain('MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}');
+    expect(source).toContain('&& MATRIX_IMAGE_SOURCE="$MATRIX_IMAGE_SOURCE" \\');
+    expect(source).toContain('MATRIX_IMAGE_VERSION="$MATRIX_IMAGE_VERSION" \\');
+    expect(source).toContain('MATRIX_SNAPSHOT_SOURCE_VERSION="$MATRIX_SNAPSHOT_SOURCE_VERSION" \\');
+    expect(source).toContain('MATRIX_TARGET_BUNDLE_SHA256="$MATRIX_TARGET_BUNDLE_SHA256" \\');
     expect(source).toContain('target bundle provenance mismatch');
   });
 });
