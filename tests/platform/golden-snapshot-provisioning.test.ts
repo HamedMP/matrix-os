@@ -285,9 +285,7 @@ describe('golden snapshot provisioning activation', () => {
         ...firstServer, id: 905, publicIPv4: '203.0.113.95', createActionId: 1805,
       });
     const deleteServer = vi.fn().mockResolvedValue(undefined);
-    const getServer = vi.fn()
-      .mockResolvedValueOnce(firstServer)
-      .mockResolvedValueOnce(null);
+    const getServer = vi.fn().mockResolvedValue(firstServer);
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
@@ -321,12 +319,20 @@ describe('golden snapshot provisioning activation', () => {
       handle: 'pr-1273',
       runtimeSlot: 'pr-1273',
       testSnapshotId: snapshotId,
-    })).resolves.toMatchObject({ status: 'provisioning' });
+    })).rejects.toMatchObject({ code: 'snapshot_clone_rejected' });
     expect(createServer).toHaveBeenCalledTimes(1);
     expect(deleteServer).toHaveBeenCalledWith(904);
+    await expect(db.executor.selectFrom('provider_deletion_queue')
+      .select(['provider_server_id', 'reason', 'completed_at'])
+      .where('provider_server_id', '=', 904)
+      .executeTakeFirstOrThrow()).resolves.toEqual({
+      provider_server_id: 904,
+      reason: 'rejected_snapshot_clone',
+      completed_at: null,
+    });
 
     currentNow = new Date('2026-07-03T00:07:00.000Z');
-    await expect(service.dispatchProvisioningJobs()).resolves.toMatchObject({ failed: 1 });
+    await expect(service.dispatchProvisioningJobs()).resolves.toMatchObject({ checked: 0 });
     expect(createServer).toHaveBeenCalledTimes(1);
     await expect(getProvisioningJob(db, '50000000-0000-4000-8000-000000000014'))
       .resolves.toMatchObject({

@@ -1476,14 +1476,26 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           if (isPreviewTestSnapshotDecision(imageDecision)) {
             try {
               await deps.hetzner.deleteServer(server.id);
-              if (await deps.hetzner.getServer(server.id)) return 'pending';
+              if (await deps.hetzner.getServer(server.id)) {
+                await enqueueProviderDeletionTx(deps.db, {
+                  providerServerId: server.id,
+                  reason: 'rejected_snapshot_clone',
+                  machineId: row.machineId,
+                  handle: row.handle,
+                  detail: 'rejected preview-test snapshot clone deletion pending',
+                });
+              }
               serverIdForCompensation = null;
             } catch (cleanupErr: unknown) {
               logCustomerVpsError('rejected preview-test snapshot clone cleanup failed', cleanupErr);
-              await queueProviderDeletion({
-                providerServerId: server.id, reason: 'rejected_snapshot_clone',
-                machineId: row.machineId, handle: row.handle, err: cleanupErr,
+              await enqueueProviderDeletionTx(deps.db, {
+                providerServerId: server.id,
+                reason: 'rejected_snapshot_clone',
+                machineId: row.machineId,
+                handle: row.handle,
+                detail: 'rejected preview-test snapshot clone cleanup failed',
               });
+              serverIdForCompensation = null;
             }
             throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
           }
