@@ -4920,6 +4920,7 @@ describe("platform proxy routing", () => {
           buildTime: "2026-05-06T20:49:48Z",
           bootstrap: {
             schemaVersion: 1,
+            targetBundleVersion: "matrix-os-host-dev",
             imageSource: "snapshot",
             fastPathSelected: true,
             fullBundleDownloaded: false,
@@ -4957,6 +4958,7 @@ describe("platform proxy routing", () => {
           release: expect.objectContaining({
             gitCommit: "a5a894cabe71a0379a877414414d865a01ecf440",
             bootstrap: expect.objectContaining({
+              targetBundleVersion: "matrix-os-host-dev",
               imageSource: "snapshot",
               fastPathSelected: true,
               fullBundleDownloaded: false,

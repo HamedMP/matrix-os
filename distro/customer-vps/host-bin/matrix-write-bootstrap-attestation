@@ -50,6 +50,8 @@ if (
     not isinstance(value, dict)
     or value.get("schemaVersion") != 1
     or value.get("imageSource") not in ("clean_image", "snapshot")
+    or not isinstance(value.get("targetBundleVersion"), str)
+    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value["targetBundleVersion"]) is None
     or any(type(value.get(field)) is not bool for field in boolean_fields)
     or not isinstance(value.get("targetBundleSha256"), str)
     or re.fullmatch(r"[a-f0-9]{64}", value["targetBundleSha256"]) is None
@@ -103,8 +105,10 @@ fi
 # shellcheck disable=SC1090
 source "$host_env"
 image_source="${MATRIX_IMAGE_SOURCE:-}"
+target_bundle_version="${MATRIX_IMAGE_VERSION:-}"
 target_bundle_sha256="${MATRIX_TARGET_BUNDLE_SHA256:-}"
 case "$image_source" in clean_image|snapshot) ;; *) exit 65 ;; esac
+[[ "$target_bundle_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || exit 65
 [[ "$target_bundle_sha256" =~ ^[a-f0-9]{64}$ ]] || exit 65
 
 phase_value() {
@@ -194,7 +198,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-printf '{"schemaVersion":1,"imageSource":"%s","fastPathSelected":%s,"fullBundleDownloaded":%s,"systemPrerequisitesReused":%s,"bundleArchivePresent":%s,"targetBundleSha256":"%s","timing":{"systemPrerequisitesReadySeconds":%s,"hostBundleReadySeconds":%s,"coreServicesStartedSeconds":%s}}\n' \
+printf '{"schemaVersion":1,"targetBundleVersion":"%s","imageSource":"%s","fastPathSelected":%s,"fullBundleDownloaded":%s,"systemPrerequisitesReused":%s,"bundleArchivePresent":%s,"targetBundleSha256":"%s","timing":{"systemPrerequisitesReadySeconds":%s,"hostBundleReadySeconds":%s,"coreServicesStartedSeconds":%s}}\n' \
+  "$target_bundle_version" \
   "$image_source" \
   "$fast_path_selected" \
   "$full_bundle_downloaded" \

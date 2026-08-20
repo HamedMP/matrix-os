@@ -21,6 +21,7 @@ const BOOTSTRAP_PHASE_MAX_SECONDS = 86_400;
 
 export interface HostBootstrapAttestation {
   schemaVersion: 1;
+  targetBundleVersion: string;
   imageSource: "clean_image" | "snapshot";
   fastPathSelected: boolean;
   fullBundleDownloaded: boolean;
@@ -205,6 +206,7 @@ function parseBootstrapPhaseSeconds(value: unknown): number | undefined {
 function parseHostBootstrapAttestation(value: unknown): HostBootstrapAttestation | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const candidate = value as Record<string, unknown>;
+  const targetBundleVersion = parseSafeSystemVersion(candidate.targetBundleVersion);
   const timing = candidate.timing;
   if (!timing || typeof timing !== "object" || Array.isArray(timing)) return undefined;
   const timingCandidate = timing as Record<string, unknown>;
@@ -216,6 +218,7 @@ function parseHostBootstrapAttestation(value: unknown): HostBootstrapAttestation
     timingCandidate.coreServicesStartedSeconds,
   );
   if (candidate.schemaVersion !== 1
+    || targetBundleVersion === undefined
     || (candidate.imageSource !== "clean_image" && candidate.imageSource !== "snapshot")
     || typeof candidate.fastPathSelected !== "boolean"
     || typeof candidate.fullBundleDownloaded !== "boolean"
@@ -245,6 +248,7 @@ function parseHostBootstrapAttestation(value: unknown): HostBootstrapAttestation
   }
   return {
     schemaVersion: 1,
+    targetBundleVersion,
     imageSource: candidate.imageSource,
     fastPathSelected: candidate.fastPathSelected,
     fullBundleDownloaded: candidate.fullBundleDownloaded,
@@ -436,7 +440,10 @@ export function getSystemInfo(
       homeDiskTotalBytes: homeDisk?.totalBytes ?? null,
       homeDiskFreeBytes: homeDisk?.freeBytes ?? null,
     },
-    release: release && bootstrap && release.bundleSha256 === bootstrap.targetBundleSha256
+    release: release && bootstrap
+      && release.version === bootstrap.targetBundleVersion
+      && (release.bundleSha256 === undefined
+        || release.bundleSha256 === bootstrap.targetBundleSha256)
       ? { ...release, bootstrap }
       : release,
   };

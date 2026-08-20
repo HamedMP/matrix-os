@@ -23,6 +23,7 @@ describe('golden snapshot host scripts', () => {
     await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
     await mkdir(join(root, 'tmp'), { recursive: true });
     await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
       'MATRIX_IMAGE_SOURCE=snapshot',
       `MATRIX_TARGET_BUNDLE_SHA256=${'a'.repeat(64)}`,
       '',
@@ -46,6 +47,7 @@ describe('golden snapshot host scripts', () => {
     const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
     expect(JSON.parse(await readFile(outputPath, 'utf8'))).toEqual({
       schemaVersion: 1,
+      targetBundleVersion: 'v2026.08.20-test',
       imageSource: 'snapshot',
       fastPathSelected: true,
       fullBundleDownloaded: false,
@@ -66,6 +68,7 @@ describe('golden snapshot host scripts', () => {
     const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
     const original = {
       schemaVersion: 1,
+      targetBundleVersion: 'v2026.08.20-test',
       imageSource: 'snapshot',
       fastPathSelected: true,
       fullBundleDownloaded: false,
@@ -113,6 +116,7 @@ describe('golden snapshot host scripts', () => {
     await mkdir(join(root, 'opt/matrix/env'), { recursive: true });
     await mkdir(join(root, 'var/log'), { recursive: true });
     await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
       'MATRIX_IMAGE_SOURCE=snapshot',
       `MATRIX_TARGET_BUNDLE_SHA256=${'a'.repeat(64)}`,
       '',
@@ -144,6 +148,7 @@ describe('golden snapshot host scripts', () => {
     await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
     await mkdir(join(root, 'tmp'), { recursive: true });
     await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
       'MATRIX_IMAGE_SOURCE=clean_image',
       `MATRIX_TARGET_BUNDLE_SHA256=${'b'.repeat(64)}`,
       '',
@@ -170,6 +175,7 @@ describe('golden snapshot host scripts', () => {
       join(root, 'var/lib/matrix/bootstrap-attestation.json'),
       'utf8',
     ))).toMatchObject({
+      targetBundleVersion: 'v2026.08.20-test',
       imageSource: 'clean_image',
       fastPathSelected: false,
       fullBundleDownloaded: true,

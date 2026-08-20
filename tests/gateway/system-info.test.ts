@@ -121,10 +121,10 @@ describe("T135: System info", () => {
       version: "v2026.08.20-991",
       channel: "dev",
       gitCommit: "0436fbb9ace1b36022ca672d4a2da3d36b259b2e",
-      bundleSha256: "a".repeat(64),
     }));
     writeFileSync(attestationPath, JSON.stringify({
       schemaVersion: 1,
+      targetBundleVersion: "v2026.08.20-991",
       imageSource: "snapshot",
       fastPathSelected: true,
       fullBundleDownloaded: false,
@@ -145,6 +145,7 @@ describe("T135: System info", () => {
         version: "v2026.08.20-991",
         bootstrap: {
           schemaVersion: 1,
+          targetBundleVersion: "v2026.08.20-991",
           imageSource: "snapshot",
           fastPathSelected: true,
           fullBundleDownloaded: false,
@@ -181,12 +182,13 @@ describe("T135: System info", () => {
     }));
     writeFileSync(attestationPath, JSON.stringify({
       schemaVersion: 1,
+      targetBundleVersion: "v2026.08.20-991",
       imageSource: "snapshot",
       fastPathSelected: true,
       fullBundleDownloaded: false,
       systemPrerequisitesReused: true,
       bundleArchivePresent: false,
-      targetBundleSha256: "a".repeat(64),
+      targetBundleSha256: "b".repeat(64),
       timing: {
         systemPrerequisitesReadySeconds: 1,
         hostBundleReadySeconds: 2,
@@ -222,6 +224,7 @@ describe("T135: System info", () => {
     }));
     writeFileSync(attestationPath, JSON.stringify({
       schemaVersion: 1,
+      targetBundleVersion: "v2026.08.20-992",
       imageSource: "clean_image",
       fastPathSelected: false,
       fullBundleDownloaded: false,
