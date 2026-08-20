@@ -41,6 +41,9 @@ import { safeExternalHttpUrl } from "./external-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
+const DESKTOP_APP_NAME = "Matrix OS";
+
+app.setName(DESKTOP_APP_NAME);
 
 // Test isolation: e2e runs point userData at a temp dir so they never touch
 // the real profile or credential.

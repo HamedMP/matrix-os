@@ -66,6 +66,22 @@ suite("desktop update experience", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
+  it("exposes Check for Updates from the Matrix OS application menu", async () => {
+    const applicationMenu = await app.evaluate(({ app: electronApp, Menu }) => {
+      const root = Menu.getApplicationMenu();
+      const appMenu = root?.items[0];
+      return {
+        appName: electronApp.name,
+        appMenuLabel: appMenu?.label,
+        labels: appMenu?.submenu?.items.map((item) => item.label) ?? [],
+      };
+    });
+
+    expect(applicationMenu.appName).toBe("Matrix OS");
+    expect(applicationMenu.appMenuLabel).toBe("Matrix OS");
+    expect(applicationMenu.labels).toContain("Check for Updates…");
+  });
+
   it("shows What's New after launch and places Update at the right edge of the account row", async () => {
     await page.getByRole("heading", { name: "What's New", level: 1 }).waitFor({ timeout: 10_000 });
     await page.getByText("Automatic background downloads for Matrix OS updates").waitFor();
