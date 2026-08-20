@@ -9,6 +9,7 @@ import DesktopUpdateExperience from "../../desktop/src/renderer/src/features/upd
 import ManualUpdateDialog from "../../desktop/src/renderer/src/features/updates/ManualUpdateDialog";
 import WhatsNewDialog from "../../desktop/src/renderer/src/features/updates/WhatsNewDialog";
 import { useDesktopUpdate } from "../../desktop/src/renderer/src/stores/desktop-update";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 describe("desktop update experience", () => {
   beforeEach(() => {
@@ -19,6 +20,7 @@ describe("desktop update experience", () => {
       manualDialogOpen: false,
       installing: false,
     });
+    useUi.setState({ rendererOverlayCount: 0 });
   });
 
   afterEach(() => {
@@ -107,6 +109,7 @@ describe("desktop update experience", () => {
     });
     expect(screen.getByRole("dialog", { name: "Software Update" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Checking for updates…" })).toBeTruthy();
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
 
     act(() => {
       listeners.get("update:state-changed")?.({
@@ -145,6 +148,7 @@ describe("desktop update experience", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Later" }));
     expect(screen.queryByRole("dialog", { name: "Software Update" })).toBeNull();
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
   });
 
   it("lets a failed manual check retry through the trusted updater IPC", async () => {
@@ -263,6 +267,7 @@ describe("desktop update experience", () => {
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: "What's New" })).toBeTruthy();
       expect(listeners.has("update:manual-check-requested")).toBe(true);
+      expect(useUi.getState().rendererOverlayCount).toBe(1);
     });
 
     act(() => {
@@ -273,6 +278,10 @@ describe("desktop update experience", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Later" }));
     expect(screen.getByRole("dialog", { name: "What's New" })).toBeTruthy();
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close What's New" }));
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
   });
 
   it("shows a blue Update control only when the download is ready and installs immediately", async () => {
