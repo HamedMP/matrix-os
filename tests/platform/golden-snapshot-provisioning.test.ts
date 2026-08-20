@@ -34,6 +34,7 @@ import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
+import { normalizePreviewTestProviderImageId } from '../../packages/platform/src/golden-snapshot-preview-test.js';
 
 const compatibility = {
   provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central', baseImage: 'ubuntu-24.04',
@@ -75,6 +76,10 @@ describe('golden snapshot provisioning activation', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     await destroyTestPlatformDb(db);
+  });
+
+  it('normalizes Postgres BIGINT provider image ids before exact preview comparison', () => {
+    expect(normalizePreviewTestProviderImageId('422202690')).toBe(422202690);
   });
 
   async function readySnapshot(version: 'v1' | 'v2', imageId: number, testMode = false) {

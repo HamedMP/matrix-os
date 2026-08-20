@@ -106,6 +106,7 @@ export default function CommandPalette() {
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
 
   // Make sure apps are available the first time the palette opens.
   useEffect(() => {
@@ -364,7 +365,7 @@ export default function CommandPalette() {
                   key={app.slug}
                   icon={<LayoutGrid size={14} />}
                   label={app.name}
-                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(appIconUrl(platformHost, app.slug) ? { icon: appIconUrl(platformHost, app.slug)! } : {}) }))}
+                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(appIconUrl(platformHost, app.slug, runtimeSlot) ? { icon: appIconUrl(platformHost, app.slug, runtimeSlot)! } : {}) }))}
                 />
               ))}
             </Command.Group>

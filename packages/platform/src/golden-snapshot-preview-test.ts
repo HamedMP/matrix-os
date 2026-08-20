@@ -308,6 +308,14 @@ const CreateIntentInputSchema = z.object({
   now: IsoDateSchema,
 }).strict();
 
+const PreviewProviderImageIdSchema = z.coerce.number().int().positive()
+  .max(Number.MAX_SAFE_INTEGER);
+
+export function normalizePreviewTestProviderImageId(value: unknown): number | undefined {
+  const parsed = PreviewProviderImageIdSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export async function createPreviewTestSnapshotCreateIntent(
   db: PlatformDB,
   rawInput: z.input<typeof CreateIntentInputSchema>,
@@ -326,7 +334,7 @@ export async function createPreviewTestSnapshotCreateIntent(
       'provider_image_id', 'provider_image_status', 'base_generation',
     ]).where('snapshot_id', '=', input.snapshotId).forUpdate().executeTakeFirst();
     if (!snapshot || !snapshot.test_mode || snapshot.state !== 'ready'
-      || snapshot.provider_image_id !== input.providerImageId
+      || normalizePreviewTestProviderImageId(snapshot.provider_image_id) !== input.providerImageId
       || snapshot.provider_image_status !== 'available') return undefined;
     const revoked = await trx.executor.selectFrom('golden_snapshot_revoked_base_generations')
       .select('base_generation').where('base_generation', '=', snapshot.base_generation).executeTakeFirst();

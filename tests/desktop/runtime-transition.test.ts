@@ -14,6 +14,7 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
+import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 
 describe("desktop runtime transition", () => {
   beforeEach(() => {
@@ -36,6 +37,12 @@ describe("desktop runtime transition", () => {
     useWorkspace.setState({ entries: [{ taskId: "task_old", lastFocusedAt: 1, live: true }] });
     useEditorTabs.setState({ tabsByTask: { task_old: ["README.md"] }, activePathByTask: { task_old: "README.md" }, dirtyPathsByTask: {} });
     useThreads.setState({ threads: [], activeThreadId: "thread_old" });
+    useApps.setState({
+      apps: [{ slug: "old-app", name: "Old app" }],
+      loaded: true,
+      loading: false,
+      error: null,
+    });
     useCodingAgentWorkspace.setState({ activeThreadId: "thread_old", selectedReviewId: "review_old" });
     useProjectWorkspaces.setState({
       entries: {
@@ -67,6 +74,7 @@ describe("desktop runtime transition", () => {
     expect(useWorkspace.getState().entries).toEqual([]);
     expect(useEditorTabs.getState().tabsByTask).toEqual({});
     expect(useThreads.getState()).toMatchObject({ threads: [], activeThreadId: null });
+    expect(useApps.getState()).toMatchObject({ apps: [], loaded: false, loading: false, error: null });
     expect(useCodingAgentWorkspace.getState()).toMatchObject({ activeThreadId: null, selectedReviewId: null });
     expect(useProjectWorkspaces.getState().entries).toEqual({});
     expect(useProjectView.getState().entries).toEqual({});
