@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell } from "electron";
+import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
@@ -35,6 +35,7 @@ import {
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
+import { fitWindowBoundsToWorkArea, type WindowBounds } from "./platform/window-bounds";
 import { createUpdater } from "./updates";
 import { safeExternalHttpUrl } from "./external-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
@@ -336,7 +337,14 @@ if (!gotLock) {
       };
       const openMainWindow = async () => {
         const savedBounds = await store.get("windowBounds");
-        mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });
+        const requestedBounds: WindowBounds = savedBounds ?? { width: 1280, height: 820 };
+        const display = screen.getDisplayMatching({
+          x: requestedBounds.x ?? 0,
+          y: requestedBounds.y ?? 0,
+          width: requestedBounds.width,
+          height: requestedBounds.height,
+        });
+        mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
         mainWindow.on("resize", persistBounds);
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
