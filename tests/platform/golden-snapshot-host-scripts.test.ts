@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -40,6 +40,57 @@ describe('golden snapshot host scripts', () => {
     })).rejects.toMatchObject({ code: 1 });
     await expect(execFileAsync(fastPathPath, [], {
       env: { ...exactEnv, MATRIX_SNAPSHOT_SOURCE_VERSION: 'older' },
+    })).rejects.toMatchObject({ code: 1 });
+  });
+
+  it('re-certifies a missing host-prerequisites marker without bootstrap work', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-recertify-'));
+    const appDir = join(root, 'opt/matrix/app');
+    const binDir = join(root, 'opt/matrix/bin');
+    const fakeBin = join(root, 'test-bin');
+    await mkdir(appDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    await mkdir(fakeBin, { recursive: true });
+    await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
+    await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v2026.08.20-test\n');
+    await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'d'.repeat(64)}\n`);
+    await copyFile(prerequisitesPath, join(binDir, 'matrix-prepare-host-prerequisites'));
+    await chmod(join(binDir, 'matrix-prepare-host-prerequisites'), 0o755);
+    for (const command of [
+      'add-apt-repository', 'apparmor_parser', 'aws', 'bwrap', 'cmatrix', 'curl', 'docker',
+      'elixir', 'erl', 'file', 'git', 'nginx', 'openssl', 'psql', 'socat', 'sudo', 'unzip', 'zsh',
+    ]) {
+      await symlink('/bin/true', join(fakeBin, command));
+    }
+    await chmod(fastPathPath, 0o755);
+
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: 'snapshot',
+        MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
+        MATRIX_TARGET_BUNDLE_SHA256: 'd'.repeat(64),
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+
+    expect(await readFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'utf8'))
+      .toBe('version=1\n');
+
+    await unlink(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'));
+    await unlink(join(fakeBin, 'aws'));
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: 'snapshot',
+        MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
+        MATRIX_TARGET_BUNDLE_SHA256: 'd'.repeat(64),
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      },
     })).rejects.toMatchObject({ code: 1 });
   });
 
@@ -409,6 +460,33 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     expect(sanitize).toBeGreaterThan(-1);
     expect(certify).toBeGreaterThan(sanitize);
     expect(callback).toBeGreaterThan(certify);
+  });
+
+  it('re-certifies an absent host marker before validation activation continues', async () => {
+    const source = await readFile(activatePath, 'utf8');
+    const validationBranch = source.indexOf('if [ "$mode" = validation ]; then');
+    const preflight = source.indexOf(
+      'set_activation_stage activation_preflight_host_prerequisites',
+      validationBranch,
+    );
+    const missingMarker = source.indexOf(
+      'if [ ! -e /opt/matrix/HOST_PREREQUISITES_READY ]',
+      preflight,
+    );
+    const certify = source.indexOf(
+      '/opt/matrix/bin/matrix-prepare-host-prerequisites --certify-only',
+      missingMarker,
+    );
+    const malformedMarker = source.indexOf(
+      'if [ ! -f /opt/matrix/HOST_PREREQUISITES_READY ]',
+      certify,
+    );
+
+    expect(validationBranch).toBeGreaterThan(-1);
+    expect(preflight).toBeGreaterThan(validationBranch);
+    expect(missingMarker).toBeGreaterThan(preflight);
+    expect(certify).toBeGreaterThan(missingMarker);
+    expect(malformedMarker).toBeGreaterThan(certify);
   });
 
   it('certifies prerequisite evidence without package or network work', async () => {

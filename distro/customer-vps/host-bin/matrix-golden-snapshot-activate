@@ -135,6 +135,17 @@ EOF
     rmdir -- /root/.ssh
   fi
   set_activation_stage activation_preflight_host_prerequisites
+  if [ ! -e /opt/matrix/HOST_PREREQUISITES_READY ] \
+    && [ ! -L /opt/matrix/HOST_PREREQUISITES_READY ]; then
+    if [ ! -f /opt/matrix/bin/matrix-prepare-host-prerequisites ] \
+      || [ -L /opt/matrix/bin/matrix-prepare-host-prerequisites ] \
+      || [ ! -x /opt/matrix/bin/matrix-prepare-host-prerequisites ]; then
+      echo "matrix host prerequisite certification unavailable" >&2
+      exit 67
+    fi
+    timeout --kill-after=10 60 \
+      /opt/matrix/bin/matrix-prepare-host-prerequisites --certify-only
+  fi
   if [ ! -f /opt/matrix/HOST_PREREQUISITES_READY ] \
     || [ -L /opt/matrix/HOST_PREREQUISITES_READY ] \
     || [ "$(tr -d '\r\n' </opt/matrix/HOST_PREREQUISITES_READY)" != 'version=1' ]; then
