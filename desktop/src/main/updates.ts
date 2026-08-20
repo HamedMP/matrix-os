@@ -16,15 +16,8 @@ export type UpdateStatus = DesktopUpdateStatus;
 interface UpdateEvents {
   onAvailable: (version: string) => void;
   onReady: (version: string) => void;
-  onUpToDate?: () => void;
-  onCheckError?: () => void;
-  onManualStatus?: (snapshot: DesktopUpdateSnapshot) => void;
   onStateChanged?: (snapshot: DesktopUpdateSnapshot) => void;
   onReleaseReady?: (release: DesktopReleaseNotes) => Promise<void> | void;
-}
-
-interface UpdateCheckOptions {
-  notifyWhenCurrent?: boolean;
 }
 
 const UPDATER_EVENT_NAMES = [
@@ -43,7 +36,7 @@ interface ElectronUpdaterModuleNamespace {
 }
 
 export interface Updater {
-  check(options?: UpdateCheckOptions): Promise<void>;
+  check(): Promise<void>;
   install(): Promise<boolean>;
   isInstallStarted(): boolean;
   snapshot(): DesktopUpdateSnapshot;
@@ -129,7 +122,6 @@ export function createUpdater(events: UpdateEvents): Updater {
   let activeAutoUpdater: ElectronAutoUpdater | null = null;
   let pendingReleaseSave: Promise<void> = Promise.resolve();
   let installStarted = false;
-  let notifyWhenCurrent = false;
   const feed = resolveUpdateFeedConfig(process.env, app.isPackaged);
 
   const setSnapshot = (next: DesktopUpdateSnapshot): void => {
@@ -137,30 +129,19 @@ export function createUpdater(events: UpdateEvents): Updater {
     events.onStateChanged?.({ ...current });
   };
 
-  const completeUserRequestedCheck = (callback?: () => void): void => {
-    const shouldNotify = notifyWhenCurrent;
-    notifyWhenCurrent = false;
-    if (shouldNotify) callback?.();
-  };
-
   const updater: Updater = {
-    async check(options) {
-      const userRequested = options?.notifyWhenCurrent === true;
+    async check() {
       if (!feed.enabled) {
         setSnapshot({ status: "disabled" });
-        if (userRequested) events.onManualStatus?.({ ...current });
         return;
       }
       if (current.status === "checking") {
-        notifyWhenCurrent ||= userRequested;
         return;
       }
       if (current.status === "downloading" || current.status === "ready") {
-        if (userRequested) events.onManualStatus?.({ ...current });
         return;
       }
 
-      notifyWhenCurrent = userRequested;
       setSnapshot({ status: "checking" });
       try {
         const autoUpdater = await loadAutoUpdater();
@@ -180,12 +161,10 @@ export function createUpdater(events: UpdateEvents): Updater {
           const version = readVersion(info);
           if (!version) {
             setSnapshot({ status: "error" });
-            completeUserRequestedCheck(events.onCheckError);
             return;
           }
           setSnapshot({ status: "downloading", version, progress: 0 });
           events.onAvailable(version);
-          completeUserRequestedCheck(() => events.onManualStatus?.({ ...current }));
         });
         autoUpdater.on("download-progress", (progress) => {
           if (current.status !== "downloading") return;
@@ -201,9 +180,10 @@ export function createUpdater(events: UpdateEvents): Updater {
             setSnapshot({ status: "error" });
             return;
           }
+          const release = readRelease(info, version);
           pendingReleaseSave = (async () => {
             try {
-              await events.onReleaseReady?.(readRelease(info, version));
+              await events.onReleaseReady?.(release);
             } catch (err: unknown) {
               console.warn(
                 "[updates] could not persist release notes:",
@@ -211,13 +191,12 @@ export function createUpdater(events: UpdateEvents): Updater {
               );
             }
           })();
-          setSnapshot({ status: "ready", version, progress: 100 });
+          setSnapshot({ status: "ready", version, progress: 100, release });
           events.onReady(version);
         });
         autoUpdater.once("update-not-available", () => {
           console.info("[updates] update check completed: up to date");
           setSnapshot({ status: "up-to-date" });
-          completeUserRequestedCheck(events.onUpToDate);
         });
         autoUpdater.once("error", (err) => {
           console.warn(
@@ -225,7 +204,6 @@ export function createUpdater(events: UpdateEvents): Updater {
             err instanceof Error ? err.message : String(err),
           );
           setSnapshot({ status: "error" });
-          completeUserRequestedCheck(events.onCheckError);
         });
         await autoUpdater.checkForUpdates();
       } catch (err: unknown) {
@@ -234,7 +212,6 @@ export function createUpdater(events: UpdateEvents): Updater {
           err instanceof Error ? err.message : String(err),
         );
         setSnapshot({ status: "error" });
-        completeUserRequestedCheck(events.onCheckError);
       }
     },
     async install() {

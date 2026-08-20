@@ -239,42 +239,6 @@ if (!gotLock) {
             silent: false,
           }).show();
         },
-        onUpToDate: () => {
-          if (!Notification.isSupported()) return;
-          new Notification({
-            title: "Matrix OS is up to date",
-            body: `You're running version ${app.getVersion()}.`,
-            silent: true,
-          }).show();
-        },
-        onCheckError: () => {
-          if (!Notification.isSupported()) return;
-          new Notification({
-            title: "Unable to check for updates",
-            body: "Check your connection and try again.",
-            silent: true,
-          }).show();
-        },
-        onManualStatus: (snapshot) => {
-          if (!Notification.isSupported()) return;
-          let body = "Matrix OS is already checking for updates.";
-          if (snapshot.status === "disabled") {
-            body = "Update checks are available in installed builds.";
-          } else if (snapshot.status === "ready") {
-            body = snapshot.version
-              ? `Matrix OS ${snapshot.version} is ready to install.`
-              : "A Matrix OS update is ready to install.";
-          } else if (snapshot.status === "downloading") {
-            body = snapshot.version
-              ? `Matrix OS ${snapshot.version} is downloading.`
-              : "A Matrix OS update is downloading.";
-          }
-          new Notification({
-            title: "Matrix OS updates",
-            body,
-            silent: true,
-          }).show();
-        },
       });
       handleUpdateBeforeQuit = createUpdateAwareBeforeQuit({
         status: () => updater.status(),
@@ -319,7 +283,10 @@ if (!gotLock) {
           codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
         },
-        getUpdateStatus: () => updater.status(),
+        checkUpdate: async () => {
+          await updater.check();
+          return updater.snapshot();
+        },
         getUpdateSnapshot: () => updater.snapshot(),
         installUpdate: () => updater.install(),
         getWhatsNew: async () => {
@@ -403,7 +370,8 @@ if (!gotLock) {
       installAppMenu(
         () => mainWindow,
         () => {
-          void updater.check({ notifyWhenCurrent: true });
+          focusMainWindow();
+          void updater.check();
         },
       );
 

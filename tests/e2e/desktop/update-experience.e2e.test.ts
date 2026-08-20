@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -19,7 +19,12 @@ suite("desktop update experience", () => {
   let userDataDir: string;
 
   function seedRelease(version: string): void {
-    writeFileSync(join(userDataDir, "state.json"), JSON.stringify({
+    const statePath = join(userDataDir, "state.json");
+    const state = existsSync(statePath)
+      ? JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>
+      : {};
+    writeFileSync(statePath, JSON.stringify({
+      ...state,
       desktopUpdateRelease: {
         version,
         releaseDate: "2026-08-11T09:00:00.000Z",
@@ -41,7 +46,6 @@ suite("desktop update experience", () => {
   beforeAll(async () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
     userDataDir = mkdtempSync(join(tmpdir(), "matrix-os-update-evidence-"));
-    seedRelease("0.1.0");
     gateway = await startStubGateway();
     app = await _electron.launch({
       executablePath: ELECTRON_PATH,
@@ -54,9 +58,11 @@ suite("desktop update experience", () => {
     });
     page = await app.firstWindow();
     const runningVersion = await app.evaluate(({ app: electronApp }) => electronApp.getVersion());
-    seedRelease(runningVersion);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
+    seedRelease(runningVersion);
+    await page.reload();
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
   }, 60_000);
 
@@ -66,10 +72,11 @@ suite("desktop update experience", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  it("exposes Check for Updates from the Matrix OS application menu", async () => {
+  it("opens visible update status from Check for Updates in the application menu", async () => {
     const applicationMenu = await app.evaluate(({ app: electronApp, Menu }) => {
       const root = Menu.getApplicationMenu();
       const appMenu = root?.items[0];
+      appMenu?.submenu?.items.find((item) => item.label === "Check for Updates…")?.click();
       return {
         appName: electronApp.name,
         appMenuLabel: appMenu?.label,
@@ -80,6 +87,12 @@ suite("desktop update experience", () => {
     expect(applicationMenu.appName).toBe("Matrix OS");
     expect(applicationMenu.appMenuLabel).toBe("Matrix OS");
     expect(applicationMenu.labels).toContain("Check for Updates…");
+    await page.getByRole("dialog", { name: "Software Update" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("heading", {
+      name: "Updates are unavailable in this preview",
+    }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-441-manual-update-dialog.png") });
+    await page.getByRole("button", { name: "Close" }).click();
   });
 
   it("shows What's New after launch and places Update at the right edge of the account row", async () => {
@@ -103,6 +116,10 @@ suite("desktop update experience", () => {
         status: "ready",
         version: "0.2.0",
         progress: 100,
+        release: {
+          version: "0.2.0",
+          notes: "## Improved\n\n- Faster updates",
+        },
       });
     });
 

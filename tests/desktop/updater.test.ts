@@ -140,103 +140,6 @@ describe("createUpdater", () => {
     info.mockRestore();
   });
 
-  it("reports an up-to-date result only for a user-requested check", async () => {
-    const onUpToDate = vi.fn();
-    const updater = createUpdater({
-      onAvailable: vi.fn(),
-      onReady: vi.fn(),
-      onUpToDate,
-    });
-
-    await updater.check();
-    updaterMock.handlers.get("update-not-available")?.({ version: "1.2.3" });
-    expect(onUpToDate).not.toHaveBeenCalled();
-
-    await updater.check({ notifyWhenCurrent: true });
-    updaterMock.handlers.get("update-not-available")?.({ version: "1.2.3" });
-
-    expect(onUpToDate).toHaveBeenCalledOnce();
-  });
-
-  it("reports a failed user-requested check without notifying for background failures", async () => {
-    const onCheckError = vi.fn();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const updater = createUpdater({
-      onAvailable: vi.fn(),
-      onReady: vi.fn(),
-      onCheckError,
-    });
-
-    updaterMock.autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("background offline"));
-    await updater.check();
-    expect(onCheckError).not.toHaveBeenCalled();
-
-    updaterMock.autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("manual offline"));
-    await updater.check({ notifyWhenCurrent: true });
-
-    expect(onCheckError).toHaveBeenCalledOnce();
-    warn.mockRestore();
-  });
-
-  it("reports that update checks require an installed build", async () => {
-    electronMock.app.isPackaged = false;
-    const onManualStatus = vi.fn();
-    const updater = createUpdater({
-      onAvailable: vi.fn(),
-      onReady: vi.fn(),
-      onManualStatus,
-    });
-
-    await updater.check({ notifyWhenCurrent: true });
-
-    expect(onManualStatus).toHaveBeenCalledWith({ status: "disabled" });
-    expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
-  });
-
-  it("reports an already downloading or ready update for a user-requested check", async () => {
-    const onManualStatus = vi.fn();
-    const updater = createUpdater({
-      onAvailable: vi.fn(),
-      onReady: vi.fn(),
-      onManualStatus,
-    });
-
-    await updater.check();
-    updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
-    await updater.check({ notifyWhenCurrent: true });
-    expect(onManualStatus).toHaveBeenLastCalledWith({
-      status: "downloading",
-      version: "1.2.3",
-      progress: 0,
-    });
-
-    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
-    await updater.check({ notifyWhenCurrent: true });
-    expect(onManualStatus).toHaveBeenLastCalledWith({
-      status: "ready",
-      version: "1.2.3",
-      progress: 100,
-    });
-  });
-
-  it("reports a newly found update for a user-requested check", async () => {
-    const onManualStatus = vi.fn();
-    const updater = createUpdater({
-      onAvailable: vi.fn(),
-      onReady: vi.fn(),
-      onManualStatus,
-    });
-
-    await updater.check({ notifyWhenCurrent: true });
-    updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
-
-    expect(onManualStatus).toHaveBeenCalledWith({
-      status: "downloading",
-      version: "1.2.3",
-      progress: 0,
-    });
-  });
-
   it("sets an error status when the update check fails", async () => {
     updaterMock.autoUpdater.checkForUpdates.mockRejectedValue(new Error("network down"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -354,11 +257,21 @@ describe("createUpdater", () => {
       status: "ready",
       version: "1.2.3",
       progress: 100,
+      release: {
+        version: "1.2.3",
+        releaseDate: "2026-08-11T09:00:00.000Z",
+        notes: "## Improved\n\n- Faster project loading",
+      },
     });
     expect(onStateChanged).toHaveBeenLastCalledWith({
       status: "ready",
       version: "1.2.3",
       progress: 100,
+      release: {
+        version: "1.2.3",
+        releaseDate: "2026-08-11T09:00:00.000Z",
+        notes: "## Improved\n\n- Faster project loading",
+      },
     });
   });
 

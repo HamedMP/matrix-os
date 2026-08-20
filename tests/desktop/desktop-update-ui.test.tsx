@@ -5,6 +5,8 @@ import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopUpdateButton from "../../desktop/src/renderer/src/features/updates/DesktopUpdateButton";
+import DesktopUpdateExperience from "../../desktop/src/renderer/src/features/updates/DesktopUpdateExperience";
+import ManualUpdateDialog from "../../desktop/src/renderer/src/features/updates/ManualUpdateDialog";
 import WhatsNewDialog from "../../desktop/src/renderer/src/features/updates/WhatsNewDialog";
 import { useDesktopUpdate } from "../../desktop/src/renderer/src/stores/desktop-update";
 
@@ -14,6 +16,7 @@ describe("desktop update experience", () => {
       snapshot: { status: "disabled" },
       release: null,
       whatsNewOpen: false,
+      manualDialogOpen: false,
       installing: false,
     });
   });
@@ -57,23 +60,208 @@ describe("desktop update experience", () => {
     expect(invoke).not.toHaveBeenCalledWith("update:acknowledge-whats-new", { version: "1.2.2" });
 
     act(() => {
-      updateListener?.({ status: "ready", version: "1.2.3", progress: 100 });
+      updateListener?.({
+        status: "ready",
+        version: "1.2.3",
+        progress: 100,
+        release: { version: "1.2.3", notes: "## Improved\n\n- Faster updates" },
+      });
     });
     expect(useDesktopUpdate.getState().snapshot).toEqual({
       status: "ready",
       version: "1.2.3",
       progress: 100,
+      release: { version: "1.2.3", notes: "## Improved\n\n- Faster updates" },
     });
 
     dispose();
-    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows manual check progress and offers restart-and-install with the changelog", async () => {
+    const listeners = new Map<string, (payload: unknown) => void>();
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "update:get-state") return { status: "disabled" };
+      if (channel === "update:get-whats-new") return { release: null, shouldOpen: false };
+      return { ok: true };
+    });
+    vi.stubGlobal("operator", {
+      invoke,
+      on: vi.fn((channel: string, listener: (payload: unknown) => void) => {
+        listeners.set(channel, listener);
+        return () => listeners.delete(channel);
+      }),
+    });
+
+    render(
+      <Tooltip.Provider>
+        <DesktopUpdateExperience />
+      </Tooltip.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(listeners.has("update:manual-check-requested")).toBe(true);
+    });
+    act(() => {
+      listeners.get("update:manual-check-requested")?.({});
+    });
+    expect(screen.getByRole("dialog", { name: "Software Update" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Checking for updates…" })).toBeTruthy();
+
+    act(() => {
+      listeners.get("update:state-changed")?.({
+        status: "downloading",
+        version: "1.3.0",
+        progress: 64,
+      });
+    });
+    expect(screen.getByRole("heading", { name: "Downloading Matrix OS 1.3.0" })).toBeTruthy();
+    expect(
+      screen.getByRole("progressbar", { name: "Download progress" }).getAttribute("aria-valuenow"),
+    ).toBe("64");
+
+    act(() => {
+      listeners.get("update:state-changed")?.({
+        status: "ready",
+        version: "1.3.0",
+        progress: 100,
+        release: {
+          version: "1.3.0",
+          releaseDate: "2026-08-20T08:00:00.000Z",
+          notes: "## Improved\n\n- Faster startup\n- Clearer update feedback",
+        },
+      });
+    });
+    expect(screen.getByRole("heading", { name: "Matrix OS 1.3.0 is ready" })).toBeTruthy();
+    expect(screen.getByText("Faster startup")).toBeTruthy();
+    expect(screen.getByText("Clearer update feedback")).toBeTruthy();
+
+    const installButton = screen.getByRole("button", { name: "Restart & Install" });
+    expect(installButton.style.background).toBe("var(--update-action)");
+    fireEvent.click(installButton);
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("update:install", {});
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    expect(screen.queryByRole("dialog", { name: "Software Update" })).toBeNull();
+  });
+
+  it("lets a failed manual check retry through the trusted updater IPC", async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "update:check") return { status: "checking" };
+      return { ok: true };
+    });
+    vi.stubGlobal("operator", { invoke, on: vi.fn() });
+    useDesktopUpdate.setState({
+      snapshot: { status: "error" },
+      manualDialogOpen: true,
+    });
+
+    render(
+      <Tooltip.Provider>
+        <ManualUpdateDialog />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Unable to check for updates" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("update:check", {});
+      expect(useDesktopUpdate.getState().snapshot).toEqual({ status: "checking" });
+    });
+  });
+
+  it("offers Retry and Close when updates are unavailable in a preview", async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "update:check") return { status: "disabled" };
+      return { ok: true };
+    });
+    vi.stubGlobal("operator", { invoke, on: vi.fn() });
+    useDesktopUpdate.setState({
+      snapshot: { status: "disabled" },
+      manualDialogOpen: true,
+    });
+
+    render(
+      <Tooltip.Provider>
+        <ManualUpdateDialog />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "Software Update" })).toBeNull();
+  });
+
+  it("confirms when Matrix OS is already up to date", () => {
+    vi.stubGlobal("operator", { invoke: vi.fn(), on: vi.fn() });
+    useDesktopUpdate.setState({
+      snapshot: { status: "up-to-date" },
+      manualDialogOpen: true,
+    });
+
+    render(
+      <Tooltip.Provider>
+        <ManualUpdateDialog />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Matrix OS is up to date" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
+  });
+
+  it("queues What's New behind an active manual update dialog", async () => {
+    const release = {
+      version: "1.3.0",
+      notes: "## Improved\n\n- Faster startup",
+    };
+    const listeners = new Map<string, (payload: unknown) => void>();
+    vi.stubGlobal("operator", {
+      invoke: vi.fn(async (channel: string) => {
+        if (channel === "update:get-state") {
+          return { status: "ready", version: "1.3.0", progress: 100, release };
+        }
+        if (channel === "update:get-whats-new") return { release, shouldOpen: true };
+        return { ok: true };
+      }),
+      on: vi.fn((channel: string, listener: (payload: unknown) => void) => {
+        listeners.set(channel, listener);
+        return () => listeners.delete(channel);
+      }),
+    });
+
+    render(
+      <Tooltip.Provider>
+        <DesktopUpdateExperience />
+      </Tooltip.Provider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "What's New" })).toBeTruthy();
+      expect(listeners.has("update:manual-check-requested")).toBe(true);
+    });
+
+    act(() => {
+      listeners.get("update:manual-check-requested")?.({});
+    });
+    expect(screen.getByRole("dialog", { name: "Software Update" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "What's New" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    expect(screen.getByRole("dialog", { name: "What's New" })).toBeTruthy();
   });
 
   it("shows a blue Update control only when the download is ready and installs immediately", async () => {
     const invoke = vi.fn(async () => ({ ok: true }));
     vi.stubGlobal("operator", { invoke, on: vi.fn() });
     useDesktopUpdate.setState({
-      snapshot: { status: "ready", version: "1.2.3", progress: 100 },
+      snapshot: {
+        status: "ready",
+        version: "1.2.3",
+        progress: 100,
+        release: { version: "1.2.3", notes: "## Improved\n\n- Faster updates" },
+      },
     });
 
     const view = render(
@@ -103,7 +291,12 @@ describe("desktop update experience", () => {
   it("renders a compact icon-only update control in expanded and collapsed sidebars", () => {
     vi.stubGlobal("operator", { invoke: vi.fn(), on: vi.fn() });
     useDesktopUpdate.setState({
-      snapshot: { status: "ready", version: "1.2.3", progress: 100 },
+      snapshot: {
+        status: "ready",
+        version: "1.2.3",
+        progress: 100,
+        release: { version: "1.2.3", notes: "## Improved\n\n- Faster updates" },
+      },
     });
 
     const view = render(

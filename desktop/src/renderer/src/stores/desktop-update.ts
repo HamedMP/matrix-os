@@ -9,9 +9,12 @@ interface DesktopUpdateState {
   snapshot: DesktopUpdateSnapshot;
   release: DesktopReleaseNotes | null;
   whatsNewOpen: boolean;
+  manualDialogOpen: boolean;
   installing: boolean;
   initialize: () => () => void;
+  check: () => Promise<void>;
   install: () => Promise<void>;
+  closeManualDialog: () => void;
   closeWhatsNew: () => void;
 }
 
@@ -19,6 +22,7 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
   snapshot: { status: "disabled" },
   release: null,
   whatsNewOpen: false,
+  manualDialogOpen: false,
   installing: false,
 
   initialize: () => {
@@ -31,9 +35,20 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
     }
     let active = true;
     let eventReceived = false;
-    const unsubscribe = onEvent("update:state-changed", (snapshot) => {
+    const unsubscribeState = onEvent("update:state-changed", (snapshot) => {
       eventReceived = true;
       if (active) set({ snapshot });
+    });
+    const unsubscribeManualCheck = onEvent("update:manual-check-requested", () => {
+      if (!active) return;
+      set((state) => ({
+        manualDialogOpen: true,
+        snapshot: state.snapshot.status === "checking"
+          || state.snapshot.status === "downloading"
+          || state.snapshot.status === "ready"
+          ? state.snapshot
+          : { status: "checking" },
+      }));
     });
 
     void Promise.all([
@@ -54,8 +69,20 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
 
     return () => {
       active = false;
-      if (typeof unsubscribe === "function") unsubscribe();
+      if (typeof unsubscribeState === "function") unsubscribeState();
+      if (typeof unsubscribeManualCheck === "function") unsubscribeManualCheck();
     };
+  },
+
+  check: async () => {
+    set({ manualDialogOpen: true });
+    try {
+      const snapshot = await invoke("update:check", {});
+      set({ snapshot });
+    } catch {
+      set({ snapshot: { status: "error" } });
+      console.warn("[desktop-update] update check failed");
+    }
   },
 
   install: async () => {
@@ -69,6 +96,8 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
       console.warn("[desktop-update] restart and install failed");
     }
   },
+
+  closeManualDialog: () => set({ manualDialogOpen: false }),
 
   closeWhatsNew: () => {
     const release = get().release;

@@ -144,7 +144,12 @@ describe("Sidebar attention badges", () => {
 
   it("places a ready update at the right edge of the account row", () => {
     useDesktopUpdate.setState({
-      snapshot: { status: "ready", version: "1.2.3", progress: 100 },
+      snapshot: {
+        status: "ready",
+        version: "1.2.3",
+        progress: 100,
+        release: { version: "1.2.3", notes: "## Improved\n\n- Faster updates" },
+      },
     });
 
     render(

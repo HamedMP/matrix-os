@@ -77,7 +77,10 @@ export function createAppMenuTemplate({
         { role: "about" },
         {
           label: "Check for Updates…",
-          click: () => checkForUpdates(),
+          click: () => {
+            send("update:manual-check-requested", {});
+            checkForUpdates();
+          },
         },
         { type: "separator" },
         {

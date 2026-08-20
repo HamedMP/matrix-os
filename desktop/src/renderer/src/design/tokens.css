@@ -56,6 +56,7 @@
   --info: #4a7c92;
   --info-muted: rgba(74, 124, 146, 0.12);
   --update-action: #2f9bff;
+  --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.12);
 
   /* ── Status (tasks / threads / sessions) ────────────────────── */
@@ -149,6 +150,7 @@
   --highlight: #d8853f;
   --highlight-muted: rgba(216, 133, 63, 0.18);
   --update-action: #2f9bff;
+  --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.18);
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);

@@ -5,11 +5,12 @@ describe("createAppMenuTemplate", () => {
   it("offers Check for Updates in installed and development application menus", () => {
     for (const isPackaged of [true, false]) {
       const checkForUpdates = vi.fn();
+      const send = vi.fn();
       const template = createAppMenuTemplate({
         appName: "Matrix OS",
         isPackaged,
         openExternal: vi.fn(),
-        send: vi.fn(),
+        send,
         adjustZoom: vi.fn(),
         checkForUpdates,
       });
@@ -23,6 +24,7 @@ describe("createAppMenuTemplate", () => {
         throw new Error("Check for Updates menu item is not clickable");
       }
       updateItem.click({} as never, {} as never, {} as never);
+      expect(send).toHaveBeenCalledWith("update:manual-check-requested", {});
       expect(checkForUpdates).toHaveBeenCalledOnce();
     }
   });
