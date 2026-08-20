@@ -630,6 +630,53 @@ describe('golden snapshot build service', () => {
     },
   );
 
+  it('retains orphan reconciliation when exact-label discovery fails after the deadline', async () => {
+    let currentTime = '2026-07-03T00:01:00.000Z';
+    const lateImage = {
+      id: 909, status: 'available' as const, type: 'snapshot' as const,
+      architecture: 'x86' as const, diskGb: 40, deleteProtected: false,
+      labels: {
+        'matrix.snapshot-build': '20000000-0000-4000-8000-000000000001',
+        'matrix.snapshot-id': '10000000-0000-4000-8000-000000000001',
+        'matrix.role': 'builder',
+      },
+    };
+    const listImagesByLabel = vi.fn()
+      .mockImplementationOnce(async () => {
+        currentTime = '2026-07-03T00:32:00.000Z';
+        throw new Error('synthetic provider outage');
+      })
+      .mockResolvedValueOnce([lateImage]);
+    const { enqueued, service } = await setup({
+      createSnapshot: vi.fn().mockRejectedValueOnce(new Error('synthetic timeout')),
+      listImagesByLabel,
+    }, () => currentTime);
+    await service.runBuildStep(enqueued.build.buildId);
+    await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+      eventId: randomUUID(), phase: 'sanitized', bundleVersion: 'v1',
+      bundleSha256: '1'.repeat(64), ...builderFingerprints,
+    });
+    await expect(service.runBuildStep(enqueued.build.buildId)).rejects.toThrow('provider operation');
+
+    await expect(service.runBuildStep(enqueued.build.buildId))
+      .rejects.toThrow('Golden snapshot image recovery window expired');
+    await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+      phase: 'failed', status: 'failed', lastErrorCode: 'snapshot_create_unresolved',
+      pendingOperation: `snapshot:${enqueued.snapshot.snapshotId}`,
+    });
+    await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({
+      state: 'quarantined', failureCode: 'snapshot_create_unresolved',
+    });
+
+    currentTime = '2026-07-03T00:33:00.000Z';
+    await expect(service.runOrphanReconciliationStep(enqueued.build.buildId)).resolves.toBe('queued');
+    await expect(listPendingGoldenSnapshotCleanup(db, currentTime, 10)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ resourceType: 'snapshot_image', providerResourceId: lateImage.id }),
+      ]),
+    );
+  });
+
   it('records builder boot evidence before accepting sanitation', async () => {
     const { enqueued, service, hetzner } = await setup();
     expect(await service.runBuildStep(enqueued.build.buildId)).toBe('builder_boot');

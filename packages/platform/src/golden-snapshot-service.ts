@@ -954,7 +954,14 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           observedAt,
         };
       };
-      const readProviderState = async <T>(context: string, read: () => Promise<T>): Promise<T> => {
+      const readProviderState = async <T>(
+        context: string,
+        read: () => Promise<T>,
+        expiredFailure: { code: string; message: string } = {
+          code: 'snapshot_creation_timeout',
+          message: 'Golden snapshot creation timed out',
+        },
+      ): Promise<T> => {
         try {
           return await read();
         } catch (err: unknown) {
@@ -963,11 +970,11 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
             await quarantine(
               buildId,
               snapshot.snapshotId,
-              'snapshot_creation_timeout',
+              expiredFailure.code,
               deadline.observedAt,
               build.phase,
             );
-            throw new Error('Golden snapshot creation timed out');
+            throw new Error(expiredFailure.message);
           }
           throw providerFailure(context, err);
         }
@@ -991,6 +998,10 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         const candidates = (await readProviderState(
           'snapshot image reconciliation',
           () => deps.hetzner.listImagesByLabel(selector),
+          {
+            code: 'snapshot_create_unresolved',
+            message: 'Golden snapshot image recovery window expired',
+          },
         )).filter((candidate) => candidate.labels['matrix.snapshot-build'] === buildId
           && candidate.labels['matrix.snapshot-id'] === snapshot.snapshotId
           && candidate.labels['matrix.role'] === 'builder');
