@@ -27,6 +27,38 @@ export class CustomerVpsError extends Error {
   }
 }
 
+export type PreviewSnapshotUnavailableReason =
+  | 'bundle_resolution_failed'
+  | 'bundle_url_unpinnable'
+  | 'existing_machine_snapshot_mismatch'
+  | 'snapshot_binding_failed'
+  | 'persisted_snapshot_missing'
+  | 'persisted_provider_image_missing'
+  | 'persisted_provider_image_unavailable'
+  | 'persisted_snapshot_not_ready'
+  | 'persisted_snapshot_ready_at_missing'
+  | 'persisted_snapshot_stale'
+  | 'persisted_bundle_version_mismatch'
+  | 'persisted_bundle_digest_mismatch'
+  | 'pre_create_snapshot_changed'
+  | 'create_intent_unavailable'
+  | 'create_intent_denied'
+  | 'provider_create_action_rejected';
+
+/**
+ * Carries a bounded, non-secret diagnostic for server-side logging while the
+ * public error contract stays deliberately generic.
+ */
+export class PreviewSnapshotUnavailableError extends CustomerVpsError {
+  readonly internalReason: PreviewSnapshotUnavailableReason;
+
+  constructor(internalReason: PreviewSnapshotUnavailableReason) {
+    super(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+    this.name = 'PreviewSnapshotUnavailableError';
+    this.internalReason = internalReason;
+  }
+}
+
 /**
  * The provider returned a bounded HTTP rejection, proving that create did not
  * have an ambiguous transport outcome. Callers may retry or fail without an
@@ -53,5 +85,8 @@ export function genericProviderError(err: unknown): CustomerVpsError {
 
 export function logCustomerVpsError(context: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`[customer-vps] ${context}: ${message}`);
+  const internalReason = err instanceof PreviewSnapshotUnavailableError
+    ? ` internalReason=${err.internalReason}`
+    : '';
+  console.error(`[customer-vps] ${context}: ${message}${internalReason}`);
 }

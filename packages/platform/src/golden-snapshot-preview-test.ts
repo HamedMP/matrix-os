@@ -3,14 +3,21 @@ import { sql } from 'kysely';
 import { z } from 'zod/v4';
 import type { PlatformDB, UserMachineRecord } from './db.js';
 import type { ProvisioningJobRecord } from './customer-vps-provisioning-jobs.js';
-import { CustomerVpsError } from './customer-vps-errors.js';
+import {
+  CustomerVpsError,
+  PreviewSnapshotUnavailableError,
+  type PreviewSnapshotUnavailableReason,
+} from './customer-vps-errors.js';
 import {
   fallbackProvisioningImage,
   getGoldenSnapshotServerProfile,
   resolveGoldenSnapshotRollout,
   type ProvisioningImageDecision,
 } from './golden-snapshot-activation.js';
-import { getGoldenSnapshot } from './golden-snapshot-repository.js';
+import {
+  getGoldenSnapshot,
+  type GoldenSnapshotRecord,
+} from './golden-snapshot-repository.js';
 import {
   compatibilityKey,
   GoldenSnapshotBundleVersionSchema,
@@ -31,6 +38,29 @@ const BindInputSchema = z.object({
   provisioningJobId: UuidSchema,
   now: IsoDateSchema,
 }).strict();
+
+function persistedSnapshotUnavailableReason(input: {
+  snapshot: GoldenSnapshotRecord | undefined;
+  isPreviewTestSnapshot: boolean;
+  imageVersion: string;
+  targetBundleSha256: string | null;
+  freshnessCutoff: string;
+}): PreviewSnapshotUnavailableReason | undefined {
+  const { snapshot } = input;
+  if (!snapshot) return 'persisted_snapshot_missing';
+  if (snapshot.providerImageId === null) return 'persisted_provider_image_missing';
+  if (snapshot.providerImageStatus !== 'available') return 'persisted_provider_image_unavailable';
+  if (snapshot.state !== 'ready') return 'persisted_snapshot_not_ready';
+  if (!snapshot.readyAt) return 'persisted_snapshot_ready_at_missing';
+  if (snapshot.readyAt <= input.freshnessCutoff) return 'persisted_snapshot_stale';
+  if (input.isPreviewTestSnapshot && snapshot.bundleVersion !== input.imageVersion) {
+    return 'persisted_bundle_version_mismatch';
+  }
+  if (input.isPreviewTestSnapshot && snapshot.bundleSha256 !== input.targetBundleSha256) {
+    return 'persisted_bundle_digest_mismatch';
+  }
+  return undefined;
+}
 
 export async function resolvePreviewTestSnapshotBundle(
   db: PlatformDB,
@@ -86,18 +116,17 @@ export async function resolvePersistedProvisioningImage(input: {
     ? Math.min(config.freshnessMaxAgeMs, config.testModeTtlMs)
     : config.freshnessMaxAgeMs;
   const freshnessCutoff = new Date(claimedAt.getTime() - freshnessMaxAgeMs).toISOString();
-  const unavailable = !persistedSnapshot?.providerImageId
-    || persistedSnapshot.providerImageStatus !== 'available'
-    || persistedSnapshot.state !== 'ready'
-    || !persistedSnapshot.readyAt
-    || persistedSnapshot.readyAt <= freshnessCutoff
-    || (isPreviewTestSnapshot && (
-      persistedSnapshot.bundleVersion !== imageVersion
-      || persistedSnapshot.bundleSha256 !== job.targetBundleSha256
-    ));
+  const unavailableReason = persistedSnapshotUnavailableReason({
+    snapshot: persistedSnapshot,
+    isPreviewTestSnapshot,
+    imageVersion,
+    targetBundleSha256: job.targetBundleSha256,
+    freshnessCutoff,
+  });
+  const unavailable = unavailableReason !== undefined;
   if ((!rollout.included && !isPreviewTestSnapshot) || unavailable) {
     if (isPreviewTestSnapshot) {
-      throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+      throw new PreviewSnapshotUnavailableError(unavailableReason ?? 'persisted_snapshot_not_ready');
     }
     await fallbackProvisioningImage(db, {
       jobId: job.jobId,
@@ -116,9 +145,12 @@ export async function resolvePersistedProvisioningImage(input: {
       effectiveProviderCreateActionId: null,
     };
   }
+  if (!persistedSnapshot) {
+    throw new Error('Persisted snapshot resolution invariant failed');
+  }
   const providerImageId = persistedSnapshot.providerImageId;
   if (providerImageId === null) {
-    throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+    throw new PreviewSnapshotUnavailableError('persisted_provider_image_missing');
   }
   return {
     imageDecision: {

@@ -42,6 +42,7 @@ import { buildPlatformVerificationToken } from './platform-token.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
 import {
   CustomerVpsError,
+  PreviewSnapshotUnavailableError,
   genericProviderError,
   logCustomerVpsError,
   type CustomerVpsFailureCode,
@@ -403,11 +404,11 @@ async function resolveHostBundleRef(
   if (previewTestSnapshotId) {
     const snapshotBundle = await resolvePreviewTestSnapshotBundle(db, previewTestSnapshotId);
     if (!snapshotBundle) {
-      throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+      throw new PreviewSnapshotUnavailableError('bundle_resolution_failed');
     }
     const pinnedUrl = tryPinHostBundleUrlForImageVersion(config, snapshotBundle.bundleVersion);
     if (!pinnedUrl) {
-      throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+      throw new PreviewSnapshotUnavailableError('bundle_url_unpinnable');
     }
     return {
       imageVersion: snapshotBundle.bundleVersion,
@@ -1331,11 +1332,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             effectiveProviderCreateActionId,
           );
           if (priorCreateResult === 'pending') return 'pending';
-          throw new CustomerVpsError(
-            409,
-            'snapshot_clone_rejected',
-            'Provisioning image unavailable',
-          );
+          throw new PreviewSnapshotUnavailableError('provider_create_action_rejected');
         }
       }
       const createInput = {
@@ -1361,6 +1358,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             const selectableSnapshot = await getGoldenSnapshot(deps.db, imageDecision.snapshotId);
             if (selectableSnapshot?.state !== 'ready'
               || selectableSnapshot.providerImageId !== imageDecision.providerImageId) {
+              if (isPreviewTestSnapshotDecision(imageDecision)) {
+                throw new PreviewSnapshotUnavailableError('pre_create_snapshot_changed');
+              }
               throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
             }
             const intent = isPreviewTestSnapshotDecision(imageDecision)
@@ -1377,6 +1377,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
                   now: now().toISOString(),
                 });
             if (!intent || intent.state === 'denied') {
+              if (isPreviewTestSnapshotDecision(imageDecision)) {
+                throw new PreviewSnapshotUnavailableError(
+                  intent?.state === 'denied' ? 'create_intent_denied' : 'create_intent_unavailable',
+                );
+              }
               throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
             }
           }
@@ -1393,6 +1398,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
                   providerServerId: server.id, reason: 'denied_snapshot_create',
                   machineId: row.machineId, handle: row.handle, err: cleanupErr,
                 });
+              }
+              if (isPreviewTestSnapshotDecision(imageDecision)) {
+                throw new PreviewSnapshotUnavailableError(
+                  accepted?.state === 'denied' ? 'create_intent_denied' : 'create_intent_unavailable',
+                );
               }
               throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
             }
@@ -1526,7 +1536,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
               });
               serverIdForCompensation = null;
             }
-            throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+            throw new PreviewSnapshotUnavailableError('provider_create_action_rejected');
           }
           await fallbackProvisioningImage(deps.db, {
             jobId: job.jobId, reason: 'clone_rejected', now: now().toISOString(),
@@ -1687,7 +1697,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         const matchesRequestedSnapshot = machine.provisioningClass === 'preview'
           && (machine.sourceSnapshotId === testSnapshotId || existingJob?.snapshotId === testSnapshotId);
         if (!matchesRequestedSnapshot) {
-          throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+          throw new PreviewSnapshotUnavailableError('existing_machine_snapshot_mismatch');
         }
       }
       await updateUserMachine(db, machine.machineId, {
@@ -1859,7 +1869,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           now: currentTime.toISOString(),
         }, deps.config.goldenSnapshots);
         if (!bound) {
-          throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+          throw new PreviewSnapshotUnavailableError('snapshot_binding_failed');
         }
       }
       return { existing: null };
