@@ -1401,4 +1401,41 @@ describe("zellij terminal WebSocket", () => {
     expect(next).toHaveBeenCalledTimes(2);
     expect(rejected).toEqual({ body: { error: "Unauthorized" }, status: 401 });
   });
+
+  it("moves the exclusive live lease to the newest focused renderer", async () => {
+    const pty = new FakePty();
+    const desktopWs = socket();
+    const vpsWs = socket();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      sizingDebounceMs: 0,
+    });
+
+    const desktop = await handler.open({
+      ws: desktopWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 180, rows: 50 },
+      exclusiveLease: true,
+    });
+    await handler.open({
+      ws: vpsWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 90, rows: 30 },
+      exclusiveLease: true,
+    });
+
+    expect(desktopWs.sent).toContainEqual({ type: "lease-revoked", epoch: 1 });
+    expect(desktopWs.closed).toBe(true);
+    expect(vpsWs.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      lease: { epoch: 2 },
+    }));
+    expect(pty.resizes).toContainEqual({ cols: 90, rows: 30 });
+    desktop.onMessage(JSON.stringify({ type: "input", data: "stale" }));
+    expect(pty.writes).not.toContain("stale");
+    await handler.dispose();
+  });
 });

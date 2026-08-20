@@ -103,6 +103,8 @@ class FakeTimers {
 interface RecordedEvents {
   states: Array<{ state: ShellSocketState; detail?: { code?: string } }>;
   outputs: Array<{ data: string; seq: number }>;
+  canonicalSizes: Array<{ cols: number; rows: number }>;
+  revocations: number;
   gaps: number;
   exits: number[];
 }
@@ -119,7 +121,7 @@ interface Harness {
 function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
   const sockets: FakeWebSocket[] = [];
   const timers = new FakeTimers();
-  const events: RecordedEvents = { states: [], outputs: [], gaps: 0, exits: [] };
+  const events: RecordedEvents = { states: [], outputs: [], canonicalSizes: [], revocations: 0, gaps: 0, exits: [] };
   const socket = new ShellSocket({
     baseUrl: "https://app.matrix-os.com",
     sessionName: "main",
@@ -130,6 +132,12 @@ function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
       },
       onOutput: (data, seq) => {
         events.outputs.push({ data, seq });
+      },
+      onCanonicalSize: (size) => {
+        events.canonicalSizes.push(size);
+      },
+      onLeaseRevoked: () => {
+        events.revocations += 1;
       },
       onGap: () => {
         events.gaps += 1;
@@ -186,6 +194,39 @@ describe("ShellSocket URL building", () => {
       `wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
     );
     expect(LIVE_TAIL_FROM_SEQ).toBe(9_007_199_254_740_991);
+  });
+
+  it("declares a hard client size and applies authority-confirmed grid changes", () => {
+    const h = createHarness({ clientClass: "hard" });
+    h.socket.resize(132, 36);
+    h.socket.connect();
+
+    expect(h.latest().url).toContain("client=hard&cols=132&rows=36");
+    h.latest().open();
+    h.latest().frame({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 0,
+      canonicalSize: { cols: 132, rows: 36 },
+    });
+    h.latest().frame({ type: "canonical-size", cols: 120, rows: 30 });
+
+    expect(h.events.canonicalSizes).toEqual([{ cols: 132, rows: 36 }, { cols: 120, rows: 30 }]);
+  });
+
+  it("stops reconnecting after another renderer takes the live lease", () => {
+    const h = createHarness({ clientClass: "hard" });
+    h.socket.resize(120, 40);
+    connectAndAttach(h);
+
+    h.latest().frame({ type: "lease-revoked", epoch: 1 });
+    h.latest().serverClose();
+    h.timers.advance(30_000);
+
+    expect(h.events.revocations).toBe(1);
+    expect(h.stateNames().at(-1)).toBe("ended");
+    expect(h.sockets).toHaveLength(1);
   });
 
   it("converts http base urls to ws and strips trailing slashes", () => {

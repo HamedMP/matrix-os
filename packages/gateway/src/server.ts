@@ -2318,6 +2318,7 @@ export async function createGateway(config: GatewayConfig) {
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
       const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
+      const exclusiveLease = c.req.query("lease") === "exclusive";
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let namedSocketClosed = false;
       const pendingInput = createPendingTerminalInputQueue();
@@ -2343,6 +2344,7 @@ export async function createGateway(config: GatewayConfig) {
             fromSeq,
             clientClass: sizingParams.clientClass,
             declaredSize: sizingParams.declaredSize,
+            exclusiveLease,
           }).then((session) => {
             if (namedSocketClosed) {
               session.onClose();
@@ -2515,6 +2517,7 @@ export async function createGateway(config: GatewayConfig) {
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
       const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
+      const exclusiveLease = c.req.query("lease") === "exclusive";
       let handle: SessionHandle | null = null;
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let namedSocketClosed = false;
@@ -2569,6 +2572,7 @@ export async function createGateway(config: GatewayConfig) {
               fromSeq,
               clientClass: sizingParams.clientClass,
               declaredSize: sizingParams.declaredSize,
+              exclusiveLease,
             }).then((session) => {
               if (namedSocketClosed) {
                 session.onClose();

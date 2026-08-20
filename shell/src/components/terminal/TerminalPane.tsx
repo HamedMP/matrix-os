@@ -389,7 +389,9 @@ export function TerminalPane({
   );
   const [linkContextMenu, setLinkContextMenu] = useState<TerminalLinkMenuState | null>(null);
   const [pasteError, setPasteError] = useState<string | null>(null);
-  const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | null>(null);
+  const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | "elsewhere" | null>(null);
+  const resumeLeaseRef = useRef<() => void>(() => undefined);
+  const wasFocusedRef = useRef(isFocused);
   const outputBufferRef = useRef("");
   const commandBlockBufferRef = useRef("");
   const activeCommandBlockRef = useRef(false);
@@ -726,6 +728,7 @@ export function TerminalPane({
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup, react-doctor/exhaustive-deps -- cleanup is returned via init()'s awaited promise (see outer return), and reading the live heartbeatRef.current in cleanup is required to stop the most recent heartbeat instance.
   useEffect(() => {
     let disposed = false;
+    let leaseWasRevoked = false;
 
     async function init() {
       const log = (event: string, details: Record<string, unknown> = {}) => {
@@ -1447,6 +1450,7 @@ export function TerminalPane({
             isClosing: isClosingRef.current,
           });
           if (disposed || isClosingRef.current) return;
+          if (leaseWasRevoked) return;
 
           // Attempt reconnection with exponential backoff
           const attempt = reconnectAttemptRef.current;
@@ -1536,6 +1540,12 @@ export function TerminalPane({
 
             case "canonical-size":
               applyCanonicalGridSize(msg);
+              break;
+
+            case "lease-revoked":
+              leaseWasRevoked = true;
+              setConnectionNotice("elsewhere");
+              ws.close();
               break;
 
             case "output":
@@ -1684,6 +1694,7 @@ export function TerminalPane({
               session: currentSessionId,
               fromSeq: String(replayRequest?.requestedSeq ?? 0),
               client: suppressNativeKeyboard ? "soft" : "hard",
+              ...(isFocusedRef.current ? { lease: "exclusive" } : {}),
               ...(declaredSize
                 ? { cols: String(declaredSize.cols), rows: String(declaredSize.rows) }
                 : {}),
@@ -1747,6 +1758,24 @@ export function TerminalPane({
             bindWs(ws, true, { generation, replayRequest });
           });
       }
+
+      resumeLeaseRef.current = () => {
+        if (disposed || isClosingRef.current) return;
+        const existing = wsRef.current;
+        if (existing && existing.readyState !== WebSocket.CLOSED) {
+          existing.onopen = null;
+          existing.onclose = null;
+          existing.onerror = null;
+          existing.onmessage = null;
+          existing.close();
+          wsRef.current = null;
+          heartbeatRef.current?.stop();
+        }
+        leaseWasRevoked = false;
+        reconnectAttemptRef.current = 0;
+        setConnectionNotice(null);
+        connectWs();
+      };
 
       if (cached && canReuseCachedSocket) {
         bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING, {
@@ -2070,6 +2099,12 @@ export function TerminalPane({
 
   useTerminalFocusRequest(termRef, focusRequestId, isFocused, suppressNativeKeyboard);
 
+  useEffect(() => {
+    const becameFocused = isFocused && !wasFocusedRef.current;
+    wasFocusedRef.current = isFocused;
+    if (becameFocused) resumeLeaseRef.current();
+  }, [isFocused]);
+
   // Re-fit the terminal whenever the visual viewport changes (soft keyboard
   // open/close, URL-bar collapse, orientation). The document viewport is
   // resized by `interactiveWidget: "resizes-content"`; the terminal host does
@@ -2185,7 +2220,11 @@ export function TerminalPane({
               : "rgba(63, 63, 70, 0.95)",
           }}
         >
-          {connectionNotice === "reconnecting" ? "Reconnecting terminal..." : "Terminal disconnected"}
+          {connectionNotice === "reconnecting"
+            ? "Reconnecting terminal..."
+            : connectionNotice === "elsewhere"
+              ? <><span>Live on another device.</span><button type="button" onClick={() => resumeLeaseRef.current()}>Resume here</button></>
+              : "Terminal disconnected"}
         </div>
       )}
       <TerminalLinksTray

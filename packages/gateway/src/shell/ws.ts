@@ -5,6 +5,7 @@ import { PendingPersistQueue } from "./output-pipeline.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
 import { createSessionSizing, type SessionSizing, type ShellClientClass, type TerminalSize } from "./sizing.js";
+import { createTerminalLeaseCoordinator } from "./terminal-lease.js";
 import type { ShellAttachProcess } from "./zellij.js";
 import {
   createTerminalOutputCompatStream,
@@ -86,6 +87,8 @@ export interface ShellWsHandlerOptions {
   sizingDebounceMs?: number;
   defaultCanonicalSize?: TerminalSize;
   persistCanonicalSize?: (name: string, size: TerminalSize) => void;
+  /** Enables exclusive live-renderer takeovers for upgraded clients. */
+  leaseCoordinator?: ReturnType<typeof createTerminalLeaseCoordinator>;
 }
 
 export interface ShellWsOpenOptions {
@@ -95,6 +98,7 @@ export interface ShellWsOpenOptions {
   /** Sizing class (spec 107 FR-007): absent = legacy (pre-upgrade client). */
   clientClass?: Exclude<ShellClientClass, "legacy">;
   declaredSize?: TerminalSize;
+  exclusiveLease?: boolean;
 }
 
 export interface ShellWsSession {
@@ -130,6 +134,9 @@ function socketBufferedAmount(ws: ShellWsSocket): number {
 }
 
 interface ConnState {
+  id: string;
+  exclusiveLease: boolean;
+  leaseEpoch: number | null;
   ws: ShellWsSocket;
   openedAt: number;
   lastActivityAt: number;
@@ -154,6 +161,7 @@ interface SessionRuntime {
 }
 
 export function createShellWsHandler(options: ShellWsHandlerOptions) {
+  const leaseCoordinator = options.leaseCoordinator ?? createTerminalLeaseCoordinator();
   const maxBuffers = options.maxBuffers ?? 20;
   const maxAttachedClients = options.maxAttachedClients ?? 8;
   const staleAttachTtlMs = options.staleAttachTtlMs ?? 60_000;
@@ -575,7 +583,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     return false;
   }
 
-  async function open({ ws, session, fromSeq = 0, clientClass: openOptionsClass, declaredSize }: ShellWsOpenOptions): Promise<ShellWsSession> {
+  async function open({ ws, session, fromSeq = 0, clientClass: openOptionsClass, declaredSize, exclusiveLease = false }: ShellWsOpenOptions): Promise<ShellWsSession> {
     const safeName = validateSessionName(session);
     const sessions = await options.registry.list();
     const info = sessions.find((candidate) => candidate.name === safeName);
@@ -652,7 +660,14 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
+    const lease = exclusiveLease
+      ? leaseCoordinator.acquire(safeName, connId, declaredSize ?? sizing.spawnSize())
+      : null;
+
     const conn: ConnState = {
+      id: connId,
+      exclusiveLease: lease !== null,
+      leaseEpoch: lease?.epoch ?? null,
       ws,
       openedAt: Date.now(),
       lastActivityAt: Date.now(),
@@ -664,6 +679,18 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       },
     };
     runtime.conns.add(conn);
+    if (lease) {
+      const priorLeases = [...runtime.conns].filter((candidate) => candidate !== conn);
+      for (const prior of priorLeases) {
+        sendJson(prior.ws, { type: "lease-revoked", epoch: prior.leaseEpoch });
+        prior.close();
+      }
+      // A takeover is a resize barrier, not an ordinary debounced layout
+      // hint. Pin the sole Zellij render bridge before acknowledging the new
+      // renderer so no old-grid output can race the attached frame.
+      runtime.child?.resize(lease.size.cols, lease.size.rows);
+      options.persistCanonicalSize?.(safeName, lease.size);
+    }
     cancelIdleClose(runtime);
 
     const effectiveFromSeq = fromSeq === SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
@@ -676,6 +703,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       state: info.status === "exited" ? "exited" : "running",
       fromSeq: effectiveFromSeq,
       canonicalSize: sizing.current() ?? sizing.spawnSize(),
+      ...(lease ? { lease: { epoch: lease.epoch } } : {}),
     });
 
     const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
@@ -698,6 +726,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
     const detachConn = () => {
       runtime.conns.delete(conn);
+      if (lease) leaseCoordinator.release(safeName, connId, lease.epoch);
       sizing.detach(connId);
       if (runtime.conns.size === 0) {
         scheduleIdleClose(runtime);
@@ -719,6 +748,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         }
         runtime.conns.delete(conn);
         sizing.detach(connId);
+        if (lease) leaseCoordinator.release(safeName, connId, lease.epoch);
         await closeSharedAttach(runtime);
         return;
       }
@@ -748,6 +778,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
         const msg = result.data;
         if (msg.type === "ping") {
+          if (lease) leaseCoordinator.touch(safeName, connId, lease.epoch);
           sendJson(ws, { type: "pong" });
           return;
         }
@@ -758,11 +789,13 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "input") {
+          if (lease && !leaseCoordinator.touch(safeName, connId, lease.epoch)) return;
           runtime.child?.write(msg.data);
           return;
         }
         if (msg.type === "resize") {
           const requested = { cols: msg.cols, rows: msg.rows };
+          if (lease && !leaseCoordinator.resize(safeName, connId, lease.epoch, requested)) return;
           if (clientClass === "hard") {
             // A desktop-web or CLI hard client changed size: update its
             // declaration and let the arbiter re-pin the shared attach pty
@@ -803,6 +836,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     }
     await Promise.all(drains);
     runtimes.clear();
+    leaseCoordinator.dispose();
   }
 
   return { open, dispose, pendingPersistBytes };

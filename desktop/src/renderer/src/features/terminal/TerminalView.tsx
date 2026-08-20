@@ -35,6 +35,15 @@ import {
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 const RECENT_ACTIVITY_THROTTLE_MS = 30_000;
 
+function proposedTerminalDimensions(fit: FitAddon | null, terminal: Terminal): { cols: number; rows: number } {
+  // The production add-on exposes proposeDimensions(). Keep a safe fallback
+  // for a temporarily unmeasurable host (and lightweight renderer test mocks).
+  if (fit && typeof fit.proposeDimensions === "function") {
+    return fit.proposeDimensions() ?? { cols: terminal.cols, rows: terminal.rows };
+  }
+  return { cols: terminal.cols, rows: terminal.rows };
+}
+
 function applyTerminalSurfaceTheme(element: HTMLElement | undefined, background: string): void {
   if (!element) return;
   element.style.width = "100%";
@@ -72,6 +81,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
+  const [leaseRevoked, setLeaseRevoked] = useState(false);
+  const [leaseAttempt, setLeaseAttempt] = useState(0);
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
   const closeTerminalContextMenu = useCallback(() => setTerminalContextMenu(null), []);
   const [pasteError, setPasteError] = useState<string | null>(null);
@@ -81,6 +92,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
+    setLeaseRevoked(false);
   }
 
   // xterm lifecycle — mount once, dispose only on real unmount (tab close).
@@ -194,8 +206,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
-        fit.fit();
-        attachmentRef.current?.resize(terminal.cols, terminal.rows);
+        const proposed = proposedTerminalDimensions(fit, terminal);
+        attachmentRef.current?.resize(proposed.cols, proposed.rows);
       });
     });
     observer.observe(host);
@@ -241,6 +253,16 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     const attachment = manager.attach(sessionName, {
       onState: (state) => setSocketState(state),
       onOutput: (data) => terminal.write(data),
+      onCanonicalSize: (size) => {
+        if (terminal.cols !== size.cols || terminal.rows !== size.rows) {
+          terminal.resize(size.cols, size.rows);
+        }
+      },
+      onLeaseRevoked: () => {
+        endedRef.current = true;
+        setLeaseRevoked(true);
+        setSocketState("ended");
+      },
       onGap: () => {
         terminal.clear();
         terminal.write(GAP_MARKER);
@@ -250,7 +272,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
         setExitCode(code);
         setSocketState("ended");
       },
-    });
+    }, { cols: terminal.cols, rows: terminal.rows });
     attachmentRef.current = attachment;
     let lastRecentActivityAt = 0;
     const dataDisposable = terminal.onData((data) => {
@@ -261,8 +283,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       }
       attachment.write(data);
     });
-    fit?.fit();
-    attachment.resize(terminal.cols, terminal.rows);
+    const proposed = proposedTerminalDimensions(fit, terminal);
+    attachment.resize(proposed.cols, proposed.rows);
     terminal.focus();
 
     return () => {
@@ -270,7 +292,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, active, closeTerminalContextMenu]);
+  }, [sessionName, active, closeTerminalContextMenu, leaseAttempt]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -356,6 +378,17 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   }, [active, api, sessionName]);
 
   const banner = (() => {
+    if (leaseRevoked) {
+      return {
+        text: "Live on another device.",
+        action: <Button variant="primary" onClick={() => {
+          endedRef.current = false;
+          setLeaseRevoked(false);
+          setSocketState("connecting");
+          setLeaseAttempt((attempt) => attempt + 1);
+        }}>Resume here</Button>,
+      };
+    }
     if (socketState === "fatal") {
       return { text: "This session has ended on your computer.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }

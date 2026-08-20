@@ -470,6 +470,7 @@ describe("TerminalPane scrolling", () => {
       expect.objectContaining({
         session: "main",
         client: "hard",
+        lease: "exclusive",
         cols: "120",
         rows: "42",
       }),

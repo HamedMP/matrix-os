@@ -25,6 +25,8 @@ export interface WebSocketLike {
 export interface ShellSocketEvents {
   onState(state: ShellSocketState, detail?: { code?: string }): void;
   onOutput(data: string, seq: number): void;
+  onCanonicalSize?(size: { cols: number; rows: number }): void;
+  onLeaseRevoked?(): void;
   onGap(): void;
   onExit(code: number): void;
 }
@@ -34,6 +36,7 @@ export interface ShellSocketOptions {
   sessionName?: string;
   cwd?: string;
   runtimeSlot: string;
+  clientClass?: "hard" | "soft";
   events: ShellSocketEvents;
   createWebSocket?: (url: string) => WebSocketLike;
   setTimeoutFn?: typeof setTimeout;
@@ -274,7 +277,11 @@ export class ShellSocket {
       : (this.opts.sessionName ?? null);
     if (sessionName !== null && sessionName.length > 0) {
       const fromSeq = isReconnect && this.receivedOutput ? this.lastSeqValue + 1 : LIVE_TAIL_FROM_SEQ;
-      return `${base}/ws/terminal/session?session=${encodeURIComponent(sessionName)}&fromSeq=${fromSeq}${runtimeSuffix}`;
+      const size = this.lastKnownDims;
+      const sizingSuffix = this.opts.clientClass && size
+        ? `&client=${this.opts.clientClass}&cols=${size.cols}&rows=${size.rows}&lease=exclusive`
+        : "";
+      return `${base}/ws/terminal/session?session=${encodeURIComponent(sessionName)}&fromSeq=${fromSeq}${runtimeSuffix}${sizingSuffix}`;
     }
     return `${base}/ws/terminal?cwd=${encodeURIComponent(this.opts.cwd ?? "")}${runtimeSuffix}`;
   }
@@ -340,6 +347,15 @@ export class ShellSocket {
         if (this.currentState !== "attached") return;
         this.handleOutput(frame);
         return;
+      case "canonical-size":
+        this.handleCanonicalSize(frame);
+        return;
+      case "lease-revoked":
+        this.teardownSocket();
+        this.clearAllTimers();
+        this.opts.events.onLeaseRevoked?.();
+        this.setState("ended");
+        return;
       case "exit":
         if (this.currentState !== "attached") return;
         this.handleExit(frame);
@@ -369,9 +385,21 @@ export class ShellSocket {
       return;
     }
     this.failedAttempts = 0;
+    this.handleCanonicalSize(frame.canonicalSize && typeof frame.canonicalSize === "object"
+      ? frame.canonicalSize as Record<string, unknown>
+      : {});
     this.flushPendingInput();
     this.scheduleAttachTimers();
     this.setState("attached");
+  }
+
+  private handleCanonicalSize(frame: Record<string, unknown>): void {
+    const cols = frame.cols;
+    const rows = frame.rows;
+    if (typeof cols !== "number" || typeof rows !== "number" || !Number.isInteger(cols) || !Number.isInteger(rows) || cols < MIN_COLS || cols > MAX_COLS || rows < MIN_ROWS || rows > MAX_ROWS) {
+      return;
+    }
+    this.opts.events.onCanonicalSize?.({ cols, rows });
   }
 
   private handleOutput(frame: Record<string, unknown>): void {
