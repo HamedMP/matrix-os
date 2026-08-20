@@ -1,0 +1,45 @@
+name: Prune Desktop channel assets
+description: Keep a mutable Desktop channel release limited to its two update manifests.
+
+inputs:
+  tag_name:
+    description: Mutable Desktop channel tag.
+    required: true
+  channel:
+    description: Desktop update channel.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Delete legacy channel bundle assets
+      shell: bash
+      env:
+        TAG_NAME: ${{ inputs.tag_name }}
+        CHANNEL: ${{ inputs.channel }}
+      run: |
+        set -euo pipefail
+        case "$CHANNEL" in
+          stable)
+            ALLOWED_MAC="latest-mac.yml"
+            ALLOWED_LINUX="latest-linux.yml"
+            ;;
+          beta|canary|dev)
+            ALLOWED_MAC="${CHANNEL}-mac.yml"
+            ALLOWED_LINUX="${CHANNEL}-linux.yml"
+            ;;
+          *)
+            echo "Unsupported Desktop update channel: $CHANNEL" >&2
+            exit 1
+            ;;
+        esac
+
+        gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" \
+          --json assets --jq '.assets[].name' \
+          | while IFS= read -r asset; do
+              if [ "$asset" = "$ALLOWED_MAC" ] || [ "$asset" = "$ALLOWED_LINUX" ]; then
+                continue
+              fi
+              gh release delete-asset "$TAG_NAME" "$asset" \
+                --repo "$GITHUB_REPOSITORY" --yes
+            done

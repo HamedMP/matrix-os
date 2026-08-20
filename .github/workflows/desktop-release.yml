@@ -49,6 +49,8 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
       artifact_prefix: ${{ steps.meta.outputs.artifact_prefix }}
     steps:
+      - uses: actions/checkout@v6
+
       - name: Resolve metadata
         id: meta
         env:
@@ -93,6 +95,15 @@ jobs:
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "artifact_prefix=matrix-desktop-$TAG-$CHANNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Guard immutable Desktop release
+        if: ${{ steps.meta.outputs.mode == 'publish' }}
+        uses: ./.github/actions/guard-immutable-desktop-release
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          expected_sha: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   build:
     needs: prepare
@@ -196,7 +207,7 @@ jobs:
           make_latest: false
           files: desktop-release/**
           fail_on_unmatched_files: true
-          overwrite_files: true
+          overwrite_files: false
 
       - name: Advance Desktop channel tag
         if: ${{ needs.prepare.outputs.mode == 'publish' }}
@@ -222,3 +233,12 @@ jobs:
           files: desktop-channel/**
           fail_on_unmatched_files: true
           overwrite_files: true
+
+      - name: Prune Desktop channel pointer assets
+        if: ${{ needs.prepare.outputs.mode == 'publish' }}
+        uses: ./.github/actions/prune-desktop-channel-assets
+        with:
+          tag_name: desktop-${{ needs.prepare.outputs.channel }}
+          channel: ${{ needs.prepare.outputs.channel }}
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -178,6 +178,65 @@ describe("createUpdater", () => {
     warn.mockRestore();
   });
 
+  it("reports that update checks require an installed build", async () => {
+    electronMock.app.isPackaged = false;
+    const onManualStatus = vi.fn();
+    const updater = createUpdater({
+      onAvailable: vi.fn(),
+      onReady: vi.fn(),
+      onManualStatus,
+    });
+
+    await updater.check({ notifyWhenCurrent: true });
+
+    expect(onManualStatus).toHaveBeenCalledWith({ status: "disabled" });
+    expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it("reports an already downloading or ready update for a user-requested check", async () => {
+    const onManualStatus = vi.fn();
+    const updater = createUpdater({
+      onAvailable: vi.fn(),
+      onReady: vi.fn(),
+      onManualStatus,
+    });
+
+    await updater.check();
+    updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
+    await updater.check({ notifyWhenCurrent: true });
+    expect(onManualStatus).toHaveBeenLastCalledWith({
+      status: "downloading",
+      version: "1.2.3",
+      progress: 0,
+    });
+
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
+    await updater.check({ notifyWhenCurrent: true });
+    expect(onManualStatus).toHaveBeenLastCalledWith({
+      status: "ready",
+      version: "1.2.3",
+      progress: 100,
+    });
+  });
+
+  it("reports a newly found update for a user-requested check", async () => {
+    const onManualStatus = vi.fn();
+    const updater = createUpdater({
+      onAvailable: vi.fn(),
+      onReady: vi.fn(),
+      onManualStatus,
+    });
+
+    await updater.check({ notifyWhenCurrent: true });
+    updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
+
+    expect(onManualStatus).toHaveBeenCalledWith({
+      status: "downloading",
+      version: "1.2.3",
+      progress: 0,
+    });
+  });
+
   it("sets an error status when the update check fails", async () => {
     updaterMock.autoUpdater.checkForUpdates.mockRejectedValue(new Error("network down"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -315,5 +374,38 @@ describe("createUpdater", () => {
     expect(await updater.install()).toBe(true);
     expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
     expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+  });
+
+  it("starts persisting release notes before publishing the ready state and waits before install", async () => {
+    const events: string[] = [];
+    let finishSave: (() => void) | null = null;
+    const updater = createUpdater({
+      onAvailable: vi.fn(),
+      onReady: vi.fn(),
+      onStateChanged: (snapshot) => {
+        if (snapshot.status === "ready") events.push("ready");
+      },
+      onReleaseReady: () => {
+        events.push("persist");
+        return new Promise<void>((resolve) => {
+          finishSave = resolve;
+        });
+      },
+    });
+
+    await updater.check();
+    updaterMock.handlers.get("update-downloaded")?.({
+      version: "1.2.3",
+      releaseNotes: "Safe persisted notes",
+    });
+
+    expect(events).toEqual(["persist", "ready"]);
+    const install = updater.install();
+    await Promise.resolve();
+    expect(updaterMock.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+
+    finishSave?.();
+    await install;
+    expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
   });
 });

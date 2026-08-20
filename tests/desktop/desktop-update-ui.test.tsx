@@ -166,4 +166,38 @@ describe("desktop update experience", () => {
       expect(invoke).toHaveBeenCalledWith("update:acknowledge-whats-new", { version: "1.2.3" });
     });
   });
+
+  it("never renders remote release-note images and opens only HTTPS links", async () => {
+    const invoke = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("operator", { invoke, on: vi.fn() });
+    useDesktopUpdate.setState({
+      release: {
+        version: "1.2.3",
+        notes: [
+          "![tracking pixel](https://tracker.example/pixel.png)",
+          "[Secure notes](https://matrix-os.com/releases/1.2.3)",
+          "[Insecure notes](http://example.com/releases/1.2.3)",
+        ].join("\n\n"),
+      },
+      whatsNewOpen: true,
+    });
+
+    render(
+      <Tooltip.Provider>
+        <WhatsNewDialog />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.queryByRole("img")).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "Secure notes" }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("shell:open-external", {
+        url: "https://matrix-os.com/releases/1.2.3",
+      });
+    });
+
+    invoke.mockClear();
+    fireEvent.click(screen.getByText("Insecure notes"));
+    expect(invoke).not.toHaveBeenCalled();
+  });
 });

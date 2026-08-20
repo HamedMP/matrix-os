@@ -2,27 +2,29 @@ import { describe, expect, it, vi } from "vitest";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
 
 describe("createAppMenuTemplate", () => {
-  it("offers Check for Updates in the packaged application menu", () => {
-    const checkForUpdates = vi.fn();
-    const template = createAppMenuTemplate({
-      appName: "Matrix OS",
-      isPackaged: true,
-      openExternal: vi.fn(),
-      send: vi.fn(),
-      adjustZoom: vi.fn(),
-      checkForUpdates,
-    });
-    const appMenu = template.find((item) => item.label === "Matrix OS");
-    const updateItem = Array.isArray(appMenu?.submenu)
-      ? appMenu.submenu.find((item) => "label" in item && item.label === "Check for Updates…")
-      : null;
+  it("offers Check for Updates in installed and development application menus", () => {
+    for (const isPackaged of [true, false]) {
+      const checkForUpdates = vi.fn();
+      const template = createAppMenuTemplate({
+        appName: "Matrix OS",
+        isPackaged,
+        openExternal: vi.fn(),
+        send: vi.fn(),
+        adjustZoom: vi.fn(),
+        checkForUpdates,
+      });
+      const appMenu = template.find((item) => item.label === "Matrix OS");
+      const updateItem = Array.isArray(appMenu?.submenu)
+        ? appMenu.submenu.find((item) => "label" in item && item.label === "Check for Updates…")
+        : null;
 
-    expect(updateItem).toBeTruthy();
-    if (!updateItem || !("click" in updateItem) || typeof updateItem.click !== "function") {
-      throw new Error("Check for Updates menu item is not clickable");
+      expect(updateItem, `isPackaged=${isPackaged}`).toBeTruthy();
+      if (!updateItem || !("click" in updateItem) || typeof updateItem.click !== "function") {
+        throw new Error("Check for Updates menu item is not clickable");
+      }
+      updateItem.click({} as never, {} as never, {} as never);
+      expect(checkForUpdates).toHaveBeenCalledOnce();
     }
-    updateItem.click({} as never, {} as never, {} as never);
-    expect(checkForUpdates).toHaveBeenCalledOnce();
   });
 
   it("maps Cmd+R to hosted Home refresh in packaged and development builds", () => {

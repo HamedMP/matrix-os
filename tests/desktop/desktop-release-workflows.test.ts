@@ -107,8 +107,11 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain("previous_tag_name=desktop-canary");
     expect(workflow).toContain("scripts/release/prepare-desktop-channel-manifests.mjs");
     expect(workflow).toContain("tag_name: desktop-v${{ needs.prepare.outputs.version }}");
+    expect(workflow).toContain("uses: ./.github/actions/guard-immutable-desktop-release");
+    expect(workflow).toContain("overwrite_files: false");
     expect(workflow).toContain("tag_name: desktop-canary");
     expect(workflow).toContain("files: desktop-channel/**");
+    expect(workflow).toContain("uses: ./.github/actions/prune-desktop-channel-assets");
     expect(workflow).not.toContain("gh release delete desktop-canary");
     expect(downloadIndex).toBeGreaterThan(-1);
     expect(notesIndex).toBeGreaterThan(downloadIndex);
@@ -128,6 +131,8 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain("name: Advance Desktop channel tag");
     expect(workflow).toContain("name: Publish Desktop channel pointer");
     expect(workflow).toContain("files: desktop-channel/**");
+    expect(workflow).toContain("uses: ./.github/actions/guard-immutable-desktop-release");
+    expect(workflow).toContain("uses: ./.github/actions/prune-desktop-channel-assets");
     expect(workflow).toContain("make_latest: false");
     expect(workflow).not.toContain("make_latest: ${{ needs.prepare.outputs.channel == 'stable' }}");
   });
@@ -158,11 +163,49 @@ describe("desktop release workflows", () => {
     expect(build).toContain("RELEASE_VERSION: ${{ inputs.version }}");
     expect(build).toContain("j.version = exact ||");
     expect(release).toContain("version: ${{ needs.prepare.outputs.version }}");
-    expect(release).toContain("overwrite_files: true");
+    const immutableRelease = release.slice(
+      release.indexOf("name: Create immutable GitHub release"),
+      release.indexOf("name: Advance Desktop channel tag"),
+    );
+    expect(immutableRelease).toContain("overwrite_files: false");
+    expect(immutableRelease).not.toContain("overwrite_files: true");
     expect(release).toContain("Merge channel macOS update manifests");
     expect(release).toContain("output: ${{ needs.prepare.outputs.channel }}-mac.yml");
     expect(canary).toContain("Merge canary macOS update manifests");
     expect(canary).toContain("output: canary-mac.yml");
+    const immutableCanary = canary.slice(
+      canary.indexOf("name: Publish immutable canary release"),
+      canary.indexOf("name: Advance desktop-canary tag"),
+    );
+    expect(immutableCanary).toContain("overwrite_files: false");
+    expect(immutableCanary).not.toContain("overwrite_files: true");
+  });
+
+  it("fails closed before replacing an existing immutable Desktop release", () => {
+    const action = readFileSync(
+      join(root, ".github/actions/guard-immutable-desktop-release/action.yml"),
+      "utf8",
+    );
+
+    expect(action).toContain("releases/tags/${TAG_NAME}");
+    expect(action).toContain("already exists and cannot be overwritten");
+    expect(action).toContain("HTTP 404");
+    expect(action).toContain('refs/tags/$TAG_NAME^{}');
+    expect(action).toContain('REMOTE_TAG_SHA" != "$EXPECTED_SHA"');
+  });
+
+  it("keeps only the two platform manifests on a Desktop channel pointer release", () => {
+    const action = readFileSync(
+      join(root, ".github/actions/prune-desktop-channel-assets/action.yml"),
+      "utf8",
+    );
+
+    expect(action).toContain('ALLOWED_MAC="latest-mac.yml"');
+    expect(action).toContain('ALLOWED_LINUX="latest-linux.yml"');
+    expect(action).toContain('ALLOWED_MAC="${CHANNEL}-mac.yml"');
+    expect(action).toContain('ALLOWED_LINUX="${CHANNEL}-linux.yml"');
+    expect(action).toContain('gh release delete-asset "$TAG_NAME" "$asset"');
+    expect(action).toContain("--yes");
   });
 
   it("supports a dev desktop update channel for test releases", () => {

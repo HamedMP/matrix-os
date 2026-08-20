@@ -33,6 +33,14 @@ jobs:
           echo "version=$BASE_VERSION-$SUFFIX" >> "$GITHUB_OUTPUT"
           echo "artifact_prefix=matrix-desktop-desktop-canary" >> "$GITHUB_OUTPUT"
 
+      - name: Guard immutable Desktop release
+        uses: ./.github/actions/guard-immutable-desktop-release
+        with:
+          tag_name: desktop-v${{ steps.meta.outputs.version }}
+          expected_sha: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   build:
     needs: prepare
     uses: ./.github/workflows/desktop-build.yml
@@ -113,7 +121,7 @@ jobs:
           make_latest: false
           files: desktop-release/**
           fail_on_unmatched_files: true
-          overwrite_files: true
+          overwrite_files: false
 
       - name: Advance desktop-canary tag
         run: |
@@ -134,3 +142,11 @@ jobs:
           files: desktop-channel/**
           fail_on_unmatched_files: true
           overwrite_files: true
+
+      - name: Prune desktop-canary channel assets
+        uses: ./.github/actions/prune-desktop-channel-assets
+        with:
+          tag_name: desktop-canary
+          channel: canary
+        env:
+          GH_TOKEN: ${{ github.token }}

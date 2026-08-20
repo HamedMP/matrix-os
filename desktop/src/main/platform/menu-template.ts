@@ -75,14 +75,10 @@ export function createAppMenuTemplate({
       label: appName,
       submenu: [
         { role: "about" },
-        ...(isPackaged
-          ? ([
-              {
-                label: "Check for Updates…",
-                click: () => checkForUpdates(),
-              },
-            ] as MenuItemConstructorOptions[])
-          : []),
+        {
+          label: "Check for Updates…",
+          click: () => checkForUpdates(),
+        },
         { type: "separator" },
         {
           label: "Settings…",

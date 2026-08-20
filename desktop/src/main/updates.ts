@@ -18,6 +18,7 @@ interface UpdateEvents {
   onReady: (version: string) => void;
   onUpToDate?: () => void;
   onCheckError?: () => void;
+  onManualStatus?: (snapshot: DesktopUpdateSnapshot) => void;
   onStateChanged?: (snapshot: DesktopUpdateSnapshot) => void;
   onReleaseReady?: (release: DesktopReleaseNotes) => Promise<void> | void;
 }
@@ -144,17 +145,22 @@ export function createUpdater(events: UpdateEvents): Updater {
 
   const updater: Updater = {
     async check(options) {
+      const userRequested = options?.notifyWhenCurrent === true;
       if (!feed.enabled) {
         setSnapshot({ status: "disabled" });
+        if (userRequested) events.onManualStatus?.({ ...current });
         return;
       }
       if (current.status === "checking") {
-        notifyWhenCurrent ||= options?.notifyWhenCurrent === true;
+        notifyWhenCurrent ||= userRequested;
         return;
       }
-      if (current.status === "downloading" || current.status === "ready") return;
+      if (current.status === "downloading" || current.status === "ready") {
+        if (userRequested) events.onManualStatus?.({ ...current });
+        return;
+      }
 
-      notifyWhenCurrent = options?.notifyWhenCurrent === true;
+      notifyWhenCurrent = userRequested;
       setSnapshot({ status: "checking" });
       try {
         const autoUpdater = await loadAutoUpdater();
@@ -177,9 +183,9 @@ export function createUpdater(events: UpdateEvents): Updater {
             completeUserRequestedCheck(events.onCheckError);
             return;
           }
-          completeUserRequestedCheck();
           setSnapshot({ status: "downloading", version, progress: 0 });
           events.onAvailable(version);
+          completeUserRequestedCheck(() => events.onManualStatus?.({ ...current }));
         });
         autoUpdater.on("download-progress", (progress) => {
           if (current.status !== "downloading") return;
@@ -195,15 +201,18 @@ export function createUpdater(events: UpdateEvents): Updater {
             setSnapshot({ status: "error" });
             return;
           }
-          setSnapshot({ status: "ready", version, progress: 100 });
-          events.onReady(version);
-          pendingReleaseSave = Promise.resolve(events.onReleaseReady?.(readRelease(info, version)))
-            .catch((err: unknown) => {
+          pendingReleaseSave = (async () => {
+            try {
+              await events.onReleaseReady?.(readRelease(info, version));
+            } catch (err: unknown) {
               console.warn(
                 "[updates] could not persist release notes:",
                 err instanceof Error ? err.message : String(err),
               );
-            });
+            }
+          })();
+          setSnapshot({ status: "ready", version, progress: 100 });
+          events.onReady(version);
         });
         autoUpdater.once("update-not-available", () => {
           console.info("[updates] update check completed: up to date");
