@@ -453,26 +453,31 @@ exit 99
     expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256"');
   });
 
-  it('skips rebaking AWS and the host bundle only after exact snapshot validation', () => {
+  it('reuses an exact prepared snapshot without repeating immutable host setup', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const hostEnv = cloudInit.indexOf('. /opt/matrix/env/host.env');
     const fastPath = cloudInit.indexOf('/opt/matrix/bin/matrix-golden-snapshot-fast-path');
-    const apt = cloudInit.indexOf('apt_get_update()', fastPath);
-    const awsSlowPath = cloudInit.indexOf('if [ "$exact_snapshot_fast_path" != true ]; then', apt);
-    const awsDownload = cloudInit.indexOf('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip', awsSlowPath);
-    const sharedSetup = cloudInit.indexOf('install -d -o root -g matrix -m 0770 /opt/matrix');
-    const bundleSlowPath = cloudInit.indexOf('if [ "$exact_snapshot_fast_path" != true ]; then', awsSlowPath + 1);
+    const bundleSlowPath = cloudInit.indexOf('if [ "$exact_snapshot_fast_path" != true ]; then', fastPath);
     const bundleDownload = cloudInit.indexOf('"$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz', bundleSlowPath);
+    const prerequisites = cloudInit.indexOf(
+      'timeout --kill-after=30 1800 /opt/matrix/bin/matrix-prepare-host-prerequisites',
+      bundleDownload,
+    );
+    const fallbackApt = cloudInit.indexOf('apt_get_update()', prerequisites);
+    const sharedSetup = cloudInit.indexOf(
+      'install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls',
+      fallbackApt,
+    );
 
     expect(hostEnv).toBeGreaterThan(-1);
     expect(fastPath).toBeGreaterThan(hostEnv);
-    expect(apt).toBeGreaterThan(fastPath);
-    expect(awsSlowPath).toBeGreaterThan(apt);
-    expect(awsDownload).toBeGreaterThan(awsSlowPath);
-    expect(sharedSetup).toBeGreaterThan(awsDownload);
-    expect(bundleSlowPath).toBeGreaterThan(sharedSetup);
+    expect(bundleSlowPath).toBeGreaterThan(fastPath);
     expect(bundleDownload).toBeGreaterThan(bundleSlowPath);
+    expect(prerequisites).toBeGreaterThan(bundleDownload);
+    expect(fallbackApt).toBeGreaterThan(prerequisites);
+    expect(sharedSetup).toBeGreaterThan(fallbackApt);
+    expect(cloudInit).toContain('[ -x /opt/matrix/bin/matrix-prepare-host-prerequisites ]');
     expect(cloudInit).toContain('matrix-host: exact golden snapshot fast path selected');
     expect(cloudInit).toContain('matrix-host: full bootstrap required');
   });

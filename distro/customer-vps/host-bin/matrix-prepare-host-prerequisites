@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST_PREREQUISITES_VERSION=1
+root="${MATRIX_HOST_PREREQUISITES_ROOT:-/}"
+case "$root" in
+  /*) ;;
+  *) echo "matrix host prerequisites root must be absolute" >&2; exit 64 ;;
+esac
+root="${root%/}"
+[ -n "$root" ] || root="/"
+if [ -L "$root" ]; then
+  echo "matrix host prerequisites root must not be a symlink" >&2
+  exit 64
+fi
+
+if [ "$root" = / ]; then
+  matrix_dir=/opt/matrix
+else
+  matrix_dir="$root/opt/matrix"
+fi
+marker="$matrix_dir/HOST_PREREQUISITES_READY"
+mode="${1:-install}"
+case "$mode" in
+  install|--certify-only) ;;
+  *) echo "usage: matrix-prepare-host-prerequisites [--certify-only]" >&2; exit 64 ;;
+esac
+required_commands=(
+  add-apt-repository
+  apparmor_parser
+  aws
+  bwrap
+  cmatrix
+  curl
+  docker
+  elixir
+  erl
+  file
+  git
+  nginx
+  openssl
+  psql
+  socat
+  sudo
+  unzip
+  zsh
+)
+
+prerequisites_present() {
+  local command
+  for command in "${required_commands[@]}"; do
+    command -v "$command" >/dev/null 2>&1 || return 1
+  done
+}
+
+write_readiness_marker() {
+  install -d -m 0770 "$matrix_dir"
+  if [ "$root" = / ]; then
+    chown root:root "$matrix_dir"
+  fi
+  local marker_tmp
+  marker_tmp="$(mktemp "$matrix_dir/.host-prerequisites.XXXXXX")"
+  trap 'rm -f -- "$marker_tmp"' EXIT HUP INT TERM
+  printf 'version=%s\n' "$HOST_PREREQUISITES_VERSION" >"$marker_tmp"
+  chmod 0644 "$marker_tmp"
+  mv -f -- "$marker_tmp" "$marker"
+  trap - EXIT HUP INT TERM
+}
+
+certify_prerequisites() {
+  local command
+  for command in "${required_commands[@]}"; do
+    command -v "$command" >/dev/null 2>&1 || {
+      echo "matrix host prerequisite missing: $command" >&2
+      return 1
+    }
+  done
+  write_readiness_marker
+}
+
+prerequisites_ready() {
+  [ -f "$marker" ] && [ ! -L "$marker" ] \
+    && [ "$(tr -d '\r\n' <"$marker")" = "version=$HOST_PREREQUISITES_VERSION" ] \
+    && prerequisites_present
+}
+
+if [ "$mode" = --certify-only ]; then
+  certify_prerequisites
+  exit 0
+fi
+
+if prerequisites_ready; then
+  exit 0
+fi
+
+apt_get_update() {
+  timeout --kill-after=30 300 apt-get update \
+    -o Acquire::Retries=5 \
+    -o Acquire::http::Timeout=20 \
+    -o Acquire::https::Timeout=20
+}
+
+if ! apt_get_update; then
+  find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i \
+    -e 's|https://mirror.hetzner.com/ubuntu/packages|http://archive.ubuntu.com/ubuntu|g' \
+    -e 's|https://mirror.hetzner.com/ubuntu/security|http://security.ubuntu.com/ubuntu|g' \
+    {} +
+  apt_get_update
+fi
+
+timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive \
+  apt-get install -y software-properties-common
+timeout --kill-after=30 120 add-apt-repository -y universe
+apt_get_update
+timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir \
+  erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools \
+  file git postgresql-client procps nginx openssl socat sudo unzip zsh
+
+install -d -o root -g root -m 0755 /etc/apparmor.d
+cat >/etc/apparmor.d/bwrap <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+EOF
+apparmor_parser -r /etc/apparmor.d/bwrap
+
+if ! command -v aws >/dev/null 2>&1; then
+  aws_tmp_dir="$(mktemp -d /tmp/matrix-aws-cli.XXXXXX)"
+  cleanup() {
+    rm -rf -- "$aws_tmp_dir"
+  }
+  trap cleanup EXIT HUP INT TERM
+  curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
+    --connect-timeout 10 --max-time 120 \
+    https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip \
+    -o "$aws_tmp_dir/awscliv2.zip"
+  unzip -q "$aws_tmp_dir/awscliv2.zip" -d "$aws_tmp_dir"
+  aws_install_args=(--bin-dir /usr/local/bin --install-dir /usr/local/aws-cli)
+  if [ -d /usr/local/aws-cli ]; then
+    aws_install_args+=(--update)
+  fi
+  "$aws_tmp_dir/aws/install" "${aws_install_args[@]}"
+  cleanup
+  trap - EXIT HUP INT TERM
+fi
+
+certify_prerequisites

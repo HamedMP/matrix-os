@@ -501,28 +501,50 @@ runcmd:
       echo "matrix-host: full bootstrap required"
     fi
 
-    apt_get_update() {
-      apt-get update \
-        -o Acquire::Retries=5 \
-        -o Acquire::http::Timeout=20 \
-        -o Acquire::https::Timeout=20
-    }
-
-    if ! apt_get_update; then
-      find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i \
-          -e 's|https://mirror.hetzner.com/ubuntu/packages|http://archive.ubuntu.com/ubuntu|g' \
-          -e 's|https://mirror.hetzner.com/ubuntu/security|http://security.ubuntu.com/ubuntu|g' \
-          {} +
-      apt_get_update
+    if [ "$exact_snapshot_fast_path" != true ]; then
+      [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }
+      curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 900 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz
+      curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256" -o /tmp/matrix-host.tgz.sha256
+      expected="$(awk '{print $1}' /tmp/matrix-host.tgz.sha256)"
+      if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ] && [ "$expected" != "$MATRIX_TARGET_BUNDLE_SHA256" ]; then
+        echo "matrix-host: target bundle provenance mismatch" >&2
+        exit 1
+      fi
+      actual="$(sha256sum /tmp/matrix-host.tgz | awk '{print $1}')"
+      [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
+      if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ]; then
+        rm -rf /opt/matrix/app /opt/matrix/bin /opt/matrix/runtime /opt/matrix/systemd
+      fi
+      tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
-    add-apt-repository -y universe
-    apt_get_update
+    if [ -x /opt/matrix/bin/matrix-prepare-host-prerequisites ]; then
+      timeout --kill-after=30 1800 /opt/matrix/bin/matrix-prepare-host-prerequisites
+    else
+      # Transitional fallback for releases built before the extracted
+      # prerequisite script existed. Remove after stable no longer references
+      # such a bundle.
+      apt_get_update() {
+        timeout --kill-after=30 300 apt-get update \
+          -o Acquire::Retries=5 \
+          -o Acquire::http::Timeout=20 \
+          -o Acquire::https::Timeout=20
+      }
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh
-    install -d -o root -g root -m 0755 /etc/apparmor.d
-    cat >/etc/apparmor.d/bwrap <<'EOF'
+      if ! apt_get_update; then
+        find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i \
+            -e 's|https://mirror.hetzner.com/ubuntu/packages|http://archive.ubuntu.com/ubuntu|g' \
+            -e 's|https://mirror.hetzner.com/ubuntu/security|http://security.ubuntu.com/ubuntu|g' \
+            {} +
+        apt_get_update
+      fi
+
+      timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
+      timeout --kill-after=30 120 add-apt-repository -y universe
+      apt_get_update
+      timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh
+      install -d -o root -g root -m 0755 /etc/apparmor.d
+      cat >/etc/apparmor.d/bwrap <<'EOF'
     abi <abi/4.0>,
     include <tunables/global>
 
@@ -531,11 +553,12 @@ runcmd:
       include if exists <local/bwrap>
     }
     EOF
-    systemctl reload apparmor
-    if [ "$exact_snapshot_fast_path" != true ]; then
-      curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
-      unzip -q /tmp/awscliv2.zip -d /tmp
-      /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+      systemctl reload apparmor
+      if ! command -v aws >/dev/null 2>&1; then
+        curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+        unzip -q /tmp/awscliv2.zip -d /tmp
+        /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+      fi
     fi
     log_bootstrap_phase system_prerequisites_ready
 
@@ -606,29 +629,11 @@ runcmd:
     ln -sfn /home/matrix/home /home/matrixos/home
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/r2.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
-    if [ "$exact_snapshot_fast_path" != true ]; then
-      [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }
-      curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 900 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz
-      curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256" -o /tmp/matrix-host.tgz.sha256
-      expected="$(awk '{print $1}' /tmp/matrix-host.tgz.sha256)"
-      if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ] && [ "$expected" != "$MATRIX_TARGET_BUNDLE_SHA256" ]; then
-        echo "matrix-host: target bundle provenance mismatch" >&2
-        exit 1
-      fi
-      actual="$(sha256sum /tmp/matrix-host.tgz | awk '{print $1}')"
-      [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
-      if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ] \
-        && [ -n "${MATRIX_SNAPSHOT_SOURCE_VERSION:-}" ] \
-        && [ "$MATRIX_SNAPSHOT_SOURCE_VERSION" != "${MATRIX_IMAGE_VERSION:-}" ]; then
-        rm -rf /opt/matrix/app /opt/matrix/bin /opt/matrix/runtime /opt/matrix/systemd
-      fi
-      tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
-      chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
-      if [ -d /opt/matrix/terminal-runtime ]; then
-        chown -R root:root /opt/matrix/terminal-runtime
-      fi
-      chmod -R g+rwX /opt/matrix/app
+    chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+    if [ -d /opt/matrix/terminal-runtime ]; then
+      chown -R root:root /opt/matrix/terminal-runtime
     fi
+    chmod -R g+rwX /opt/matrix/app
     log_bootstrap_phase host_bundle_ready
     chown root:matrix /opt/matrix/app
     chmod g+rwx /opt/matrix/app

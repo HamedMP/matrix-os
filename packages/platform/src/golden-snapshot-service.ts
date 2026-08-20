@@ -24,6 +24,35 @@ import {
 const UuidSchema = z.string().uuid();
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const CleanupProviderResourceIdSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const SystemdStateSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:@-]+$/);
+export const GoldenSnapshotServiceDiagnosticsSchema = z.object({
+  unit: z.enum([
+    'matrix-gateway.service',
+    'matrix-shell.service',
+    'matrix-sync-agent.service',
+  ]),
+  loadState: SystemdStateSchema,
+  activeState: SystemdStateSchema,
+  subState: SystemdStateSchema,
+  result: SystemdStateSchema,
+  conditionResult: z.boolean().nullable(),
+  execMainCode: SystemdStateSchema,
+  execMainStatus: z.number().int().nonnegative().max(2 ** 31 - 1),
+  nRestarts: z.number().int().nonnegative().max(10_000),
+  journalTail: z.array(z.string().max(512)).max(40),
+}).strict();
+const GoldenSnapshotCallbackOutcomeSchema = z.object({
+  accepted: z.literal(true),
+  serviceDiagnostics: GoldenSnapshotServiceDiagnosticsSchema.optional(),
+}).passthrough();
+
+export function readGoldenSnapshotServiceDiagnosticsForOperator(input: unknown) {
+  const diagnostics = GoldenSnapshotCallbackOutcomeSchema.safeParse(input).data?.serviceDiagnostics;
+  if (!diagnostics) return undefined;
+  const { journalTail: _journalTail, ...coarseDiagnostics } = diagnostics;
+  return coarseDiagnostics;
+}
+
 export function normalizeCleanupProviderResourceId(input: unknown): number {
   return CleanupProviderResourceIdSchema.parse(input);
 }
@@ -31,10 +60,13 @@ const GoldenSnapshotFailureStageSchema = z.enum([
   'bundle_download',
   'bundle_verify',
   'bundle_extract',
+  'host_prerequisites',
   'identity_regeneration',
   'activation',
   'activation_preflight_evidence',
   'activation_preflight_forbidden_state',
+  'activation_preflight_host_prerequisites',
+  'activation_preflight_user_state',
   'activation_preflight_runtime_state',
   'activation_preflight_owner_state',
   'activation_preflight_root_ssh_state',
@@ -113,6 +145,7 @@ export const GoldenSnapshotCallbackSchema = z.discriminatedUnion('phase', [
     stage: GoldenSnapshotFailureStageSchema,
     bundleVersion: GoldenSnapshotBundleVersionSchema,
     bundleSha256: Sha256Schema,
+    serviceDiagnostics: GoldenSnapshotServiceDiagnosticsSchema.optional(),
   }).strict(),
 ]);
 
@@ -285,7 +318,7 @@ runcmd:
         && [ ! -L /run/matrix-golden-activation-stage ]; then
         activationStage="$(cat /run/matrix-golden-activation-stage)"
         case "$activationStage" in
-          activation_preflight_evidence|activation_preflight_forbidden_state|activation_preflight_runtime_state|activation_preflight_owner_state|activation_preflight_root_ssh_state|activation_preflight_root_local_state|activation_preflight_log_state|activation_preflight_cloud_init|activation_preflight_container_state|activation_runtime_setup|activation_terminal_runtime|activation_docker_start|activation_postgres_pull|activation_postgres_start|activation_postgres_ready|activation_services_start|activation_services_ready|activation_gateway_ready|activation_shell_ready|activation_sync_agent_ready|activation_gateway_health) reportedStage="$activationStage" ;;
+          activation_preflight_evidence|activation_preflight_forbidden_state|activation_preflight_host_prerequisites|activation_preflight_user_state|activation_preflight_runtime_state|activation_preflight_owner_state|activation_preflight_root_ssh_state|activation_preflight_root_local_state|activation_preflight_log_state|activation_preflight_cloud_init|activation_preflight_container_state|activation_runtime_setup|activation_terminal_runtime|activation_docker_start|activation_postgres_pull|activation_postgres_start|activation_postgres_ready|activation_services_start|activation_services_ready|activation_gateway_ready|activation_shell_ready|activation_sync_agent_ready|activation_gateway_health) reportedStage="$activationStage" ;;
         esac
       fi
       callbackToken="$(cat /run/matrix-golden-snapshot-callback-token 2>/dev/null)"
@@ -558,6 +591,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
       phase: string;
       tokenDigest: string;
       payloadDigest: string;
+      serviceDiagnostics?: z.infer<typeof GoldenSnapshotServiceDiagnosticsSchema>;
     },
   ): Promise<boolean> {
     return deps.db.transaction(async (trx) => {
@@ -581,6 +615,16 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           fromState: priorSnapshot.state, toState: 'quarantined', reason: code, now: at,
         });
       }
+      const callbackEvidence = callbackReceipt ? {
+        callback_event_id: callbackReceipt.eventId,
+        callback_payload_sha256: callbackReceipt.payloadDigest,
+        callback_outcome: {
+          accepted: true,
+          ...(callbackReceipt.serviceDiagnostics
+            ? { serviceDiagnostics: callbackReceipt.serviceDiagnostics }
+            : {}),
+        },
+      } : {};
       await trx.executor.updateTable('golden_snapshot_builds').set({
         phase: 'failed', status: 'failed', last_error_code: code, updated_at: at,
         completed_at: at, lease_expires_at: null, callback_phase: null, callback_token_hash: null,
@@ -588,6 +632,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           ? addMilliseconds(at, ORPHAN_RECONCILIATION_DEADLINE_MS)
           : null,
         pending_operation: reconcileUnknownCreate ? build.pending_operation : null,
+        ...callbackEvidence,
       }).where('build_id', '=', buildId).where('phase', '=', expectedPhase)
         .where('status', '=', 'running').execute();
       const resources = [
@@ -1172,6 +1217,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         phase: payload.phase,
         tokenDigest,
         payloadDigest,
+        serviceDiagnostics: payload.serviceDiagnostics,
       })) {
         throw new GoldenSnapshotCallbackError('rejected');
       }
