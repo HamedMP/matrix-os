@@ -17,6 +17,26 @@ const startedAt = new Date(startTime).toISOString();
 const SYSTEM_INFO_FILE_MAX_BYTES = 64 * 1024;
 const SYSTEM_INFO_CACHE_TTL_MS = 5_000;
 const SYSTEM_INFO_CACHE_MAX_ENTRIES = 8;
+const BOOTSTRAP_PHASE_MAX_SECONDS = 86_400;
+
+export interface HostBootstrapAttestation {
+  schemaVersion: 1;
+  imageSource: "clean_image" | "snapshot";
+  fastPathSelected: boolean;
+  fullBundleDownloaded: boolean;
+  systemPrerequisitesReused: boolean;
+  bundleArchivePresent: boolean;
+  targetBundleSha256: string;
+  timing: {
+    systemPrerequisitesReadySeconds: number;
+    hostBundleReadySeconds: number;
+    coreServicesStartedSeconds: number;
+  };
+}
+
+interface RuntimeHostBundleRelease extends HostBundleRelease {
+  bootstrap?: HostBootstrapAttestation;
+}
 
 interface CachedSystemInfoFile<T> {
   expiresAt: number;
@@ -89,7 +109,12 @@ function parseInstalledRelease(value: unknown): HostBundleRelease | undefined {
   const version = parseSafeSystemVersion(parsed.version);
   if (!version) return undefined;
   const channel = parseReleaseChannel(parsed.channel);
-  const { version: _rawVersion, channel: _rawChannel, ...metadata } = parsed;
+  const {
+    version: _rawVersion,
+    channel: _rawChannel,
+    bootstrap: _untrustedBootstrap,
+    ...metadata
+  } = parsed as HostBundleRelease & { bootstrap?: unknown };
   return {
     ...metadata,
     version,
@@ -167,7 +192,88 @@ export interface SystemInfo {
     homeDiskTotalBytes: number | null;
     homeDiskFreeBytes: number | null;
   };
-  release?: HostBundleRelease;
+  release?: RuntimeHostBundleRelease;
+}
+
+function parseBootstrapPhaseSeconds(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && Number(value) >= 0
+    && Number(value) <= BOOTSTRAP_PHASE_MAX_SECONDS
+    ? Number(value)
+    : undefined;
+}
+
+function parseHostBootstrapAttestation(value: unknown): HostBootstrapAttestation | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  const timing = candidate.timing;
+  if (!timing || typeof timing !== "object" || Array.isArray(timing)) return undefined;
+  const timingCandidate = timing as Record<string, unknown>;
+  const systemPrerequisitesReadySeconds = parseBootstrapPhaseSeconds(
+    timingCandidate.systemPrerequisitesReadySeconds,
+  );
+  const hostBundleReadySeconds = parseBootstrapPhaseSeconds(timingCandidate.hostBundleReadySeconds);
+  const coreServicesStartedSeconds = parseBootstrapPhaseSeconds(
+    timingCandidate.coreServicesStartedSeconds,
+  );
+  if (candidate.schemaVersion !== 1
+    || (candidate.imageSource !== "clean_image" && candidate.imageSource !== "snapshot")
+    || typeof candidate.fastPathSelected !== "boolean"
+    || typeof candidate.fullBundleDownloaded !== "boolean"
+    || typeof candidate.systemPrerequisitesReused !== "boolean"
+    || typeof candidate.bundleArchivePresent !== "boolean"
+    || typeof candidate.targetBundleSha256 !== "string"
+    || !/^[a-f0-9]{64}$/.test(candidate.targetBundleSha256)
+    || systemPrerequisitesReadySeconds === undefined
+    || hostBundleReadySeconds === undefined
+    || coreServicesStartedSeconds === undefined
+    || hostBundleReadySeconds < systemPrerequisitesReadySeconds
+    || coreServicesStartedSeconds < hostBundleReadySeconds) {
+    return undefined;
+  }
+  if (candidate.fastPathSelected
+    && (candidate.imageSource !== "snapshot"
+      || candidate.fullBundleDownloaded
+      || !candidate.systemPrerequisitesReused
+      || candidate.bundleArchivePresent)) {
+    return undefined;
+  }
+  if (!candidate.fastPathSelected
+    && (!candidate.fullBundleDownloaded
+      || candidate.systemPrerequisitesReused
+      || !candidate.bundleArchivePresent)) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 1,
+    imageSource: candidate.imageSource,
+    fastPathSelected: candidate.fastPathSelected,
+    fullBundleDownloaded: candidate.fullBundleDownloaded,
+    systemPrerequisitesReused: candidate.systemPrerequisitesReused,
+    bundleArchivePresent: candidate.bundleArchivePresent,
+    targetBundleSha256: candidate.targetBundleSha256,
+    timing: {
+      systemPrerequisitesReadySeconds,
+      hostBundleReadySeconds,
+      coreServicesStartedSeconds,
+    },
+  };
+}
+
+function readHostBootstrapAttestation(): HostBootstrapAttestation | undefined {
+  const file = process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE
+    ?? "/var/lib/matrix/bootstrap-attestation.json";
+  try {
+    return readCachedSystemInfoFile(`bootstrap:${file}`, () => {
+      const raw = readBoundedTextFile(file);
+      if (!raw) return undefined;
+      return parseHostBootstrapAttestation(JSON.parse(raw));
+    });
+  } catch (err) {
+    if (!isMissingFileError(err)) {
+      logSystemInfoReadFailure("Failed to read host bootstrap attestation", err);
+    }
+    return undefined;
+  }
 }
 
 function readReleaseInfo(): HostBundleRelease | undefined {
@@ -289,6 +395,7 @@ export function getSystemInfo(
   const homeDisk = readDiskUsage(homePath);
   const [load1 = 0, load5 = 0, load15 = 0] = loadavg();
   const release = readReleaseInfo();
+  const bootstrap = readHostBootstrapAttestation();
   const channel = parseReleaseChannel(release?.channel);
   const updateChannel = readPersistentUpdateChannel()
     ?? parseReleaseChannel(process.env.MATRIX_UPDATE_CHANNEL)
@@ -329,6 +436,8 @@ export function getSystemInfo(
       homeDiskTotalBytes: homeDisk?.totalBytes ?? null,
       homeDiskFreeBytes: homeDisk?.freeBytes ?? null,
     },
-    release,
+    release: release && bootstrap && release.bundleSha256 === bootstrap.targetBundleSha256
+      ? { ...release, bootstrap }
+      : release,
   };
 }

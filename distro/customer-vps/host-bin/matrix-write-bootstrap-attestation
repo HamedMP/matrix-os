@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="${MATRIX_BOOTSTRAP_ATTESTATION_ROOT:-}"
+root="${root%/}"
+path() {
+  printf '%s%s\n' "$root" "$1"
+}
+
+wait_seconds="${MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS:-60}"
+[[ "$wait_seconds" =~ ^[0-9]{1,3}$ ]] && [ "$wait_seconds" -le 300 ] || exit 64
+host_env="$(path /opt/matrix/env/host.env)"
+cloud_init_output="$(path /var/log/cloud-init-output.log)"
+bundle_archive="$(path /tmp/matrix-host.tgz)"
+bundle_checksum="$(path /tmp/matrix-host.tgz.sha256)"
+output_dir="$(path /var/lib/matrix)"
+output_file="$(path /var/lib/matrix/bootstrap-attestation.json)"
+
+is_not_group_or_world_writable() {
+  local mode
+  mode="$(stat -c %a "$1")" || return 1
+  (( (8#$mode & 8#022) == 0 ))
+}
+
+validate_existing_attestation() {
+  [ -f "$output_file" ] && [ ! -L "$output_file" ] || return 1
+  existing_size="$(stat -c %s "$output_file")" || return 1
+  [[ "$existing_size" =~ ^[0-9]+$ ]] && [ "$existing_size" -le 65536 ] || return 1
+  if [ -z "$root" ]; then
+    [ "$(stat -c %u:%a "$output_file")" = 0:644 ] || return 1
+  fi
+  python3 - "$output_file" <<'PY'
+import json
+import re
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        value = json.load(stream)
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+boolean_fields = (
+    "fastPathSelected",
+    "fullBundleDownloaded",
+    "systemPrerequisitesReused",
+    "bundleArchivePresent",
+)
+if (
+    not isinstance(value, dict)
+    or value.get("schemaVersion") != 1
+    or value.get("imageSource") not in ("clean_image", "snapshot")
+    or any(type(value.get(field)) is not bool for field in boolean_fields)
+    or not isinstance(value.get("targetBundleSha256"), str)
+    or re.fullmatch(r"[a-f0-9]{64}", value["targetBundleSha256"]) is None
+):
+    raise SystemExit(1)
+
+timing = value.get("timing")
+timing_fields = (
+    "systemPrerequisitesReadySeconds",
+    "hostBundleReadySeconds",
+    "coreServicesStartedSeconds",
+)
+if not isinstance(timing, dict):
+    raise SystemExit(1)
+seconds = [timing.get(field) for field in timing_fields]
+if any(type(item) is not int or item < 0 or item > 86400 for item in seconds):
+    raise SystemExit(1)
+if seconds != sorted(seconds):
+    raise SystemExit(1)
+
+if value["fastPathSelected"]:
+    valid_path = (
+        value["imageSource"] == "snapshot"
+        and not value["fullBundleDownloaded"]
+        and value["systemPrerequisitesReused"]
+        and not value["bundleArchivePresent"]
+    )
+else:
+    valid_path = (
+        value["fullBundleDownloaded"]
+        and not value["systemPrerequisitesReused"]
+        and value["bundleArchivePresent"]
+    )
+if not valid_path:
+    raise SystemExit(1)
+PY
+}
+
+if [ -e "$output_file" ] || [ -L "$output_file" ]; then
+  validate_existing_attestation || exit 68
+  exit 0
+fi
+
+[ -f "$host_env" ] && [ ! -L "$host_env" ] || exit 65
+host_env_size="$(stat -c %s "$host_env")" || exit 65
+[[ "$host_env_size" =~ ^[0-9]+$ ]] && [ "$host_env_size" -le 65536 ] || exit 65
+if [ -z "$root" ]; then
+  [ "$(stat -c %u "$host_env")" = 0 ] && is_not_group_or_world_writable "$host_env" || exit 65
+  [ "$(stat -c %u:%a "$output_dir")" = 0:755 ] || exit 67
+fi
+# shellcheck disable=SC1090
+source "$host_env"
+image_source="${MATRIX_IMAGE_SOURCE:-}"
+target_bundle_sha256="${MATRIX_TARGET_BUNDLE_SHA256:-}"
+case "$image_source" in clean_image|snapshot) ;; *) exit 65 ;; esac
+[[ "$target_bundle_sha256" =~ ^[a-f0-9]{64}$ ]] || exit 65
+
+phase_value() {
+  local phase="$1"
+  awk -v wanted="$phase" '
+    index($0, "matrix-host-timing phase=" wanted " ") {
+      elapsed = ""
+      source = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^elapsed_seconds=[0-9]+$/) { split($i, part, "="); elapsed = part[2] }
+        if ($i ~ /^image_source=(clean_image|snapshot)$/) { split($i, part, "="); source = part[2] }
+      }
+      if (elapsed != "" && source != "") value = elapsed " " source
+    }
+    END { if (value != "") print value; else exit 1 }
+  ' "$cloud_init_output"
+}
+
+derive_evidence() {
+  [ -f "$cloud_init_output" ] && [ ! -L "$cloud_init_output" ] || return 1
+  if [ -z "$root" ]; then
+    [ "$(stat -c %u "$cloud_init_output")" = 0 ] \
+      && is_not_group_or_world_writable "$cloud_init_output" || return 1
+  fi
+  output_size="$(stat -c %s "$cloud_init_output")" || return 1
+  [[ "$output_size" =~ ^[0-9]+$ ]] && [ "$output_size" -le 524288 ] || return 1
+
+  fast_path_selected=false
+  full_bootstrap_required=false
+  grep -Fq 'matrix-host: exact golden snapshot fast path selected' "$cloud_init_output" \
+    && fast_path_selected=true
+  grep -Fq 'matrix-host: full bootstrap required' "$cloud_init_output" \
+    && full_bootstrap_required=true
+  [ "$fast_path_selected" != "$full_bootstrap_required" ] || return 1
+
+  read -r system_prerequisites_ready_seconds prerequisites_source \
+    <<<"$(phase_value system_prerequisites_ready)" || return 1
+  read -r host_bundle_ready_seconds bundle_source \
+    <<<"$(phase_value host_bundle_ready)" || return 1
+  read -r core_services_started_seconds services_source \
+    <<<"$(phase_value core_services_started)" || return 1
+  [ "$prerequisites_source" = "$image_source" ] \
+    && [ "$bundle_source" = "$image_source" ] \
+    && [ "$services_source" = "$image_source" ] || return 1
+  for value in \
+    "$system_prerequisites_ready_seconds" \
+    "$host_bundle_ready_seconds" \
+    "$core_services_started_seconds"
+  do
+    [[ "$value" =~ ^[0-9]{1,5}$ ]] && [ "$value" -le 86400 ] || return 1
+  done
+  [ "$host_bundle_ready_seconds" -ge "$system_prerequisites_ready_seconds" ] \
+    && [ "$core_services_started_seconds" -ge "$host_bundle_ready_seconds" ] || return 1
+
+  bundle_archive_present=false
+  for archive in "$bundle_archive" "$bundle_checksum"; do
+    if [ -e "$archive" ] || [ -L "$archive" ]; then
+      bundle_archive_present=true
+    fi
+  done
+  full_bundle_downloaded=false
+  if [ -f "$bundle_archive" ] && [ ! -L "$bundle_archive" ] \
+    && [ -f "$bundle_checksum" ] && [ ! -L "$bundle_checksum" ]; then
+    full_bundle_downloaded=true
+  fi
+  system_prerequisites_reused=false
+  if [ "$fast_path_selected" = true ]; then
+    [ "$image_source" = snapshot ] \
+      && [ "$full_bundle_downloaded" = false ] \
+      && [ "$bundle_archive_present" = false ] || return 1
+    system_prerequisites_reused=true
+  else
+    [ "$full_bootstrap_required" = true ] && [ "$full_bundle_downloaded" = true ] || return 1
+  fi
+}
+
+deadline=$((SECONDS + wait_seconds))
+until derive_evidence; do
+  [ "$SECONDS" -lt "$deadline" ] || exit 66
+  sleep 1
+done
+
+[ -d "$output_dir" ] && [ ! -L "$output_dir" ] || exit 67
+temporary_file="$(mktemp "$output_dir/.bootstrap-attestation.XXXXXX")"
+cleanup() {
+  rm -f -- "$temporary_file"
+}
+trap cleanup EXIT INT TERM
+
+printf '{"schemaVersion":1,"imageSource":"%s","fastPathSelected":%s,"fullBundleDownloaded":%s,"systemPrerequisitesReused":%s,"bundleArchivePresent":%s,"targetBundleSha256":"%s","timing":{"systemPrerequisitesReadySeconds":%s,"hostBundleReadySeconds":%s,"coreServicesStartedSeconds":%s}}\n' \
+  "$image_source" \
+  "$fast_path_selected" \
+  "$full_bundle_downloaded" \
+  "$system_prerequisites_reused" \
+  "$bundle_archive_present" \
+  "$target_bundle_sha256" \
+  "$system_prerequisites_ready_seconds" \
+  "$host_bundle_ready_seconds" \
+  "$core_services_started_seconds" \
+  >"$temporary_file"
+chmod 0644 "$temporary_file"
+if [ -z "$root" ]; then
+  chown root:matrix "$temporary_file"
+fi
+if ! ln -- "$temporary_file" "$output_file"; then
+  validate_existing_attestation || exit 68
+fi
+rm -f -- "$temporary_file"
+trap - EXIT INT TERM

@@ -109,6 +109,172 @@ describe("T135: System info", () => {
     }
   });
 
+  it("includes validated host bootstrap attestation with installed release provenance", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release-with-bootstrap.json");
+    const attestationPath = join(homePath, "bootstrap-attestation.json");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    const previousAttestationPath = process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE = attestationPath;
+    writeFileSync(releasePath, JSON.stringify({
+      version: "v2026.08.20-991",
+      channel: "dev",
+      gitCommit: "0436fbb9ace1b36022ca672d4a2da3d36b259b2e",
+      bundleSha256: "a".repeat(64),
+    }));
+    writeFileSync(attestationPath, JSON.stringify({
+      schemaVersion: 1,
+      imageSource: "snapshot",
+      fastPathSelected: true,
+      fullBundleDownloaded: false,
+      systemPrerequisitesReused: true,
+      bundleArchivePresent: false,
+      targetBundleSha256: "a".repeat(64),
+      timing: {
+        systemPrerequisitesReadySeconds: 1,
+        hostBundleReadySeconds: 2,
+        coreServicesStartedSeconds: 9,
+      },
+    }));
+
+    try {
+      const info = getSystemInfo(homePath);
+
+      expect(info.release).toMatchObject({
+        version: "v2026.08.20-991",
+        bootstrap: {
+          schemaVersion: 1,
+          imageSource: "snapshot",
+          fastPathSelected: true,
+          fullBundleDownloaded: false,
+          systemPrerequisitesReused: true,
+          bundleArchivePresent: false,
+          targetBundleSha256: "a".repeat(64),
+          timing: {
+            systemPrerequisitesReadySeconds: 1,
+            hostBundleReadySeconds: 2,
+            coreServicesStartedSeconds: 9,
+          },
+        },
+      });
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      if (previousAttestationPath === undefined) delete process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE;
+      else process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE = previousAttestationPath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not attach bootstrap evidence to a different installed release", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release-bootstrap-mismatch.json");
+    const attestationPath = join(homePath, "bootstrap-attestation-mismatch.json");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    const previousAttestationPath = process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE = attestationPath;
+    writeFileSync(releasePath, JSON.stringify({
+      version: "v2026.08.20-992",
+      bundleSha256: "b".repeat(64),
+    }));
+    writeFileSync(attestationPath, JSON.stringify({
+      schemaVersion: 1,
+      imageSource: "snapshot",
+      fastPathSelected: true,
+      fullBundleDownloaded: false,
+      systemPrerequisitesReused: true,
+      bundleArchivePresent: false,
+      targetBundleSha256: "a".repeat(64),
+      timing: {
+        systemPrerequisitesReadySeconds: 1,
+        hostBundleReadySeconds: 2,
+        coreServicesStartedSeconds: 9,
+      },
+    }));
+
+    try {
+      expect(getSystemInfo(homePath).release).toMatchObject({
+        version: "v2026.08.20-992",
+      });
+      expect(getSystemInfo(homePath).release).not.toHaveProperty("bootstrap");
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      if (previousAttestationPath === undefined) delete process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE;
+      else process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE = previousAttestationPath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not expose contradictory full-bootstrap evidence", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release-bootstrap-invalid.json");
+    const attestationPath = join(homePath, "bootstrap-attestation-invalid.json");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    const previousAttestationPath = process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE = attestationPath;
+    writeFileSync(releasePath, JSON.stringify({
+      version: "v2026.08.20-992",
+      bundleSha256: "b".repeat(64),
+    }));
+    writeFileSync(attestationPath, JSON.stringify({
+      schemaVersion: 1,
+      imageSource: "clean_image",
+      fastPathSelected: false,
+      fullBundleDownloaded: false,
+      systemPrerequisitesReused: true,
+      bundleArchivePresent: false,
+      targetBundleSha256: "b".repeat(64),
+      timing: {
+        systemPrerequisitesReadySeconds: 1,
+        hostBundleReadySeconds: 2,
+        coreServicesStartedSeconds: 9,
+      },
+    }));
+
+    try {
+      expect(getSystemInfo(homePath).release).not.toHaveProperty("bootstrap");
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      if (previousAttestationPath === undefined) delete process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE;
+      else process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE = previousAttestationPath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not trust bootstrap data embedded directly in release metadata", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release-embedded-bootstrap.json");
+    const attestationPath = join(homePath, "missing-bootstrap-attestation.json");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    const previousAttestationPath = process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE = attestationPath;
+    writeFileSync(releasePath, JSON.stringify({
+      version: "v2026.08.20-992",
+      bundleSha256: "b".repeat(64),
+      bootstrap: {
+        schemaVersion: 1,
+        imageSource: "snapshot",
+        fastPathSelected: true,
+      },
+    }));
+
+    try {
+      expect(getSystemInfo(homePath).release).not.toHaveProperty("bootstrap");
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      if (previousAttestationPath === undefined) delete process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE;
+      else process.env.MATRIX_BOOTSTRAP_ATTESTATION_FILE = previousAttestationPath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("reports the persistent update channel separately from bundle provenance", () => {
     const homePath = tmpHome();
     const releasePath = join(homePath, "release.json");

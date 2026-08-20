@@ -4918,6 +4918,20 @@ describe("platform proxy routing", () => {
           version: "matrix-os-host-dev",
           gitCommit: "a5a894cabe71a0379a877414414d865a01ecf440",
           buildTime: "2026-05-06T20:49:48Z",
+          bootstrap: {
+            schemaVersion: 1,
+            imageSource: "snapshot",
+            fastPathSelected: true,
+            fullBundleDownloaded: false,
+            systemPrerequisitesReused: true,
+            bundleArchivePresent: false,
+            targetBundleSha256: "a".repeat(64),
+            timing: {
+              systemPrerequisitesReadySeconds: 1,
+              hostBundleReadySeconds: 2,
+              coreServicesStartedSeconds: 9,
+            },
+          },
         },
       }),
     );
@@ -4942,6 +4956,11 @@ describe("platform proxy routing", () => {
           reachable: true,
           release: expect.objectContaining({
             gitCommit: "a5a894cabe71a0379a877414414d865a01ecf440",
+            bootstrap: expect.objectContaining({
+              imageSource: "snapshot",
+              fastPathSelected: true,
+              fullBundleDownloaded: false,
+            }),
           }),
         }),
       }),
