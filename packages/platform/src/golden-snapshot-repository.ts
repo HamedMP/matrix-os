@@ -642,7 +642,10 @@ export async function claimGoldenSnapshotBuild(
       .select('build_id')
       .where('build_id', '=', buildId)
       .where('status', '=', 'running')
-      .where('attempts', '<', maxAttempts)
+      .where((eb) => eb.or([
+        eb('attempts', '<', maxAttempts),
+        eb('phase', '=', 'snapshot_wait'),
+      ]))
       .where('lease_expires_at', '<=', now)
       .where((eb) => eb.or([
         eb('phase', 'not in', ['builder_boot', 'validation_boot']),
@@ -655,9 +658,14 @@ export async function claimGoldenSnapshotBuild(
       return undefined;
     }
     const row = await trx.executor.updateTable('golden_snapshot_builds').set({
-      status: 'running', attempts: sql<number>`attempts + 1`, claimed_at: now,
+      status: 'running',
+      attempts: sql<number>`CASE WHEN phase = 'snapshot_wait' THEN attempts ELSE attempts + 1 END`,
+      claimed_at: now,
       lease_expires_at: leaseExpiresAt, updated_at: now,
-    }).where('build_id', '=', buildId).where('attempts', '<', maxAttempts)
+    }).where('build_id', '=', buildId).where((eb) => eb.or([
+      eb('attempts', '<', maxAttempts),
+      eb('phase', '=', 'snapshot_wait'),
+    ]))
       .where('phase', 'not in', ['builder_boot', 'validation_boot'])
       .where((eb) => eb.exists(
         eb.selectFrom('golden_snapshots').select('snapshot_id')
@@ -690,6 +698,7 @@ async function terminalizeExhaustedGoldenSnapshotBuild(
   const exhausted = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
     .where('build_id', '=', buildId).where('status', '=', 'running')
     .where('attempts', '>=', maxAttempts).where('lease_expires_at', '<=', now)
+    .where('phase', '!=', 'snapshot_wait')
     .where((eb) => eb.or([
       eb('phase', 'not in', ['builder_boot', 'validation_boot']),
       eb('callback_expires_at', 'is', null),
@@ -763,6 +772,7 @@ export async function claimGoldenSnapshotBuildBatch(
     const exhausted = await trx.executor.selectFrom('golden_snapshot_builds').select('build_id')
       .where('status', '=', 'running').where('attempts', '>=', maxAttempts)
       .where('lease_expires_at', '<=', now)
+      .where('phase', '!=', 'snapshot_wait')
       .where((eb) => eb.or([
         eb('phase', 'not in', ['builder_boot', 'validation_boot']),
         eb('callback_expires_at', 'is', null),
@@ -775,7 +785,10 @@ export async function claimGoldenSnapshotBuildBatch(
     }
     const reclaimable = await trx.executor.selectFrom('golden_snapshot_builds')
       .select('build_id')
-      .where('attempts', '<', maxAttempts)
+      .where((eb) => eb.or([
+        eb('attempts', '<', maxAttempts),
+        eb('phase', '=', 'snapshot_wait'),
+      ]))
       .where('phase', 'not in', ['builder_boot', 'validation_boot'])
       .where((eb) => eb.exists(
         eb.selectFrom('golden_snapshots').select('snapshot_id')
@@ -815,12 +828,15 @@ export async function claimGoldenSnapshotBuildBatch(
     for (const candidate of reclaimable) {
       const row = await trx.executor.updateTable('golden_snapshot_builds').set({
         status: 'running',
-        attempts: sql<number>`attempts + 1`,
+        attempts: sql<number>`CASE WHEN phase = 'snapshot_wait' THEN attempts ELSE attempts + 1 END`,
         claimed_at: now,
         lease_expires_at: leaseExpiresAt,
         updated_at: now,
       }).where('build_id', '=', candidate.build_id)
-        .where('attempts', '<', maxAttempts)
+        .where((eb) => eb.or([
+          eb('attempts', '<', maxAttempts),
+          eb('phase', '=', 'snapshot_wait'),
+        ]))
         .where('phase', 'not in', ['builder_boot', 'validation_boot'])
         .where('status', '=', 'running')
         .where('lease_expires_at', '<=', now)

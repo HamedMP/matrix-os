@@ -1004,7 +1004,19 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         }
         return 'snapshot_wait';
       }
-      if (image.status !== 'available' || (action !== null && action.status !== 'success')) return 'snapshot_wait';
+      if (image.status !== 'available' || (action !== null && action.status !== 'success')) {
+        if (!build.callbackExpiresAt || build.callbackExpiresAt <= at) {
+          await quarantine(
+            buildId,
+            snapshot.snapshotId,
+            'snapshot_creation_timeout',
+            at,
+            build.phase,
+          );
+          throw new Error('Golden snapshot creation timed out');
+        }
+        return 'snapshot_wait';
+      }
       if (image.architecture !== snapshot.compatibility.architecture || image.deleteProtected) {
         await quarantine(buildId, snapshot.snapshotId, 'image_incompatible', at, build.phase);
         throw new Error('Golden snapshot image compatibility validation failed');
