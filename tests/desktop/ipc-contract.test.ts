@@ -880,6 +880,7 @@ describe("IPC contract", () => {
   it("caps state:set values at 64KB and only allows known keys", () => {
     const schema = INVOKE_CHANNELS["state:set"].request;
     expect(schema.safeParse({ key: "appearance", value: { theme: "dark" } }).success).toBe(true);
+    expect(schema.safeParse({ key: "terminalAppearance", value: { mode: "dark" } }).success).toBe(true);
     expect(schema.safeParse({
       key: "projectViews",
       value: {

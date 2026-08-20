@@ -22,6 +22,10 @@ const AppearanceSchema = z
   })
   .strict();
 
+const TerminalAppearanceSchema = z.strictObject({
+  mode: z.enum(["dark", "light"]),
+});
+
 const WindowBoundsSchema = z
   .object({
     x: z.number().int(),
@@ -75,6 +79,7 @@ const KEY_SCHEMAS = {
   lastProjectSlug: z.string().max(256),
   panelLayouts: PanelLayoutsSchema,
   appearance: AppearanceSchema,
+  terminalAppearance: TerminalAppearanceSchema,
   recents: RecentsSchema,
   projectViews: ProjectViewsStateSchema,
   providerPreferences: ProviderPreferencesSchema,
