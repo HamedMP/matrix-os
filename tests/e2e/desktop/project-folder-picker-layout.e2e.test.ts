@@ -18,6 +18,30 @@ if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
 
 const suite = hasDesktopBuild ? describe : describe.skip;
 
+async function closeElectronApp(app: ElectronApplication): Promise<void> {
+  const electronProcess = app.process();
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  const closedGracefully = await Promise.race([
+    app.close().then(() => true),
+    new Promise<false>((resolve) => {
+      closeTimer = setTimeout(() => resolve(false), 5_000);
+    }),
+  ]);
+  if (closeTimer) clearTimeout(closeTimer);
+  if (closedGracefully) return;
+
+  if (electronProcess.exitCode === null) electronProcess.kill("SIGKILL");
+  if (electronProcess.exitCode !== null) return;
+
+  await new Promise<void>((resolve) => {
+    const exitTimer = setTimeout(resolve, 5_000);
+    electronProcess.once("exit", () => {
+      clearTimeout(exitTimer);
+      resolve();
+    });
+  });
+}
+
 suite("Desktop Add Project compact folder picker", () => {
   let app: ElectronApplication;
   let gateway: StubGateway;
@@ -51,10 +75,10 @@ suite("Desktop Add Project compact folder picker", () => {
   }, 60_000);
 
   afterAll(async () => {
-    await app?.close();
+    if (app) await closeElectronApp(app);
     await gateway?.close();
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   it("keeps the sticky list header flush with the toolbar while rows scroll beneath it", async () => {
     await page.getByRole("button", { name: "Add project" }).click();
