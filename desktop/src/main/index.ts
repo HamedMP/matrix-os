@@ -36,7 +36,7 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
 import { createUpdater } from "./updates";
-import { safeExternalHttpUrl } from "./external-url";
+import { createExternalHttpUrlOpener } from "./external-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
@@ -82,11 +82,10 @@ function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>)
   mainWindow?.webContents.send(channel, parsed.data);
 }
 
-async function openExternalHttpUrl(url: string): Promise<void> {
-  const externalUrl = safeExternalHttpUrl(url);
-  if (!externalUrl) return;
-  await shell.openExternal(externalUrl);
-}
+const openExternalHttpUrl = createExternalHttpUrlOpener({
+  disabled: process.env.OPERATOR_DISABLE_EXTERNAL_BROWSER === "1",
+  openExternal: (url) => shell.openExternal(url),
+});
 
 function createWindow(bounds: { x?: number; y?: number; width: number; height: number }): BrowserWindow {
   const win = new BrowserWindow({

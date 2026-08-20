@@ -14,6 +14,9 @@ export default defineConfig({
     },
   },
   test: {
+    env: {
+      OPERATOR_DISABLE_EXTERNAL_BROWSER: "1",
+    },
     globals: true,
     include: ["tests/e2e/**/*.e2e.test.ts"],
     testTimeout: 30_000,

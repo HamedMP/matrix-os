@@ -22,6 +22,17 @@ bun run dev:shell
 bun run dev:platform
 ```
 
+For automated or agent-driven Electron checks that exercise the stub device
+authorization flow, disable system-browser side effects explicitly:
+
+```bash
+OPERATOR_DISABLE_EXTERNAL_BROWSER=1 bun run dev:desktop
+```
+
+Keep this variable unset for manual authentication checks. Desktop E2E tests
+set it centrally through `vitest.e2e.config.ts` so clicking **Continue in
+browser** can complete stub authorization without stealing foreground focus.
+
 ## Bundled Default Apps
 
 First-party apps live under `home/apps/**` and build to `dist/`.
