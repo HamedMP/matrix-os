@@ -269,6 +269,74 @@ describe('golden snapshot provisioning activation', () => {
     });
   });
 
+  it('never creates a second exact-test server after a persisted provider action is rejected', async () => {
+    const snapshotId = await readySnapshot('v2', 302, true);
+    let currentNow = new Date('2026-07-03T00:01:00.000Z');
+    const firstServer = {
+      id: 904, status: 'initializing' as const, publicIPv4: '203.0.113.94', createActionId: 1804,
+      labels: {
+        machine_id: '30000000-0000-4000-8000-000000000014',
+        snapshot_id: snapshotId,
+      },
+    };
+    const createServer = vi.fn()
+      .mockResolvedValueOnce(firstServer)
+      .mockResolvedValueOnce({
+        ...firstServer, id: 905, publicIPv4: '203.0.113.95', createActionId: 1805,
+      });
+    const deleteServer = vi.fn().mockResolvedValue(undefined);
+    const getServer = vi.fn()
+      .mockResolvedValueOnce(firstServer)
+      .mockResolvedValueOnce(null);
+    const service = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_SECRET: 'platform-secret',
+        CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
+        S3_ACCESS_KEY_ID: 'access-key',
+        S3_SECRET_ACCESS_KEY: 'secret-key',
+        S3_ENDPOINT: 'https://r2.example',
+        HETZNER_SERVER_TYPE: 'cpx22',
+        GOLDEN_SNAPSHOTS_ENABLED: 'false',
+        GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '0',
+      }),
+      hetzner: createMockHetznerClient({
+        createServer,
+        deleteServer,
+        getServer,
+        getAction: vi.fn().mockResolvedValue({
+          id: 1804, status: 'error', command: 'create_server',
+        }),
+        listServersByLabel: vi.fn().mockResolvedValue([]),
+      }),
+      systemStore: createMockCustomerVpsSystemStore(),
+      machineIdFactory: () => '30000000-0000-4000-8000-000000000014',
+      provisioningJobIdFactory: () => '50000000-0000-4000-8000-000000000014',
+      now: () => currentNow,
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview_action_retry',
+      handle: 'pr-1273',
+      runtimeSlot: 'pr-1273',
+      testSnapshotId: snapshotId,
+    })).resolves.toMatchObject({ status: 'provisioning' });
+    expect(createServer).toHaveBeenCalledTimes(1);
+    expect(deleteServer).toHaveBeenCalledWith(904);
+
+    currentNow = new Date('2026-07-03T00:07:00.000Z');
+    await expect(service.dispatchProvisioningJobs()).resolves.toMatchObject({ failed: 1 });
+    expect(createServer).toHaveBeenCalledTimes(1);
+    await expect(getProvisioningJob(db, '50000000-0000-4000-8000-000000000014'))
+      .resolves.toMatchObject({
+        status: 'failed',
+        providerCreateActionId: 1804,
+      });
+    await expect(getUserMachine(db, '30000000-0000-4000-8000-000000000014'))
+      .resolves.toMatchObject({ status: 'failed', failureCode: 'snapshot_clone_rejected' });
+  });
+
   it('atomically selects an exact snapshot, leases it, and persists durable activation provenance', async () => {
     const snapshotId = await readySnapshot('v2', 302);
     const selected = await chooseProvisioningImage(db, config, {

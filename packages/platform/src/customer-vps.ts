@@ -1285,7 +1285,30 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (existingServers.length > 0 && matchingServers.length === 0) {
         throw new Error('Existing provider server image provenance is ambiguous');
       }
-      const existingServer = matchingServers[0];
+      let existingServer = matchingServers[0];
+      if (!existingServer && isPreviewTestSnapshotDecision(imageDecision)
+        && effectiveProviderCreateActionId !== null) {
+        const persistedServer = row.hetznerServerId === null
+          ? null
+          : await deps.hetzner.getServer(row.hetznerServerId);
+        if (persistedServer) {
+          if (persistedServer.labels?.machine_id !== row.machineId
+            || persistedServer.labels?.snapshot_id !== imageDecision.snapshotId) {
+            throw new Error('Persisted preview-test server provenance is ambiguous');
+          }
+          existingServer = persistedServer;
+        } else {
+          const priorCreateResult = await waitForProvisioningCreateAction(
+            effectiveProviderCreateActionId,
+          );
+          if (priorCreateResult === 'pending') return 'pending';
+          throw new CustomerVpsError(
+            409,
+            'snapshot_clone_rejected',
+            'Provisioning image unavailable',
+          );
+        }
+      }
       const createInput = {
           name: buildServerName(row.handle),
           serverType: row.serverType ?? deps.config.serverType,
