@@ -196,6 +196,8 @@ describe("Desktop sidebar navigation shell", () => {
     const sidebar = screen.getByRole("complementary", { name: "Matrix OS navigation" });
     expect(sidebar.getAttribute("data-sidebar-state")).toBe("expanded");
     expect(sidebar.style.width).toBe("var(--sidebar-expanded-width)");
+    expect(sidebar.style.borderRight).toBe("1px solid var(--border-subtle)");
+    expect(screen.queryByTestId("collapsed-sidebar-divider")).toBeNull();
     expect(screen.getByTestId("matrix-sidebar-logo")).toBeTruthy();
 
     expect(screen.getByRole("button", { name: "Terminal" }).getAttribute("aria-current")).toBe("page");
@@ -218,6 +220,9 @@ describe("Desktop sidebar navigation shell", () => {
     const sidebar = screen.getByRole("complementary", { name: "Matrix OS navigation" });
     expect(sidebar.getAttribute("data-sidebar-state")).toBe("collapsed");
     expect(sidebar.style.width).toBe("var(--sidebar-collapsed-width)");
+    expect(sidebar.style.borderRightWidth).toBe("0px");
+    expect(screen.getByTestId("collapsed-sidebar-divider").style.top)
+      .toBe("var(--titlebar-height)");
     expect(screen.queryByTestId("matrix-sidebar-logo")).toBeNull();
     expect(screen.queryByText("Recents")).toBeNull();
     expect(screen.queryByText("Projects")).toBeNull();

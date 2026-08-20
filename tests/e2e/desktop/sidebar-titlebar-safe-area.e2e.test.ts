@@ -52,7 +52,7 @@ suite("Desktop sidebar macOS titlebar safe area", () => {
     await page.setViewportSize(viewport);
     await expect.poll(async () => (await page.locator("aside").boundingBox())?.width).toBe(240);
     await page.screenshot({
-      path: join(SCREENSHOT_DIR, `mat-325-sidebar-expanded-${viewportName}.png`),
+      path: join(SCREENSHOT_DIR, `mat-449-sidebar-expanded-${viewportName}.png`),
     });
 
     const collapse = page.getByRole("button", { name: "Collapse sidebar" });
@@ -61,14 +61,23 @@ suite("Desktop sidebar macOS titlebar safe area", () => {
 
     await expect.poll(async () => (await page.locator("aside").boundingBox())?.width).toBe(56);
     const sidebarBox = await page.locator("aside").boundingBox();
+    const titlebarBox = await page.locator("aside > .titlebar-drag").boundingBox();
+    const dividerBox = await page.getByTestId("collapsed-sidebar-divider").boundingBox();
     const expand = page.getByRole("button", { name: "Expand sidebar" });
     const expandBox = await expand.boundingBox();
     await page.screenshot({
-      path: join(SCREENSHOT_DIR, `mat-325-sidebar-collapsed-${viewportName}.png`),
+      path: join(SCREENSHOT_DIR, `mat-449-sidebar-collapsed-${viewportName}.png`),
     });
 
     expect(sidebarBox).not.toBeNull();
     expect(sidebarBox?.width).toBe(56);
+    expect(await page.locator("aside").evaluate((element) =>
+      window.getComputedStyle(element).borderRightWidth)).toBe("0px");
+    expect(titlebarBox).not.toBeNull();
+    expect(dividerBox).not.toBeNull();
+    expect(dividerBox?.y ?? 0).toBeGreaterThanOrEqual(
+      (titlebarBox?.y ?? 0) + (titlebarBox?.height ?? 0),
+    );
     expect(expandBox).not.toBeNull();
     expect(expandBox?.x ?? 0).toBeGreaterThanOrEqual(MACOS_TITLEBAR_SAFE_X);
     expect(await expand.isVisible()).toBe(true);
@@ -79,7 +88,7 @@ suite("Desktop sidebar macOS titlebar safe area", () => {
     await expect.poll(async () => (await page.locator("aside").boundingBox())?.width).toBe(240);
   }
 
-  it("keeps the 56px collapsed rail and expand control outside native traffic lights", async () => {
+  it("keeps collapsed sidebar chrome outside native traffic lights", async () => {
     await expectSidebarLayoutsClearOfTrafficLights(
       { width: 1280, height: 820 },
       "normal",

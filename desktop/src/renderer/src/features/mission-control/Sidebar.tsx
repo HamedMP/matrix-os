@@ -61,11 +61,13 @@ export default function Sidebar() {
     <aside
       aria-label="Matrix OS navigation"
       data-sidebar-state={collapsed ? "collapsed" : "expanded"}
-      className="flex shrink-0 flex-col"
+      className="relative flex shrink-0 flex-col"
       style={{
         width: collapsed ? "var(--sidebar-collapsed-width)" : "var(--sidebar-expanded-width)",
         background: "var(--bg-sunken)",
-        borderRight: "1px solid var(--border-subtle)",
+        borderRight: collapsed
+          ? "0px solid transparent"
+          : "1px solid var(--border-subtle)",
         transition: "width 140ms var(--ease-out)",
       }}
     >
@@ -82,6 +84,18 @@ export default function Sidebar() {
           </div>
         )}
       </div>
+
+      {collapsed ? (
+        <div
+          aria-hidden="true"
+          data-testid="collapsed-sidebar-divider"
+          className="pointer-events-none absolute right-0 bottom-0"
+          style={{
+            top: "var(--titlebar-height)",
+            borderRight: "1px solid var(--border-subtle)",
+          }}
+        />
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
         <nav aria-label="Primary" className="flex flex-col gap-0.5">
