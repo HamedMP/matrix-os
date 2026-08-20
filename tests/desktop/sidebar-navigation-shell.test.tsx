@@ -202,6 +202,25 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByRole("button", { name: "Terminal" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBeNull();
 
+    const dividers = screen.getAllByRole("separator");
+    expect(dividers).toHaveLength(2);
+    for (const divider of dividers) {
+      expect(divider.style.marginInline).toBe("16px");
+      expect(divider.style.background).toBe("var(--sidebar-divider)");
+    }
+
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    expect(terminal.style.background).toBe("var(--bg-surface)");
+    expect(terminal.style.borderColor).toBe("var(--border-subtle)");
+    expect(terminal.style.borderWidth).toBe("1px");
+    expect(terminal.style.fontWeight).toBe("500");
+
+    for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Plugins", "Projects"]) {
+      const icon = screen.getByRole("button", { name: label }).querySelector<HTMLElement>("[data-sidebar-icon]");
+      expect(icon?.style.width).toBe("14px");
+      expect(icon?.style.height).toBe("14px");
+    }
+
     const orderedLabels = [
       "Main computer",
       "Home",

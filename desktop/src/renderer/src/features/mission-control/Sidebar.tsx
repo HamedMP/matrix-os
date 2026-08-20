@@ -23,7 +23,12 @@ import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import AccountMenu from "./AccountMenu";
 import ProjectSidebarRow from "./ProjectSidebarRow";
 import RecentViews from "./RecentViews";
-import { SidebarNavRow } from "./SidebarPrimitives";
+import {
+  SidebarDivider,
+  SidebarIcon,
+  SidebarNavRow,
+  sidebarNavRowStyle,
+} from "./SidebarPrimitives";
 
 export default function Sidebar() {
   const tabs = useTabs((s) => s.tabs);
@@ -75,7 +80,9 @@ export default function Sidebar() {
           <div className="px-2 pt-4">
             <RuntimeComputerMenu collapsed={false} />
           </div>
-          <div className="mt-3 h-px shrink-0" style={{ background: "var(--border-subtle)" }} />
+          <div className="mt-3">
+            <SidebarDivider />
+          </div>
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-3">
             <nav aria-label="Primary" className="flex flex-col gap-0.5 px-2">
@@ -133,27 +140,12 @@ export default function Sidebar() {
                     aria-label={projectAttention > 0 ? `Projects ${projectAttention}` : "Projects"}
                     aria-current={activeTab?.kind === "project" || activeTab?.kind === "task" ? "page" : undefined}
                     data-active={activeTab?.kind === "project" || activeTab?.kind === "task" ? "true" : "false"}
-                    className="group/sidebar-row flex w-full items-center gap-2 rounded-md px-2 text-[13px] font-normal outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
-                    style={{
-                      height: "var(--sidebar-row-height)",
-                      color: activeTab?.kind === "project" || activeTab?.kind === "task"
-                        ? "var(--text-primary)"
-                        : "var(--text-secondary)",
-                      background: activeTab?.kind === "project" || activeTab?.kind === "task"
-                        ? "var(--bg-selected)"
-                        : undefined,
-                    }}
+                    className="group/sidebar-row flex w-full items-center gap-2 rounded-md px-2 text-[13px] outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
+                    style={sidebarNavRowStyle(activeTab?.kind === "project" || activeTab?.kind === "task")}
                   >
-                    <Folder
-                      size={14}
-                      aria-hidden="true"
-                      className="shrink-0"
-                      style={{
-                        color: activeTab?.kind === "project" || activeTab?.kind === "task"
-                          ? "var(--accent)"
-                          : "var(--text-tertiary)",
-                      }}
-                    />
+                    <SidebarIcon active={activeTab?.kind === "project" || activeTab?.kind === "task"}>
+                      <Folder size={14} />
+                    </SidebarIcon>
                     <span className="min-w-0 flex-1 truncate text-left">Projects</span>
                     {projectAttention > 0 ? (
                       <span
@@ -214,7 +206,9 @@ export default function Sidebar() {
               </Popover.Root>
             </nav>
 
-            <div className="mt-3 h-px shrink-0" style={{ background: "var(--border-subtle)" }} />
+            <div className="mt-3">
+              <SidebarDivider />
+            </div>
             <RecentViews />
           </div>
 

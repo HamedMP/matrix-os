@@ -84,10 +84,16 @@ function HeaderButton({
       aria-label={label}
       title={label}
       disabled={disabled}
-      className="no-drag inline-flex h-7 w-6 items-center justify-center rounded-sm text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-35"
+      className="no-drag relative -mx-[5px] inline-flex h-7 w-6 items-center justify-center rounded-sm text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-35"
       onClick={onClick}
     >
-      {children}
+      <span
+        data-header-icon
+        className="flex items-center justify-center [&>svg]:size-3.5"
+        style={{ width: "14px", height: "14px" }}
+      >
+        {children}
+      </span>
     </button>
   );
 }
@@ -127,8 +133,9 @@ export default function NavigationHeader() {
       }}
     >
       <div
-        className="-mr-[5px] flex items-center justify-end px-4"
+        className="flex items-center justify-end px-4"
         data-testid="sidebar-navigation-actions"
+        style={{ gap: "8px" }}
       >
         <HeaderButton label="Go back" disabled={!canGoBack} onClick={goBack}>
           <ChevronLeft size={14} />

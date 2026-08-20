@@ -32,6 +32,7 @@
   --border-subtle: #ebe9e1;
   --border-default: #d6d3c8;
   --border-strong: #c4c0b2;
+  --sidebar-divider: color-mix(in srgb, var(--border-subtle) 62%, transparent);
 
   /* ── Text ───────────────────────────────────────────────────── */
   --text-primary: #282c25;

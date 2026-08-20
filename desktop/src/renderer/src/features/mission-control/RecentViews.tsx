@@ -18,6 +18,7 @@ import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat } from "../../stores/hermes-chat";
 import { useThreads } from "../../stores/threads";
+import { SidebarIcon, sidebarNavRowStyle } from "./SidebarPrimitives";
 
 const FILTER_OPTIONS: Array<{ filter: RecentViewFilter; label: string }> = [
   { filter: "all", label: "All recents" },
@@ -176,20 +177,12 @@ export default function RecentViews() {
               aria-current={active ? "page" : undefined}
               data-active={active ? "true" : "false"}
               className="flex w-full items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
-              style={{
-                height: "var(--sidebar-row-height)",
-                color: active ? "var(--text-primary)" : "var(--text-secondary)",
-                background: active ? "var(--bg-selected)" : undefined,
-              }}
+              style={sidebarNavRowStyle(active)}
               onClick={() => openRecent(recent)}
             >
-              <span
-                aria-hidden="true"
-                className="shrink-0"
-                style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }}
-              >
+              <SidebarIcon active={active}>
                 <RecentIcon kind={recent.kind} />
-              </span>
+              </SidebarIcon>
               <span className="min-w-0 flex-1 truncate">{recent.label}</span>
             </button>
           );

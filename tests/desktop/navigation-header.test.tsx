@@ -110,6 +110,9 @@ describe("Desktop navigation header", () => {
     expect(header.style.gridTemplateColumns).toBe("var(--sidebar-expanded-width) minmax(0, 1fr)");
     expect(header.style.borderBottom).toBe("");
 
+    const actionGroup = screen.getByTestId("sidebar-navigation-actions");
+    expect(actionGroup.style.gap).toBe("8px");
+
     const actions = [
       screen.getByRole("button", { name: "Go back" }),
       screen.getByRole("button", { name: "Go forward" }),
@@ -118,6 +121,11 @@ describe("Desktop navigation header", () => {
     for (let index = 1; index < actions.length; index += 1) {
       expect(actions[index - 1]!.compareDocumentPosition(actions[index]!))
         .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    }
+    for (const action of actions) {
+      const icon = action.querySelector<HTMLElement>("[data-header-icon]");
+      expect(icon?.style.width).toBe("14px");
+      expect(icon?.style.height).toBe("14px");
     }
   });
 

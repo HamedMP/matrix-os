@@ -1,5 +1,48 @@
 import { ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+
+export function sidebarNavRowStyle(active: boolean): CSSProperties {
+  return {
+    height: "var(--sidebar-row-height)",
+    color: active ? "var(--text-primary)" : "var(--text-secondary)",
+    background: active ? "var(--bg-surface)" : undefined,
+    borderColor: active ? "var(--border-subtle)" : "transparent",
+    borderStyle: "solid",
+    borderWidth: "1px",
+    fontWeight: active ? 500 : 400,
+  };
+}
+
+export function SidebarIcon({ active, children }: { active: boolean; children: ReactNode }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-sidebar-icon
+      className="flex shrink-0 items-center justify-center transition-colors [&>svg]:size-3.5"
+      style={{
+        width: "14px",
+        height: "14px",
+        color: active ? "var(--text-primary)" : "var(--text-tertiary)",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function SidebarDivider() {
+  return (
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      className="h-px shrink-0"
+      style={{
+        marginInline: "16px",
+        background: "var(--sidebar-divider)",
+      }}
+    />
+  );
+}
 
 export function SidebarNavRow({
   icon,
@@ -23,21 +66,11 @@ export function SidebarNavRow({
       aria-current={active ? "page" : undefined}
       data-active={active ? "true" : "false"}
       title={collapsed ? label : undefined}
-      className={`group/sidebar-row flex w-full items-center rounded-md text-[13px] font-normal outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center px-0" : "gap-2 px-2"}`}
-      style={{
-        height: "var(--sidebar-row-height)",
-        color: active ? "var(--text-primary)" : "var(--text-secondary)",
-        background: active ? "var(--bg-selected)" : undefined,
-      }}
+      className={`group/sidebar-row flex w-full items-center rounded-md text-[13px] outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center px-0" : "gap-2 px-2"}`}
+      style={sidebarNavRowStyle(active)}
       onClick={onClick}
     >
-      <span
-        aria-hidden="true"
-        className="flex shrink-0 items-center justify-center transition-colors"
-        style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }}
-      >
-        {icon}
-      </span>
+      <SidebarIcon active={active}>{icon}</SidebarIcon>
       {!collapsed ? <span className="min-w-0 flex-1 truncate text-left">{label}</span> : null}
       {!collapsed && badge ? (
         <span
