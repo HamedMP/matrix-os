@@ -56,6 +56,17 @@ describe('golden snapshot host scripts', () => {
     await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'d'.repeat(64)}\n`);
     await copyFile(prerequisitesPath, join(binDir, 'matrix-prepare-host-prerequisites'));
     await chmod(join(binDir, 'matrix-prepare-host-prerequisites'), 0o755);
+    for (const [command, target] of [
+      ['bash', '/bin/bash'],
+      ['chmod', '/usr/bin/chmod'],
+      ['install', '/usr/bin/install'],
+      ['mktemp', '/usr/bin/mktemp'],
+      ['mv', '/usr/bin/mv'],
+      ['rm', '/usr/bin/rm'],
+      ['tr', '/usr/bin/tr'],
+    ]) {
+      await symlink(target, join(fakeBin, command));
+    }
     for (const command of [
       'add-apt-repository', 'apparmor_parser', 'aws', 'bwrap', 'cmatrix', 'curl', 'docker',
       'elixir', 'erl', 'file', 'git', 'nginx', 'openssl', 'psql', 'socat', 'sudo', 'unzip', 'zsh',
@@ -72,7 +83,7 @@ describe('golden snapshot host scripts', () => {
         MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
         MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
         MATRIX_TARGET_BUNDLE_SHA256: 'd'.repeat(64),
-        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        PATH: fakeBin,
       },
     })).resolves.toMatchObject({ stdout: '' });
 
@@ -89,7 +100,7 @@ describe('golden snapshot host scripts', () => {
         MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
         MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
         MATRIX_TARGET_BUNDLE_SHA256: 'd'.repeat(64),
-        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        PATH: fakeBin,
       },
     })).rejects.toMatchObject({ code: 1 });
   });
