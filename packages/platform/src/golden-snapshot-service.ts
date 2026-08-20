@@ -947,16 +947,43 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
     }
 
     if (build.phase === 'snapshot_wait') {
-      let image = snapshot.providerImageId === null
+      const readProviderState = async <T>(context: string, read: () => Promise<T>): Promise<T> => {
+        try {
+          return await read();
+        } catch (err: unknown) {
+          if (!build.callbackExpiresAt || build.callbackExpiresAt <= at) {
+            await quarantine(
+              buildId,
+              snapshot.snapshotId,
+              'snapshot_creation_timeout',
+              at,
+              build.phase,
+            );
+            throw new Error('Golden snapshot creation timed out');
+          }
+          throw providerFailure(context, err);
+        }
+      };
+      const providerImageId = snapshot.providerImageId;
+      const providerSnapshotActionId = build.providerSnapshotActionId;
+      let image = providerImageId === null
         ? null
-        : await deps.hetzner.getImage(snapshot.providerImageId);
-      const action = build.providerSnapshotActionId === null
+        : await readProviderState(
+          'snapshot image confirmation',
+          () => deps.hetzner.getImage(providerImageId),
+        );
+      const action = providerSnapshotActionId === null
         ? null
-        : await deps.hetzner.getAction(build.providerSnapshotActionId);
+        : await readProviderState(
+          'snapshot action confirmation',
+          () => deps.hetzner.getAction(providerSnapshotActionId),
+        );
       if (snapshot.providerImageId === null) {
         const selector = `matrix.snapshot-build=${buildId},matrix.snapshot-id=${snapshot.snapshotId}`;
-        const candidates = (await deps.hetzner.listImagesByLabel(selector)).filter((candidate) =>
-          candidate.labels['matrix.snapshot-build'] === buildId
+        const candidates = (await readProviderState(
+          'snapshot image reconciliation',
+          () => deps.hetzner.listImagesByLabel(selector),
+        )).filter((candidate) => candidate.labels['matrix.snapshot-build'] === buildId
           && candidate.labels['matrix.snapshot-id'] === snapshot.snapshotId
           && candidate.labels['matrix.role'] === 'builder');
         if (candidates.length > 1) {
