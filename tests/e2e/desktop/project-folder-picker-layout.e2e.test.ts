@@ -10,7 +10,13 @@ const DESKTOP_MAIN = resolve(__dirname, "../../../desktop/out/main/index.js");
 const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/package.json"));
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-335-regression");
-const suite = existsSync(DESKTOP_MAIN) ? describe : describe.skip;
+const hasDesktopBuild = existsSync(DESKTOP_MAIN);
+
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
+  throw new Error(`Required Desktop E2E build is missing: ${DESKTOP_MAIN}`);
+}
+
+const suite = hasDesktopBuild ? describe : describe.skip;
 
 suite("Desktop Add Project compact folder picker", () => {
   let app: ElectronApplication;
