@@ -589,6 +589,47 @@ describe('golden snapshot build service', () => {
     },
   );
 
+  it.each(['resolved', 'rejected'] as const)(
+    'fails an expired provider snapshot when an in-flight image read is %s after the deadline',
+    async (outcome) => {
+      let currentTime = '2026-07-03T00:01:00.000Z';
+      const pendingImage = {
+        id: 301, status: 'creating' as const, type: 'snapshot' as const,
+        architecture: 'x86' as const, diskGb: 40, labels: {}, deleteProtected: false,
+      };
+      const getImage = vi.fn().mockImplementation(async () => {
+        currentTime = '2026-07-03T00:32:00.000Z';
+        if (outcome === 'rejected') throw new Error('synthetic provider outage');
+        return pendingImage;
+      });
+      const { enqueued, service } = await setup({
+        createSnapshot: vi.fn().mockResolvedValue({
+          image: pendingImage,
+          action: { id: 401, status: 'running', command: 'create_image' },
+        }),
+        getImage,
+        getAction: vi.fn()
+          .mockResolvedValueOnce({ id: 201, status: 'success', command: 'create_server' })
+          .mockResolvedValue({ id: 401, status: 'running', command: 'create_image' }),
+      }, () => currentTime);
+      await service.runBuildStep(enqueued.build.buildId);
+      await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+        eventId: randomUUID(), phase: 'sanitized', bundleVersion: 'v1',
+        bundleSha256: '1'.repeat(64), ...builderFingerprints,
+      });
+      await expect(service.runBuildStep(enqueued.build.buildId)).resolves.toBe('snapshot_wait');
+
+      await expect(service.runBuildStep(enqueued.build.buildId))
+        .rejects.toThrow('Golden snapshot creation timed out');
+      await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+        phase: 'failed', status: 'failed', lastErrorCode: 'snapshot_creation_timeout',
+      });
+      await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({
+        state: 'quarantined', failureCode: 'snapshot_creation_timeout',
+      });
+    },
+  );
+
   it('records builder boot evidence before accepting sanitation', async () => {
     const { enqueued, service, hetzner } = await setup();
     expect(await service.runBuildStep(enqueued.build.buildId)).toBe('builder_boot');
