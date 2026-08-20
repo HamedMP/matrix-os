@@ -378,9 +378,11 @@ function tryPinHostBundleUrlForImageVersion(
   imageVersion: string,
 ): string | undefined {
   const currentSegment = `/system-bundles/${encodeURIComponent(config.imageVersion)}/`;
-  if (!config.hostBundleUrl.includes(currentSegment)) return undefined;
+  const url = new URL(config.hostBundleUrl);
+  if (!url.pathname.includes(currentSegment)) return undefined;
   const pinnedSegment = `/system-bundles/${encodeURIComponent(imageVersion)}/`;
-  return config.hostBundleUrl.replaceAll(currentSegment, pinnedSegment);
+  url.pathname = url.pathname.replaceAll(currentSegment, pinnedSegment);
+  return url.toString();
 }
 
 function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: string): string {
