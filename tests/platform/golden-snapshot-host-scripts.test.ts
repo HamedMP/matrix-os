@@ -213,6 +213,37 @@ describe('golden snapshot host scripts', () => {
     })).rejects.toMatchObject({ code: 1 });
   });
 
+  it('loads canonical snapshot inputs when the cloud-init launcher did not export them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-host-env-'));
+    const appDir = join(root, 'opt/matrix/app');
+    const envDir = join(root, 'opt/matrix/env');
+    await mkdir(appDir, { recursive: true });
+    await mkdir(envDir, { recursive: true });
+    await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
+    await writeFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'version=1\n');
+    await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v2026.08.20-test\n');
+    await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'e'.repeat(64)}\n`);
+    await writeFile(join(envDir, 'host.env'), [
+      'MATRIX_IMAGE_SOURCE=snapshot',
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_SNAPSHOT_SOURCE_VERSION=v2026.08.20-test',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'e'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await chmod(fastPathPath, 0o755);
+
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: '',
+        MATRIX_IMAGE_VERSION: '',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: '',
+        MATRIX_TARGET_BUNDLE_SHA256: '',
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+  });
+
   it('re-certifies a missing host-prerequisites marker without bootstrap work', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-recertify-'));
     const appDir = join(root, 'opt/matrix/app');
