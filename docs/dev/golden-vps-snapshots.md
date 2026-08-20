@@ -79,6 +79,8 @@ The snapshot lease remains active while the provider clone is in flight. Owner i
 
 A definite provider rejection that proves the snapshot cannot be cloned may fall back to clean Ubuntu. Timeouts, connection loss, and other ambiguous results must reconcile the labeled provider resource; they must not create a second server. The existing clean-image path remains authoritative when the feature is disabled or no safe snapshot is available.
 
+Before customer rollout is enabled, an operator can exercise the real preview provisioning and registration path against one exact disposable test-mode snapshot by sending `testSnapshotId` to `POST /vps/preview/provision`. That field changes the route credential from `PLATFORM_SECRET` to `GOLDEN_SNAPSHOT_OPERATOR_SECRET`; release automation cannot invoke it. The transaction accepts only a `ready`, fresh, provider-available, exact-bundle test image compatible with the preview server, and atomically binds its lease to a preview-class machine and durable provisioning job. This override does not change the compatibility rollout row and cannot select a snapshot for an ordinary customer job. Unlike customer rollout, an exact preview test fails closed instead of silently falling back to clean Ubuntu, so its resulting provenance and timing cannot be misclassified.
+
 Recovery uses the same image decision and lease rules, but a golden snapshot is never treated as owner backup data. Existing backup ownership checks remain unchanged. After replacement creation succeeds, platform atomically replaces the machine/provider identity, marks the replacement `recovering`, and begins exact old-server cleanup. The replacement remains unroutable until registration proves the requested bundle version, SHA-256, and health and moves the machine to `running`; persisted provenance keeps those checks mandatory even if the bounded snapshot lease has expired. The previous server is not retained as a rollback after replacement adoption. A later registration timeout marks and reaps the unroutable replacement; an operator or customer must retry recovery. Disable snapshot selection or revoke the candidate before that retry when the next attempt must use clean Ubuntu.
 
 ## Configuration
@@ -129,6 +131,7 @@ codes only; raw provider responses are logged server-side and never returned.
 
 | Route | Authorization | Body limit | Purpose |
 |---|---|---:|---|
+| `POST /vps/preview/provision` with `testSnapshotId` | snapshot-operator bearer | 4 KiB | Provision one exact disposable preview through the real registration path while customer selection remains disabled |
 | `POST /system-bundles/snapshot-builds` with production `testMode: false` | platform/release bearer | 8 KiB | Idempotently enqueue an eligible immutable published bundle |
 | `POST /system-bundles/snapshot-builds` with operator-only `testMode: true` | snapshot-operator bearer | 8 KiB | Enqueue a bounded disposable spike candidate without granting test-mode authority to release automation |
 | `GET /system-bundles/snapshot-builds/:buildId` | snapshot-operator bearer | none | Read coarse build phase/status |
@@ -168,7 +171,7 @@ Production selection must remain disabled until all gates pass:
 2. A separately authorized disposable Hetzner project runs the spike in the spec quickstart.
 3. The spike records creation Action behavior, image readiness timing, clone compatibility across intended architecture/location/server types, cloud-init rerun behavior, and deletion convergence.
 4. A validation clone proves the full sanitation and exact activation contract.
-5. Builds run safely with selection still off; retention and cleanup remain bounded below quota.
+5. Builds run safely with selection still off; one exact test-mode snapshot completes operator-only preview provisioning, real registration, service health, timing capture, and cleanup; retention remains bounded below quota.
 6. Selection starts at a small deterministic percentage for both new-customer provisioning and recovery; clean-image fallback metrics remain healthy for both flows.
 7. Expand the shared rollout percentage only after provisioning and recovery are both proven at the smaller cohort. V1 has no independent recovery selection switch.
 

@@ -43,6 +43,7 @@ export function meetsMessagingResourceFloor(
 export interface CustomerVpsRoutesDeps {
   service: CustomerVpsService;
   platformSecret: string;
+  goldenSnapshotOperatorSecret?: string;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   probeMachineHealth?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<boolean>;
   probeMachineRuntime?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<{
@@ -129,6 +130,16 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
     return null;
   }
 
+  function previewAuthKind(c: import('hono').Context): 'platform' | 'snapshot_operator' | null {
+    const authorization = c.req.header('authorization');
+    if (bearerTokenMatches(authorization, deps.platformSecret)) return 'platform';
+    if (deps.goldenSnapshotOperatorSecret
+      && bearerTokenMatches(authorization, deps.goldenSnapshotOperatorSecret)) {
+      return 'snapshot_operator';
+    }
+    return null;
+  }
+
   app.post('/storage-check', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
     const authError = requirePlatformAuth(c);
     if (authError) return authError;
@@ -188,8 +199,8 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
   });
 
   app.post('/preview/provision', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
-    const authError = requirePlatformAuth(c);
-    if (authError) return authError;
+    const authKind = previewAuthKind(c);
+    if (!authKind) return c.json({ error: 'Unauthorized' }, 401);
     let parsed: ReturnType<typeof PreviewProvisionRequestSchema.safeParse>;
     try {
       parsed = PreviewProvisionRequestSchema.safeParse(await readJson(c));
@@ -199,6 +210,8 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
     if (!parsed.success) {
       return c.json({ error: 'Invalid request' }, 400);
     }
+    const requiredAuthKind = parsed.data.testSnapshotId ? 'snapshot_operator' : 'platform';
+    if (authKind !== requiredAuthKind) return c.json({ error: 'Unauthorized' }, 401);
     const { clerkUserId, handle, runtimeSlot, developerTools } = parsed.data;
     emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_REQUESTED, {
       distinctId: clerkUserId,

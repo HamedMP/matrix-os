@@ -83,6 +83,12 @@ Rerunning the workflow resumes that exact machine; an absent or failed preview i
 retried through the same idempotent route. The platform persists the machine and a
 durable provisioning job atomically before provider dispatch.
 
+Golden-snapshot rollout validation may additionally supply one exact
+`testSnapshotId`. That optional field is accepted only with the separate snapshot
+operator bearer, only for a ready test-mode image, and fails closed rather than
+falling back to a clean image. Normal preview automation continues to use the
+platform bearer and cannot opt into this path.
+
 To walk the full onboarding/billing flow against branch platform code — a
 four-slice split (staging slot for the shell, an IAM-proxied `preview-platform`
 revision for the journey/reliability API, a local `dev:platform` + Stripe CLI

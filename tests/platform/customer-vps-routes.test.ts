@@ -11,6 +11,7 @@ import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-
 describe('platform/customer-vps-routes', () => {
   let db: PlatformDB;
   const platformSecret = 'platform-secret';
+  const snapshotOperatorSecret = 'snapshot-operator-secret';
 
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb());
@@ -44,7 +45,11 @@ describe('platform/customer-vps-routes', () => {
       now: () => new Date('2026-04-26T12:00:00.000Z'),
     });
     const app = new Hono();
-    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+    app.route('/vps', createCustomerVpsRoutes({
+      service,
+      platformSecret,
+      goldenSnapshotOperatorSecret: snapshotOperatorSecret,
+    }));
     return app;
   }
 
@@ -104,7 +109,11 @@ describe('platform/customer-vps-routes', () => {
       provisionPreview,
     } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
     const app = new Hono();
-    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+    app.route('/vps', createCustomerVpsRoutes({
+      service,
+      platformSecret,
+      goldenSnapshotOperatorSecret: snapshotOperatorSecret,
+    }));
 
     const unauthorized = await app.request('/vps/preview/provision', {
       method: 'POST',
@@ -127,7 +136,7 @@ describe('platform/customer-vps-routes', () => {
       expect(await invalid.json()).toEqual({ error: 'Invalid request' });
     }
 
-    const accepted = await app.request('/vps/preview/provision', {
+    const releaseCredentialRejected = await app.request('/vps/preview/provision', {
       method: 'POST',
       headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -135,6 +144,20 @@ describe('platform/customer-vps-routes', () => {
         handle: 'pr-897',
         runtimeSlot: 'pr-897',
         accessClerkUserIds: ['user_456'],
+        testSnapshotId: '10000000-0000-4000-8000-000000000001',
+      }),
+    });
+    expect(releaseCredentialRejected.status).toBe(401);
+
+    const accepted = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${snapshotOperatorSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        clerkUserId: 'user_123',
+        handle: 'pr-897',
+        runtimeSlot: 'pr-897',
+        accessClerkUserIds: ['user_456'],
+        testSnapshotId: '10000000-0000-4000-8000-000000000001',
       }),
     });
 
@@ -145,6 +168,7 @@ describe('platform/customer-vps-routes', () => {
       handle: 'pr-897',
       runtimeSlot: 'pr-897',
       accessClerkUserIds: ['user_456'],
+      testSnapshotId: '10000000-0000-4000-8000-000000000001',
     });
     expect(provision).not.toHaveBeenCalled();
 
@@ -156,6 +180,45 @@ describe('platform/customer-vps-routes', () => {
     });
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({ error: 'Provisioning failed' });
+  });
+
+  it('does not grant exact-snapshot authority to the ordinary customer provision route', async () => {
+    const provision = vi.fn().mockResolvedValue({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff113',
+      status: 'provisioning',
+      etaSeconds: 90,
+    });
+    const service = { provision } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({
+      service,
+      platformSecret,
+      goldenSnapshotOperatorSecret: snapshotOperatorSecret,
+    }));
+    const body = {
+      clerkUserId: 'user_customer',
+      handle: 'customer-test',
+      testSnapshotId: '10000000-0000-4000-8000-000000000001',
+    };
+
+    const operatorAttempt = await app.request('/vps/provision', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${snapshotOperatorSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(operatorAttempt.status).toBe(401);
+
+    const customerAttempt = await app.request('/vps/provision', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(customerAttempt.status).toBe(202);
+    expect(provision).toHaveBeenCalledWith({
+      clerkUserId: 'user_customer',
+      handle: 'customer-test',
+      runtimeSlot: 'primary',
+    });
   });
 
   it('rejects duplicate, owner, and oversized preview collaborator lists', async () => {

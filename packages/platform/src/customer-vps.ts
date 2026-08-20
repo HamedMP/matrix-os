@@ -91,7 +91,6 @@ import {
   chooseProvisioningImage,
   chooseRecoveryImage,
   fallbackProvisioningImage,
-  resolveGoldenSnapshotRollout,
   type ProvisioningImageDecision,
 } from './golden-snapshot-activation.js';
 import {
@@ -102,6 +101,12 @@ import {
   releaseGoldenSnapshotLease,
   releaseGoldenSnapshotLeaseInTransaction,
 } from './golden-snapshot-repository.js';
+import {
+  bindTestSnapshotToPreviewProvisionInTransaction,
+  createPreviewTestSnapshotCreateIntent,
+  isPreviewTestSnapshotDecision,
+  resolvePersistedProvisioningImage,
+} from './golden-snapshot-preview-test.js';
 
 export interface ProvisionResponse {
   machineId: string;
@@ -1195,47 +1200,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       let transitionedToFallback = false;
       let effectiveProviderCreateActionId = job.providerCreateActionId;
       if (job.imageSource === 'snapshot' && job.snapshotId && job.snapshotLeaseId) {
-        const rollout = await resolveGoldenSnapshotRollout(
-          deps.db,
-          deps.config.goldenSnapshots,
-          row.machineId,
-          claimedAt.toISOString(),
-        );
-        const persistedSnapshot = await getGoldenSnapshot(deps.db, job.snapshotId);
-        const freshnessCutoff = new Date(
-          claimedAt.getTime() - deps.config.goldenSnapshots.freshnessMaxAgeMs,
-        ).toISOString();
-        if (!rollout.included || !persistedSnapshot?.providerImageId || persistedSnapshot.state !== 'ready'
-          || !persistedSnapshot.readyAt || persistedSnapshot.readyAt <= freshnessCutoff) {
-          await fallbackProvisioningImage(deps.db, {
-            jobId: job.jobId,
-            reason: !rollout.included
-              ? 'snapshot_rollout_disabled'
-              : persistedSnapshot?.state === 'ready' ? 'snapshot_stale' : 'snapshot_unavailable',
-            now: claimedAt.toISOString(),
-          });
-          transitionedToFallback = true;
-          effectiveProviderCreateActionId = null;
-          imageDecision = {
-            imageSource: 'clean_image',
-            targetBundleVersion: imageVersion,
-            targetBundleSha256: job.targetBundleSha256 ?? '0'.repeat(64),
-          };
-        } else {
-          imageDecision = {
-            imageSource: 'snapshot',
-            targetBundleVersion: imageVersion,
-            targetBundleSha256: job.targetBundleSha256 ?? persistedSnapshot.bundleSha256,
-            snapshotId: persistedSnapshot.snapshotId,
-            snapshotLeaseId: job.snapshotLeaseId,
-            providerImageId: persistedSnapshot.providerImageId,
-            sourceBundleVersion: persistedSnapshot.bundleVersion,
-            sourceBaseGeneration: persistedSnapshot.compatibility.baseGeneration,
-            rolloutGeneration: rollout.generation,
-            exact: persistedSnapshot.bundleSha256 === job.targetBundleSha256,
-            requiresExactUpdate: persistedSnapshot.bundleSha256 !== job.targetBundleSha256,
-          };
-        }
+        const resolved = await resolvePersistedProvisioningImage({
+          db: deps.db,
+          config: deps.config.goldenSnapshots,
+          machine: row,
+          job,
+          imageVersion,
+          claimedAt,
+        });
+        imageDecision = resolved.imageDecision;
+        transitionedToFallback = resolved.transitionedToFallback;
+        effectiveProviderCreateActionId = resolved.effectiveProviderCreateActionId;
       } else if (job.imageSource === 'clean_image') {
         imageDecision = {
           imageSource: 'clean_image',
@@ -1336,12 +1311,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
               || selectableSnapshot.providerImageId !== imageDecision.providerImageId) {
               throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
             }
-            const intent = await createGoldenSnapshotCreateIntent(deps.db, {
-              intentId: randomUUID(), snapshotId: imageDecision.snapshotId,
-              leaseId: imageDecision.snapshotLeaseId, machineId: row.machineId,
-              purpose: 'provision', rolloutGeneration: imageDecision.rolloutGeneration,
-              now: now().toISOString(),
-            });
+            const intent = isPreviewTestSnapshotDecision(imageDecision)
+              ? await createPreviewTestSnapshotCreateIntent(deps.db, {
+                  intentId: randomUUID(), snapshotId: imageDecision.snapshotId,
+                  leaseId: imageDecision.snapshotLeaseId, machineId: row.machineId,
+                  providerImageId: imageDecision.providerImageId,
+                  now: now().toISOString(),
+                })
+              : await createGoldenSnapshotCreateIntent(deps.db, {
+                  intentId: randomUUID(), snapshotId: imageDecision.snapshotId,
+                  leaseId: imageDecision.snapshotLeaseId, machineId: row.machineId,
+                  purpose: 'provision', rolloutGeneration: imageDecision.rolloutGeneration,
+                  now: now().toISOString(),
+                });
             if (!intent || intent.state === 'denied') {
               throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
             }
@@ -1371,6 +1353,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           if (!(createErr instanceof CustomerVpsError)
             || createErr.code !== 'snapshot_clone_rejected'
             || imageDecision.imageSource !== 'snapshot') throw createErr;
+          if (isPreviewTestSnapshotDecision(imageDecision)) throw createErr;
           await fallbackProvisioningImage(deps.db, {
             jobId: job.jobId,
             reason: 'clone_rejected',
@@ -1466,6 +1449,20 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         if (createResult === 'error') {
           if (imageDecision.imageSource !== 'snapshot') {
             throw new Error('Provider create action failed');
+          }
+          if (isPreviewTestSnapshotDecision(imageDecision)) {
+            try {
+              await deps.hetzner.deleteServer(server.id);
+              if (await deps.hetzner.getServer(server.id)) return 'pending';
+              serverIdForCompensation = null;
+            } catch (cleanupErr: unknown) {
+              logCustomerVpsError('rejected preview-test snapshot clone cleanup failed', cleanupErr);
+              await queueProviderDeletion({
+                providerServerId: server.id, reason: 'rejected_snapshot_clone',
+                machineId: row.machineId, handle: row.handle, err: cleanupErr,
+              });
+            }
+            throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
           }
           await fallbackProvisioningImage(deps.db, {
             jobId: job.jobId, reason: 'clone_rejected', now: now().toISOString(),
@@ -1605,6 +1602,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     provisioningClass: UserMachineProvisioningClass,
     dispatch: NonNullable<ProvisionOptions['dispatch']>,
   ): Promise<ProvisionResponse> {
+    const testSnapshotId = provisioningClass === 'preview' && 'testSnapshotId' in input
+      ? input.testSnapshotId
+      : undefined;
     const request = {
       ...input,
       runtimeSlot: input.runtimeSlot ?? 'primary',
@@ -1618,6 +1618,14 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       machine: UserMachineRecord,
     ): Promise<UserMachineRecord> => {
       if (provisioningClass !== 'preview') return machine;
+      if (testSnapshotId) {
+        const existingJob = await getProvisioningJobByMachineId(db, machine.machineId);
+        const matchesRequestedSnapshot = machine.provisioningClass === 'preview'
+          && (machine.sourceSnapshotId === testSnapshotId || existingJob?.snapshotId === testSnapshotId);
+        if (!matchesRequestedSnapshot) {
+          throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+        }
+      }
       await updateUserMachine(db, machine.machineId, {
         accessClerkUserIds: request.accessClerkUserIds,
       });
@@ -1687,6 +1695,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       let attempt = 1;
       if (existing) {
         if (existing.status !== 'failed') {
+          if (testSnapshotId) {
+            await reconcilePreviewAccess(trx, existing);
+          }
           if (provisioningClass === 'preview' && existing.runtimeSlot !== request.runtimeSlot) {
             const failedExact = await getActiveUserMachineByClerkId(
               trx,
@@ -1749,6 +1760,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           throw billingUpgradeRequired();
         }
       }
+      const serverType = transactionBillingContext?.serverType ?? deps.config.serverType;
       await insertUserMachine(trx, {
         machineId,
         clerkUserId: request.clerkUserId,
@@ -1758,7 +1770,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         accessClerkUserIds: request.accessClerkUserIds,
         status: 'provisioning',
         imageVersion: bundleRef.imageVersion,
-        serverType: transactionBillingContext?.serverType ?? deps.config.serverType,
+        serverType,
         location: ('location' in request ? request.location : undefined) ?? deps.config.location,
         developerTools: request.developerTools,
         registrationTokenHash: registration.hash,
@@ -1773,7 +1785,20 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         availableAt: currentTime.toISOString(),
         createdAt: currentTime.toISOString(),
       });
-        return { existing: null };
+      if (testSnapshotId) {
+        const bound = await bindTestSnapshotToPreviewProvisionInTransaction(trx, {
+          snapshotId: testSnapshotId,
+          targetBundleVersion: bundleRef.imageVersion,
+          serverType,
+          machineId,
+          provisioningJobId: jobId,
+          now: currentTime.toISOString(),
+        }, deps.config.goldenSnapshots);
+        if (!bound) {
+          throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+        }
+      }
+      return { existing: null };
       });
     } catch (err: unknown) {
       const errorCode = err instanceof Error
