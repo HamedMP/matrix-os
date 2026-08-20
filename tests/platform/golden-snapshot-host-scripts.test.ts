@@ -242,6 +242,24 @@ describe('golden snapshot host scripts', () => {
         MATRIX_TARGET_BUNDLE_SHA256: '',
       },
     })).resolves.toMatchObject({ stdout: '' });
+
+    await writeFile(join(envDir, 'host.env'), [
+      'MATRIX_IMAGE_SOURCE=clean_image',
+      'MATRIX_IMAGE_VERSION=older',
+      'MATRIX_SNAPSHOT_SOURCE_VERSION=',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'f'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: 'snapshot',
+        MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
+        MATRIX_TARGET_BUNDLE_SHA256: 'e'.repeat(64),
+      },
+    })).resolves.toMatchObject({ stdout: '' });
   });
 
   it('re-certifies a missing host-prerequisites marker without bootstrap work', async () => {

@@ -11,21 +11,26 @@ path() {
   printf '%s%s\n' "$root" "$1"
 }
 
-host_env="$(path /opt/matrix/env/host.env)"
-if [ -e "$host_env" ] || [ -L "$host_env" ]; then
-  [ -f "$host_env" ] && [ ! -L "$host_env" ] || exit 1
-  host_env_size="$(stat -c %s "$host_env")" || exit 1
-  [[ "$host_env_size" =~ ^[0-9]+$ ]] && [ "$host_env_size" -le 65536 ] || exit 1
-  if [ -z "$root" ]; then
-    host_env_mode="$(stat -c %a "$host_env")" || exit 1
-    [ "$(stat -c %u "$host_env")" = 0 ] \
-      && (( (8#$host_env_mode & 8#022) == 0 )) || exit 1
+if [ -z "${MATRIX_IMAGE_SOURCE:-}" ] \
+  || [ -z "${MATRIX_IMAGE_VERSION:-}" ] \
+  || [ -z "${MATRIX_SNAPSHOT_SOURCE_VERSION:-}" ] \
+  || [ -z "${MATRIX_TARGET_BUNDLE_SHA256:-}" ]; then
+  host_env="$(path /opt/matrix/env/host.env)"
+  if [ -e "$host_env" ] || [ -L "$host_env" ]; then
+    [ -f "$host_env" ] && [ ! -L "$host_env" ] || exit 1
+    host_env_size="$(stat -c %s "$host_env")" || exit 1
+    [[ "$host_env_size" =~ ^[0-9]+$ ]] && [ "$host_env_size" -le 65536 ] || exit 1
+    if [ -z "$root" ]; then
+      host_env_mode="$(stat -c %a "$host_env")" || exit 1
+      [ "$(stat -c %u "$host_env")" = 0 ] \
+        && (( (8#$host_env_mode & 8#022) == 0 )) || exit 1
+    fi
+    # Cloud-init writes this root-owned file immediately before runcmd. Loading
+    # the canonical inputs here keeps the fast path correct even when a caller
+    # sources the file without exporting its shell variables to this process.
+    # shellcheck disable=SC1090
+    source "$host_env"
   fi
-  # Cloud-init writes this root-owned file immediately before runcmd. Loading
-  # the canonical inputs here keeps the fast path correct even when a caller
-  # sources the file without exporting its shell variables to this process.
-  # shellcheck disable=SC1090
-  source "$host_env"
 fi
 
 [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = snapshot ] || exit 1
