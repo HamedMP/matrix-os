@@ -61,8 +61,8 @@ function Column({
   const { setNodeRef, isOver } = useDroppable({ id: `column:${status}` });
   const openCreateTask = useUi((s) => s.openCreateTask);
   return (
-    <div className="group/col flex w-[252px] shrink-0 flex-col">
-      <div className="mb-2 flex items-center gap-2 px-1">
+    <div className="group/col flex min-w-[220px] flex-1 flex-col border-r last:border-r-0" style={{ borderColor: "var(--border-subtle)" }}>
+      <div className="flex items-center gap-2 border-b px-3 py-3" style={{ borderColor: "var(--border-subtle)" }}>
         <span className="h-2 w-2 rounded-full" style={{ background: COLUMN_COLOR[status] }} />
         <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
           {COLUMN_LABEL[status]}
@@ -75,7 +75,7 @@ function Column({
           type="button"
           aria-label={`New task in ${COLUMN_LABEL[status]}`}
           title={`New task in ${COLUMN_LABEL[status]}`}
-          className="flex h-5 w-5 items-center justify-center rounded opacity-0 transition-opacity duration-100 hover:bg-[var(--bg-hover)] group-hover/col:opacity-100"
+          className="flex h-6 w-6 items-center justify-center rounded transition-colors duration-100 hover:bg-[var(--bg-hover)]"
           style={{ color: "var(--text-tertiary)" }}
           onClick={() => openCreateTask(status)}
         >
@@ -84,12 +84,15 @@ function Column({
       </div>
       <div
         ref={setNodeRef}
-        className="flex min-h-[120px] flex-1 flex-col gap-1.5 rounded-lg p-1 transition-colors duration-100"
+        className="flex min-h-[160px] flex-1 flex-col gap-1.5 p-2 transition-colors duration-100"
         style={{ background: isOver ? "var(--bg-selected)" : "transparent" }}
       >
         {cards.map((card) => (
           <DraggableCard key={card.id} card={card} dragging={activeDragId === card.id} />
         ))}
+        {cards.length === 0 ? (
+          <p className="px-2 py-4 text-xs" style={{ color: "var(--text-tertiary)" }}>No tasks</p>
+        ) : null}
         <button
           type="button"
           className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-100 hover:bg-[var(--bg-hover)]"
@@ -131,7 +134,6 @@ export default function Board({ projectSlug, active = true }: { projectSlug?: st
   const sessionsLoad = useSessions((s) => s.load);
   const gitLoadAll = useGit((s) => s.loadAll);
   const gitLoadPreviews = useGit((s) => s.loadPreviews);
-  const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
   // Live development state for the card badges (session/branch/dirty/preview).
@@ -212,24 +214,9 @@ export default function Board({ projectSlug, active = true }: { projectSlug?: st
     );
   }
 
-  if (cards.length === 0) {
-    return (
-      <EmptyState
-        icon={<Kanban size={28} />}
-        headline="No tasks yet"
-        description="Create your first task to start working with your Matrix OS computer."
-        action={
-          <Button variant="primary" onClick={() => setCreateTaskOpen(true)}>
-            New task
-          </Button>
-        }
-      />
-    );
-  }
-
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      <div className="flex flex-1 gap-4 overflow-x-auto p-4">
+      <div className="flex min-w-max flex-1 overflow-x-auto" data-slot="project-board">
         {BOARD_COLUMNS.map((status) => (
           <Column
             key={status}

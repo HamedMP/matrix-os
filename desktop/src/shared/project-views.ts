@@ -5,7 +5,7 @@
 import { ThreadIdSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
-export const ProjectViewSchema = z.enum(["board", "chats"]);
+export const ProjectViewSchema = z.enum(["overview", "board", "chats"]);
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
 
 export const ProjectViewEntrySchema = z

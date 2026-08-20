@@ -200,41 +200,69 @@ describe("ProjectTab", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the project header with the runtime status and defaults to the board view", async () => {
+  it("opens on the Figma sessions landing with runtime status and recent sessions", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
-    expect(screen.getByText("Matrix OS")).toBeTruthy();
-    // The board is the default project view.
-    expect(await screen.findByText("No tasks yet")).toBeTruthy();
+    expect(screen.getAllByText("Matrix OS").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { name: "Matrix OS" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start a new chat in Matrix OS" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Open session Plan the auth work" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open session Harden the auth route" })).toBeTruthy();
     const board = screen.getByRole("button", { name: "Board" });
     const chats = screen.getByRole("button", { name: "Chats" });
-    expect(board.getAttribute("aria-pressed")).toBe("true");
-    expect(chats.getAttribute("aria-pressed")).toBe("false");
+    expect(board.getAttribute("aria-pressed")).toBe("false");
+    expect(chats.getAttribute("aria-pressed")).toBe("true");
     // Runtime status stays visible in the project workspace header.
-    expect(await screen.findByText("Primary")).toBeTruthy();
+    expect(await screen.findByText("Primary Matrix computer")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Refresh agent workspace" })).toBeTruthy();
   });
 
   it("shows the project attention count in the header", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
-    await screen.findByText("No tasks yet");
+    await screen.findByRole("button", { name: "Start a new chat in Matrix OS" });
     expect(screen.getByLabelText("3 need attention")).toBeTruthy();
   });
 
-  it("switches to the chats view and persists the choice per project", async () => {
+  it("starts a new chat through the canonical project composer", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start a new chat in Matrix OS" }));
 
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
-    // The project chats list replaces the board.
-    expect(await screen.findByRole("button", { name: "Chat Plan the auth work" })).toBeTruthy();
-    expect(screen.queryByText("No tasks yet")).toBeNull();
-    // The board view choice survives a remount.
-    cleanup();
+    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
+  });
+
+  it("opens a recent session in the detailed Chats view", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
-    expect((await screen.findAllByRole("button", { name: "Chats" }))[0]!.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open session Harden the auth route" }));
+
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_auth");
+    expect(await screen.findByRole("region", { name: "Conversation Harden the auth route" })).toBeTruthy();
+  });
+
+  it("keeps all five workflow columns visible when the board has no tasks", async () => {
+    render(<ProjectTab projectSlug="matrix-os" active />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Board" }));
+
+    for (const status of ["Todo", "Running", "Waiting", "Blocked", "Complete"]) {
+      expect(await screen.findByRole("button", { name: `New task in ${status}` })).toBeTruthy();
+    }
+    expect(screen.getAllByText("No tasks")).toHaveLength(5);
+  });
+
+  it("returns from Board to the sessions landing through Chats", async () => {
+    render(<ProjectTab projectSlug="matrix-os" active />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Board" }));
+    await screen.findByRole("button", { name: "New task in Todo" });
+    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("overview");
+    expect(await screen.findByRole("button", { name: "Start a new chat in Matrix OS" })).toBeTruthy();
   });
 
   it("keeps global task creation available when the active project opens in Chats", async () => {
