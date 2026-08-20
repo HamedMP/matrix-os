@@ -31,6 +31,16 @@ export interface StubGateway {
   };
 }
 
+export interface StubGatewayOptions {
+  rootFileEntries?: Array<{
+    name: string;
+    type: "directory" | "file";
+    children?: number;
+    size?: number;
+    modified: string;
+  }>;
+}
+
 const TOKEN = "stub-token-1";
 const REVIEW_TOKEN = "stub-review-token-with-enough-entropy-1";
 const NOW = "2026-07-08T00:00:00.000Z";
@@ -462,7 +472,7 @@ export function codingAgentSummary(): RuntimeSummary {
   });
 }
 
-export async function startStubGateway(): Promise<StubGateway> {
+export async function startStubGateway(options: StubGatewayOptions = {}): Promise<StubGateway> {
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   let projectLifecycle: "active" | "archived" | "deleted" = "active";
   const state: StubGateway["state"] = {
@@ -729,7 +739,7 @@ export async function startStubGateway(): Promise<StubGateway> {
             { name: "t3code", type: "directory", children: 12, modified: "2026-07-30T17:00:00.000Z" },
             { name: "README.md", type: "file", size: 4_862, modified: NOW },
           ]
-        : [
+        : options.rootFileEntries ?? [
             { name: "workspaces", type: "directory", children: 3, modified: NOW },
             { name: "apps", type: "directory", children: 7, modified: "2026-07-31T16:00:00.000Z" },
             { name: "system", type: "directory", children: 9, modified: "2026-07-29T12:00:00.000Z" },

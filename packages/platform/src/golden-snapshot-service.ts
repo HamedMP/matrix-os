@@ -947,16 +947,62 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
     }
 
     if (build.phase === 'snapshot_wait') {
-      let image = snapshot.providerImageId === null
+      const observeDeadline = (): { expired: boolean; observedAt: string } => {
+        const observedAt = now();
+        return {
+          expired: !build.callbackExpiresAt || build.callbackExpiresAt <= observedAt,
+          observedAt,
+        };
+      };
+      const readProviderState = async <T>(
+        context: string,
+        read: () => Promise<T>,
+        expiredFailure: { code: string; message: string } = {
+          code: 'snapshot_creation_timeout',
+          message: 'Golden snapshot creation timed out',
+        },
+      ): Promise<T> => {
+        try {
+          return await read();
+        } catch (err: unknown) {
+          const deadline = observeDeadline();
+          if (deadline.expired) {
+            await quarantine(
+              buildId,
+              snapshot.snapshotId,
+              expiredFailure.code,
+              deadline.observedAt,
+              build.phase,
+            );
+            throw new Error(expiredFailure.message);
+          }
+          throw providerFailure(context, err);
+        }
+      };
+      const providerImageId = snapshot.providerImageId;
+      const providerSnapshotActionId = build.providerSnapshotActionId;
+      let image = providerImageId === null
         ? null
-        : await deps.hetzner.getImage(snapshot.providerImageId);
-      const action = build.providerSnapshotActionId === null
+        : await readProviderState(
+          'snapshot image confirmation',
+          () => deps.hetzner.getImage(providerImageId),
+        );
+      const action = providerSnapshotActionId === null
         ? null
-        : await deps.hetzner.getAction(build.providerSnapshotActionId);
+        : await readProviderState(
+          'snapshot action confirmation',
+          () => deps.hetzner.getAction(providerSnapshotActionId),
+        );
       if (snapshot.providerImageId === null) {
         const selector = `matrix.snapshot-build=${buildId},matrix.snapshot-id=${snapshot.snapshotId}`;
-        const candidates = (await deps.hetzner.listImagesByLabel(selector)).filter((candidate) =>
-          candidate.labels['matrix.snapshot-build'] === buildId
+        const candidates = (await readProviderState(
+          'snapshot image reconciliation',
+          () => deps.hetzner.listImagesByLabel(selector),
+          {
+            code: 'snapshot_create_unresolved',
+            message: 'Golden snapshot image recovery window expired',
+          },
+        )).filter((candidate) => candidate.labels['matrix.snapshot-build'] === buildId
           && candidate.labels['matrix.snapshot-id'] === snapshot.snapshotId
           && candidate.labels['matrix.role'] === 'builder');
         if (candidates.length > 1) {
@@ -982,10 +1028,18 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
               now: at,
             },
           )) throw new Error('Golden snapshot build lease lost during image adoption');
-        } else if (build.callbackExpiresAt && build.callbackExpiresAt <= at) {
-          await quarantine(buildId, snapshot.snapshotId, 'snapshot_create_unresolved', at, build.phase);
-          throw new Error('Golden snapshot image recovery window expired');
         } else {
+          const deadline = observeDeadline();
+          if (deadline.expired) {
+            await quarantine(
+              buildId,
+              snapshot.snapshotId,
+              'snapshot_create_unresolved',
+              deadline.observedAt,
+              build.phase,
+            );
+            throw new Error('Golden snapshot image recovery window expired');
+          }
           return 'snapshot_wait';
         }
       }
@@ -998,13 +1052,33 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         throw new Error('Golden snapshot image validation failed');
       }
       if (action === null && (build.providerSnapshotActionId !== null || image.status !== 'available')) {
-        if (build.callbackExpiresAt && build.callbackExpiresAt <= at) {
-          await quarantine(buildId, snapshot.snapshotId, 'snapshot_action_unconfirmed', at, build.phase);
+        const deadline = observeDeadline();
+        if (deadline.expired) {
+          await quarantine(
+            buildId,
+            snapshot.snapshotId,
+            'snapshot_action_unconfirmed',
+            deadline.observedAt,
+            build.phase,
+          );
           throw new Error('Golden snapshot action confirmation timed out');
         }
         return 'snapshot_wait';
       }
-      if (image.status !== 'available' || (action !== null && action.status !== 'success')) return 'snapshot_wait';
+      if (image.status !== 'available' || (action !== null && action.status !== 'success')) {
+        const deadline = observeDeadline();
+        if (deadline.expired) {
+          await quarantine(
+            buildId,
+            snapshot.snapshotId,
+            'snapshot_creation_timeout',
+            deadline.observedAt,
+            build.phase,
+          );
+          throw new Error('Golden snapshot creation timed out');
+        }
+        return 'snapshot_wait';
+      }
       if (image.architecture !== snapshot.compatibility.architecture || image.deleteProtected) {
         await quarantine(buildId, snapshot.snapshotId, 'image_incompatible', at, build.phase);
         throw new Error('Golden snapshot image compatibility validation failed');

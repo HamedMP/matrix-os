@@ -494,7 +494,9 @@ export default function ComputerFileBrowser({
       ) : null}
       <div
         data-files-listing
-        className={`${compact ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto p-1.5`}
+        className={`${compact ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto ${
+          compact && view === "list" ? "px-1.5 pb-1.5" : "p-1.5"
+        }`}
         onDragEnter={mode === "browse" && !viewReadOnly ? (event) => {
           if (!hasRegularDroppedFiles(event.dataTransfer)) return;
           event.preventDefault();

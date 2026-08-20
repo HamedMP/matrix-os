@@ -17,7 +17,6 @@ import { useGlobalShortcuts } from "./shortcuts";
 import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
-import DesktopUpdateExperience from "../updates/DesktopUpdateExperience";
 import { useShellSessionSync } from "../../lib/shell-session-sync";
 import { preloadAppIcons, useApps } from "../../stores/apps";
 
@@ -185,7 +184,6 @@ export default function MissionControl() {
       <CommandPalette />
       <QuickOpen />
       <CreateProjectDialog open={createProjectOpen} onClose={() => setCreateProjectOpen(false)} />
-      <DesktopUpdateExperience />
     </div>
   );
 }

@@ -3,15 +3,19 @@ import type {
   DesktopReleaseNotes,
   DesktopUpdateSnapshot,
 } from "../../../shared/desktop-update";
+import { diagnosticErrorKind } from "../lib/errors";
 import { invoke, onEvent } from "../lib/operator";
 
 interface DesktopUpdateState {
   snapshot: DesktopUpdateSnapshot;
   release: DesktopReleaseNotes | null;
   whatsNewOpen: boolean;
+  manualDialogOpen: boolean;
   installing: boolean;
   initialize: () => () => void;
+  check: () => Promise<void>;
   install: () => Promise<void>;
+  closeManualDialog: () => void;
   closeWhatsNew: () => void;
 }
 
@@ -19,6 +23,7 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
   snapshot: { status: "disabled" },
   release: null,
   whatsNewOpen: false,
+  manualDialogOpen: false,
   installing: false,
 
   initialize: () => {
@@ -31,9 +36,20 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
     }
     let active = true;
     let eventReceived = false;
-    const unsubscribe = onEvent("update:state-changed", (snapshot) => {
+    const unsubscribeState = onEvent("update:state-changed", (snapshot) => {
       eventReceived = true;
       if (active) set({ snapshot });
+    });
+    const unsubscribeManualCheck = onEvent("update:manual-check-requested", () => {
+      if (!active) return;
+      set((state) => ({
+        manualDialogOpen: true,
+        snapshot: state.snapshot.status === "checking"
+          || state.snapshot.status === "downloading"
+          || state.snapshot.status === "ready"
+          ? state.snapshot
+          : { status: "checking" },
+      }));
     });
 
     void Promise.all([
@@ -48,14 +64,29 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
           whatsNewOpen: whatsNew.shouldOpen && Boolean(whatsNew.release),
         });
       })
-      .catch(() => {
-        console.warn("[desktop-update] could not initialize update state");
+      .catch((err: unknown) => {
+        console.warn(
+          "[desktop-update] could not initialize update state:",
+          diagnosticErrorKind(err),
+        );
       });
 
     return () => {
       active = false;
-      if (typeof unsubscribe === "function") unsubscribe();
+      if (typeof unsubscribeState === "function") unsubscribeState();
+      if (typeof unsubscribeManualCheck === "function") unsubscribeManualCheck();
     };
+  },
+
+  check: async () => {
+    set({ manualDialogOpen: true });
+    try {
+      const snapshot = await invoke("update:check", {});
+      set({ snapshot });
+    } catch (err: unknown) {
+      set({ snapshot: { status: "error" } });
+      console.warn("[desktop-update] update check failed:", diagnosticErrorKind(err));
+    }
   },
 
   install: async () => {
@@ -64,18 +95,25 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
     try {
       const result = await invoke("update:install", {});
       if (!result.ok) set({ installing: false });
-    } catch {
+    } catch (err: unknown) {
       set({ installing: false });
-      console.warn("[desktop-update] restart and install failed");
+      console.warn("[desktop-update] restart and install failed:", diagnosticErrorKind(err));
     }
   },
+
+  closeManualDialog: () => set({ manualDialogOpen: false }),
 
   closeWhatsNew: () => {
     const release = get().release;
     set({ whatsNewOpen: false });
     if (!release) return;
-    void invoke("update:acknowledge-whats-new", { version: release.version }).catch(() => {
-      console.warn("[desktop-update] could not acknowledge What's New");
-    });
+    void invoke("update:acknowledge-whats-new", { version: release.version }).catch(
+      (err: unknown) => {
+        console.warn(
+          "[desktop-update] could not acknowledge What's New:",
+          diagnosticErrorKind(err),
+        );
+      },
+    );
   },
 }));

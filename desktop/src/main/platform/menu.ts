@@ -4,7 +4,10 @@ import { app, Menu, shell, type BrowserWindow } from "electron";
 import { createAppMenuTemplate } from "./menu-template";
 import { nextZoomFactor, type ZoomAction } from "./zoom";
 
-export function installAppMenu(getWindow: () => BrowserWindow | null): void {
+export function installAppMenu(
+  getWindow: () => BrowserWindow | null,
+  checkForUpdates: () => void,
+): void {
   const send = (channel: string, payload: unknown) => {
     getWindow()?.webContents.send(channel, payload);
   };
@@ -27,6 +30,7 @@ export function installAppMenu(getWindow: () => BrowserWindow | null): void {
     },
     send,
     adjustZoom,
+    checkForUpdates,
   });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

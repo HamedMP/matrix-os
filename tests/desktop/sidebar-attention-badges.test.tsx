@@ -148,9 +148,14 @@ describe("Sidebar attention badges", () => {
     expect(within(projectButton).queryByText("0")).toBeNull();
   });
 
-  it("places a ready update outside and before the account row", () => {
+  it("places a ready update at the right edge of the account row", () => {
     useDesktopUpdate.setState({
-      snapshot: { status: "ready", version: "1.2.3", progress: 100 },
+      snapshot: {
+        status: "ready",
+        version: "1.2.3",
+        progress: 100,
+        release: { version: "1.2.3", notes: "## Improved\n\n- Faster updates" },
+      },
     });
 
     render(
@@ -162,7 +167,8 @@ describe("Sidebar attention badges", () => {
     const update = screen.getByRole("button", { name: "Update Matrix OS to 1.2.3" });
     const account = screen.getByRole("button", { name: "Open account menu" });
 
-    expect(update.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(update.parentElement).not.toBe(account.parentElement);
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+    expect(account.compareDocumentPosition(update) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(update.parentElement).toBe(account.parentElement);
   });
 });

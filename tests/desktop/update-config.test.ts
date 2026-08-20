@@ -10,12 +10,11 @@ describe("resolveUpdateFeedConfig", () => {
     });
   });
 
-  it("uses GitHub releases for packaged stable builds by default", () => {
+  it("uses the stable Desktop channel release for packaged builds by default", () => {
     expect(resolveUpdateFeedConfig({}, true)).toEqual({
       enabled: true,
-      provider: "github",
-      owner: "HamedMP",
-      repo: "matrix-os",
+      provider: "generic",
+      url: "https://github.com/HamedMP/matrix-os/releases/download/desktop-stable/",
       channel: "stable",
       allowPrerelease: false,
     });
@@ -26,7 +25,8 @@ describe("resolveUpdateFeedConfig", () => {
       resolveUpdateFeedConfig({ MATRIX_DESKTOP_UPDATE_CHANNEL: "canary" }, true),
     ).toMatchObject({
       enabled: true,
-      provider: "github",
+      provider: "generic",
+      url: "https://github.com/HamedMP/matrix-os/releases/download/desktop-canary/",
       channel: "canary",
       allowPrerelease: true,
     });
@@ -35,7 +35,8 @@ describe("resolveUpdateFeedConfig", () => {
   it("allows dev builds to use the dev update channel", () => {
     expect(resolveUpdateFeedConfig({ MATRIX_DESKTOP_UPDATE_CHANNEL: "dev" }, true)).toMatchObject({
       enabled: true,
-      provider: "github",
+      provider: "generic",
+      url: "https://github.com/HamedMP/matrix-os/releases/download/desktop-dev/",
       channel: "dev",
       allowPrerelease: true,
     });
@@ -44,9 +45,22 @@ describe("resolveUpdateFeedConfig", () => {
   it("uses the bundled release channel when runtime env is absent", () => {
     expect(resolveUpdateFeedConfig({}, true, "canary")).toMatchObject({
       enabled: true,
-      provider: "github",
+      provider: "generic",
+      url: "https://github.com/HamedMP/matrix-os/releases/download/desktop-canary/",
       channel: "canary",
       allowPrerelease: true,
+    });
+  });
+
+  it("keeps repository overrides inside the channel-specific Desktop feed", () => {
+    expect(resolveUpdateFeedConfig({
+      MATRIX_DESKTOP_RELEASE_OWNER: "example",
+      MATRIX_DESKTOP_RELEASE_REPO: "desktop-releases",
+      MATRIX_DESKTOP_UPDATE_CHANNEL: "beta",
+    }, true)).toMatchObject({
+      provider: "generic",
+      url: "https://github.com/example/desktop-releases/releases/download/desktop-beta/",
+      channel: "beta",
     });
   });
 

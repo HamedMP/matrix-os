@@ -28,15 +28,50 @@ const UPDATER_EVENT_NAMES = [
   "error",
 ] as const;
 
-interface InstallableUpdater {
-  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+type ElectronAutoUpdater = typeof import("electron-updater")["autoUpdater"];
+
+interface ElectronUpdaterModuleNamespace {
+  autoUpdater?: unknown;
+  default?: unknown;
 }
 
 export interface Updater {
   check(): Promise<void>;
   install(): Promise<boolean>;
+  isInstallStarted(): boolean;
   snapshot(): DesktopUpdateSnapshot;
   status(): UpdateStatus;
+}
+
+function hasAutoUpdaterShape(value: unknown): value is ElectronAutoUpdater {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.checkForUpdates === "function" &&
+    typeof candidate.quitAndInstall === "function" &&
+    typeof candidate.setFeedURL === "function" &&
+    typeof candidate.removeAllListeners === "function" &&
+    typeof candidate.once === "function" &&
+    typeof candidate.on === "function"
+  );
+}
+
+async function loadAutoUpdater(): Promise<ElectronAutoUpdater> {
+  const updaterModule = await import("electron-updater") as ElectronUpdaterModuleNamespace;
+  const directAutoUpdater = "autoUpdater" in updaterModule
+    ? updaterModule.autoUpdater
+    : undefined;
+  const defaultExport = "default" in updaterModule
+    ? updaterModule.default
+    : undefined;
+  const defaultAutoUpdater = defaultExport && typeof defaultExport === "object"
+    ? (defaultExport as Record<string, unknown>).autoUpdater
+    : undefined;
+  const autoUpdater = directAutoUpdater ?? defaultAutoUpdater;
+  if (!hasAutoUpdaterShape(autoUpdater)) {
+    throw new Error("Desktop updater module is unavailable");
+  }
+  return autoUpdater;
 }
 
 function readVersion(info: unknown): string | null {
@@ -84,8 +119,9 @@ function readRelease(info: unknown, version: string): DesktopReleaseNotes {
 
 export function createUpdater(events: UpdateEvents): Updater {
   let current: DesktopUpdateSnapshot = { status: "disabled" };
-  let activeAutoUpdater: InstallableUpdater | null = null;
+  let activeAutoUpdater: ElectronAutoUpdater | null = null;
   let pendingReleaseSave: Promise<void> = Promise.resolve();
+  let installStarted = false;
   const feed = resolveUpdateFeedConfig(process.env, app.isPackaged);
 
   const setSnapshot = (next: DesktopUpdateSnapshot): void => {
@@ -99,29 +135,25 @@ export function createUpdater(events: UpdateEvents): Updater {
         setSnapshot({ status: "disabled" });
         return;
       }
-      if (
-        current.status === "checking" ||
-        current.status === "downloading" ||
-        current.status === "ready"
-      ) return;
+      if (current.status === "checking") {
+        return;
+      }
+      if (current.status === "downloading" || current.status === "ready") {
+        return;
+      }
 
       setSnapshot({ status: "checking" });
       try {
-        const { autoUpdater } = await import("electron-updater");
+        const autoUpdater = await loadAutoUpdater();
         activeAutoUpdater = autoUpdater;
         autoUpdater.autoDownload = true;
-        autoUpdater.autoInstallOnAppQuit = true;
+        autoUpdater.autoInstallOnAppQuit = false;
         autoUpdater.allowPrerelease = feed.allowPrerelease;
-        if (feed.provider === "generic") {
-          autoUpdater.setFeedURL({ provider: "generic", url: feed.url });
-        } else {
-          autoUpdater.setFeedURL({
-            provider: "github",
-            owner: feed.owner,
-            repo: feed.repo,
-            ...(feed.channel === "stable" ? {} : { channel: feed.channel }),
-          });
-        }
+        autoUpdater.setFeedURL({
+          provider: "generic",
+          url: feed.url,
+          channel: feed.channel === "stable" ? "latest" : feed.channel,
+        });
         for (const eventName of UPDATER_EVENT_NAMES) {
           autoUpdater.removeAllListeners(eventName);
         }
@@ -148,17 +180,22 @@ export function createUpdater(events: UpdateEvents): Updater {
             setSnapshot({ status: "error" });
             return;
           }
-          setSnapshot({ status: "ready", version, progress: 100 });
-          events.onReady(version);
-          pendingReleaseSave = Promise.resolve(events.onReleaseReady?.(readRelease(info, version)))
-            .catch((err: unknown) => {
+          const release = readRelease(info, version);
+          pendingReleaseSave = (async () => {
+            try {
+              await events.onReleaseReady?.(release);
+            } catch (err: unknown) {
               console.warn(
                 "[updates] could not persist release notes:",
                 err instanceof Error ? err.message : String(err),
               );
-            });
+            }
+          })();
+          setSnapshot({ status: "ready", version, progress: 100, release });
+          events.onReady(version);
         });
         autoUpdater.once("update-not-available", () => {
+          console.info("[updates] update check completed: up to date");
           setSnapshot({ status: "up-to-date" });
         });
         autoUpdater.once("error", (err) => {
@@ -178,13 +215,20 @@ export function createUpdater(events: UpdateEvents): Updater {
       }
     },
     async install() {
-      if (current.status !== "ready") return false;
-      await pendingReleaseSave;
-      const installable = activeAutoUpdater ?? (await import("electron-updater")).autoUpdater;
-      activeAutoUpdater = installable;
-      installable.quitAndInstall(false, true);
-      return true;
+      if (current.status !== "ready" || installStarted) return false;
+      installStarted = true;
+      try {
+        await pendingReleaseSave;
+        const installable = activeAutoUpdater ?? await loadAutoUpdater();
+        activeAutoUpdater = installable;
+        installable.quitAndInstall(false, true);
+        return true;
+      } catch (error: unknown) {
+        installStarted = false;
+        throw error;
+      }
     },
+    isInstallStarted: () => installStarted,
     snapshot: () => ({ ...current }),
     status: () => current.status,
   };

@@ -12,14 +12,6 @@ export type UpdateFeedConfig =
       url: string;
       channel: DesktopUpdateChannel;
       allowPrerelease: boolean;
-    }
-  | {
-      enabled: true;
-      provider: "github";
-      owner: string;
-      repo: string;
-      channel: DesktopUpdateChannel;
-      allowPrerelease: boolean;
     };
 
 const DEFAULT_OWNER = "HamedMP";
@@ -43,6 +35,12 @@ function firstNonEmpty(...values: Array<string | undefined>): string | undefined
     if (value && value.trim().length > 0) return value.trim();
   }
   return undefined;
+}
+
+function githubChannelFeedUrl(owner: string, repo: string, channel: DesktopUpdateChannel): string {
+  const encodedOwner = encodeURIComponent(owner);
+  const encodedRepo = encodeURIComponent(repo);
+  return `https://github.com/${encodedOwner}/${encodedRepo}/releases/download/desktop-${channel}/`;
 }
 
 export function resolveUpdateFeedConfig(
@@ -70,11 +68,12 @@ export function resolveUpdateFeedConfig(
     };
   }
 
+  const owner = firstNonEmpty(env.MATRIX_DESKTOP_RELEASE_OWNER) ?? DEFAULT_OWNER;
+  const repo = firstNonEmpty(env.MATRIX_DESKTOP_RELEASE_REPO) ?? DEFAULT_REPO;
   return {
     enabled: true,
-    provider: "github",
-    owner: firstNonEmpty(env.MATRIX_DESKTOP_RELEASE_OWNER) ?? DEFAULT_OWNER,
-    repo: firstNonEmpty(env.MATRIX_DESKTOP_RELEASE_REPO) ?? DEFAULT_REPO,
+    provider: "generic",
+    url: githubChannelFeedUrl(owner, repo, channel),
     channel,
     allowPrerelease,
   };

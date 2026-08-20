@@ -233,8 +233,10 @@ export default function Sidebar() {
           </div>
 
           <div className="mt-auto flex shrink-0 flex-col">
-            <DesktopUpdateButton collapsed={false} />
-            <AccountMenu collapsed={false} />
+            <AccountMenu
+              collapsed={false}
+              trailingAction={<DesktopUpdateButton collapsed={false} />}
+            />
           </div>
         </>
       )}

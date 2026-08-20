@@ -259,10 +259,17 @@ describe("ComputerFileBrowser view options", () => {
   it("uses tighter metadata tracks in the compact folder picker", async () => {
     renderBrowser({ compact: true, mode: "folder-picker", onChooseFolder: vi.fn() });
     const row = await screen.findByRole("button", { name: "Open workspaces" });
+    const listing = document.querySelector<HTMLElement>("[data-files-listing]");
 
     expect(row.getAttribute("style")).toContain("minmax(0,1fr) 56px 80px");
     expect(screen.getByRole("button", { name: "Sort by name" }).parentElement?.className)
       .toContain("gap-1");
+    expect(listing?.classList.contains("px-1.5")).toBe(true);
+    expect(listing?.classList.contains("pb-1.5")).toBe(true);
+    expect(listing?.classList.contains("p-1.5")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Grid view" }));
+    expect(listing?.classList.contains("p-1.5")).toBe(true);
   });
 
   it("sorts the list when a column header is clicked", async () => {
