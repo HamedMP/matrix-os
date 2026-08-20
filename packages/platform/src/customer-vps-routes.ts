@@ -1,7 +1,12 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
-import { CustomerVpsError, logCustomerVpsError, type CustomerVpsFailureCode } from './customer-vps-errors.js';
+import {
+  CustomerVpsError,
+  PreviewSnapshotUnavailableError,
+  logCustomerVpsError,
+  type CustomerVpsFailureCode,
+} from './customer-vps-errors.js';
 import { bearerTokenMatches } from './customer-vps-auth.js';
 import {
   MachineIdParamSchema,
@@ -84,6 +89,9 @@ function customerVpsFailureStatus(err: unknown): number {
 
 function jsonError(c: import('hono').Context, err: unknown, fallback: string) {
   if (err instanceof CustomerVpsError) {
+    if (err instanceof PreviewSnapshotUnavailableError) {
+      logCustomerVpsError(fallback, err);
+    }
     return c.json({ error: err.publicMessage }, err.status as never);
   }
   logCustomerVpsError(fallback, err);

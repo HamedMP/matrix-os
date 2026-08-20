@@ -5,6 +5,7 @@ import { createCustomerVpsService } from '../../packages/platform/src/customer-v
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { createCustomerVpsRoutes } from '../../packages/platform/src/customer-vps-routes.js';
+import { PreviewSnapshotUnavailableError } from '../../packages/platform/src/customer-vps-errors.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
@@ -18,6 +19,7 @@ describe('platform/customer-vps-routes', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await destroyTestPlatformDb(db);
   });
 
@@ -180,6 +182,43 @@ describe('platform/customer-vps-routes', () => {
     });
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({ error: 'Provisioning failed' });
+  });
+
+  it('logs bounded preview snapshot diagnostics while keeping route errors generic', async () => {
+    const provisionPreview = vi.fn().mockRejectedValue(
+      new PreviewSnapshotUnavailableError('snapshot_binding_failed'),
+    );
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const service = { provisionPreview } as unknown as Parameters<
+      typeof createCustomerVpsRoutes
+    >[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({
+      service,
+      platformSecret,
+      goldenSnapshotOperatorSecret: snapshotOperatorSecret,
+    }));
+
+    const response = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${snapshotOperatorSecret}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        clerkUserId: 'user_123',
+        handle: 'pr-899',
+        runtimeSlot: 'pr-899',
+        testSnapshotId: '10000000-0000-4000-8000-000000000001',
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'Provisioning image unavailable' });
+    expect(consoleError).toHaveBeenCalledWith(
+      '[customer-vps] /vps/preview/provision: Provisioning image unavailable '
+      + 'internalReason=snapshot_binding_failed',
+    );
   });
 
   it('does not grant exact-snapshot authority to the ordinary customer provision route', async () => {

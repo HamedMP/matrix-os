@@ -73,6 +73,7 @@ describe('golden snapshot provisioning activation', () => {
   });
   afterEach(async () => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     await destroyTestPlatformDb(db);
   });
 
@@ -201,6 +202,56 @@ describe('golden snapshot provisioning activation', () => {
         sourceSnapshotId: snapshotId,
         sourceBaseGeneration: compatibility.baseGeneration,
       });
+  });
+
+  it('logs a bounded server-only reason when a leased preview snapshot becomes stale before dispatch', async () => {
+    await promoteHostBundleChannel(db, 'stable', 'v1', '2026-07-03T00:00:00.000Z');
+    const snapshotId = await readySnapshot('v2', 302, true);
+    const createServer = vi.fn();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let nowCalls = 0;
+    const service = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_SECRET: 'platform-secret',
+        CUSTOMER_VPS_IMAGE_VERSION: 'stable',
+        MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/stable/matrix-host-bundle.tar.gz',
+        S3_ACCESS_KEY_ID: 'access-key',
+        S3_SECRET_ACCESS_KEY: 'secret-key',
+        S3_ENDPOINT: 'https://r2.example',
+        HETZNER_SERVER_TYPE: 'cpx22',
+        GOLDEN_SNAPSHOTS_ENABLED: 'false',
+        GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '0',
+        GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS: '60000',
+      }),
+      hetzner: createMockHetznerClient({ createServer }),
+      systemStore: createMockCustomerVpsSystemStore(),
+      machineIdFactory: () => '30000000-0000-4000-8000-000000000019',
+      provisioningJobIdFactory: () => '50000000-0000-4000-8000-000000000019',
+      tokenFactory: () => ({
+        token: 'preview-registration-token',
+        hash: hashRegistrationToken('preview-registration-token'),
+        expiresAt: '2026-07-03T01:00:00.000Z',
+      }),
+      now: () => new Date(nowCalls++ === 0
+        ? '2026-07-03T00:01:00.000Z'
+        : '2026-07-03T00:02:00.000Z'),
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview_diagnostic',
+      handle: 'pr-12751',
+      runtimeSlot: 'pr-12751',
+      testSnapshotId: snapshotId,
+    })).rejects.toMatchObject({
+      code: 'snapshot_clone_rejected',
+      publicMessage: 'Provisioning image unavailable',
+    });
+
+    expect(createServer).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(
+      'internalReason=persisted_snapshot_stale',
+    ));
   });
 
   it.each([
