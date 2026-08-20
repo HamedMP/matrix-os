@@ -29,6 +29,41 @@ describe("desktop update experience", () => {
     vi.unstubAllGlobals();
   });
 
+  it("waits for native embeds to suspend before painting an update dialog", async () => {
+    let resolveSuspend!: (value: { ok: boolean }) => void;
+    const suspend = new Promise<{ ok: boolean }>((resolve) => {
+      resolveSuspend = resolve;
+    });
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "embed:suspend-all") return suspend;
+      if (channel === "update:get-state") return Promise.resolve({ status: "disabled" });
+      if (channel === "update:get-whats-new") {
+        return Promise.resolve({ release: null, shouldOpen: false });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    vi.stubGlobal("operator", { invoke, on: vi.fn(() => vi.fn()) });
+    useDesktopUpdate.setState({ manualDialogOpen: true });
+
+    render(
+      <Tooltip.Provider>
+        <DesktopUpdateExperience />
+      </Tooltip.Provider>,
+    );
+
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    expect(invoke).toHaveBeenCalledWith("embed:suspend-all", {});
+    expect(screen.queryByRole("dialog", { name: "Software Update" })).toBeNull();
+
+    await act(async () => {
+      resolveSuspend({ ok: true });
+      await suspend;
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Software Update" })).toBeTruthy();
+    });
+  });
+
   it("subscribes to background update state without acknowledging before dismissal", async () => {
     let updateListener: ((payload: unknown) => void) | null = null;
     const invoke = vi.fn(async (channel: string) => {
@@ -107,7 +142,7 @@ describe("desktop update experience", () => {
     act(() => {
       listeners.get("update:manual-check-requested")?.({});
     });
-    expect(screen.getByRole("dialog", { name: "Software Update" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Software Update" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Checking for updates…" })).toBeTruthy();
     await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
 

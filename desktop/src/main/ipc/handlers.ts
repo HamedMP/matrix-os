@@ -291,6 +291,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("embed:set-active", ({ embedId, active }) => ({
     ok: ctx.embeds.setActive(embedId, active),
   }));
+  handle("embed:suspend-all", () => ({ ok: ctx.embeds.suspendAll() }));
   handle("embed:reload", async ({ embedId }) => ({ ok: await ctx.embeds.reload(embedId) }));
   handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));
   handle("embed:retry-auth", async ({ embedId }) => {

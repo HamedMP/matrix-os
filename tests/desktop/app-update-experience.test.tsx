@@ -28,6 +28,7 @@ describe("App desktop update experience", () => {
       invoke: vi.fn(async (channel: string) => {
         if (channel === "update:get-state") return { status: "disabled" };
         if (channel === "update:get-whats-new") return { release: null, shouldOpen: false };
+        if (channel === "embed:suspend-all") return { ok: true };
         return { signedIn: false, platformHost: "", runtimeSlot: "primary", authGeneration: 0 };
       }),
       on: vi.fn((channel: string, listener: (payload: unknown) => void) => {
@@ -56,7 +57,7 @@ describe("App desktop update experience", () => {
     act(() => {
       listeners.get("update:manual-check-requested")?.({});
     });
-    expect(screen.getByRole("dialog", { name: "Software Update" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Software Update" })).toBeTruthy();
     expect(screen.getByText("Signed out")).toBeTruthy();
   });
 });
