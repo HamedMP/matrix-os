@@ -19,6 +19,7 @@ import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import DesktopUpdateExperience from "../updates/DesktopUpdateExperience";
 import { useShellSessionSync } from "../../lib/shell-session-sync";
+import { preloadAppIcons, useApps } from "../../stores/apps";
 
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
@@ -27,6 +28,7 @@ export default function MissionControl() {
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const authGeneration = useConnection((s) => s.authGeneration);
   const loadProjects = useBoard((s) => s.loadProjects);
+  const loadApps = useApps((s) => s.load);
   const openTab = useTabs((s) => s.openTab);
   const tabCount = useTabs((s) => s.tabs.length);
   const createProjectOpen = useUi((s) => s.createProjectOpen);
@@ -100,6 +102,21 @@ export default function MissionControl() {
       cancelled = true;
     };
   }, [api, loadProjects, runtimeSlot]);
+
+  // Warm the catalog and icon cache as soon as this computer is connected,
+  // rather than making the first Apps-tab visit wait for both request stages.
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    void loadApps(api).then(() => {
+      if (!cancelled) {
+        preloadAppIcons(platformHost, runtimeSlot, useApps.getState().apps);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, loadApps, platformHost, runtimeSlot]);
 
   useEffect(() => {
     if (!api) return;
