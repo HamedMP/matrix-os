@@ -32,6 +32,27 @@ const BindInputSchema = z.object({
   now: IsoDateSchema,
 }).strict();
 
+export async function resolvePreviewTestSnapshotBundle(
+  db: PlatformDB,
+  rawSnapshotId: string,
+): Promise<{ bundleVersion: string; bundleSha256: string } | undefined> {
+  // This read only chooses the immutable bundle for cloud-init. The binding
+  // transaction below repeats every snapshot, release, and compatibility
+  // check before it commits the machine, job, and lease together.
+  const snapshotId = UuidSchema.parse(rawSnapshotId);
+  const snapshot = await getGoldenSnapshot(db, snapshotId);
+  if (!snapshot?.testMode) return undefined;
+  const release = await db.executor.selectFrom('host_bundle_releases')
+    .select('sha256')
+    .where('version', '=', snapshot.bundleVersion)
+    .executeTakeFirst();
+  if (release?.sha256.toLowerCase() !== snapshot.bundleSha256) return undefined;
+  return {
+    bundleVersion: snapshot.bundleVersion,
+    bundleSha256: snapshot.bundleSha256,
+  };
+}
+
 export function isPreviewTestSnapshotDecision(
   decision: ProvisioningImageDecision,
 ): decision is Extract<ProvisioningImageDecision, { imageSource: 'snapshot' }> & { previewTest: true } {

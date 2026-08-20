@@ -105,6 +105,7 @@ import {
   bindTestSnapshotToPreviewProvisionInTransaction,
   createPreviewTestSnapshotCreateIntent,
   isPreviewTestSnapshotDecision,
+  resolvePreviewTestSnapshotBundle,
   resolvePersistedProvisioningImage,
 } from './golden-snapshot-preview-test.js';
 
@@ -385,7 +386,22 @@ function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: s
   return url.toString();
 }
 
-async function resolveHostBundleRef(db: PlatformDB, config: CustomerVpsConfig): Promise<HostBundleRef> {
+async function resolveHostBundleRef(
+  db: PlatformDB,
+  config: CustomerVpsConfig,
+  previewTestSnapshotId?: string,
+): Promise<HostBundleRef> {
+  if (previewTestSnapshotId) {
+    const snapshotBundle = await resolvePreviewTestSnapshotBundle(db, previewTestSnapshotId);
+    if (!snapshotBundle) {
+      throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+    }
+    return {
+      imageVersion: snapshotBundle.bundleVersion,
+      hostBundleUrl: hostBundleUrlForImageVersion(config, snapshotBundle.bundleVersion),
+      sha256: snapshotBundle.bundleSha256,
+    };
+  }
   if (config.hostBundleUrlOverride || !HOST_BUNDLE_CHANNELS.has(config.imageVersion)) {
     const release = await getHostBundleRelease(db, config.imageVersion);
     return {
@@ -1701,7 +1717,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
 
-    const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
+    const bundleRef = await resolveHostBundleRef(deps.db, deps.config, testSnapshotId);
 
     let provisionRow: { existing: UserMachineRecord | null };
     try {
