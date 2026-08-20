@@ -106,7 +106,7 @@ import {
   bindTestSnapshotToPreviewProvisionInTransaction,
   createPreviewTestSnapshotCreateIntent,
   isPreviewTestSnapshotDecision,
-  resolvePreviewTestSnapshotBundle,
+  resolvePinnedPreviewTestSnapshotBundle,
   resolvePersistedProvisioningImage,
 } from './golden-snapshot-preview-test.js';
 
@@ -402,19 +402,12 @@ async function resolveHostBundleRef(
   previewTestSnapshotId?: string,
 ): Promise<HostBundleRef> {
   if (previewTestSnapshotId) {
-    const snapshotBundle = await resolvePreviewTestSnapshotBundle(db, previewTestSnapshotId);
-    if (!snapshotBundle) {
-      throw new PreviewSnapshotUnavailableError('bundle_resolution_failed');
-    }
-    const pinnedUrl = tryPinHostBundleUrlForImageVersion(config, snapshotBundle.bundleVersion);
-    if (!pinnedUrl) {
-      throw new PreviewSnapshotUnavailableError('bundle_url_unpinnable');
-    }
-    return {
-      imageVersion: snapshotBundle.bundleVersion,
-      hostBundleUrl: pinnedUrl,
-      sha256: snapshotBundle.bundleSha256,
-    };
+    return resolvePinnedPreviewTestSnapshotBundle({
+      db,
+      snapshotId: previewTestSnapshotId,
+      currentBundleVersion: config.imageVersion,
+      currentBundleUrl: config.hostBundleUrl,
+    });
   }
   if (config.hostBundleUrlOverride || !HOST_BUNDLE_CHANNELS.has(config.imageVersion)) {
     const release = await getHostBundleRelease(db, config.imageVersion);

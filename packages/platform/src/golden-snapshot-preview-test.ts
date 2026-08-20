@@ -83,6 +83,30 @@ export async function resolvePreviewTestSnapshotBundle(
   };
 }
 
+export async function resolvePinnedPreviewTestSnapshotBundle(input: {
+  db: PlatformDB;
+  snapshotId: string;
+  currentBundleVersion: string;
+  currentBundleUrl: string;
+}): Promise<{ imageVersion: string; hostBundleUrl: string; sha256: string }> {
+  const snapshotBundle = await resolvePreviewTestSnapshotBundle(input.db, input.snapshotId);
+  if (!snapshotBundle) {
+    throw new PreviewSnapshotUnavailableError('bundle_resolution_failed');
+  }
+  const currentSegment = `/system-bundles/${encodeURIComponent(input.currentBundleVersion)}/`;
+  const url = new URL(input.currentBundleUrl);
+  if (!url.pathname.includes(currentSegment)) {
+    throw new PreviewSnapshotUnavailableError('bundle_url_unpinnable');
+  }
+  const pinnedSegment = `/system-bundles/${encodeURIComponent(snapshotBundle.bundleVersion)}/`;
+  url.pathname = url.pathname.replaceAll(currentSegment, pinnedSegment);
+  return {
+    imageVersion: snapshotBundle.bundleVersion,
+    hostBundleUrl: url.toString(),
+    sha256: snapshotBundle.bundleSha256,
+  };
+}
+
 export function isPreviewTestSnapshotDecision(
   decision: ProvisioningImageDecision,
 ): decision is Extract<ProvisioningImageDecision, { imageSource: 'snapshot' }> & { previewTest: true } {
