@@ -373,12 +373,19 @@ interface HostBundleRef {
   sha256?: string | null;
 }
 
-function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: string): string {
+function tryPinHostBundleUrlForImageVersion(
+  config: CustomerVpsConfig,
+  imageVersion: string,
+): string | undefined {
   const currentSegment = `/system-bundles/${encodeURIComponent(config.imageVersion)}/`;
+  if (!config.hostBundleUrl.includes(currentSegment)) return undefined;
   const pinnedSegment = `/system-bundles/${encodeURIComponent(imageVersion)}/`;
-  if (config.hostBundleUrl.includes(currentSegment)) {
-    return config.hostBundleUrl.replaceAll(currentSegment, pinnedSegment);
-  }
+  return config.hostBundleUrl.replaceAll(currentSegment, pinnedSegment);
+}
+
+function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: string): string {
+  const pinnedUrl = tryPinHostBundleUrlForImageVersion(config, imageVersion);
+  if (pinnedUrl) return pinnedUrl;
   // Defensive fallback for future URL-template changes. The current generated
   // URL always contains the encoded image-version segment above.
   const url = new URL(config.hostBundleUrl);
@@ -396,9 +403,13 @@ async function resolveHostBundleRef(
     if (!snapshotBundle) {
       throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
     }
+    const pinnedUrl = tryPinHostBundleUrlForImageVersion(config, snapshotBundle.bundleVersion);
+    if (!pinnedUrl) {
+      throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
+    }
     return {
       imageVersion: snapshotBundle.bundleVersion,
-      hostBundleUrl: hostBundleUrlForImageVersion(config, snapshotBundle.bundleVersion),
+      hostBundleUrl: pinnedUrl,
       sha256: snapshotBundle.bundleSha256,
     };
   }

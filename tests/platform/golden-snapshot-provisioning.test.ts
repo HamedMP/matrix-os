@@ -203,6 +203,35 @@ describe('golden snapshot provisioning activation', () => {
       });
   });
 
+  it('rejects an exact test snapshot when a custom bundle URL cannot be safely version-pinned', async () => {
+    await promoteHostBundleChannel(db, 'stable', 'v1', '2026-07-03T00:00:00.000Z');
+    const snapshotId = await readySnapshot('v2', 302, true);
+    const createServer = vi.fn();
+    const service = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_SECRET: 'platform-secret',
+        CUSTOMER_VPS_IMAGE_VERSION: 'stable',
+        MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/custom/latest.tar.gz',
+        S3_ACCESS_KEY_ID: 'access-key',
+        S3_SECRET_ACCESS_KEY: 'secret-key',
+        S3_ENDPOINT: 'https://r2.example',
+        HETZNER_SERVER_TYPE: 'cpx22',
+      }),
+      hetzner: createMockHetznerClient({ createServer }),
+      systemStore: createMockCustomerVpsSystemStore(),
+      now: () => new Date('2026-07-03T00:01:00.000Z'),
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview_custom_bundle',
+      handle: 'pr-12741',
+      runtimeSlot: 'pr-12741',
+      testSnapshotId: snapshotId,
+    })).rejects.toMatchObject({ code: 'snapshot_clone_rejected' });
+    expect(createServer).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-test snapshot on the operator preview override before provider creation', async () => {
     const snapshotId = await readySnapshot('v2', 302);
     const createServer = vi.fn();
