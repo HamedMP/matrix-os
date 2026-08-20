@@ -73,6 +73,21 @@ const secondValidationFingerprints = {
   validationMachineIdSha256: 'e'.repeat(64),
   validationSshHostKeySha256: 'f'.repeat(64),
 };
+const serviceDiagnostics = {
+  unit: 'matrix-gateway.service' as const,
+  loadState: 'loaded',
+  activeState: 'failed',
+  subState: 'failed',
+  result: 'exit-code',
+  conditionResult: true,
+  execMainCode: 'exited',
+  execMainStatus: 1,
+  nRestarts: 3,
+  journalTail: [
+    'gateway bootstrap failed with token=[REDACTED]',
+    'process exited with status 1',
+  ],
+};
 
 describe('golden snapshot build service', () => {
   let db: PlatformDB;
@@ -98,6 +113,8 @@ describe('golden snapshot build service', () => {
     for (const stage of [
       'activation_preflight_evidence',
       'activation_preflight_forbidden_state',
+      'activation_preflight_host_prerequisites',
+      'activation_preflight_user_state',
       'activation_preflight_runtime_state',
       'activation_preflight_owner_state',
       'activation_preflight_root_ssh_state',
@@ -122,6 +139,23 @@ describe('golden snapshot build service', () => {
         bundleVersion: 'v1', bundleSha256: '1'.repeat(64),
       }).success).toBe(true);
     }
+  });
+
+  it('accepts bounded service diagnostics and rejects oversized journal evidence', () => {
+    const payload = {
+      eventId: randomUUID(), phase: 'failed', role: 'builder', stage: 'activation_gateway_ready',
+      bundleVersion: 'v1', bundleSha256: '1'.repeat(64), serviceDiagnostics,
+    };
+
+    expect(GoldenSnapshotCallbackSchema.safeParse(payload).success).toBe(true);
+    expect(GoldenSnapshotCallbackSchema.safeParse({
+      ...payload,
+      serviceDiagnostics: { ...serviceDiagnostics, journalTail: ['x'.repeat(513)] },
+    }).success).toBe(false);
+    expect(GoldenSnapshotCallbackSchema.safeParse({
+      ...payload,
+      serviceDiagnostics: { ...serviceDiagnostics, journalTail: Array(41).fill('bounded') },
+    }).success).toBe(false);
   });
 
   afterEach(async () => destroyTestPlatformDb(db));
@@ -238,6 +272,24 @@ describe('golden snapshot build service', () => {
       .resolves.toEqual(expect.arrayContaining([
         expect.objectContaining({ resourceType: 'builder_server', providerResourceId: 101 }),
       ]));
+  });
+
+  it('persists bounded service diagnostics from a failed builder callback', async () => {
+    const { enqueued, service } = await setup();
+    await service.runBuildStep(enqueued.build.buildId);
+    const eventId = randomUUID();
+
+    await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+      eventId,
+      phase: 'failed', role: 'builder', stage: 'activation_gateway_ready',
+      bundleVersion: 'v1', bundleSha256: '1'.repeat(64), serviceDiagnostics,
+    });
+
+    await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+      callbackEventId: eventId,
+      callbackOutcome: { accepted: true, serviceDiagnostics },
+      lastErrorCode: 'builder_activation_gateway_ready_failed',
+    });
   });
 
   it('quarantines and cleans up a validation clone that reports a coarse lifecycle failure', async () => {
@@ -457,6 +509,172 @@ describe('golden snapshot build service', () => {
     for (const item of cleanup) await service.runCleanupStep(item.cleanupId);
     expect(hetzner.deleteServer).toHaveBeenCalledTimes(2);
     expect(await listPendingGoldenSnapshotCleanup(db, '2026-07-03T00:02:00.000Z', 10)).toEqual([]);
+  });
+
+  it('fails a provider snapshot that remains pending past its explicit deadline', async () => {
+    let currentTime = '2026-07-03T00:01:00.000Z';
+    const pendingImage = {
+      id: 301, status: 'creating' as const, type: 'snapshot' as const,
+      architecture: 'x86' as const, diskGb: 40, labels: {}, deleteProtected: false,
+    };
+    const { enqueued, service } = await setup({
+      createSnapshot: vi.fn().mockResolvedValue({
+        image: pendingImage,
+        action: { id: 401, status: 'running', command: 'create_image' },
+      }),
+      getImage: vi.fn().mockResolvedValue(pendingImage),
+      getAction: vi.fn()
+        .mockResolvedValueOnce({ id: 201, status: 'success', command: 'create_server' })
+        .mockResolvedValue({ id: 401, status: 'running', command: 'create_image' }),
+    }, () => currentTime);
+    await service.runBuildStep(enqueued.build.buildId);
+    await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+      eventId: randomUUID(), phase: 'sanitized', bundleVersion: 'v1',
+      bundleSha256: '1'.repeat(64), ...builderFingerprints,
+    });
+    await expect(service.runBuildStep(enqueued.build.buildId)).resolves.toBe('snapshot_wait');
+
+    currentTime = '2026-07-03T00:32:00.000Z';
+    await expect(service.runBuildStep(enqueued.build.buildId))
+      .rejects.toThrow('Golden snapshot creation timed out');
+    await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+      phase: 'failed', status: 'failed', lastErrorCode: 'snapshot_creation_timeout',
+    });
+    await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({
+      state: 'quarantined', failureCode: 'snapshot_creation_timeout',
+    });
+  });
+
+  it.each(['image', 'action'] as const)(
+    'fails an expired provider snapshot when the %s status read fails',
+    async (failedRead) => {
+      let currentTime = '2026-07-03T00:01:00.000Z';
+      const pendingImage = {
+        id: 301, status: 'creating' as const, type: 'snapshot' as const,
+        architecture: 'x86' as const, diskGb: 40, labels: {}, deleteProtected: false,
+      };
+      const getAction = vi.fn()
+        .mockResolvedValueOnce({ id: 201, status: 'success', command: 'create_server' });
+      if (failedRead === 'action') {
+        getAction.mockRejectedValueOnce(new Error('synthetic provider outage'));
+      } else {
+        getAction.mockResolvedValueOnce({ id: 401, status: 'running', command: 'create_image' });
+      }
+      const { enqueued, service } = await setup({
+        createSnapshot: vi.fn().mockResolvedValue({
+          image: pendingImage,
+          action: { id: 401, status: 'running', command: 'create_image' },
+        }),
+        getImage: failedRead === 'image'
+          ? vi.fn().mockRejectedValue(new Error('synthetic provider outage'))
+          : vi.fn().mockResolvedValue(pendingImage),
+        getAction,
+      }, () => currentTime);
+      await service.runBuildStep(enqueued.build.buildId);
+      await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+        eventId: randomUUID(), phase: 'sanitized', bundleVersion: 'v1',
+        bundleSha256: '1'.repeat(64), ...builderFingerprints,
+      });
+      await expect(service.runBuildStep(enqueued.build.buildId)).resolves.toBe('snapshot_wait');
+
+      currentTime = '2026-07-03T00:32:00.000Z';
+      await expect(service.runBuildStep(enqueued.build.buildId))
+        .rejects.toThrow('Golden snapshot creation timed out');
+      await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+        phase: 'failed', status: 'failed', lastErrorCode: 'snapshot_creation_timeout',
+      });
+      await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({
+        state: 'quarantined', failureCode: 'snapshot_creation_timeout',
+      });
+    },
+  );
+
+  it.each(['resolved', 'rejected'] as const)(
+    'fails an expired provider snapshot when an in-flight image read is %s after the deadline',
+    async (outcome) => {
+      let currentTime = '2026-07-03T00:01:00.000Z';
+      const pendingImage = {
+        id: 301, status: 'creating' as const, type: 'snapshot' as const,
+        architecture: 'x86' as const, diskGb: 40, labels: {}, deleteProtected: false,
+      };
+      const getImage = vi.fn().mockImplementation(async () => {
+        currentTime = '2026-07-03T00:32:00.000Z';
+        if (outcome === 'rejected') throw new Error('synthetic provider outage');
+        return pendingImage;
+      });
+      const { enqueued, service } = await setup({
+        createSnapshot: vi.fn().mockResolvedValue({
+          image: pendingImage,
+          action: { id: 401, status: 'running', command: 'create_image' },
+        }),
+        getImage,
+        getAction: vi.fn()
+          .mockResolvedValueOnce({ id: 201, status: 'success', command: 'create_server' })
+          .mockResolvedValue({ id: 401, status: 'running', command: 'create_image' }),
+      }, () => currentTime);
+      await service.runBuildStep(enqueued.build.buildId);
+      await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+        eventId: randomUUID(), phase: 'sanitized', bundleVersion: 'v1',
+        bundleSha256: '1'.repeat(64), ...builderFingerprints,
+      });
+      await expect(service.runBuildStep(enqueued.build.buildId)).resolves.toBe('snapshot_wait');
+
+      await expect(service.runBuildStep(enqueued.build.buildId))
+        .rejects.toThrow('Golden snapshot creation timed out');
+      await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+        phase: 'failed', status: 'failed', lastErrorCode: 'snapshot_creation_timeout',
+      });
+      await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({
+        state: 'quarantined', failureCode: 'snapshot_creation_timeout',
+      });
+    },
+  );
+
+  it('retains orphan reconciliation when exact-label discovery fails after the deadline', async () => {
+    let currentTime = '2026-07-03T00:01:00.000Z';
+    const lateImage = {
+      id: 909, status: 'available' as const, type: 'snapshot' as const,
+      architecture: 'x86' as const, diskGb: 40, deleteProtected: false,
+      labels: {
+        'matrix.snapshot-build': '20000000-0000-4000-8000-000000000001',
+        'matrix.snapshot-id': '10000000-0000-4000-8000-000000000001',
+        'matrix.role': 'builder',
+      },
+    };
+    const listImagesByLabel = vi.fn()
+      .mockImplementationOnce(async () => {
+        currentTime = '2026-07-03T00:32:00.000Z';
+        throw new Error('synthetic provider outage');
+      })
+      .mockResolvedValueOnce([lateImage]);
+    const { enqueued, service } = await setup({
+      createSnapshot: vi.fn().mockRejectedValueOnce(new Error('synthetic timeout')),
+      listImagesByLabel,
+    }, () => currentTime);
+    await service.runBuildStep(enqueued.build.buildId);
+    await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+      eventId: randomUUID(), phase: 'sanitized', bundleVersion: 'v1',
+      bundleSha256: '1'.repeat(64), ...builderFingerprints,
+    });
+    await expect(service.runBuildStep(enqueued.build.buildId)).rejects.toThrow('provider operation');
+
+    await expect(service.runBuildStep(enqueued.build.buildId))
+      .rejects.toThrow('Golden snapshot image recovery window expired');
+    await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+      phase: 'failed', status: 'failed', lastErrorCode: 'snapshot_create_unresolved',
+      pendingOperation: `snapshot:${enqueued.snapshot.snapshotId}`,
+    });
+    await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({
+      state: 'quarantined', failureCode: 'snapshot_create_unresolved',
+    });
+
+    currentTime = '2026-07-03T00:33:00.000Z';
+    await expect(service.runOrphanReconciliationStep(enqueued.build.buildId)).resolves.toBe('queued');
+    await expect(listPendingGoldenSnapshotCleanup(db, currentTime, 10)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ resourceType: 'snapshot_image', providerResourceId: lateImage.id }),
+      ]),
+    );
   });
 
   it('records builder boot evidence before accepting sanitation', async () => {

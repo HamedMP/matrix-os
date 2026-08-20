@@ -30,6 +30,7 @@ import {
 import {
   GoldenSnapshotCallbackSchema,
   GoldenSnapshotCallbackError,
+  readGoldenSnapshotServiceDiagnosticsForOperator,
   type GoldenSnapshotService,
 } from './golden-snapshot-service.js';
 
@@ -166,6 +167,7 @@ export function createGoldenSnapshotRoutes(deps: GoldenSnapshotRoutesDeps): Hono
     if (!build) return c.json({ error: 'Snapshot build not found' }, 404);
     const snapshot = await getGoldenSnapshot(deps.db, build.snapshotId);
     if (!snapshot) return c.json({ error: 'Snapshot build unavailable' }, 503);
+    const serviceDiagnostics = readGoldenSnapshotServiceDiagnosticsForOperator(build.callbackOutcome);
     return c.json({
       buildId: build.buildId,
       snapshotId: snapshot.snapshotId,
@@ -174,6 +176,7 @@ export function createGoldenSnapshotRoutes(deps: GoldenSnapshotRoutesDeps): Hono
       attempts: build.attempts,
       state: snapshot.state,
       failureCode: build.lastErrorCode ?? snapshot.failureCode,
+      ...(serviceDiagnostics ? { serviceDiagnostics } : {}),
     });
   });
 

@@ -206,8 +206,11 @@ export default function Sidebar() {
 
       <div className="flex flex-col border-t" style={{ borderColor: "var(--border-subtle)" }}>
         <RuntimeComputerMenu collapsed={collapsed} />
-        <DesktopUpdateButton collapsed={collapsed} />
-        <AccountMenu collapsed={collapsed} />
+        {collapsed ? <DesktopUpdateButton collapsed /> : null}
+        <AccountMenu
+          collapsed={collapsed}
+          trailingAction={collapsed ? null : <DesktopUpdateButton collapsed={false} />}
+        />
       </div>
     </aside>
   );

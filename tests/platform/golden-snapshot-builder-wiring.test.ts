@@ -29,4 +29,20 @@ describe('golden snapshot builder orchestration wiring', () => {
     expect(service).toContain('/run/matrix-golden-activation-stage');
     expect(service).toContain("'activation_terminal_runtime'");
   });
+
+  it('reports prerequisite and user-state preflight failures separately', async () => {
+    const [activation, service] = await Promise.all([
+      readFile('distro/customer-vps/host-bin/matrix-golden-snapshot-activate', 'utf8'),
+      readFile('packages/platform/src/golden-snapshot-service.ts', 'utf8'),
+    ]);
+
+    for (const stage of [
+      'activation_preflight_host_prerequisites',
+      'activation_preflight_user_state',
+    ]) {
+      expect(activation).toContain(`set_activation_stage ${stage}`);
+      expect(service).toContain(`'${stage}'`);
+      expect(service).toContain(`|${stage}`);
+    }
+  });
 });

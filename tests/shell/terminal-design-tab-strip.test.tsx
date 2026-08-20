@@ -233,6 +233,47 @@ describe("TerminalApp per-design interior chrome", () => {
     expect(within(tablist).getByRole("tab", { name: "Shell" }).getAttribute("aria-selected")).toBe("true");
   });
 
+  it("requests xterm focus for changed, repeated, and replacement tab activation", async () => {
+    setThemeStyle("win11");
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    await flushAsync();
+
+    const readGridProps = () => paneGridSpy.mock.lastCall?.[0] as {
+      focusRequestId: number;
+      focusedPaneId: string | null;
+      paneTree: { type: "pane"; id: string };
+    };
+    const tablist = screen.getByRole("tablist", { name: "Terminal tabs" });
+    const canvasTab = within(tablist).getByRole("tab", { name: "Canvas Terminal" });
+    const initialRequest = readGridProps().focusRequestId;
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const afterCreate = readGridProps();
+    expect(afterCreate.focusRequestId).toBeGreaterThan(initialRequest);
+    expect(afterCreate.focusedPaneId).toBe(afterCreate.paneTree.id);
+
+    fireEvent.click(canvasTab);
+    const afterSwitch = readGridProps();
+    expect(afterSwitch.focusRequestId).toBeGreaterThan(afterCreate.focusRequestId);
+    expect(afterSwitch.focusedPaneId).toBe(afterSwitch.paneTree.id);
+
+    fireEvent.click(canvasTab);
+    const afterRepeatedActivation = readGridProps();
+    expect(afterRepeatedActivation.focusRequestId).toBeGreaterThan(afterSwitch.focusRequestId);
+    expect(afterRepeatedActivation.focusedPaneId).toBe(afterRepeatedActivation.paneTree.id);
+
+    fireEvent.click(within(tablist).getByRole("button", { name: "Close Canvas Terminal" }));
+    const afterClose = readGridProps();
+    expect(within(tablist).getByRole("tab", { name: "Shell" }).getAttribute("aria-selected")).toBe("true");
+    expect(afterClose.focusRequestId).toBeGreaterThan(afterRepeatedActivation.focusRequestId);
+    expect(afterClose.focusedPaneId).toBe(afterClose.paneTree.id);
+  });
+
   it("links design tabs to the terminal panel with ARIA containment and controls", async () => {
     setThemeStyle("win11");
     render(<TerminalApp initialSessionId="canvas-session-123" />);

@@ -8,6 +8,7 @@ import {
 } from "@desktop/renderer/src/stores/connection";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { clearDraftChats, useDraftChat } from "@desktop/renderer/src/stores/draft-chat";
+import { useApps } from "@desktop/renderer/src/stores/apps";
 
 type Listener = (payload: unknown) => void;
 
@@ -203,6 +204,24 @@ describe("connection event wiring", () => {
     expect(useConnection.getState().status).toBe("signed-out");
     expect(useConnection.getState().api).toBeNull();
     expect(warn).toHaveBeenCalledWith("[connection] failed to refresh auth status:", "ipc unavailable");
+  });
+
+  it("clears app catalog state when auth status lookup fails", async () => {
+    useConnection.setState({ status: "signed-in", handle: "old-owner" });
+    useApps.setState({
+      apps: [{ slug: "private-app", name: "Private app" }],
+      loaded: true,
+      loading: false,
+      error: null,
+    });
+    window.operator = {
+      invoke: vi.fn().mockRejectedValue(new Error("ipc unavailable")),
+      on: vi.fn(),
+    };
+
+    await useConnection.getState().refresh();
+
+    expect(useApps.getState()).toMatchObject({ apps: [], loaded: false, loading: false, error: null });
   });
 
   it("unwires auth and runtime listeners so tests can reinitialize the bridge", async () => {

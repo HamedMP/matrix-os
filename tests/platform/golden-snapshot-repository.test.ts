@@ -869,6 +869,52 @@ describe('golden snapshot repository', () => {
     ]);
   });
 
+  it('renews snapshot waits without consuming the generic retry budget', async () => {
+    const enqueued = await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v1', compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000053',
+      buildId: '20000000-0000-4000-8000-000000000053',
+      now: '2026-07-03T00:00:00.000Z',
+    });
+    await db.executor.updateTable('golden_snapshots').set({
+      state: 'sanitizing', provider_image_id: 953, provider_image_status: 'creating',
+      image_architecture: 'x86', image_disk_gb: 40,
+    }).where('snapshot_id', '=', enqueued.snapshot.snapshotId).execute();
+    await db.executor.updateTable('golden_snapshot_builds').set({
+      status: 'running', phase: 'snapshot_wait', attempts: 1,
+      lease_expires_at: '2026-07-03T00:01:00.000Z',
+      callback_expires_at: '2026-07-03T00:30:00.000Z',
+      provider_snapshot_action_id: 1053,
+    }).where('build_id', '=', enqueued.build.buildId).execute();
+
+    await expect(claimGoldenSnapshotBuildBatch(
+      db, '2026-07-03T00:02:00.000Z', '2026-07-03T00:07:00.000Z', 1, 10, 2,
+    )).resolves.toEqual([
+      expect.objectContaining({
+        buildId: enqueued.build.buildId, phase: 'snapshot_wait', attempts: 1,
+        leaseExpiresAt: '2026-07-03T00:07:00.000Z',
+      }),
+    ]);
+    await expect(claimGoldenSnapshotBuildBatch(
+      db, '2026-07-03T00:08:00.000Z', '2026-07-03T00:13:00.000Z', 1, 10, 2,
+    )).resolves.toEqual([
+      expect.objectContaining({
+        buildId: enqueued.build.buildId, phase: 'snapshot_wait', attempts: 1,
+        leaseExpiresAt: '2026-07-03T00:13:00.000Z',
+      }),
+    ]);
+    await expect(claimGoldenSnapshotBuild(
+      db, enqueued.build.buildId,
+      '2026-07-03T00:14:00.000Z', '2026-07-03T00:19:00.000Z', 1,
+    )).resolves.toMatchObject({
+      buildId: enqueued.build.buildId, phase: 'snapshot_wait', attempts: 1,
+      leaseExpiresAt: '2026-07-03T00:19:00.000Z',
+    });
+    await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({
+      state: 'sanitizing', failureCode: null,
+    });
+  });
+
   it('finalizes exhausted expired builds before the bounded batch claims new work', async () => {
     const exhausted = await enqueueGoldenSnapshotBuild(db, {
       bundleVersion: 'v1', compatibility,

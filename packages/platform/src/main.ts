@@ -744,6 +744,7 @@ export function createApp(deps: {
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
       platformSecret,
+      goldenSnapshotOperatorSecret,
       probeMachineHealth,
       probeMachineRuntime,
       recordRuntimeMetrics: platformMetricsRoutes.recordRuntimeMetrics,

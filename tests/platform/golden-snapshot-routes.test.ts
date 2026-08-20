@@ -148,6 +148,42 @@ describe('golden snapshot control-plane routes', () => {
     })).status).toBe(200);
   });
 
+  it('returns only coarse persisted service diagnostics from the operator build-status route', async () => {
+    await app().request('/snapshot-builds', {
+      method: 'POST', headers: { authorization: 'Bearer platform-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ bundleVersion: 'v1' }),
+    });
+    const serviceDiagnostics = {
+      unit: 'matrix-gateway.service', loadState: 'loaded', activeState: 'failed',
+      subState: 'failed', result: 'exit-code', conditionResult: true,
+      execMainCode: 'exited', execMainStatus: 1, nRestarts: 3,
+      journalTail: ['gateway failed with token=[REDACTED]'],
+    };
+    await db.executor.updateTable('golden_snapshot_builds').set({
+      phase: 'failed', status: 'failed', last_error_code: 'builder_activation_gateway_ready_failed',
+      callback_outcome: { accepted: true, serviceDiagnostics },
+    }).where('build_id', '=', '20000000-0000-4000-8000-000000000001').execute();
+    const path = '/snapshot-builds/20000000-0000-4000-8000-000000000001';
+
+    expect((await app().request(path, {
+      headers: { authorization: 'Bearer platform-secret' },
+    })).status).toBe(401);
+    const response = await app().request(path, {
+      headers: { authorization: 'Bearer operator-secret' },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { serviceDiagnostics: Record<string, unknown> };
+    expect(body).toMatchObject({
+      serviceDiagnostics: {
+        unit: 'matrix-gateway.service', loadState: 'loaded', activeState: 'failed',
+        subState: 'failed', result: 'exit-code', conditionResult: true,
+        execMainCode: 'exited', execMainStatus: 1, nRestarts: 3,
+      },
+    });
+    expect(body.serviceDiagnostics).not.toHaveProperty('journalTail');
+    expect(JSON.stringify(body)).not.toContain('gateway failed');
+  });
+
   it('reads the snapshot operator credential from the injected app environment', async () => {
     const platformApp = createPlatformApp({
       db,

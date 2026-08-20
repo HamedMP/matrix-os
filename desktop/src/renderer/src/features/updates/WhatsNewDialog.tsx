@@ -1,10 +1,7 @@
 import { X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Dialog } from "../../design/primitives";
-import { safeUrlTransform } from "../../lib/markdown";
-import { invoke } from "../../lib/operator";
 import { useDesktopUpdate } from "../../stores/desktop-update";
+import ReleaseNotesMarkdown from "./ReleaseNotesMarkdown";
 
 function releaseDateLabel(value?: string): string | null {
   if (!value) return null;
@@ -18,7 +15,9 @@ function releaseDateLabel(value?: string): string | null {
 }
 
 export default function WhatsNewDialog() {
-  const open = useDesktopUpdate((state) => state.whatsNewOpen);
+  const open = useDesktopUpdate(
+    (state) => state.whatsNewOpen && !state.manualDialogOpen,
+  );
   const release = useDesktopUpdate((state) => state.release);
   const close = useDesktopUpdate((state) => state.closeWhatsNew);
 
@@ -74,28 +73,7 @@ export default function WhatsNewDialog() {
             className="text-sm leading-6 [&_a]:font-medium [&_a]:text-[var(--accent)] [&_code]:rounded [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1 [&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mt-6 [&_h2]:mb-3 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-5 [&_h3]:mb-2 [&_h3]:font-semibold [&_li]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
             style={{ color: "var(--text-secondary)" }}
           >
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              urlTransform={safeUrlTransform}
-              components={{
-                img: () => null,
-                a: ({ href, children }) => (
-                  <a
-                    href={href}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      if (href?.startsWith("https://")) {
-                        void invoke("shell:open-external", { url: href });
-                      }
-                    }}
-                  >
-                    {children}
-                  </a>
-                ),
-              }}
-            >
-              {release.notes}
-            </ReactMarkdown>
+            <ReleaseNotesMarkdown notes={release.notes} />
           </div>
         </div>
       </div>

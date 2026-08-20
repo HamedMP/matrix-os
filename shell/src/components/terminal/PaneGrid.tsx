@@ -9,6 +9,7 @@ interface PaneGridProps {
   paneTree: PaneNode;
   theme: Theme;
   focusedPaneId?: string | null;
+  focusRequestId?: number;
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
@@ -18,13 +19,14 @@ interface PaneGridProps {
   canvasZoom?: number;
 }
 
-export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: PaneGridProps) {
+export function PaneGrid({ paneTree, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: PaneGridProps) {
   return (
     <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
       <PaneNodeRenderer
         node={paneTree}
         theme={theme}
         focusedPaneId={focusedPaneId}
+        focusRequestId={focusRequestId}
         onFocusPane={onFocusPane}
         onSessionAttached={onSessionAttached}
         shouldCachePane={shouldCachePane}
@@ -41,6 +43,7 @@ interface PaneNodeRendererProps {
   node: PaneNode;
   theme: Theme;
   focusedPaneId?: string | null;
+  focusRequestId?: number;
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
@@ -50,7 +53,7 @@ interface PaneNodeRendererProps {
   canvasZoom?: number;
 }
 
-function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: PaneNodeRendererProps) {
+function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: PaneNodeRendererProps) {
   if (node.type === "pane") {
     const focused = focusedPaneId === node.id;
     return (
@@ -70,6 +73,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
           cwd={node.cwd}
           theme={theme}
           isFocused={focused}
+          focusRequestId={focusRequestId}
           sessionId={node.sessionId}
           claudeMode={node.claudeMode === true}
           startupCommand={node.startupCommand}
@@ -94,6 +98,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
       right={node.children[1]}
       theme={theme}
       focusedPaneId={focusedPaneId}
+      focusRequestId={focusRequestId}
       onFocusPane={onFocusPane}
       onSessionAttached={onSessionAttached}
       shouldCachePane={shouldCachePane}
@@ -112,6 +117,7 @@ interface SplitContainerProps {
   right: PaneNode;
   theme: Theme;
   focusedPaneId?: string | null;
+  focusRequestId?: number;
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
@@ -121,7 +127,7 @@ interface SplitContainerProps {
   canvasZoom?: number;
 }
 
-function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: SplitContainerProps) {
+function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // react-doctor-disable-next-line react-doctor/no-derived-useState -- local drag buffer, not a mirror of `ratio`: it is seeded from the prop, then diverges live as the user drags the split divider (setCurrentRatio in onMouseMove). It must NOT stay in sync with `ratio` or the divider would snap back mid-drag; it holds uncommitted pointer-driven layout state.
   const [currentRatio, setCurrentRatio] = useState(ratio);
@@ -169,6 +175,7 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           node={left}
           theme={theme}
           focusedPaneId={focusedPaneId}
+          focusRequestId={focusRequestId}
           onFocusPane={onFocusPane}
           onSessionAttached={onSessionAttached}
           shouldCachePane={shouldCachePane}
@@ -189,6 +196,7 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           node={right}
           theme={theme}
           focusedPaneId={focusedPaneId}
+          focusRequestId={focusRequestId}
           onFocusPane={onFocusPane}
           onSessionAttached={onSessionAttached}
           shouldCachePane={shouldCachePane}

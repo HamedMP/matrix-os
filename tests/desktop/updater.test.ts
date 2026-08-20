@@ -128,6 +128,18 @@ describe("createUpdater", () => {
     expect(updater.status()).toBe("ready");
   });
 
+  it("logs a packaged smoke-test signal when the current version is up to date", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+    updaterMock.handlers.get("update-not-available")?.({ version: "1.2.3" });
+
+    expect(updater.status()).toBe("up-to-date");
+    expect(info).toHaveBeenCalledWith("[updates] update check completed: up to date");
+    info.mockRestore();
+  });
+
   it("sets an error status when the update check fails", async () => {
     updaterMock.autoUpdater.checkForUpdates.mockRejectedValue(new Error("network down"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -159,7 +171,7 @@ describe("createUpdater", () => {
     warn.mockRestore();
   });
 
-  it("passes the resolved prerelease channel to the GitHub provider", async () => {
+  it("passes the resolved prerelease channel to the generic provider", async () => {
     delete process.env.OPERATOR_UPDATE_FEED;
     process.env.MATRIX_DESKTOP_UPDATE_CHANNEL = "beta";
     const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
@@ -167,10 +179,36 @@ describe("createUpdater", () => {
     await updater.check();
 
     expect(updaterMock.autoUpdater.setFeedURL).toHaveBeenCalledWith({
-      provider: "github",
-      owner: "HamedMP",
-      repo: "matrix-os",
+      provider: "generic",
+      url: "https://github.com/HamedMP/matrix-os/releases/download/desktop-beta/",
       channel: "beta",
+    });
+  });
+
+  it("uses electron-updater's latest manifest name for the stable channel", async () => {
+    delete process.env.OPERATOR_UPDATE_FEED;
+    process.env.MATRIX_DESKTOP_UPDATE_CHANNEL = "stable";
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+
+    expect(updaterMock.autoUpdater.setFeedURL).toHaveBeenCalledWith({
+      provider: "generic",
+      url: "https://github.com/HamedMP/matrix-os/releases/download/desktop-stable/",
+      channel: "latest",
+    });
+  });
+
+  it("preserves the selected channel for an overridden generic feed", async () => {
+    process.env.MATRIX_DESKTOP_UPDATE_CHANNEL = "canary";
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+
+    expect(updaterMock.autoUpdater.setFeedURL).toHaveBeenCalledWith({
+      provider: "generic",
+      url: "https://updates.example.com",
+      channel: "canary",
     });
   });
 
@@ -219,11 +257,21 @@ describe("createUpdater", () => {
       status: "ready",
       version: "1.2.3",
       progress: 100,
+      release: {
+        version: "1.2.3",
+        releaseDate: "2026-08-11T09:00:00.000Z",
+        notes: "## Improved\n\n- Faster project loading",
+      },
     });
     expect(onStateChanged).toHaveBeenLastCalledWith({
       status: "ready",
       version: "1.2.3",
       progress: 100,
+      release: {
+        version: "1.2.3",
+        releaseDate: "2026-08-11T09:00:00.000Z",
+        notes: "## Improved\n\n- Faster project loading",
+      },
     });
   });
 
@@ -239,5 +287,38 @@ describe("createUpdater", () => {
     expect(await updater.install()).toBe(true);
     expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
     expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+  });
+
+  it("starts persisting release notes before publishing the ready state and waits before install", async () => {
+    const events: string[] = [];
+    let finishSave: (() => void) | null = null;
+    const updater = createUpdater({
+      onAvailable: vi.fn(),
+      onReady: vi.fn(),
+      onStateChanged: (snapshot) => {
+        if (snapshot.status === "ready") events.push("ready");
+      },
+      onReleaseReady: () => {
+        events.push("persist");
+        return new Promise<void>((resolve) => {
+          finishSave = resolve;
+        });
+      },
+    });
+
+    await updater.check();
+    updaterMock.handlers.get("update-downloaded")?.({
+      version: "1.2.3",
+      releaseNotes: "Safe persisted notes",
+    });
+
+    expect(events).toEqual(["persist", "ready"]);
+    const install = updater.install();
+    await Promise.resolve();
+    expect(updaterMock.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+
+    finishSave?.();
+    await install;
+    expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
   });
 });

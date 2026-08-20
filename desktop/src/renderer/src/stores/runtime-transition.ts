@@ -19,6 +19,7 @@ import { useThreads } from "./threads";
 import { useUi } from "./ui";
 import { useWorkspace } from "./workspace";
 import { advanceRuntimeGeneration } from "./runtime-generation";
+import { resetAppsRuntime } from "./apps";
 
 interface RuntimeChangeOptions {
   disposeRuntimeAttachments?: () => void;
@@ -103,6 +104,7 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     loadingPaths: {},
   });
   useThreads.setState({ threads: [], activeThreadId: null });
+  resetAppsRuntime();
   clearCodingAgentRuntimeSelection();
   clearDraftChats();
   clearProjectWorkspaces();

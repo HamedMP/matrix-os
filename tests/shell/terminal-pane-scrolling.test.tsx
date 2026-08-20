@@ -511,6 +511,7 @@ describe("TerminalPane scrolling", () => {
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 1_010 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 660 });
     createdFitAddons[0].proposeDimensions.mockReturnValue({ cols: 999, rows: 999 });
+    await waitFor(() => expect(ResizeObserverMock.instances).not.toHaveLength(0));
     await act(async () => {
       ResizeObserverMock.instances.at(-1)!.trigger();
       await new Promise((resolve) => setTimeout(resolve, 10));
