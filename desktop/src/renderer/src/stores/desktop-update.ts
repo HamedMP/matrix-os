@@ -3,6 +3,7 @@ import type {
   DesktopReleaseNotes,
   DesktopUpdateSnapshot,
 } from "../../../shared/desktop-update";
+import { diagnosticErrorKind } from "../lib/errors";
 import { invoke, onEvent } from "../lib/operator";
 
 interface DesktopUpdateState {
@@ -63,8 +64,11 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
           whatsNewOpen: whatsNew.shouldOpen && Boolean(whatsNew.release),
         });
       })
-      .catch(() => {
-        console.warn("[desktop-update] could not initialize update state");
+      .catch((err: unknown) => {
+        console.warn(
+          "[desktop-update] could not initialize update state:",
+          diagnosticErrorKind(err),
+        );
       });
 
     return () => {
@@ -79,9 +83,9 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
     try {
       const snapshot = await invoke("update:check", {});
       set({ snapshot });
-    } catch {
+    } catch (err: unknown) {
       set({ snapshot: { status: "error" } });
-      console.warn("[desktop-update] update check failed");
+      console.warn("[desktop-update] update check failed:", diagnosticErrorKind(err));
     }
   },
 
@@ -91,9 +95,9 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
     try {
       const result = await invoke("update:install", {});
       if (!result.ok) set({ installing: false });
-    } catch {
+    } catch (err: unknown) {
       set({ installing: false });
-      console.warn("[desktop-update] restart and install failed");
+      console.warn("[desktop-update] restart and install failed:", diagnosticErrorKind(err));
     }
   },
 
@@ -103,8 +107,13 @@ export const useDesktopUpdate = create<DesktopUpdateState>()((set, get) => ({
     const release = get().release;
     set({ whatsNewOpen: false });
     if (!release) return;
-    void invoke("update:acknowledge-whats-new", { version: release.version }).catch(() => {
-      console.warn("[desktop-update] could not acknowledge What's New");
-    });
+    void invoke("update:acknowledge-whats-new", { version: release.version }).catch(
+      (err: unknown) => {
+        console.warn(
+          "[desktop-update] could not acknowledge What's New:",
+          diagnosticErrorKind(err),
+        );
+      },
+    );
   },
 }));

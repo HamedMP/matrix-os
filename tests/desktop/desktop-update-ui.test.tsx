@@ -173,6 +173,29 @@ describe("desktop update experience", () => {
     });
   });
 
+  it("logs only the diagnostic error kind when a manual update check fails", async () => {
+    const failure = new Error("private updater detail at /home/matrix");
+    failure.name = "UpdaterIpcError";
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "update:check") throw failure;
+      return { ok: true };
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("operator", { invoke, on: vi.fn() });
+
+    await useDesktopUpdate.getState().check();
+
+    expect(useDesktopUpdate.getState().snapshot).toEqual({ status: "error" });
+    expect(warn).toHaveBeenCalledWith(
+      "[desktop-update] update check failed:",
+      "UpdaterIpcError",
+    );
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("/home/matrix"),
+    );
+  });
+
   it("offers Retry and Close when updates are unavailable in a preview", async () => {
     const invoke = vi.fn(async (channel: string) => {
       if (channel === "update:check") return { status: "disabled" };
