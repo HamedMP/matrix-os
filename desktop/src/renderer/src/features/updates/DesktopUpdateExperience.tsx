@@ -21,13 +21,18 @@ export default function DesktopUpdateExperience() {
     if (!updateOverlayOpen) return;
     let active = true;
     acquireRendererOverlay();
+    const recoverFromSuspensionFailure = () => {
+      if (!active) return;
+      console.warn("[desktop-update] failed to suspend native embeds");
+      useDesktopUpdate.setState({ manualDialogOpen: false, whatsNewOpen: false });
+    };
     void invoke("embed:suspend-all", {})
       .then(({ ok }) => {
-        if (active && ok) setNativeEmbedsSuspended(true);
+        if (!active) return;
+        if (ok) setNativeEmbedsSuspended(true);
+        else recoverFromSuspensionFailure();
       })
-      .catch(() => {
-        console.warn("[desktop-update] failed to suspend native embeds");
-      });
+      .catch(recoverFromSuspensionFailure);
     return () => {
       active = false;
       setNativeEmbedsSuspended(false);

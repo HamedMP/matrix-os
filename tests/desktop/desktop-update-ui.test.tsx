@@ -64,6 +64,37 @@ describe("desktop update experience", () => {
     });
   });
 
+  it("restores the hosted shell when native embed suspension fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "embed:suspend-all") {
+        return Promise.reject(new Error("private IPC failure"));
+      }
+      if (channel === "update:get-state") return Promise.resolve({ status: "disabled" });
+      if (channel === "update:get-whats-new") {
+        return Promise.resolve({ release: null, shouldOpen: false });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    vi.stubGlobal("operator", { invoke, on: vi.fn(() => vi.fn()) });
+    useDesktopUpdate.setState({ manualDialogOpen: true, whatsNewOpen: true });
+
+    render(
+      <Tooltip.Provider>
+        <DesktopUpdateExperience />
+      </Tooltip.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(useDesktopUpdate.getState().manualDialogOpen).toBe(false);
+      expect(useDesktopUpdate.getState().whatsNewOpen).toBe(false);
+      expect(useUi.getState().rendererOverlayCount).toBe(0);
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(warn).toHaveBeenCalledWith("[desktop-update] failed to suspend native embeds");
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("private IPC failure"));
+  });
+
   it("subscribes to background update state without acknowledging before dismissal", async () => {
     let updateListener: ((payload: unknown) => void) | null = null;
     const invoke = vi.fn(async (channel: string) => {
