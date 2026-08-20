@@ -262,7 +262,12 @@ jobs:
             OPERATOR_UPDATE_FEED="http://127.0.0.1:${update_port}/" \
             "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" --disable-gpu >"$app_log" 2>&1 &
           app_pid=$!
-          for _ in {1..20}; do
+          launch_attempts=20
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            # GitHub's macOS runner is arm64, so the x64 app starts through Rosetta.
+            launch_attempts=60
+          fi
+          for ((attempt = 1; attempt <= launch_attempts; attempt += 1)); do
             if ! kill -0 "$app_pid" 2>/dev/null; then
               wait "$app_pid" || true
               cat "$app_log"
