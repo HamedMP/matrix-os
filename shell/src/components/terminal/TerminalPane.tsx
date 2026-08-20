@@ -1401,7 +1401,7 @@ export function TerminalPane({
           // Start heartbeat
           if (heartbeatRef.current) heartbeatRef.current.stop();
           heartbeatRef.current = createSocketHealth({
-            pingIntervalMs: 30_000,
+            pingIntervalMs: 10_000,
             pongTimeoutMs: 5_000,
             send: (data) => {
               if (isCurrentWs() && ws.readyState === WebSocket.OPEN) ws.send(data);

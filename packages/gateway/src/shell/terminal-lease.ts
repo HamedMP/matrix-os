@@ -85,7 +85,12 @@ export function createTerminalLeaseCoordinator(options: TerminalLeaseCoordinator
     if (!lease || lease.holderId !== holderId || lease.epoch !== epoch) {
       return false;
     }
-    lease.lastTouchedAt = now();
+    const at = now();
+    if (expired(lease, at)) {
+      leases.delete(terminalId);
+      return false;
+    }
+    lease.lastTouchedAt = at;
     return true;
   }
 

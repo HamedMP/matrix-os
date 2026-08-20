@@ -233,6 +233,32 @@ describe("ShellSocket URL building", () => {
     expect(h.sockets).toHaveLength(1);
   });
 
+  it("renews an idle exclusive lease with periodic heartbeat pings", () => {
+    const h = createHarness({ clientClass: "hard" });
+    h.socket.resize(120, 40);
+    h.socket.connect();
+    h.latest().open();
+    h.latest().frame({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 0,
+      lease: { epoch: 1 },
+    });
+
+    h.timers.advance(10_000);
+    expect(h.latest().sentFrames()).toContainEqual({ type: "ping" });
+
+    h.latest().frame({ type: "pong" });
+    h.timers.advance(10_000);
+    expect(h.latest().sentFrames().filter((frame) => frame.type === "ping")).toHaveLength(2);
+
+    h.socket.dispose();
+    const pingCount = h.latest().sentFrames().filter((frame) => frame.type === "ping").length;
+    h.timers.advance(30_000);
+    expect(h.latest().sentFrames().filter((frame) => frame.type === "ping")).toHaveLength(pingCount);
+  });
+
   it("resets presentation state before accepting a fresh Zellij bootstrap", () => {
     const h = createHarness({ clientClass: "hard" });
     h.socket.resize(120, 40);

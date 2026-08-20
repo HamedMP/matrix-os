@@ -159,6 +159,7 @@ interface SessionRuntime {
   disposed: boolean;
   sizing: SessionSizing | null;
   cutoverTail: Promise<void>;
+  coordinatedOwnership: boolean;
 }
 
 export function createShellWsHandler(options: ShellWsHandlerOptions) {
@@ -228,6 +229,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       disposed: false,
       sizing: null,
       cutoverTail: Promise.resolve(),
+      coordinatedOwnership: false,
     };
     runtimes.set(name, runtime);
     return runtime;
@@ -734,6 +736,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
       if (exclusiveLease) {
         lease = leaseCoordinator.acquire(safeName, connId, declaredSize ?? sizing.spawnSize());
+        runtime.coordinatedOwnership = true;
         conn.leaseEpoch = lease.epoch;
         sizing.attach(connId, clientClass, declaredSize ?? lease.size);
         sizingRegistered = true;
@@ -792,13 +795,29 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
-    const mayMutate = (resize?: TerminalSize): boolean => {
+    const revokeExpiredHolders = (): void => {
+      for (const candidate of [...runtime.conns]) {
+        if (!candidate.exclusiveLease || candidate.leaseEpoch === null || candidate.closed) continue;
+        sendJson(candidate.ws, { type: "lease-revoked", epoch: candidate.leaseEpoch });
+        candidate.close();
+      }
+    };
+
+    const currentLeaseOrRevokeExpired = () => {
       const currentLease = leaseCoordinator.current(safeName);
-      if (!currentLease) return !conn.exclusiveLease;
+      if (!currentLease && runtime.coordinatedOwnership) revokeExpiredHolders();
+      return currentLease;
+    };
+
+    const mayMutate = (resize?: TerminalSize): boolean => {
+      const currentLease = currentLeaseOrRevokeExpired();
+      if (!currentLease) return !runtime.coordinatedOwnership && !conn.exclusiveLease;
       if (currentLease.holderId !== conn.id || currentLease.epoch !== conn.leaseEpoch) return false;
-      return resize
+      const renewed = resize
         ? leaseCoordinator.resize(safeName, conn.id, currentLease.epoch, resize) !== null
         : leaseCoordinator.touch(safeName, conn.id, currentLease.epoch);
+      if (!renewed) revokeExpiredHolders();
+      return renewed;
     };
 
     return {
@@ -824,7 +843,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
         const msg = result.data;
         if (msg.type === "ping") {
-          if (lease) leaseCoordinator.touch(safeName, connId, lease.epoch);
+          if (conn.exclusiveLease && !mayMutate()) return;
+          if (!conn.exclusiveLease) currentLeaseOrRevokeExpired();
           sendJson(ws, { type: "pong" });
           return;
         }

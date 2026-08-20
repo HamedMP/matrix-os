@@ -6,6 +6,7 @@ import {
   shellWsMessageDataToString,
   type ShellWsSocket,
 } from "../../packages/gateway/src/shell/ws.js";
+import { createTerminalLeaseCoordinator } from "../../packages/gateway/src/shell/terminal-lease.js";
 
 class FakePty {
   writes: string[] = [];
@@ -1495,6 +1496,67 @@ describe("zellij terminal WebSocket", () => {
 
     expect(activePtyBeforeMutation.writes).not.toContain("blocked");
     expect(activePtyBeforeMutation.resizes).toHaveLength(resizeCount);
+    await handler.dispose();
+  });
+
+  it("fails closed after an exclusive lease expires while its socket remains connected", async () => {
+    let now = 1_000;
+    const pty = new FakePty();
+    const replacementPty = new FakePty();
+    const holderWs = socket();
+    const observerWs = socket();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(pty)
+          .mockReturnValueOnce(replacementPty),
+      },
+      leaseCoordinator: createTerminalLeaseCoordinator({ now: () => now, ttlMs: 100 }),
+      sizingDebounceMs: 0,
+    });
+
+    const holder = await handler.open({
+      ws: holderWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 120, rows: 40 },
+      exclusiveLease: true,
+    });
+    const observer = await handler.open({
+      ws: observerWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 80, rows: 24 },
+    });
+    const activePty = [pty, replacementPty].findLast((candidate) => !candidate.killed) ?? replacementPty;
+    const resizeCount = activePty.resizes.length;
+    now += 101;
+
+    observer.onMessage(JSON.stringify({ type: "input", data: "must-stay-blocked" }));
+    observer.onMessage(JSON.stringify({ type: "resize", cols: 70, rows: 20 }));
+    holder.onMessage(JSON.stringify({ type: "input", data: "expired-holder" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(activePty.writes).not.toContain("must-stay-blocked");
+    expect(activePty.writes).not.toContain("expired-holder");
+    expect(activePty.resizes).toHaveLength(resizeCount);
+    expect(holderWs.sent).toContainEqual({ type: "lease-revoked", epoch: 1 });
+    expect(holderWs.closed).toBe(true);
+    expect(observerWs.closed).toBe(false);
+
+    const resumedWs = socket();
+    const resumed = await handler.open({
+      ws: resumedWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 90, rows: 30 },
+      exclusiveLease: true,
+    });
+    resumed.onMessage(JSON.stringify({ type: "input", data: "resumed-owner" }));
+
+    expect(resumedWs.sent).toContainEqual(expect.objectContaining({ lease: { epoch: 2 } }));
+    expect(replacementPty.writes).toContain("resumed-owner");
     await handler.dispose();
   });
 

@@ -57,6 +57,7 @@ const RESIZE_DEBOUNCE_STARTUP_MS = 220;
 const RESIZE_DEBOUNCE_STEADY_MS = 90;
 const STARTUP_SETTLE_AFTER_ATTACH_MS = 300;
 const RESIZE_FALLBACK_AFTER_ATTACH_MS = 900;
+const LEASE_HEARTBEAT_INTERVAL_MS = 10_000;
 const MIN_COLS = 1;
 const MAX_COLS = 500;
 const MIN_ROWS = 1;
@@ -126,6 +127,8 @@ export class ShellSocket {
   private settleTimer: TimerHandle | null = null;
   private fallbackTimer: TimerHandle | null = null;
   private handshakeTimer: TimerHandle | null = null;
+  private leaseHeartbeatTimer: TimerHandle | null = null;
+  private leaseEpoch: number | null = null;
 
   constructor(options: ShellSocketOptions) {
     const hasSession = typeof options.sessionName === "string" && options.sessionName.length > 0;
@@ -223,6 +226,7 @@ export class ShellSocket {
     this.lastSentDims = null;
     this.resizeSentSinceAttach = false;
     this.inStartupWindow = true;
+    this.leaseEpoch = null;
 
     const url = this.buildUrl(isReconnect);
     let socket: WebSocketLike;
@@ -389,6 +393,14 @@ export class ShellSocket {
       return;
     }
     this.failedAttempts = 0;
+    const lease = frame.lease;
+    const leaseEpoch = lease && typeof lease === "object"
+      ? (lease as Record<string, unknown>).epoch
+      : null;
+    this.leaseEpoch = typeof leaseEpoch === "number" && Number.isInteger(leaseEpoch) && leaseEpoch > 0
+      ? leaseEpoch
+      : null;
+    this.scheduleLeaseHeartbeat();
     this.handleCanonicalSize(frame.canonicalSize && typeof frame.canonicalSize === "object"
       ? frame.canonicalSize as Record<string, unknown>
       : {});
@@ -457,6 +469,18 @@ export class ShellSocket {
         this.flushResize();
       }
     }, RESIZE_FALLBACK_AFTER_ATTACH_MS);
+  }
+
+  private scheduleLeaseHeartbeat(): void {
+    if (this.leaseHeartbeatTimer !== null) this.clearT(this.leaseHeartbeatTimer);
+    this.leaseHeartbeatTimer = null;
+    if (this.leaseEpoch === null || this.currentState === "ended" || this.currentState === "fatal") return;
+    this.leaseHeartbeatTimer = this.setT(() => {
+      this.leaseHeartbeatTimer = null;
+      if (this.leaseEpoch === null || this.currentState !== "attached" || this.socket === null) return;
+      this.sendFrame({ type: "ping" });
+      this.scheduleLeaseHeartbeat();
+    }, LEASE_HEARTBEAT_INTERVAL_MS);
   }
 
   private flushResize(): void {
@@ -533,6 +557,7 @@ export class ShellSocket {
       "settleTimer",
       "fallbackTimer",
       "handshakeTimer",
+      "leaseHeartbeatTimer",
     ] as const) {
       const handle = this[key];
       if (handle !== null) {
@@ -540,6 +565,7 @@ export class ShellSocket {
         this[key] = null;
       }
     }
+    this.leaseEpoch = null;
   }
 
   private setState(state: ShellSocketState, detail?: { code?: string }): void {

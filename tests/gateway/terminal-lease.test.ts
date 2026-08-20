@@ -47,13 +47,24 @@ describe("terminal live lease coordinator", () => {
     expect(vps.epoch).toBe(2);
   });
 
-  it("renews the current holder after an idle period when no takeover occurred", () => {
+  it("does not revive a holder after its lease already expired", () => {
     let now = 1_000;
     const leases = createTerminalLeaseCoordinator({ now: () => now, ttlMs: 100 });
     const desktop = leases.acquire("main", "desktop", { cols: 180, rows: 50 });
     now += 101;
 
+    expect(leases.touch("main", "desktop", desktop.epoch)).toBe(false);
+    expect(leases.holds("main", "desktop", desktop.epoch)).toBe(false);
+  });
+
+  it("renews a live holder before its lease expires", () => {
+    let now = 1_000;
+    const leases = createTerminalLeaseCoordinator({ now: () => now, ttlMs: 100 });
+    const desktop = leases.acquire("main", "desktop", { cols: 180, rows: 50 });
+    now += 75;
+
     expect(leases.touch("main", "desktop", desktop.epoch)).toBe(true);
+    now += 75;
     expect(leases.holds("main", "desktop", desktop.epoch)).toBe(true);
   });
 });
