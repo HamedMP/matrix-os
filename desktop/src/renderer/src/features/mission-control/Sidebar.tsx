@@ -1,15 +1,14 @@
 import {
   Blocks,
+  FolderKanban,
   Home,
   FolderTree,
   LayoutGrid,
-  Plus,
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
-import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat } from "../../stores/hermes-chat";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
@@ -19,7 +18,6 @@ import { useUi } from "../../stores/ui";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import AccountMenu from "./AccountMenu";
-import ProjectSidebarRow from "./ProjectSidebarRow";
 import RecentViews from "./RecentViews";
 import { SidebarNavRow, SidebarSectionHeader } from "./SidebarPrimitives";
 
@@ -47,13 +45,12 @@ export default function Sidebar() {
   const activeTabId = useTabs((s) => s.activeTabId);
   const openTab = useTabs((s) => s.openTab);
   const focusTab = useTabs((s) => s.focusTab);
-  const projects = useBoard((s) => s.projects);
   const openApps = useMemo(() => tabs.filter((t) => t.kind === "app"), [tabs]);
   const chatAttention = useThreads((s) => kernelThreadAttentionCount(s.threads));
-  const summaryProjects = useCodingAgentWorkspace((s) => s.summary?.projects.items);
+  const projectAttention = useCodingAgentWorkspace((s) =>
+    s.summary?.projects.items.reduce((total, project) => total + project.attentionCount, 0) ?? 0,
+  );
   const collapsed = useUi((s) => s.sidebarCollapsed);
-  const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
-  const [projectsOpen, setProjectsOpen] = useState(true);
   const [appsOpen, setAppsOpen] = useState(true);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -132,50 +129,19 @@ export default function Sidebar() {
             active={activeTab?.kind === "plugins"}
             onClick={() => openTab({ kind: "plugins", title: "Plugins" })}
           />
+          <SidebarNavRow
+            icon={<FolderKanban size={15} />}
+            label="Projects"
+            collapsed={collapsed}
+            active={activeTab?.kind === "projects" || activeTab?.kind === "project"}
+            badge={projectAttention}
+            onClick={() => openTab({ kind: "projects", title: "Projects", closable: false })}
+          />
         </nav>
 
         {!collapsed ? (
           <>
             <RecentViews />
-            <SidebarSectionHeader
-              label="Projects"
-              open={projectsOpen}
-              controls="sidebar-projects"
-              onToggle={() => setProjectsOpen((value) => !value)}
-              action={(
-                <button
-                  type="button"
-                  aria-label="Add project"
-                  title="Add project"
-                  className="flex h-5 w-5 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--bg-hover)] focus:opacity-100 group-hover/sidebar-section:opacity-100"
-                  style={{ color: "var(--text-tertiary)" }}
-                  onClick={() => setCreateProjectOpen(true)}
-                >
-                  <Plus size={13} aria-hidden="true" />
-                </button>
-              )}
-            />
-            <div id="sidebar-projects">
-              {projectsOpen
-                ? projects.map((project) => {
-                    const isActive = activeTab?.kind === "project" && activeTab.projectSlug === project.slug;
-                    const attention = summaryProjects?.find((candidate) => candidate.id === project.slug)?.attentionCount ?? 0;
-                    return (
-                      <ProjectSidebarRow
-                        key={project.slug}
-                        project={project}
-                        active={isActive}
-                        attention={attention}
-                        onOpen={() => openTab({ kind: "project", projectSlug: project.slug, title: project.name || project.slug })}
-                      />
-                    );
-                  })
-                : null}
-              {projectsOpen && projects.length === 0 ? (
-                <p className="px-2.5 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>No projects yet.</p>
-              ) : null}
-            </div>
-
             {openApps.length > 0 ? (
               <>
                 <SidebarSectionHeader

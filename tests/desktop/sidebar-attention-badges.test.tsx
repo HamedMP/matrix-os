@@ -103,7 +103,7 @@ describe("Sidebar attention badges", () => {
     expect(screen.getByRole("button", { name: /^Chat\s*2$/ })).toBeTruthy();
   });
 
-  it("shows the coding-agent attention count on the project row", () => {
+  it("shows the aggregate coding-agent attention count on the Projects row", () => {
     useCodingAgentWorkspace.setState({ summary: summaryWithProjectAttention(3) });
 
     render(
@@ -112,8 +112,8 @@ describe("Sidebar attention badges", () => {
       </Tooltip.Provider>,
     );
 
-    const projectButton = screen.getByRole("button", { name: "Open Matrix OS" });
-    expect(within(projectButton).getByText("3")).toBeTruthy();
+    const projectsButton = screen.getByRole("button", { name: /^Projects\s*3$/ });
+    expect(within(projectsButton).getByText("3")).toBeTruthy();
   });
 
   it("no longer offers the retired Agents workspace row", () => {
@@ -138,8 +138,8 @@ describe("Sidebar attention badges", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toBeTruthy();
-    const projectButton = screen.getByRole("button", { name: "Open Matrix OS" });
-    expect(within(projectButton).queryByText("0")).toBeNull();
+    const projectsButton = screen.getByRole("button", { name: "Projects" });
+    expect(within(projectsButton).queryByText("0")).toBeNull();
   });
 
   it("places a ready update at the right edge of the account row", () => {

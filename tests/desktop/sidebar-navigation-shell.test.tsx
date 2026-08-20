@@ -187,7 +187,7 @@ describe("Desktop sidebar navigation shell", () => {
       .toBe(false);
   });
 
-  it("exposes the persistent navigation hierarchy and selected row semantics", () => {
+  it("exposes Projects as a persistent primary navigation destination", () => {
     useBoard.setState({
       projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "scratch" }],
     });
@@ -202,13 +202,25 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBeNull();
 
     const projects = screen.getByRole("button", { name: "Projects" });
-    expect(projects.getAttribute("aria-expanded")).toBe("true");
-    expect(projects.getAttribute("aria-controls")).toBe("sidebar-projects");
-    expect(screen.getByRole("button", { name: "Open Matrix OS" })).toBeTruthy();
+    fireEvent.click(projects);
+    expect(projects.getAttribute("aria-current")).toBe("page");
+    expect(useTabs.getState().tabs.find((tab) => tab.kind === "projects")).toBeTruthy();
+  });
+
+  it("opens and focuses one canonical Projects index tab", () => {
+    renderSidebar();
+
+    const projects = screen.getByRole("button", { name: "Projects" });
+    fireEvent.click(projects);
+
+    const first = useTabs.getState().tabs.find((tab) => tab.kind === "projects");
+    expect(first).toBeTruthy();
+    expect(useTabs.getState().activeTabId).toBe(first?.id);
+    expect(projects.getAttribute("aria-current")).toBe("page");
 
     fireEvent.click(projects);
-    expect(projects.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByRole("button", { name: "Open Matrix OS" })).toBeNull();
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "projects")).toHaveLength(1);
+    expect(useTabs.getState().activeTabId).toBe(first?.id);
   });
 
   it("keeps the collapsed rail labelled while hiding expanded-only chrome", () => {

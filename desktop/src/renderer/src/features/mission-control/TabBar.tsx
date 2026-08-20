@@ -17,6 +17,7 @@ import { useTabs, type Tab, type TabKind } from "../../stores/tabs";
 const TAB_ICON: Record<TabKind, LucideIcon> = {
   home: Home,
   chat: Sparkles,
+  projects: FolderKanban,
   project: FolderKanban,
   task: FileCode2,
   terminal: SquareTerminal,

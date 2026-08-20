@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { LayoutGrid, MessageCircle, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, StatusDot } from "../../design/primitives";
@@ -34,20 +34,21 @@ export function ProjectViewSwitch({
   const chatsActive = view !== "board";
   return (
     <div role="group" aria-label="Project view" className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
-      {(["board", "chats"] as const).map((mode) => (
+      {(["chats", "board"] as const).map((mode) => (
         <button
           key={mode}
           type="button"
           aria-label={mode === "board" ? "Board" : "Chats"}
           aria-pressed={mode === "board" ? view === "board" : chatsActive}
           onClick={() => onChange(mode === "board" ? "board" : "overview")}
-          className="rounded-md px-3 py-1.5 text-xs font-medium capitalize outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          title={mode === "board" ? "Board" : "Chats"}
+          className="flex h-7 w-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           style={{
             background: (mode === "board" ? view === "board" : chatsActive) ? "var(--bg-selected)" : "transparent",
             color: (mode === "board" ? view === "board" : chatsActive) ? "var(--text-primary)" : "var(--text-tertiary)",
           }}
         >
-          {mode}
+          {mode === "board" ? <LayoutGrid size={14} /> : <MessageCircle size={14} />}
         </button>
       ))}
     </div>
@@ -101,11 +102,12 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
 
   const summaryProject = summary?.projects.items.find((project) => project.id === projectSlug);
   const name = boardProject?.name || summaryProject?.label || projectSlug;
+  const description = boardProject?.description;
   const attention = summaryProject?.attentionCount ?? 0;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <header
+      {view !== "overview" ? <header
         className="flex shrink-0 items-center gap-3 border-b px-5 py-2.5"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
@@ -147,9 +149,16 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
             </Button>
           </div>
         ) : null}
-      </header>
+      </header> : null}
       {view === "overview" ? (
-        <ProjectOverview projectId={projectSlug} projectLabel={name} summary={summary} active={active} />
+        <ProjectOverview
+          projectId={projectSlug}
+          projectLabel={name}
+          description={description}
+          summary={summary}
+          active={active}
+          viewSwitch={<ProjectViewSwitch view={view} onChange={(next) => setView(projectSlug, next)} />}
+        />
       ) : view === "chats" ? (
         <ProjectChatsView projectId={projectSlug} active={active} />
       ) : (

@@ -21,6 +21,23 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("CreateProjectDialog add-project flows", () => {
+  function selectCloneSource(projectName = "My product") {
+    fireEvent.change(screen.getByLabelText("What are you working on?"), {
+      target: { value: projectName },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+  }
+
+  function openNewFolder(projectName: string) {
+    fireEvent.change(screen.getByLabelText("What are you working on?"), {
+      target: { value: projectName },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    fireEvent.click(screen.getByRole("button", { name: /New folder in Projects/ }));
+  }
+
   beforeEach(() => {
     const api = createApiClient({
       baseUrl: "https://gateway.test",
@@ -52,14 +69,13 @@ describe("CreateProjectDialog add-project flows", () => {
     vi.unstubAllGlobals();
   });
 
-  it("starts on three mode cards and navigates back", async () => {
+  it("starts on the two Figma source cards and navigates back", async () => {
     render(<CreateProjectDialog open onClose={vi.fn()} />);
 
-    expect(screen.getByRole("button", { name: /Existing folder/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Folders/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Clone from GitHub/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /New folder/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+    selectCloneSource();
     expect(screen.getByPlaceholderText("https://github.com/owner/repo")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
@@ -70,7 +86,7 @@ describe("CreateProjectDialog add-project flows", () => {
   describe("clone from GitHub", () => {
     function openCloneStep() {
       render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      selectCloneSource();
     }
 
     it.each([
@@ -102,7 +118,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useTabs.setState({ openTab });
 
       render(<CreateProjectDialog open onClose={onClose} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      selectCloneSource("My product");
 
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/repo.git" },
@@ -119,6 +135,7 @@ describe("CreateProjectDialog add-project flows", () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         url: "https://github.com/owner/repo.git",
         name: "repo",
+        displayName: "My product",
         branch: "main",
         clientRequestId: expect.stringMatching(/^req_[A-Za-z0-9_-]+$/),
       });
@@ -136,8 +153,8 @@ describe("CreateProjectDialog add-project flows", () => {
       vi.stubGlobal("fetch", fetchMock);
       useBoard.setState({ selectProject: vi.fn(async () => undefined), loadProjects: vi.fn(async () => true) });
 
-      render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+      selectCloneSource();
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/big-repo" },
       });
@@ -160,8 +177,8 @@ describe("CreateProjectDialog add-project flows", () => {
       useBoard.setState({ selectProject, loadProjects: vi.fn(async () => true) });
       useTabs.setState({ openTab });
 
-      render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+      selectCloneSource();
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/big-repo" },
       });
@@ -197,7 +214,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useBoard.setState({ selectProject, loadProjects });
 
       render(<CreateProjectDialog open onClose={onClose} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      selectCloneSource();
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/repo" },
       });
@@ -217,7 +234,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useTabs.setState({ openTab });
 
       render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      selectCloneSource();
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/repo" },
       });
@@ -236,7 +253,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useBoard.setState({ selectProject: vi.fn(async () => undefined), loadProjects: vi.fn(async () => true) });
 
       render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      selectCloneSource();
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/repo" },
       });
@@ -256,7 +273,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useConnection.setState({ api });
 
       render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      selectCloneSource();
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/repo" },
       });
@@ -277,7 +294,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useConnection.setState({ api });
 
       render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      selectCloneSource();
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/repo" },
       });
@@ -296,7 +313,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useBoard.setState({ selectProject: vi.fn(async () => undefined), loadProjects: vi.fn(async () => true) });
 
       render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      selectCloneSource();
       fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
         target: { value: "https://github.com/owner/repo" },
       });
@@ -345,9 +362,8 @@ describe("CreateProjectDialog add-project flows", () => {
       useBoard.setState({ createProject, selectProject });
       useTabs.setState({ openTab });
 
-      render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
-      fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Notes" } });
+      render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+      openNewFolder("Notes");
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
       await waitFor(() => expect(createProject).toHaveBeenCalledWith(expect.anything(), {
@@ -385,8 +401,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useTabs.setState({ openTab: vi.fn() });
 
       render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
-      fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
-      fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Side Project" } });
+      openNewFolder("Side Project");
 
       fireEvent.click(screen.getByRole("button", { name: "Choose a different folder…" }));
       await waitFor(() => expect(screen.getByRole("button", { name: "Open code" })).not.toBeNull());
@@ -427,8 +442,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
 
       render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
-      fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
-      fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Notes" } });
+      openNewFolder("Notes");
       fireEvent.click(screen.getByRole("button", { name: "Choose a different folder…" }));
       await waitFor(() => expect(screen.getByRole("button", { name: "Open projects" })).toBeTruthy());
       fireEvent.click(screen.getByRole("button", { name: "Open projects" }));
@@ -452,8 +466,7 @@ describe("CreateProjectDialog add-project flows", () => {
       useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
 
       render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
-      fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
-      fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Side Project" } });
+      openNewFolder("Side Project");
       fireEvent.click(screen.getByRole("button", { name: "Choose a different folder…" }));
       await waitFor(() => expect(screen.getByRole("button", { name: "Open code" })).not.toBeNull());
       fireEvent.click(screen.getByRole("button", { name: "Open code" }));
@@ -468,9 +481,8 @@ describe("CreateProjectDialog add-project flows", () => {
       const createProject = vi.fn();
       useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
 
-      render(<CreateProjectDialog open onClose={vi.fn()} />);
-      fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
-      fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "!!!" } });
+      render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+      openNewFolder("!!!");
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
       expect(screen.getByText(/at least one letter or number/)).toBeTruthy();

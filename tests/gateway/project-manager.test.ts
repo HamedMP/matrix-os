@@ -97,6 +97,20 @@ describe("project-manager", () => {
     expect(config.localPath).toBe(join(homePath, "projects", "empty-workspace", "repo"));
   });
 
+  it("rejects an oversized project description at the manager boundary", async () => {
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "scratch",
+      name: "Oversized",
+      description: "x".repeat(1_001),
+    })).resolves.toMatchObject({
+      ok: false,
+      status: 400,
+      error: { code: "invalid_project_description" },
+    });
+  });
+
   it("returns the same project for an idempotent create request", async () => {
     const manager = createProjectManager({ homePath, runCommand: vi.fn() });
     const input = {

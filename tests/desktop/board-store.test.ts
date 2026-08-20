@@ -127,6 +127,26 @@ describe("createProject", () => {
     expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App", kind: "scratch" }]);
   });
 
+  it("persists the optional project goal with project creation", async () => {
+    const post = vi.fn().mockResolvedValue({
+      project: { slug: "portfolio", name: "Portfolio", description: "Build my portfolio" },
+    });
+    const get = vi.fn().mockResolvedValue({ projects: [] });
+    const api = makeApi({ post, get });
+
+    await useBoard.getState().createProject(api, {
+      name: "Portfolio",
+      description: "Build my portfolio",
+      mode: "scratch",
+    });
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/projects",
+      expect.objectContaining({ description: "Build my portfolio" }),
+      { timeoutMs: 30_000 },
+    );
+  });
+
   it("recovers a timed-out project create with one idempotent retry", async () => {
     const createdResponse = { project: { slug: "my-app", name: "My App" } };
     const post = vi.fn()

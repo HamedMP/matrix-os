@@ -39,6 +39,8 @@ export interface Project {
   archivedAt?: string;
   localPath?: string;
   githubBacked?: boolean;
+  description?: string;
+  updatedAt?: string;
 }
 
 export const BOARD_COLUMNS: readonly CardStatus[] = [
@@ -76,6 +78,8 @@ const WireProjectSchema = z.object({
   localPath: z.string().min(1).optional(),
   kind: z.enum(["scratch", "github", "folder"]).optional(),
   archivedAt: z.string().datetime().optional(),
+  description: z.string().max(1_000).optional(),
+  updatedAt: z.string().max(64).optional(),
   github: z.object({ owner: z.string(), repo: z.string() }).passthrough().optional(),
 });
 
@@ -87,6 +91,8 @@ export function parseProject(raw: unknown): Project | null {
     name: parsed.data.name,
     kind: parsed.data.kind ?? (parsed.data.github ? "github" : "scratch"),
     ...(parsed.data.archivedAt ? { archivedAt: parsed.data.archivedAt } : {}),
+    ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    ...(parsed.data.updatedAt ? { updatedAt: parsed.data.updatedAt } : {}),
     ...(parsed.data.localPath
       ? { localPath: parsed.data.localPath, githubBacked: parsed.data.github !== undefined }
       : {}),
@@ -222,6 +228,7 @@ interface BoardState {
   loadProjects(api: ApiClient): Promise<boolean>;
   createProject(api: ApiClient, input: {
     name: string;
+    description?: string;
     mode: "scratch" | "github" | "folder";
     url?: string;
     path?: string;
@@ -345,10 +352,10 @@ export const useBoard = create<BoardState>()((set, get) => {
       try {
         const clientRequestId = `req_desktop_project_${crypto.randomUUID()}`;
         const body = input.mode === "github"
-          ? { name: input.name, mode: "github" as const, url: input.url, clientRequestId }
+          ? { name: input.name, description: input.description, mode: "github" as const, url: input.url, clientRequestId }
           : input.mode === "folder"
-            ? { name: input.name, mode: "folder" as const, path: input.path, clientRequestId }
-            : { name: input.name, mode: "scratch" as const, clientRequestId };
+            ? { name: input.name, description: input.description, mode: "folder" as const, path: input.path, clientRequestId }
+            : { name: input.name, description: input.description, mode: "scratch" as const, clientRequestId };
         const sendCreate = (timeoutMs: number) => api.post<{ project: unknown }>(
           "/api/projects",
           body,

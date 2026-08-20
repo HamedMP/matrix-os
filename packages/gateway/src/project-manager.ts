@@ -20,6 +20,7 @@ export type ProjectVisibility = "active" | "archived" | "all";
 export interface ProjectConfig {
   id: string;
   name: string;
+  description?: string;
   slug: string;
   kind: ProjectKind;
   remote?: string;
@@ -87,6 +88,8 @@ const CLONE_TIMEOUT_MS = 5 * 60_000;
 
 const GitHubUrlSchema = z.string().trim().min(1).max(512);
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
+const ProjectNameSchema = z.string().trim().min(1).max(128);
+const ProjectDescriptionSchema = z.string().trim().max(1_000).optional();
 const CreateRequestIdSchema = z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/);
 
 const BRANCH_FORBIDDEN_CHARS = /[\x00-\x20 ~^:?*[\]\\]/;
@@ -113,6 +116,7 @@ function createRequestFingerprint(input: {
   mode: CreateProjectMode;
   slug: string;
   name?: string;
+  description?: string;
   localPath?: string;
   repositoryUrl?: string;
   branch?: string;
@@ -313,6 +317,7 @@ export function createProjectManager(options: {
       url?: string;
       slug?: string;
       name?: string;
+      description?: string;
       path?: string;
       branch?: string;
       mode?: CreateProjectMode;
@@ -325,6 +330,11 @@ export function createProjectManager(options: {
       if (input.branch !== undefined && !GitBranchSchema.safeParse(input.branch).success) {
         return genericError(400, "invalid_branch", "Branch name is invalid");
       }
+      const parsedDescription = ProjectDescriptionSchema.safeParse(input.description);
+      if (!parsedDescription.success) {
+        return genericError(400, "invalid_project_description", "Project description is invalid");
+      }
+      const description = parsedDescription.data || undefined;
       const mode = input.mode ?? (input.url ? "github" : "scratch");
       if (mode === "folder") {
         const name = input.name?.trim() || "";
@@ -373,7 +383,7 @@ export function createProjectManager(options: {
           }
         }
         const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
-        const fingerprint = createRequestFingerprint({ mode, slug, name, localPath: realLocalPath, ownerScope });
+        const fingerprint = createRequestFingerprint({ mode, slug, name, description, localPath: realLocalPath, ownerScope });
         return withProjectLock(slug, async () => {
           if (await registry.hasTombstone(slug)) {
             return genericError(409, "slug_conflict", "Project slug already exists");
@@ -382,6 +392,7 @@ export function createProjectManager(options: {
           const project: ProjectConfig = {
             id: `proj_${randomUUID()}`,
             name,
+            description,
             slug,
             kind: "folder",
             // Persist the fully resolved path: session launches use the stored
@@ -421,7 +432,7 @@ export function createProjectManager(options: {
           return genericError(400, "invalid_slug", "Project slug is invalid");
         }
         const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
-        const fingerprint = createRequestFingerprint({ mode, slug, name, ownerScope });
+        const fingerprint = createRequestFingerprint({ mode, slug, name, description, ownerScope });
         return withProjectLock(slug, async () => {
           const targetProjectPath = projectPath(homePath, slug);
           if (
@@ -445,6 +456,7 @@ export function createProjectManager(options: {
           const project: ProjectConfig = {
             id: `proj_${randomUUID()}`,
             name,
+            description,
             slug,
             kind: "scratch",
             localPath: repoPath,
@@ -471,9 +483,15 @@ export function createProjectManager(options: {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
       const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+      const name = input.name?.trim() || github.repo;
+      if (!ProjectNameSchema.safeParse(name).success) {
+        return genericError(400, "invalid_project_name", "Project name is invalid");
+      }
       const fingerprint = createRequestFingerprint({
         mode,
         slug,
+        name,
+        description,
         repositoryUrl: github.htmlUrl,
         branch: input.branch,
         ownerScope,
@@ -538,7 +556,8 @@ export function createProjectManager(options: {
         const timestamp = nowIso(options.now);
         const project: ProjectConfig = {
           id: `proj_${randomUUID()}`,
-          name: github.repo,
+          name,
+          description,
           slug,
           kind: "github",
           remote: input.url,

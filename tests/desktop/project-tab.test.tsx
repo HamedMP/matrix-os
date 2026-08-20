@@ -131,6 +131,7 @@ function mockOperator(summary: RuntimeSummary = summaryFixture()) {
     if (channel === "runtime:get-thread-snapshot") {
       return threadSnapshot((payload as { threadId: string }).threadId);
     }
+    if (channel === "runtime:create-thread") return threadSnapshot("thread_new");
     if (channel === "state:get") return { value: null };
     if (channel === "state:set") return { ok: true };
     if (channel === "runtime:subscribe-thread-events" || channel === "runtime:unsubscribe-thread-events") {
@@ -200,37 +201,39 @@ describe("ProjectTab", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens on the Figma sessions landing with runtime status and recent sessions", async () => {
+  it("opens on the Figma sessions landing with a real composer and session rows", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
     expect(screen.getAllByText("Matrix OS").length).toBeGreaterThan(0);
     expect(await screen.findByRole("heading", { name: "Matrix OS" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Start a new chat in Matrix OS" })).toBeTruthy();
+    expect(screen.getByLabelText("Message new chat")).toBeTruthy();
     expect(await screen.findByRole("button", { name: "Open session Plan the auth work" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open session Harden the auth route" })).toBeTruthy();
+    expect(screen.queryByText("Recent sessions")).toBeNull();
     const board = screen.getByRole("button", { name: "Board" });
     const chats = screen.getByRole("button", { name: "Chats" });
     expect(board.getAttribute("aria-pressed")).toBe("false");
     expect(chats.getAttribute("aria-pressed")).toBe("true");
-    // Runtime status stays visible in the project workspace header.
-    expect(await screen.findByText("Primary Matrix computer")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Refresh agent workspace" })).toBeTruthy();
+    expect(screen.queryByText("Primary Matrix computer")).toBeNull();
   });
 
   it("shows the project attention count in the header", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
-    await screen.findByRole("button", { name: "Start a new chat in Matrix OS" });
+    await screen.findByLabelText("Message new chat");
+    fireEvent.click(screen.getByRole("button", { name: "Board" }));
     expect(screen.getByLabelText("3 need attention")).toBeTruthy();
   });
 
   it("starts a new chat through the canonical project composer", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Start a new chat in Matrix OS" }));
+    const input = await screen.findByLabelText("Message new chat");
+    fireEvent.change(input, { target: { value: "Review the auth flow" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
-    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
+    await waitFor(() => expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats"));
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_new");
   });
 
   it("opens a recent session in the detailed Chats view", async () => {
@@ -262,7 +265,7 @@ describe("ProjectTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Chats" }));
 
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("overview");
-    expect(await screen.findByRole("button", { name: "Start a new chat in Matrix OS" })).toBeTruthy();
+    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
   });
 
   it("keeps global task creation available when the active project opens in Chats", async () => {

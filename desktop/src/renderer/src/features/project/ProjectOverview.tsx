@@ -1,11 +1,15 @@
-import { AlertCircle, ArrowUp, Bot, Code2, MessageSquare, Plus } from "lucide-react";
+import { AlertCircle, Code2, MessageSquare } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
-import { openProjectChat } from "../../lib/project-chat";
 import { useConnection } from "../../stores/connection";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
+import { useTabs } from "../../stores/tabs";
 import { capabilityEnabled } from "../coding-agents/capabilities";
+import { ProjectChatDraft } from "./ProjectChatDraft";
 import {
   buildProjectThreadListModel,
   formatRelativeTime,
@@ -38,11 +42,15 @@ export default function ProjectOverview({
   projectLabel,
   summary,
   active,
+  description,
+  viewSwitch,
 }: {
   projectId: string;
   projectLabel: string;
   summary: RuntimeSummary | null;
   active: boolean;
+  description?: string;
+  viewSwitch: ReactNode;
 }) {
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const workspaceEntry = useProjectWorkspaces((state) => state.entries[projectId]);
@@ -50,13 +58,12 @@ export default function ProjectOverview({
   const refreshWorkspace = useProjectWorkspaces((state) => state.refresh);
   const workspaceEnabled = summary ? capabilityEnabled(summary, "codingAgentsProjectWorkspace") : false;
   const canCreate = summary ? capabilityEnabled(summary, "codingAgentsThreadCreate") : false;
+  const setSelectedThread = useProjectView((state) => state.setSelectedThread);
+  const setView = useProjectView((state) => state.setView);
+  const composerFocusRequestId = useCodingAgentWorkspace((state) => state.composerFocusRequestId);
   const threads = useMemo(
     () => summary ? allThreads(summary, projectId, workspaceEntry?.workspace ?? null) : [],
     [projectId, summary, workspaceEntry?.workspace],
-  );
-  const taskTitleById = useMemo(
-    () => new Map(workspaceEntry?.workspace?.tasks.items.map((task) => [task.id, task.title]) ?? []),
-    [workspaceEntry?.workspace],
   );
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -71,62 +78,40 @@ export default function ProjectOverview({
     return () => window.clearInterval(timer);
   }, []);
 
-  const project = summary?.projects.items.find((candidate) => candidate.id === projectId);
-  const threadCount = workspaceEntry?.workspace?.project.threadCount ?? project?.threadCount ?? threads.length;
-  const taskCount = workspaceEntry?.workspace?.project.taskCount ?? project?.taskCount ?? 0;
-
   return (
     <main className="min-h-0 flex-1 overflow-y-auto" style={{ background: "var(--bg-app)" }}>
-      <div className="mx-auto flex w-full max-w-[860px] flex-col px-8 pb-12 pt-10">
-        <div className="mb-8">
-          <h1 className="text-3xl font-semibold tracking-[-0.03em]" style={{ color: "var(--text-primary)" }}>
+      <div className="mx-auto flex w-full max-w-[980px] flex-col px-8 pb-12 pt-8">
+        <div className="mb-6 flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+          <h1 className="text-[32px] leading-none tracking-[-0.035em]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-editorial)" }}>
             {projectLabel}
           </h1>
-          <p className="mt-2 text-sm" style={{ color: "var(--text-tertiary)" }}>
-            {threadCount} {threadCount === 1 ? "conversation" : "conversations"}
-            <span aria-hidden="true"> · </span>
-            {taskCount} {taskCount === 1 ? "task" : "tasks"}
-          </p>
+          {description ? <p className="mt-2 text-sm" style={{ color: "var(--text-tertiary)" }}>{description}</p> : null}
+          </div>
+          {viewSwitch}
         </div>
 
-        <button
-          type="button"
-          aria-label={`Start a new chat in ${projectLabel}`}
-          disabled={!canCreate}
-          onClick={() => void openProjectChat(projectId, { compose: true })}
-          className="group mb-10 flex min-h-[128px] w-full flex-col justify-between rounded-2xl border p-4 text-left outline-none transition-[border-color,box-shadow,transform] hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-          style={{
-            borderColor: "var(--border-default)",
-            background: "var(--bg-surface)",
-            boxShadow: "var(--shadow-2)",
-          }}
-        >
-          <span className="text-sm" style={{ color: "var(--text-tertiary)" }}>
-            How can I help you today?
-          </span>
-          <span className="flex w-full items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md border" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-              <Plus size={14} />
-            </span>
-            <span className="flex items-center gap-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
-              <Bot size={14} />
-              {summary?.providers[0]?.displayName ?? "Agent"}
-            </span>
-            <span className="flex-1" />
-            <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ background: "var(--accent)", color: "var(--text-on-accent)" }}>
-              <ArrowUp size={15} />
-            </span>
-          </span>
-        </button>
-
-        <section aria-labelledby={`project-${projectId}-recent-sessions`}>
-          <div className="mb-2 flex items-center justify-between border-b pb-3" style={{ borderColor: "var(--border-subtle)" }}>
-            <h2 id={`project-${projectId}-recent-sessions`} className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              Recent sessions
-            </h2>
-            <span className="text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>{threads.length}</span>
+        {summary && workspaceEnabled ? (
+          <div className="mb-6">
+            <ProjectChatDraft
+              summary={summary}
+              projectId={projectId}
+              projectLabel={projectLabel}
+              active={active}
+              seed={null}
+              focusRequestId={composerFocusRequestId}
+              typeToStartEnabled={canCreate}
+              presentation="landing"
+              onCreated={(threadId, label) => {
+                setSelectedThread(projectId, threadId);
+                setView(projectId, "chats");
+                useTabs.getState().recordRecentConversation(threadId, label);
+              }}
+            />
           </div>
+        ) : null}
 
+        <section aria-label={`${projectLabel} sessions`}>
           {workspaceEntry?.status === "loading" && threads.length === 0 ? (
             <p className="py-6 text-sm" style={{ color: "var(--text-tertiary)" }}>Loading recent sessions…</p>
           ) : null}
@@ -151,28 +136,23 @@ export default function ProjectOverview({
           <div>
             {threads.map((thread) => {
               const status = threadRailStatus(thread);
-              const provider = summary?.providers.find((candidate) => candidate.id === thread.providerId)?.displayName ?? "Agent";
-              const taskTitle = thread.taskId ? taskTitleById.get(thread.taskId) : undefined;
               const relative = formatRelativeTime(thread.updatedAt, nowMs);
               return (
                 <button
                   key={thread.id}
                   type="button"
                   aria-label={`Open session ${thread.title}`}
-                  onClick={() => void openProjectChat(projectId, { threadId: thread.id })}
-                  className="group flex w-full items-center gap-3 border-b px-2 py-3 text-left outline-none transition-colors last:border-b-0 hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  onClick={() => {
+                    setSelectedThread(projectId, thread.id);
+                    setView(projectId, "chats");
+                  }}
+                  className="group flex w-full items-center gap-3 border-b px-3 py-3.5 text-left outline-none transition-colors last:border-b-0 hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   style={{ borderColor: "var(--border-subtle)" }}
                 >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: "var(--bg-raised)", color: "var(--text-secondary)" }}>
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center" style={{ color: "var(--text-primary)" }}>
                     {thread.taskId ? <Code2 size={15} /> : <MessageSquare size={15} />}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{thread.title}</span>
-                    <span className="mt-0.5 flex items-center gap-1.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-                      <span>{provider}</span>
-                      {taskTitle ? <><span aria-hidden="true">·</span><span className="truncate">{taskTitle}</span></> : null}
-                    </span>
-                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{thread.title}</span>
                   {status ? (
                     <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={STATUS_COLORS[status.tone]}>{status.label}</span>
                   ) : null}
