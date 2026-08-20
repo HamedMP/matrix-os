@@ -1,4 +1,4 @@
-import { AlertCircle, Code2, MessageSquare } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
@@ -9,6 +9,7 @@ import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useTabs } from "../../stores/tabs";
 import { capabilityEnabled } from "../coding-agents/capabilities";
+import { ProviderGlyph } from "../settings/provider-glyph";
 import { ProjectChatDraft } from "./ProjectChatDraft";
 import {
   buildProjectThreadListModel,
@@ -137,6 +138,8 @@ export default function ProjectOverview({
             {threads.map((thread) => {
               const status = threadRailStatus(thread);
               const relative = formatRelativeTime(thread.updatedAt, nowMs);
+              const provider = summary?.providers.find((candidate) => candidate.id === thread.providerId);
+              const providerLabel = provider?.displayName ?? thread.providerId;
               return (
                 <button
                   key={thread.id}
@@ -149,8 +152,8 @@ export default function ProjectOverview({
                   className="group flex w-full items-center gap-3 border-b px-3 py-3.5 text-left outline-none transition-colors last:border-b-0 hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   style={{ borderColor: "var(--border-subtle)" }}
                 >
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center" style={{ color: "var(--text-primary)" }}>
-                    {thread.taskId ? <Code2 size={15} /> : <MessageSquare size={15} />}
+                  <span aria-label={`${providerLabel} provider`} title={providerLabel} className="shrink-0">
+                    <ProviderGlyph kind={provider?.kind ?? "custom"} compact />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{thread.title}</span>
                   {status ? (

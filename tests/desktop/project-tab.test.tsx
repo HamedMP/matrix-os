@@ -37,6 +37,16 @@ function summaryFixture({ projectWorkspace = true }: { projectWorkspace?: boolea
       supportedModes: ["default"],
       defaultMode: "default",
       setupActions: [],
+    }, {
+      id: "claude",
+      kind: "claude",
+      displayName: "Claude",
+      availability: "available",
+      installStatus: "installed",
+      authStatus: "authenticated",
+      supportedModes: ["default"],
+      defaultMode: "default",
+      setupActions: [],
     }],
     projects: {
       items: [{ id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 2, attentionCount: 3 }],
@@ -88,7 +98,7 @@ function workspaceFixture(): ProjectAgentWorkspace {
     taskThreads: {
       items: [{
         id: "thread_auth",
-        providerId: "codex",
+        providerId: "claude",
         title: "Harden the auth route",
         status: "running",
         attention: "none",
@@ -209,6 +219,8 @@ describe("ProjectTab", () => {
     expect(screen.getByLabelText("Message new chat")).toBeTruthy();
     expect(await screen.findByRole("button", { name: "Open session Plan the auth work" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open session Harden the auth route" })).toBeTruthy();
+    expect(screen.getByLabelText("Codex provider")).toBeTruthy();
+    expect(screen.getByLabelText("Claude provider")).toBeTruthy();
     expect(screen.queryByText("Recent sessions")).toBeNull();
     const board = screen.getByRole("button", { name: "Board" });
     const chats = screen.getByRole("button", { name: "Chats" });

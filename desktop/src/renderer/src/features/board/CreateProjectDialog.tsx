@@ -338,14 +338,20 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
           label="Folders"
           description="Connect an existing folder or create a new one"
           selected={selectedMode === "folder"}
-          onSelect={() => setSelectedMode("folder")}
+          onSelect={() => {
+            setSelectedMode("folder");
+            setStep("folder");
+          }}
         />
         <ModeCard
           icon={<Github size={16} />}
           label="Clone from GitHub"
           description="Copy a repository to this computer"
           selected={selectedMode === "github"}
-          onSelect={() => setSelectedMode("github")}
+          onSelect={() => {
+            setSelectedMode("github");
+            setStep("github");
+          }}
         />
       </div>
       </div>

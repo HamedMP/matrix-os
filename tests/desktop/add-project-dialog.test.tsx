@@ -26,7 +26,6 @@ describe("CreateProjectDialog add-project flows", () => {
       target: { value: projectName },
     });
     fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
   }
 
   function openNewFolder(projectName: string) {
@@ -34,7 +33,6 @@ describe("CreateProjectDialog add-project flows", () => {
       target: { value: projectName },
     });
     fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
     fireEvent.click(screen.getByRole("button", { name: /New folder in Projects/ }));
   }
 

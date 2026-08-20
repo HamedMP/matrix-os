@@ -514,6 +514,28 @@ export function createWorkspaceRoutes(options: {
     return c.json({ prs: result.prs, refreshedAt: result.refreshedAt });
   });
 
+  app.get("/api/projects/:slug/code-metadata", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.getCodeMetadata(c.req.param("slug"), ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    const worktrees = await worktreeManager.listWorktrees(c.req.param("slug"), ownerScope);
+    if (!worktrees.ok) {
+      console.warn("[workspace-routes] Failed to list project worktrees:", worktrees.error.code);
+    }
+    return c.json({
+      path: result.path,
+      repository: result.repository,
+      isGitRepository: result.isGitRepository,
+      branch: result.branch,
+      clean: result.clean,
+      ahead: result.ahead,
+      behind: result.behind,
+      hasUpstream: result.hasUpstream,
+      worktreeCount: worktrees.ok ? worktrees.worktrees.length : null,
+    });
+  });
+
   app.get("/api/projects/:slug/branches", async (c) => {
     let ownerScope: OwnerScope;
     try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }

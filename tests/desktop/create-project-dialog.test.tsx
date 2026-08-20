@@ -15,7 +15,6 @@ describe("CreateProjectDialog", () => {
   function openFolders() {
     fireEvent.change(screen.getByLabelText("What are you working on?"), { target: { value: "Temporary" } });
     fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
   }
 
   function openNewFolder() {
@@ -56,6 +55,17 @@ describe("CreateProjectDialog", () => {
     expect(screen.getByRole("button", { name: /Folders/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Clone from GitHub/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create project" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("opens the folder and GitHub source flows directly from their cards", () => {
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+
+    fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
+    expect(screen.getByText("Connect an existing folder")).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Back" })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+    expect(screen.getByPlaceholderText("https://github.com/owner/repo")).toBeTruthy();
   });
 
   it("does not select or open a project after Cancel closes an in-flight create", async () => {

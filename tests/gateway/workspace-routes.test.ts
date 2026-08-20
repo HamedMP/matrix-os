@@ -230,6 +230,61 @@ describe("workspace API routes", () => {
     expect(listBranches).toHaveBeenCalledWith("repo", ownerScope);
   });
 
+  it("returns owner-scoped project code metadata with the registered worktree count", async () => {
+    const ownerScope = { type: "user" as const, id: "user_workspace" };
+    const getCodeMetadata = vi.fn(async () => ({
+      ok: true as const,
+      path: "/home/matrix/projects/repo",
+      repository: "Matrix-OS/repo",
+      isGitRepository: true,
+      branch: "main",
+      clean: false,
+      ahead: 2,
+      behind: 1,
+      hasUpstream: true,
+    }));
+    const listWorktrees = vi.fn(async () => ({
+      ok: true as const,
+      worktrees: [{ id: "wt_one" }, { id: "wt_two" }],
+    }));
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+      getCodeMetadata,
+    };
+    const worktreeManager = {
+      createWorktree: vi.fn(),
+      listWorktrees,
+      deleteWorktree: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      worktreeManager,
+      getOwnerScope: () => ownerScope,
+    });
+
+    const response = await app.request("/api/projects/repo/code-metadata");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      path: "/home/matrix/projects/repo",
+      repository: "Matrix-OS/repo",
+      branch: "main",
+      clean: false,
+      ahead: 2,
+      behind: 1,
+      worktreeCount: 2,
+    });
+    expect(getCodeMetadata).toHaveBeenCalledWith("repo", ownerScope);
+    expect(listWorktrees).toHaveBeenCalledWith("repo", ownerScope);
+  });
+
   it("rejects commit reads before touching git when the principal does not own the project", async () => {
     const getProject = vi.fn(async () => ({
       ok: false as const,

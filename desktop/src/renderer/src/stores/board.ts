@@ -39,6 +39,8 @@ export interface Project {
   archivedAt?: string;
   localPath?: string;
   githubBacked?: boolean;
+  repository?: string;
+  defaultBranch?: string;
   description?: string;
   updatedAt?: string;
 }
@@ -80,7 +82,8 @@ const WireProjectSchema = z.object({
   archivedAt: z.string().datetime().optional(),
   description: z.string().max(1_000).optional(),
   updatedAt: z.string().max(64).optional(),
-  github: z.object({ owner: z.string(), repo: z.string() }).passthrough().optional(),
+  defaultBranch: z.string().min(1).max(200).optional(),
+  github: z.object({ owner: z.string().min(1).max(200), repo: z.string().min(1).max(200) }).passthrough().optional(),
 });
 
 export function parseProject(raw: unknown): Project | null {
@@ -93,6 +96,8 @@ export function parseProject(raw: unknown): Project | null {
     ...(parsed.data.archivedAt ? { archivedAt: parsed.data.archivedAt } : {}),
     ...(parsed.data.description ? { description: parsed.data.description } : {}),
     ...(parsed.data.updatedAt ? { updatedAt: parsed.data.updatedAt } : {}),
+    ...(parsed.data.github ? { repository: `${parsed.data.github.owner}/${parsed.data.github.repo}` } : {}),
+    ...(parsed.data.defaultBranch ? { defaultBranch: parsed.data.defaultBranch } : {}),
     ...(parsed.data.localPath
       ? { localPath: parsed.data.localPath, githubBacked: parsed.data.github !== undefined }
       : {}),
