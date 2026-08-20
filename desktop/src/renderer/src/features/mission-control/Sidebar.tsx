@@ -1,15 +1,15 @@
 import * as Popover from "@radix-ui/react-popover";
 import {
-  Blocks,
-  Folder,
-  Home,
-  FolderTree,
+  File,
+  FolderOpen,
+  House,
   LayoutGrid,
+  MessageCircle,
   Plus,
-  Sparkles,
-  SquareTerminal,
+  Terminal,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import phosphorPlugsUrl from "../../assets/phosphor/plugs.svg?no-inline";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -29,6 +29,26 @@ import {
   SidebarNavRow,
   sidebarNavRowStyle,
 } from "./SidebarPrimitives";
+
+function FigmaPlugsIcon() {
+  return (
+    <span
+      data-figma-icon="phosphor-plugs"
+      className="block size-3.5"
+      style={{
+        backgroundColor: "currentColor",
+        maskImage: `url(${phosphorPlugsUrl})`,
+        maskPosition: "center",
+        maskRepeat: "no-repeat",
+        maskSize: "contain",
+        WebkitMaskImage: `url(${phosphorPlugsUrl})`,
+        WebkitMaskPosition: "center",
+        WebkitMaskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+      }}
+    />
+  );
+}
 
 export default function Sidebar() {
   const tabs = useTabs((s) => s.tabs);
@@ -87,14 +107,14 @@ export default function Sidebar() {
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-3">
             <nav aria-label="Primary" className="flex flex-col gap-0.5 px-2">
               <SidebarNavRow
-                icon={<Home size={14} />}
+                icon={<House size={14} />}
                 label="Home"
                 collapsed={false}
                 active={activeTab?.kind === "home"}
                 onClick={() => openTab({ kind: "home", title: "Home", closable: false })}
               />
               <SidebarNavRow
-                icon={<Sparkles size={14} />}
+                icon={<MessageCircle size={14} />}
                 label="Chat"
                 collapsed={false}
                 active={activeTab?.kind === "chat"}
@@ -106,14 +126,14 @@ export default function Sidebar() {
                 }}
               />
               <SidebarNavRow
-                icon={<SquareTerminal size={14} />}
+                icon={<Terminal size={14} />}
                 label="Terminal"
                 collapsed={false}
                 active={activeTab?.kind === "terminals" || activeTab?.kind === "terminal"}
                 onClick={() => openTab({ kind: "terminals", title: "Terminal" })}
               />
               <SidebarNavRow
-                icon={<FolderTree size={14} />}
+                icon={<File size={14} />}
                 label="Files"
                 collapsed={false}
                 active={activeTab?.kind === "files"}
@@ -127,7 +147,7 @@ export default function Sidebar() {
                 onClick={() => openTab({ kind: "apps", title: "Apps" })}
               />
               <SidebarNavRow
-                icon={<Blocks size={14} />}
+                icon={<FigmaPlugsIcon />}
                 label="Plugins"
                 collapsed={false}
                 active={activeTab?.kind === "plugins"}
@@ -144,7 +164,7 @@ export default function Sidebar() {
                     style={sidebarNavRowStyle(activeTab?.kind === "project" || activeTab?.kind === "task")}
                   >
                     <SidebarIcon active={activeTab?.kind === "project" || activeTab?.kind === "task"}>
-                      <Folder size={14} />
+                      <FolderOpen size={14} />
                     </SidebarIcon>
                     <span className="min-w-0 flex-1 truncate text-left">Projects</span>
                     {projectAttention > 0 ? (

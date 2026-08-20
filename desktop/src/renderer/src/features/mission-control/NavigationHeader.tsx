@@ -3,8 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
+  PanelLeft,
 } from "lucide-react";
 import { Fragment } from "react";
 import { useHermesChat } from "../../stores/hermes-chat";
@@ -147,7 +146,7 @@ export default function NavigationHeader() {
           label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           onClick={toggleSidebar}
         >
-          {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+          <PanelLeft size={14} />
         </HeaderButton>
       </div>
 

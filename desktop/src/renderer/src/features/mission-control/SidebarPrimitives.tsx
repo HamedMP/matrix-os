@@ -6,9 +6,7 @@ export function sidebarNavRowStyle(active: boolean): CSSProperties {
     height: "var(--sidebar-row-height)",
     color: active ? "var(--text-primary)" : "var(--text-secondary)",
     background: active ? "var(--bg-surface)" : undefined,
-    borderColor: active ? "var(--border-subtle)" : "transparent",
-    borderStyle: "solid",
-    borderWidth: "1px",
+    boxShadow: active ? "inset 0 0 0 1px var(--border-subtle)" : undefined,
     fontWeight: active ? 500 : 400,
   };
 }

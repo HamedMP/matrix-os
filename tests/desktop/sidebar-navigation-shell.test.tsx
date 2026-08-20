@@ -211,9 +211,26 @@ describe("Desktop sidebar navigation shell", () => {
 
     const terminal = screen.getByRole("button", { name: "Terminal" });
     expect(terminal.style.background).toBe("var(--bg-surface)");
-    expect(terminal.style.borderColor).toBe("var(--border-subtle)");
-    expect(terminal.style.borderWidth).toBe("1px");
+    expect(terminal.style.boxShadow).toBe("inset 0 0 0 1px var(--border-subtle)");
+    expect(terminal.style.borderWidth).toBe("");
     expect(terminal.style.fontWeight).toBe("500");
+
+    const figmaGlyphs = {
+      Home: ".lucide-house",
+      Chat: ".lucide-message-circle",
+      Terminal: ".lucide-terminal",
+      Files: ".lucide-file",
+      Apps: ".lucide-layout-grid",
+      Projects: ".lucide-folder-open",
+    } as const;
+    for (const [label, selector] of Object.entries(figmaGlyphs)) {
+      expect(screen.getByRole("button", { name: label }).querySelector(selector)).toBeTruthy();
+    }
+    const pluginsGlyph = screen.getByRole("button", { name: "Plugins" })
+      .querySelector<HTMLElement>('[data-figma-icon="phosphor-plugs"]');
+    expect(pluginsGlyph).toBeTruthy();
+    expect(pluginsGlyph?.style.maskImage).toContain("plugs.svg");
+    expect(pluginsGlyph?.style.maskRepeat).toBe("no-repeat");
 
     for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Plugins", "Projects"]) {
       const icon = screen.getByRole("button", { name: label }).querySelector<HTMLElement>("[data-sidebar-icon]");

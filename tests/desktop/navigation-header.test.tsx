@@ -127,6 +127,9 @@ describe("Desktop navigation header", () => {
       expect(icon?.style.width).toBe("14px");
       expect(icon?.style.height).toBe("14px");
     }
+    expect(actions[2]?.querySelector(".lucide-panel-left")).toBeTruthy();
+    expect(actions[2]?.querySelector(".lucide-panel-left-close")).toBeNull();
+    expect(actions[2]?.querySelector(".lucide-panel-left-open")).toBeNull();
   });
 
   it("places Home actions behind the Figma breadcrumb ellipsis", async () => {
