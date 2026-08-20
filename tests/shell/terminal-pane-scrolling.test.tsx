@@ -480,6 +480,34 @@ describe("TerminalPane scrolling", () => {
     expect(createdTerminals[0].resize).not.toHaveBeenCalled();
   });
 
+  it("resets the web xterm before a replacement Zellij presentation", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-presentation-reset"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const socket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      socket.onmessage?.({ data: JSON.stringify({ type: "presentation-reset" }) });
+    });
+
+    expect(terminal.reset).toHaveBeenCalledOnce();
+  });
+
   it("waits for a measurable hard pane instead of attaching with a destructive fallback", async () => {
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
       configurable: true,

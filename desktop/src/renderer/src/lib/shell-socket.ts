@@ -27,6 +27,7 @@ export interface ShellSocketEvents {
   onOutput(data: string, seq: number): void;
   onCanonicalSize?(size: { cols: number; rows: number }): void;
   onLeaseRevoked?(): void;
+  onPresentationReset?(): void;
   onGap(): void;
   onExit(code: number): void;
 }
@@ -355,6 +356,9 @@ export class ShellSocket {
         this.clearAllTimers();
         this.opts.events.onLeaseRevoked?.();
         this.setState("ended");
+        return;
+      case "presentation-reset":
+        this.opts.events.onPresentationReset?.();
         return;
       case "exit":
         if (this.currentState !== "attached") return;

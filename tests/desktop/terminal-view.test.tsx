@@ -34,6 +34,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     selection: string;
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     selectAll: ReturnType<typeof vi.fn>;
+    reset: ReturnType<typeof vi.fn>;
   }>,
   resizeObserverCallbacks: [] as ResizeObserverCallback[],
 }));
@@ -65,6 +66,7 @@ vi.mock("@xterm/xterm", () => ({
     selection = "";
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     selectAll = vi.fn();
+    reset = vi.fn();
 
     constructor(options: FakeTerminal["initialOptions"]) {
       this.initialOptions = options;
@@ -343,6 +345,16 @@ describe("TerminalView session switching", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Resume here" }));
     expect(attachMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets xterm before rendering a replacement Zellij presentation", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
+
+    act(() => events.onPresentationReset?.());
+
+    expect(terminal.reset).toHaveBeenCalledOnce();
   });
 
   it("re-themes live terminals only when the theme actually changes", () => {

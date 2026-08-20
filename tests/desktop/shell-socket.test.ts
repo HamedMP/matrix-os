@@ -105,6 +105,7 @@ interface RecordedEvents {
   outputs: Array<{ data: string; seq: number }>;
   canonicalSizes: Array<{ cols: number; rows: number }>;
   revocations: number;
+  presentationResets: number;
   gaps: number;
   exits: number[];
 }
@@ -121,7 +122,7 @@ interface Harness {
 function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
   const sockets: FakeWebSocket[] = [];
   const timers = new FakeTimers();
-  const events: RecordedEvents = { states: [], outputs: [], canonicalSizes: [], revocations: 0, gaps: 0, exits: [] };
+  const events: RecordedEvents = { states: [], outputs: [], canonicalSizes: [], revocations: 0, presentationResets: 0, gaps: 0, exits: [] };
   const socket = new ShellSocket({
     baseUrl: "https://app.matrix-os.com",
     sessionName: "main",
@@ -138,6 +139,9 @@ function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
       },
       onLeaseRevoked: () => {
         events.revocations += 1;
+      },
+      onPresentationReset: () => {
+        events.presentationResets += 1;
       },
       onGap: () => {
         events.gaps += 1;
@@ -227,6 +231,18 @@ describe("ShellSocket URL building", () => {
     expect(h.events.revocations).toBe(1);
     expect(h.stateNames().at(-1)).toBe("ended");
     expect(h.sockets).toHaveLength(1);
+  });
+
+  it("resets presentation state before accepting a fresh Zellij bootstrap", () => {
+    const h = createHarness({ clientClass: "hard" });
+    h.socket.resize(120, 40);
+    connectAndAttach(h);
+
+    h.latest().frame({ type: "presentation-reset" });
+    h.latest().frame({ type: "output", seq: 7, data: "\u001b[?1000hless redraw" });
+
+    expect(h.events.presentationResets).toBe(1);
+    expect(h.events.outputs).toEqual([{ data: "\u001b[?1000hless redraw", seq: 7 }]);
   });
 
   it("converts http base urls to ws and strips trailing slashes", () => {

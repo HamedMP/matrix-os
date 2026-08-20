@@ -78,6 +78,9 @@ export class AttachManager {
       onLeaseRevoked: () => {
         if (this.isLive(generation)) events.onLeaseRevoked?.();
       },
+      onPresentationReset: () => {
+        if (this.isLive(generation)) events.onPresentationReset?.();
+      },
       onGap: () => {
         if (this.isLive(generation)) events.onGap();
       },

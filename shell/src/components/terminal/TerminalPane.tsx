@@ -1548,6 +1548,13 @@ export function TerminalPane({
               ws.close();
               break;
 
+            case "presentation-reset":
+              term.reset();
+              outputBufferRef.current = "";
+              commandBlockBufferRef.current = "";
+              activeCommandBlockRef.current = false;
+              break;
+
             case "output":
               term.write(transformTerminalOutputForCompat(
                 msg.data,

@@ -110,5 +110,8 @@ describe("terminal soft-client canonical grid", () => {
     expect(parseTerminalServerMessage(JSON.stringify({ type: "lease-revoked", epoch: 7 }))).toEqual({
       type: "lease-revoked",
     });
+    expect(parseTerminalServerMessage(JSON.stringify({ type: "presentation-reset" }))).toEqual({
+      type: "presentation-reset",
+    });
   });
 });

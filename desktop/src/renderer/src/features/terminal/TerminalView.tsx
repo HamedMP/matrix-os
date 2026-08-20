@@ -263,6 +263,9 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
         setLeaseRevoked(true);
         setSocketState("ended");
       },
+      onPresentationReset: () => {
+        terminal.reset();
+      },
       onGap: () => {
         terminal.clear();
         terminal.write(GAP_MARKER);
