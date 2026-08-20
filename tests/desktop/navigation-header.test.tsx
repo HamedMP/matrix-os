@@ -102,22 +102,42 @@ describe("Desktop navigation header", () => {
     expect(useUi.getState().sidebarCollapsed).toBe(false);
   });
 
-  it("shows a refresh control only for Home and requests a hosted-shell reload", () => {
+  it("matches the Figma top-bar geometry and navigation-action order", () => {
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    const header = screen.getByRole("banner");
+    expect(header.style.height).toBe("var(--titlebar-height)");
+    expect(header.style.gridTemplateColumns).toBe("var(--sidebar-expanded-width) minmax(0, 1fr)");
+    expect(header.style.borderBottom).toBe("");
+
+    const actions = [
+      screen.getByRole("button", { name: "Go back" }),
+      screen.getByRole("button", { name: "Go forward" }),
+      screen.getByRole("button", { name: "Collapse sidebar" }),
+    ];
+    for (let index = 1; index < actions.length; index += 1) {
+      expect(actions[index - 1]!.compareDocumentPosition(actions[index]!))
+        .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    }
+  });
+
+  it("places Home actions behind the Figma breadcrumb ellipsis", async () => {
     useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
-    const refresh = screen.getByRole("button", { name: "Refresh Home" });
-    expect(breadcrumb.nextElementSibling).toContain(refresh);
-    expect(refresh.parentElement?.className).not.toContain("ml-auto");
+    expect(breadcrumb.querySelector(".lucide-chevron-right")).toBeTruthy();
+    const actions = screen.getByRole("button", { name: "Actions for Home" });
+    expect(breadcrumb.nextElementSibling).toContain(actions);
 
-    fireEvent.click(refresh);
+    fireEvent.pointerDown(actions, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Refresh Home" }));
     expect(useUi.getState().homeRefreshRequest).toBe(1);
 
     act(() => {
       useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
     });
-    expect(screen.queryByRole("button", { name: "Refresh Home" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Refresh Home" })).toBeNull();
   });
 
   it("shows the active canonical Hermes conversation in the Chat breadcrumb", () => {

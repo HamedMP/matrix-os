@@ -140,10 +140,11 @@ describe("Desktop sidebar geometry tokens", () => {
   const tokensCss = readRendererFile("design", "tokens.css");
   const root = themeBlock(tokensCss, ":root");
 
-  it("defines the shared expanded, collapsed, row, and menu geometry", () => {
+  it("defines the Figma sidebar and shell geometry", () => {
+    expect(tokenValue(root, "--titlebar-height")).toBe("38px");
     expect(tokenValue(root, "--sidebar-expanded-width")).toBe("240px");
-    expect(tokenValue(root, "--sidebar-collapsed-width")).toBe("56px");
-    expect(tokenValue(root, "--sidebar-row-height")).toBe("32px");
+    expect(tokenValue(root, "--sidebar-collapsed-width")).toBe("0px");
+    expect(tokenValue(root, "--sidebar-row-height")).toBe("28px");
     expect(tokenValue(root, "--sidebar-menu-width")).toBe("248px");
   });
 });

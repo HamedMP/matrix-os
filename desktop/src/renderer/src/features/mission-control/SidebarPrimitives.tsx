@@ -23,7 +23,7 @@ export function SidebarNavRow({
       aria-current={active ? "page" : undefined}
       data-active={active ? "true" : "false"}
       title={collapsed ? label : undefined}
-      className={`group/sidebar-row flex w-full items-center rounded-md text-sm font-medium outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center px-0" : "gap-2.5 px-2.5"}`}
+      className={`group/sidebar-row flex w-full items-center rounded-md text-[13px] font-normal outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center px-0" : "gap-2 px-2"}`}
       style={{
         height: "var(--sidebar-row-height)",
         color: active ? "var(--text-primary)" : "var(--text-secondary)",

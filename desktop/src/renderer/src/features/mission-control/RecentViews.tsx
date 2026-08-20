@@ -110,9 +110,9 @@ export default function RecentViews() {
   };
 
   return (
-    <div className="relative mt-4">
-      <div className="flex items-center justify-between px-2.5 pb-1">
-        <span className="text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>
+    <div className="relative mt-3">
+      <div className="flex items-center justify-between px-4 pb-1">
+        <span className="text-[11px] font-medium" style={{ color: "var(--text-tertiary)" }}>
           Recents
         </span>
         <DropdownMenu.Root>
@@ -165,7 +165,7 @@ export default function RecentViews() {
         </DropdownMenu.Root>
       </div>
 
-      <div className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-0.5 px-2">
         {visible.map((recent) => {
           const active = isActive(recent);
           return (
@@ -175,7 +175,7 @@ export default function RecentViews() {
               aria-label={`Open recent ${recent.label}`}
               aria-current={active ? "page" : undefined}
               data-active={active ? "true" : "false"}
-              className="flex w-full items-center gap-2 rounded-md px-2.5 text-left text-sm outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
+              className="flex w-full items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
               style={{
                 height: "var(--sidebar-row-height)",
                 color: active ? "var(--text-primary)" : "var(--text-secondary)",
@@ -195,7 +195,7 @@ export default function RecentViews() {
           );
         })}
         {visible.length === 0 ? (
-          <span className="px-2.5 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+          <span className="px-2 py-1 text-[13px]" style={{ color: "var(--text-tertiary)" }}>
             No recent {recentFilter === "all" ? "views" : FILTER_OPTIONS.find((option) => option.filter === recentFilter)?.label.toLowerCase()}.
           </span>
         ) : null}

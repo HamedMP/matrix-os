@@ -39,9 +39,10 @@ describe("add-project entry points", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens the add-project dialog from the sidebar projects plus button", () => {
+  it("opens the add-project dialog from the sidebar projects chooser", () => {
     render(<Tooltip.Provider><Sidebar /></Tooltip.Provider>);
 
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
     fireEvent.click(screen.getByRole("button", { name: "Add project" }));
 
     expect(useUi.getState().createProjectOpen).toBe(true);

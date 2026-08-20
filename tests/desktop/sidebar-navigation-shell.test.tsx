@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -14,7 +14,7 @@ import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 vi.mock("../../desktop/src/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
-  default: () => null,
+  default: () => <button type="button">Main computer</button>,
 }));
 
 const invoke = vi.fn(async () => ({ ok: true }));
@@ -187,7 +187,7 @@ describe("Desktop sidebar navigation shell", () => {
       .toBe(false);
   });
 
-  it("exposes the persistent navigation hierarchy and selected row semantics", () => {
+  it("matches the Figma navigation hierarchy and keeps the sidebar borderless", () => {
     useBoard.setState({
       projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "scratch" }],
     });
@@ -196,33 +196,78 @@ describe("Desktop sidebar navigation shell", () => {
     const sidebar = screen.getByRole("complementary", { name: "Matrix OS navigation" });
     expect(sidebar.getAttribute("data-sidebar-state")).toBe("expanded");
     expect(sidebar.style.width).toBe("var(--sidebar-expanded-width)");
-    expect(screen.getByTestId("matrix-sidebar-logo")).toBeTruthy();
+    expect(sidebar.style.borderRight).toBe("");
+    expect(screen.queryByTestId("matrix-sidebar-logo")).toBeNull();
 
     expect(screen.getByRole("button", { name: "Terminal" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBeNull();
 
+    const orderedLabels = [
+      "Main computer",
+      "Home",
+      "Chat",
+      "Terminal",
+      "Files",
+      "Apps",
+      "Plugins",
+      "Projects",
+      "Filter recents",
+      "Open account menu",
+    ];
+    const orderedButtons = orderedLabels.map((label) => screen.getByRole("button", { name: label }));
+    for (let index = 1; index < orderedButtons.length; index += 1) {
+      expect(orderedButtons[index - 1]!.compareDocumentPosition(orderedButtons[index]!))
+        .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    }
+
     const projects = screen.getByRole("button", { name: "Projects" });
-    expect(projects.getAttribute("aria-expanded")).toBe("true");
-    expect(projects.getAttribute("aria-controls")).toBe("sidebar-projects");
-    expect(screen.getByRole("button", { name: "Open Matrix OS" })).toBeTruthy();
+    expect(projects.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(projects);
+    fireEvent.click(screen.getByRole("button", { name: "Open Matrix OS" }));
+    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId))
+      .toMatchObject({ kind: "project", projectSlug: "matrix-os" });
 
     fireEvent.click(projects);
-    expect(projects.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByRole("button", { name: "Open Matrix OS" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    expect(useUi.getState().createProjectOpen).toBe(true);
   });
 
-  it("keeps the collapsed rail labelled while hiding expanded-only chrome", () => {
-    useUi.setState({ sidebarCollapsed: true });
+  it("holds the renderer overlay through the nested project actions flow", async () => {
+    useBoard.setState({
+      projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "scratch" }],
+    });
     renderSidebar();
 
-    const sidebar = screen.getByRole("complementary", { name: "Matrix OS navigation" });
+    const projects = screen.getByRole("button", { name: "Projects" });
+    fireEvent.click(projects);
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
+
+    const actions = screen.getByRole("button", { name: "Project actions for Matrix OS" });
+    fireEvent.pointerDown(actions, { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Archive project" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(2));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+    expect(document.activeElement).toBe(projects);
+  });
+
+  it("removes the navigation column below the title bar when collapsed", () => {
+    useUi.setState({ sidebarCollapsed: true });
+    const { container } = renderSidebar();
+
+    const sidebar = container.querySelector("aside")!;
+    expect(sidebar).not.toBeNull();
     expect(sidebar.getAttribute("data-sidebar-state")).toBe("collapsed");
     expect(sidebar.style.width).toBe("var(--sidebar-collapsed-width)");
+    expect(sidebar.getAttribute("aria-hidden")).toBe("true");
     expect(screen.queryByTestId("matrix-sidebar-logo")).toBeNull();
     expect(screen.queryByText("Recents")).toBeNull();
     expect(screen.queryByText("Projects")).toBeNull();
-    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open account menu" })).toBeNull();
   });
 
   it("opens Recents and account menus from the keyboard", async () => {
