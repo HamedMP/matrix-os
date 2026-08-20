@@ -107,4 +107,21 @@ describe("settings data sections", () => {
     expect(screen.queryByText(loading)).not.toBeNull();
     expect(screen.queryByText(empty)).toBeNull();
   });
+
+  it("shows installed and running bundle versions when an update is only partially applied", async () => {
+    useConnection.setState({
+      api: makeApi({
+        version: "v2026.08.19-1002",
+        runningVersion: "v2026.08.18-997",
+      }),
+    });
+
+    render(<SystemSection />);
+
+    expect(await screen.findByText("Installed version")).not.toBeNull();
+    expect(screen.getByText("Running version")).not.toBeNull();
+    expect(screen.getByText(
+      "The running services do not match the installed update. Restart Matrix services to finish applying it.",
+    )).not.toBeNull();
+  });
 });

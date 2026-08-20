@@ -102,7 +102,10 @@ describe("ProjectSidebarRow", () => {
       status: "signed-in",
       api: {
         baseUrl: "https://matrix.test",
-        get: vi.fn(),
+        get: vi.fn(async () => ({
+          version: "v2026.08.19-1002",
+          runningVersion: "v2026.08.18-997",
+        })),
         post: vi.fn(async () => { throw new AppError("notFound"); }),
         patch: vi.fn(),
         put: vi.fn(),
@@ -126,7 +129,9 @@ describe("ProjectSidebarRow", () => {
     fireEvent.click(await screen.findByText("Archive project"));
 
     await screen.findByRole("heading", { name: "Project couldn't be archived" });
-    expect(screen.getByText("Update this Matrix computer before managing projects.")).not.toBeNull();
+    expect(screen.getByText(
+      "This computer has not finished applying its update. Restart Matrix services, then try again.",
+    )).not.toBeNull();
     expect(useUi.getState().rendererOverlayCount).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
