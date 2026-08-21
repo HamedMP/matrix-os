@@ -86,6 +86,18 @@ describe("InspectorTerminalPanel", () => {
     expect(screen.getByText(/No terminal sessions/)).toBeTruthy();
   });
 
+  it("explains when the selected chat has no canonical terminal binding", () => {
+    renderPanel(
+      <InspectorTerminalPanel
+        summary={summaryWith([])}
+        emptyMessage="This chat has no linked terminal session."
+      />,
+    );
+
+    expect(screen.getByText("This chat has no linked terminal session.")).toBeTruthy();
+    expect(screen.queryByText("No terminal sessions.")).toBeNull();
+  });
+
   it("embeds a live terminal for the picked session and returns to the list", () => {
     renderPanel(
       <InspectorTerminalPanel

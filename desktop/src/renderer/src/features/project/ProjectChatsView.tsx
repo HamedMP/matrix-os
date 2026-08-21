@@ -1,5 +1,5 @@
-import { MessageSquare, PanelRightClose, PanelRightOpen, Server } from "lucide-react";
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { Maximize2, MessageSquare, Minimize2, PanelRightOpen, Server, X } from "lucide-react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { Group, Panel, Separator, type Layout as SplitLayout } from "react-resizable-panels";
 import { defaultAgentThreadComposerDraft } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
@@ -30,8 +30,6 @@ import type { ComposerSeed } from "../coding-agents/composer-seed";
 import {
   AttentionThreadList,
   InspectorEmptyState,
-  NotificationPreferencesPanel,
-  ProviderList,
 } from "../coding-agents/AgentWorkspacePanels";
 import { capabilityEnabled } from "../coding-agents/capabilities";
 import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
@@ -39,6 +37,7 @@ import { CreatedThreadHandleList, ThreadList } from "../coding-agents/AgentThrea
 import { ReviewList, reviewHunkFollowUpDraft } from "../coding-agents/AgentReviewPanel";
 import { loadCodingAgentConversation, openCodingAgentThread } from "../../lib/project-chat";
 import { ProjectChatDraft } from "./ProjectChatDraft";
+import { buildProjectInspectorContext } from "./project-inspector-context";
 import { ProjectThreadList } from "./ProjectThreadList";
 
 export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/composer-seed";
@@ -116,7 +115,8 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     void ensureWorkspace(projectId);
   }, [ensureWorkspace, projectId, projectWorkspaceEnabled, runtimeScope]);
 
-  const inspectorCollapsed = inspectorEntry?.collapsed ?? false;
+  const inspectorCollapsed = inspectorEntry?.collapsed ?? true;
+  const inspectorMaximized = inspectorEntry?.maximized ?? false;
   const inspectorWidthPct = inspectorEntry?.widthPct ?? DEFAULT_INSPECTOR_WIDTH_PCT;
 
   // Review focus can originate outside the inspector (for example, from a
@@ -333,12 +333,16 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const snapshotMatches = selectedThreadId !== null
     && threadSnapshot?.thread.id === selectedThreadId
     && activeThreadId === selectedThreadId;
-  const inspectorCounts = {
-    changes: reviewEnabled ? (reviews?.items.length ?? 0) : 0,
-    terminal: summary.terminalSessions.items.length,
-    preview: previewEnabled ? (summary.previewSessions?.items.length ?? 0) : 0,
-    activity: summary.attentionThreads.items.length + summary.activeThreads.items.length,
-  };
+  const selectedThreadContext = snapshotMatches
+    ? threadSnapshot.thread
+    : [...(workspace?.projectThreads.items ?? []), ...(workspace?.taskThreads.items ?? [])]
+      .find((thread) => thread.id === selectedThreadId) ?? null;
+  const inspectorContext = buildProjectInspectorContext({
+    projectId,
+    summary,
+    selectedThread: selectedThreadContext,
+    reviews: reviews?.items ?? [],
+  });
 
   // Selecting a thread is navigation only. Recents is promoted by successful
   // message sends, never by opening or re-opening a conversation.
@@ -369,8 +373,10 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   // The inspector tab is controlled so live surfaces can gate on visibility:
   // the embedded terminal releases the single app-wide socket attachment
   // while another surface (or a background project tab) is showing.
-  const inspectorDefaultTab: AgentConversationInspectorTab = reviewEnabled ? "changes" : "terminal";
-  const inspectorTab = inspectorTabOverride ?? inspectorDefaultTab;
+  const inspectorDefaultTab: AgentConversationInspectorTab = inspectorContext.defaultTab;
+  const inspectorTab = inspectorTabOverride && inspectorContext.tabs.includes(inspectorTabOverride)
+    ? inspectorTabOverride
+    : inspectorDefaultTab;
 
   const handleSplitLayout = (layout: SplitLayout) => {
     const pct = layout["inspector"];
@@ -444,30 +450,45 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     >
       <AgentConversationInspector
         defaultTab={inspectorDefaultTab}
+        tabs={inspectorContext.tabs}
         selectedTab={inspectorTab}
         onTabChange={setInspectorTabOverride}
         changesFocusRequestId={reviewFocusRequestId}
         changesFocusConsumedId={reviewFocusConsumedId}
         onChangesFocusConsumed={consumeReviewFocusRequest}
-        counts={inspectorCounts}
+        counts={inspectorContext.counts}
         toolbar={(
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Conversation tools</h2>
               <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>Inspect the current project without leaving the chat</p>
             </div>
-            {projectWorkspaceEnabled ? (
-              <Button
-                variant="primary"
-                className="h-7 shrink-0 whitespace-nowrap"
-                aria-label="New chat in selected project"
-                onClick={() => {
-                  void openNewChat();
-                }}
+            <div className="flex shrink-0 items-center gap-1">
+              {projectWorkspaceEnabled ? (
+                <Button
+                  variant="primary"
+                  className="mr-1 h-7 shrink-0 whitespace-nowrap"
+                  aria-label="New chat in selected project"
+                  onClick={() => {
+                    void openNewChat();
+                  }}
+                >
+                  New chat
+                </Button>
+              ) : null}
+              <InspectorHeaderButton
+                label={inspectorMaximized ? "Restore conversation tools" : "Maximize conversation tools"}
+                onClick={() => useInspectorLayout.getState().setMaximized(projectId, !inspectorMaximized)}
               >
-                New chat
-              </Button>
-            ) : null}
+                {inspectorMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </InspectorHeaderButton>
+              <InspectorHeaderButton
+                label="Close conversation tools"
+                onClick={() => useInspectorLayout.getState().setCollapsed(projectId, true)}
+              >
+                <X size={14} />
+              </InspectorHeaderButton>
+            </div>
           </div>
         )}
         composer={
@@ -484,6 +505,8 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         }
         changes={reviewEnabled ? (
           <ReviewList
+            projectId={projectId}
+            items={inspectorContext.reviews}
             canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
             canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
             canCreateFollowUp={canCreate}
@@ -504,34 +527,36 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         ) : (
           <InspectorEmptyState message="Change review is not available on this computer." />
         )}
-        files={<InspectorFilesPanel />}
+        files={inspectorContext.tabs.includes("files") ? <InspectorFilesPanel scopeLabel="Matrix Home files" /> : undefined}
         terminal={(
           <InspectorTerminalPanel
-            summary={summary}
+            summary={inspectorContext.summary}
             active={inspectorTab === "terminal" && active && !inspectorCollapsed}
+            emptyMessage={inspectorContext.terminalState === "unavailable"
+              ? "The linked terminal session is no longer available."
+              : "This chat has no linked terminal session."}
           />
         )}
         preview={previewEnabled ? (
-          <InspectorPreviewPanel summary={summary} />
+          <InspectorPreviewPanel summary={inspectorContext.summary} />
         ) : (
           <InspectorEmptyState message="No preview capability is available for this project." />
         )}
         activity={(
           <div className="space-y-4">
             <AttentionThreadList
-              summary={summary}
+              summary={inspectorContext.summary}
               onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
             />
             <ThreadList
-              summary={summary}
+              summary={inspectorContext.summary}
               onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
             />
             <CreatedThreadHandleList
-              summary={summary}
+              summary={inspectorContext.summary}
+              projectId={projectId}
               onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
             />
-            <ProviderList summary={summary} />
-            <NotificationPreferencesPanel />
           </div>
         )}
       />
@@ -562,13 +587,24 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {conversationColumn}
         </div>
+      ) : inspectorMaximized ? (
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div data-testid="conversation-underlay" className="invisible flex min-h-0 min-w-0 flex-1 flex-col">
+            {conversationColumn}
+          </div>
+          <div
+            data-testid="inspector-maximized"
+            className="absolute inset-0 z-20 flex min-h-0 min-w-0 flex-col overflow-hidden"
+          >
+            {inspectorPanel}
+          </div>
+        </div>
       ) : inspectorCollapsed ? (
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {conversationColumn}
-          <InspectorToggle
-            collapsed
+          <InspectorOpenButton
             controls={inspectorRegionId}
-            onToggle={() => useInspectorLayout.getState().setCollapsed(projectId, false)}
+            onOpen={() => useInspectorLayout.getState().setCollapsed(projectId, false)}
           />
         </div>
       ) : (
@@ -589,11 +625,6 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           >
             <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               {conversationColumn}
-              <InspectorToggle
-                collapsed={false}
-                controls={inspectorRegionId}
-                onToggle={() => useInspectorLayout.getState().setCollapsed(projectId, true)}
-              />
             </div>
           </Panel>
           <Separator
@@ -621,6 +652,29 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   );
 }
 
+function InspectorHeaderButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      style={{ color: "var(--text-tertiary)" }}
+    >
+      {children}
+    </button>
+  );
+}
+
 const NARROW_INSPECTOR_MEDIA_QUERY = "(max-width: 1099px)";
 
 function useNarrowInspectorLayout(): boolean {
@@ -642,27 +696,24 @@ function useNarrowInspectorLayout(): boolean {
   return narrow;
 }
 
-// Collapse toggle for the tools inspector. Lives in the conversation pane's
-// top-right corner so the hero transcript keeps one persistent, keyboard-
-// reachable control in both states.
-function InspectorToggle({
-  collapsed,
+// The closed inspector leaves one persistent, keyboard-reachable control in
+// the conversation pane's top-right corner.
+function InspectorOpenButton({
   controls,
-  onToggle,
+  onOpen,
 }: {
-  collapsed: boolean;
   controls: string;
-  onToggle: () => void;
+  onOpen: () => void;
 }) {
-  const label = collapsed ? "Show conversation tools" : "Hide conversation tools";
+  const label = "Show conversation tools";
   return (
     <button
       type="button"
       aria-label={label}
-      aria-expanded={!collapsed}
+      aria-expanded={false}
       aria-controls={controls}
       title={label}
-      onClick={onToggle}
+      onClick={onOpen}
       className="no-drag absolute right-2.5 top-2.5 z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border outline-none transition-colors hover:brightness-105 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       style={{
         borderColor: "var(--border-subtle)",
@@ -670,7 +721,7 @@ function InspectorToggle({
         color: "var(--text-tertiary)",
       }}
     >
-      {collapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
+      <PanelRightOpen size={14} />
     </button>
   );
 }
