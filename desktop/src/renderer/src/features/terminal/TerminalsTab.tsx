@@ -118,7 +118,10 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
   const reconcileRecentTerminals = useTabs((s) => s.reconcileRecentTerminals);
   const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
+  const terminalIndexRequestId = useTabs((s) => s.terminalIndexRequestId);
   const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
+  const terminalsTabId = useTabs((s) => s.tabs.find((tab) => tab.kind === "terminals")?.id);
+  const renameTab = useTabs((s) => s.renameTab);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
@@ -132,6 +135,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ShellSessionSummary | null>(null);
+  const consumedTerminalIndexRequestRef = useRef(terminalIndexRequestId);
   const draggingNameRef = useRef<string | null>(null);
   const draggingPlacementRef = useRef<ShellSessionPlacement | null>(null);
 
@@ -173,6 +177,12 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
 
   const selectedShell = selectedName ? shells.find((shell) => shell.name === selectedName) ?? null : null;
   const selected = selectedShell?.name ?? selectedName;
+
+  useEffect(() => {
+    if (!terminalsTabId) return;
+    renameTab(terminalsTabId, selectedName ?? "Terminal");
+  }, [renameTab, selectedName, terminalsTabId]);
+
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
   const renamingNameRef = useRef<string | null>(null);
@@ -247,10 +257,16 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     terminalSessionRequest,
   ]);
 
-  const showShellList = () => {
+  const showShellList = useCallback(() => {
     setSelectedName(null);
     setLiveSessionName(null);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (consumedTerminalIndexRequestRef.current === terminalIndexRequestId) return;
+    consumedTerminalIndexRequestRef.current = terminalIndexRequestId;
+    showShellList();
+  }, [showShellList, terminalIndexRequestId]);
 
   const openShellInTab = (shell: ShellSessionSummary) => {
     openTab({ kind: "terminal", sessionName: shell.name, title: shell.name });

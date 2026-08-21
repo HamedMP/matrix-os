@@ -41,6 +41,46 @@ describe("tabs store", () => {
     expect(useTabs.getState().canGoForward).toBe(false);
   });
 
+  it("deduplicates a retained root before preserving detail Forward history", () => {
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    const home = useTabs.getState().openTab({
+      kind: "home",
+      title: "Home",
+      closable: false,
+    });
+    const projects = useTabs.getState().openTab({
+      kind: "projects",
+      title: "Projects",
+      closable: false,
+    });
+    useTabs.getState().openTab({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+    });
+    useTabs.getState().focusTab(projects);
+    const task = useTabs.getState().openTab({
+      kind: "task",
+      projectSlug: "matrix-os",
+      taskId: "MAT-466",
+      title: "Fix Desktop navigation",
+    });
+
+    useTabs.getState().openTabAtHistoryRoot({
+      kind: "projects",
+      title: "Projects",
+      closable: false,
+    }, ["project", "task"]);
+
+    expect(useTabs.getState()).toMatchObject({
+      activeTabId: projects,
+      viewHistory: [home, projects, task],
+      historyIndex: 1,
+    });
+    useTabs.getState().goForward();
+    expect(useTabs.getState().activeTabId).toBe(task);
+  });
+
   it("caps view history during long navigation sessions", () => {
     useTabs.getState().ensureNavigationScope("runtime-a");
     const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });

@@ -187,6 +187,18 @@ describe("Desktop sidebar navigation shell", () => {
       .toBe(false);
   });
 
+  it("uses the global Terminal navigation to open the Terminal list root", () => {
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+
+    const activeTab = useTabs.getState().tabs.find(
+      (tab) => tab.id === useTabs.getState().activeTabId,
+    );
+    expect(activeTab).toMatchObject({ kind: "terminals", title: "Terminal" });
+    expect(useTabs.getState().terminalIndexRequestId).toBe(1);
+  });
+
   it("exposes Projects as a persistent primary navigation destination", () => {
     useBoard.setState({
       projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "scratch" }],
