@@ -98,8 +98,10 @@ suite("operator desktop e2e", () => {
     expect(gateway.state.tokenRequests).toBeGreaterThan(0);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "01-home.png") });
 
-    // Open the project board from the sidebar; tasks render.
+    // Open the project and choose Board explicitly; the following tests rely
+    // on the persisted Board view before exercising Chats separately.
     await page.locator("aside button", { hasText: "Matrix OS" }).last().click();
+    await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Fix the failing auth tests").waitFor({ timeout: 10_000 });
     await page.getByText("Polish the board design").waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "02-board.png") });
@@ -131,7 +133,8 @@ suite("operator desktop e2e", () => {
     const palette = page.getByRole("dialog", { name: "Command palette" });
     await palette.waitFor({ timeout: 10_000 });
     await palette.getByRole("group", { name: "Projects" }).getByText("Matrix OS").click();
-    // The project tab opens on the board; switching to Chats shows the threads.
+    // The earlier explicit Board choice persists; switch to Chats and exercise
+    // the project-scoped conversation rail in the exact production build.
     await page.getByRole("button", { name: "Chats" }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Chats" }).click();
     await page.getByRole("button", { name: "New chat in Matrix OS" }).waitFor({ timeout: 10_000 });
@@ -140,6 +143,21 @@ suite("operator desktop e2e", () => {
     await page.getByRole("group", { name: "Task Fix the failing auth tests" }).waitFor();
     await page.getByRole("button", { name: "Chat Investigate auth callback" }).waitFor();
     await page.getByRole("button", { name: "Chat Verify token refresh" }).waitFor();
+
+    const railSearch = page.getByRole("searchbox", { name: "Search chats" });
+    await railSearch.fill("token");
+    await page.getByRole("button", { name: "Chat Verify token refresh" }).waitFor();
+    await expect.poll(
+      () => page.getByRole("button", { name: "Chat Investigate auth callback" }).count(),
+    ).toBe(0);
+    await railSearch.fill("");
+    const statusFilter = page.getByRole("combobox", { name: "Filter chats by status" });
+    await statusFilter.selectOption("done");
+    await page.getByRole("button", { name: "Chat Verify token refresh" }).waitFor();
+    await expect.poll(
+      () => page.getByRole("button", { name: "Chat Investigate auth callback" }).count(),
+    ).toBe(0);
+    await statusFilter.selectOption("all");
     await page.screenshot({ path: join(SCREENSHOT_DIR, "04-project-chats-list.png") });
 
     // The segmented control switches back to the project's board.

@@ -17,7 +17,7 @@ export type { ProjectView } from "../../../shared/project-views";
 
 export const MAX_PROJECT_VIEW_ENTRIES = 50;
 
-const DEFAULT_VIEW: ProjectView = "board";
+export const DEFAULT_PROJECT_VIEW: ProjectView = "chats";
 
 interface ProjectViewState {
   entries: Record<string, ProjectViewEntry>;
@@ -47,7 +47,7 @@ function upsertEntry(
 ): Record<string, ProjectViewEntry> {
   const existing = entries[projectId];
   const next: ProjectViewEntry = {
-    view: patch.view ?? existing?.view ?? DEFAULT_VIEW,
+    view: patch.view ?? existing?.view ?? DEFAULT_PROJECT_VIEW,
     selectedThreadId: patch.selectedThreadId !== undefined
       ? patch.selectedThreadId
       : existing?.selectedThreadId ?? null,
@@ -126,7 +126,7 @@ export const useProjectView = create<ProjectViewState>()((set, get) => ({
     persistEntries(capped, runtimeScope);
   },
 
-  viewFor: (projectId) => get().entries[projectId]?.view ?? DEFAULT_VIEW,
+  viewFor: (projectId) => get().entries[projectId]?.view ?? DEFAULT_PROJECT_VIEW,
 
   selectedThreadFor: (projectId) => get().entries[projectId]?.selectedThreadId ?? null,
 

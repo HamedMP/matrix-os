@@ -200,16 +200,15 @@ describe("ProjectTab", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the project header with the runtime status and defaults to the board view", async () => {
+  it("renders the project header with the runtime status and defaults to the chats view", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
     expect(screen.getByText("Matrix OS")).toBeTruthy();
-    // The board is the default project view.
-    expect(await screen.findByText("No tasks yet")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Chat Plan the auth work" })).toBeTruthy();
     const board = screen.getByRole("button", { name: "Board" });
     const chats = screen.getByRole("button", { name: "Chats" });
-    expect(board.getAttribute("aria-pressed")).toBe("true");
-    expect(chats.getAttribute("aria-pressed")).toBe("false");
+    expect(board.getAttribute("aria-pressed")).toBe("false");
+    expect(chats.getAttribute("aria-pressed")).toBe("true");
     // Runtime status stays visible in the project workspace header.
     expect(await screen.findByText("Primary")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Refresh agent workspace" })).toBeTruthy();
@@ -218,23 +217,22 @@ describe("ProjectTab", () => {
   it("shows the project attention count in the header", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
-    await screen.findByText("No tasks yet");
+    await screen.findByRole("button", { name: "Chat Plan the auth work" });
     expect(screen.getByLabelText("3 need attention")).toBeTruthy();
   });
 
-  it("switches to the chats view and persists the choice per project", async () => {
+  it("switches to the board view and persists the explicit choice per project", async () => {
     render(<ProjectTab projectSlug="matrix-os" active />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+    fireEvent.click(screen.getByRole("button", { name: "Board" }));
 
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
-    // The project chats list replaces the board.
-    expect(await screen.findByRole("button", { name: "Chat Plan the auth work" })).toBeTruthy();
-    expect(screen.queryByText("No tasks yet")).toBeNull();
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+    expect(await screen.findByText("No tasks yet")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Chat Plan the auth work" })).toBeNull();
     // The board view choice survives a remount.
     cleanup();
     render(<ProjectTab projectSlug="matrix-os" active />);
-    expect((await screen.findAllByRole("button", { name: "Chats" }))[0]!.getAttribute("aria-pressed")).toBe("true");
+    expect((await screen.findAllByRole("button", { name: "Board" }))[0]!.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("keeps global task creation available when the active project opens in Chats", async () => {

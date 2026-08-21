@@ -71,6 +71,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const workspaceEntry = useProjectWorkspaces((s) => s.entries[projectId]);
   const ensureWorkspace = useProjectWorkspaces((s) => s.ensure);
   const refreshWorkspace = useProjectWorkspaces((s) => s.refresh);
+  const loadMoreWorkspace = useProjectWorkspaces((s) => s.loadMore);
   const resolveNewChatTarget = useProjectWorkspaces((s) => s.resolveNewChatTarget);
   const selectedThreadId = useProjectView((s) => s.entries[projectId]?.selectedThreadId ?? null);
   const setSelectedThread = useProjectView((s) => s.setSelectedThread);
@@ -551,6 +552,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         onSelectThread={(threadId) => openListedThread(threadId)}
         onNewChat={(taskId) => void openNewChat(taskId)}
         onRetry={() => void refreshWorkspace(projectId)}
+        onLoadMore={() => void loadMoreWorkspace(projectId)}
       />
       {draftVisible ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

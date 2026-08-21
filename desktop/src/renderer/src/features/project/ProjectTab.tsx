@@ -5,7 +5,7 @@ import { Button, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
-import { useProjectView } from "../../stores/project-view";
+import { DEFAULT_PROJECT_VIEW, useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useUi } from "../../stores/ui";
 import type { ProjectView } from "../../stores/project-view";
@@ -58,7 +58,7 @@ export function ProjectViewSwitch({
  * panels (git DAG, files, terminal) to this header/segmented structure.
  */
 export default function ProjectTab({ projectSlug, active }: { projectSlug: string; active: boolean }) {
-  const view = useProjectView((s) => s.entries[projectSlug]?.view ?? "board");
+  const view = useProjectView((s) => s.entries[projectSlug]?.view ?? DEFAULT_PROJECT_VIEW);
   const setView = useProjectView((s) => s.setView);
   const boardProject = useBoard((s) => s.projects.find((project) => project.slug === projectSlug));
   const selectProject = useBoard((s) => s.selectProject);

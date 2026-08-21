@@ -32,8 +32,8 @@ describe("project view store", () => {
     resetStore();
   });
 
-  it("defaults every project to the board view with no thread selection", () => {
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+  it("defaults every project to the chats view with no thread selection", () => {
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
   });
 
@@ -97,6 +97,19 @@ describe("project view store", () => {
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_alpha");
   });
 
+  it("preserves an explicit persisted board choice", async () => {
+    mockOperator({
+      runtimeScope: SCOPE,
+      views: {
+        "matrix-os": { view: "board", selectedThreadId: null, touchedAt: 10 },
+      },
+    });
+
+    await useProjectView.getState().hydrate(SCOPE);
+
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+  });
+
   it("ignores persisted views from a different runtime scope", async () => {
     mockOperator({
       runtimeScope: "other|https://platform.test|primary",
@@ -107,7 +120,7 @@ describe("project view store", () => {
 
     await useProjectView.getState().hydrate(SCOPE);
 
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
   });
 
@@ -170,6 +183,6 @@ describe("project view store", () => {
     clearProjectViewRuntime();
 
     expect(useProjectView.getState().entries).toEqual({});
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
   });
 });
