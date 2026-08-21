@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -112,6 +112,9 @@ describe("Sidebar attention badges", () => {
       </Tooltip.Provider>,
     );
 
+    const projects = screen.getByRole("button", { name: "Projects 3" });
+    expect(within(projects).getByText("3")).toBeTruthy();
+    fireEvent.click(projects);
     const projectButton = screen.getByRole("button", { name: "Open Matrix OS" });
     expect(within(projectButton).getByText("3")).toBeTruthy();
   });
@@ -138,6 +141,9 @@ describe("Sidebar attention badges", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toBeTruthy();
+    const projects = screen.getByRole("button", { name: "Projects" });
+    expect(within(projects).queryByText("0")).toBeNull();
+    fireEvent.click(projects);
     const projectButton = screen.getByRole("button", { name: "Open Matrix OS" });
     expect(within(projectButton).queryByText("0")).toBeNull();
   });

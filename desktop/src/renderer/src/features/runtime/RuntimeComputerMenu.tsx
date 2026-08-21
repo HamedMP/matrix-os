@@ -1,5 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, ChevronUp, LoaderCircle, Monitor, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, LoaderCircle, Monitor, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
@@ -54,9 +54,26 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
     [computers, selectedSlot],
   );
   const currentLabel = current?.label ?? fallbackComputerLabel(selectedSlot);
+  const baseVisibleLabel = selectedSlot === "primary" ? "Main computer" : currentLabel;
+  const inventoryLoading = loadStatus === "loading" && current === null;
+  const visiblyUnavailable = loadStatus === "error" || current?.availability === "unavailable";
+  const visiblyStarting = current?.availability === "starting";
+  const visibleLabel = visiblyUnavailable
+    ? `${baseVisibleLabel} unavailable`
+    : visiblyStarting
+      ? `${baseVisibleLabel} starting…`
+      : inventoryLoading
+        ? "Loading computers…"
+        : baseVisibleLabel;
   const buttonLabel = loadStatus === "error"
     ? "Computer list unavailable"
-    : `Change computer, currently ${currentLabel}`;
+    : inventoryLoading
+      ? "Loading computers"
+      : visiblyStarting
+        ? `Change computer, currently ${currentLabel}, starting`
+        : current?.availability === "unavailable"
+          ? `Change computer, currently ${currentLabel}, unavailable`
+          : `Change computer, currently ${currentLabel}`;
   const switchComputer = async (runtimeSlotValue: string) => {
     const computer = computers.find((candidate) => candidate.runtimeSlot === runtimeSlotValue);
     if (!computer || runtimeSlotValue === selectedSlot || computer.availability !== "available" || switchingSlot) return;
@@ -67,7 +84,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
   };
 
   return (
-    <div className="px-2 py-1">
+    <div className={collapsed ? undefined : "relative"} style={collapsed ? undefined : { height: "22px" }}>
       <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <DropdownMenu.Trigger asChild>
           <button
@@ -75,31 +92,25 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
             type="button"
             aria-label={buttonLabel}
             title={collapsed ? currentLabel : undefined}
-            className={`flex w-full items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center" : "gap-2 px-2"}`}
+            className={`flex w-full items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "justify-center" : "absolute inset-x-0 -top-[3px] gap-2 px-2"}`}
             style={{ height: "var(--sidebar-row-height)", color: "var(--text-secondary)" }}
           >
-            <span className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md" style={{ background: "var(--bg-hover)" }}>
-              <Monitor size={14} aria-hidden="true" />
-              <span
-                aria-hidden="true"
-                className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border"
-                style={{
-                  background: current?.availability === "available"
-                    ? "var(--success)"
-                    : loadStatus === "error"
-                      ? "var(--danger)"
-                      : "var(--warning)",
-                  borderColor: "var(--bg-sunken)",
-                }}
-              />
+            <span
+              className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+              style={{ color: visiblyUnavailable ? "var(--danger)" : undefined }}
+            >
+              {visiblyStarting || inventoryLoading
+                ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
+                : <Monitor size={14} aria-hidden="true" />}
             </span>
             {!collapsed ? (
               <>
-                <span className="min-w-0 flex-1 text-left">
-                  <span className="block truncate text-xs font-medium" style={{ color: "var(--text-primary)" }}>{currentLabel}</span>
-                  <span className="block truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>{current?.handle ?? handle ?? "Select computer"}</span>
+                <span className="min-w-0 flex-1 truncate text-left text-[13px] font-medium" style={{ color: "var(--text-primary)" }}>
+                  {visibleLabel}
+                  {visibleLabel !== currentLabel ? <span className="sr-only">{currentLabel}</span> : null}
+                  <span className="sr-only">{current?.handle ?? handle ?? "Select computer"}</span>
                 </span>
-                <ChevronUp size={13} className="shrink-0 transition-transform" style={{ transform: open ? "rotate(180deg)" : undefined }} aria-hidden="true" />
+                <ChevronDown size={14} className="shrink-0 transition-transform" style={{ transform: open ? "rotate(180deg)" : undefined }} aria-hidden="true" />
               </>
             ) : null}
           </button>
@@ -108,7 +119,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
           <DropdownMenu.Content
             aria-label="Choose computer"
             aria-labelledby={undefined}
-            side="top"
+            side="bottom"
             align="start"
             sideOffset={4}
             className="relative overflow-hidden rounded-xl border p-1 outline-none"
