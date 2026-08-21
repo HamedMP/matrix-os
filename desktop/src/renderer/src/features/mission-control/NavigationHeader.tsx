@@ -50,8 +50,18 @@ export function breadcrumbItemsForTab(
     case "terminal":
       return [
         { key: "terminal", label: "Terminal" },
-        { key: `terminal/${tab.sessionName ?? tab.id}`, label: tab.title },
+        {
+          key: `terminal/${tab.sessionName ?? tab.id}`,
+          label: tab.sessionName ?? tab.title,
+        },
       ];
+    case "terminals":
+      return tab.title === "Terminal"
+        ? [{ key: "terminal", label: "Terminal" }]
+        : [
+            { key: "terminal", label: "Terminal" },
+            { key: `terminal/${tab.title}`, label: tab.title },
+          ];
     case "app":
       return [
         { key: "apps", label: "Apps" },
@@ -127,6 +137,9 @@ export default function NavigationHeader() {
     : undefined;
   const activeConversationTitle = activeThreadTitle ?? hermesConversationTitle;
   const breadcrumbs = breadcrumbItemsForTab(activeTab, activeConversationTitle);
+  const hasContextActions = Boolean(
+    activeTab && activeTab.kind !== "terminals" && activeTab.kind !== "terminal",
+  );
 
   return (
     <header
@@ -177,7 +190,7 @@ export default function NavigationHeader() {
               </span>
             </Fragment>
           ))}
-          {breadcrumbs.length > 0 ? (
+          {breadcrumbs.length > 0 && hasContextActions ? (
             <ChevronRight
               size={12}
               className="shrink-0"
@@ -187,7 +200,7 @@ export default function NavigationHeader() {
           ) : null}
         </nav>
 
-        {activeTab ? (
+        {activeTab && hasContextActions ? (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger
               aria-label={`Actions for ${activeTab.title}`}

@@ -166,6 +166,8 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const setTerminalAppearanceMode = useTerminalAppearance((s) => s.setMode);
   const terminalAppearance = getTerminalAppearanceTokens(terminalAppearanceMode);
   const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
+  const terminalsTabId = useTabs((s) => s.tabs.find((tab) => tab.kind === "terminals")?.id);
+  const renameTab = useTabs((s) => s.renameTab);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
@@ -219,6 +221,12 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
 
   const selectedShell = selectedName ? shells.find((shell) => shell.name === selectedName) ?? null : null;
   const selected = selectedShell?.name ?? selectedName;
+
+  useEffect(() => {
+    if (!terminalsTabId) return;
+    renameTab(terminalsTabId, selectedName ?? "Terminal");
+  }, [renameTab, selectedName, terminalsTabId]);
+
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
   const renamingNameRef = useRef<string | null>(null);
