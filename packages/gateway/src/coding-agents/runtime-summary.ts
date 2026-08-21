@@ -18,7 +18,10 @@ import type {
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
-import type { CodingAgentProviderRegistry } from "./provider-registry.js";
+import {
+  applyCredentialState,
+  type CodingAgentProviderRegistry,
+} from "./provider-registry.js";
 
 const TERMINAL_SUMMARY_LIMIT = 20;
 const PREVIEW_SUMMARY_LIMIT = 50;
@@ -166,31 +169,18 @@ function capability(input: {
 }
 
 function statusToProviderSummary(agent: AgentCredentialSummary): AgentProviderSummary {
-  const isAvailable = agent.status === "available";
-  const isMissing = agent.status === "missing";
-  const isExpired = agent.status === "expired" || agent.status === "revoked";
-  const failed = agent.status === "failed";
-
-  return {
+  return applyCredentialState({
     id: agent.agent,
     displayName: displayNameForAgent(agent.agent),
     kind: kindForAgent(agent.agent),
-    availability: isAvailable
-      ? "available"
-      : isExpired
-        ? "auth_required"
-        : isMissing
-          ? "setup_required"
-          : failed
-            ? "unavailable"
-            : "unknown",
-    installStatus: isAvailable || isExpired ? "installed" : isMissing ? "missing" : failed ? "failed" : "unknown",
-    authStatus: isAvailable ? "authenticated" : isExpired ? "expired" : isMissing ? "missing" : "unknown",
+    availability: "available",
+    installStatus: "unknown",
+    authStatus: "unknown",
     supportedModes: ["default", "review"],
     defaultMode: "default",
     setupActions: [],
     lastCheckedAt: agent.verifiedAt ?? undefined,
-  };
+  }, agent);
 }
 
 function displayNameForAgent(agent: AgentId): string {
