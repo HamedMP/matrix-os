@@ -145,10 +145,12 @@ function timelineItems(items: ConversationItem[]): TimelineItem[] {
 }
 
 function assistantText(events: AssistantEvent[]): { text: string; completed: boolean } {
-  const deltas = events.filter(
+  const completedIndex = events.findIndex((event) => event.type === "assistant.text.completed");
+  const messageEvents = completedIndex >= 0 ? events.slice(0, completedIndex) : events;
+  const deltas = messageEvents.filter(
     (event): event is Extract<AssistantEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta",
   );
-  const completed = events.some((event) => event.type === "assistant.text.completed");
+  const completed = completedIndex >= 0;
   // Redact BEFORE the defensive tail slice: truncation can sever a credential
   // prefix (e.g. password=) while its value survives in the retained tail.
   let text = redactCredentialsForDisplay(deltas.map((event) => event.delta).join(""));

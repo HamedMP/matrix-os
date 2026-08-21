@@ -105,4 +105,13 @@ describe("terminal soft-client canonical grid", () => {
       rows: 40,
     }))).toBeNull();
   });
+
+  it("accepts live-lease revocation frames", () => {
+    expect(parseTerminalServerMessage(JSON.stringify({ type: "lease-revoked", epoch: 7 }))).toEqual({
+      type: "lease-revoked",
+    });
+    expect(parseTerminalServerMessage(JSON.stringify({ type: "presentation-reset" }))).toEqual({
+      type: "presentation-reset",
+    });
+  });
 });

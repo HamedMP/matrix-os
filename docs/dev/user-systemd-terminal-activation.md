@@ -6,6 +6,11 @@ units. The release remains controlled by the normal immutable host-bundle
 channel and exact-version deployment paths; merging code does not promote a
 stable channel or deploy a customer VPS.
 
+This process-ownership layer is distinct from live renderer ownership. See
+[Terminal session ownership](./terminal-session-ownership.md) for supported
+gateway attachment paths, the raw `zellij attach` boundary, and the
+single-gateway topology requirement.
+
 ## Activation source of truth
 
 The installed app payload is authoritative:

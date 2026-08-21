@@ -6,6 +6,7 @@ import {
   shellWsMessageDataToString,
   type ShellWsSocket,
 } from "../../packages/gateway/src/shell/ws.js";
+import { createTerminalLeaseCoordinator } from "../../packages/gateway/src/shell/terminal-lease.js";
 
 class FakePty {
   writes: string[] = [];
@@ -1400,5 +1401,283 @@ describe("zellij terminal WebSocket", () => {
 
     expect(next).toHaveBeenCalledTimes(2);
     expect(rejected).toEqual({ body: { error: "Unauthorized" }, status: 401 });
+  });
+
+  it("moves the exclusive live lease to the newest focused renderer", async () => {
+    const desktopPty = new FakePty();
+    const vpsPty = new FakePty();
+    const desktopWs = socket();
+    const vpsWs = socket();
+    const attachSession = vi.fn()
+      .mockReturnValueOnce(desktopPty)
+      .mockReturnValueOnce(vpsPty);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession },
+      sizingDebounceMs: 0,
+    });
+
+    const desktop = await handler.open({
+      ws: desktopWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 180, rows: 50 },
+      exclusiveLease: true,
+    });
+    await handler.open({
+      ws: vpsWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 90, rows: 30 },
+      exclusiveLease: true,
+    });
+
+    expect(desktopWs.sent).toContainEqual({ type: "lease-revoked", epoch: 1 });
+    expect(desktopWs.closed).toBe(true);
+    expect(vpsWs.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      lease: { epoch: 2 },
+    }));
+    expect(desktopPty.killed).toBe(true);
+    expect(attachSession).toHaveBeenLastCalledWith("main", expect.objectContaining({
+      size: { cols: 90, rows: 30 },
+    }));
+    expect(vpsWs.sent).toContainEqual({ type: "presentation-reset" });
+    vpsPty.emitData("\x1b[?1000hless redraw");
+    expect(vpsWs.sent).toContainEqual(expect.objectContaining({
+      type: "output",
+      data: "\x1b[?1000hless redraw",
+    }));
+    const attachedIndex = vpsWs.sent.findIndex((frame) => (frame as { type?: unknown }).type === "attached");
+    const resetIndex = vpsWs.sent.findIndex((frame) => (frame as { type?: unknown }).type === "presentation-reset");
+    const bootstrapIndex = vpsWs.sent.findIndex((frame) => (
+      (frame as { type?: unknown; data?: unknown }).type === "output"
+      && (frame as { data?: unknown }).data === "\x1b[?1000hless redraw"
+    ));
+    expect(attachedIndex).toBeLessThan(resetIndex);
+    expect(resetIndex).toBeLessThan(bootstrapIndex);
+    desktop.onMessage(JSON.stringify({ type: "input", data: "stale" }));
+    expect(vpsPty.writes).not.toContain("stale");
+    await handler.dispose();
+  });
+
+  it("removes an earlier non-exclusive hard client from sizing before exclusive takeover", async () => {
+    const observerPty = new FakePty();
+    const holderPty = new FakePty();
+    const observerWs = socket();
+    const holderWs = socket();
+    const attachSession = vi.fn()
+      .mockReturnValueOnce(observerPty)
+      .mockReturnValueOnce(holderPty);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession },
+      sizingDebounceMs: 0,
+    });
+
+    await handler.open({
+      ws: observerWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 80, rows: 24 },
+    });
+    await handler.open({
+      ws: holderWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 160, rows: 50 },
+      exclusiveLease: true,
+    });
+
+    expect(observerWs.sent).toContainEqual({ type: "lease-revoked", epoch: null });
+    expect(observerWs.closed).toBe(true);
+    expect(attachSession).toHaveBeenLastCalledWith("main", expect.objectContaining({
+      size: { cols: 160, rows: 50 },
+    }));
+    expect(holderWs.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      canonicalSize: { cols: 160, rows: 50 },
+      lease: { epoch: 1 },
+    }));
+    expect(holderPty.resizes.at(-1)).toEqual({ cols: 160, rows: 50 });
+    await handler.dispose();
+  });
+
+  it("fences non-exclusive input and resize while an exclusive lease is active", async () => {
+    const initialPty = new FakePty();
+    const leasedPty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(initialPty)
+          .mockReturnValueOnce(leasedPty),
+      },
+      sizingDebounceMs: 0,
+    });
+
+    await handler.open({
+      ws: socket(),
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 120, rows: 40 },
+      exclusiveLease: true,
+    });
+    const observer = await handler.open({
+      ws: socket(),
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 80, rows: 24 },
+    });
+    const activePtyBeforeMutation = [initialPty, leasedPty]
+      .findLast((pty) => !pty.killed) ?? leasedPty;
+    const resizeCount = activePtyBeforeMutation.resizes.length;
+
+    observer.onMessage(JSON.stringify({ type: "input", data: "blocked" }));
+    observer.onMessage(JSON.stringify({ type: "resize", cols: 70, rows: 20 }));
+
+    expect(activePtyBeforeMutation.writes).not.toContain("blocked");
+    expect(activePtyBeforeMutation.resizes).toHaveLength(resizeCount);
+    await handler.dispose();
+  });
+
+  it("fails closed after an exclusive lease expires while its socket remains connected", async () => {
+    let now = 1_000;
+    const pty = new FakePty();
+    const replacementPty = new FakePty();
+    const holderWs = socket();
+    const observerWs = socket();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(pty)
+          .mockReturnValueOnce(replacementPty),
+      },
+      leaseCoordinator: createTerminalLeaseCoordinator({ now: () => now, ttlMs: 100 }),
+      sizingDebounceMs: 0,
+    });
+
+    const holder = await handler.open({
+      ws: holderWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 120, rows: 40 },
+      exclusiveLease: true,
+    });
+    const observer = await handler.open({
+      ws: observerWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 80, rows: 24 },
+    });
+    const activePty = [pty, replacementPty].findLast((candidate) => !candidate.killed) ?? replacementPty;
+    const resizeCount = activePty.resizes.length;
+    now += 101;
+
+    observer.onMessage(JSON.stringify({ type: "input", data: "must-stay-blocked" }));
+    observer.onMessage(JSON.stringify({ type: "resize", cols: 70, rows: 20 }));
+    holder.onMessage(JSON.stringify({ type: "input", data: "expired-holder" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(activePty.writes).not.toContain("must-stay-blocked");
+    expect(activePty.writes).not.toContain("expired-holder");
+    expect(activePty.resizes).toHaveLength(resizeCount);
+    expect(holderWs.sent).toContainEqual({ type: "lease-revoked", epoch: 1 });
+    expect(holderWs.closed).toBe(true);
+    expect(observerWs.closed).toBe(false);
+
+    const resumedWs = socket();
+    const resumed = await handler.open({
+      ws: resumedWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 90, rows: 30 },
+      exclusiveLease: true,
+    });
+    resumed.onMessage(JSON.stringify({ type: "input", data: "resumed-owner" }));
+
+    expect(resumedWs.sent).toContainEqual(expect.objectContaining({ lease: { epoch: 2 } }));
+    expect(replacementPty.writes).toContain("resumed-owner");
+    await handler.dispose();
+  });
+
+  it("revokes an expired holder before classifying a later hard observer", async () => {
+    let now = 1_000;
+    const pty = new FakePty();
+    const holderWs = socket();
+    const observerWs = socket();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      leaseCoordinator: createTerminalLeaseCoordinator({ now: () => now, ttlMs: 100 }),
+      sizingDebounceMs: 0,
+    });
+
+    await handler.open({
+      ws: holderWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 140, rows: 40 },
+      exclusiveLease: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    now += 101;
+
+    await handler.open({
+      ws: observerWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 70, rows: 20 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(holderWs.sent).toContainEqual({ type: "lease-revoked", epoch: 1 });
+    expect(holderWs.closed).toBe(true);
+    expect(observerWs.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      canonicalSize: { cols: 140, rows: 40 },
+    }));
+    expect(pty.resizes.at(-1)).toEqual({ cols: 140, rows: 40 });
+    await handler.dispose();
+  });
+
+  it("serializes simultaneous exclusive takeovers so the newest bridge wins", async () => {
+    const firstPty = new FakePty();
+    const secondPty = new FakePty();
+    const firstWs = socket();
+    const secondWs = socket();
+    const attachSession = vi.fn()
+      .mockReturnValueOnce(firstPty)
+      .mockReturnValueOnce(secondPty);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession },
+      attachStartupGraceMs: 10,
+      sizingDebounceMs: 0,
+    });
+
+    const firstOpen = handler.open({
+      ws: firstWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 160, rows: 45 },
+      exclusiveLease: true,
+    });
+    const secondOpen = handler.open({
+      ws: secondWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 100, rows: 30 },
+      exclusiveLease: true,
+    });
+    await Promise.all([firstOpen, secondOpen]);
+
+    expect(attachSession).toHaveBeenCalledTimes(2);
+    expect(firstPty.killed).toBe(true);
+    expect(secondPty.killed).toBe(false);
+    expect(firstWs.sent).toContainEqual({ type: "lease-revoked", epoch: 1 });
+    expect(secondWs.sent).toContainEqual(expect.objectContaining({ lease: { epoch: 2 } }));
+    await handler.dispose();
   });
 });

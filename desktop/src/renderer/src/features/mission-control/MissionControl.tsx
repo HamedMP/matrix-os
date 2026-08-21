@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -20,6 +20,34 @@ import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project
 import { useShellSessionSync } from "../../lib/shell-session-sync";
 import { preloadAppIcons, useApps } from "../../stores/apps";
 
+export function MissionControlContentSurface({
+  collapsed,
+  children,
+}: {
+  collapsed: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <main
+      data-testid="mission-control-content-surface"
+      className="absolute flex min-h-0 min-w-0 flex-col"
+      style={{
+        left: collapsed ? "4px" : "var(--sidebar-expanded-width)",
+        top: "var(--titlebar-height)",
+        right: "4px",
+        bottom: "4px",
+        overflow: "hidden",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "var(--radius)",
+        background: "var(--bg-app)",
+        transition: "left 140ms var(--ease-out)",
+      }}
+    >
+      {children}
+    </main>
+  );
+}
+
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
@@ -32,6 +60,7 @@ export default function MissionControl() {
   const tabCount = useTabs((s) => s.tabs.length);
   const createProjectOpen = useUi((s) => s.createProjectOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
+  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
 
   useGlobalShortcuts();
   useShellSessionSync(api, `${runtimeScope}|${authGeneration}|${runtimeSlot}`);
@@ -140,12 +169,17 @@ export default function MissionControl() {
   }, [api, runtimeScope, runtimeSlot]);
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col" style={{ background: "var(--bg-app)" }}>
-        <NavigationHeader />
-        <TabContent />
+    <div className="relative flex flex-1 overflow-hidden" style={{ background: "var(--bg-sunken)" }}>
+      <NavigationHeader />
+      <div
+        className="absolute bottom-0 left-0"
+        style={{ top: "var(--titlebar-height)" }}
+      >
+        <Sidebar />
       </div>
+      <MissionControlContentSurface collapsed={sidebarCollapsed}>
+        <TabContent />
+      </MissionControlContentSurface>
       <Composer />
       <CommandPalette />
       <QuickOpen />

@@ -380,6 +380,37 @@ describe("ChatTab", () => {
     expect(screen.queryByText("hello")).toBeNull();
   });
 
+  it("renders the Chat home with the approved handoff hierarchy", () => {
+    useHermesChat.setState({
+      view: "index",
+      indexStatus: "ready",
+      indexError: null,
+      conversations: [{
+        id: "conversation-one",
+        title: "Plan the launch",
+        preview: "Review the final launch checklist",
+        messageCount: 4,
+        createdAt: 20,
+        updatedAt: 30,
+      }],
+    });
+
+    const { container } = render(<ChatTab />);
+
+    const content = container.querySelector<HTMLElement>("[data-chat-index-content]");
+    const header = container.querySelector<HTMLElement>("[data-chat-index-header]");
+    const list = container.querySelector<HTMLElement>("[data-chat-index-list]");
+    const row = container.querySelector<HTMLElement>("[data-conversation-row]");
+    expect(content?.className).toContain("max-w-[1020px]");
+    expect(header?.className).toContain("min-h-[47px]");
+    expect(header?.className).toContain("mb-2");
+    expect(list?.className).not.toContain("rounded");
+    expect(list?.className).not.toContain("border");
+    expect(row?.className).toContain("h-16");
+    expect(screen.getByRole("button", { name: "Search chats" }).className).toContain("border");
+    expect(screen.getByRole("button", { name: "New chat" }).style.background).toBe("var(--accent)");
+  });
+
   it("reconciles stale Hermes Recents without removing coding-agent chats", async () => {
     useTabs.getState().recordRecentHermesConversation("conversation-live", "Live chat");
     useTabs.getState().recordRecentHermesConversation("conversation-deleted", "Deleted chat");

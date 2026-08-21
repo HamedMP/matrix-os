@@ -1506,6 +1506,24 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('download_bundle "$version" "$sha256" "$(json_field "$manifest" size)" "$bundle_url" "$bundle_file"');
   });
 
+  it('sync agent publishes coarse bootstrap evidence before entering its polling loop', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(
+      join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'),
+      'utf8',
+    );
+    const build = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const helper = 'matrix-write-bootstrap-attestation';
+    const invocation = syncAgent.indexOf('sudo -- "$BOOTSTRAP_ATTESTATION_WRITER"');
+    const mainLoop = syncAgent.indexOf('# ── Main loop');
+
+    expect(syncAgent).toContain(`readonly BOOTSTRAP_ATTESTATION_WRITER="$BIN_DIR/${helper}"`);
+    expect(invocation).toBeGreaterThan(-1);
+    expect(invocation).toBeLessThan(mainLoop);
+    expect(syncAgent).toContain('WARN: bootstrap attestation unavailable');
+    expect(build).toContain(`"$STAGE_DIR/bin/${helper}"`);
+  });
+
   it('sync agent replaces the app tree with root permissions', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');

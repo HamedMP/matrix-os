@@ -86,14 +86,14 @@ export default function AccountMenu({
   };
 
   return (
-    <div className={`p-2 pt-1 ${collapsed ? "" : "flex items-center gap-1"}`}>
+    <div className={collapsed ? "p-2 pt-1" : "flex items-center gap-1 px-4 py-4"}>
       <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <DropdownMenu.Trigger asChild>
           <button
             type="button"
             aria-label="Open account menu"
             title={collapsed ? primaryLabel : undefined}
-            className={`flex h-10 min-w-0 items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "w-full justify-center" : "flex-1 gap-2 px-1"}`}
+            className={`flex min-w-0 items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "h-10 w-full justify-center" : "flex-1 gap-2"}`}
           >
             <span
               className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold"
@@ -103,9 +103,9 @@ export default function AccountMenu({
             </span>
             {!collapsed ? (
               <span className="min-w-0 flex-1 text-left leading-tight">
-                <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
+                <span className="block truncate text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
                 {secondaryLabel ? (
-                  <span className="block truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span>
+                  <span className="block truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span>
                 ) : null}
               </span>
             ) : null}

@@ -156,9 +156,9 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   };
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-6 sm:px-8" aria-labelledby="conversation-index-title">
-      <div className="mx-auto flex w-full max-w-[1020px] flex-col">
-        <div className="mb-6 flex min-h-10 min-w-0 items-center justify-between gap-4">
+    <section className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4 sm:px-8" aria-labelledby="conversation-index-title">
+      <div data-chat-index-content className="mx-auto flex w-full max-w-[1020px] flex-col">
+        <div data-chat-index-header className="mb-2 flex min-h-[47px] min-w-0 items-center justify-between gap-4">
           <h1 id="conversation-index-title" className="text-[36px] font-medium leading-none tracking-[-0.02em]" style={{ color: "var(--text-primary)", fontFamily: '"Instrument Serif", Georgia, serif' }}>
             Chats
           </h1>
@@ -197,15 +197,15 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
               <button
                 type="button"
                 aria-label="Search chats"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-                style={{ color: "var(--text-secondary)" }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                style={{ background: "var(--bg-raised)", borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
                 onClick={() => setSearchOpen(true)}
               >
                 <Search size={15} aria-hidden />
               </button>
             )}
             <Button
-              variant="subtle"
+              variant="primary"
               className="h-8"
               disabled={!api}
               onClick={() => void startConversation()}
@@ -273,7 +273,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
         ) : null}
 
         {filteredConversations.length > 0 ? (
-          <div className="overflow-hidden rounded-xl border" style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}>
+          <div data-chat-index-list>
             {filteredConversations.map((conversation) => (
               <ConversationRow
                 key={conversation.id}

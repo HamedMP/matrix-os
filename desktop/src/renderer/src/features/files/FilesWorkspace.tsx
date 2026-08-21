@@ -47,7 +47,14 @@ export default function FilesWorkspace() {
           : "grid-rows-1"}`}
         style={{ background: "var(--bg-surface)" }}
       >
-        <ComputerFileBrowser onSelectionChange={handleSelectionChange} framed={false} />
+        <div
+          data-testid="files-home-content"
+          className={activeSelection
+            ? "contents"
+            : "mx-auto flex min-h-0 w-full max-w-[1052px] flex-col px-4 pt-4"}
+        >
+          <ComputerFileBrowser onSelectionChange={handleSelectionChange} framed={false} />
+        </div>
         {activeSelection ? (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>}>
             <PreviewPane selection={activeSelection} />

@@ -4,16 +4,34 @@ export { isSafeSessionId, parseTerminalSessions } from "@/lib/terminal-state";
 
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
+const LEASE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 export type TerminalClientFrame =
   | { type: "attach"; sessionId?: string; cwd?: string; fromSeq?: number }
   | { type: "input"; data: string }
   | { type: "resize"; cols: number; rows: number }
+  | { type: "ping" }
   | { type: "detach" }
   | { type: "destroy" };
 
+export interface TerminalCanonicalSize {
+  cols: number;
+  rows: number;
+}
+
 export type TerminalServerFrame =
-  | { type: "attached"; sessionId: string; cwd?: string; replay?: string }
+  | {
+      type: "attached";
+      sessionId: string;
+      state: "running" | "exited";
+      cwd?: string;
+      replay?: string;
+      canonicalSize: TerminalCanonicalSize | null;
+      leaseEpoch: number | null;
+    }
+  | { type: "canonical-size"; cols: number; rows: number }
+  | { type: "lease-revoked" }
+  | { type: "presentation-reset" }
   | { type: "output"; data: string }
   | { type: "replay-start"; fromSeq?: number; toSeq?: number }
   | { type: "replay-end"; nextSeq?: number }
@@ -53,7 +71,14 @@ export class MobileTerminalClient {
     if (!options.sessionId) return null;
     const token = await this.gateway.getWsToken();
     this.gateway.setWebSocketToken(token);
-    const ws = this.gateway.openTerminalWebSocket(token, options.sessionId, options.fromSeq);
+    const cols = clampInteger(options.cols ?? 80, 1, 500);
+    const rows = clampInteger(options.rows ?? 24, 1, 200);
+    const ws = this.gateway.openTerminalWebSocket(token, options.sessionId, options.fromSeq, {
+      client: "hard",
+      cols,
+      rows,
+      lease: "exclusive",
+    });
     const connection = new MobileTerminalConnection(ws, options);
     connection.attach();
     return connection;
@@ -62,6 +87,8 @@ export class MobileTerminalClient {
 
 export class MobileTerminalConnection {
   private attached = false;
+  private leaseEpoch: number | null = null;
+  private leaseHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly ws: WebSocket,
@@ -71,19 +98,24 @@ export class MobileTerminalConnection {
   attach(): void {
     this.options.onStatus?.("connecting");
 
-    // The session name is supplied in the WS query, so no attach frame is sent;
-    // we just announce our viewport size once the socket opens.
+    // The session name, initial hard-grid dimensions, and exclusive lease are
+    // supplied in the WS query, so no attach or startup resize frame is needed.
     this.ws.onopen = () => {
       this.attached = true;
       this.options.onStatus?.("open");
-      if (this.options.cols && this.options.rows) {
-        this.resize(this.options.cols, this.options.rows);
-      }
     };
 
     this.ws.onmessage = (event) => {
       const frame = parseTerminalServerFrame(event.data);
-      if (frame) this.options.onMessage(frame);
+      if (!frame) return;
+      if (frame.type === "attached") {
+        this.leaseEpoch = frame.leaseEpoch;
+        this.scheduleLeaseHeartbeat();
+      } else if (frame.type === "lease-revoked") {
+        this.leaseEpoch = null;
+        this.clearLeaseHeartbeat();
+      }
+      this.options.onMessage(frame);
     };
 
     this.ws.onerror = () => {
@@ -91,6 +123,9 @@ export class MobileTerminalConnection {
     };
 
     this.ws.onclose = () => {
+      this.attached = false;
+      this.leaseEpoch = null;
+      this.clearLeaseHeartbeat();
       this.options.onStatus?.("closed");
     };
   }
@@ -122,6 +157,8 @@ export class MobileTerminalConnection {
   }
 
   close(): void {
+    this.clearLeaseHeartbeat();
+    this.leaseEpoch = null;
     if (this.ws.readyState !== WS_CONNECTING && this.ws.readyState !== WS_OPEN) return;
     this.attached = false;
     this.ws.close();
@@ -132,6 +169,23 @@ export class MobileTerminalConnection {
     this.ws.send(JSON.stringify(frame));
     return true;
   }
+
+  private scheduleLeaseHeartbeat(): void {
+    this.clearLeaseHeartbeat();
+    if (this.leaseEpoch === null || !this.attached) return;
+    this.leaseHeartbeatTimer = setTimeout(() => {
+      this.leaseHeartbeatTimer = null;
+      if (this.leaseEpoch === null || !this.attached) return;
+      this.sendFrame({ type: "ping" });
+      this.scheduleLeaseHeartbeat();
+    }, LEASE_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private clearLeaseHeartbeat(): void {
+    if (this.leaseHeartbeatTimer === null) return;
+    clearTimeout(this.leaseHeartbeatTimer);
+    this.leaseHeartbeatTimer = null;
+  }
 }
 
 export function buildTerminalWebSocketUrl(baseUrl: string, token?: string | null): string {
@@ -140,19 +194,89 @@ export function buildTerminalWebSocketUrl(baseUrl: string, token?: string | null
   return `${url}?token=${encodeURIComponent(token)}`;
 }
 
-function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
+export function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
   if (typeof data !== "string") return null;
   try {
-    const frame = JSON.parse(data) as TerminalServerFrame;
+    const frame = JSON.parse(data) as Record<string, unknown>;
     if (!frame || typeof frame !== "object" || typeof frame.type !== "string") return null;
-    if (frame.type === "attached" && typeof frame.sessionId === "string") return frame;
-    if (frame.type === "output" && typeof frame.data === "string") return frame;
-    if (frame.type === "replay-start" || frame.type === "replay-end" || frame.type === "exit") return frame;
+    if (frame.type === "attached") {
+      const sessionId = typeof frame.session === "string"
+        ? frame.session
+        : typeof frame.sessionId === "string"
+          ? frame.sessionId
+          : null;
+      if (!sessionId || (frame.state !== undefined && frame.state !== "running" && frame.state !== "exited")) {
+        return null;
+      }
+      const lease = frame.lease && typeof frame.lease === "object"
+        ? frame.lease as Record<string, unknown>
+        : null;
+      return {
+        type: "attached",
+        sessionId,
+        state: frame.state === "exited" ? "exited" : "running",
+        ...(typeof frame.cwd === "string" ? { cwd: frame.cwd } : {}),
+        ...(typeof frame.replay === "string" ? { replay: frame.replay } : {}),
+        canonicalSize: parseCanonicalSize(frame.canonicalSize),
+        leaseEpoch: Number.isSafeInteger(lease?.epoch) && (lease?.epoch as number) > 0
+          ? lease?.epoch as number
+          : null,
+      };
+    }
+    if (frame.type === "canonical-size") {
+      const size = parseCanonicalSize(frame);
+      return size ? { type: "canonical-size", ...size } : null;
+    }
+    if (frame.type === "lease-revoked") return { type: "lease-revoked" };
+    if (frame.type === "presentation-reset") return { type: "presentation-reset" };
+    if (frame.type === "output" && typeof frame.data === "string") {
+      return { type: "output", data: frame.data };
+    }
+    if (frame.type === "replay-start") {
+      return {
+        type: "replay-start",
+        ...(Number.isSafeInteger(frame.fromSeq) ? { fromSeq: frame.fromSeq as number } : {}),
+        ...(Number.isSafeInteger(frame.toSeq) ? { toSeq: frame.toSeq as number } : {}),
+      };
+    }
+    if (frame.type === "replay-end") {
+      return {
+        type: "replay-end",
+        ...(Number.isSafeInteger(frame.nextSeq) ? { nextSeq: frame.nextSeq as number } : {}),
+      };
+    }
+    if (frame.type === "exit") {
+      const rawExitCode = frame.code ?? frame.exitCode;
+      return {
+        type: "exit",
+        exitCode: typeof rawExitCode === "number" && Number.isFinite(rawExitCode)
+          ? rawExitCode
+          : rawExitCode === null
+            ? null
+            : undefined,
+      };
+    }
     if (frame.type === "error") return { type: "error", message: typeof frame.message === "string" ? frame.message : undefined };
     return null;
   } catch {
     return null;
   }
+}
+
+function parseCanonicalSize(value: unknown): TerminalCanonicalSize | null {
+  if (!value || typeof value !== "object") return null;
+  const size = value as Record<string, unknown>;
+  if (
+    !Number.isInteger(size.cols)
+    || (size.cols as number) < 1
+    || (size.cols as number) > 500
+    || !Number.isInteger(size.rows)
+    || (size.rows as number) < 1
+    || (size.rows as number) > 200
+  ) {
+    return null;
+  }
+  return { cols: size.cols as number, rows: size.rows as number };
 }
 
 function clampInteger(value: number, min: number, max: number): number {

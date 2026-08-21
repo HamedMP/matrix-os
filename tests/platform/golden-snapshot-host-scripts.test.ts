@@ -13,8 +13,178 @@ const fastPathPath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-fast-p
 const awsCliSmokePath = 'distro/customer-vps/host-bin/matrix-aws-cli-smoke';
 const prerequisitesPath = 'distro/customer-vps/host-bin/matrix-prepare-host-prerequisites';
 const serviceDiagnosticsPath = 'distro/customer-vps/host-bin/matrix-golden-service-diagnostics';
+const bootstrapAttestationPath = 'distro/customer-vps/host-bin/matrix-write-bootstrap-attestation';
 
 describe('golden snapshot host scripts', () => {
+  it('derives and atomically records coarse exact-snapshot bootstrap evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-'));
+    await mkdir(join(root, 'opt/matrix/env'), { recursive: true });
+    await mkdir(join(root, 'var/log'), { recursive: true });
+    await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
+    await mkdir(join(root, 'tmp'), { recursive: true });
+    await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_IMAGE_SOURCE=snapshot',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'a'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'var/log/cloud-init-output.log'), [
+      'matrix-host: exact golden snapshot fast path selected',
+      'matrix-host-timing phase=system_prerequisites_ready elapsed_seconds=1 image_source=snapshot',
+      'matrix-host-timing phase=host_bundle_ready elapsed_seconds=2 image_source=snapshot',
+      'matrix-host-timing phase=core_services_started elapsed_seconds=9 image_source=snapshot',
+      '',
+    ].join('\n'));
+
+    await expect(execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+
+    const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
+    expect(JSON.parse(await readFile(outputPath, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      targetBundleVersion: 'v2026.08.20-test',
+      imageSource: 'snapshot',
+      fastPathSelected: true,
+      fullBundleDownloaded: false,
+      systemPrerequisitesReused: true,
+      bundleArchivePresent: false,
+      targetBundleSha256: 'a'.repeat(64),
+      timing: {
+        systemPrerequisitesReadySeconds: 1,
+        hostBundleReadySeconds: 2,
+        coreServicesStartedSeconds: 9,
+      },
+    });
+    expect((await stat(outputPath)).mode & 0o777).toBe(0o644);
+  });
+
+  it('preserves valid first-boot evidence instead of rewriting it after an update', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-existing-'));
+    const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
+    const original = {
+      schemaVersion: 1,
+      targetBundleVersion: 'v2026.08.20-test',
+      imageSource: 'snapshot',
+      fastPathSelected: true,
+      fullBundleDownloaded: false,
+      systemPrerequisitesReused: true,
+      bundleArchivePresent: false,
+      targetBundleSha256: 'a'.repeat(64),
+      timing: {
+        systemPrerequisitesReadySeconds: 1,
+        hostBundleReadySeconds: 2,
+        coreServicesStartedSeconds: 9,
+      },
+    };
+    await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify(original)}\n`);
+
+    await expect(execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+
+    expect(JSON.parse(await readFile(outputPath, 'utf8'))).toEqual(original);
+  });
+
+  it('fails closed instead of replacing invalid existing bootstrap evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-invalid-'));
+    const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
+    await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
+    await writeFile(outputPath, '{"schemaVersion":2}\n');
+
+    await expect(execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    })).rejects.toMatchObject({ code: 68 });
+    expect(await readFile(outputPath, 'utf8')).toBe('{"schemaVersion":2}\n');
+  });
+
+  it('rejects ambiguous bootstrap logs instead of guessing which path ran', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-ambiguous-'));
+    await mkdir(join(root, 'opt/matrix/env'), { recursive: true });
+    await mkdir(join(root, 'var/log'), { recursive: true });
+    await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_IMAGE_SOURCE=snapshot',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'a'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'var/log/cloud-init-output.log'), [
+      'matrix-host: exact golden snapshot fast path selected',
+      'matrix-host: full bootstrap required',
+      'matrix-host-timing phase=system_prerequisites_ready elapsed_seconds=1 image_source=snapshot',
+      'matrix-host-timing phase=host_bundle_ready elapsed_seconds=2 image_source=snapshot',
+      'matrix-host-timing phase=core_services_started elapsed_seconds=9 image_source=snapshot',
+      '',
+    ].join('\n'));
+
+    await expect(execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    })).rejects.toMatchObject({ code: 66 });
+    await expect(stat(join(root, 'var/lib/matrix/bootstrap-attestation.json')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('records full-download evidence for a clean-image bootstrap', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-full-'));
+    await mkdir(join(root, 'opt/matrix/env'), { recursive: true });
+    await mkdir(join(root, 'var/log'), { recursive: true });
+    await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
+    await mkdir(join(root, 'tmp'), { recursive: true });
+    await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_IMAGE_SOURCE=clean_image',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'b'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'var/log/cloud-init-output.log'), [
+      'matrix-host: full bootstrap required',
+      'matrix-host-timing phase=system_prerequisites_ready elapsed_seconds=31 image_source=clean_image',
+      'matrix-host-timing phase=host_bundle_ready elapsed_seconds=62 image_source=clean_image',
+      'matrix-host-timing phase=core_services_started elapsed_seconds=81 image_source=clean_image',
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'tmp/matrix-host.tgz'), 'bundle');
+    await writeFile(join(root, 'tmp/matrix-host.tgz.sha256'), `${'b'.repeat(64)}  matrix-host.tgz\n`);
+
+    await execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    });
+
+    expect(JSON.parse(await readFile(
+      join(root, 'var/lib/matrix/bootstrap-attestation.json'),
+      'utf8',
+    ))).toMatchObject({
+      targetBundleVersion: 'v2026.08.20-test',
+      imageSource: 'clean_image',
+      fastPathSelected: false,
+      fullBundleDownloaded: true,
+      systemPrerequisitesReused: false,
+      bundleArchivePresent: true,
+      targetBundleSha256: 'b'.repeat(64),
+    });
+  });
+
   it('allows the fast path only for a baked exact-bundle snapshot', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-'));
     const appDir = join(root, 'opt/matrix/app');
@@ -41,6 +211,55 @@ describe('golden snapshot host scripts', () => {
     await expect(execFileAsync(fastPathPath, [], {
       env: { ...exactEnv, MATRIX_SNAPSHOT_SOURCE_VERSION: 'older' },
     })).rejects.toMatchObject({ code: 1 });
+  });
+
+  it('loads canonical snapshot inputs when the cloud-init launcher did not export them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-host-env-'));
+    const appDir = join(root, 'opt/matrix/app');
+    const envDir = join(root, 'opt/matrix/env');
+    await mkdir(appDir, { recursive: true });
+    await mkdir(envDir, { recursive: true });
+    await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
+    await writeFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'version=1\n');
+    await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v2026.08.20-test\n');
+    await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'e'.repeat(64)}\n`);
+    await writeFile(join(envDir, 'host.env'), [
+      'MATRIX_IMAGE_SOURCE=snapshot',
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_SNAPSHOT_SOURCE_VERSION=v2026.08.20-test',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'e'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await chmod(fastPathPath, 0o755);
+
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: '',
+        MATRIX_IMAGE_VERSION: '',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: '',
+        MATRIX_TARGET_BUNDLE_SHA256: '',
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+
+    await writeFile(join(envDir, 'host.env'), [
+      'MATRIX_IMAGE_SOURCE=clean_image',
+      'MATRIX_IMAGE_VERSION=older',
+      'MATRIX_SNAPSHOT_SOURCE_VERSION=',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'f'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: 'snapshot',
+        MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
+        MATRIX_TARGET_BUNDLE_SHA256: 'e'.repeat(64),
+      },
+    })).resolves.toMatchObject({ stdout: '' });
   });
 
   it('re-certifies a missing host-prerequisites marker without bootstrap work', async () => {
@@ -156,6 +375,7 @@ describe('golden snapshot host scripts', () => {
       'home/matrix/.bash_history',
       'home/matrix/.npmrc',
       'run/matrix/bootstrap-token',
+      'var/lib/matrix/bootstrap-attestation.json',
       'var/lib/docker/volumes/customer/_data/db',
       'var/log/matrix-builder.log',
       'var/crash/matrix-gateway.crash',
@@ -773,6 +993,10 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     expect(source).toContain('ssh-keygen -A');
     expect(source).toMatch(/if \[ "\$\{MATRIX_IMAGE_SOURCE:-clean_image\}" = "snapshot" \]; then[\s\S]*systemctl enable --now docker\.service containerd\.service[\s\S]*fi/);
     expect(source).toContain('MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}');
+    expect(source).toContain('&& MATRIX_IMAGE_SOURCE="$MATRIX_IMAGE_SOURCE" \\');
+    expect(source).toContain('MATRIX_IMAGE_VERSION="$MATRIX_IMAGE_VERSION" \\');
+    expect(source).toContain('MATRIX_SNAPSHOT_SOURCE_VERSION="$MATRIX_SNAPSHOT_SOURCE_VERSION" \\');
+    expect(source).toContain('MATRIX_TARGET_BUNDLE_SHA256="$MATRIX_TARGET_BUNDLE_SHA256" \\');
     expect(source).toContain('target bundle provenance mismatch');
   });
 });

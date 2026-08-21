@@ -48,6 +48,19 @@ describe('CI workflows', () => {
     expect(readme).toContain('Docs-only changes still run targeted docs contract tests');
   });
 
+  it('builds and requires the MAT-335 Desktop regression in the E2E job', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+
+    expect(workflow).toContain('name: Build Desktop for Electron E2E');
+    expect(workflow).toContain('run: bun run build:desktop');
+    expect(workflow).toContain('name: Run required MAT-335 Desktop regression');
+    expect(workflow).toContain('MATRIX_DESKTOP_E2E_REQUIRED: "1"');
+    expect(workflow).toContain(
+      'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts',
+    );
+  });
+
   it('documents workflow ownership and required checks', () => {
     const root = process.cwd();
     const readme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');

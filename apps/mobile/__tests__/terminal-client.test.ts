@@ -118,6 +118,7 @@ describe("mobile terminal client", () => {
   });
 
   it("sends resize, input, and detach frames (no attach frame; name is in the query)", () => {
+    jest.useFakeTimers();
     const ws = new MockWebSocket() as unknown as WebSocket;
     const messages: unknown[] = [];
     const statuses: string[] = [];
@@ -131,6 +132,16 @@ describe("mobile terminal client", () => {
 
     connection.attach();
     (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({
+        type: "attached",
+        session: SHELL_NAME,
+        state: "running",
+        canonicalSize: { cols: 220, rows: 70 },
+        lease: { epoch: 7 },
+      }),
+    });
+    jest.advanceTimersByTime(10_000);
     connection.sendInput("pwd\r");
     connection.resize(999, 999);
     (ws as unknown as MockWebSocket).onmessage?.({ data: JSON.stringify({ type: "output", data: "ok" }) });
@@ -138,13 +149,72 @@ describe("mobile terminal client", () => {
 
     expect(statuses).toEqual(["connecting", "open"]);
     expect((ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame))).toEqual([
-      { type: "resize", cols: 220, rows: 70 },
+      { type: "ping" },
       { type: "input", data: "pwd\r" },
       { type: "resize", cols: 500, rows: 200 },
       { type: "detach" },
     ]);
-    expect(messages).toEqual([{ type: "output", data: "ok" }]);
+    expect(messages).toEqual([
+      {
+        type: "attached",
+        sessionId: SHELL_NAME,
+        state: "running",
+        canonicalSize: { cols: 220, rows: 70 },
+        leaseEpoch: 7,
+      },
+      { type: "output", data: "ok" },
+    ]);
     expect((ws as unknown as MockWebSocket).closed).toBe(true);
+    jest.useRealTimers();
+  });
+
+  it("parses canonical presentation frames and stops renewing when displaced", () => {
+    jest.useFakeTimers();
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const messages: unknown[] = [];
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SHELL_NAME,
+      cols: 100,
+      rows: 30,
+      onMessage: (frame) => messages.push(frame),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({
+        type: "attached",
+        session: SHELL_NAME,
+        state: "running",
+        canonicalSize: { cols: 100, rows: 30 },
+        lease: { epoch: 12 },
+      }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "canonical-size", cols: 96, rows: 28 }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "presentation-reset" }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "lease-revoked", epoch: 12 }),
+    });
+    jest.advanceTimersByTime(30_000);
+
+    expect(messages).toEqual([
+      {
+        type: "attached",
+        sessionId: SHELL_NAME,
+        state: "running",
+        canonicalSize: { cols: 100, rows: 30 },
+        leaseEpoch: 12,
+      },
+      { type: "canonical-size", cols: 96, rows: 28 },
+      { type: "presentation-reset" },
+      { type: "lease-revoked" },
+    ]);
+    expect((ws as unknown as MockWebSocket).sent).toEqual([]);
+    jest.useRealTimers();
   });
 
   it("opens terminal sockets with browser-compatible query auth and native bearer headers", async () => {
@@ -156,12 +226,14 @@ describe("mobile terminal client", () => {
     const terminalClient = new MobileTerminalClient(gateway);
     const connection = await terminalClient.connect({
       sessionId: SHELL_NAME,
+      cols: 120,
+      rows: 40,
       onMessage: jest.fn(),
     });
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      `wss://app.matrix-os.test/ws/terminal/session?session=${SHELL_NAME}&token=ws-token`,
+      `wss://app.matrix-os.test/ws/terminal/session?session=${SHELL_NAME}&client=hard&cols=120&rows=40&lease=exclusive&token=ws-token`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );
@@ -176,12 +248,14 @@ describe("mobile terminal client", () => {
     const terminalClient = new MobileTerminalClient(gateway);
     const connection = await terminalClient.connect({
       sessionId: SHELL_NAME,
+      cols: 120,
+      rows: 40,
       onMessage: jest.fn(),
     });
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      `wss://app.matrix-os.test/ws/terminal/session?session=${SHELL_NAME}`,
+      `wss://app.matrix-os.test/ws/terminal/session?session=${SHELL_NAME}&client=hard&cols=120&rows=40&lease=exclusive`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );

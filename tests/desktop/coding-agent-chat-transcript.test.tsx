@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { mergeLiveThreadEvent } from "../../desktop/src/renderer/src/stores/coding-agent/thread-model";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
@@ -187,6 +188,81 @@ describe("AgentConversationView transcript", () => {
     );
 
     expect(screen.getByText("Reading the failing test now.")).toBeTruthy();
+  });
+
+  it("preserves whitespace, Markdown code boundaries, and multibyte text across same-timestamp live chunks", () => {
+    const occurredAt = "2026-07-15T00:01:00.000Z";
+    const chunks = [
+      { eventId: "evt_z", text: "# Result\n\n你好" },
+      { eventId: "evt_y", text: " 👋\n\n```ts\n" },
+      { eventId: "evt_x", text: "const greeting = \"你好 👋\";\n" },
+      { eventId: "evt_w", text: "```\n\nDone." },
+    ];
+    const live = chunks.reduce(
+      (current, chunk) => mergeLiveThreadEvent(current, {
+        type: "assistant.text.delta",
+        eventId: chunk.eventId,
+        threadId: "thread_alpha",
+        occurredAt,
+        messageId: "msg_multibyte",
+        delta: chunk.text,
+      }),
+      snapshot([]),
+    );
+
+    render(
+      <AgentConversationView status="ready" snapshot={live} error={null} canSendTurns />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Result" })).toBeTruthy();
+    expect(screen.getByText("你好 👋")).toBeTruthy();
+    expect(document.querySelector("pre code")?.textContent).toContain('const greeting = "你好 👋";');
+    expect(screen.getByText("Done.")).toBeTruthy();
+  });
+
+  it("does not let a late delta for completed A mutate A after turn B starts", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          delta("msg_a", "Stable answer.", 1),
+          completedEvent("msg_a"),
+          {
+            type: "turn.accepted",
+            eventId: "evt_turn_b",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:03:00.000Z",
+            turnId: "turn_b",
+            clientRequestId: "req_b",
+            acceptedAt: "2026-07-15T00:03:00.000Z",
+          },
+          {
+            type: "user.message",
+            eventId: "evt_user_b",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:03:00.000Z",
+            messageId: "msg_user_b",
+            text: "Follow-up B",
+            clientRequestId: "req_b",
+            turnId: "turn_b",
+          },
+          {
+            type: "assistant.text.delta",
+            eventId: "evt_late_a",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:04:00.000Z",
+            messageId: "msg_a",
+            delta: " STALE",
+          },
+        ])}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect(screen.getByText("Stable answer.")).toBeTruthy();
+    expect(screen.queryByText(/STALE/)).toBeNull();
+    expect(screen.getByText("Follow-up B")).toBeTruthy();
   });
 
   it("collapses long user messages behind a show-more toggle", () => {

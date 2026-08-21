@@ -5,6 +5,7 @@ import { PendingPersistQueue } from "./output-pipeline.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
 import { createSessionSizing, type SessionSizing, type ShellClientClass, type TerminalSize } from "./sizing.js";
+import { createTerminalLeaseCoordinator } from "./terminal-lease.js";
 import type { ShellAttachProcess } from "./zellij.js";
 import {
   createTerminalOutputCompatStream,
@@ -86,6 +87,8 @@ export interface ShellWsHandlerOptions {
   sizingDebounceMs?: number;
   defaultCanonicalSize?: TerminalSize;
   persistCanonicalSize?: (name: string, size: TerminalSize) => void;
+  /** Enables exclusive live-renderer takeovers for upgraded clients. */
+  leaseCoordinator?: ReturnType<typeof createTerminalLeaseCoordinator>;
 }
 
 export interface ShellWsOpenOptions {
@@ -95,6 +98,7 @@ export interface ShellWsOpenOptions {
   /** Sizing class (spec 107 FR-007): absent = legacy (pre-upgrade client). */
   clientClass?: Exclude<ShellClientClass, "legacy">;
   declaredSize?: TerminalSize;
+  exclusiveLease?: boolean;
 }
 
 export interface ShellWsSession {
@@ -130,11 +134,14 @@ function socketBufferedAmount(ws: ShellWsSocket): number {
 }
 
 interface ConnState {
+  id: string;
+  exclusiveLease: boolean;
+  leaseEpoch: number | null;
   ws: ShellWsSocket;
   openedAt: number;
   lastActivityAt: number;
   closed: boolean;
-  close: () => void;
+  close: () => Promise<void>;
 }
 
 interface SessionRuntime {
@@ -151,9 +158,12 @@ interface SessionRuntime {
   idleCloseTimer: NodeJS.Timeout | null;
   disposed: boolean;
   sizing: SessionSizing | null;
+  cutoverTail: Promise<void>;
+  coordinatedOwnership: boolean;
 }
 
 export function createShellWsHandler(options: ShellWsHandlerOptions) {
+  const leaseCoordinator = options.leaseCoordinator ?? createTerminalLeaseCoordinator();
   const maxBuffers = options.maxBuffers ?? 20;
   const maxAttachedClients = options.maxAttachedClients ?? 8;
   const staleAttachTtlMs = options.staleAttachTtlMs ?? 60_000;
@@ -218,6 +228,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       idleCloseTimer: null,
       disposed: false,
       sizing: null,
+      cutoverTail: Promise.resolve(),
+      coordinatedOwnership: false,
     };
     runtimes.set(name, runtime);
     return runtime;
@@ -231,7 +243,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
     }
     for (const conn of dead) {
-      conn.close();
+      void conn.close();
     }
   }
 
@@ -303,17 +315,21 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     });
   }
 
-  async function closeSharedAttach(
-    runtime: SessionRuntime,
-    warnContext = "final scrollback flush failed",
-    recreateQueue = true,
-  ): Promise<void> {
+  function stopSharedAttach(runtime: SessionRuntime): void {
     const child = runtime.child;
     if (runtime.outputCompat) {
       emitOutput(runtime, runtime.outputCompat.flush());
     }
     clearSharedAttach(runtime);
     child?.kill();
+  }
+
+  async function closeSharedAttach(
+    runtime: SessionRuntime,
+    warnContext = "final scrollback flush failed",
+    recreateQueue = true,
+  ): Promise<void> {
+    stopSharedAttach(runtime);
     await flushAndRotateQueue(runtime, warnContext, recreateQueue);
   }
 
@@ -344,6 +360,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         continue;
       }
       conn.closed = true;
+      if (conn.leaseEpoch !== null) {
+        leaseCoordinator.release(runtime.name, conn.id, conn.leaseEpoch);
+      }
       sendJson(conn.ws, { type: "exit", code: event.exitCode });
     }
     runtime.conns.clear();
@@ -567,7 +586,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       // Free the slot synchronously so a concurrent open cannot observe the
       // evicted conn still occupying capacity while its close settles.
       runtime.conns.delete(stalest);
-      stalest.close();
+      void stalest.close();
       return true;
     }
     sendJson(ws, { type: "error", code: "attach_limit", message: "Too many clients attached" });
@@ -575,7 +594,21 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     return false;
   }
 
-  async function open({ ws, session, fromSeq = 0, clientClass: openOptionsClass, declaredSize }: ShellWsOpenOptions): Promise<ShellWsSession> {
+  async function withCutoverLock<T>(runtime: SessionRuntime, operation: () => Promise<T>): Promise<T> {
+    const prior = runtime.cutoverTail;
+    let release!: () => void;
+    runtime.cutoverTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await prior;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  async function open({ ws, session, fromSeq = 0, clientClass: openOptionsClass, declaredSize, exclusiveLease = false }: ShellWsOpenOptions): Promise<ShellWsSession> {
     const safeName = validateSessionName(session);
     const sessions = await options.registry.list();
     const info = sessions.find((candidate) => candidate.name === safeName);
@@ -595,10 +628,6 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       ws.close?.();
       return { onMessage: () => undefined, onClose: () => undefined };
     }
-    if (!evictStaleOrReject(runtime, ws)) {
-      return { onMessage: () => undefined, onClose: () => undefined };
-    }
-
     const replayBuffer = runtime.buffer;
     if (!runtime.sizing) {
       runtime.sizing = createSessionSizing({
@@ -617,88 +646,35 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     const sizing = runtime.sizing;
     await replayBuffer.ensureSeeded();
 
-    // Re-check capacity: awaits since the first check (seeding, registry
-    // list) allow concurrent opens to race the same last slot.
-    if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
-      return { onMessage: () => undefined, onClose: () => undefined };
-    }
-
     // A hard declaration without a size cannot participate in negotiation;
     // treat it as legacy so it does not disable legacy resize-follow while
     // contributing nothing (review finding on spec 107 FR-007).
     const clientClass: ShellClientClass =
       openOptionsClass === "hard" && !declaredSize ? "legacy" : (openOptionsClass ?? "legacy");
     const connId = `conn-${++connCounter}`;
-    // Register before the shared attach so the first client's pty spawns at
-    // its own declared size instead of the fallback corrected after the
-    // debounce.
-    sizing.attach(connId, clientClass, declaredSize ?? null);
-
-    if (!(await ensureSharedAttach(runtime, safeName, replayBuffer))) {
-      sizing.detach(connId);
-      sendJson(ws, {
-        type: "error",
-        code: "attach_failed",
-        message: "Shell attach failed",
-      });
-      ws.close?.();
-      return { onMessage: () => undefined, onClose: () => undefined };
-    }
-
-    // One or more concurrent opens may have filled the final client slot while
-    // this call awaited the shared attach startup.
-    if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
-      sizing.detach(connId);
-      return { onMessage: () => undefined, onClose: () => undefined };
-    }
-
+    let lease: ReturnType<typeof leaseCoordinator.acquire> | null = null;
+    let sizingRegistered = false;
     const conn: ConnState = {
+      id: connId,
+      exclusiveLease: exclusiveLease,
+      leaseEpoch: null,
       ws,
       openedAt: Date.now(),
       lastActivityAt: Date.now(),
       closed: false,
-      close: () => {
-        void closeSession().finally(() => {
+      close: () =>
+        closeSession().finally(() => {
           ws.close?.();
-        });
-      },
+        }),
     };
-    runtime.conns.add(conn);
-    cancelIdleClose(runtime);
-
-    const effectiveFromSeq = fromSeq === SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
-      ? (await replayBuffer.latestSeq() ?? -1) + 1
-      : fromSeq;
-
-    sendJson(ws, {
-      type: "attached",
-      session: safeName,
-      state: info.status === "exited" ? "exited" : "running",
-      fromSeq: effectiveFromSeq,
-      canonicalSize: sizing.current() ?? sizing.spawnSize(),
-    });
-
-    const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
-    for (const event of await replayBuffer.replayFromSeq(effectiveFromSeq)) {
-      if (event.type === "replay-evicted") {
-        continue;
-      }
-      if (event.type === "output") {
-        const data = replayOutputCompat.write(event.data);
-        if (data.length > 0) {
-          sendJson(ws, { ...event, data });
-        }
-        // A replay chunk can contain only the start of an escape sequence. The
-        // compat stream buffers it and emits bytes with the later completing
-        // chunk, matching the live-output path even when delivered seqs skip.
-        continue;
-      }
-      sendJson(ws, event);
-    }
 
     const detachConn = () => {
       runtime.conns.delete(conn);
-      sizing.detach(connId);
+      if (lease) leaseCoordinator.release(safeName, connId, lease.epoch);
+      if (sizingRegistered) {
+        sizing.detach(connId);
+        sizingRegistered = false;
+      }
       if (runtime.conns.size === 0) {
         scheduleIdleClose(runtime);
       }
@@ -718,11 +694,142 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           }
         }
         runtime.conns.delete(conn);
-        sizing.detach(connId);
+        if (sizingRegistered) {
+          sizing.detach(connId);
+          sizingRegistered = false;
+        }
+        if (lease) leaseCoordinator.release(safeName, connId, lease.epoch);
         await closeSharedAttach(runtime);
         return;
       }
       detachConn();
+    };
+
+    const sendAttachedAndReplay = async (effectiveFromSeq: number): Promise<void> => {
+      sendJson(ws, {
+        type: "attached",
+        session: safeName,
+        state: info.status === "exited" ? "exited" : "running",
+        fromSeq: effectiveFromSeq,
+        canonicalSize: sizing.current() ?? sizing.spawnSize(),
+        ...(lease ? { lease: { epoch: lease.epoch } } : {}),
+      });
+
+      const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
+      for (const event of await replayBuffer.replayFromSeq(effectiveFromSeq)) {
+        if (event.type === "replay-evicted") continue;
+        if (event.type === "output") {
+          const data = replayOutputCompat.write(event.data);
+          if (data.length > 0) sendJson(ws, { ...event, data });
+          continue;
+        }
+        sendJson(ws, event);
+      }
+    };
+
+    const revokeExpiredHolders = async (): Promise<void> => {
+      const closes: Promise<void>[] = [];
+      for (const candidate of [...runtime.conns]) {
+        if (!candidate.exclusiveLease || candidate.leaseEpoch === null || candidate.closed) continue;
+        sendJson(candidate.ws, { type: "lease-revoked", epoch: candidate.leaseEpoch });
+        closes.push(candidate.close());
+      }
+      await Promise.all(closes);
+    };
+
+    const attached = await withCutoverLock(runtime, async () => {
+      if (!canUseRuntime(runtime)) return false;
+      cancelIdleClose(runtime);
+
+      if (!exclusiveLease && !evictStaleOrReject(runtime, ws)) return false;
+
+      if (exclusiveLease) {
+        lease = leaseCoordinator.acquire(safeName, connId, declaredSize ?? sizing.spawnSize());
+        runtime.coordinatedOwnership = true;
+        conn.leaseEpoch = lease.epoch;
+        sizing.attach(connId, clientClass, declaredSize ?? lease.size);
+        sizingRegistered = true;
+        runtime.conns.add(conn);
+
+        for (const prior of [...runtime.conns]) {
+          if (prior === conn) continue;
+          sendJson(prior.ws, { type: "lease-revoked", epoch: prior.leaseEpoch });
+          // Remove every prior sizing registration before computing the
+          // replacement bridge size. Awaiting this makes the cutover ordering
+          // explicit instead of relying on closeSession's synchronous prefix.
+          await prior.close();
+        }
+
+        // The Zellij client owns presentation modes (alternate screen, mouse
+        // reporting, cursor state). Rotate it with the lease so the incoming
+        // renderer receives a complete fresh bootstrap instead of inheriting
+        // an opaque byte-stream tail from the previous renderer.
+        stopSharedAttach(runtime);
+        options.persistCanonicalSize?.(safeName, lease.size);
+        const effectiveFromSeq = (await replayBuffer.latestSeq() ?? -1) + 1;
+        await sendAttachedAndReplay(effectiveFromSeq);
+        sendJson(ws, { type: "presentation-reset" });
+        if (!(await ensureSharedAttach(runtime, safeName, replayBuffer))) {
+          detachConn();
+          sendJson(ws, { type: "error", code: "attach_failed", message: "Shell attach failed" });
+          ws.close?.();
+          return false;
+        }
+        return true;
+      }
+
+      const currentLease = leaseCoordinator.current(safeName);
+      if (!currentLease && runtime.coordinatedOwnership) {
+        // Expiry removes the coordinator record before the connected holder's
+        // socket necessarily observes revocation. Remove that holder's sizing
+        // registration before admitting any later observer.
+        await revokeExpiredHolders();
+      }
+      // Once a session has entered coordinated ownership, non-exclusive
+      // connections are observers even during a lease gap. They must never
+      // re-enter hard-size negotiation merely because the lease expired.
+      const sizingClass = currentLease || runtime.coordinatedOwnership ? "soft" : clientClass;
+      sizing.attach(connId, sizingClass, declaredSize ?? null);
+      sizingRegistered = true;
+      if (!(await ensureSharedAttach(runtime, safeName, replayBuffer))) {
+        sizing.detach(connId);
+        sizingRegistered = false;
+        sendJson(ws, { type: "error", code: "attach_failed", message: "Shell attach failed" });
+        ws.close?.();
+        return false;
+      }
+      if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
+        sizing.detach(connId);
+        sizingRegistered = false;
+        return false;
+      }
+      runtime.conns.add(conn);
+      const effectiveFromSeq = fromSeq === SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
+        ? (await replayBuffer.latestSeq() ?? -1) + 1
+        : fromSeq;
+      await sendAttachedAndReplay(effectiveFromSeq);
+      return true;
+    });
+
+    if (!attached) {
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
+
+    const currentLeaseOrRevokeExpired = () => {
+      const currentLease = leaseCoordinator.current(safeName);
+      if (!currentLease && runtime.coordinatedOwnership) void revokeExpiredHolders();
+      return currentLease;
+    };
+
+    const mayMutate = (resize?: TerminalSize): boolean => {
+      const currentLease = currentLeaseOrRevokeExpired();
+      if (!currentLease) return !runtime.coordinatedOwnership && !conn.exclusiveLease;
+      if (currentLease.holderId !== conn.id || currentLease.epoch !== conn.leaseEpoch) return false;
+      const renewed = resize
+        ? leaseCoordinator.resize(safeName, conn.id, currentLease.epoch, resize) !== null
+        : leaseCoordinator.touch(safeName, conn.id, currentLease.epoch);
+      if (!renewed) void revokeExpiredHolders();
+      return renewed;
     };
 
     return {
@@ -748,6 +855,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
         const msg = result.data;
         if (msg.type === "ping") {
+          if (conn.exclusiveLease && !mayMutate()) return;
+          if (!conn.exclusiveLease) currentLeaseOrRevokeExpired();
           sendJson(ws, { type: "pong" });
           return;
         }
@@ -758,11 +867,13 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "input") {
+          if (!mayMutate()) return;
           runtime.child?.write(msg.data);
           return;
         }
         if (msg.type === "resize") {
           const requested = { cols: msg.cols, rows: msg.rows };
+          if (!mayMutate(requested)) return;
           if (clientClass === "hard") {
             // A desktop-web or CLI hard client changed size: update its
             // declaration and let the arbiter re-pin the shared attach pty
@@ -803,6 +914,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     }
     await Promise.all(drains);
     runtimes.clear();
+    leaseCoordinator.dispose();
   }
 
   return { open, dispose, pendingPersistBytes };

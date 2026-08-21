@@ -427,6 +427,22 @@ describe("EmbedManager", () => {
     expect(manager.setActive("nope", false)).toBe(false);
   });
 
+  it("suspends every live embed while keeping each record reattachable", () => {
+    const { manager, views } = makeManager(3);
+    const first = manager.open("app", "a", BOUNDS, "https://gw.test/a");
+    const second = manager.open("app", "b", BOUNDS, "https://gw.test/b");
+
+    expect(manager.suspendAll()).toBe(true);
+    expect(manager.liveCount).toBe(0);
+    expect(manager.has(first)).toBe(true);
+    expect(manager.has(second)).toBe(true);
+    expect(views[0]?.view.events).toContain("detach");
+    expect(views[1]?.view.events).toContain("detach");
+
+    expect(manager.setActive(first, true)).toBe(true);
+    expect(manager.liveCount).toBe(1);
+  });
+
   it("closeAll destroys every embed including suspended ones", () => {
     const { manager, views } = makeManager(1);
     manager.open("app", "a", BOUNDS, "https://gw.test/a");

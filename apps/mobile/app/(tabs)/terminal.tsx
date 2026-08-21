@@ -3,9 +3,11 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Easing,
   Keyboard,
   Linking,
+  Pressable,
   Text,
   useWindowDimensions,
   View,
@@ -65,6 +67,12 @@ export default function TerminalScreen() {
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [chromeExpanded, setChromeExpanded] = useState(false);
+  const [leaseRevoked, setLeaseRevoked] = useState(false);
+  // React Native may report null briefly while the bridge initializes. Treat
+  // that startup window as active; subsequent AppState events are authoritative.
+  const [appState, setAppState] = useState(AppState.currentState ?? "active");
+  const [focusKnown, setFocusKnown] = useState(false);
+  const [statusBarFocused, setStatusBarFocused] = useState(false);
   const terminalClient = useMemo(() => (client ? new MobileTerminalClient(client) : null), [client]);
   const connectionRef = useRef<MobileTerminalConnection | null>(null);
   const connectAttemptRef = useRef(0);
@@ -73,6 +81,9 @@ export default function TerminalScreen() {
   // The session whose live output is currently streaming, so output frames land
   // in the right scrollback cache bucket (state.activeSessionId lags in closures).
   const attachedSessionIdRef = useRef<string | null>(null);
+  // The requested session is retained across a focus/background cutover even
+  // if the socket was cancelled before its attached frame arrived.
+  const targetSessionIdRef = useRef<string | null>(null);
   const keyboardLift = useRef(new Animated.Value(0)).current;
   // Cursor-aware keyboard lift: the emulator reports the cursor's bottom edge
   // (surface-local px); combined with the surface's window offset we lift only
@@ -81,6 +92,14 @@ export default function TerminalScreen() {
   const surfaceWindowTopRef = useRef(0);
   const surfaceWrapRef = useRef<View | null>(null);
   const keyboardFrameRef = useRef<{ keyboardTopY: number; maxLift: number } | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      setFocusKnown(true);
+      setStatusBarFocused(true);
+      return () => setStatusBarFocused(false);
+    }, []),
+  );
 
   // Detected-URL banner state. Refs hold the rolling scan window + recent list;
   // only the surfaced URL drives a render.
@@ -150,6 +169,11 @@ export default function TerminalScreen() {
   }, [loadSessions]);
 
   useEffect(() => {
+    const subscription = AppState.addEventListener("change", setAppState);
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
     loadMobileShellState()
       .then((saved) => {
         setLastTerminalSessionId(saved.lastActiveTerminalSessionId);
@@ -182,11 +206,16 @@ export default function TerminalScreen() {
 
   const handleFrame = useCallback((frame: TerminalServerFrame) => {
     if (frame.type === "attached") {
+      setLeaseRevoked(false);
       surfaceRef.current?.clear();
+      if (frame.canonicalSize) {
+        surfaceRef.current?.resize(frame.canonicalSize.cols, frame.canonicalSize.rows);
+      }
       if (frame.replay) surfaceRef.current?.write(frame.replay);
       // The gateway replay is authoritative and just repainted the cleared
       // surface, so any cached preview is now superseded — reset the cache to it.
       attachedSessionIdRef.current = frame.sessionId;
+      targetSessionIdRef.current = frame.sessionId;
       resetScrollback(frame.sessionId, frame.replay ?? "");
       if (frame.replay) scanForUrls(frame.replay);
       dispatch({
@@ -211,6 +240,25 @@ export default function TerminalScreen() {
       loadSessions();
       return;
     }
+    if (frame.type === "canonical-size") {
+      surfaceRef.current?.resize(frame.cols, frame.rows);
+      return;
+    }
+    if (frame.type === "presentation-reset") {
+      surfaceRef.current?.reset();
+      if (attachedSessionIdRef.current) resetScrollback(attachedSessionIdRef.current, "");
+      resetUrlDetection();
+      dispatch({ type: "reset.output" });
+      return;
+    }
+    if (frame.type === "lease-revoked") {
+      setLeaseRevoked(true);
+      connectingRef.current = false;
+      connectionRef.current?.close();
+      connectionRef.current = null;
+      dispatch({ type: "connection.changed", status: "detached" });
+      return;
+    }
     if (frame.type === "output") {
       surfaceRef.current?.write(frame.data);
       if (attachedSessionIdRef.current) appendScrollback(attachedSessionIdRef.current, frame.data);
@@ -221,6 +269,7 @@ export default function TerminalScreen() {
     if (frame.type === "exit") {
       if (attachedSessionIdRef.current) clearScrollback(attachedSessionIdRef.current);
       attachedSessionIdRef.current = null;
+      targetSessionIdRef.current = null;
       dispatch({ type: "terminal.ended", exitCode: frame.exitCode });
       setLastTerminalSessionId(null);
       loadSessions();
@@ -229,7 +278,7 @@ export default function TerminalScreen() {
     if (frame.type === "error") {
       dispatch({ type: "terminal.error", message: frame.message ?? "Terminal unavailable" });
     }
-  }, [loadSessions, scanForUrls]);
+  }, [loadSessions, resetUrlDetection, scanForUrls]);
 
   const clearTerminalHandoff = useCallback(() => {
     setTerminalHandoffSessionId(null);
@@ -254,6 +303,7 @@ export default function TerminalScreen() {
     const attemptId = connectAttemptRef.current + 1;
     connectAttemptRef.current = attemptId;
     connectingRef.current = true;
+    if (sessionId) targetSessionIdRef.current = sessionId;
     connectionRef.current?.detach();
     connectionRef.current = null;
     dispatch({ type: "connection.changed", status: "connecting" });
@@ -273,6 +323,7 @@ export default function TerminalScreen() {
         }
       }
       if (connectAttemptRef.current !== attemptId) return;
+      targetSessionIdRef.current = targetName;
       // New session view: drop the previous session's detected-URL banner; the
       // attach replay below re-scans this session's history.
       resetUrlDetection();
@@ -320,10 +371,10 @@ export default function TerminalScreen() {
   }, [handleFrame, resetUrlDetection, terminalClient]);
 
   const sendData = useCallback((data: string) => {
-    if (!data) return;
+    if (!data || leaseRevoked) return;
     const sent = connectionRef.current?.sendInput(data) ?? false;
     if (!sent) dispatch({ type: "terminal.error", message: "Terminal unavailable" });
-  }, []);
+  }, [leaseRevoked]);
 
   const animateKeyboardLift = useCallback((event: KeyboardEvent | null, lift: number) => {
     Animated.timing(keyboardLift, {
@@ -397,6 +448,7 @@ export default function TerminalScreen() {
       clearScrollback(sessionId);
     }
     attachedSessionIdRef.current = null;
+    targetSessionIdRef.current = null;
     resetUrlDetection();
     connectAttemptRef.current += 1;
     connectingRef.current = false;
@@ -445,8 +497,10 @@ export default function TerminalScreen() {
   // running session, attach to it automatically (once). Picking a session from
   // the Sessions screen updates the persisted last session, so it lands here.
   const autoConnectedRef = useRef(false);
+  const appIsActive = appState !== "background" && appState !== "inactive";
   useEffect(() => {
     if (autoConnectedRef.current) return;
+    if (!focusKnown || !statusBarFocused || !appIsActive) return;
     if (!terminalResumeLoaded || !sessionsLoaded) return;
     if (state.status !== "idle") return;
     if (terminalHandoffSessionId && !handoffRunningSession) {
@@ -460,11 +514,14 @@ export default function TerminalScreen() {
     connectSession(autoAttachSession.sessionId);
   }, [
     autoAttachSession,
+    appIsActive,
     clearTerminalHandoff,
     connectSession,
+    focusKnown,
     handoffRunningSession,
     sessionsLoaded,
     state.status,
+    statusBarFocused,
     terminalHandoffSessionId,
     terminalResumeLoaded,
   ]);
@@ -474,13 +531,38 @@ export default function TerminalScreen() {
   // unconditioned <StatusBar> here would leak light style onto every other
   // tab; declarative mount/unmount hands control back to the root's dark bar
   // (imperative setStatusBarStyle gets overridden by later component updates).
-  const [statusBarFocused, setStatusBarFocused] = useState(false);
-  useFocusEffect(
-    useCallback(() => {
-      setStatusBarFocused(true);
-      return () => setStatusBarFocused(false);
-    }, []),
-  );
+  const presentationActive = focusKnown && statusBarFocused && appIsActive;
+
+  useEffect(() => {
+    if (!focusKnown) return;
+    if (!presentationActive) {
+      if (connectionRef.current || connectingRef.current) {
+        connectAttemptRef.current += 1;
+        connectingRef.current = false;
+        connectionRef.current?.detach();
+        connectionRef.current = null;
+        dispatch({ type: "connection.changed", status: "detached" });
+      }
+      return;
+    }
+    const resumableSessionId = state.activeSessionId ?? targetSessionIdRef.current;
+    if (
+      leaseRevoked
+      || connectionRef.current
+      || connectingRef.current
+      || !resumableSessionId
+      || state.status !== "detached"
+    ) {
+      return;
+    }
+    void connectSession(resumableSessionId);
+  }, [connectSession, focusKnown, leaseRevoked, presentationActive, state.activeSessionId, state.status]);
+
+  const resumeHere = useCallback(() => {
+    if (!state.activeSessionId || !presentationActive) return;
+    setLeaseRevoked(false);
+    void connectSession(state.activeSessionId);
+  }, [connectSession, presentationActive, state.activeSessionId]);
 
   return (
     <View style={styles.screen}>
@@ -519,6 +601,18 @@ export default function TerminalScreen() {
             onResize={handleResize}
             onCursor={handleCursor}
           />
+          {leaseRevoked ? (
+            <View style={styles.leaseOverlay}>
+              <Text style={styles.leaseTitle}>Live on another device.</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={resumeHere}
+                style={styles.resumeButton}
+              >
+                <Text style={styles.resumeButtonText}>Resume here</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {state.status === "idle" ? (
             <View style={styles.emptyOverlay} pointerEvents="none">
               <Text style={styles.emptyTitle}>No terminal session</Text>
@@ -647,6 +741,31 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.terminal.fgDim,
     fontSize: 13,
     lineHeight: 18,
+  },
+  leaseOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    paddingHorizontal: 28,
+    backgroundColor: "rgba(15, 23, 42, 0.82)",
+  },
+  leaseTitle: {
+    fontFamily: theme.fonts.sansMedium,
+    color: theme.terminal.fg,
+    fontSize: 14,
+  },
+  resumeButton: {
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    backgroundColor: theme.colors.primary,
+  },
+  resumeButtonText: {
+    fontFamily: theme.fonts.sansBold,
+    color: theme.colors.primaryForeground,
+    fontSize: 13,
   },
   errorBar: {
     marginHorizontal: 14,
