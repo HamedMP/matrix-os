@@ -17,3 +17,11 @@ export function openTerminalIndex(): void {
 export function openProjectsIndex(): void {
   useTabs.getState().openTab({ kind: "projects", title: "Projects", closable: false });
 }
+
+export function returnToProjectsIndex(): void {
+  useTabs.getState().openTabAtHistoryRoot({
+    kind: "projects",
+    title: "Projects",
+    closable: false,
+  });
+}

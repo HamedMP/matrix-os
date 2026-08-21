@@ -169,7 +169,11 @@ describe("Desktop navigation header", () => {
   });
 
   it("returns from a directly opened Project task to the Projects list before older history", () => {
-    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    const homeTabId = useTabs.getState().openTab({
+      kind: "home",
+      title: "Home",
+      closable: false,
+    });
     useTabs.getState().openTab({
       kind: "task",
       projectSlug: "matrix-os",
@@ -182,6 +186,49 @@ describe("Desktop navigation header", () => {
 
     expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent)
       .toBe("HomeProjects");
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    expect(useTabs.getState().activeTabId).toBe(homeTabId);
+  });
+
+  it("returns through an existing Projects root without looping back to a task", () => {
+    const homeTabId = useTabs.getState().openTab({
+      kind: "home",
+      title: "Home",
+      closable: false,
+    });
+    const projectsTabId = useTabs.getState().openTab({
+      kind: "projects",
+      title: "Projects",
+      closable: false,
+    });
+    useTabs.getState().openTab({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+    });
+    useTabs.getState().openTab({
+      kind: "task",
+      projectSlug: "matrix-os",
+      taskId: "MAT-466",
+      title: "Fix Desktop navigation",
+    });
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    expect(useTabs.getState()).toMatchObject({
+      activeTabId: projectsTabId,
+      historyIndex: 1,
+    });
+    expect(useTabs.getState().viewHistory).toHaveLength(4);
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    expect(useTabs.getState().activeTabId).toBe(homeTabId);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent)
+      .toBe("Home");
   });
 
   it("moves backward through an existing Projects list history entry without adding a loop", () => {

@@ -11,7 +11,12 @@ import { useTabs, type Tab } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
-import { openChatIndex, openProjectsIndex, openTerminalIndex } from "./navigation-roots";
+import {
+  openChatIndex,
+  openProjectsIndex,
+  openTerminalIndex,
+  returnToProjectsIndex,
+} from "./navigation-roots";
 
 interface BreadcrumbItem {
   key: string;
@@ -169,11 +174,7 @@ export default function NavigationHeader() {
       return;
     }
     if (canReturnToProjectsIndex) {
-      if (previousTab?.kind === "projects") {
-        goBack();
-      } else {
-        openProjectsIndex();
-      }
+      returnToProjectsIndex();
       return;
     }
     goBack();

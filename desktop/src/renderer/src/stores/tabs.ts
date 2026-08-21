@@ -123,6 +123,9 @@ interface TabsState {
   terminalSessionRequestSequence: number;
   terminalIndexRequestId: number;
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
+  openTabAtHistoryRoot(
+    spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
+  ): string;
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
   focusTab(id: string): void;
@@ -193,6 +196,30 @@ export const useTabs = create<TabsState>()((set, get) => ({
         tabs,
         activeTabId: id,
         ...recordHistory(pruned.viewHistory, pruned.historyIndex, id),
+      };
+    });
+    return id;
+  },
+
+  openTabAtHistoryRoot: (spec) => {
+    const previousState = get();
+    const id = previousState.openTab(spec);
+    set((state) => {
+      const retainedTabIds = new Set(state.tabs.map((tab) => tab.id));
+      const priorHistory = previousState.viewHistory
+        .slice(0, previousState.historyIndex + 1)
+        .filter((tabId) => retainedTabIds.has(tabId));
+      const earlierRootIndex = priorHistory.lastIndexOf(id, priorHistory.length - 2);
+      if (earlierRootIndex >= 0) {
+        return {
+          activeTabId: id,
+          ...historyPatch(priorHistory, earlierRootIndex),
+        };
+      }
+      const replaced = [...priorHistory.slice(0, -1), id].slice(-MAX_VIEW_HISTORY);
+      return {
+        activeTabId: id,
+        ...historyPatch(replaced, replaced.length - 1),
       };
     });
     return id;
