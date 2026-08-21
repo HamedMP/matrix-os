@@ -14,7 +14,8 @@ The following clients participate in gateway-coordinated ownership:
 
 - the focused browser Terminal in Canvas or Desktop mode, including the mobile
   web shell;
-- the native desktop app's Terminal tab; and
+- the native desktop app's Terminal tab;
+- the focused native mobile Terminal tab; and
 - the Matrix CLI using `mos shell attach <session>`.
 
 For example, attach the local CLI to the same `main` session shown by Matrix:
@@ -30,11 +31,11 @@ the canonical rows and columns; another renderer must explicitly resume the
 session to transfer ownership. Lease expiry fails closed and does not make a
 background observer writable.
 
-The separate native-mobile terminal client is gateway-routed but does not yet
-implement the lease, canonical-size, revocation, and resume contract. Treat it
-as a non-owner for a session that has entered coordinated ownership. Interactive
-native-mobile takeover requires extending that client with the same protocol;
-it must not introduce a second ownership model.
+The native mobile client declares its measured xterm grid as a hard renderer,
+releases ownership when its Terminal tab loses focus or the app backgrounds,
+and reacquires ownership when the user returns. If another renderer takes over
+while mobile is visible, mobile closes the displaced socket and requires an
+explicit **Resume here** action before it requests a new exclusive lease.
 
 ## Direct Zellij attachment
 

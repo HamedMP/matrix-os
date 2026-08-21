@@ -18,6 +18,8 @@ import { FIT_ADDON_JS, XTERM_CSS, XTERM_JS } from "@/components/terminal/xterm-b
 export interface TerminalSurfaceHandle {
   write: (data: string) => void;
   clear: () => void;
+  reset: () => void;
+  resize: (cols: number, rows: number) => void;
   focus: () => void;
   blur: () => void;
   scrollLines: (lines: number) => void;
@@ -245,6 +247,15 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         clear: () => {
           pendingRef.current = [];
           inject("window.__term && window.__term.clear()");
+        },
+        reset: () => {
+          pendingRef.current = [];
+          inject("window.__term && window.__term.reset()");
+        },
+        resize: (cols: number, rows: number) => {
+          if (!Number.isInteger(cols) || !Number.isInteger(rows)) return;
+          if (cols < 1 || cols > 500 || rows < 1 || rows > 200) return;
+          inject(`window.__term && window.__term.resize(${cols},${rows})`);
         },
         focus: () => inject("window.__matrixTerminal && window.__matrixTerminal.focus()"),
         blur: () => inject("window.__matrixTerminal && window.__matrixTerminal.blur()"),
