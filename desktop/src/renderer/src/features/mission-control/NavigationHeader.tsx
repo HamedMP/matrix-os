@@ -100,7 +100,7 @@ function HeaderButton({
       aria-label={label}
       title={label}
       disabled={disabled}
-      className="no-drag relative -mx-[5px] inline-flex h-7 w-6 items-center justify-center rounded-sm text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-35"
+      className="no-drag relative -mx-1 inline-flex h-7 w-6 items-center justify-center rounded-sm text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-35"
       onClick={onClick}
     >
       <span
