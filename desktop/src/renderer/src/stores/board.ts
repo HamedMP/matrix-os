@@ -39,6 +39,7 @@ export interface Project {
   archivedAt?: string;
   localPath?: string;
   githubBacked?: boolean;
+  github?: { owner: string; repo: string };
 }
 
 export const BOARD_COLUMNS: readonly CardStatus[] = [
@@ -90,6 +91,7 @@ export function parseProject(raw: unknown): Project | null {
     ...(parsed.data.localPath
       ? { localPath: parsed.data.localPath, githubBacked: parsed.data.github !== undefined }
       : {}),
+    ...(parsed.data.github ? { github: parsed.data.github } : {}),
   };
 }
 

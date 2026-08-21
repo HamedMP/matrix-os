@@ -23,6 +23,14 @@ function conversation(id: string) {
   };
 }
 
+const readyContext = {
+  projectId: "matrix-os",
+  projectName: "Matrix OS",
+  projectKind: "github" as const,
+  repositoryLabel: "FinnaAI/matrix-os",
+  status: "ready" as const,
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -102,6 +110,7 @@ describe("useHermesChat", () => {
         messageCount: 2,
         createdAt: 30,
         updatedAt: 40,
+        context: readyContext,
       },
       {
         id: "../invalid",
@@ -125,6 +134,7 @@ describe("useHermesChat", () => {
           preview: expect.stringMatching(/^Newest conversation/),
           messageCount: 2,
           updatedAt: 40,
+          context: readyContext,
         },
         {
           id: "conversation-old",
@@ -194,6 +204,7 @@ describe("useHermesChat", () => {
       id: "conversation-two",
       createdAt: 10,
       updatedAt: 30,
+      context: readyContext,
       totalCount: 2,
       messages: [
         { index: 0, role: "user", content: "hello", contentTruncated: false, timestamp: 10 },
@@ -213,10 +224,129 @@ describe("useHermesChat", () => {
       sessionId: "conversation-two",
       loadStatus: "idle",
       loadError: null,
+      conversationContext: readyContext,
       messages: [
         { id: "conversation-two:0", role: "user", content: "hello", timestamp: 10 },
         { id: "conversation-two:1", role: "assistant", content: "hi", timestamp: 20 },
       ],
+    });
+  });
+
+  it("persists and clears the selected project through the strict context route", async () => {
+    const patch = vi.fn()
+      .mockResolvedValueOnce({ context: readyContext })
+      .mockResolvedValueOnce({ context: null });
+    const api = { patch } as never;
+
+    await expect(
+      useHermesChat.getState().updateConversationContext(api, "conversation-one", "matrix-os"),
+    ).resolves.toBe(true);
+    expect(patch).toHaveBeenNthCalledWith(
+      1,
+      "/api/conversations/conversation-one/context",
+      { projectId: "matrix-os" },
+    );
+    expect(useHermesChat.getState()).toMatchObject({
+      conversationContext: readyContext,
+      contextStatus: "ready",
+      contextError: null,
+    });
+
+    await expect(
+      useHermesChat.getState().updateConversationContext(api, "conversation-one", null),
+    ).resolves.toBe(true);
+    expect(patch).toHaveBeenNthCalledWith(
+      2,
+      "/api/conversations/conversation-one/context",
+      { projectId: null },
+    );
+    expect(useHermesChat.getState()).toMatchObject({
+      conversationContext: null,
+      contextStatus: "ready",
+      contextError: null,
+    });
+  });
+
+  it("preserves the previous context when the response shape is not strict", async () => {
+    useHermesChat.setState({ conversationContext: readyContext });
+    const patch = vi.fn().mockResolvedValue({
+      context: readyContext,
+      localPath: "/private/repository",
+    });
+
+    await expect(useHermesChat.getState().updateConversationContext(
+      { patch } as never,
+      "conversation-one",
+      "matrix-os",
+    )).resolves.toBe(false);
+
+    expect(useHermesChat.getState()).toMatchObject({
+      conversationContext: readyContext,
+      contextStatus: "error",
+      contextError: "Project context could not be updated. Try again.",
+    });
+  });
+
+  it.each([
+    ["conversation_busy", "Stop the active response before changing its project."],
+    ["project_unavailable", "That project is unavailable. Choose another project."],
+    ["conversation_context_unavailable", "Project context is unavailable. Choose another project or remove it."],
+  ])("allowlists the %s context mutation error", async (code, message) => {
+    useHermesChat.setState({ conversationContext: readyContext });
+    const patch = vi.fn().mockRejectedValue(new AppError("server", { detail: code }));
+
+    await expect(useHermesChat.getState().updateConversationContext(
+      { patch } as never,
+      "conversation-one",
+      "matrix-os",
+    )).resolves.toBe(false);
+
+    expect(useHermesChat.getState()).toMatchObject({
+      conversationContext: readyContext,
+      contextStatus: "error",
+      contextError: message,
+    });
+  });
+
+  it("suppresses duplicate context mutations", async () => {
+    const pending = deferred<{ context: typeof readyContext }>();
+    const patch = vi.fn(() => pending.promise);
+    const api = { patch } as never;
+
+    const first = useHermesChat.getState().updateConversationContext(
+      api,
+      "conversation-one",
+      "matrix-os",
+    );
+    await expect(useHermesChat.getState().updateConversationContext(
+      api,
+      "conversation-one",
+      null,
+    )).resolves.toBe(false);
+    expect(patch).toHaveBeenCalledTimes(1);
+
+    pending.resolve({ context: readyContext });
+    await expect(first).resolves.toBe(true);
+  });
+
+  it("discards a context mutation that settles after a runtime reset", async () => {
+    const pending = deferred<{ context: typeof readyContext }>();
+    const mutation = useHermesChat.getState().updateConversationContext(
+      { patch: vi.fn(() => pending.promise) } as never,
+      "conversation-one",
+      "matrix-os",
+    );
+
+    advanceRuntimeGeneration();
+    useHermesChat.getState().resetRuntime();
+    pending.resolve({ context: readyContext });
+
+    await expect(mutation).resolves.toBe(false);
+    expect(useHermesChat.getState()).toMatchObject({
+      sessionId: null,
+      conversationContext: null,
+      contextStatus: "idle",
+      contextError: null,
     });
   });
 

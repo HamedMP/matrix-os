@@ -28,6 +28,19 @@ describe("MainWsClientMessageSchema", () => {
     }
   });
 
+  it.each(["workingDirectory", "path", "localPath"])(
+    "rejects the client-controlled %s path field",
+    (field) => {
+      const result = MainWsClientMessageSchema.safeParse({
+        type: "message",
+        text: "hello",
+        [field]: "/private/project",
+      });
+
+      expect(result.success).toBe(false);
+    },
+  );
+
   it.each([
     ["model", "not-an-allowlisted-model"],
     ["effort", "extreme"],

@@ -1,13 +1,75 @@
 import { describe, expect, it } from "vitest";
 import {
+  KernelConversationContextProjectionSchema,
+  KernelConversationContextUpdateSchema,
   KernelConversationDeleteResponseSchema,
   KernelConversationHistoryQuerySchema,
   KernelConversationHistoryResponseSchema,
   KernelConversationIdSchema,
   KernelConversationMutationErrorCodeSchema,
+  KernelConversationSummarySchema,
 } from "../../packages/contracts/src/index.js";
 
 describe("kernel conversation contracts", () => {
+  it("strictly bounds canonical project context updates and safe projections", () => {
+    expect(KernelConversationContextUpdateSchema.parse({ projectId: "matrix-os" }))
+      .toEqual({ projectId: "matrix-os" });
+    expect(KernelConversationContextUpdateSchema.parse({ projectId: null }))
+      .toEqual({ projectId: null });
+    expect(KernelConversationContextUpdateSchema.safeParse({
+      projectId: "matrix-os",
+      localPath: "/private/repository",
+    }).success).toBe(false);
+
+    const context = {
+      projectId: "matrix-os",
+      projectName: "Matrix OS",
+      projectKind: "github",
+      repositoryLabel: "FinnaAI/matrix-os",
+      status: "ready",
+    } as const;
+    expect(KernelConversationContextProjectionSchema.parse(context)).toEqual(context);
+    expect(KernelConversationContextProjectionSchema.safeParse({
+      ...context,
+      workingDirectory: "/private/repository",
+    }).success).toBe(false);
+  });
+
+  it("includes only safe optional context in conversation summaries and history", () => {
+    const context = {
+      projectId: "matrix-os",
+      projectName: "Matrix OS",
+      projectKind: "github",
+      repositoryLabel: "FinnaAI/matrix-os",
+      status: "unavailable",
+    } as const;
+    const summary = {
+      id: "conversation-1",
+      preview: "Inspect the repository",
+      messageCount: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      context,
+    };
+    const history = {
+      id: "conversation-1",
+      createdAt: 1,
+      updatedAt: 2,
+      totalCount: 0,
+      messages: [],
+      hasMore: false,
+      limit: 50,
+      context,
+    };
+
+    expect(KernelConversationSummarySchema.parse(summary)).toEqual(summary);
+    expect(KernelConversationHistoryResponseSchema.parse(history)).toEqual(history);
+    expect(KernelConversationSummarySchema.safeParse({
+      ...summary,
+      context: { ...context, localPath: "/private/repository" },
+    }).success).toBe(false);
+  });
+
   it("accepts bounded Matrix conversation identifiers", () => {
     expect(KernelConversationIdSchema.parse("mobile:123e4567-e89b-12d3-a456-426614174000"))
       .toBe("mobile:123e4567-e89b-12d3-a456-426614174000");

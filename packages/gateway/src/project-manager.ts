@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
@@ -250,6 +250,64 @@ async function isManagedProjectContainer(homePath: string, resolvedPath: string)
   // the project/worktree APIs. An unrelated owner checkout is not blocked
   // merely because one of its own directories happens to be named worktrees.
   return segments.length === 1 || segments[1] === "worktrees";
+}
+
+async function resolveEligibleProjectWorkingDirectory(
+  homePath: string,
+  project: ProjectConfig,
+): Promise<string | null> {
+  try {
+    const lexicalPath = resolve(project.localPath);
+    const stats = await lstat(lexicalPath);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return null;
+
+    const realHomePath = await realpath(homePath);
+    const realLocalPath = await realpath(lexicalPath);
+    const relativeToHome = relative(realHomePath, realLocalPath);
+    if (
+      relativeToHome === ""
+      || relativeToHome.startsWith(`..${sep}`)
+      || relativeToHome === ".."
+      || isAbsolute(relativeToHome)
+      || isProtectedFolderProjectPath(realHomePath, realLocalPath)
+      || containsDeniedFileApiPath(realHomePath, realLocalPath)
+    ) {
+      return null;
+    }
+
+    const projectsRoot = join(realHomePath, "projects");
+    if (project.kind !== "folder") {
+      const managedRoot = join(projectsRoot, project.slug, "repo");
+      return realLocalPath === managedRoot || realLocalPath.startsWith(`${managedRoot}${sep}`)
+        ? realLocalPath
+        : null;
+    }
+
+    const registryEntry = join(projectsRoot, project.slug);
+    if (
+      realLocalPath === registryEntry
+      || realLocalPath.startsWith(`${registryEntry}${sep}`)
+      || registryEntry.startsWith(`${realLocalPath}${sep}`)
+    ) {
+      return null;
+    }
+    const relativeToRegistry = relative(projectsRoot, realLocalPath);
+    if (
+      relativeToRegistry !== ""
+      && !relativeToRegistry.startsWith("..")
+      && !isAbsolute(relativeToRegistry)
+    ) {
+      const segments = relativeToRegistry.split(sep);
+      if (segments.length === 1 || segments[1] !== "repo") return null;
+    }
+    return realLocalPath;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") return null;
+    }
+    throw error;
+  }
 }
 
 function classifyLegacyProject(homePath: string, config: Omit<ProjectConfig, "kind">): ProjectKind {
@@ -595,15 +653,27 @@ export function createProjectManager(options: {
       return { projects, nextCursor: null };
     },
 
-    async getProject(slug: string, ownerScope?: OwnerScope): Promise<Result<{ project: ProjectConfig }> | Failure> {
+    async getProject(
+      slug: string,
+      ownerScope?: OwnerScope,
+    ): Promise<Result<{ project: ProjectConfig }> | Failure> {
       if (!SlugSchema.safeParse(slug).success) {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
       const project = await readProjectConfig(homePath, slug);
-      if (!project || !ownerScopeMatches(project.ownerScope, ownerScope) || project.archivedAt || project.deletingAt) {
+      if (
+        !project
+        || !ownerScopeMatches(project.ownerScope, ownerScope)
+        || project.archivedAt
+        || project.deletingAt
+      ) {
         return genericError(404, "not_found", "Project was not found");
       }
       return { ok: true, project };
+    },
+
+    async resolveProjectWorkingDirectory(project: ProjectConfig): Promise<string | null> {
+      return resolveEligibleProjectWorkingDirectory(homePath, project);
     },
 
     async getProjectForLifecycle(input: {

@@ -247,6 +247,33 @@ export const KernelConversationIdSchema = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/, "Invalid conversation id")
   .refine((value) => !value.includes(".."), { message: "Invalid conversation id" });
 
+const KernelConversationContextLabelSchema = (maxChars: number) => boundedDisplayText(maxChars)
+  .refine(
+    (value) => !value.startsWith("/") && !value.startsWith("\\") && !/^[A-Za-z]:[\\/]/.test(value),
+    { message: "Context labels cannot be absolute paths" },
+  );
+
+export const KernelConversationContextUpdateSchema = z.object({
+  projectId: ProjectIdSchema.nullable(),
+}).strict();
+
+export const KernelConversationContextProjectionSchema = z.object({
+  projectId: ProjectIdSchema,
+  projectName: KernelConversationContextLabelSchema(160),
+  projectKind: z.enum(["scratch", "github", "folder"]),
+  repositoryLabel: KernelConversationContextLabelSchema(200).optional(),
+  status: z.enum(["ready", "unavailable"]),
+}).strict();
+
+export const KernelConversationSummarySchema = z.object({
+  id: KernelConversationIdSchema,
+  preview: z.string().max(32_000),
+  messageCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  context: KernelConversationContextProjectionSchema.optional(),
+}).strict();
+
 export const KernelConversationHistoryQuerySchema = z.object({
   cursor: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(50),
@@ -265,6 +292,7 @@ export const KernelConversationHistoryResponseSchema = z.object({
   id: KernelConversationIdSchema,
   createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  context: KernelConversationContextProjectionSchema.optional(),
   totalCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   messages: z.array(KernelConversationHistoryMessageSchema).max(50),
   hasMore: z.boolean(),
@@ -283,12 +311,21 @@ export const KernelConversationDeleteResponseSchema = z.object({
 
 export const KernelConversationMutationErrorCodeSchema = z.enum([
   "invalid_conversation_id",
+  "invalid_conversation_context",
   "conversation_not_found",
   "conversation_busy",
   "conversation_delete_unavailable",
+  "project_unavailable",
+  "project_context_conflict",
+  "conversation_context_unavailable",
 ]);
 
 export type KernelConversationId = z.infer<typeof KernelConversationIdSchema>;
+export type KernelConversationContextUpdate = z.infer<typeof KernelConversationContextUpdateSchema>;
+export type KernelConversationContextProjection = z.infer<
+  typeof KernelConversationContextProjectionSchema
+>;
+export type KernelConversationSummary = z.infer<typeof KernelConversationSummarySchema>;
 export type KernelConversationHistoryQuery = z.infer<typeof KernelConversationHistoryQuerySchema>;
 export type KernelConversationHistoryMessage = z.infer<typeof KernelConversationHistoryMessageSchema>;
 export type KernelConversationHistoryResponse = z.infer<typeof KernelConversationHistoryResponseSchema>;
