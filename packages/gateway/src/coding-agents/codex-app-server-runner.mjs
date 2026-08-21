@@ -165,13 +165,9 @@ const ItemLifecycleSchema = z.object({
 const TurnCompletedSchema = z.object({
   method: z.literal("turn/completed"),
   params: z.object({
-    turn: z.object({ status: z.string().max(80).optional() }).passthrough(),
-  }).passthrough(),
-}).passthrough();
-const TurnFailedSchema = z.object({
-  method: z.enum(["turn/failed", "turn/cancelled"]),
-  params: z.object({
-    turn: z.object({ status: z.string().max(80).optional() }).passthrough().optional(),
+    turn: z.object({
+      status: z.enum(["completed", "interrupted", "failed", "inProgress"]),
+    }).passthrough(),
   }).passthrough(),
 }).passthrough();
 const RpcResponseSchema = z.object({
@@ -623,12 +619,7 @@ async function handleProviderMessage(raw) {
   }
   const completed = TurnCompletedSchema.safeParse(raw);
   if (completed.success) {
-    await finishTurn("completed");
-    return;
-  }
-  const failed = TurnFailedSchema.safeParse(raw);
-  if (failed.success) {
-    await finishTurn("failed");
+    await finishTurn(completed.data.params.turn.status === "completed" ? "completed" : "failed");
   }
 }
 

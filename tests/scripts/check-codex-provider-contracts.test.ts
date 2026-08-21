@@ -16,6 +16,7 @@ describe("Codex provider contract checker", () => {
     const execSchema = Buffer.from("thread.started\nturn.completed\nitem.started", "utf8");
     const appServerSchema = Buffer.from(JSON.stringify({
       methods: ["item/commandExecution/requestApproval", "item/tool/requestUserInput"],
+      notifications: ["item/started", "item/completed", "turn/completed"],
     }), "utf8");
     const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
     const execContract = {
@@ -30,6 +31,7 @@ describe("Codex provider contract checker", () => {
         "item/commandExecution/requestApproval",
         "item/tool/requestUserInput",
       ],
+      requiredServerNotifications: ["item/started", "item/completed", "turn/completed"],
     };
 
     expect(() => verifyCodexProviderContracts({
@@ -47,6 +49,17 @@ describe("Codex provider contract checker", () => {
       execSchemaBytes: execSchema,
       appServerSchemaBytes: appServerSchema,
     })).toThrow("Codex exec event is unavailable: turn.failed");
+
+    expect(() => verifyCodexProviderContracts({
+      version,
+      execContract,
+      appServerContract: {
+        ...appServerContract,
+        requiredServerNotifications: ["item/started", "turn/failed"],
+      },
+      execSchemaBytes: execSchema,
+      appServerSchemaBytes: appServerSchema,
+    })).toThrow("Codex app-server notification is unavailable: turn/failed");
 
     expect(() => verifyCodexProviderContracts({
       version,
