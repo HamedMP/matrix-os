@@ -241,6 +241,27 @@ describe("Codex structured event runtime", () => {
     }
   });
 
+  it("refuses an older verified version when the runner is pinned to the latest lifecycle contract", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-"));
+    const bridge = createCodexEventBridge({
+      homePath,
+      pollIntervalMs: 60_000,
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.147.0\n", stderr: "" })),
+    });
+    try {
+      await expect(bridge.healthCheck()).resolves.toEqual({ ok: false });
+      await expect(bridge.watch({
+        principal,
+        threadId: "thread_stale_version_1",
+        sessionId: "sess_stale_version_1",
+      })).rejects.toThrow("Codex structured events are unavailable");
+      expect(bridge.watcherCount()).toBe(0);
+    } finally {
+      await bridge.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("does not cache an aborted Codex version probe", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-"));
     const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
@@ -252,7 +273,7 @@ describe("Codex structured event runtime", () => {
       if (options.signal.aborted) {
         throw Object.assign(new Error("aborted"), { name: "AbortError" });
       }
-      return { stdout: "codex-cli 0.144.3\n", stderr: "" };
+      return { stdout: `codex-cli ${CODEX_VERIFIED_VERSION}\n`, stderr: "" };
     });
     const bridge = createCodexEventBridge({
       homePath,
@@ -300,7 +321,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: `codex-cli ${CODEX_VERIFIED_VERSION}\n`, stderr: "" })),
     });
     bridge.attachThreadStore({ ingestProviderEvents });
     try {
@@ -354,7 +375,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: `codex-cli ${CODEX_VERIFIED_VERSION}\n`, stderr: "" })),
     });
     bridge.attachThreadStore({
       async ingestProviderEvents(_principal, _threadId, batch) {
@@ -397,7 +418,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: `codex-cli ${CODEX_VERIFIED_VERSION}\n`, stderr: "" })),
     });
     bridge.attachThreadStore({
       async ingestProviderEvents(_principal, _threadId, batch) {
@@ -438,7 +459,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: `codex-cli ${CODEX_VERIFIED_VERSION}\n`, stderr: "" })),
     });
     const runtime = {
       startSession: vi.fn(async () => ({

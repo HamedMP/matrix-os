@@ -8,6 +8,7 @@ import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
   AgentThreadSummarySchema,
+  CODEX_VERIFIED_VERSION,
   SafeClientErrorSchema,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
@@ -155,7 +156,8 @@ export function createCodexEventBridge(options: {
       const appServerStatus = codexAppServerContractStatus(versionOutput);
       ok = execStatus.status === "verified" &&
         appServerStatus.status === "verified" &&
-        execStatus.version === appServerStatus.version;
+        execStatus.version === appServerStatus.version &&
+        execStatus.version === CODEX_VERIFIED_VERSION;
     } catch (error: unknown) {
       if (
         signal.aborted ||
