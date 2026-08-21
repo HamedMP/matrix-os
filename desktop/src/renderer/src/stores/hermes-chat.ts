@@ -295,6 +295,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   refreshConversations: async (api) => {
     const generation = captureRuntimeGeneration();
     const sequence = get().indexSequence + 1;
+    const contextSequenceAtStart = get().contextSequence;
     set((state) => ({
       indexSequence: sequence,
       indexStatus: state.conversations.length === 0 ? "loading" : state.indexStatus,
@@ -309,21 +310,29 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         set({ indexStatus: "error", indexError: INDEX_ERROR_MESSAGE });
         return;
       }
-      const selectedSummary = get().sessionId
-        ? snapshot.conversations.find((conversation) => conversation.id === get().sessionId)
-        : undefined;
-      set({
-        conversations: snapshot.conversations,
-        isConversationIndexComplete: snapshot.complete,
-        indexStatus: "ready",
-        indexError: null,
-        ...(selectedSummary
-          ? {
-              conversationContext: selectedSummary.context ?? null,
-              contextStatus: "ready" as const,
-              contextError: null,
-            }
-          : {}),
+      set((state) => {
+        const selectedSummary = state.sessionId
+          ? snapshot.conversations.find(
+              (conversation) => conversation.id === state.sessionId,
+            )
+          : undefined;
+        const canApplySelectedContext =
+          state.contextSequence === contextSequenceAtStart
+          && state.contextStatus !== "loading";
+
+        return {
+          conversations: snapshot.conversations,
+          isConversationIndexComplete: snapshot.complete,
+          indexStatus: "ready",
+          indexError: null,
+          ...(canApplySelectedContext && selectedSummary
+            ? {
+                conversationContext: selectedSummary.context ?? null,
+                contextStatus: "ready" as const,
+                contextError: null,
+              }
+            : {}),
+        };
       });
     } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(generation) || get().indexSequence !== sequence) return;

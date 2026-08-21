@@ -267,6 +267,56 @@ describe("useHermesChat", () => {
     });
   });
 
+  it("keeps a successful context update when an older index refresh settles later", async () => {
+    const staleContext = {
+      projectId: "legacy-project",
+      projectName: "Legacy project",
+      projectKind: "folder" as const,
+      repositoryLabel: "legacy-project",
+      status: "unavailable" as const,
+    };
+    const pendingIndex = deferred<unknown>();
+    const get = vi.fn(() => pendingIndex.promise);
+    const patch = vi.fn().mockResolvedValue({ context: readyContext });
+    const api = { get, patch } as never;
+
+    useHermesChat.setState({
+      sessionId: "conversation-one",
+      view: "conversation",
+      conversationContext: staleContext,
+      contextStatus: "ready",
+    });
+
+    const refresh = useHermesChat.getState().refreshConversations(api);
+
+    await expect(
+      useHermesChat.getState().updateConversationContext(
+        api,
+        "conversation-one",
+        "matrix-os",
+      ),
+    ).resolves.toBe(true);
+
+    pendingIndex.resolve([
+      {
+        id: "conversation-one",
+        preview: "Conversation one",
+        messageCount: 1,
+        createdAt: 1,
+        updatedAt: 2,
+        context: staleContext,
+      },
+    ]);
+    await refresh;
+
+    expect(useHermesChat.getState()).toMatchObject({
+      conversationContext: readyContext,
+      contextStatus: "ready",
+      contextError: null,
+      indexStatus: "ready",
+    });
+  });
+
   it("preserves the previous context when the response shape is not strict", async () => {
     useHermesChat.setState({ conversationContext: readyContext });
     const patch = vi.fn().mockResolvedValue({
