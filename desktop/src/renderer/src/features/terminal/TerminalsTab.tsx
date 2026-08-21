@@ -1,5 +1,6 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
+  ArrowLeft,
   Check,
   Clipboard,
   Edit3,
@@ -561,15 +562,18 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
               <button
                 type="button"
                 aria-label="Back to terminal sessions"
-                className="min-w-0 flex-1 rounded-md text-left outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg outline-none transition-opacity hover:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                 style={{ color: terminalAppearance.text }}
                 onClick={showShellList}
               >
+                <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.75} />
+              </button>
+              <div className="min-w-0 flex-1">
                 <h1 className="truncate text-[13px] font-normal leading-4" style={{ color: terminalAppearance.text }}>{shellTitle(shell)}</h1>
                 <p className="mt-1 truncate text-[13px] leading-4" style={{ color: terminalAppearance.muted }}>
                   Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
                 </p>
-              </button>
+              </div>
               <span
                 className="inline-flex h-5 items-center rounded-full border px-2 text-[11px]"
                 style={{
@@ -752,7 +756,7 @@ function ShellCard({
           onClick={onOpen}
         >
           <span className="min-w-0">
-            <span className="block truncate text-base font-normal" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</span>
+            <span className="block truncate text-base font-medium" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</span>
             {shellTitle(shell) !== shell.name ? (
               <span className="mt-0.5 block truncate font-mono text-[11px]" style={{ color: "var(--text-tertiary)" }}>{shell.name}</span>
             ) : null}

@@ -206,13 +206,18 @@ describe("TerminalsTab", () => {
     renderTab();
 
     expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(screen.getByText("matrix-main").className).toContain("font-medium");
     expect(screen.queryByTestId("terminal-view-matrix-main")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
 
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Back to terminal sessions" }).className)
+    const backButton = screen.getByRole("button", { name: "Back to terminal sessions" });
+    const detailHeading = screen.getByRole("heading", { name: "matrix-main" });
+    expect(backButton.className)
       .toContain("focus-visible:outline");
+    expect(backButton.querySelector("svg")).toBeTruthy();
+    expect(backButton.contains(detailHeading)).toBe(false);
     expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
     expect(terminalMounts.get("matrix-main")).toBe(1);

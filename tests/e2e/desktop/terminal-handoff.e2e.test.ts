@@ -80,6 +80,9 @@ suite("Desktop Terminal Figma handoff", () => {
     expect(await heading.evaluate((element) => getComputedStyle(element).fontSize)).toBe("36px");
     expect(await page.getByRole("button", { name: "Search terminal sessions" }).count()).toBe(1);
     expect(await page.getByRole("button", { name: "New shell" }).count()).toBe(1);
+    const firstSessionTitle = page.getByRole("button", { name: "Open matrix-task-1" })
+      .getByText("matrix-task-1", { exact: true });
+    expect(await firstSessionTitle.evaluate((element) => getComputedStyle(element).fontWeight)).toBe("500");
     const overview = page.locator("[data-terminal-overview]");
     expect(Math.round((await overview.boundingBox())?.width ?? 0)).toBe(1022);
     const overviewFrame = overview.locator("..").locator("..");
@@ -100,11 +103,18 @@ suite("Desktop Terminal Figma handoff", () => {
 
   it("opens dark by default and switches the same retained terminal to light", async () => {
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
-    await page.getByRole("heading", { name: "matrix-task-1" }).waitFor();
+    const detailHeading = page.getByRole("heading", { name: "matrix-task-1" });
+    await detailHeading.waitFor();
     await page.locator(".xterm").waitFor({ timeout: 10_000 });
 
     expect(await page.getByRole("navigation", { name: "Terminal breadcrumb" }).count()).toBe(0);
     expect(await page.getByRole("navigation", { name: "Terminal session switcher" }).count()).toBe(0);
+    const backButton = page.getByRole("button", { name: "Back to terminal sessions" });
+    expect(await backButton.locator("svg").count()).toBe(1);
+    expect(await backButton.locator("h1").count()).toBe(0);
+    const backBounds = await backButton.boundingBox();
+    const headingBounds = await detailHeading.boundingBox();
+    expect(backBounds?.x ?? Number.POSITIVE_INFINITY).toBeLessThan(headingBounds?.x ?? Number.NEGATIVE_INFINITY);
     await expect.poll(() => page.getByRole("button", { name: "Use dark Terminal theme" }).getAttribute("aria-pressed"))
       .toBe("true");
     expect(await page.getByRole("button", { name: "Use dark Terminal theme" })
