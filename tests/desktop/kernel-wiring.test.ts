@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { wireKernel } from "../../desktop/src/renderer/src/lib/kernel-wiring";
+import {
+  switchKernelSession,
+  wireKernel,
+} from "../../desktop/src/renderer/src/lib/kernel-wiring";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -199,6 +202,20 @@ describe("kernel wiring", () => {
       type: "switch_session",
       sessionId: "conversation-live",
     });
+    cleanup();
+  });
+
+  it("marks an explicitly hydrated session so completed events are not replayed", () => {
+    const cleanup = wireKernel();
+    const instance = kernelSocketMocks.instances[0]!;
+
+    expect(switchKernelSession("conversation-history", { replayCompleted: false })).toBe(true);
+    expect(instance.send).toHaveBeenCalledWith({
+      type: "switch_session",
+      sessionId: "conversation-history",
+      replayCompleted: false,
+    });
+
     cleanup();
   });
 

@@ -49,6 +49,15 @@ export type MessageGroup =
   | { type: "message"; message: ChatMessage }
   | { type: "tool_group"; messages: ChatMessage[] };
 
+export interface ChatTurn {
+  id: string;
+  user: ChatMessage | null;
+  responseGroups: MessageGroup[];
+  startedAt: number;
+  endedAt: number;
+  requestId?: string;
+}
+
 export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
   let toolBuf: ChatMessage[] = [];
@@ -71,6 +80,41 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   flushTools();
 
   return groups;
+}
+
+export function groupChatTurns(messages: ChatMessage[]): ChatTurn[] {
+  const turns: ChatTurn[] = [];
+  let user: ChatMessage | null = null;
+  let response: ChatMessage[] = [];
+
+  const flush = () => {
+    if (!user && response.length === 0) return;
+    const first = user ?? response[0]!;
+    const last = response[response.length - 1] ?? user ?? first;
+    const requestId = user?.requestId ?? response.find((message) => message.requestId)?.requestId;
+    turns.push({
+      id: user?.id ?? `response:${first.id}`,
+      user,
+      responseGroups: groupMessages(response),
+      startedAt: user?.timestamp ?? first.timestamp,
+      endedAt: Math.max(last.timestamp, user?.timestamp ?? last.timestamp),
+      ...(requestId ? { requestId } : {}),
+    });
+    user = null;
+    response = [];
+  };
+
+  for (const message of messages) {
+    if (message.role === "user") {
+      flush();
+      user = message;
+      continue;
+    }
+    response.push(message);
+  }
+  flush();
+
+  return turns;
 }
 
 export function reduceChat(messages: ChatMessage[], event: ChatEvent): ChatMessage[] {

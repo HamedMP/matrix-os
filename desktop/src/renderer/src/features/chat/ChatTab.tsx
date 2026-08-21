@@ -1,7 +1,7 @@
 import { FileText, FolderOpen, GitBranch, Plus } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
-import { groupMessages } from "../../lib/chat";
+import { groupChatTurns, type ChatMessage } from "../../lib/chat";
 import { useConnection } from "../../stores/connection";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useTabs } from "../../stores/tabs";
@@ -12,10 +12,10 @@ import { appendHermesAttachmentPaths } from "./attachments/local-attachment-cont
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { Bubble, BubbleContent } from "./elements/bubble";
 import { Conversation, ConversationContent, ConversationItem } from "./elements/conversation";
+import { Marker, MarkerContent } from "./elements/marker";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
-import { Reasoning } from "./elements/reasoning";
-import { Tool } from "./elements/tool";
+import { Tool, type ToolActivityState } from "./elements/tool";
 import { ChatResourcesPanel, conversationMessageDisplay } from "./ChatResourcesPanel";
 import {
   ConversationContextControls,
@@ -34,75 +34,169 @@ export function canSubmitChatDraft(
     && !contextBlocksSend;
 }
 
-function HermesMessageList({
-  groups,
-  status,
+function formatTurnDuration(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${totalSeconds}s`;
+}
+
+function TurnReceipt({
+  startedAt,
+  endedAt,
+  active,
 }: {
-  groups: ReturnType<typeof groupMessages>;
+  startedAt: number;
+  endedAt: number;
+  active: boolean;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active) return;
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [active]);
+
+  const elapsed = active ? now - startedAt : endedAt - startedAt;
+  return (
+    <ConversationItem messageId={`receipt:${startedAt}`}>
+      <Marker variant="separator">
+        <MarkerContent className="font-medium">
+          {active ? "Working" : "Worked"} for {formatTurnDuration(elapsed)}
+        </MarkerContent>
+      </Marker>
+    </ConversationItem>
+  );
+}
+
+function toolActivityState(message: ChatMessage): ToolActivityState {
+  if (message.content.startsWith("Using ")) return "running";
+  if (message.content.startsWith("Stopped ")) return "stopped";
+  return "done";
+}
+
+function ToolActivityGroup({ messages }: { messages: ChatMessage[] }) {
+  const [showPrevious, setShowPrevious] = useState(false);
+  const previous = messages.slice(0, -1);
+  const visibleMessages = showPrevious ? messages : messages.slice(-1);
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {previous.length > 0 ? (
+        <button
+          type="button"
+          aria-expanded={showPrevious}
+          aria-label={`${previous.length} previous tool ${previous.length === 1 ? "call" : "calls"}`}
+          className="flex h-8 items-center rounded-lg px-2 text-left text-sm font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+          style={{ color: "var(--text-secondary)" }}
+          onClick={() => setShowPrevious((value) => !value)}
+        >
+          +{previous.length} previous tool {previous.length === 1 ? "call" : "calls"}
+        </button>
+      ) : null}
+      {visibleMessages.map((message) => (
+        <Tool
+          key={message.id}
+          tool={message.tool ?? "Tool"}
+          state={toolActivityState(message)}
+          input={message.toolInput}
+        />
+      ))}
+    </div>
+  );
+}
+
+function UserMessage({ message }: { message: ChatMessage }) {
+  const display = conversationMessageDisplay(message.content);
+  return (
+    <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
+      <Message align="end">
+        <MessageContent>
+          <Bubble variant="secondary" align="end">
+            <BubbleContent className="max-w-[580px] whitespace-pre-wrap" data-selectable>
+              {display.text}
+              {display.attachments.length > 0 ? (
+                <span className="mt-2 flex flex-wrap justify-end gap-1.5">
+                  {display.attachments.map((name) => (
+                    <span
+                      key={name}
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+                      style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+                    >
+                      <FileText size={12} aria-hidden className="shrink-0" />
+                      <span className="truncate">{name}</span>
+                    </span>
+                  ))}
+                </span>
+              ) : null}
+            </BubbleContent>
+          </Bubble>
+        </MessageContent>
+      </Message>
+    </ConversationItem>
+  );
+}
+
+function ResponseMessage({ message }: { message: ChatMessage }) {
+  const systemMessage = message.role === "system";
+  return (
+    <ConversationItem messageId={`${message.role}:${message.id}`}>
+      <Message>
+        <MessageContent>
+          <Bubble variant="ghost">
+            <BubbleContent
+              className={systemMessage
+                ? "max-w-[620px] rounded-lg border px-3 py-2 text-sm"
+                : "max-w-[620px] overflow-visible"}
+              style={systemMessage ? { borderColor: "var(--border-subtle)", color: "var(--text-secondary)" } : undefined}
+            >
+              <MessageResponse>{message.content}</MessageResponse>
+            </BubbleContent>
+          </Bubble>
+        </MessageContent>
+      </Message>
+    </ConversationItem>
+  );
+}
+
+function HermesMessageList({
+  turns,
+  status,
+  activeRequestId,
+}: {
+  turns: ReturnType<typeof groupChatTurns>;
   status: HermesStatus;
+  activeRequestId: string | null;
 }) {
   return (
     <Conversation>
       <ConversationContent className="justify-start pt-8 sm:pt-12">
-        {groups.map((group) =>
-          group.type === "tool_group" ? (
-            <ConversationItem key={group.messages[0]?.id ?? "tools"} messageId={group.messages[0]?.id}>
-              <div className="flex flex-col gap-1.5">
-                {group.messages.map((message) => (
-                  <Tool key={message.id} name={message.content} detail={message.toolInput ? JSON.stringify(message.toolInput, null, 2) : undefined} />
-                ))}
-              </div>
-            </ConversationItem>
-          ) : group.message.role === "user" ? (
-            <ConversationItem key={group.message.id} messageId={`user:${group.message.id}`} scrollAnchor>
-              <Message align="end">
-                <MessageContent>
-                  <Bubble variant="secondary" align="end">
-                    {(() => {
-                      const display = conversationMessageDisplay(group.message.content);
-                      return (
-                        <BubbleContent className="max-w-[580px] whitespace-pre-wrap" data-selectable>
-                          {display.text}
-                          {display.attachments.length > 0 ? (
-                            <span className="mt-2 flex flex-wrap justify-end gap-1.5">
-                              {display.attachments.map((name) => (
-                                <span
-                                  key={name}
-                                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
-                                  style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-                                >
-                                  <FileText size={12} aria-hidden className="shrink-0" />
-                                  <span className="truncate">{name}</span>
-                                </span>
-                              ))}
-                            </span>
-                          ) : null}
-                        </BubbleContent>
-                      );
-                    })()}
-                  </Bubble>
-                </MessageContent>
-              </Message>
-            </ConversationItem>
-          ) : (
-            <ConversationItem key={group.message.id} messageId={`assistant:${group.message.id}`}>
-              <Message>
-                <MessageContent>
-                  <Bubble variant="ghost">
-                    <BubbleContent className="max-w-[620px] overflow-visible">
-                      <MessageResponse>{group.message.content}</MessageResponse>
-                    </BubbleContent>
-                  </Bubble>
-                </MessageContent>
-              </Message>
-            </ConversationItem>
-          ),
-        )}
-        {status === "thinking" ? (
-          <ConversationItem messageId="hermes:working">
-            <Reasoning streaming><span className="shimmer">Working on it…</span></Reasoning>
-          </ConversationItem>
-        ) : null}
+        {turns.map((turn) => {
+          const active = status !== "idle" && turn.requestId === activeRequestId;
+          return (
+            <Fragment key={turn.id}>
+              {turn.user ? <UserMessage message={turn.user} /> : null}
+              {turn.responseGroups.length > 0 || active ? (
+                <TurnReceipt
+                  startedAt={turn.startedAt}
+                  endedAt={turn.endedAt}
+                  active={active}
+                />
+              ) : null}
+              {turn.responseGroups.map((group) => group.type === "tool_group" ? (
+                <ConversationItem
+                  key={group.messages[0]?.id ?? `${turn.id}:tools`}
+                  messageId={group.messages[0]?.id}
+                >
+                  <ToolActivityGroup messages={group.messages} />
+                </ConversationItem>
+              ) : (
+                <ResponseMessage key={group.message.id} message={group.message} />
+              ))}
+            </Fragment>
+          );
+        })}
       </ConversationContent>
     </Conversation>
   );
@@ -113,6 +207,7 @@ function HermesPane() {
   const messages = useHermesChat((state) => state.messages);
   const sessionId = useHermesChat((state) => state.sessionId);
   const status = useHermesChat((state) => state.status);
+  const activeRequestId = useHermesChat((state) => state.activeRequestId);
   const loadError = useHermesChat((state) => state.loadError);
   const conversationContext = useHermesChat((state) => state.conversationContext);
   const contextStatus = useHermesChat((state) => state.contextStatus);
@@ -130,7 +225,7 @@ function HermesPane() {
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
 
-  const groups = groupMessages(messages);
+  const turns = groupChatTurns(messages);
   const empty = messages.length === 0;
   const contextBlocksSend = conversationContext?.status === "unavailable";
   const contextMutationPending = contextStatus === "loading";
@@ -340,7 +435,7 @@ function HermesPane() {
         </div>
       ) : (
         <>
-          <HermesMessageList groups={groups} status={status} />
+          <HermesMessageList turns={turns} status={status} activeRequestId={activeRequestId} />
           <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
             {renderComposer("Reply to Hermes…")}
           </div>
