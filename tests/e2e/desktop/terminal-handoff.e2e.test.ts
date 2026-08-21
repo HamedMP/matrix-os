@@ -82,8 +82,13 @@ suite("Desktop Terminal Figma handoff", () => {
     expect(await page.getByRole("button", { name: "New shell" }).count()).toBe(1);
     const overview = page.locator("[data-terminal-overview]");
     expect(Math.round((await overview.boundingBox())?.width ?? 0)).toBe(1022);
-    expect(await overview.locator("..").locator("..").evaluate((element) => getComputedStyle(element).borderRadius))
+    const overviewFrame = overview.locator("..").locator("..");
+    expect(await overviewFrame.evaluate((element) => getComputedStyle(element).borderRadius))
       .toBe("8px");
+    expect(await overviewFrame.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth];
+    })).toEqual(["0px", "0px", "0px", "0px"]);
     const overviewScroller = page.locator("[data-terminal-overview]").locator("..");
     expect(await overviewScroller.evaluate((element) => element.scrollWidth)).toBe(
       await overviewScroller.evaluate((element) => element.clientWidth),
@@ -106,6 +111,11 @@ suite("Desktop Terminal Figma handoff", () => {
       .evaluate((element) => getComputedStyle(element).backgroundColor))
       .toBe("rgb(67, 78, 63)");
     const surface = page.locator("section[aria-hidden='false'] [data-terminal-surface]");
+    const detailFrame = page.locator("section[aria-hidden='false'] [data-terminal-detail]").locator("..");
+    expect(await detailFrame.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth];
+    })).toEqual(["0px", "0px", "0px", "0px"]);
     const xterm = page.locator("section[aria-hidden='false'] .xterm");
     await xterm.evaluate((element) => element.setAttribute("data-mat-454-identity", "preserved"));
     expect(await surface.evaluate((element) => getComputedStyle(element).backgroundColor))

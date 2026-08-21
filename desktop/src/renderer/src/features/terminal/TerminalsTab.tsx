@@ -413,9 +413,9 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
       <RetainedPane
         as="section"
         active={overviewVisible}
-        className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg border"
+        className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
         background="var(--bg-surface)"
-        style={{ borderColor: "var(--border-subtle)", borderRadius: 8 }}
+        style={{ borderRadius: 8 }}
       >
         <div className="flex min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
           <div data-terminal-overview className="mx-auto flex min-h-0 w-full max-w-[1022px] flex-1 flex-col">
@@ -550,9 +550,9 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
             as="section"
             key={sessionName}
             active={visible}
-            className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg border"
+            className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
             background={terminalAppearance.surface}
-            style={{ borderColor: terminalAppearance.border, borderRadius: 8 }}
+            style={{ borderRadius: 8 }}
           >
             <header
               className="flex h-[70px] shrink-0 items-center gap-3 border-b px-4 py-4"
