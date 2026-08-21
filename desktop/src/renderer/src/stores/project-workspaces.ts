@@ -121,6 +121,7 @@ async function performWorkspaceLoad(
 ): Promise<void> {
   const runtimeGeneration = captureRuntimeGeneration();
   const generation = nextGeneration(projectId);
+  const selectionAtLoadStart = useProjectView.getState().entries[projectId]?.selectedThreadId;
   useProjectWorkspaces.setState((state) => ({
     entries: {
       ...state.entries,
@@ -145,7 +146,12 @@ async function performWorkspaceLoad(
     // Reconcile the persisted chat selection against the fresh projection.
     const projectView = useProjectView.getState();
     const currentSelection = projectView.selectedThreadFor(projectId);
-    if (options.preserveEmptySelection && currentSelection === null) return;
+    const selectedNewChatDuringLoad = selectionAtLoadStart !== undefined
+      && selectionAtLoadStart !== null
+      && currentSelection === null;
+    if ((options.preserveEmptySelection || selectedNewChatDuringLoad) && currentSelection === null) {
+      return;
+    }
     const selected = reconcileProjectChatSelection(
       workspace,
       currentSelection,
