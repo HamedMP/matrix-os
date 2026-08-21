@@ -193,7 +193,7 @@ describe("TerminalsTab", () => {
     expect(useTabs.getState().activeTabId).toBe(home);
   });
 
-  it("opens the Figma-aligned session detail and releases its live attachment while preserving the mounted terminal on return", () => {
+  it("opens the Figma-aligned session detail without a Terminal-local back control", () => {
     useShellSessions.setState({
       sessions: [{
         name: "matrix-main",
@@ -212,24 +212,9 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
 
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
-    const backButton = screen.getByRole("button", { name: "Back to terminal sessions" });
-    const detailHeading = screen.getByRole("heading", { name: "matrix-main" });
-    expect(backButton.className)
-      .toContain("focus-visible:outline");
-    expect(backButton.querySelector("svg")).toBeTruthy();
-    expect(backButton.contains(detailHeading)).toBe(false);
+    expect(screen.queryByRole("button", { name: "Back to terminal sessions" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
     expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
-    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
-    expect(terminalMounts.get("matrix-main")).toBe(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
-
-    expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
-    expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("false");
-    expect(terminalMounts.get("matrix-main")).toBe(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
-
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
@@ -319,10 +304,8 @@ describe("TerminalsTab", () => {
     renderTab();
 
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
-    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open matrix-two" }));
-    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open matrix-one" }));
+    act(() => useTabs.getState().requestTerminalSession("matrix-two"));
+    act(() => useTabs.getState().requestTerminalSession("matrix-one"));
 
     expect(useTabs.getState().recentViews).toEqual([]);
     expect(terminalMounts.get("matrix-one")).toBe(1);
@@ -336,7 +319,6 @@ describe("TerminalsTab", () => {
     });
     renderTab();
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
-    fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
 
     act(() => {
       useTabs.setState({
@@ -439,9 +421,9 @@ describe("TerminalsTab", () => {
 
     renderTab();
 
-    for (let index = 1; index <= 9; index += 1) {
-      fireEvent.click(screen.getByRole("button", { name: `Open matrix-${index}` }));
-      fireEvent.click(screen.getByRole("button", { name: "Back to terminal sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-1" }));
+    for (let index = 2; index <= 9; index += 1) {
+      act(() => useTabs.getState().requestTerminalSession(`matrix-${index}`));
     }
 
     expect(screen.queryByTestId("terminal-view-matrix-1")).toBeNull();

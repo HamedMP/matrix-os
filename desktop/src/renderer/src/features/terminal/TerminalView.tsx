@@ -69,7 +69,8 @@ export default function TerminalView({
   const resolvedThemeMode = themeMode ?? persistedThemeMode;
   const terminalTheme = getDesktopTerminalXtermTheme(resolvedThemeMode);
   const terminalBackground = terminalTheme.background;
-  const initialThemeModeRef = useRef(resolvedThemeMode);
+  const latestThemeModeRef = useRef(resolvedThemeMode);
+  latestThemeModeRef.current = resolvedThemeMode;
   const hostRef = useRef<HTMLDivElement>(null);
   const [stateSessionName, setStateSessionName] = useState(sessionName);
   const termRef = useRef<Terminal | null>(null);
@@ -95,7 +96,7 @@ export default function TerminalView({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const theme = getDesktopTerminalXtermTheme(initialThemeModeRef.current);
+    const theme = getDesktopTerminalXtermTheme(latestThemeModeRef.current);
     const screenReaderMode = navigator.webdriver === true;
     const terminal = new Terminal({
       allowProposedApi: true,

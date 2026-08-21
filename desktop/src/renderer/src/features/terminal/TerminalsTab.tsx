@@ -1,6 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
-  ArrowLeft,
   Check,
   Clipboard,
   Edit3,
@@ -294,11 +293,6 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     terminalSessionRequest,
   ]);
 
-  const showShellList = () => {
-    setSelectedName(null);
-    setLiveSessionName(null);
-  };
-
   const openShellInTab = (shell: ShellSessionSummary) => {
     openTab({ kind: "terminal", sessionName: shell.name, title: shell.name });
     if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
@@ -559,15 +553,6 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
               className="flex h-[70px] shrink-0 items-center gap-3 border-b px-4 py-4"
               style={{ borderColor: terminalAppearance.border, background: terminalAppearance.surface }}
             >
-              <button
-                type="button"
-                aria-label="Back to terminal sessions"
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg outline-none transition-opacity hover:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-                style={{ color: terminalAppearance.text }}
-                onClick={showShellList}
-              >
-                <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.75} />
-              </button>
               <div className="min-w-0 flex-1">
                 <h1 className="truncate text-[13px] font-normal leading-4" style={{ color: terminalAppearance.text }}>{shellTitle(shell)}</h1>
                 <p className="mt-1 truncate text-[13px] leading-4" style={{ color: terminalAppearance.muted }}>

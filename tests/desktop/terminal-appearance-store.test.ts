@@ -39,6 +39,25 @@ describe("Terminal appearance store", () => {
     expect(useTerminalAppearance.getState()).toMatchObject({ mode: "dark", hydrated: true });
   });
 
+  it("preserves a newer explicit selection when startup hydration resolves late", async () => {
+    let resolveLoad: ((value: { value: { mode: "dark" } }) => void) | undefined;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "state:get") {
+        return new Promise<{ value: { mode: "dark" } }>((resolve) => {
+          resolveLoad = resolve;
+        });
+      }
+      return Promise.resolve({ ok: true });
+    });
+
+    const load = useTerminalAppearance.getState().load();
+    useTerminalAppearance.getState().setMode("light");
+    resolveLoad?.({ value: { mode: "dark" } });
+    await load;
+
+    expect(useTerminalAppearance.getState()).toMatchObject({ mode: "light", hydrated: true });
+  });
+
   it("persists an explicit Terminal-only mode change", () => {
     useTerminalAppearance.getState().setMode("light");
 

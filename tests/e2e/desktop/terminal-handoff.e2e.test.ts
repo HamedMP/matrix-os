@@ -109,12 +109,7 @@ suite("Desktop Terminal Figma handoff", () => {
 
     expect(await page.getByRole("navigation", { name: "Terminal breadcrumb" }).count()).toBe(0);
     expect(await page.getByRole("navigation", { name: "Terminal session switcher" }).count()).toBe(0);
-    const backButton = page.getByRole("button", { name: "Back to terminal sessions" });
-    expect(await backButton.locator("svg").count()).toBe(1);
-    expect(await backButton.locator("h1").count()).toBe(0);
-    const backBounds = await backButton.boundingBox();
-    const headingBounds = await detailHeading.boundingBox();
-    expect(backBounds?.x ?? Number.POSITIVE_INFINITY).toBeLessThan(headingBounds?.x ?? Number.NEGATIVE_INFINITY);
+    expect(await page.getByRole("button", { name: "Back to terminal sessions" }).count()).toBe(0);
     await expect.poll(() => page.getByRole("button", { name: "Use dark Terminal theme" }).getAttribute("aria-pressed"))
       .toBe("true");
     expect(await page.getByRole("button", { name: "Use dark Terminal theme" })

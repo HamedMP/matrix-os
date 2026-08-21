@@ -362,6 +362,16 @@ describe("TerminalView session switching", () => {
     expect(terminal.options.theme).toMatchObject({ background: "#fffffd" });
   });
 
+  it("recreates a switched session with the current Terminal theme", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" themeMode="dark" />);
+
+    rerender(<TerminalView sessionName="alpha" themeMode="light" />);
+    rerender(<TerminalView sessionName="beta" themeMode="light" />);
+
+    expect(createdTerminals).toHaveLength(2);
+    expect(createdTerminals.at(-1)?.initialOptions.theme).toMatchObject({ background: "#fffffd" });
+  });
+
   it("uses the persisted Terminal preference when no view override is provided", () => {
     useTerminalAppearance.setState({ mode: "light" });
 
