@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
@@ -66,7 +65,7 @@ async function startFakeRuntime(
   options: { initialTranscriptBytes?: number } = {},
 ): Promise<FakeRuntime> {
   const shortName = name.slice(0, 8);
-  const homePath = await mkdtemp(join(tmpdir(), `mx-${shortName}-`));
+  const homePath = await mkdtemp(join("/tmp", `mx-${shortName}-`));
   const fakePath = join(homePath, "fake-codex.mjs");
   const eventPath = codexProviderEventPath(homePath, `sess_${shortName}`);
   const controlPath = eventPath.replace(/\.jsonl$/, ".sock");

@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
@@ -47,7 +46,7 @@ async function sendControl(path: string, payload: unknown): Promise<unknown> {
 
 describe("Codex app-server control runtime", () => {
   it("durably publishes a safe approval before accepting one idempotent decision", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "codex-appr-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-appr-"));
     const fakeCodexPath = join(homePath, "fake-codex-app-server.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
     const eventPath = codexProviderEventPath(homePath, "sess_appr_1");
@@ -146,7 +145,7 @@ describe("Codex app-server control runtime", () => {
   });
 
   it("maps structured answers to native questions without persisting secret input", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "codex-input-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-input-"));
     const fakeCodexPath = join(homePath, "fake-codex-input.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
     const eventPath = codexProviderEventPath(homePath, "sess_input_1");
@@ -236,7 +235,7 @@ describe("Codex app-server control runtime", () => {
   });
 
   it("caps pending requests and fails the excess request closed", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "codex-cap-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-cap-"));
     const fakeCodexPath = join(homePath, "fake-codex-cap.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
     const eventPath = codexProviderEventPath(homePath, "sess_cap_1");
@@ -297,7 +296,7 @@ describe("Codex app-server control runtime", () => {
   });
 
   it("publishes typed app-server items without exposing provider payloads", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "codex-items-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-items-"));
     const fakeCodexPath = join(homePath, "fake-codex-items.mjs");
     const eventPath = codexProviderEventPath(homePath, "sess_items_1");
     await writeFile(fakeCodexPath, [
@@ -390,7 +389,7 @@ describe("Codex app-server control runtime", () => {
   });
 
   it("persists a generic failure and removes the control socket when the provider exits", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "codex-exit-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-exit-"));
     const fakeCodexPath = join(homePath, "fake-codex-exit.mjs");
     const eventPath = codexProviderEventPath(homePath, "sess_exit_1");
     const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
