@@ -220,6 +220,22 @@ describe("ComputerFileBrowser view options", () => {
     });
   });
 
+  it("returns keyboard focus after closing a search with no results", async () => {
+    renderBrowser();
+    await screen.findByRole("button", { name: "Open README.md" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Search files" }));
+    const searchbox = screen.getByRole("searchbox", { name: "Search files" });
+    fireEvent.change(searchbox, { target: { value: "no-match" } });
+    expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
+
+    fireEvent.keyDown(searchbox, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(document.activeElement?.getAttribute("aria-label")).toMatch(/^Open /);
+    });
+  });
+
   it("switches between list and grid from the segmented control", async () => {
     renderBrowser();
     expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();

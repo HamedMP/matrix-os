@@ -493,7 +493,7 @@ export default function ComputerFileBrowser({
         searchQuery={searchQuery}
         onSearchOpen={() => setSearchOpen(true)}
         onSearchClose={() => {
-          restoreFocusRef.current = sortedEntries.length > 0;
+          restoreFocusRef.current = viewEntries.length > 0;
           setSearchOpen(false);
           setSearchQuery("");
         }}
