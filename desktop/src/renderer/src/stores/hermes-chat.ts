@@ -296,6 +296,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     const generation = captureRuntimeGeneration();
     const sequence = get().indexSequence + 1;
     const contextSequenceAtStart = get().contextSequence;
+    const contextMutationActiveAtStart = get().contextStatus === "loading";
     set((state) => ({
       indexSequence: sequence,
       indexStatus: state.conversations.length === 0 ? "loading" : state.indexStatus,
@@ -317,7 +318,8 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
             )
           : undefined;
         const canApplySelectedContext =
-          state.contextSequence === contextSequenceAtStart
+          !contextMutationActiveAtStart
+          && state.contextSequence === contextSequenceAtStart
           && state.contextStatus !== "loading";
 
         return {
