@@ -1,7 +1,8 @@
-import { FolderOpen, GitBranch, Plus } from "lucide-react";
+import { Code2, FolderOpen, GitBranch, Plus, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { ConversationProviderSelector } from "../../components/conversation/provider-selector";
+import type { ConversationProviderIcon } from "../../components/conversation/provider-options";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { useConnection } from "../../stores/connection";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
@@ -15,6 +16,7 @@ import { PromptInput } from "./elements/prompt-input";
 import { ChatResourcesPanel } from "./ChatResourcesPanel";
 import { hermesConversationPresentation } from "./hermes-presentation";
 import { HermesConversationIndex } from "./HermesConversationIndex";
+import { globalChatProviderOptions } from "./global-chat-providers";
 
 export function canSubmitChatDraft(draft: string, status: HermesStatus, attachmentCount = 0): boolean {
   return (draft.trim().length > 0 || attachmentCount > 0) && status === "idle";
@@ -37,6 +39,11 @@ function HermesPane() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
+  const codexProjectId = defaultProjectId();
+  const providerOptions = globalChatProviderOptions({
+    hermesReady: Boolean(api),
+    hasProject: Boolean(codexProjectId),
+  });
 
   const turns = hermesConversationPresentation(messages, status, activeRequestId);
   const copyText = useCallback(async (text: string) => {
@@ -134,10 +141,10 @@ function HermesPane() {
   const harnessBadge = (
     <ConversationProviderSelector
       value="hermes"
-      options={[
-        { id: "hermes", label: "Hermes", available: true },
-        { id: "codex", label: "Codex", available: true },
-      ]}
+      options={providerOptions}
+      renderIcon={(icon: ConversationProviderIcon) => icon === "hermes"
+        ? <Sparkles className="size-3.5" />
+        : <Code2 className="size-3.5" />}
       onSelect={(providerId) => {
         if (providerId === "codex") void startCodexChat();
       }}

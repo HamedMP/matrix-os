@@ -4,7 +4,7 @@ import {
   Conversation,
   ConversationContent,
   ConversationItem,
-} from "../../features/chat/elements/conversation";
+} from "./conversation";
 import { ConversationActivityGroup } from "./activity";
 import { Bubble, BubbleContent } from "./bubble";
 import { Marker, MarkerContent } from "./marker";

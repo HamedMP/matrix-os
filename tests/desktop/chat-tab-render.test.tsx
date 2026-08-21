@@ -535,6 +535,18 @@ describe("ChatTab", () => {
     })));
   });
 
+  it("explains when a coding harness cannot open without a project", () => {
+    useBoard.setState({ projects: [], activeProjectSlug: null });
+    useHermesChat.setState({ messages: [], status: "idle" });
+
+    render(<ChatTab />);
+
+    const codex = screen.getByRole("option", {
+      name: "Codex — Create a project to use Codex.",
+    });
+    expect((codex as HTMLOptionElement).disabled).toBe(true);
+  });
+
   it("does not intercept a text-only drop in Chat", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);

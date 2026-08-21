@@ -47,10 +47,19 @@ export interface ConversationNoticePresentation {
   timestamp: number;
 }
 
+/**
+ * The single registry for provider-neutral transcript rows. MAT-458 can add
+ * reasoning, plan, delegation, approval, and user-input variants here and in
+ * the shared renderer without creating provider-owned visual components.
+ */
+export interface ConversationWorkPresentationMap {
+  message: ConversationMessagePresentation;
+  "activity-group": ConversationActivityGroupPresentation;
+  notice: ConversationNoticePresentation;
+}
+
 export type ConversationWorkPresentation =
-  | ConversationMessagePresentation
-  | ConversationActivityGroupPresentation
-  | ConversationNoticePresentation;
+  ConversationWorkPresentationMap[keyof ConversationWorkPresentationMap];
 
 export interface ConversationTurnPresentation {
   id: string;
@@ -64,10 +73,4 @@ export interface ConversationTurnPresentation {
 
 export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
-}
-
-export interface ConversationProviderOption {
-  id: string;
-  label: string;
-  available: boolean;
 }
