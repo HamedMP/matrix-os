@@ -49,6 +49,21 @@ function setupAction(
   };
 }
 
+function authenticationAction(
+  providerId: string,
+  setupActions: SafeSetupAction[],
+): Extract<ProviderReadinessAction, { kind: "setup" }> {
+  const trustedActionIds = new Set([
+    `${providerId}_connect`,
+    `${providerId}_reconnect`,
+  ]);
+  return {
+    kind: "setup",
+    action: setupActions.find((action) => trustedActionIds.has(action.id))
+      ?? OPEN_PROVIDER_SETTINGS_ACTION,
+  };
+}
+
 export function deriveProviderReadiness(input: {
   summary: RuntimeSummary | null;
   providerId?: string;
@@ -105,7 +120,7 @@ export function deriveProviderReadiness(input: {
       blocked: true,
       title: `${provider.displayName} needs to be reconnected`,
       description: `Reconnect ${provider.displayName} before sending a message.`,
-      action: setupAction(provider.setupActions),
+      action: authenticationAction(provider.id, provider.setupActions),
     };
   }
   if (provider.availability === "auth_required") {
@@ -114,7 +129,7 @@ export function deriveProviderReadiness(input: {
       blocked: true,
       title: `Connect ${provider.displayName} to continue`,
       description: `Sign in to ${provider.displayName} before sending a message.`,
-      action: setupAction(provider.setupActions),
+      action: authenticationAction(provider.id, provider.setupActions),
     };
   }
   if (provider.availability === "setup_required" || provider.installStatus === "missing") {

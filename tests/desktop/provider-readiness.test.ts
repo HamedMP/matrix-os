@@ -125,6 +125,43 @@ describe("deriveProviderReadiness", () => {
     });
   });
 
+  it("selects the authentication action for an installed provider that needs login", () => {
+    const readiness = deriveProviderReadiness({
+      summary: summary([provider({
+        availability: "auth_required",
+        installStatus: "installed",
+        authStatus: "missing",
+        setupActions: [installAction, connectAction],
+      })]),
+      providerId: "codex",
+      loading: false,
+    });
+
+    expect(readiness.action).toEqual({ kind: "setup", action: connectAction });
+  });
+
+  it("opens provider settings when authentication recovery is unavailable", () => {
+    const readiness = deriveProviderReadiness({
+      summary: summary([provider({
+        availability: "auth_required",
+        installStatus: "installed",
+        authStatus: "missing",
+        setupActions: [installAction],
+      })]),
+      providerId: "codex",
+      loading: false,
+    });
+
+    expect(readiness.action).toEqual({
+      kind: "setup",
+      action: {
+        id: "provider_settings",
+        kind: "open_settings",
+        label: "Open provider settings",
+      },
+    });
+  });
+
   it.each([
     {
       name: "not installed",
