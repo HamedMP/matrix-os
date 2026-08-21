@@ -151,6 +151,34 @@ describe("Desktop navigation header", () => {
     expect(screen.queryByRole("menuitem", { name: "Refresh Home" })).toBeNull();
   });
 
+  it("shows the current Terminal session in the breadcrumb without an action ellipsis", () => {
+    useTabs.getState().openTab({
+      kind: "terminals",
+      title: "clever-comet",
+      closable: false,
+    });
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(breadcrumb.textContent).toBe("Terminalclever-comet");
+    expect(breadcrumb.querySelectorAll(".lucide-chevron-right")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Actions for clever-comet" })).toBeNull();
+  });
+
+  it("uses the canonical session name for a native Terminal tab without an action ellipsis", () => {
+    useTabs.getState().openTab({
+      kind: "terminal",
+      sessionName: "focused-shell",
+      title: "Friendly terminal title",
+    });
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(breadcrumb.textContent).toBe("Terminalfocused-shell");
+    expect(breadcrumb.querySelectorAll(".lucide-chevron-right")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Actions for Friendly terminal title" })).toBeNull();
+  });
+
   it("shows the active canonical Hermes conversation in the Chat breadcrumb", () => {
     useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
     useHermesChat.setState({
