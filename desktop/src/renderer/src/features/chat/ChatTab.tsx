@@ -16,13 +16,14 @@ import { PromptInput } from "./elements/prompt-input";
 import { ChatResourcesPanel } from "./ChatResourcesPanel";
 import { hermesConversationPresentation } from "./hermes-presentation";
 import { HermesConversationIndex } from "./HermesConversationIndex";
-import { globalChatProviderOptions } from "./global-chat-providers";
+import { createGlobalChatProviderRegistry } from "./global-chat-providers";
 
 export function canSubmitChatDraft(draft: string, status: HermesStatus, attachmentCount = 0): boolean {
   return (draft.trim().length > 0 || attachmentCount > 0) && status === "idle";
 }
 
 function HermesPane() {
+  const api = useConnection((state) => state.api);
   const messages = useHermesChat((state) => state.messages);
   const sessionId = useHermesChat((state) => state.sessionId);
   const status = useHermesChat((state) => state.status);
@@ -40,10 +41,6 @@ function HermesPane() {
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
   const codexProjectId = defaultProjectId();
-  const providerOptions = globalChatProviderOptions({
-    hermesReady: Boolean(api),
-    hasProject: Boolean(codexProjectId),
-  });
 
   const turns = hermesConversationPresentation(messages, status, activeRequestId);
   const copyText = useCallback(async (text: string) => {
@@ -94,6 +91,12 @@ function HermesPane() {
       setHarnessError("Codex chat could not be opened. Try again from the project.");
     }
   }, [setDefaultProvider]);
+  const providerRegistry = createGlobalChatProviderRegistry({
+    hermesReady: Boolean(api),
+    hasProject: Boolean(codexProjectId),
+    onUseCurrentConversation: () => setDefaultProvider("hermes"),
+    onOpenProjectConversation: startCodexChat,
+  });
 
   const attachmentPreviews = (
     <AttachmentPreviewRow
@@ -140,14 +143,12 @@ function HermesPane() {
   );
   const harnessBadge = (
     <ConversationProviderSelector
-      value="hermes"
-      options={providerOptions}
+      value={providerRegistry.selectedId}
+      options={providerRegistry.options}
       renderIcon={(icon: ConversationProviderIcon) => icon === "hermes"
         ? <Sparkles className="size-3.5" />
         : <Code2 className="size-3.5" />}
-      onSelect={(providerId) => {
-        if (providerId === "codex") void startCodexChat();
-      }}
+      onSelect={(providerId) => void providerRegistry.activate(providerId)}
     />
   );
   const renderComposer = (placeholder: string, autoFocus = false) => (

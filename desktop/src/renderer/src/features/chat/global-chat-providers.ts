@@ -1,8 +1,10 @@
 import {
-  buildConversationProviderOptions,
   type ConversationProviderDefinition,
-  type ConversationProviderOption,
 } from "../../components/conversation/provider-options";
+import {
+  createConversationProviderRegistry,
+  type ConversationProviderRegistry,
+} from "../../components/conversation/provider-registry";
 
 const GLOBAL_CHAT_PROVIDER_DEFINITIONS: readonly ConversationProviderDefinition[] = [
   {
@@ -19,19 +21,34 @@ const GLOBAL_CHAT_PROVIDER_DEFINITIONS: readonly ConversationProviderDefinition[
   },
 ];
 
-export function globalChatProviderOptions({
+export function createGlobalChatProviderRegistry({
   hermesReady,
   hasProject,
+  onUseCurrentConversation,
+  onOpenProjectConversation,
 }: {
   hermesReady: boolean;
   hasProject: boolean;
-}): ConversationProviderOption[] {
-  return buildConversationProviderOptions(GLOBAL_CHAT_PROVIDER_DEFINITIONS, {
-    hermes: hermesReady
-      ? { state: "ready" }
-      : { state: "disabled", reason: "Connect a computer to use Hermes." },
-    codex: hasProject
-      ? { state: "ready" }
-      : { state: "disabled", reason: "Create a project to use Codex." },
+  onUseCurrentConversation: () => void | Promise<void>;
+  onOpenProjectConversation: () => void | Promise<void>;
+}): ConversationProviderRegistry {
+  return createConversationProviderRegistry({
+    selectedId: "hermes",
+    providers: [
+      {
+        definition: GLOBAL_CHAT_PROVIDER_DEFINITIONS[0]!,
+        readiness: hermesReady
+          ? { state: "ready" }
+          : { state: "disabled", reason: "Connect a computer to use Hermes." },
+        onActivate: onUseCurrentConversation,
+      },
+      {
+        definition: GLOBAL_CHAT_PROVIDER_DEFINITIONS[1]!,
+        readiness: hasProject
+          ? { state: "ready" }
+          : { state: "disabled", reason: "Create a project to use Codex." },
+        onActivate: onOpenProjectConversation,
+      },
+    ],
   });
 }

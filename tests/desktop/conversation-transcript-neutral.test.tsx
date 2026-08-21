@@ -4,7 +4,10 @@ import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscript } from "../../desktop/src/renderer/src/components/conversation/transcript";
-import type { ConversationTurnPresentation } from "../../desktop/src/renderer/src/components/conversation/presentation";
+import {
+  adaptProjectLikeConversation,
+  type ProjectLikeConversationTurn,
+} from "./fixtures/project-like-conversation-adapter";
 
 describe("provider-neutral conversation transcript", () => {
   beforeEach(() => {
@@ -18,55 +21,36 @@ describe("provider-neutral conversation transcript", () => {
 
   afterEach(cleanup);
 
-  it("renders synthetic turn work, final output, and semantic activity without a provider adapter", () => {
-    const turns: ConversationTurnPresentation[] = [{
+  it("renders typed non-Hermes adapter output without importing a provider store", () => {
+    const sourceTurns: ProjectLikeConversationTurn[] = [{
       id: "turn-synthetic",
       startedAt: 1_000,
       endedAt: 6_000,
       active: false,
-      user: {
-        kind: "message",
-        id: "user-synthetic",
-        role: "user",
-        phase: "final",
-        markdown: "Inspect the workspace",
-        copyText: "Inspect the workspace",
-        timestamp: 1_000,
-      },
-      work: [
+      userText: "Inspect the workspace",
+      events: [
         {
-          kind: "message",
+          kind: "commentary",
           id: "commentary-synthetic",
-          role: "assistant",
-          phase: "commentary",
-          markdown: "I’ll inspect the repository first.",
-          copyText: "I’ll inspect the repository first.",
+          text: "I’ll inspect the repository first.",
           timestamp: 2_000,
         },
         {
-          kind: "activity-group",
-          id: "activities-synthetic",
-          activities: [{
-            id: "command-synthetic",
-            kind: "command",
-            state: "completed",
-            label: "Ran command",
-            preview: "git status --short",
-            previewKind: "command",
-            copyText: "git status --short",
-          }],
+          kind: "command",
+          id: "command-synthetic",
+          command: "git status --short",
+          state: "completed",
+          timestamp: 3_000,
+        },
+        {
+          kind: "final",
+          id: "final-synthetic",
+          text: "The workspace is clean.",
+          timestamp: 6_000,
         },
       ],
-      final: {
-        kind: "message",
-        id: "final-synthetic",
-        role: "assistant",
-        phase: "final",
-        markdown: "The workspace is clean.",
-        copyText: "The workspace is clean.",
-        timestamp: 6_000,
-      },
     }];
+    const turns = adaptProjectLikeConversation(sourceTurns);
 
     render(<ConversationTranscript turns={turns} callbacks={{ copyText: vi.fn() }} />);
 
