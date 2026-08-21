@@ -539,16 +539,9 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
             </nav>
 
             <header className="flex shrink-0 items-center gap-3 border-b px-5 py-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-              <button
-                type="button"
-                aria-label="Back to terminal sessions"
-                title="Back to terminal sessions"
-                className="no-drag inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-[var(--bg-overlay)] transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-                style={{ color: "var(--text-primary)", borderColor: "var(--border-subtle)" }}
-                onClick={showShellList}
-              >
-                <ArrowLeft size={16} />
-              </button>
+              <IconButton label="Back to terminal sessions" onClick={showShellList}>
+                <ArrowLeft size={14} />
+              </IconButton>
               <div className="min-w-0 flex-1">
                 <h1 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</h1>
                 <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
@@ -744,7 +737,7 @@ function ShellCard({
           onClick={onOpen}
         >
           <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</span>
+            <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{shellTitle(shell)}</span>
             {shellTitle(shell) !== shell.name ? (
               <span className="mt-0.5 block truncate font-mono text-[11px]" style={{ color: "var(--text-tertiary)" }}>{shell.name}</span>
             ) : null}

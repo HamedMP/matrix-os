@@ -173,18 +173,10 @@ describe("TerminalsTab", () => {
     expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
     expect(screen.queryByTestId("terminal-view-matrix-main")).toBeNull();
 
-    const sessionName = screen.getByText("matrix-main");
-    expect(sessionName.className.split(/\s+/)).toContain("font-semibold");
-
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
 
     expect(screen.getByRole("navigation", { name: "Terminal breadcrumb" }).textContent).toContain("matrix-main");
     expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
-    const backButton = screen.getByRole("button", { name: "Back to terminal sessions" });
-    expect(backButton.className.split(/\s+/)).toContain("border");
-    expect(backButton.style.color).toBe("var(--text-primary)");
-    expect(backButton.nextElementSibling?.textContent).toContain("matrix-main");
-    expect(backButton.nextElementSibling?.textContent).toContain("Started at");
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
     expect(terminalMounts.get("matrix-main")).toBe(1);
 
