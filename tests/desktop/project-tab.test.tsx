@@ -371,6 +371,18 @@ describe("ProjectTab", () => {
     expect(screen.getByLabelText("Message new chat")).toBeTruthy();
   });
 
+  it("reconciles the first chat when Board refreshes without an established project selection", async () => {
+    render(<ProjectTab projectSlug="matrix-os" active />);
+    await screen.findByText("Primary");
+    expect(useProjectView.getState().entries["matrix-os"]).toBeUndefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    await waitFor(() => {
+      expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_plan");
+    });
+  });
+
   it("keeps a compose request pending until runtime capabilities finish loading", async () => {
     useCodingAgentWorkspace.setState({ status: "loading", summary: null });
     useProjectChatLauncher.getState().requestComposer("matrix-os");
