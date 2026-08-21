@@ -150,6 +150,15 @@ describe("kernel conversation history route", () => {
             tool: "Grep",
             toolInput: { query: "stack trace in /home/private" },
           },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 5,
+            tool: "Bash",
+            toolInput: {
+              command: "AWS_SECRET_ACCESS_KEY=aws-secret curl -u alice:pw https://example.com",
+            },
+          },
         ],
       })),
     }));
@@ -167,7 +176,13 @@ describe("kernel conversation history route", () => {
       preview: "curl -H 'Authorization: [redacted]' https://example.com && git status --short",
     });
     expect(body.messages[2]).not.toHaveProperty("toolDisplay");
+    expect(body.messages[3]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "AWS_SECRET_ACCESS_KEY=[redacted] curl -u [redacted] https://example.com",
+    });
     expect(JSON.stringify(body)).not.toContain("super-secret");
+    expect(JSON.stringify(body)).not.toContain("aws-secret");
+    expect(JSON.stringify(body)).not.toContain("alice:pw");
     expect(JSON.stringify(body)).not.toContain("/home/private");
   });
 

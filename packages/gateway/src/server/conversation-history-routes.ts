@@ -24,9 +24,12 @@ function boundedToolText(value: unknown): string | undefined {
   const normalized = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized) return undefined;
   const redacted = normalized
+    .replace(/\b([A-Za-z_][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE_KEY|CREDENTIAL)[A-Za-z0-9_]*=)(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1[redacted]")
     .replace(/authorization\s*:\s*(?:bearer\s+)?[^'"\s]+/gi, "Authorization: [redacted]")
-    .replace(/((?:--?|\b)(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret)(?:=|\s+))(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1[redacted]")
-    .replace(/\b(?:sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|xox[baprs]-[A-Za-z0-9-]+)\b/g, "[redacted]")
+    .replace(/(^|\s)((?:--?)?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret)(?:=|\s+))(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2[redacted]")
+    .replace(/(^|\s)(-u|--user)\s+(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2 [redacted]")
+    .replace(/\b(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
+    .replace(/\b(?:AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|sk-[A-Za-z0-9_-]+|sk_(?:live|test)_[A-Za-z0-9]+|ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|xox[baprs]-[A-Za-z0-9-]+)\b/g, "[redacted]")
     .replace(/(^|[\s=(])\/(?:Users|home|tmp|var|opt|etc|root|private)(?:\/[^\s'";|&)]*)?/g, "$1[path]")
     .replace(/(^|[\s=(])[A-Za-z]:\\[^\s'";|&)]*/g, "$1[path]");
   return redacted.length > MAX_TOOL_DISPLAY_CHARS
