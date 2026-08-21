@@ -175,7 +175,7 @@ function isMissingGitUpstreamError(err: unknown): boolean {
   const stderr = "stderr" in err && typeof (err as { stderr?: unknown }).stderr === "string"
     ? (err as { stderr: string }).stderr
     : "";
-  return /no upstream configured|no such branch.*@\{upstream\}|ambiguous argument.*@\{upstream\}/i.test(`${err.message}\n${stderr}`);
+  return /no upstream configured|no such branch.*@\{upstream\}|ambiguous argument.*@\{upstream\}|HEAD does not point to a branch/i.test(`${err.message}\n${stderr}`);
 }
 
 function repositoryNameFromRemote(remote: string | undefined): string | null {

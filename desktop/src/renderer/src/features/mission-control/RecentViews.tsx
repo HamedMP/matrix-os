@@ -9,6 +9,7 @@ import {
 import { useMemo } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { openCodingAgentThread } from "../../lib/project-chat";
+import { openProjectOverview } from "../../lib/project-navigation";
 import {
   useTabs,
   type RecentView,
@@ -57,7 +58,7 @@ export default function RecentViews() {
 
   const openRecent = (recent: RecentView) => {
     if (recent.kind === "project") {
-      openTab({ kind: "project", projectSlug: recent.id, title: recent.label });
+      openProjectOverview(recent.id, recent.label);
       return;
     }
     if (recent.kind === "terminal") {

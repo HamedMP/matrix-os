@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProjectsIndex from "../../desktop/src/renderer/src/features/project/ProjectsIndex";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -14,6 +14,8 @@ import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 describe("ProjectsIndex", () => {
   beforeEach(() => {
     useBoard.setState({
+      projectsStatus: "ready",
+      projectsError: null,
       projects: [
         {
           slug: "portfolio",
@@ -83,6 +85,69 @@ describe("ProjectsIndex", () => {
     fireEvent.click(screen.getByRole("button", { name: "New" }));
 
     expect(useUi.getState().createProjectOpen).toBe(true);
+  });
+
+  it("distinguishes the initial project-list load from a genuinely empty account", () => {
+    useBoard.setState({ projects: [], projectsStatus: "loading", projectsError: null } as never);
+
+    render(<ProjectsIndex />);
+
+    expect(screen.getByText("Loading projects…")).toBeTruthy();
+    expect(screen.queryByText("Create your first project to get started.")).toBeNull();
+  });
+
+  it("shows a bounded project-list error with a retry action", () => {
+    const loadProjects = vi.fn(async () => true);
+    useBoard.setState({
+      projects: [],
+      projectsStatus: "error",
+      projectsError: "offline",
+      loadProjects,
+    } as never);
+    useConnection.setState({ api: { get: vi.fn(), baseUrl: "https://gateway.test" } as never });
+
+    render(<ProjectsIndex />);
+
+    expect(screen.getByText("Can't load projects")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(loadProjects).toHaveBeenCalledWith(useConnection.getState().api);
+  });
+
+  it("bounds project metadata work instead of starting one request per card", async () => {
+    const projects = Array.from({ length: 30 }, (_, index) => ({
+      slug: `project-${index}`,
+      name: `Project ${index}`,
+      kind: "scratch" as const,
+    }));
+    const firstBatchResolvers: Array<(value: unknown) => void> = [];
+    const metadata = {
+      path: "/Users/test/project",
+      repository: null,
+      isGitRepository: false,
+      branch: null,
+      clean: null,
+      ahead: 0,
+      behind: 0,
+      hasUpstream: false,
+      worktreeCount: 0,
+    };
+    const get = vi.fn(() => {
+      if (firstBatchResolvers.length < 4 && get.mock.calls.length <= 4) {
+        return new Promise((resolve) => firstBatchResolvers.push(resolve));
+      }
+      return Promise.resolve(metadata);
+    });
+    useBoard.setState({ projects, projectsStatus: "ready", projectsError: null } as never);
+    useConnection.setState({ api: { get, baseUrl: "https://gateway.test" } as never });
+
+    render(<ProjectsIndex />);
+
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(4));
+    expect(screen.getByRole("button", { name: "Next projects page" })).toBeTruthy();
+    await act(async () => {
+      for (const resolve of firstBatchResolvers) resolve(metadata);
+    });
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(24));
   });
 
   it("shows local path, git state, and worktree visibility for coding projects", async () => {

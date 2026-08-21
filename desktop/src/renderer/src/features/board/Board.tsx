@@ -216,15 +216,17 @@ export default function Board({ projectSlug, active = true }: { projectSlug?: st
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      <div className="flex min-w-max flex-1 overflow-x-auto" data-slot="project-board">
-        {BOARD_COLUMNS.map((status) => (
-          <Column
-            key={status}
-            status={status}
-            cards={columns[status] ?? []}
-            activeDragId={activeDragId}
-          />
-        ))}
+      <div className="min-w-0 w-full flex-1 overflow-x-auto" data-slot="project-board-scroll">
+        <div className="flex min-h-full min-w-max" data-slot="project-board">
+          {BOARD_COLUMNS.map((status) => (
+            <Column
+              key={status}
+              status={status}
+              cards={columns[status] ?? []}
+              activeDragId={activeDragId}
+            />
+          ))}
+        </div>
       </div>
       <DragOverlay dropAnimation={null}>
         {dragCard ? <BoardCard card={dragCard} overlay /> : null}

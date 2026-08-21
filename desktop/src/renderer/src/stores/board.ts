@@ -14,6 +14,7 @@ import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-
 
 export type CardStatus = "todo" | "running" | "waiting" | "blocked" | "complete" | "archived";
 export type CardPriority = "low" | "normal" | "high" | "urgent";
+export type ProjectListStatus = "idle" | "loading" | "ready" | "error";
 
 export interface Card {
   id: string;
@@ -225,6 +226,8 @@ export type CardPatch = Partial<Pick<Card, "title" | "description" | "status" | 
 
 interface BoardState {
   projects: Project[];
+  projectsStatus: ProjectListStatus;
+  projectsError: AppErrorCategory | null;
   activeProjectSlug: string | null;
   cardsByProject: Record<string, Card[]>;
   firstLoadByProject: Record<string, boolean>;
@@ -324,6 +327,8 @@ export const useBoard = create<BoardState>()((set, get) => {
 
   return {
     projects: [],
+    projectsStatus: "idle",
+    projectsError: null,
     activeProjectSlug: null,
     cardsByProject: {},
     firstLoadByProject: {},
@@ -332,6 +337,7 @@ export const useBoard = create<BoardState>()((set, get) => {
 
     loadProjects: async (api) => {
       const runtimeGeneration = captureRuntimeGeneration();
+      set({ projectsStatus: "loading", projectsError: null });
       try {
         const response = await api.get<{ projects: unknown[] }>("/api/workspace/projects");
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
@@ -340,12 +346,13 @@ export const useBoard = create<BoardState>()((set, get) => {
           const project = parseProject(raw);
           if (project) projects.push(project);
         }
-        set({ projects, error: null });
+        set({ projects, projectsStatus: "ready", projectsError: null, error: null });
         return true;
       } catch (err: unknown) {
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
         console.error("[board] Failed to load projects:", err);
-        set({ error: categoryOf(err) });
+        const error = categoryOf(err);
+        set({ projectsStatus: "error", projectsError: error, error });
         return false;
       }
     },

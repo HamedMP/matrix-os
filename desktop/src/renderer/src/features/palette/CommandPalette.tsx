@@ -12,6 +12,7 @@ import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../lib/project-chat";
+import { openProjectOverview } from "../../lib/project-navigation";
 import { handleNewAgentRunShortcut } from "../mission-control/shortcuts";
 import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../coding-agents/provider-setup-terminal";
 
@@ -270,7 +271,7 @@ export default function CommandPalette() {
                   key={p.slug}
                   icon={<Kanban size={14} />}
                   label={p.name || p.slug}
-                  onSelect={() => run(() => openTab({ kind: "project", projectSlug: p.slug, title: p.name || p.slug }))}
+                  onSelect={() => run(() => openProjectOverview(p.slug, p.name || p.slug))}
                 />
               ))}
             </Command.Group>
