@@ -204,6 +204,22 @@ describe("ComputerFileBrowser view options", () => {
     });
   });
 
+  it("returns keyboard focus to the listing after closing search", async () => {
+    renderBrowser();
+    await screen.findByRole("button", { name: "Open README.md" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Search files" }));
+    const searchbox = screen.getByRole("searchbox", { name: "Search files" });
+    expect(document.activeElement).toBe(searchbox);
+
+    fireEvent.keyDown(searchbox, { key: "Escape" });
+
+    expect(screen.queryByRole("searchbox", { name: "Search files" })).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement?.getAttribute("aria-label")).toMatch(/^Open /);
+    });
+  });
+
   it("switches between list and grid from the segmented control", async () => {
     renderBrowser();
     expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();

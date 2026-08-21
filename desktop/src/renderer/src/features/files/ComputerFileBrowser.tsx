@@ -296,7 +296,7 @@ export default function ComputerFileBrowser({
     if (viewStatus !== "ready" || !restoreFocusRef.current) return;
     restoreFocusRef.current = false;
     entryRefs.current[0]?.focus();
-  }, [viewStatus, sortedEntries, view]);
+  }, [viewStatus, sortedEntries, view, searchOpen]);
 
   const focusEntry = useCallback((index: number) => {
     const clamped = Math.max(0, Math.min(index, sortedEntries.length - 1));
@@ -493,6 +493,7 @@ export default function ComputerFileBrowser({
         searchQuery={searchQuery}
         onSearchOpen={() => setSearchOpen(true)}
         onSearchClose={() => {
+          restoreFocusRef.current = sortedEntries.length > 0;
           setSearchOpen(false);
           setSearchQuery("");
         }}
