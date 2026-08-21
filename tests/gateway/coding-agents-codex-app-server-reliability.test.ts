@@ -299,7 +299,7 @@ describe("Codex app-server runner reliability", () => {
       startThread,
       "else if (message.method === 'turn/start') {",
       "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
-      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'a'.repeat(1000) } }));",
+      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: 'native-message', delta: 'a'.repeat(1000) } }));",
       "  setInterval(() => {}, 1000);",
       "}",
     ], { initialTranscriptBytes: 16 * 1024 * 1024 - 100 });

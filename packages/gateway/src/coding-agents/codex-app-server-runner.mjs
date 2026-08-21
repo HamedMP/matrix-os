@@ -23,6 +23,8 @@ const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_PENDING_REQUESTS = 20;
 const MAX_COMPLETED_REQUESTS = 100;
 const MAX_CONTROL_SOCKETS = 20;
+const MAX_TRACKED_ITEMS = 500;
+const ASSISTANT_DELTA_FLUSH_CHARS = 256;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const RPC_TIMEOUT_MS = 30 * 1000;
 const CONTROL_SOCKET_TIMEOUT_MS = 2_000;
@@ -100,7 +102,65 @@ const InputRequestSchema = z.object({
 }).passthrough();
 const AgentDeltaSchema = z.object({
   method: z.literal("item/agentMessage/delta"),
-  params: z.object({ delta: z.string().max(MAX_LINE_BYTES) }).passthrough(),
+  params: z.object({
+    turnId: NativeReferenceSchema,
+    itemId: NativeReferenceSchema,
+    delta: z.string().max(MAX_LINE_BYTES),
+  }).passthrough(),
+}).passthrough();
+const ToolOutputDeltaSchema = z.object({
+  method: z.enum([
+    "item/commandExecution/outputDelta",
+    "item/fileChange/outputDelta",
+    "item/mcpToolCall/progress",
+    "item/dynamicToolCall/outputDelta",
+  ]),
+  params: z.object({
+    turnId: NativeReferenceSchema,
+    itemId: NativeReferenceSchema,
+  }).passthrough(),
+}).passthrough();
+const MessagePhaseSchema = z.enum(["commentary", "final_answer"]);
+const ToolLifecycleTypeSchema = z.enum([
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "collabAgentToolCall",
+  "webSearch",
+  "plan",
+]);
+const AgentMessageLifecycleItemSchema = z.object({
+  id: NativeReferenceSchema,
+  type: z.literal("agentMessage"),
+  text: z.string().max(MAX_PROVIDER_LINE_BYTES),
+  phase: MessagePhaseSchema.nullable().optional(),
+}).passthrough();
+const ToolLifecycleItemSchema = z.object({
+  id: NativeReferenceSchema,
+  type: ToolLifecycleTypeSchema,
+  status: z.string().max(80).optional(),
+  aggregatedOutput: z.string().max(MAX_PROVIDER_LINE_BYTES).nullable().optional(),
+  result: z.unknown().nullable().optional(),
+  error: z.unknown().nullable().optional(),
+}).passthrough();
+const IgnoredLifecycleItemSchema = z.object({
+  id: NativeReferenceSchema,
+  type: z.string().min(1).max(80).refine((type) => (
+    type !== "agentMessage" && !ToolLifecycleTypeSchema.options.includes(type)
+  )),
+}).passthrough();
+const LifecycleItemSchema = z.union([
+  AgentMessageLifecycleItemSchema,
+  ToolLifecycleItemSchema,
+  IgnoredLifecycleItemSchema,
+]);
+const ItemLifecycleSchema = z.object({
+  method: z.enum(["item/started", "item/completed"]),
+  params: z.object({
+    turnId: NativeReferenceSchema,
+    item: LifecycleItemSchema,
+  }).passthrough(),
 }).passthrough();
 const TurnCompletedSchema = z.object({
   method: z.literal("turn/completed"),
@@ -207,9 +267,49 @@ const pendingRpc = new Map();
 const pendingApprovals = new Map();
 const pendingInputs = new Map();
 const completedControls = new Map();
+const assistantItemsWithDelta = new Set();
+const assistantDeltaBuffers = new Map();
+const startedToolItems = new Set();
+const toolItemsWithOutput = new Set();
 
 function digest(parts) {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 32);
+}
+
+function itemIdentity(nativeTurnId, nativeItemId) {
+  return `codex_item_${digest([nativeTurnId, nativeItemId])}`;
+}
+
+function rememberBounded(collection, value) {
+  if (collection.has(value)) return;
+  if (collection.size >= MAX_TRACKED_ITEMS) {
+    const oldest = collection.values().next().value;
+    if (oldest) collection.delete(oldest);
+  }
+  collection.add(value);
+}
+
+function toolPresentation(type) {
+  if (type === "commandExecution") return { displayName: "Run command", kind: "command" };
+  if (type === "fileChange") return { displayName: "Update files", kind: "file_change" };
+  if (type === "webSearch") return { displayName: "Search web", kind: "search" };
+  if (type === "plan") return { displayName: "Update plan", kind: "plan" };
+  if (type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
+  return { displayName: "Use tool", kind: "tool" };
+}
+
+function toolOutcome(status) {
+  if (status === undefined || status === "completed") return "success";
+  if (status === "declined" || status === "cancelled") return "cancelled";
+  return "failed";
+}
+
+function itemHasOutput(item) {
+  return (
+    (typeof item.aggregatedOutput === "string" && item.aggregatedOutput.length > 0) ||
+    (item.result !== null && item.result !== undefined) ||
+    (item.error !== null && item.error !== undefined)
+  );
 }
 
 function approvalIdentity(request) {
@@ -263,6 +363,25 @@ async function persist(value) {
   }
   await eventFile.write(`${line}\n`);
   transcriptBytes += bytes;
+}
+
+async function flushAssistantDelta(messageId) {
+  const delta = assistantDeltaBuffers.get(messageId);
+  if (!delta) return;
+  assistantDeltaBuffers.delete(messageId);
+  await persist({ type: "matrix.codex.assistant.delta", messageId, delta });
+}
+
+async function bufferAssistantDelta(messageId, delta) {
+  if (!assistantDeltaBuffers.has(messageId) && assistantDeltaBuffers.size >= MAX_TRACKED_ITEMS) {
+    const oldest = assistantDeltaBuffers.keys().next().value;
+    if (oldest) await flushAssistantDelta(oldest);
+  }
+  const buffered = `${assistantDeltaBuffers.get(messageId) ?? ""}${delta}`;
+  assistantDeltaBuffers.set(messageId, buffered);
+  if (buffered.length >= ASSISTANT_DELTA_FLUSH_CHARS || buffered.includes("\n")) {
+    await flushAssistantDelta(messageId);
+  }
 }
 
 function sendProvider(value) {
@@ -413,6 +532,67 @@ async function handleInput(raw) {
   return true;
 }
 
+async function handleItemLifecycle(raw) {
+  const parsed = ItemLifecycleSchema.safeParse(raw);
+  if (!parsed.success) return false;
+  const { item } = parsed.data.params;
+  const matrixItemId = itemIdentity(parsed.data.params.turnId, item.id);
+
+  if (item.type === "agentMessage") {
+    if (parsed.data.method === "item/completed") {
+      await flushAssistantDelta(matrixItemId);
+      if (!assistantItemsWithDelta.has(matrixItemId) && item.text.length > 0) {
+        await persist({
+          type: "matrix.codex.assistant.delta",
+          messageId: matrixItemId,
+          delta: item.text,
+        });
+      }
+      await persist({ type: "matrix.codex.assistant.completed", messageId: matrixItemId });
+      assistantItemsWithDelta.delete(matrixItemId);
+    }
+    return true;
+  }
+  if (!ToolLifecycleTypeSchema.options.includes(item.type)) {
+    return true;
+  }
+
+  const presentation = toolPresentation(item.type);
+  if (parsed.data.method === "item/started") {
+    await persist({
+      type: "matrix.codex.tool.started",
+      toolCallId: matrixItemId,
+      ...presentation,
+    });
+    rememberBounded(startedToolItems, matrixItemId);
+    return true;
+  }
+
+  if (!startedToolItems.has(matrixItemId)) {
+    await persist({
+      type: "matrix.codex.tool.started",
+      toolCallId: matrixItemId,
+      ...presentation,
+    });
+  }
+  if (toolItemsWithOutput.has(matrixItemId) || itemHasOutput(item)) {
+    await persist({
+      type: "matrix.codex.tool.output",
+      toolCallId: matrixItemId,
+      text: item.type === "commandExecution" ? "Command produced output." : "Tool returned a result.",
+      truncated: true,
+    });
+  }
+  await persist({
+    type: "matrix.codex.tool.completed",
+    toolCallId: matrixItemId,
+    outcome: toolOutcome(item.status),
+  });
+  startedToolItems.delete(matrixItemId);
+  toolItemsWithOutput.delete(matrixItemId);
+  return true;
+}
+
 async function handleProviderMessage(raw) {
   const response = RpcResponseSchema.safeParse(raw);
   if (response.success && pendingRpc.has(response.data.id)) {
@@ -425,9 +605,20 @@ async function handleProviderMessage(raw) {
   }
   if (await handleApproval(raw)) return;
   if (await handleInput(raw)) return;
+  if (await handleItemLifecycle(raw)) return;
+  const outputDelta = ToolOutputDeltaSchema.safeParse(raw);
+  if (outputDelta.success) {
+    rememberBounded(toolItemsWithOutput, itemIdentity(
+      outputDelta.data.params.turnId,
+      outputDelta.data.params.itemId,
+    ));
+    return;
+  }
   const delta = AgentDeltaSchema.safeParse(raw);
   if (delta.success) {
-    await persist({ type: "matrix.codex.assistant.delta", delta: delta.data.params.delta });
+    const messageId = itemIdentity(delta.data.params.turnId, delta.data.params.itemId);
+    rememberBounded(assistantItemsWithDelta, messageId);
+    await bufferAssistantDelta(messageId, delta.data.params.delta);
     return;
   }
   const completed = TurnCompletedSchema.safeParse(raw);
@@ -615,6 +806,13 @@ async function finishTurn(outcome) {
   if (terminalOutcome) return;
   terminalOutcome = outcome;
   activeTurn = false;
+  for (const messageId of assistantDeltaBuffers.keys()) {
+    await flushAssistantDelta(messageId);
+  }
+  assistantItemsWithDelta.clear();
+  assistantDeltaBuffers.clear();
+  startedToolItems.clear();
+  toolItemsWithOutput.clear();
   try {
     await persist({ type: outcome === "completed" ? "turn.completed" : "turn.failed" });
   } finally {

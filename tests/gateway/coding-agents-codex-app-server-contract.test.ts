@@ -28,6 +28,15 @@ describe("Codex app-server contract", () => {
         "item/tool/requestUserInput",
         "item/permissions/requestApproval",
       ],
+      requiredServerNotifications: [
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "item/commandExecution/outputDelta",
+        "turn/completed",
+        "turn/failed",
+        "turn/cancelled",
+      ],
     });
   });
 
