@@ -11,8 +11,25 @@ const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/packag
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-299-responsive");
 const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
+const WIDE_VIEWPORT = { width: 1280, height: 800 } as const;
 const MINIMUM_VIEWPORT = { width: 880, height: 560 } as const;
 const suite = existsSync(DESKTOP_MAIN) ? describe : describe.skip;
+
+async function resizeDesktopWindow(
+  app: ElectronApplication,
+  page: Page,
+  size: { width: number; height: number },
+) {
+  await app.evaluate(({ BrowserWindow }, nextSize) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) throw new Error("Desktop window is unavailable");
+    window.setContentSize(nextSize.width, nextSize.height);
+  }, size);
+  await page.waitForFunction(
+    (nextSize) => innerWidth === nextSize.width && innerHeight === nextSize.height,
+    size,
+  );
+}
 
 async function measureOverflow(root: Locator) {
   return root.evaluate((element) => {
@@ -68,7 +85,7 @@ suite("responsive Hermes Desktop conversations", () => {
       },
     });
     page = await app.firstWindow();
-    await page.setViewportSize(MINIMUM_VIEWPORT);
+    await resizeDesktopWindow(app, page, MINIMUM_VIEWPORT);
     await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
     await page.locator("aside button", { hasText: "Chat" }).first().waitFor({ timeout: 15_000 });
   }, 60_000);
@@ -79,8 +96,8 @@ suite("responsive Hermes Desktop conversations", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  it("keeps Chat and Files toolbar actions visible at the Figma handoff viewport", async () => {
-    await page.setViewportSize({ width: 1512, height: 982 });
+  it("keeps Chat and Files toolbar actions visible after a native window resize", async () => {
+    await resizeDesktopWindow(app, page, WIDE_VIEWPORT);
     await page.locator("aside button", { hasText: "Chat" }).first().click();
     await page.getByRole("heading", { name: "Chats" }).waitFor({ timeout: 10_000 });
     expectNoHorizontalOverflow(await measureOverflow(page.locator("[data-chat-index-header]")));
@@ -89,7 +106,7 @@ suite("responsive Hermes Desktop conversations", () => {
     await page.getByRole("heading", { name: "Files" }).waitFor({ timeout: 10_000 });
     expectNoHorizontalOverflow(await measureOverflow(page.getByTestId("files-home-content")));
 
-    await page.setViewportSize(MINIMUM_VIEWPORT);
+    await resizeDesktopWindow(app, page, MINIMUM_VIEWPORT);
   }, 30_000);
 
   it("keeps Chats lifecycle surfaces inside the minimum Desktop viewport", async () => {
