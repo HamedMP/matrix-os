@@ -82,6 +82,7 @@ describe("project clone and mkdir routes", () => {
       const res = await app.request(jsonRequest("/api/projects/clone", {
         url: "https://github.com/owner/repo",
         name: "my-repo",
+        displayName: "My product",
         branch: "main",
         clientRequestId: "req_clone-123",
       }));
@@ -93,7 +94,8 @@ describe("project clone and mkdir routes", () => {
         mode: "github",
         url: "https://github.com/owner/repo",
         slug: "my-repo",
-        name: undefined,
+        name: "My product",
+        description: undefined,
         branch: "main",
         clientRequestId: "req_clone-123",
         ownerScope: expect.anything(),

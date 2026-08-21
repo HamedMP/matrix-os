@@ -97,6 +97,20 @@ describe("project-manager", () => {
     expect(config.localPath).toBe(join(homePath, "projects", "empty-workspace", "repo"));
   });
 
+  it("rejects an oversized project description at the manager boundary", async () => {
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "scratch",
+      name: "Oversized",
+      description: "x".repeat(1_001),
+    })).resolves.toMatchObject({
+      ok: false,
+      status: 400,
+      error: { code: "invalid_project_description" },
+    });
+  });
+
   it("returns the same project for an idempotent create request", async () => {
     const manager = createProjectManager({ homePath, runCommand: vi.fn() });
     const input = {
@@ -172,6 +186,65 @@ describe("project-manager", () => {
       refreshedAt: "2026-04-26T00:00:00.000Z",
     });
     expect(runCommand).not.toHaveBeenCalledWith("git", expect.arrayContaining(["branch"]), expect.any(Object));
+  });
+
+  it("reports local coding metadata without fetching the remote", async () => {
+    const ownerScope = { type: "user" as const, id: "user_123" };
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      expect(command).toBe("git");
+      if (args.join(" ") === "rev-parse --show-toplevel") {
+        return { stdout: `${join(homePath, "projects", "repo", "repo")}\n`, stderr: "" };
+      }
+      if (args.join(" ") === "status --porcelain --untracked-files=normal") {
+        return { stdout: " M src/app.ts\n", stderr: "" };
+      }
+      if (args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+        return { stdout: "feature/project-cards\n", stderr: "" };
+      }
+      if (args.join(" ") === "rev-parse --abbrev-ref @{upstream}") {
+        return { stdout: "origin/feature/project-cards\n", stderr: "" };
+      }
+      if (args.join(" ") === "rev-list --left-right --count @{upstream}...HEAD") {
+        return { stdout: "2\t3\n", stderr: "" };
+      }
+      throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+    });
+    const manager = createProjectManager({ homePath, runCommand });
+    const created = await manager.createProject({
+      mode: "scratch",
+      name: "Repo",
+      slug: "repo",
+      ownerScope,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    await atomicWriteJson(
+      join(homePath, "system", "projects", "repo", "config.json"),
+      {
+        ...created.project,
+        kind: "github",
+        remote: "https://github.com/Matrix-OS/repo.git",
+        github: {
+          owner: "Matrix-OS",
+          repo: "repo",
+          htmlUrl: "https://github.com/Matrix-OS/repo",
+          authState: "ok",
+        },
+      },
+    );
+
+    await expect(manager.getCodeMetadata("repo", ownerScope)).resolves.toEqual({
+      ok: true,
+      path: join(homePath, "projects", "repo", "repo"),
+      repository: "Matrix-OS/repo",
+      isGitRepository: true,
+      branch: "feature/project-cards",
+      clean: false,
+      ahead: 3,
+      behind: 2,
+      hasUpstream: true,
+    });
+    expect(runCommand.mock.calls.some(([, args]) => args.includes("fetch"))).toBe(false);
   });
 
   it("lists branches for a folder project nested inside a repository", async () => {

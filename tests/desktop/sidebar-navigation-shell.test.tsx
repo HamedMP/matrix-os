@@ -257,37 +257,25 @@ describe("Desktop sidebar navigation shell", () => {
     }
 
     const projects = screen.getByRole("button", { name: "Projects" });
-    expect(projects.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(projects);
-    fireEvent.click(screen.getByRole("button", { name: "Open Matrix OS" }));
-    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId))
-      .toMatchObject({ kind: "project", projectSlug: "matrix-os" });
-
-    fireEvent.click(projects);
-    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
-    expect(useUi.getState().createProjectOpen).toBe(true);
+    expect(projects.getAttribute("aria-current")).toBe("page");
+    expect(useTabs.getState().tabs.find((tab) => tab.kind === "projects")).toBeTruthy();
   });
 
-  it("holds the renderer overlay through the nested project actions flow", async () => {
-    useBoard.setState({
-      projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "scratch" }],
-    });
+  it("opens and focuses one canonical Projects index tab", () => {
     renderSidebar();
 
     const projects = screen.getByRole("button", { name: "Projects" });
     fireEvent.click(projects);
-    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
 
-    const actions = screen.getByRole("button", { name: "Project actions for Matrix OS" });
-    fireEvent.pointerDown(actions, { button: 0, ctrlKey: false });
-    await screen.findByRole("menuitem", { name: "Archive project" });
-    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(2));
+    const first = useTabs.getState().tabs.find((tab) => tab.kind === "projects");
+    expect(first).toBeTruthy();
+    expect(useTabs.getState().activeTabId).toBe(first?.id);
+    expect(projects.getAttribute("aria-current")).toBe("page");
 
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
-    expect(document.activeElement).toBe(projects);
+    fireEvent.click(projects);
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "projects")).toHaveLength(1);
+    expect(useTabs.getState().activeTabId).toBe(first?.id);
   });
 
   it("removes the navigation column below the title bar when collapsed", () => {

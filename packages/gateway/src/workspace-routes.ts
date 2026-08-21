@@ -48,6 +48,7 @@ const CreateProjectSchema = z.object({
   url: z.string().min(1).max(512).optional(),
   slug: z.string().min(1).max(63).optional(),
   name: z.string().trim().min(1).max(128).optional(),
+  description: z.string().trim().max(1_000).optional(),
   path: z.string().min(1).max(4096).optional(),
   branch: GitBranchSchema.optional(),
   clientRequestId: z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/).optional(),
@@ -90,6 +91,8 @@ const CloneProjectSchema = z.object({
     /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?(\.git)?\/?$/,
   ),
   name: z.string().trim().regex(PROJECT_SLUG_REGEX).optional(),
+  displayName: z.string().trim().min(1).max(128).optional(),
+  description: z.string().trim().max(1_000).optional(),
   branch: GitBranchSchema.optional(),
   clientRequestId: z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/),
 });
@@ -390,6 +393,7 @@ export function createWorkspaceRoutes(options: {
       url: body.value.url,
       slug: body.value.slug,
       name: body.value.name,
+      description: body.value.description || undefined,
       path: body.value.path,
       branch: body.value.branch,
       clientRequestId: body.value.clientRequestId,
@@ -416,6 +420,8 @@ export function createWorkspaceRoutes(options: {
       mode: "github",
       url: body.value.url,
       slug: body.value.name,
+      name: body.value.displayName,
+      description: body.value.description || undefined,
       branch: body.value.branch,
       clientRequestId: body.value.clientRequestId,
       ownerScope,
@@ -506,6 +512,28 @@ export function createWorkspaceRoutes(options: {
     const result = await projectManager.listPullRequests(c.req.param("slug"), ownerScope);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ prs: result.prs, refreshedAt: result.refreshedAt });
+  });
+
+  app.get("/api/projects/:slug/code-metadata", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.getCodeMetadata(c.req.param("slug"), ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    const worktrees = await worktreeManager.listWorktrees(c.req.param("slug"), ownerScope);
+    if (!worktrees.ok) {
+      console.warn("[workspace-routes] Failed to list project worktrees:", worktrees.error.code);
+    }
+    return c.json({
+      path: result.path,
+      repository: result.repository,
+      isGitRepository: result.isGitRepository,
+      branch: result.branch,
+      clean: result.clean,
+      ahead: result.ahead,
+      behind: result.behind,
+      hasUpstream: result.hasUpstream,
+      worktreeCount: worktrees.ok ? worktrees.worktrees.length : null,
+    });
   });
 
   app.get("/api/projects/:slug/branches", async (c) => {

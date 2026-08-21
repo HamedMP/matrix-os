@@ -21,6 +21,7 @@ export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const ProjectRecordSchema = z.object({
   id: z.string().regex(/^proj_[A-Za-z0-9_-]{1,128}$/),
   name: z.string().min(1).max(200),
+  description: z.string().max(1_000).optional(),
   slug: z.string().regex(PROJECT_SLUG_REGEX),
   kind: z.enum(["scratch", "github", "folder"]).optional(),
   remote: z.string().max(2_048).optional(),
@@ -53,6 +54,7 @@ const MAX_PROJECT_DISCOVERY_ENTRIES = 10_000;
 export interface ProjectRecord {
   id: string;
   name: string;
+  description?: string;
   slug: string;
   kind?: "scratch" | "github" | "folder";
   remote?: string;

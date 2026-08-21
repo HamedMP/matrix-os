@@ -1,4 +1,4 @@
-import { FolderKanban, RefreshCw } from "lucide-react";
+import { LayoutGrid, MessageCircle, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, StatusDot } from "../../design/primitives";
@@ -12,6 +12,7 @@ import type { ProjectView } from "../../stores/project-view";
 import Board from "../board/Board";
 import CreateTaskDialog from "../board/CreateTaskDialog";
 import ProjectChatsView from "./ProjectChatsView";
+import ProjectOverview from "./ProjectOverview";
 
 const RUNTIME_STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -30,22 +31,24 @@ export function ProjectViewSwitch({
   view: ProjectView;
   onChange: (view: ProjectView) => void;
 }) {
+  const chatsActive = view !== "board";
   return (
     <div role="group" aria-label="Project view" className="inline-flex rounded-lg border p-0.5" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
-      {(["board", "chats"] as const).map((mode) => (
+      {(["chats", "board"] as const).map((mode) => (
         <button
           key={mode}
           type="button"
           aria-label={mode === "board" ? "Board" : "Chats"}
-          aria-pressed={view === mode}
-          onClick={() => onChange(mode)}
-          className="rounded-md px-3 py-1.5 text-xs font-medium capitalize outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          aria-pressed={mode === "board" ? view === "board" : chatsActive}
+          onClick={() => onChange(mode === "board" ? "board" : "overview")}
+          title={mode === "board" ? "Board" : "Chats"}
+          className="flex h-7 w-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           style={{
-            background: view === mode ? "var(--bg-selected)" : "transparent",
-            color: view === mode ? "var(--text-primary)" : "var(--text-tertiary)",
+            background: (mode === "board" ? view === "board" : chatsActive) ? "var(--bg-selected)" : "transparent",
+            color: (mode === "board" ? view === "board" : chatsActive) ? "var(--text-primary)" : "var(--text-tertiary)",
           }}
         >
-          {mode}
+          {mode === "board" ? <LayoutGrid size={14} /> : <MessageCircle size={14} />}
         </button>
       ))}
     </div>
@@ -55,7 +58,8 @@ export function ProjectViewSwitch({
 /**
  * The project tab: one canonical surface per project with a Board (kanban)
  * and a Chats (coding-agent conversations) view. Later waves attach more
- * panels (git DAG, files, terminal) to this header/segmented structure.
+ * The Figma sessions landing and the existing chat detail share the Chats segment;
+ * contextual tools remain owned by ProjectChatsView.
  */
 export default function ProjectTab({ projectSlug, active }: { projectSlug: string; active: boolean }) {
   const view = useProjectView((s) => s.entries[projectSlug]?.view ?? DEFAULT_PROJECT_VIEW);
@@ -98,18 +102,26 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
 
   const summaryProject = summary?.projects.items.find((project) => project.id === projectSlug);
   const name = boardProject?.name || summaryProject?.label || projectSlug;
+  const description = boardProject?.description;
   const attention = summaryProject?.attentionCount ?? 0;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <header
-        className="flex shrink-0 items-center gap-3 border-b px-4 py-2"
+      {view !== "overview" ? <header
+        className="flex shrink-0 items-center gap-3 border-b px-5 py-2.5"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md" style={{ background: "var(--accent-muted)", color: "var(--accent)" }}>
-          <FolderKanban size={13} />
-        </span>
-        <span className="truncate text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{name}</span>
+        {summary ? (
+          <div className="flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-app)" }}>
+            <StatusDot
+              color={RUNTIME_STATUS_COLOR[summary.runtime.status] ?? "var(--text-tertiary)"}
+              pulse={summary.runtime.status === "available"}
+            />
+            <span className="max-w-44 truncate text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+              {summary.runtime.label} Matrix computer
+            </span>
+          </div>
+        ) : null}
         {attention > 0 ? (
           <span
             aria-label={`${attention} need attention`}
@@ -122,14 +134,7 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
         <div className="flex-1" />
         <ProjectViewSwitch view={view} onChange={(next) => setView(projectSlug, next)} />
         {summary ? (
-          <div className="flex shrink-0 items-center gap-2">
-            <StatusDot
-              color={RUNTIME_STATUS_COLOR[summary.runtime.status] ?? "var(--text-tertiary)"}
-              pulse={summary.runtime.status === "available"}
-            />
-            <span className="max-w-32 truncate text-xs" style={{ color: "var(--text-secondary)" }}>
-              {summary.runtime.label}
-            </span>
+          <div className="flex shrink-0 items-center">
             <Button
               variant="ghost"
               aria-label="Refresh agent workspace"
@@ -144,8 +149,17 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
             </Button>
           </div>
         ) : null}
-      </header>
-      {view === "chats" ? (
+      </header> : null}
+      {view === "overview" ? (
+        <ProjectOverview
+          projectId={projectSlug}
+          projectLabel={name}
+          description={description}
+          summary={summary}
+          active={active}
+          viewSwitch={<ProjectViewSwitch view={view} onChange={(next) => setView(projectSlug, next)} />}
+        />
+      ) : view === "chats" ? (
         <ProjectChatsView projectId={projectSlug} active={active} />
       ) : (
         <Board projectSlug={projectSlug} active={active} />

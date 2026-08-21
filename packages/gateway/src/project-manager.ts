@@ -20,6 +20,7 @@ export type ProjectVisibility = "active" | "archived" | "all";
 export interface ProjectConfig {
   id: string;
   name: string;
+  description?: string;
   slug: string;
   kind: ProjectKind;
   remote?: string;
@@ -58,6 +59,17 @@ export interface BranchSummary {
   default?: boolean;
 }
 
+export interface ProjectCodeMetadata {
+  path: string;
+  repository: string | null;
+  isGitRepository: boolean;
+  branch: string | null;
+  clean: boolean | null;
+  ahead: number;
+  behind: number;
+  hasUpstream: boolean;
+}
+
 export interface GithubRepoSummary {
   nameWithOwner: string;
   url: string;
@@ -87,6 +99,8 @@ const CLONE_TIMEOUT_MS = 5 * 60_000;
 
 const GitHubUrlSchema = z.string().trim().min(1).max(512);
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
+const ProjectNameSchema = z.string().trim().min(1).max(128);
+const ProjectDescriptionSchema = z.string().trim().max(1_000).optional();
 const CreateRequestIdSchema = z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/);
 
 const BRANCH_FORBIDDEN_CHARS = /[\x00-\x20 ~^:?*[\]\\]/;
@@ -113,6 +127,7 @@ function createRequestFingerprint(input: {
   mode: CreateProjectMode;
   slug: string;
   name?: string;
+  description?: string;
   localPath?: string;
   repositoryUrl?: string;
   branch?: string;
@@ -153,6 +168,23 @@ function isNotAGitRepositoryError(err: unknown): boolean {
     ? (err as { stderr: string }).stderr
     : "";
   return /not a git repository/i.test(stderr) || /not a git repository/i.test(err.message);
+}
+
+function isMissingGitUpstreamError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const stderr = "stderr" in err && typeof (err as { stderr?: unknown }).stderr === "string"
+    ? (err as { stderr: string }).stderr
+    : "";
+  return /no upstream configured|no such branch.*@\{upstream\}|ambiguous argument.*@\{upstream\}/i.test(`${err.message}\n${stderr}`);
+}
+
+function repositoryNameFromRemote(remote: string | undefined): string | null {
+  if (!remote) return null;
+  const github = validateGitHubUrl(remote);
+  if (github.ok) return `${github.owner}/${github.repo}`;
+  const normalized = remote.replace(/\.git\/?$/, "").replace(/\/$/, "");
+  const match = /(?:[:/])([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(normalized);
+  return match ? `${match[1]}/${match[2]}` : null;
 }
 
 function nowIso(now?: () => string): string {
@@ -371,6 +403,7 @@ export function createProjectManager(options: {
       url?: string;
       slug?: string;
       name?: string;
+      description?: string;
       path?: string;
       branch?: string;
       mode?: CreateProjectMode;
@@ -383,6 +416,11 @@ export function createProjectManager(options: {
       if (input.branch !== undefined && !GitBranchSchema.safeParse(input.branch).success) {
         return genericError(400, "invalid_branch", "Branch name is invalid");
       }
+      const parsedDescription = ProjectDescriptionSchema.safeParse(input.description);
+      if (!parsedDescription.success) {
+        return genericError(400, "invalid_project_description", "Project description is invalid");
+      }
+      const description = parsedDescription.data || undefined;
       const mode = input.mode ?? (input.url ? "github" : "scratch");
       if (mode === "folder") {
         const name = input.name?.trim() || "";
@@ -431,7 +469,7 @@ export function createProjectManager(options: {
           }
         }
         const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
-        const fingerprint = createRequestFingerprint({ mode, slug, name, localPath: realLocalPath, ownerScope });
+        const fingerprint = createRequestFingerprint({ mode, slug, name, description, localPath: realLocalPath, ownerScope });
         return withProjectLock(slug, async () => {
           if (await registry.hasTombstone(slug)) {
             return genericError(409, "slug_conflict", "Project slug already exists");
@@ -440,6 +478,7 @@ export function createProjectManager(options: {
           const project: ProjectConfig = {
             id: `proj_${randomUUID()}`,
             name,
+            description,
             slug,
             kind: "folder",
             // Persist the fully resolved path: session launches use the stored
@@ -479,7 +518,7 @@ export function createProjectManager(options: {
           return genericError(400, "invalid_slug", "Project slug is invalid");
         }
         const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
-        const fingerprint = createRequestFingerprint({ mode, slug, name, ownerScope });
+        const fingerprint = createRequestFingerprint({ mode, slug, name, description, ownerScope });
         return withProjectLock(slug, async () => {
           const targetProjectPath = projectPath(homePath, slug);
           if (
@@ -503,6 +542,7 @@ export function createProjectManager(options: {
           const project: ProjectConfig = {
             id: `proj_${randomUUID()}`,
             name,
+            description,
             slug,
             kind: "scratch",
             localPath: repoPath,
@@ -529,9 +569,15 @@ export function createProjectManager(options: {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
       const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+      const name = input.name?.trim() || github.repo;
+      if (!ProjectNameSchema.safeParse(name).success) {
+        return genericError(400, "invalid_project_name", "Project name is invalid");
+      }
       const fingerprint = createRequestFingerprint({
         mode,
         slug,
+        name,
+        description,
         repositoryUrl: github.htmlUrl,
         branch: input.branch,
         ownerScope,
@@ -596,7 +642,8 @@ export function createProjectManager(options: {
         const timestamp = nowIso(options.now);
         const project: ProjectConfig = {
           id: `proj_${randomUUID()}`,
-          name: github.repo,
+          name,
+          description,
           slug,
           kind: "github",
           remote: input.url,
@@ -831,6 +878,117 @@ export function createProjectManager(options: {
         };
       } catch (err: unknown) {
         if (err instanceof Error) console.warn("[project-manager] Failed to list branches:", err.message);
+        return genericError(502, "git_request_failed", "Git request failed");
+      }
+    },
+
+    async getCodeMetadata(slug: string, ownerScope?: OwnerScope): Promise<Result<ProjectCodeMetadata> | Failure> {
+      const projectResult = await this.getProject(slug, ownerScope);
+      if (!projectResult.ok) return projectResult;
+      const project = projectResult.project;
+      let repository = project.github
+        ? `${project.github.owner}/${project.github.repo}`
+        : repositoryNameFromRemote(project.remote);
+      let repoTopLevel: string;
+      try {
+        const probe = await runCommand("git", ["rev-parse", "--show-toplevel"], {
+          cwd: project.localPath,
+          timeout: DEFAULT_TIMEOUT_MS,
+        });
+        repoTopLevel = probe.stdout.trim();
+      } catch (err: unknown) {
+        if (isNotAGitRepositoryError(err)) {
+          return {
+            ok: true,
+            path: project.localPath,
+            repository,
+            isGitRepository: false,
+            branch: null,
+            clean: null,
+            ahead: 0,
+            behind: 0,
+            hasUpstream: false,
+          };
+        }
+        console.warn("[project-manager] Failed to probe project git metadata:", err instanceof Error ? err.message : typeof err);
+        return genericError(502, "git_request_failed", "Git request failed");
+      }
+
+      try {
+        const [homeReal, repoReal] = await Promise.all([realpath(homePath), realpath(repoTopLevel)]);
+        if (homeReal === repoReal) {
+          return {
+            ok: true,
+            path: project.localPath,
+            repository,
+            isGitRepository: false,
+            branch: null,
+            clean: null,
+            ahead: 0,
+            behind: 0,
+            hasUpstream: false,
+          };
+        }
+
+        if (!repository) {
+          try {
+            const remote = await runCommand("git", ["remote", "get-url", "origin"], {
+              cwd: project.localPath,
+              timeout: DEFAULT_TIMEOUT_MS,
+            });
+            repository = repositoryNameFromRemote(remote.stdout.trim());
+          } catch (err: unknown) {
+            console.info("[project-manager] Project has no readable origin remote:", err instanceof Error ? err.message : typeof err);
+          }
+        }
+
+        const statusResult = await runCommand("git", ["status", "--porcelain", "--untracked-files=normal"], {
+          cwd: project.localPath,
+          timeout: DEFAULT_TIMEOUT_MS,
+        });
+        const branchResult = await runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: project.localPath,
+          timeout: DEFAULT_TIMEOUT_MS,
+        });
+        const branchValue = branchResult.stdout.trim();
+        const branch = branchValue && branchValue !== "HEAD" ? branchValue : null;
+        let ahead = 0;
+        let behind = 0;
+        let hasUpstream = false;
+        try {
+          await runCommand("git", ["rev-parse", "--abbrev-ref", "@{upstream}"], {
+            cwd: project.localPath,
+            timeout: DEFAULT_TIMEOUT_MS,
+          });
+          const divergence = await runCommand("git", ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], {
+            cwd: project.localPath,
+            timeout: DEFAULT_TIMEOUT_MS,
+          });
+          const [behindText, aheadText] = divergence.stdout.trim().split(/\s+/);
+          behind = Number.parseInt(behindText ?? "0", 10);
+          ahead = Number.parseInt(aheadText ?? "0", 10);
+          if (!Number.isFinite(behind) || behind < 0) behind = 0;
+          if (!Number.isFinite(ahead) || ahead < 0) ahead = 0;
+          hasUpstream = true;
+        } catch (err: unknown) {
+          if (!isMissingGitUpstreamError(err)) {
+            console.warn("[project-manager] Failed to read project upstream metadata:", err instanceof Error ? err.message : typeof err);
+            return genericError(502, "git_request_failed", "Git request failed");
+          }
+        }
+        return {
+          ok: true,
+          path: project.localPath,
+          repository,
+          isGitRepository: true,
+          branch,
+          clean: statusResult.stdout.trim().length === 0,
+          ahead,
+          behind,
+          hasUpstream,
+        };
+      } catch (err: unknown) {
+        console.warn("[project-manager] Failed to read project git metadata:", err instanceof Error ? err.message : typeof err);
         return genericError(502, "git_request_failed", "Git request failed");
       }
     },

@@ -1,4 +1,4 @@
-// Per-project shell view state: which view (Board | Chats) a project tab shows
+// Per-project shell view state: which view (Overview | Board | Chats) a project tab shows
 // and which chat is selected in the Chats view. Persisted under the
 // `projectViews` local-state key, scoped to the current runtime so another
 // computer's selections never leak in. Bounded to MAX_PROJECT_VIEW_ENTRIES
@@ -17,7 +17,7 @@ export type { ProjectView } from "../../../shared/project-views";
 
 export const MAX_PROJECT_VIEW_ENTRIES = 50;
 
-export const DEFAULT_PROJECT_VIEW: ProjectView = "chats";
+export const DEFAULT_PROJECT_VIEW: ProjectView = "overview";
 
 interface ProjectViewState {
   entries: Record<string, ProjectViewEntry>;

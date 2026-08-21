@@ -23,13 +23,20 @@ export function breadcrumbItemsForTab(
 ): BreadcrumbItem[] {
   if (!tab) return [];
   switch (tab.kind) {
+    case "projects":
+      return [
+        { key: "home", label: "Home" },
+        { key: "projects", label: "Projects" },
+      ];
     case "project":
       return [
+        { key: "home", label: "Home" },
         { key: "projects", label: "Projects" },
         { key: `projects/${tab.projectSlug ?? tab.id}`, label: tab.title },
       ];
     case "task":
       return [
+        { key: "home", label: "Home" },
         { key: "projects", label: "Projects" },
         {
           key: `projects/${tab.projectSlug ?? "project"}`,

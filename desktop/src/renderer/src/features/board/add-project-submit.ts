@@ -14,7 +14,7 @@ export interface AddProjectSubmitContext {
   getProjects: () => Project[];
   createProject: (
     api: ApiClient,
-    input: { name: string; mode: "scratch" | "github" | "folder"; url?: string; path?: string },
+    input: { name: string; description?: string; mode: "scratch" | "github" | "folder"; url?: string; path?: string },
   ) => Promise<Project | null>;
   selectProject: (api: ApiClient, slug: string) => Promise<void>;
   loadProjects: (api: ApiClient) => Promise<boolean>;
@@ -39,7 +39,7 @@ function projectPathMatches(localPath: string | undefined, selectedPath: string)
 
 async function handleExistingFolderProject(
   ctx: AddProjectSubmitContext,
-  input: { name: string; path: string },
+  input: { name: string; description?: string; path: string },
 ): Promise<boolean> {
   const projects = ctx.getProjects();
   // Folder identity is stronger than the editable display name. In particular,
@@ -78,10 +78,10 @@ export async function openExistingProject(ctx: AddProjectSubmitContext, slug: st
 
 export async function submitExistingFolder(
   ctx: AddProjectSubmitContext,
-  input: { name: string; path: string },
+  input: { name: string; description?: string; path: string },
 ): Promise<void> {
   if (await handleExistingFolderProject(ctx, input)) return;
-  const project = await ctx.createProject(ctx.api, { name: input.name, mode: "folder", path: input.path });
+  const project = await ctx.createProject(ctx.api, { name: input.name, description: input.description, mode: "folder", path: input.path });
   if (!ctx.isCurrent()) return;
   if (!project) {
     await ctx.loadProjects(ctx.api);
@@ -95,12 +95,14 @@ export async function submitExistingFolder(
 
 export async function submitClone(
   ctx: AddProjectSubmitContext,
-  input: { url: string; name: string; branch?: string; clientRequestId: string },
+  input: { url: string; name: string; displayName: string; description?: string; branch?: string; clientRequestId: string },
 ): Promise<void> {
   const result = await cloneProject({
     api: ctx.api,
     url: input.url,
     name: input.name,
+    displayName: input.displayName,
+    description: input.description,
     branch: input.branch,
     clientRequestId: input.clientRequestId,
   });
@@ -122,14 +124,14 @@ export async function submitClone(
 
 export async function submitNewFolder(
   ctx: AddProjectSubmitContext,
-  input: { name: string; parentPath: string; clientRequestId: string },
+  input: { name: string; description?: string; parentPath: string; clientRequestId: string },
 ): Promise<void> {
   const parentPath = input.parentPath.trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
   // Selecting the visible Projects directory is semantically identical to the
   // default location. Use the manager-owned scratch path instead of mkdir +
   // folder bind, which would pre-create the registry slot and then conflict.
   if (!parentPath || parentPath === "projects") {
-    const project = await ctx.createProject(ctx.api, { name: input.name, mode: "scratch" });
+    const project = await ctx.createProject(ctx.api, { name: input.name, description: input.description, mode: "scratch" });
     if (!ctx.isCurrent()) return;
     if (!project) {
       ctx.setError("Couldn't create the project. Check the name.");
@@ -177,7 +179,7 @@ export async function submitNewFolder(
     );
     return;
   }
-  const project = await ctx.createProject(ctx.api, { name: input.name, mode: "folder", path: createdPath });
+  const project = await ctx.createProject(ctx.api, { name: input.name, description: input.description, mode: "folder", path: createdPath });
   if (!ctx.isCurrent()) return;
   if (!project) {
     ctx.setError("The folder was created but couldn't be connected. Add it with “Existing folder”.");
