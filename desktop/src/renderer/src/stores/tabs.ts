@@ -216,8 +216,10 @@ export const useTabs = create<TabsState>()((set, get) => ({
       };
       const retainedRootIndex = priorHistory.lastIndexOf(id);
       const historyBeforeRoot = retainedRootIndex >= 0
-        ? priorHistory.slice(0, retainedRootIndex).filter((tabId) => !isDetailTab(tabId))
-        : priorHistory.filter((tabId) => !isDetailTab(tabId));
+        ? priorHistory
+            .slice(0, retainedRootIndex)
+            .filter((tabId) => tabId !== id && !isDetailTab(tabId))
+        : priorHistory.filter((tabId) => tabId !== id && !isDetailTab(tabId));
       const historyAfterRoot = retainedRootIndex >= 0
         ? priorHistory.slice(retainedRootIndex + 1)
         : [];
