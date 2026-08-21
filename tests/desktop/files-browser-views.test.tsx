@@ -236,6 +236,22 @@ describe("ComputerFileBrowser view options", () => {
     });
   });
 
+  it("returns keyboard focus to the search control in an empty listing", async () => {
+    api.get.mockResolvedValue({ entries: [] });
+    renderBrowser();
+    await screen.findByText("This folder is empty.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Search files" }));
+    const searchbox = screen.getByRole("searchbox", { name: "Search files" });
+    expect(document.activeElement).toBe(searchbox);
+
+    fireEvent.keyDown(searchbox, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Search files" }));
+    });
+  });
+
   it("switches between list and grid from the segmented control", async () => {
     renderBrowser();
     expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();

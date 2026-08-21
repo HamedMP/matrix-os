@@ -17,6 +17,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 import { Button, IconButton } from "../../design/primitives";
 import type { BrowserEntry, BrowserSortDirection } from "./browser-entries";
@@ -309,8 +310,18 @@ export function BrowserToolbar({
   onSearchClose: () => void;
   onSearchQueryChange: (query: string) => void;
 }) {
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const previousSearchOpenRef = useRef(searchOpen);
+
+  useEffect(() => {
+    if (previousSearchOpenRef.current && !searchOpen) {
+      toolbarRef.current?.querySelector<HTMLButtonElement>("[data-files-search-trigger]")?.focus();
+    }
+    previousSearchOpenRef.current = searchOpen;
+  }, [searchOpen]);
+
   return (
-    <div data-files-toolbar className="flex h-[37px] shrink-0 items-center gap-1 border-b" style={{ borderColor: "var(--border-subtle)" }}>
+    <div ref={toolbarRef} data-files-toolbar className="flex h-[37px] shrink-0 items-center gap-1 border-b" style={{ borderColor: "var(--border-subtle)" }}>
       <IconButton label="Back" className="h-8 w-8 shrink-0 disabled:opacity-40" disabled={!canGoBack} onClick={onBack}>
         <ArrowLeft size={16} />
       </IconButton>
@@ -381,7 +392,7 @@ export function BrowserToolbar({
           </button>
         </div>
       ) : (
-        <IconButton label="Search files" className="h-8 w-8 shrink-0 border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }} onClick={onSearchOpen}>
+        <IconButton data-files-search-trigger label="Search files" className="h-8 w-8 shrink-0 border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }} onClick={onSearchOpen}>
           <Search size={16} />
         </IconButton>
       )}
