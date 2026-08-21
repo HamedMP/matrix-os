@@ -125,6 +125,7 @@ interface TabsState {
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
   openTabAtHistoryRoot(
     spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
+    detailKinds: readonly TabKind[],
   ): string;
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
@@ -201,7 +202,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
     return id;
   },
 
-  openTabAtHistoryRoot: (spec) => {
+  openTabAtHistoryRoot: (spec, detailKinds) => {
     const previousState = get();
     const id = previousState.openTab(spec);
     set((state) => {
@@ -209,17 +210,26 @@ export const useTabs = create<TabsState>()((set, get) => ({
       const priorHistory = previousState.viewHistory
         .slice(0, previousState.historyIndex + 1)
         .filter((tabId) => retainedTabIds.has(tabId));
-      const earlierRootIndex = priorHistory.lastIndexOf(id, priorHistory.length - 2);
-      if (earlierRootIndex >= 0) {
-        return {
-          activeTabId: id,
-          ...historyPatch(priorHistory, earlierRootIndex),
-        };
-      }
-      const replaced = [...priorHistory.slice(0, -1), id].slice(-MAX_VIEW_HISTORY);
+      const isDetailTab = (tabId: string) => {
+        const tabKind = state.tabs.find((tab) => tab.id === tabId)?.kind;
+        return tabKind !== undefined && detailKinds.includes(tabKind);
+      };
+      const retainedRootIndex = priorHistory.lastIndexOf(id);
+      const historyBeforeRoot = retainedRootIndex >= 0
+        ? priorHistory.slice(0, retainedRootIndex).filter((tabId) => !isDetailTab(tabId))
+        : priorHistory.filter((tabId) => !isDetailTab(tabId));
+      const historyAfterRoot = retainedRootIndex >= 0
+        ? priorHistory.slice(retainedRootIndex + 1)
+        : [];
+      const nextHistory = [
+        ...historyBeforeRoot,
+        id,
+        ...historyAfterRoot,
+      ].slice(-MAX_VIEW_HISTORY);
+      const nextRootIndex = nextHistory.indexOf(id);
       return {
         activeTabId: id,
-        ...historyPatch(replaced, replaced.length - 1),
+        ...historyPatch(nextHistory, nextRootIndex),
       };
     });
     return id;

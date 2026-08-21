@@ -23,5 +23,5 @@ export function returnToProjectsIndex(): void {
     kind: "projects",
     title: "Projects",
     closable: false,
-  });
+  }, ["project", "task"]);
 }

@@ -231,6 +231,37 @@ describe("Desktop navigation header", () => {
       .toBe("Home");
   });
 
+  it("does not revisit a retained task reopened after the Projects root", () => {
+    const homeTabId = useTabs.getState().openTab({
+      kind: "home",
+      title: "Home",
+      closable: false,
+    });
+    const taskSpec = {
+      kind: "task" as const,
+      projectSlug: "matrix-os",
+      taskId: "MAT-466",
+      title: "Fix Desktop navigation",
+    };
+    useTabs.getState().openTab(taskSpec);
+    const projectsTabId = useTabs.getState().openTab({
+      kind: "projects",
+      title: "Projects",
+      closable: false,
+    });
+    useTabs.getState().openTab(taskSpec);
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    expect(useTabs.getState().activeTabId).toBe(projectsTabId);
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    expect(useTabs.getState().activeTabId).toBe(homeTabId);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent)
+      .toBe("Home");
+  });
+
   it("moves backward through an existing Projects list history entry without adding a loop", () => {
     const projectsTabId = useTabs.getState().openTab({
       kind: "projects",
