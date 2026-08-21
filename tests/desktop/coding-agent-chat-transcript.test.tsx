@@ -46,7 +46,7 @@ function completedEvent(messageId: string): AgentThreadEvent {
   } as AgentThreadEvent;
 }
 
-function toolEvents(id: string, displayName: string, outcome: "success" | "failed" | null): AgentThreadEvent[] {
+function toolEvents(id: string, displayName: string, outcome: "success" | "failed" | "cancelled" | null): AgentThreadEvent[] {
   const events: AgentThreadEvent[] = [
     {
       type: "tool.started",
@@ -68,6 +68,17 @@ function toolEvents(id: string, displayName: string, outcome: "success" | "faile
     } as AgentThreadEvent);
   }
   return events;
+}
+
+function userMessage(id: string, text: string, second: number): AgentThreadEvent {
+  return {
+    type: "user.message",
+    eventId: `evt_user_${id}`,
+    threadId: "thread_alpha",
+    occurredAt: `2026-07-15T00:00:${String(second).padStart(2, "0")}.000Z`,
+    messageId: id,
+    text,
+  } as AgentThreadEvent;
 }
 
 describe("AgentConversationView transcript", () => {
@@ -307,16 +318,114 @@ describe("AgentConversationView transcript", () => {
     expect(screen.getAllByText(/completed with errors/).length).toBeGreaterThan(0);
   });
 
-  it("collapses long tool runs behind an earlier-calls toggle", () => {
-    const events = Array.from({ length: 7 }, (_, index) => toolEvents(`tc_${index}`, `Tool ${index}`, "success")).flat();
+  it("keeps the active turn and latest tool-call tail visible", () => {
+    const events = [
+      userMessage("msg_user_active", "Inspect the project", 1),
+      ...Array.from({ length: 7 }, (_, index) => toolEvents(`tc_${index}`, `Tool ${index}`, "success")).flat(),
+    ];
     render(
       <AgentConversationView status="ready" snapshot={snapshot(events)} error={null} canSendTurns />,
     );
 
+    expect(document.querySelectorAll('[data-slot="agent-turn"]')).toHaveLength(1);
     expect(screen.getByRole("button", { name: "+4 earlier tool calls" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Tool call Tool 0" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Tool call Tool 6" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "+4 earlier tool calls" }));
     expect(screen.getByRole("button", { name: "Tool call Tool 0" })).toBeTruthy();
+  });
+
+  it("collapses a settled turn's tool activity behind one truthful summary", () => {
+    const events = [
+      userMessage("msg_user_settled", "Run the checks", 1),
+      ...Array.from({ length: 7 }, (_, index) => toolEvents(`settled_${index}`, `Check ${index}`, "success")).flat(),
+      delta("msg_result", "All checks passed.", 40),
+      completedEvent("msg_result"),
+    ];
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot(events, { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    const turn = document.querySelector('[data-slot="agent-turn"]');
+    expect(turn).not.toBeNull();
+    expect(turn?.textContent).toContain("All checks passed.");
+    const summary = screen.getByRole("button", { name: "7 tool calls, completed" });
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Tool call Check 0" })).toBeNull();
+
+    fireEvent.click(summary);
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Tool call Check 0" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tool call Check 6" })).toBeTruthy();
+  });
+
+  it("keeps message actions on the terminal result without spacing out commentary", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          userMessage("msg_user_meta", "Inspect the transcript", 1),
+          delta("msg_commentary", "I’ll inspect the renderer first.", 2),
+          completedEvent("msg_commentary"),
+          ...toolEvents("tc_meta", "Read renderer", "success"),
+          delta("msg_result", "The renderer is verified.", 20),
+          completedEvent("msg_result"),
+        ], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Copy assistant message" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Copy your message" })).toBeTruthy();
+  });
+
+  it("keeps multiple turn sections in received chronology", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          userMessage("msg_user_1", "First request", 1),
+          delta("msg_first_result", "First result", 2),
+          completedEvent("msg_first_result"),
+          userMessage("msg_user_2", "Second request", 3),
+          delta("msg_second_result", "Second result", 4),
+          completedEvent("msg_second_result"),
+        ], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    const turns = Array.from(document.querySelectorAll('[data-slot="agent-turn"]'));
+    expect(turns).toHaveLength(2);
+    expect(turns[0]?.textContent).toContain("First request");
+    expect(turns[0]?.textContent).toContain("First result");
+    expect(turns[1]?.textContent).toContain("Second request");
+    expect(turns[1]?.textContent).toContain("Second result");
+  });
+
+  it("renders a cancelled tool result as cancelled instead of completed", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          userMessage("msg_user_cancelled", "Stop the check", 1),
+          ...toolEvents("tc_cancelled", "Cancelled check", "cancelled"),
+        ], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "1 tool call, cancelled" }));
+    expect(screen.getByLabelText("Cancelled")).toBeTruthy();
+    expect(screen.queryByLabelText("Completed")).toBeNull();
   });
 
   it("shows a working indicator while the thread runs without streaming text", () => {

@@ -51,21 +51,17 @@ import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
 import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
 import { AgentComposerPickers } from "./composer-pickers";
+import {
+  projectConversationTimeline,
+  type AssistantEvent,
+  type ConversationTimelineItem,
+  type TimelineItem,
+  type ToolEvent,
+} from "./conversation-timeline";
 import { ToolCallDetailMeta } from "./tool-call-detail";
 import { deriveTurnSummaries } from "./turn-summary";
 
 type ConversationStatus = "idle" | "loading" | "ready" | "error";
-type AssistantEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
-type ToolEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
-// `order` is the index of the item's first event; `endOrder` the index of its
-// last — turn summaries anchor to the row containing a turn's final event.
-type ConversationItem =
-  | { kind: "assistant"; key: string; events: AssistantEvent[]; order: number; endOrder: number }
-  | { kind: "tool"; key: string; events: ToolEvent[]; order: number; endOrder: number }
-  | { kind: "event"; event: AgentThreadEvent; order: number; endOrder: number };
-type TimelineItem =
-  | Exclude<ConversationItem, { kind: "tool" }>
-  | { kind: "tool-run"; key: string; runs: Array<Extract<ConversationItem, { kind: "tool" }>>; order: number; endOrder: number };
 
 // Defensive ceiling for one rendered message; each delta is already bounded by
 // the event schema (4,000 chars / 16KB), so this only guards runaway joins.
@@ -78,71 +74,6 @@ const TOOL_RUN_VISIBLE_TAIL = 3;
 
 const TRANSCRIPT_MARKDOWN_CLASS =
   "prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:text-md [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-[var(--border-subtle)] [&_li]:my-1 [&_li]:marker:text-[var(--text-tertiary)] [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--border-subtle)] [&_pre]:bg-[var(--bg-sunken)] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-[13px] [&_td]:border [&_td]:border-[var(--border-subtle)] [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-[var(--border-subtle)] [&_th]:bg-[var(--bg-sunken)] [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5";
-
-function conversationItems(events: AgentThreadEvent[]): ConversationItem[] {
-  const assistants = new Map<string, Extract<ConversationItem, { kind: "assistant" }>>();
-  const tools = new Map<string, Extract<ConversationItem, { kind: "tool" }>>();
-  const items: ConversationItem[] = [];
-  for (const [order, event] of events.entries()) {
-    if (event.type === "assistant.text.delta" || event.type === "assistant.text.completed") {
-      const group = assistants.get(event.messageId);
-      if (group) {
-        group.events.push(event);
-        group.endOrder = order;
-      } else {
-        const item: Extract<ConversationItem, { kind: "assistant" }> = {
-          kind: "assistant",
-          key: `assistant:${event.messageId}`,
-          events: [event],
-          order,
-          endOrder: order,
-        };
-        assistants.set(event.messageId, item);
-        items.push(item);
-      }
-      continue;
-    }
-    if (event.type === "tool.started" || event.type === "tool.output" || event.type === "tool.completed") {
-      const group = tools.get(event.toolCallId);
-      if (group) {
-        group.events.push(event);
-        group.endOrder = order;
-      } else {
-        const item: Extract<ConversationItem, { kind: "tool" }> = {
-          kind: "tool",
-          key: `tool:${event.toolCallId}`,
-          events: [event],
-          order,
-          endOrder: order,
-        };
-        tools.set(event.toolCallId, item);
-        items.push(item);
-      }
-      continue;
-    }
-    items.push({ kind: "event", event, order, endOrder: order });
-  }
-  return items.sort((left, right) => left.order - right.order);
-}
-
-/** Batches consecutive tool items into one run so long runs can collapse. */
-function timelineItems(items: ConversationItem[]): TimelineItem[] {
-  const timeline: TimelineItem[] = [];
-  for (const item of items) {
-    if (item.kind !== "tool") {
-      timeline.push(item);
-      continue;
-    }
-    const previous = timeline.at(-1);
-    if (previous?.kind === "tool-run") {
-      previous.runs.push(item);
-      previous.endOrder = item.endOrder;
-      continue;
-    }
-    timeline.push({ kind: "tool-run", key: `run:${item.key}`, runs: [item], order: item.order, endOrder: item.endOrder });
-  }
-  return timeline;
-}
 
 function assistantText(events: AssistantEvent[]): { text: string; completed: boolean } {
   const completedIndex = events.findIndex((event) => event.type === "assistant.text.completed");
@@ -198,7 +129,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 // surface — with a hover-revealed footer, matching the reference chat anatomy.
 // The markdown pipeline (react-markdown + GFM + highlight + redaction) is
 // unchanged; Message/Bubble own layout only.
-function AssistantRow({ events }: { events: AssistantEvent[] }) {
+function AssistantRow({ events, showMeta }: { events: AssistantEvent[]; showMeta: boolean }) {
   const { text, completed } = useMemo(() => assistantText(events), [events]);
   if (!text) {
     return completed ? (
@@ -207,7 +138,7 @@ function AssistantRow({ events }: { events: AssistantEvent[] }) {
   }
   return (
     <Message>
-      <MessageContent>
+      <MessageContent className={showMeta ? "gap-1" : "gap-0"}>
         <Bubble variant="ghost">
           <BubbleContent className="overflow-visible">
             <div className={TRANSCRIPT_MARKDOWN_CLASS} style={{ color: "var(--text-primary)" }} data-selectable>
@@ -234,12 +165,14 @@ function AssistantRow({ events }: { events: AssistantEvent[] }) {
             </div>
           </BubbleContent>
         </Bubble>
-        <MessageFooter className="mt-1 gap-2 opacity-0 transition-opacity group-hover/message:opacity-100">
-          <CopyButton text={text} label="Copy assistant message" />
-          <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-            {occurredAtLabel(events[0]?.occurredAt ?? "")}
-          </span>
-        </MessageFooter>
+        {showMeta ? (
+          <MessageFooter className="gap-2 opacity-0 transition-opacity group-hover/message:opacity-100">
+            <CopyButton text={text} label="Copy assistant message" />
+            <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+              {occurredAtLabel(events[0]?.occurredAt ?? "")}
+            </span>
+          </MessageFooter>
+        ) : null}
       </MessageContent>
     </Message>
   );
@@ -295,7 +228,7 @@ function UserRow({ event }: { event: Extract<AgentThreadEvent, { type: "user.mes
   const collapsible = event.text.length > COLLAPSED_USER_MAX_CHARS || lines > COLLAPSED_USER_MAX_LINES;
   return (
     <Message align="end">
-      <MessageContent>
+      <MessageContent className="gap-0">
         <Bubble variant="secondary" align="end">
           <BubbleContent
             className="rounded-[var(--radius-xl)] rounded-br-md border-[var(--border-subtle)] px-3.5 whitespace-pre-wrap"
@@ -357,11 +290,12 @@ function ToolChip({ events }: { events: ToolEvent[] }) {
   const completed = events.find((event): event is Extract<ToolEvent, { type: "tool.completed" }> => event.type === "tool.completed");
   const name = started?.displayName ?? "Tool";
   const failed = completed?.outcome === "failed";
+  const cancelled = completed?.outcome === "cancelled";
   const detail = completed
     ? `${name} completed ${completed.outcome === "success" ? "successfully" : completed.outcome === "failed" ? "with errors" : "cancelled"}${outputs.length ? (outputs.some((event) => event.truncated) ? " after receiving partial output" : " after receiving output") : " without captured output"}`
     : `${name} running${outputs.length ? " with output received" : ""}`;
   const KindIcon = toolKindIcon(name);
-  const StatusIcon = completed ? (failed ? X : Check) : Minus;
+  const StatusIcon = completed ? (failed ? X : cancelled ? Minus : Check) : Minus;
   return (
     <div className="flex min-w-0 flex-col">
       <Marker asChild>
@@ -386,8 +320,8 @@ function ToolChip({ events }: { events: ToolEvent[] }) {
           </span>
           <StatusIcon
             className="size-3.5 shrink-0"
-            style={{ color: failed ? "var(--danger)" : completed ? "var(--success)" : "var(--text-tertiary)" }}
-            aria-label={completed ? (failed ? "Failed" : "Completed") : "Running"}
+            style={{ color: failed ? "var(--danger)" : completed && !cancelled ? "var(--success)" : "var(--text-tertiary)" }}
+            aria-label={completed ? (failed ? "Failed" : cancelled ? "Cancelled" : "Completed") : "Running"}
           />
         </button>
       </Marker>
@@ -404,8 +338,57 @@ function ToolChip({ events }: { events: ToolEvent[] }) {
   );
 }
 
-function ToolRun({ runs }: { runs: Array<Extract<ConversationItem, { kind: "tool" }>> }) {
+function toolRunResult(runs: Array<Extract<ConversationTimelineItem, { kind: "tool" }>>): "running" | "completed" | "failed" | "cancelled" {
+  const outcomes = runs.map((run) => run.events.find(
+    (event): event is Extract<ToolEvent, { type: "tool.completed" }> => event.type === "tool.completed",
+  )?.outcome);
+  if (outcomes.some((outcome) => outcome === undefined)) return "running";
+  if (outcomes.some((outcome) => outcome === "failed")) return "failed";
+  if (outcomes.some((outcome) => outcome === "cancelled")) return "cancelled";
+  return "completed";
+}
+
+function ToolRun({
+  runs,
+  settled = false,
+}: {
+  runs: Array<Extract<ConversationTimelineItem, { kind: "tool" }>>;
+  settled?: boolean;
+}) {
   const [showAll, setShowAll] = useState(false);
+  const result = toolRunResult(runs);
+  if (settled) {
+    const countLabel = `${runs.length} tool ${runs.length === 1 ? "call" : "calls"}`;
+    const resultLabel = result === "completed" ? "Completed" : result[0]!.toUpperCase() + result.slice(1);
+    const ResultIcon = result === "failed" ? X : result === "completed" ? Check : Minus;
+    const resultColor = result === "failed"
+      ? "var(--danger)"
+      : result === "completed"
+        ? "var(--success)"
+        : "var(--text-tertiary)";
+    return (
+      <section aria-label={`${countLabel}, ${result}`} className="flex min-w-0 flex-col gap-0.5">
+        <button
+          type="button"
+          className="flex min-w-0 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-[var(--bg-hover)]"
+          aria-label={`${countLabel}, ${result}`}
+          aria-expanded={showAll}
+          onClick={() => setShowAll((value) => !value)}
+        >
+          <Wrench className="size-3.5 shrink-0" aria-hidden="true" style={{ color: "var(--text-tertiary)" }} />
+          <span className="truncate text-[12px] font-medium" style={{ color: "var(--text-secondary)" }}>{countLabel}</span>
+          <span aria-hidden="true" className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>·</span>
+          <span className="truncate text-[11px]" style={{ color: resultColor }}>{resultLabel}</span>
+          <ResultIcon className="ml-auto size-3.5 shrink-0" aria-hidden="true" style={{ color: resultColor }} />
+        </button>
+        {showAll ? (
+          <div className="flex flex-col gap-0.5 border-l pl-2" style={{ borderColor: "var(--border-subtle)" }}>
+            {runs.map((run) => <ToolChip key={run.key} events={run.events} />)}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
   const collapsed = !showAll && runs.length > TOOL_RUN_COLLAPSE_THRESHOLD;
   const visible = collapsed ? runs.slice(runs.length - TOOL_RUN_VISIBLE_TAIL) : runs;
   const hiddenCount = runs.length - visible.length;
@@ -610,6 +593,50 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
   );
 }
 
+function TranscriptItem({
+  item,
+  settled,
+  showAssistantMeta = true,
+  workedLabel,
+  answeredInputs,
+  resolvedApprovals,
+}: {
+  item: TimelineItem;
+  settled: boolean;
+  showAssistantMeta?: boolean;
+  workedLabel: string | undefined;
+  answeredInputs: ReadonlySet<string>;
+  resolvedApprovals: ReadonlySet<string>;
+}) {
+  const itemKey = item.kind === "event" ? `event:${item.event.eventId}` : item.key;
+  return (
+    <Fragment>
+      {item.kind === "assistant" ? (
+        <ConversationItem messageId={item.key}>
+          <AssistantRow events={item.events} showMeta={showAssistantMeta} />
+        </ConversationItem>
+      ) : item.kind === "tool-run" ? (
+        <ConversationItem messageId={item.key}>
+          <ToolRun runs={item.runs} settled={settled} />
+        </ConversationItem>
+      ) : item.event.type === "user.message" ? (
+        <ConversationItem messageId={`user:${item.event.messageId}`} scrollAnchor>
+          <UserRow event={item.event} />
+        </ConversationItem>
+      ) : (
+        <ConversationItem messageId={`event:${item.event.eventId}`}>
+          <SystemEvent event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />
+        </ConversationItem>
+      )}
+      {workedLabel ? (
+        <ConversationItem messageId={`turn-summary:${itemKey}`}>
+          <WorkedRow label={workedLabel} />
+        </ConversationItem>
+      ) : null}
+    </Fragment>
+  );
+}
+
 function ConversationComposer({
   threadId,
   threadLabel,
@@ -638,9 +665,10 @@ function ConversationComposer({
   const abortSupported = agentThreadAbortSupported();
 
   async function submit() {
-    if ((!message.trim() && attachments.items.length === 0) || waitingForAction || submitting || uploadingAttachments) return;
-    // Every submit is a direct send. A follow-up aimed at a busy conversation
-    // returns a safe recoverable conflict, which surfaces through turnError.
+    if ((!message.trim() && attachments.items.length === 0) || waitingForAction || threadBusy || submitting || uploadingAttachments) return;
+    // Every accepted submit is a direct send. While the thread is known busy,
+    // the draft remains local and editable, but Matrix does not offer a doomed
+    // send or invent a renderer-owned queue.
     // Pending messages are durable server-owned records (SPEC 105 FR-100), and
     // queueing must be explicit rather than silent (FR-027, FR-101), so this
     // client deliberately keeps no local queue: a renderer-only queue would be
@@ -679,7 +707,7 @@ function ConversationComposer({
           onAbort={abortSupported && (submitting || threadBusy) ? () => void abortAgentThread(threadId) : undefined}
           busy={submitting || threadBusy || uploadingAttachments}
           disabled={waitingForAction || uploadingAttachments}
-          canSubmit={!waitingForAction && !uploadingAttachments && (message.trim().length > 0 || attachments.items.length > 0)}
+          canSubmit={!waitingForAction && !threadBusy && !submitting && !uploadingAttachments && (message.trim().length > 0 || attachments.items.length > 0)}
           attachments={(
             <AttachmentPreviewRow
               items={attachments.items}
@@ -692,11 +720,15 @@ function ConversationComposer({
           // drafts are prevented client-side instead of failing generically.
           maxLength={24_000}
           ariaLabel="Message conversation"
-          placeholder={waitingForAction ? "Respond to the pending request above to continue" : "Ask a follow-up…"}
+          placeholder={waitingForAction
+            ? "Respond to the pending request above to continue"
+            : threadBusy
+              ? "Draft a follow-up…"
+              : "Ask a follow-up…"}
           controls={composerControls}
           footer={
             threadBusy && !waitingForAction ? (
-              <span className="text-xs">Agent is working — send a follow-up once this turn finishes</span>
+              <span className="text-xs">Agent is working — draft now, send when this turn finishes</span>
             ) : undefined
           }
         />
@@ -727,7 +759,11 @@ export function AgentConversationView({
     || snapshot?.thread.status === "waiting_for_approval"
     || snapshot?.thread.status === "waiting_for_input";
   const attachments = useConversationAttachments(snapshot?.thread.id ?? null);
-  const items = useMemo(() => timelineItems(conversationItems(snapshot?.events.items ?? [])), [snapshot?.events.items]);
+  const timeline = useMemo(
+    () => projectConversationTimeline(snapshot?.events.items ?? [], threadActive),
+    [snapshot?.events.items, threadActive],
+  );
+  const { items, sections } = timeline;
   // Per-turn "Worked for Xs" rows, derived from event timestamps only.
   const turnSummaryByItemKey = useMemo(() => {
     const map = new Map<string, string>();
@@ -784,34 +820,50 @@ export function AgentConversationView({
       </header>
       <Conversation key={`transcript:${snapshot.thread.id}`}>
         <ConversationContent>
-          {items.map((item) => {
-            const itemKey = item.kind === "event" ? `event:${item.event.eventId}` : item.key;
-            const workedLabel = turnSummaryByItemKey.get(itemKey);
+          {sections.map((section) => {
+            if (section.kind === "standalone") {
+              const itemKey = section.item.kind === "event" ? `event:${section.item.event.eventId}` : section.item.key;
+              return (
+                <TranscriptItem
+                  key={section.key}
+                  item={section.item}
+                  settled={!threadActive}
+                  workedLabel={turnSummaryByItemKey.get(itemKey)}
+                  answeredInputs={answeredInputs}
+                  resolvedApprovals={resolvedApprovals}
+                />
+              );
+            }
+            const lastAgentOutputIndex = section.items.reduce(
+              (lastIndex, item, index) => item.kind === "assistant" || item.kind === "tool-run" ? index : lastIndex,
+              -1,
+            );
             return (
-              <Fragment key={itemKey}>
-                {item.kind === "assistant" ? (
-                  <ConversationItem messageId={item.key}>
-                    <AssistantRow events={item.events} />
-                  </ConversationItem>
-                ) : item.kind === "tool-run" ? (
-                  <ConversationItem messageId={item.key}>
-                    <ToolRun runs={item.runs} />
-                  </ConversationItem>
-                ) : item.event.type === "user.message" ? (
-                  <ConversationItem messageId={`user:${item.event.messageId}`} scrollAnchor>
-                    <UserRow event={item.event} />
-                  </ConversationItem>
-                ) : (
-                  <ConversationItem messageId={`event:${item.event.eventId}`}>
-                    <SystemEvent event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />
-                  </ConversationItem>
-                )}
-                {workedLabel ? (
-                  <ConversationItem messageId={`turn-summary:${itemKey}`}>
-                    <WorkedRow label={workedLabel} />
-                  </ConversationItem>
-                ) : null}
-              </Fragment>
+              <section
+                key={section.key}
+                aria-label="Conversation turn"
+                data-slot="agent-turn"
+                data-state={section.settled ? "settled" : "active"}
+                className="flex min-w-0 flex-col gap-2"
+              >
+                {section.items.map((item, index) => {
+                  const itemKey = item.kind === "event" ? `event:${item.event.eventId}` : item.key;
+                  // An assistant row followed by more assistant/tool output is
+                  // commentary, not the turn result. Keep its text selectable
+                  // without reserving a hidden copy/timestamp footer.
+                  return (
+                    <TranscriptItem
+                      key={itemKey}
+                      item={item}
+                      settled={section.settled}
+                      showAssistantMeta={item.kind === "assistant" && index === lastAgentOutputIndex}
+                      workedLabel={turnSummaryByItemKey.get(itemKey)}
+                      answeredInputs={answeredInputs}
+                      resolvedApprovals={resolvedApprovals}
+                    />
+                  );
+                })}
+              </section>
             );
           })}
           {showWorking ? (
