@@ -168,6 +168,22 @@ describe("Desktop navigation header", () => {
       .toBe("HomeProjects");
   });
 
+  it("returns from a directly opened Project task to the Projects list before older history", () => {
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    useTabs.getState().openTab({
+      kind: "task",
+      projectSlug: "matrix-os",
+      taskId: "MAT-466",
+      title: "Fix Desktop navigation",
+    });
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent)
+      .toBe("HomeProjects");
+  });
+
   it("moves backward through an existing Projects list history entry without adding a loop", () => {
     const projectsTabId = useTabs.getState().openTab({
       kind: "projects",

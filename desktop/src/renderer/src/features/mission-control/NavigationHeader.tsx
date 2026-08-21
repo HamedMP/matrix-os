@@ -147,7 +147,8 @@ export default function NavigationHeader() {
     && (activeThreadId !== null || hermesConversationView === "conversation");
   const canReturnToTerminalIndex = activeTab?.kind === "terminal"
     || (activeTab?.kind === "terminals" && activeTab.title !== "Terminal");
-  const canReturnToProjectsIndex = activeTab?.kind === "project";
+  const canReturnToProjectsIndex = activeTab?.kind === "project"
+    || activeTab?.kind === "task";
   const previousTab = historyIndex > 0
     ? tabs.find((tab) => tab.id === viewHistory[historyIndex - 1])
     : undefined;
