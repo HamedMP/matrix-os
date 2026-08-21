@@ -9,6 +9,7 @@ import DesktopUpdateExperience from "../../desktop/src/renderer/src/features/upd
 import ManualUpdateDialog from "../../desktop/src/renderer/src/features/updates/ManualUpdateDialog";
 import WhatsNewDialog from "../../desktop/src/renderer/src/features/updates/WhatsNewDialog";
 import { useDesktopUpdate } from "../../desktop/src/renderer/src/stores/desktop-update";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 describe("desktop update experience", () => {
   beforeEach(() => {
@@ -19,12 +20,79 @@ describe("desktop update experience", () => {
       manualDialogOpen: false,
       installing: false,
     });
+    useUi.setState({ rendererOverlayCount: 0 });
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("waits for native embeds to suspend before painting an update dialog", async () => {
+    let resolveSuspend!: (value: { ok: boolean }) => void;
+    const suspend = new Promise<{ ok: boolean }>((resolve) => {
+      resolveSuspend = resolve;
+    });
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "embed:suspend-all") return suspend;
+      if (channel === "update:get-state") return Promise.resolve({ status: "disabled" });
+      if (channel === "update:get-whats-new") {
+        return Promise.resolve({ release: null, shouldOpen: false });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    vi.stubGlobal("operator", { invoke, on: vi.fn(() => vi.fn()) });
+    useDesktopUpdate.setState({ manualDialogOpen: true });
+
+    render(
+      <Tooltip.Provider>
+        <DesktopUpdateExperience />
+      </Tooltip.Provider>,
+    );
+
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    expect(invoke).toHaveBeenCalledWith("embed:suspend-all", {});
+    expect(screen.queryByRole("dialog", { name: "Software Update" })).toBeNull();
+
+    await act(async () => {
+      resolveSuspend({ ok: true });
+      await suspend;
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Software Update" })).toBeTruthy();
+    });
+  });
+
+  it("restores the hosted shell when native embed suspension fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "embed:suspend-all") {
+        return Promise.reject(new Error("private IPC failure"));
+      }
+      if (channel === "update:get-state") return Promise.resolve({ status: "disabled" });
+      if (channel === "update:get-whats-new") {
+        return Promise.resolve({ release: null, shouldOpen: false });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    vi.stubGlobal("operator", { invoke, on: vi.fn(() => vi.fn()) });
+    useDesktopUpdate.setState({ manualDialogOpen: true, whatsNewOpen: true });
+
+    render(
+      <Tooltip.Provider>
+        <DesktopUpdateExperience />
+      </Tooltip.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(useDesktopUpdate.getState().manualDialogOpen).toBe(false);
+      expect(useDesktopUpdate.getState().whatsNewOpen).toBe(false);
+      expect(useUi.getState().rendererOverlayCount).toBe(0);
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(warn).toHaveBeenCalledWith("[desktop-update] failed to suspend native embeds");
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("private IPC failure"));
   });
 
   it("subscribes to background update state without acknowledging before dismissal", async () => {
@@ -105,8 +173,9 @@ describe("desktop update experience", () => {
     act(() => {
       listeners.get("update:manual-check-requested")?.({});
     });
-    expect(screen.getByRole("dialog", { name: "Software Update" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Software Update" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Checking for updates…" })).toBeTruthy();
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
 
     act(() => {
       listeners.get("update:state-changed")?.({
@@ -145,6 +214,7 @@ describe("desktop update experience", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Later" }));
     expect(screen.queryByRole("dialog", { name: "Software Update" })).toBeNull();
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
   });
 
   it("lets a failed manual check retry through the trusted updater IPC", async () => {
@@ -263,6 +333,7 @@ describe("desktop update experience", () => {
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: "What's New" })).toBeTruthy();
       expect(listeners.has("update:manual-check-requested")).toBe(true);
+      expect(useUi.getState().rendererOverlayCount).toBe(1);
     });
 
     act(() => {
@@ -273,6 +344,10 @@ describe("desktop update experience", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Later" }));
     expect(screen.getByRole("dialog", { name: "What's New" })).toBeTruthy();
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close What's New" }));
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
   });
 
   it("shows a blue Update control only when the download is ready and installs immediately", async () => {

@@ -240,6 +240,31 @@ describe("EmbedService", () => {
     expect(emitState).toHaveBeenCalledWith("embed-shell", "loading");
   });
 
+  it("suspends live and pending embeds through the trusted core", () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      pendingHostedShells: Map<string, Bounds>;
+      pendingApps: Map<string, { slug: string; bounds: Bounds }>;
+      pendingActive: Map<string, boolean>;
+      manager: { suspendAll: () => boolean };
+    };
+    const suspendAll = vi.spyOn(internals.manager, "suspendAll").mockReturnValue(true);
+    internals.pendingHostedShells.set("embed-shell", BOUNDS);
+    internals.pendingApps.set("embed-app", { slug: "notes", bounds: BOUNDS });
+    internals.pendingActive.set("embed-shell", true);
+    internals.pendingActive.set("embed-app", true);
+
+    expect(service.suspendAll()).toBe(true);
+    expect(suspendAll).toHaveBeenCalledOnce();
+    expect(internals.pendingActive.get("embed-shell")).toBe(false);
+    expect(internals.pendingActive.get("embed-app")).toBe(false);
+  });
+
   it("schedules hosted-shell session refresh from the app-session cookie expiry", async () => {
     vi.useFakeTimers();
     const service = new EmbedService({
