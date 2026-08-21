@@ -111,13 +111,16 @@ describe("Files workspace", () => {
     ]);
   });
 
-  it("starts with the full-width overview and opens a split preview after selection", async () => {
+  it("starts with the Figma-width overview and opens a split preview after selection", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     await screen.findByRole("button", { name: "Open README.md" });
 
     const panes = screen.getByTestId("files-workspace-panes");
     expect(panes.getAttribute("data-layout")).toBe("overview");
-    expect(within(panes).getByRole("button", { name: "Refresh folder" })).toBeTruthy();
+    const homeContent = within(panes).getByTestId("files-home-content");
+    expect(homeContent.className).toContain("max-w-[1052px]");
+    expect(homeContent.className).toContain("px-4");
+    expect(homeContent.className).toContain("pt-4");
     expect(within(panes).queryByRole("region", { name: "File preview" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Open workspaces" }));

@@ -13,7 +13,9 @@ import {
   LayoutGrid,
   List,
   RefreshCw,
+  Search,
   Upload,
+  X,
 } from "lucide-react";
 import type { DragEvent, KeyboardEvent } from "react";
 import { Button, IconButton } from "../../design/primitives";
@@ -80,8 +82,8 @@ export function ViewSwitcher({
     <div
       role="group"
       aria-label="View options"
-      className="flex shrink-0 items-center gap-0.5 rounded-md p-0.5"
-      style={{ background: "var(--bg-hover)" }}
+      className="flex h-8 shrink-0 items-center gap-0.5 rounded-lg border p-0.5"
+      style={{ background: "var(--bg-hover)", borderColor: "var(--border-subtle)" }}
     >
       {VIEW_OPTIONS.map(({ mode, label, icon: Icon }) => {
         const active = view === mode;
@@ -92,13 +94,13 @@ export function ViewSwitcher({
             aria-label={label}
             aria-pressed={active}
             onClick={() => onChange(mode)}
-            className="flex h-6 w-6 items-center justify-center rounded outline-none transition-colors focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+            className="flex h-[26px] w-[26px] items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
             style={{
               background: active ? "var(--bg-selected)" : "transparent",
               color: active ? "var(--text-primary)" : "var(--text-tertiary)",
             }}
           >
-            <Icon size={13} aria-hidden />
+            <Icon size={16} aria-hidden />
           </button>
         );
       })}
@@ -226,10 +228,14 @@ export function EntryButton({
       type="button"
       aria-label={`Open ${entry.name}`}
       aria-pressed={pressed}
-      className={`grid h-9 w-full items-center ${compact ? "gap-1" : "gap-2"} rounded-md px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]`}
+      data-files-list-row
+      className={`grid w-full items-center outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)] ${compact
+        ? "h-9 gap-1 rounded-md px-2 text-left text-sm"
+        : "h-[54px] gap-4 rounded-none border-b px-4 text-left text-base font-medium last:border-b-0"}`}
       style={{
         gridTemplateColumns: listColumns,
         background: selected ? "var(--bg-selected)" : "transparent",
+        borderColor: compact ? undefined : "var(--border-subtle)",
         color: "var(--text-primary)",
       }}
       onClick={onSelect}
@@ -246,16 +252,16 @@ export function EntryButton({
         onDropFiles(regularDroppedFiles(event.dataTransfer));
       }}
     >
-      <span className="flex min-w-0 items-center gap-2">
+      <span className={`flex min-w-0 items-center ${compact ? "gap-2" : "gap-4"}`}>
         <span className="shrink-0" style={{ color: glyphColor }}>
-          <FileGlyph kind={kind} size={16} />
+          <FileGlyph kind={kind} size={compact ? 16 : 20} />
         </span>
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
       </span>
-      <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
+      <span className="truncate text-right text-[13px] font-normal" style={{ color: "var(--text-tertiary)" }}>
         {managed ? "Managed" : formatEntrySize(entry)}
       </span>
-      <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
+      <span className="truncate text-right text-[13px] font-normal" style={{ color: "var(--text-tertiary)" }}>
         {formatModified(entry.modifiedAt)}
       </span>
     </button>
@@ -277,6 +283,11 @@ export function BrowserToolbar({
   onNavigate,
   onRefresh,
   onUpload,
+  searchOpen,
+  searchQuery,
+  onSearchOpen,
+  onSearchClose,
+  onSearchQueryChange,
 }: {
   compact: boolean;
   currentPath: string;
@@ -292,33 +303,36 @@ export function BrowserToolbar({
   onNavigate: (path: string) => void;
   onRefresh: () => void;
   onUpload?: () => void;
+  searchOpen: boolean;
+  searchQuery: string;
+  onSearchOpen: () => void;
+  onSearchClose: () => void;
+  onSearchQueryChange: (query: string) => void;
 }) {
   return (
-    <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
-      <IconButton label="Back" className="shrink-0 disabled:opacity-40" disabled={!canGoBack} onClick={onBack}>
-        <ArrowLeft size={13} />
+    <div data-files-toolbar className="flex h-[37px] shrink-0 items-center gap-1 border-b" style={{ borderColor: "var(--border-subtle)" }}>
+      <IconButton label="Back" className="h-8 w-8 shrink-0 disabled:opacity-40" disabled={!canGoBack} onClick={onBack}>
+        <ArrowLeft size={16} />
       </IconButton>
-      <IconButton label="Forward" className="shrink-0 disabled:opacity-40" disabled={!canGoForward} onClick={onForward}>
-        <ArrowRight size={13} />
+      <IconButton label="Forward" className="h-8 w-8 shrink-0 disabled:opacity-40" disabled={!canGoForward} onClick={onForward}>
+        <ArrowRight size={16} />
       </IconButton>
-      <IconButton
-        label="Up one level"
-        className="shrink-0 disabled:opacity-40"
-        disabled={!currentPath}
-        onClick={onUp}
-      >
-        <ArrowUp size={13} />
-      </IconButton>
+      {currentPath ? (
+        <IconButton label="Up one level" className="h-8 w-8 shrink-0" onClick={onUp}>
+          <ArrowUp size={16} />
+        </IconButton>
+      ) : null}
       <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         <button
           type="button"
           aria-label="Matrix home"
-          className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--bg-hover)]"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium hover:bg-[var(--bg-hover)]"
           style={{ color: currentPath ? "var(--text-secondary)" : "var(--text-primary)" }}
           onClick={() => onNavigate("")}
         >
-          <Home size={13} />
+          <Home size={16} />
           {!compact ? "Matrix home" : "Home"}
+          {!compact ? <ChevronDown size={16} aria-hidden /> : null}
         </button>
         {crumbs.map((crumb) => (
           <span key={crumb.path} className="flex min-w-0 items-center gap-1">
@@ -339,15 +353,43 @@ export function BrowserToolbar({
           Read only
         </span>
       ) : null}
-      <ViewSwitcher view={view} onChange={onViewChange} />
-      {onUpload ? (
-        <IconButton label="Upload files" className="shrink-0" onClick={onUpload}>
-          <Upload size={13} />
+      {currentPath ? (
+        <IconButton label="Refresh folder" className="h-8 w-8 shrink-0" onClick={onRefresh}>
+          <RefreshCw size={16} />
         </IconButton>
       ) : null}
-      <IconButton label="Refresh folder" className="shrink-0" onClick={onRefresh}>
-        <RefreshCw size={13} />
-      </IconButton>
+      <ViewSwitcher view={view} onChange={onViewChange} />
+      {searchOpen ? (
+        <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg border px-2 sm:max-w-48" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
+          <Search size={16} aria-hidden style={{ color: "var(--text-tertiary)" }} />
+          <input
+            type="text"
+            role="searchbox"
+            aria-label="Search files"
+            autoFocus
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") onSearchClose();
+            }}
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+            style={{ color: "var(--text-primary)" }}
+            placeholder="Search files"
+          />
+          <button type="button" aria-label="Close file search" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" onClick={onSearchClose}>
+            <X size={14} aria-hidden />
+          </button>
+        </div>
+      ) : (
+        <IconButton label="Search files" className="h-8 w-8 shrink-0 border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }} onClick={onSearchOpen}>
+          <Search size={16} />
+        </IconButton>
+      )}
+      {onUpload ? (
+        <IconButton label="Upload files" className="h-8 w-8 shrink-0 border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }} onClick={onUpload}>
+          <Upload size={16} />
+        </IconButton>
+      ) : null}
     </div>
   );
 }

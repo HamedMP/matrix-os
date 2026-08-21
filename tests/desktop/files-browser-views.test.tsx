@@ -243,6 +243,31 @@ describe("ComputerFileBrowser view options", () => {
     expect(screen.getByText("3 items")).toBeTruthy();
   });
 
+  it("matches the Files list handoff geometry and filters from the toolbar search", async () => {
+    const { container } = renderBrowser();
+    const readme = await screen.findByRole("button", { name: "Open README.md" });
+
+    const toolbar = container.querySelector<HTMLElement>("[data-files-toolbar]");
+    const header = container.querySelector<HTMLElement>("[data-files-list-header]");
+    expect(toolbar?.className).toContain("h-[37px]");
+    expect(header?.className).toContain("h-9");
+    expect(header?.textContent).toContain("Date modified");
+    expect(readme.getAttribute("data-files-list-row")).toBe("true");
+    expect(readme.className).toContain("h-[54px]");
+    expect(readme.className).toContain("rounded-none");
+    expect(readme.className).toContain("px-4");
+    expect(readme.getAttribute("style")).toContain("minmax(0,1fr) 110px 110px");
+    expect(screen.queryByRole("button", { name: "Up one level" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Refresh folder" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search files" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "readme" },
+    });
+    expect(screen.getByRole("button", { name: "Open README.md" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open hero.png" })).toBeNull();
+  });
+
   it("gives the name column the flexible track with fixed right-aligned meta columns", async () => {
     renderBrowser();
     const row = await screen.findByRole("button", { name: "Open README.md" });
@@ -250,7 +275,7 @@ describe("ComputerFileBrowser view options", () => {
     // Name owns the flexible minmax track; Size/Modified are fixed-width
     // columns sized to the format.ts outputs so names only truncate when the
     // pane is genuinely out of room.
-    expect(row.getAttribute("style")).toContain("minmax(0,1fr) 72px 104px");
+    expect(row.getAttribute("style")).toContain("minmax(0,1fr) 110px 110px");
     expect(screen.getByText("2 KB").className).toContain("text-right");
     const modifiedHeader = screen.getByRole("button", { name: "Sort by modified" });
     expect(modifiedHeader.className).toContain("justify-end");
@@ -408,8 +433,8 @@ describe("ComputerFileBrowser view options", () => {
 
   it("goes up one level from the toolbar button", async () => {
     renderBrowser();
-    const up = await screen.findByRole("button", { name: "Up one level" });
-    expect(up.hasAttribute("disabled")).toBe(true);
+    await screen.findByRole("button", { name: "Open workspaces" });
+    expect(screen.queryByRole("button", { name: "Up one level" })).toBeNull();
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
     await screen.findByRole("button", { name: "Open app.ts" });
