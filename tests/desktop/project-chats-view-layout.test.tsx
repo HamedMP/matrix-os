@@ -336,6 +336,55 @@ describe("ProjectChatsView hero layout", () => {
     );
   });
 
+  it("does not bind a cached workspace terminal while the selected thread snapshot is loading", async () => {
+    const { invoke } = mockOperator();
+    const defaultInvoke = invoke.getMockImplementation()!;
+    const pendingSnapshot = new Promise<never>(() => undefined);
+    invoke.mockImplementation(async (channel: string, payload: unknown) => {
+      if (channel === "runtime:get-summary") {
+        return {
+          ...summaryFixture(),
+          terminalSessions: {
+            items: [{
+              id: "term_cached",
+              name: "cached-shell",
+              status: "running",
+              attachable: true,
+              createdAt: NOW,
+              updatedAt: NOW,
+            }],
+            hasMore: false,
+            limit: 20,
+          },
+        };
+      }
+      if (channel === "runtime:get-project-workspace") {
+        const workspace = workspaceFixture();
+        return {
+          ...workspace,
+          projectThreads: {
+            ...workspace.projectThreads,
+            items: workspace.projectThreads.items.map((thread) => ({
+              ...thread,
+              terminalSessionId: "term_cached",
+            })),
+          },
+        };
+      }
+      if (channel === "runtime:get-thread-snapshot") return pendingSnapshot;
+      return defaultInvoke(channel, payload);
+    });
+
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_plan");
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    await openInspector();
+    fireEvent.click(await screen.findByRole("tab", { name: /^Terminal\b/ }));
+
+    expect(await screen.findByText("This chat has no linked terminal session.")).toBeTruthy();
+    expect(screen.queryByText("cached-shell")).toBeNull();
+  });
+
   it("collapses to a full-width hero transcript and persists the choice", async () => {
     const { saved } = mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);

@@ -332,10 +332,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const snapshotMatches = selectedThreadId !== null
     && threadSnapshot?.thread.id === selectedThreadId
     && activeThreadId === selectedThreadId;
-  const selectedThreadContext = snapshotMatches
-    ? threadSnapshot.thread
-    : [...(workspace?.projectThreads.items ?? []), ...(workspace?.taskThreads.items ?? [])]
-      .find((thread) => thread.id === selectedThreadId) ?? null;
+  const selectedThreadContext = snapshotMatches ? threadSnapshot.thread : null;
   const inspectorContext = buildProjectInspectorContext({
     projectId,
     summary,

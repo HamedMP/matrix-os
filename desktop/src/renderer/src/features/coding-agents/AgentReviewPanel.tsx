@@ -85,7 +85,12 @@ export function ReviewList({
   const prepareSourceCommit = useCodingAgentWorkspace((s) => s.prepareSourceCommit);
   const createSourcePullRequest = useCodingAgentWorkspace((s) => s.createSourcePullRequest);
   const items = scopedItems ?? reviews?.items ?? [];
-  const visibleReviewSnapshot = projectId === undefined || reviewSnapshot?.review.projectId === projectId
+  const selectedReview = selectedReviewId
+    ? reviews?.items.find((review) => review.id === selectedReviewId)
+    : undefined;
+  const reviewSelectionInScope = projectId === undefined || selectedReview?.projectId === projectId;
+  const visibleReviewSnapshot = reviewSelectionInScope
+    && (projectId === undefined || reviewSnapshot?.review.projectId === projectId)
     ? reviewSnapshot
     : null;
 
@@ -132,9 +137,9 @@ export function ReviewList({
           </button>
         ))}
         <ReviewSnapshotPanel
-          status={reviewSnapshotStatus}
+          status={reviewSelectionInScope ? reviewSnapshotStatus : "idle"}
           snapshot={visibleReviewSnapshot}
-          error={reviewSnapshotError}
+          error={reviewSelectionInScope ? reviewSnapshotError : null}
           canReadFiles={canReadFiles}
           fileReadStatus={fileReadStatus}
           fileRead={fileRead}

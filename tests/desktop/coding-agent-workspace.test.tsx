@@ -2336,6 +2336,32 @@ describe("ProjectChatsView", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-reviews", {});
   });
 
+  it("does not render another project's review detail status", async () => {
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    await screen.findByText("matrix-os");
+
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        selectedReviewId: "rev_other_project",
+        reviewSnapshotStatus: "loading",
+        reviewSnapshot: null,
+        reviewSnapshotError: null,
+      });
+    });
+
+    expect(screen.queryByText("Loading review details...")).toBeNull();
+
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        reviewSnapshotStatus: "error",
+        reviewSnapshotError: "Review details unavailable",
+      });
+    });
+
+    expect(screen.queryByText("Review details unavailable")).toBeNull();
+  });
+
   it("loads a read-only review snapshot when a review is selected", async () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
 
