@@ -727,6 +727,16 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
     };
 
+    const revokeExpiredHolders = async (): Promise<void> => {
+      const closes: Promise<void>[] = [];
+      for (const candidate of [...runtime.conns]) {
+        if (!candidate.exclusiveLease || candidate.leaseEpoch === null || candidate.closed) continue;
+        sendJson(candidate.ws, { type: "lease-revoked", epoch: candidate.leaseEpoch });
+        closes.push(candidate.close());
+      }
+      await Promise.all(closes);
+    };
+
     const attached = await withCutoverLock(runtime, async () => {
       if (!canUseRuntime(runtime)) return false;
       cancelIdleClose(runtime);
@@ -768,9 +778,17 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         return true;
       }
 
-      // A read-only observer that arrives while a lease exists must not alter
-      // canonical sizing merely by declaring itself as a hard client.
-      const sizingClass = leaseCoordinator.current(safeName) ? "soft" : clientClass;
+      const currentLease = leaseCoordinator.current(safeName);
+      if (!currentLease && runtime.coordinatedOwnership) {
+        // Expiry removes the coordinator record before the connected holder's
+        // socket necessarily observes revocation. Remove that holder's sizing
+        // registration before admitting any later observer.
+        await revokeExpiredHolders();
+      }
+      // Once a session has entered coordinated ownership, non-exclusive
+      // connections are observers even during a lease gap. They must never
+      // re-enter hard-size negotiation merely because the lease expired.
+      const sizingClass = currentLease || runtime.coordinatedOwnership ? "soft" : clientClass;
       sizing.attach(connId, sizingClass, declaredSize ?? null);
       sizingRegistered = true;
       if (!(await ensureSharedAttach(runtime, safeName, replayBuffer))) {
@@ -797,17 +815,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
-    const revokeExpiredHolders = (): void => {
-      for (const candidate of [...runtime.conns]) {
-        if (!candidate.exclusiveLease || candidate.leaseEpoch === null || candidate.closed) continue;
-        sendJson(candidate.ws, { type: "lease-revoked", epoch: candidate.leaseEpoch });
-        void candidate.close();
-      }
-    };
-
     const currentLeaseOrRevokeExpired = () => {
       const currentLease = leaseCoordinator.current(safeName);
-      if (!currentLease && runtime.coordinatedOwnership) revokeExpiredHolders();
+      if (!currentLease && runtime.coordinatedOwnership) void revokeExpiredHolders();
       return currentLease;
     };
 
@@ -818,7 +828,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       const renewed = resize
         ? leaseCoordinator.resize(safeName, conn.id, currentLease.epoch, resize) !== null
         : leaseCoordinator.touch(safeName, conn.id, currentLease.epoch);
-      if (!renewed) revokeExpiredHolders();
+      if (!renewed) void revokeExpiredHolders();
       return renewed;
     };
 

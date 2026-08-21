@@ -1602,6 +1602,46 @@ describe("zellij terminal WebSocket", () => {
     await handler.dispose();
   });
 
+  it("revokes an expired holder before classifying a later hard observer", async () => {
+    let now = 1_000;
+    const pty = new FakePty();
+    const holderWs = socket();
+    const observerWs = socket();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      leaseCoordinator: createTerminalLeaseCoordinator({ now: () => now, ttlMs: 100 }),
+      sizingDebounceMs: 0,
+    });
+
+    await handler.open({
+      ws: holderWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 140, rows: 40 },
+      exclusiveLease: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    now += 101;
+
+    await handler.open({
+      ws: observerWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 70, rows: 20 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(holderWs.sent).toContainEqual({ type: "lease-revoked", epoch: 1 });
+    expect(holderWs.closed).toBe(true);
+    expect(observerWs.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      canonicalSize: { cols: 140, rows: 40 },
+    }));
+    expect(pty.resizes.at(-1)).toEqual({ cols: 140, rows: 40 });
+    await handler.dispose();
+  });
+
   it("serializes simultaneous exclusive takeovers so the newest bridge wins", async () => {
     const firstPty = new FakePty();
     const secondPty = new FakePty();
