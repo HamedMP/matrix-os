@@ -51,6 +51,11 @@ import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
 import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
 import { AgentComposerPickers } from "./composer-pickers";
+import { ProviderReadinessNotice } from "./ProviderReadinessNotice";
+import {
+  deriveProviderReadiness,
+  type ProviderReadinessPresentation,
+} from "./provider-readiness";
 import {
   projectConversationTimeline,
   type AssistantEvent,
@@ -644,6 +649,8 @@ function ConversationComposer({
   threadBusy,
   composerControls,
   attachments,
+  readiness,
+  providers,
 }: {
   threadId: string;
   threadLabel: string;
@@ -652,6 +659,8 @@ function ConversationComposer({
   // Left side of the composer bottom row (provider/mode pickers).
   composerControls?: ReactNode;
   attachments: ReturnType<typeof useConversationAttachments>;
+  readiness?: ProviderReadinessPresentation;
+  providers: RuntimeSummary["providers"];
 }) {
   const [message, setMessage] = useState("");
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -665,7 +674,14 @@ function ConversationComposer({
   const abortSupported = agentThreadAbortSupported();
 
   async function submit() {
-    if ((!message.trim() && attachments.items.length === 0) || waitingForAction || threadBusy || submitting || uploadingAttachments) return;
+    if (
+      (!message.trim() && attachments.items.length === 0)
+      || readiness?.blocked
+      || waitingForAction
+      || threadBusy
+      || submitting
+      || uploadingAttachments
+    ) return;
     // Every accepted submit is a direct send. While the thread is known busy,
     // the draft remains local and editable, but Matrix does not offer a doomed
     // send or invent a renderer-owned queue.
@@ -697,6 +713,15 @@ function ConversationComposer({
       {/* Floating composer card: same centered column as the transcript; the
           rounded/shadowed surface itself lives on PromptInput's prompt-card. */}
       <div className="mx-auto w-full max-w-[46rem]" data-slot="conversation-composer">
+        {readiness ? (
+          <div className="mb-2">
+            <ProviderReadinessNotice
+              readiness={readiness}
+              providers={providers}
+              onRefresh={() => useCodingAgentWorkspace.getState().refresh()}
+            />
+          </div>
+        ) : null}
         {turnThreadId === threadId && turnError ? (
           <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
         ) : null}
@@ -707,7 +732,14 @@ function ConversationComposer({
           onAbort={abortSupported && (submitting || threadBusy) ? () => void abortAgentThread(threadId) : undefined}
           busy={submitting || threadBusy || uploadingAttachments}
           disabled={waitingForAction || uploadingAttachments}
-          canSubmit={!waitingForAction && !threadBusy && !submitting && !uploadingAttachments && (message.trim().length > 0 || attachments.items.length > 0)}
+          canSubmit={
+            !readiness?.blocked
+            && !waitingForAction
+            && !threadBusy
+            && !submitting
+            && !uploadingAttachments
+            && (message.trim().length > 0 || attachments.items.length > 0)
+          }
           attachments={(
             <AttachmentPreviewRow
               items={attachments.items}
@@ -801,6 +833,16 @@ export function AgentConversationView({
   const streamingAssistant = lastItem?.kind === "assistant"
     && !lastItem.events.some((event) => event.type === "assistant.text.completed");
   const showWorking = running && !streamingAssistant;
+  // Project Chats always supplies the runtime summary. Keeping this optional
+  // preserves the transcript component's isolated story/test seam; every
+  // product send path derives fail-closed readiness from the stored provider.
+  const providerReadiness = summary
+    ? deriveProviderReadiness({
+        summary,
+        providerId: snapshot.thread.providerId,
+        loading: false,
+      })
+    : undefined;
 
   return (
     <section aria-label={`Conversation ${snapshot.thread.title}`} className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-app)" }} {...attachments.paneProps}>
@@ -889,6 +931,8 @@ export function AgentConversationView({
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
           threadBusy={running}
           attachments={attachments}
+          readiness={providerReadiness}
+          providers={summary?.providers ?? []}
           composerControls={
             summary ? (
               <AgentComposerPickers

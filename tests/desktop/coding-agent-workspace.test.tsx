@@ -3,6 +3,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { RuntimeSummary } from "@matrix-os/contracts";
 import ProjectChatsView, {
   clearComposerLaunchContext,
   mergeComposerSeed,
@@ -45,7 +46,16 @@ function summaryFixture({
   sourceControl = false,
   threadTerminalSessionId,
   terminalSessionName = "matrix-abc1234",
-}: { threadCreate?: boolean; sameThreadTurns?: boolean; files?: boolean; sourceControl?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
+  providers,
+}: {
+  threadCreate?: boolean;
+  sameThreadTurns?: boolean;
+  files?: boolean;
+  sourceControl?: boolean;
+  threadTerminalSessionId?: string;
+  terminalSessionName?: string;
+  providers?: RuntimeSummary["providers"];
+} = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -84,7 +94,7 @@ function summaryFixture({
           }]
         : []),
     ],
-    providers: [
+    providers: providers ?? [
       {
         id: "codex",
         kind: "codex",
@@ -1314,6 +1324,155 @@ describe("ProjectChatsView", () => {
       });
     });
     await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(""));
+  });
+
+  it.each([
+    {
+      name: "missing",
+      provider: {
+        ...summaryFixture().providers[0],
+        availability: "setup_required" as const,
+        installStatus: "missing" as const,
+        authStatus: "missing" as const,
+        setupActions: [{
+          id: "codex_install",
+          kind: "foreground_terminal" as const,
+          label: "Install Codex",
+          command: "npm install -g @openai/codex",
+        }],
+      },
+      notice: "Codex is not installed",
+      action: "Install Codex",
+    },
+    {
+      name: "auth-required",
+      provider: {
+        ...summaryFixture().providers[0],
+        availability: "auth_required" as const,
+        authStatus: "missing" as const,
+        setupActions: [{
+          id: "codex_connect",
+          kind: "foreground_terminal" as const,
+          label: "Connect Codex",
+          command: "codex login",
+        }],
+      },
+      notice: "Connect Codex to continue",
+      action: "Connect Codex",
+    },
+  ])("preserves the stored-provider follow-up while $name, then sends after refresh", async ({
+    provider,
+    notice,
+    action,
+  }) => {
+    const settledSnapshot = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "completed" as const,
+        attention: "none" as const,
+      },
+    };
+    const blockedSummary = summaryFixture({ providers: [provider] });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(blockedSummary);
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(settledSnapshot);
+      if (channel === "runtime:create-turn") {
+        return Promise.resolve({
+          ok: true,
+          response: {
+            threadId: "thread_alpha",
+            turnId: "turn_provider_recovered",
+            status: "accepted",
+            acceptedAt: "2026-07-06T00:06:00.000Z",
+          },
+        });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    const composer = await screen.findByLabelText("Message conversation") as HTMLTextAreaElement;
+    const draft = `Keep this ${provider.availability} follow-up`;
+    fireEvent.change(composer, { target: { value: draft } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    expect(screen.getByText(notice)).toBeTruthy();
+    expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    expect(composer.disabled).toBe(false);
+    expect(composer.value).toBe(draft);
+    expect(vi.mocked(window.operator.invoke).mock.calls.filter(([channel]) => channel === "runtime:create-turn")).toHaveLength(0);
+
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        status: "ready",
+        summary: summaryFixture(),
+        summaryRevision: useCodingAgentWorkspace.getState().summaryRevision + 1,
+      });
+    });
+
+    await waitFor(() => expect(screen.queryByText(notice)).toBeNull());
+    expect(composer.value).toBe(draft);
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith(
+      "runtime:create-turn",
+      expect.objectContaining({ threadId: "thread_alpha", message: draft }),
+    ));
+    await waitFor(() => expect(composer.value).toBe(""));
+  });
+
+  it("keeps a blocked follow-up draft isolated when switching threads", async () => {
+    const blockedProvider = {
+      ...summaryFixture().providers[0],
+      availability: "auth_required" as const,
+      authStatus: "missing" as const,
+      setupActions: [],
+    };
+    const settledAlpha = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "completed" as const,
+        attention: "none" as const,
+      },
+    };
+    const settledBeta = {
+      ...betaThreadSnapshotFixture(),
+      thread: { ...betaThreadSnapshotFixture().thread, status: "completed" as const },
+    };
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
+    window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "runtime:get-summary") {
+        return Promise.resolve(summaryFixture({ providers: [blockedProvider] }));
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") {
+        return Promise.resolve((payload as { threadId?: string })?.threadId === "thread_beta" ? settledBeta : settledAlpha);
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    const alphaComposer = await screen.findByLabelText("Message conversation") as HTMLTextAreaElement;
+    fireEvent.change(alphaComposer, { target: { value: "Alpha-only blocked draft" } });
+    expect(screen.getByText("Connect Codex to continue")).toBeTruthy();
+
+    act(() => useProjectView.getState().setSelectedThread("matrix-os", "thread_beta"));
+
+    expect(await screen.findByRole("region", { name: "Conversation Fix billing route" })).toBeTruthy();
+    const betaComposer = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
+    expect(betaComposer.value).toBe("");
+    expect(vi.mocked(window.operator.invoke).mock.calls.filter(([channel]) => channel === "runtime:create-turn")).toHaveLength(0);
   });
 
   it("withholds the same-thread composer when the runtime does not support turns", async () => {

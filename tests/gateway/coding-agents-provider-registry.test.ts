@@ -10,6 +10,16 @@ import type { RequestPrincipal } from "../../packages/gateway/src/request-princi
 const baseNow = new Date("2026-07-09T12:00:00.000Z");
 const owner: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 
+function providerReady(summary: {
+  availability: string;
+  installStatus: string;
+  authStatus: string;
+}): boolean {
+  return summary.availability === "available" &&
+    summary.installStatus === "installed" &&
+    summary.authStatus === "authenticated";
+}
+
 function credentialService(
   status: AgentCredentialStatus,
 ): Pick<AgentCredentialStatusService, "getStatus"> {
@@ -93,13 +103,18 @@ describe("coding-agent provider registry", () => {
   });
 
   it.each([
-    ["missing", "setup_required", "missing", "missing"],
-    ["expired", "auth_required", "installed", "expired"],
-    ["revoked", "auth_required", "installed", "expired"],
-    ["failed", "unavailable", "failed", "unknown"],
+    ["available", "available", "installed", "authenticated", true],
+    ["missing", "setup_required", "missing", "missing", false],
+    ["auth_required", "auth_required", "installed", "missing", false],
+    ["expired", "auth_required", "installed", "expired", false],
+    ["revoked", "auth_required", "installed", "expired", false],
+    ["failed", "unavailable", "failed", "unknown", false],
+    ["check_failed", "unavailable", "unknown", "unknown", false],
+    ["version_unsupported", "unavailable", "failed", "unknown", false],
+    ["not_applicable", "unavailable", "unknown", "unknown", false],
   ] as const)(
     "maps %s credential state to coarse provider status",
-    async (status, availability, installStatus, authStatus) => {
+    async (status, availability, installStatus, authStatus, ready) => {
       const healthCheck = vi.fn(() => ({ ok: true }));
       const registry = createCodingAgentProviderRegistry({
         providers: [adapter({ healthCheck })],
@@ -110,7 +125,8 @@ describe("coding-agent provider registry", () => {
       const [summary] = await registry.listProviders(owner);
 
       expect(summary).toMatchObject({ availability, installStatus, authStatus });
-      expect(healthCheck).not.toHaveBeenCalled();
+      expect(providerReady(summary!)).toBe(ready);
+      expect(healthCheck).toHaveBeenCalledTimes(ready ? 1 : 0);
     },
   );
 

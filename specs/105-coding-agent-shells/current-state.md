@@ -1,7 +1,7 @@
 # Current State: Coding Agent Shells
 
 **Branch stack**: implementation checkpoint merged to `main` through PR #869 (`056b3da668ed6d1753712120316d2d5accfafdcf`)
-**Updated**: 2026-07-13
+**Updated**: 2026-08-21
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 For the evidence-based checkpoint audit, see [completion-audit.md](./completion-audit.md).
@@ -18,7 +18,7 @@ The landed checkpoint is not the confirmed final information architecture. Curre
 - The current desktop `AgentWorkspace` is a sectioned dashboard. It does not provide the required persistent project/task/thread navigator or a segmented Conversation/Kanban mode over one selected project.
 - Mobile now adds gateway-validated project/task/thread routes, multi-thread Conversation groups, and a capability-gated Kanban projection with phone/tablet layouts. SDK 57 device and cross-shell evidence remain outstanding.
 - Mobile now has a Cloud-authenticated computer chooser backed by a bounded platform projection. It can reconnect the same signed-in shell to main or preview `/vm/:handle` routes while persisting only the selected gateway reference; remote preview device evidence remains outstanding.
-- Desktop follow-up controls still seed a new thread with a structured reference. Mobile now uses the gateway same-thread turn route with transient drafts and exact retry idempotency; desktop and cross-shell confirmation remain outstanding. Delivering input to a running workspace session settles that turn without marking the thread complete; canonical session-stop reconciliation owns terminal thread status.
+- Desktop project chats now use the gateway same-thread turn route. New-chat and follow-up composers fail closed unless the selected or stored provider is explicitly available, installed, and authenticated; blocked drafts stay local, editable, and isolated per thread while a safe foreground setup or refresh action remains visible. Real authenticated VPS/Desktop recovery and accepted-turn evidence remains outstanding. Mobile uses the same gateway same-thread turn route with transient drafts and exact retry idempotency; cross-shell confirmation remains outstanding. Delivering input to a running workspace session settles that turn without marking the thread complete; canonical session-stop reconciliation owns terminal thread status.
 - Existing desktop Kanban task routes/statuses are canonical and reusable, but coding-thread aggregates and multi-thread task navigation are not integrated into that board.
 
 The clarified target and required evidence are defined in `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md`. No implementation completion claim should treat the existing dashboard/create path as proof of those requirements.
