@@ -130,6 +130,11 @@ When adding a provider:
 
 Coding-agent threads may point at a canonical terminal session using bounded terminal identifiers. The binding rules are:
 
+Cross-surface input, presentation, and canonical-size ownership follow
+[Terminal session ownership](./terminal-session-ownership.md). In particular,
+local command-line handoff uses `mos shell attach <session>`; raw
+`zellij attach` is not a coordinated Matrix client.
+
 - Workspace orchestration owns `/api/sessions`; canonical named terminal sessions use `/api/terminal/sessions`. The assembled gateway mounts the legacy terminal compatibility routes after workspace routes so task-session requests cannot be parsed as legacy terminal creates.
 
 - Thread snapshots can expose attachable terminal references, not raw PTY output.

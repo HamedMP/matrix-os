@@ -47,6 +47,12 @@ matrix logout             # clear local credentials
 
 All three bin entries are installed: `matrix`, `matrixos`, `mos`.
 
+Use `mos shell attach <session>` rather than running `zellij attach` directly
+when handing a live session between Matrix surfaces. The CLI command
+participates in gateway ownership, size coordination, and renderer revocation.
+See [Terminal session ownership](../../docs/dev/terminal-session-ownership.md)
+for supported clients and the single-gateway deployment constraint.
+
 ## Requirements
 
 - Node.js 20 or newer for npm package runners and global npm installs
