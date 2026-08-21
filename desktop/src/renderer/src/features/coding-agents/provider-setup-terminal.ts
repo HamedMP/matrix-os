@@ -3,7 +3,10 @@ import type { ApiClient } from "../../lib/api";
 import type { useTabs } from "../../stores/tabs";
 
 const MAX_PROVIDER_SETUP_ACTIONS = 10;
+const MAX_SETUP_SESSION_NAME_LENGTH = 31;
+const SETUP_RUN_SUFFIX_LENGTH = 6;
 const SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
+let setupRunSequence = 0;
 
 type ForegroundSetupAction = Extract<SafeSetupAction, { kind: "foreground_terminal" }>;
 
@@ -41,6 +44,22 @@ function setupSessionName(providerId: string, actionId: string): string {
   return `${prefix}${segment || "agent"}-${suffix}`;
 }
 
+function freshSetupSessionName(setup: ProviderSetupCommand): string {
+  setupRunSequence = (setupRunSequence + 1) % Number.MAX_SAFE_INTEGER;
+  const randomIdentity = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : "";
+  const suffix = setupSessionHash(
+    `${setup.key}:${setup.command}:${Date.now()}:${setupRunSequence}:${randomIdentity}`,
+  );
+  const stableName = /-[a-z0-9]{6}$/.test(setup.sessionName)
+    ? setup.sessionName.slice(0, -(SETUP_RUN_SUFFIX_LENGTH + 1))
+    : setup.sessionName;
+  const maxBaseLength = MAX_SETUP_SESSION_NAME_LENGTH - SETUP_RUN_SUFFIX_LENGTH - 1;
+  const base = stableName.slice(0, maxBaseLength).replace(/-+$/g, "") || "matrix-setup";
+  return `${base}-${suffix}`;
+}
+
 export function providerSetupCommands(providers: AgentProviderSummary[]): ProviderSetupCommand[] {
   const commands: ProviderSetupCommand[] = [];
   for (const provider of providers) {
@@ -65,14 +84,15 @@ export async function openProviderSetupTerminal(
   logPrefix = "provider-setup",
 ): Promise<boolean> {
   try {
+    const requestedSessionName = freshSetupSessionName(setup);
     const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", {
-      name: setup.sessionName,
+      name: requestedSessionName,
       cwd: "projects",
       cmd: setup.command,
     });
     const sessionName = typeof response.name === "string" && SESSION_NAME_PATTERN.test(response.name)
       ? response.name
-      : setup.sessionName;
+      : requestedSessionName;
     openTab({ kind: "terminal", sessionName, title: setup.label });
     return true;
   } catch (err: unknown) {

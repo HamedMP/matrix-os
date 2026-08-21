@@ -167,6 +167,35 @@ describe("ProviderReadinessNotice", () => {
     ]);
   });
 
+  it("executes the current command in a fresh setup session on deliberate retry", async () => {
+    render(
+      <ProviderReadinessNotice
+        readiness={readiness()}
+        providers={[provider]}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Install Codex" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Install Codex" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+
+    const firstRequest = api.post.mock.calls[0]?.[1];
+    const retryRequest = api.post.mock.calls[1]?.[1];
+    expect(firstRequest).toEqual(expect.objectContaining({
+      cmd: installAction.command,
+      cwd: "projects",
+      name: expect.stringMatching(/^matrix-setup-[a-z0-9-]{1,18}$/),
+    }));
+    expect(retryRequest).toEqual(expect.objectContaining({
+      cmd: installAction.command,
+      cwd: "projects",
+      name: expect.stringMatching(/^matrix-setup-[a-z0-9-]{1,18}$/),
+    }));
+    expect(retryRequest.name).not.toBe(firstRequest.name);
+  });
+
   it("refreshes once and exposes pending state", async () => {
     let finishRefresh: (() => void) | undefined;
     const onRefresh = vi.fn(() => new Promise<void>((resolve) => {
