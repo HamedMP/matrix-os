@@ -15,8 +15,8 @@ import {
   buildProjectThreadListModel,
   formatRelativeTime,
   threadRailStatus,
-  type ThreadRailTone,
 } from "./ProjectThreadList";
+import type { ThreadRailTone } from "./project-thread-list-model";
 
 const STATUS_COLORS: Record<ThreadRailTone, { background: string; color: string }> = {
   running: { background: "var(--accent-muted)", color: "var(--status-running)" },
