@@ -336,8 +336,12 @@ describe("ProjectTab", () => {
     const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("button", { name: "Chat Plan the auth work" });
+    const summaryRevisionBeforeNewChat = useCodingAgentWorkspace.getState().summaryRevision;
     const summaryCallsBeforeNewChat = invoke.mock.calls.filter(
       ([channel]) => channel === "runtime:get-summary",
+    ).length;
+    const workspaceCallsBeforeNewChat = invoke.mock.calls.filter(
+      ([channel]) => channel === "runtime:get-project-workspace",
     ).length;
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
@@ -347,6 +351,15 @@ describe("ProjectTab", () => {
       expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-summary").length)
         .toBe(summaryCallsBeforeNewChat + 1);
     });
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().summaryRevision)
+        .toBe(summaryRevisionBeforeNewChat + 1);
+    });
+    expect(invoke.mock.calls.filter(
+      ([channel]) => channel === "runtime:get-project-workspace",
+    )).toHaveLength(workspaceCallsBeforeNewChat);
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+    expect(screen.getByLabelText("Message new chat")).toBeTruthy();
   });
 
   it("keeps the new-chat draft selected when the project workspace is refreshed", async () => {

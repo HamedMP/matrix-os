@@ -56,7 +56,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const status = useCodingAgentWorkspace((s) => s.status);
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const error = useCodingAgentWorkspace((s) => s.error);
-  const refresh = useCodingAgentWorkspace((s) => s.refresh);
+  const refreshRuntimeSummary = useCodingAgentWorkspace((s) => s.refresh);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const threadSnapshotStatus = useCodingAgentWorkspace((s) => s.threadSnapshotStatus);
@@ -123,8 +123,8 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       || draftReadinessRefreshedRef.current
     ) return;
     draftReadinessRefreshedRef.current = true;
-    void refresh();
-  }, [active, projectWorkspaceEnabled, refresh, selectedThreadId, workspaceEntry?.status]);
+    void refreshRuntimeSummary();
+  }, [active, projectWorkspaceEnabled, refreshRuntimeSummary, selectedThreadId, workspaceEntry?.status]);
 
   useEffect(() => {
     if (!projectWorkspaceEnabled) return;
@@ -327,7 +327,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         icon={<Server size={28} />}
         headline={error ?? "Runtime summary unavailable"}
         description="Refresh the workspace or check your selected runtime."
-        action={<Button onClick={() => void refresh()}>Retry</Button>}
+        action={<Button onClick={() => void refreshRuntimeSummary()}>Retry</Button>}
       />
     );
   }
