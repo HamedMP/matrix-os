@@ -80,3 +80,34 @@ export async function openProviderSetupTerminal(
     return false;
   }
 }
+
+export async function executeProviderSetupAction(input: {
+  provider: AgentProviderSummary;
+  action: SafeSetupAction;
+  api: ApiClient | null;
+  openTab: ReturnType<typeof useTabs.getState>["openTab"];
+  requestSettingsSection: (section: string) => void;
+}): Promise<boolean> {
+  if (input.action.kind === "open_settings") {
+    input.requestSettingsSection("providers");
+    input.openTab({ kind: "settings", title: "Settings" });
+    return true;
+  }
+  if (!input.api) return false;
+  const foregroundAction = input.action;
+
+  const trustedAction = input.provider.setupActions.find((candidate) =>
+    candidate.kind === "foreground_terminal" &&
+    candidate.id === foregroundAction.id &&
+    candidate.label === foregroundAction.label &&
+    candidate.command === foregroundAction.command
+  );
+  if (!trustedAction || trustedAction.kind !== "foreground_terminal") return false;
+  const setup = providerSetupCommands([input.provider]).find((candidate) =>
+    candidate.key === `${input.provider.id}:${trustedAction.id}` &&
+    candidate.label === trustedAction.label &&
+    candidate.command === trustedAction.command
+  );
+  if (!setup) return false;
+  return await openProviderSetupTerminal(input.api, setup, input.openTab, "provider-readiness");
+}
