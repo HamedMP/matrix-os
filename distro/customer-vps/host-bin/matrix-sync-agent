@@ -48,6 +48,27 @@ current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
 staged_release_metadata=""
 
+stop_runtime_services() {
+  local service state
+  if ! sudo systemctl stop matrix-symphony matrix-gateway matrix-shell; then
+    log "ERROR: systemd could not stop all runtime services"
+    return 1
+  fi
+  for service in matrix-symphony matrix-gateway matrix-shell; do
+    if ! state="$(sudo systemctl show --property=ActiveState --value "$service")"; then
+      log "ERROR: systemd could not inspect $service after stopping it"
+      return 1
+    fi
+    case "$state" in
+      inactive|failed) ;;
+      *)
+        log "ERROR: $service remained in state ${state:-unknown} after stopping it"
+        return 1
+        ;;
+    esac
+  done
+}
+
 cleanup_staged_release_metadata() {
   if [ -n "$staged_release_metadata" ]; then
     sudo rm -f -- "$staged_release_metadata" || true
@@ -263,6 +284,12 @@ release_url_for_version() { echo "$(platform_url)/system-bundles/releases/$1.jso
 release_url_for_channel() { echo "$(platform_url)/system-bundles/channels/$1.json"; }
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
+
+running_gateway_version() {
+  local response
+  response="$(curl --fail --silent --max-time 5 "$HEALTH_URL")" || return 1
+  json_field "$response" runningVersion
+}
 
 compare_host_bundle_versions() {
   local candidate="$1" current="$2"
@@ -797,7 +824,13 @@ apply_update() {
     return 1
   fi
   log "Stopping services..."
-  sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  if ! stop_runtime_services; then
+    log "ERROR: runtime services did not stop; aborting before app replacement"
+    write_update_error "pre_install_service_stop_failed" "The running services could not be stopped safely, so the update was not installed." "$version"
+    cleanup_staged_release_metadata
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   sudo rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
     sudo mv "$APP_DIR" "$APP_DIR.rollback"
@@ -885,10 +918,13 @@ apply_update() {
   fi
   log "Running health check..."
   write_update_phase health || return 1
-  local healthy=false
+  local healthy=false gateway_reached=false observed_running_version=""
   for _ in $(seq 1 18); do
-    if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
-      healthy=true; break
+    if observed_running_version="$(running_gateway_version)"; then
+      gateway_reached=true
+      if [ "$observed_running_version" = "$version" ]; then
+        healthy=true; break
+      fi
     fi
     sleep 5
   done
@@ -909,9 +945,18 @@ apply_update() {
       return 1
     fi
   else
-    log "ERROR: health check failed — rolling back"
+    local verification_error_code verification_error_message
+    if [ "$gateway_reached" = true ]; then
+      log "ERROR: gateway running version did not match the candidate release — rolling back"
+      verification_error_code="post_install_runtime_version_mismatch"
+      verification_error_message="The updated gateway did not report the expected running version and the previous release was restored."
+    else
+      log "ERROR: health check failed — rolling back"
+      verification_error_code="post_install_health_failed"
+      verification_error_message="The updated gateway failed its health check and the previous release was restored."
+    fi
     if do_rollback false; then
-      write_update_error "post_install_health_failed" "The updated gateway failed its health check and the previous release was restored." "$version"
+      write_update_error "$verification_error_code" "$verification_error_message" "$version"
     else
       write_update_error "post_install_rollback_failed" "The updated gateway failed its health check and rollback did not complete." "$version"
     fi
@@ -952,7 +997,10 @@ do_rollback() {
     return 1
   fi
   log "Rolling back..."
-  sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  if ! stop_runtime_services; then
+    log "ERROR: rollback could not stop the runtime services safely"
+    return 1
+  fi
   if [ -d "$APP_DIR" ]; then
     sudo mkdir -p "$STAGING_DIR"
     sudo chown matrix:matrix "$STAGING_DIR"
