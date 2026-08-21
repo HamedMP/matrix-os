@@ -35,7 +35,11 @@ import {
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
-import { fitWindowBoundsToWorkArea, type WindowBounds } from "./platform/window-bounds";
+import {
+  fitWindowBoundsToWorkArea,
+  type FittedWindowBounds,
+  type WindowBounds,
+} from "./platform/window-bounds";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
@@ -94,11 +98,9 @@ async function openExternalHttpUrl(url: string): Promise<void> {
   await shell.openExternal(externalUrl);
 }
 
-function createWindow(bounds: { x?: number; y?: number; width: number; height: number }): BrowserWindow {
+function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const win = new BrowserWindow({
     ...bounds,
-    minWidth: 880,
-    minHeight: 560,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 14, y: 13 },
     backgroundColor: "#0e0e13",

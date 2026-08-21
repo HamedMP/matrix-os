@@ -12,10 +12,18 @@ export interface WorkArea {
   height: number;
 }
 
+export interface FittedWindowBounds extends Required<WindowBounds> {
+  minWidth: number;
+  minHeight: number;
+}
+
+const PREFERRED_MIN_WIDTH = 880;
+const PREFERRED_MIN_HEIGHT = 560;
+
 export function fitWindowBoundsToWorkArea(
   bounds: WindowBounds,
   workArea: WorkArea,
-): Required<WindowBounds> {
+): FittedWindowBounds {
   const width = Math.min(bounds.width, workArea.width);
   const height = Math.min(bounds.height, workArea.height);
   const maxX = workArea.x + workArea.width - width;
@@ -26,5 +34,7 @@ export function fitWindowBoundsToWorkArea(
     y: Math.min(Math.max(bounds.y ?? workArea.y, workArea.y), maxY),
     width,
     height,
+    minWidth: Math.min(PREFERRED_MIN_WIDTH, width),
+    minHeight: Math.min(PREFERRED_MIN_HEIGHT, height),
   };
 }
