@@ -121,6 +121,7 @@ interface TabsState {
   recentFilter: RecentViewFilter;
   terminalSessionRequest: TerminalSessionRequest | null;
   terminalSessionRequestSequence: number;
+  terminalIndexRequestId: number;
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
@@ -137,6 +138,7 @@ interface TabsState {
   reconcileRecentTerminals(ids: string[]): void;
   reconcileTerminalSessions(liveSessionNames: string[]): void;
   requestTerminalSession(sessionName: string): void;
+  requestTerminalIndex(): void;
   consumeTerminalSessionRequest(requestId: number): void;
   setRecentFilter(filter: RecentViewFilter): void;
   renameTab(id: string, title: string): void;
@@ -157,6 +159,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
   recentFilter: "all",
   terminalSessionRequest: null,
   terminalSessionRequestSequence: 0,
+  terminalIndexRequestId: 0,
 
   openTab: (spec) => {
     const key = identityKey(spec);
@@ -273,6 +276,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
       recentFilter: "all",
       terminalSessionRequest: null,
       terminalSessionRequestSequence: 0,
+      terminalIndexRequestId: 0,
     };
   }),
 
@@ -405,6 +409,10 @@ export const useTabs = create<TabsState>()((set, get) => ({
       terminalSessionRequestSequence: requestId,
     };
   }),
+
+  requestTerminalIndex: () => set((state) => ({
+    terminalIndexRequestId: state.terminalIndexRequestId + 1,
+  })),
 
   consumeTerminalSessionRequest: (requestId) => set((state) => (
     state.terminalSessionRequest?.requestId === requestId
