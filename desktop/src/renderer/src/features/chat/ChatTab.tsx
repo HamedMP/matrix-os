@@ -1,5 +1,5 @@
-import { FileText, FolderOpen, GitBranch, Plus } from "lucide-react";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { ChevronRight, FileText, FolderOpen, GitBranch, Plus } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { groupChatTurns, type ChatMessage } from "../../lib/chat";
 import { useConnection } from "../../stores/connection";
@@ -45,10 +45,16 @@ function TurnReceipt({
   startedAt,
   endedAt,
   active,
+  expanded,
+  canToggle,
+  onToggle,
 }: {
   startedAt: number;
   endedAt: number;
   active: boolean;
+  expanded: boolean;
+  canToggle: boolean;
+  onToggle: () => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -59,12 +65,28 @@ function TurnReceipt({
   }, [active]);
 
   const elapsed = active ? now - startedAt : endedAt - startedAt;
+  const label = `${active ? "Working" : "Worked"} for ${formatTurnDuration(elapsed)}`;
   return (
     <ConversationItem messageId={`receipt:${startedAt}`}>
-      <Marker variant="separator">
-        <MarkerContent className="font-medium">
-          {active ? "Working" : "Worked"} for {formatTurnDuration(elapsed)}
-        </MarkerContent>
+      <Marker variant="border" className="min-h-10 pb-2">
+        {canToggle ? (
+          <button
+            type="button"
+            aria-label={label}
+            aria-expanded={expanded}
+            className="inline-flex min-w-0 items-center gap-1.5 rounded-md py-1 pr-1 font-medium hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+            onClick={onToggle}
+          >
+            <MarkerContent>{label}</MarkerContent>
+            <ChevronRight
+              size={15}
+              aria-hidden
+              className={`shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+            />
+          </button>
+        ) : (
+          <MarkerContent className="font-medium">{label}</MarkerContent>
+        )}
       </Marker>
     </ConversationItem>
   );
@@ -160,6 +182,51 @@ function ResponseMessage({ message }: { message: ChatMessage }) {
   );
 }
 
+type HermesTurnData = ReturnType<typeof groupChatTurns>[number];
+
+function finalResponseGroupIndex(turn: HermesTurnData): number {
+  for (let index = turn.responseGroups.length - 1; index >= 0; index -= 1) {
+    if (turn.responseGroups[index]?.type === "message") return index;
+  }
+  return -1;
+}
+
+function HermesTurn({ turn, active }: { turn: HermesTurnData; active: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const finalIndex = finalResponseGroupIndex(turn);
+  const showWork = active || expanded;
+  const hasWork = turn.responseGroups.some((_group, index) => index !== finalIndex);
+
+  return (
+    <>
+      {turn.user ? <UserMessage message={turn.user} /> : null}
+      {turn.responseGroups.length > 0 || active ? (
+        <TurnReceipt
+          startedAt={turn.startedAt}
+          endedAt={turn.endedAt}
+          active={active}
+          expanded={showWork}
+          canToggle={!active && hasWork}
+          onToggle={() => setExpanded((value) => !value)}
+        />
+      ) : null}
+      {turn.responseGroups.map((group, index) => {
+        if (!showWork && index !== finalIndex) return null;
+        return group.type === "tool_group" ? (
+          <ConversationItem
+            key={group.messages[0]?.id ?? `${turn.id}:tools`}
+            messageId={group.messages[0]?.id}
+          >
+            <ToolActivityGroup messages={group.messages} />
+          </ConversationItem>
+        ) : (
+          <ResponseMessage key={group.message.id} message={group.message} />
+        );
+      })}
+    </>
+  );
+}
+
 function HermesMessageList({
   turns,
   status,
@@ -174,28 +241,7 @@ function HermesMessageList({
       <ConversationContent className="justify-start pt-8 sm:pt-12">
         {turns.map((turn) => {
           const active = status !== "idle" && turn.requestId === activeRequestId;
-          return (
-            <Fragment key={turn.id}>
-              {turn.user ? <UserMessage message={turn.user} /> : null}
-              {turn.responseGroups.length > 0 || active ? (
-                <TurnReceipt
-                  startedAt={turn.startedAt}
-                  endedAt={turn.endedAt}
-                  active={active}
-                />
-              ) : null}
-              {turn.responseGroups.map((group) => group.type === "tool_group" ? (
-                <ConversationItem
-                  key={group.messages[0]?.id ?? `${turn.id}:tools`}
-                  messageId={group.messages[0]?.id}
-                >
-                  <ToolActivityGroup messages={group.messages} />
-                </ConversationItem>
-              ) : (
-                <ResponseMessage key={group.message.id} message={group.message} />
-              ))}
-            </Fragment>
-          );
+          return <HermesTurn key={turn.id} turn={turn} active={active} />;
         })}
       </ConversationContent>
     </Conversation>
