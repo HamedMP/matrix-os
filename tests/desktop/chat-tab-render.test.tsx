@@ -188,13 +188,17 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     expect(screen.getByText("sh")).toBeTruthy();
-    expect(screen.getByText("pwd && git status --short").closest("pre")?.className).toContain("overflow-x-auto");
+    const pre = screen.getByText("pwd && git status --short").closest("pre");
+    expect(pre?.className).toContain("overflow-x-auto");
+    fireEvent.click(screen.getByRole("button", { name: "Wrap code block" }));
+    expect(pre?.className).toContain("whitespace-pre-wrap");
+    expect(screen.getByRole("button", { name: "Disable code wrapping" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Copy code block" }));
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("pwd && git status --short"));
     expect(screen.getByRole("button", { name: "Copied code block" })).toBeTruthy();
   });
 
-  it("keeps structured agent output readable with GFM tables", () => {
+  it("keeps structured agent output readable and copyable with GFM tables", async () => {
     useHermesChat.setState({
       status: "idle",
       messages: [{
@@ -211,6 +215,34 @@ describe("ChatTab", () => {
     expect(table.className).toContain("border-collapse");
     expect(screen.getByRole("columnheader", { name: "File" })).toBeTruthy();
     expect(screen.getByRole("cell", { name: "README.md" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy table as Markdown" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "| File | Status |\n| --- | --- |\n| README.md | clean |",
+    ));
+    expect(screen.getByRole("button", { name: "Copied table as Markdown" })).toBeTruthy();
+  });
+
+  it("renders safe external links and native GFM task state", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{
+        id: "assistant-rich-markdown",
+        role: "assistant",
+        content: "- [x] Checked\n\n[Matrix](https://matrix-os.com)",
+        timestamp: 10_000,
+      }],
+    });
+
+    render(<ChatTab />);
+
+    const task = screen.getByRole("checkbox", { name: "Completed task" }) as HTMLInputElement;
+    expect(task.checked).toBe(true);
+    expect(task.disabled).toBe(true);
+    expect(task.hasAttribute("node")).toBe(false);
+    const link = screen.getByRole("link", { name: "Matrix" });
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(link.hasAttribute("node")).toBe(false);
   });
 
   it("shows live turn and tool status without claiming unavailable reasoning", () => {
@@ -233,6 +265,61 @@ describe("ChatTab", () => {
     expect(commandChip.getAttribute("title")).toBe("bun run test");
     expect(screen.queryByRole("button", { name: "Copy assistant message" })).toBeNull();
     expect(screen.queryByText("Thought process")).toBeNull();
+  });
+
+  it("renders failed command work as failed instead of running or complete", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [
+        { id: "user-failed", role: "user", content: "Run the checks", requestId: "request-failed", timestamp: 1_000 },
+        {
+          id: "tool-failed",
+          role: "system",
+          content: "Failed Bash",
+          tool: "Bash",
+          requestId: "request-failed",
+          toolDisplay: { kind: "command", preview: "bun run test" },
+          timestamp: 2_000,
+        },
+        { id: "error-failed", role: "system", content: "The command failed.", requestId: "request-failed", timestamp: 3_000 },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Worked for 2s" }));
+    expect(screen.getByRole("button", { name: "Failed command: bun run test" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Agent work failed" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Running command: bun run test" })).toBeNull();
+  });
+
+  it("copies a command from its work row and redacts credential-shaped values", async () => {
+    useHermesChat.setState({
+      status: "streaming",
+      activeRequestId: "request-command-copy",
+      messages: [
+        { id: "user-command-copy", role: "user", content: "Inspect safely", requestId: "request-command-copy", timestamp: 1_000 },
+        {
+          id: "tool-command-copy",
+          role: "system",
+          content: "Using Bash...",
+          tool: "Bash",
+          requestId: "request-command-copy",
+          toolInput: { command: "API_KEY=supersecret git status --short", unrelated: "do-not-render" },
+          timestamp: 2_000,
+        },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.queryByText(/supersecret/)).toBeNull();
+    expect(screen.queryByText(/do-not-render/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "API_KEY=[redacted] git status --short",
+    ));
+    expect(screen.getByRole("button", { name: "Copied command" })).toBeTruthy();
   });
 
   it("renders the approved centered empty state and only working composer controls", () => {

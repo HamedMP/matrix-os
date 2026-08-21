@@ -228,6 +228,7 @@ import {
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import {
   kernelEventToServerMessage,
+  kernelResultFallbackText,
   send,
   sendClientAck,
 } from "./server/main-ws-messages.js";
@@ -2132,6 +2133,7 @@ export async function createGateway(config: GatewayConfig) {
               pendingText = parsed.displayText ?? parsed.text;
               const requestId = parsed.requestId;
               let lastToolName: string | undefined;
+              let receivedAssistantText = false;
               captureGatewayProductEvent("agent_task_started", {
                 shell_surface: "gateway_ws",
                 request_id_present: Boolean(requestId),
@@ -2190,6 +2192,7 @@ export async function createGateway(config: GatewayConfig) {
                     pendingText = undefined;
                   }
                 } else if (msg.type === "kernel:text" && activeSessionId) {
+                  receivedAssistantText = true;
                   publishConversationRunMessage(activeSessionId, msg);
                   conversations.appendAssistantText(activeSessionId, msg.text);
                 } else if (msg.type === "kernel:tool_start" && activeSessionId) {
@@ -2200,6 +2203,8 @@ export async function createGateway(config: GatewayConfig) {
                   publishConversationRunMessage(activeSessionId, msg);
                   conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
                 } else if (msg.type === "kernel:result" && activeSessionId) {
+                  const fallbackText = kernelResultFallbackText(event, receivedAssistantText);
+                  if (fallbackText) conversations.appendAssistantText(activeSessionId, fallbackText);
                   captureGatewayProductEvent("agent_task_completed", {
                     shell_surface: "gateway_ws",
                     request_id_present: Boolean(requestId),
@@ -2215,9 +2220,11 @@ export async function createGateway(config: GatewayConfig) {
                     ...msg,
                     message: CLIENT_KERNEL_ERROR_MESSAGE,
                   });
+                  conversations.addSystemMessage(activeSessionId, CLIENT_KERNEL_ERROR_MESSAGE);
                   void finalizeWithSummary(activeSessionId);
                 } else if (msg.type === "kernel:aborted" && activeSessionId) {
                   publishConversationRunMessage(activeSessionId, msg);
+                  conversations.addSystemMessage(activeSessionId, "Stopped.");
                   void finalizeWithSummary(activeSessionId);
                 }
               }, undefined, abortController, {
@@ -2241,6 +2248,7 @@ export async function createGateway(config: GatewayConfig) {
                     activeSessionId,
                     failureReplay.runMessage as ConversationRunMessage,
                   );
+                  conversations.addSystemMessage(activeSessionId, CLIENT_KERNEL_ERROR_MESSAGE);
                   void finalizeWithSummary(activeSessionId);
                 }
                 send(ws, failureReplay.liveMessage);

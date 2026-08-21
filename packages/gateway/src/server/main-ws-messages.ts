@@ -1,10 +1,28 @@
 import type { KernelEvent } from "@matrix-os/kernel";
+import { isKernelResultFailureText } from "@matrix-os/contracts";
 import type { MainWsClientMessage } from "../ws-message-schema.js";
 import type { ServerMessage } from "./types.js";
 
 type WebSocketSender = {
   send(data: string): void;
 };
+
+export function kernelResultFallbackText(
+  event: KernelEvent,
+  receivedIncrementalText: boolean,
+): string | null {
+  if (
+    receivedIncrementalText
+    || event.type !== "result"
+    || (event.data.errors?.length ?? 0) > 0
+    || typeof event.data.result !== "string"
+    || isKernelResultFailureText(event.data.result)
+  ) {
+    return null;
+  }
+  const result = event.data.result.trim();
+  return result || null;
+}
 
 export function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
@@ -17,6 +35,12 @@ export function kernelEventToServerMessage(event: KernelEvent, requestId?: strin
     case "tool_end":
       return { type: "kernel:tool_end", input: event.input, requestId };
     case "result":
+      if (
+        (event.data.errors?.length ?? 0) > 0
+        || isKernelResultFailureText(event.data.result)
+      ) {
+        return { type: "kernel:error", message: "Request failed", requestId };
+      }
       return { type: "kernel:result", data: event.data, requestId };
     case "aborted":
       return { type: "kernel:aborted", requestId };

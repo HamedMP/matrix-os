@@ -7,6 +7,7 @@ import {
   KernelConversationHistoryResponseSchema,
   KernelConversationIdSchema,
   KernelConversationMutationErrorCodeSchema,
+  isKernelResultFailureText,
 } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { z } from "zod/v4";
@@ -169,6 +170,26 @@ interface HermesChatState {
 
 function nextId(): string {
   return crypto.randomUUID();
+}
+
+const UNSUCCESSFUL_RESULT_MESSAGE = "The agent could not complete this turn. Try again.";
+
+function resultHasErrors(event: ChatEvent): boolean {
+  if (event.type !== "kernel:result" || !event.data || typeof event.data !== "object") {
+    return false;
+  }
+  const errors = Reflect.get(event.data, "errors");
+  return (Array.isArray(errors) && errors.length > 0)
+    || isKernelResultFailureText(Reflect.get(event.data, "result"));
+}
+
+function resultFallbackText(event: ChatEvent): string | null {
+  if (event.type !== "kernel:result" || resultHasErrors(event) || !event.data || typeof event.data !== "object") {
+    return null;
+  }
+  const result = Reflect.get(event.data, "result");
+  if (typeof result !== "string") return null;
+  return result.trim() || null;
 }
 
 export const useHermesChat = create<HermesChatState>()((set, get) => ({
@@ -487,7 +508,31 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       const seenReplayEventIds = eventId
         ? [...state.seenReplayEventIds, eventId].slice(-REPLAY_EVENT_CAP)
         : state.seenReplayEventIds;
-      const messages = reduceChat(state.messages, event).slice(-TRANSCRIPT_CAP);
+      // Agent SDK unsuccessful results arrive as terminal `kernel:result`
+      // frames whose data contains provider errors. Keep those details out of
+      // renderer state while making the otherwise silent failed turn visible.
+      const fallbackText = resultFallbackText(event);
+      const alreadyStreamed = event.requestId
+        ? state.messages.some((message) => (
+            message.requestId === event.requestId
+            && message.role === "assistant"
+            && !message.tool
+          ))
+        : false;
+      const presentationEvent: ChatEvent = resultHasErrors(event)
+        ? {
+            type: "kernel:error",
+            message: UNSUCCESSFUL_RESULT_MESSAGE,
+            ...(event.requestId ? { requestId: event.requestId } : {}),
+          }
+        : fallbackText && !alreadyStreamed
+          ? {
+              type: "kernel:text",
+              text: fallbackText,
+              ...(event.requestId ? { requestId: event.requestId } : {}),
+            }
+        : event;
+      const messages = reduceChat(state.messages, presentationEvent).slice(-TRANSCRIPT_CAP);
       let status = state.status;
       let active: string | null = state.activeRequestId;
       if (event.type === "kernel:text") status = "streaming";

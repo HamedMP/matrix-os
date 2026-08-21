@@ -189,6 +189,18 @@ export function reduceChat(messages: ChatMessage[], event: ChatEvent): ChatMessa
       break;
     }
     case "kernel:error": {
+      // A provider error ends the currently active tool. Leaving the tool in
+      // its `Using ...` state makes the settled transcript claim it is still
+      // running, both live and after the error row is appended.
+      for (let i = next.length - 1; i >= 0; i--) {
+        const m = next[i]!;
+        if (m.tool && m.content.startsWith("Using ")) {
+          if (!reqId || m.requestId === reqId) {
+            next[i] = { ...m, content: `Failed ${m.tool}` };
+            break;
+          }
+        }
+      }
       next.push({
         id: newMsgId(),
         role: "system",

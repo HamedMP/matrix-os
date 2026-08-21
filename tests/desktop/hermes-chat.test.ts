@@ -412,4 +412,93 @@ describe("useHermesChat", () => {
       messages: [expect.objectContaining({ content: "streamed once" })],
     });
   });
+
+  it("shows a safe failure when Hermes ends with an unsuccessful result", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId,
+      data: {
+        errors: ["Anthropic API key failed at /home/matrix/private-config"],
+      },
+    });
+
+    expect(useHermesChat.getState()).toMatchObject({
+      status: "idle",
+      activeRequestId: null,
+      messages: [
+        expect.objectContaining({ role: "user", content: "hello" }),
+        expect.objectContaining({
+          role: "system",
+          content: "The agent could not complete this turn. Try again.",
+        }),
+      ],
+    });
+    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("Anthropic");
+    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("/home/matrix");
+  });
+
+  it("uses the completed result when Hermes emits no incremental text", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId,
+      data: { result: "Final answer from Hermes" },
+    });
+
+    expect(useHermesChat.getState()).toMatchObject({
+      status: "idle",
+      activeRequestId: null,
+      messages: [
+        expect.objectContaining({ role: "user", content: "hello" }),
+        expect.objectContaining({ role: "assistant", content: "Final answer from Hermes" }),
+      ],
+    });
+  });
+
+  it("does not duplicate a completed result after incremental text", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+    useHermesChat.getState().ingest({
+      type: "kernel:text",
+      requestId,
+      text: "Final answer from Hermes",
+    });
+
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId,
+      data: { result: "Final answer from Hermes" },
+    });
+
+    expect(useHermesChat.getState().messages.filter((message) => message.role === "assistant"))
+      .toEqual([expect.objectContaining({ content: "Final answer from Hermes" })]);
+  });
+
+  it("turns an error-shaped completed result into a safe failure notice", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId,
+      data: {
+        result: "Failed to authenticate. API Error: 401 {\"type\":\"authentication_error\",\"message\":\"API key is invalid\"}",
+      },
+    });
+
+    expect(useHermesChat.getState().messages).toEqual([
+      expect.objectContaining({ role: "user", content: "hello" }),
+      expect.objectContaining({
+        role: "system",
+        content: "The agent could not complete this turn. Try again.",
+      }),
+    ]);
+    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("API key");
+    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("401");
+  });
 });

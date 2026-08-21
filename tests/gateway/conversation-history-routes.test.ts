@@ -16,6 +16,7 @@ function createStore(overrides: Partial<ConversationStore> = {}): ConversationSt
   return {
     begin: vi.fn(),
     addUserMessage: vi.fn(),
+    addSystemMessage: vi.fn(),
     appendAssistantText: vi.fn(),
     addToolStart: vi.fn(),
     addToolEnd: vi.fn(),
