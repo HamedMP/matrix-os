@@ -100,6 +100,48 @@ describe("ChatTab", () => {
       .not.toContain("30vh");
   });
 
+  it("renders a completed Hermes turn with elapsed time and compact semantic tool activity", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [
+        { id: "user-1", role: "user", content: "Inspect the repo", requestId: "request-1", timestamp: 1_000 },
+        { id: "assistant-1", role: "assistant", content: "I’ll inspect it.", requestId: "request-1", timestamp: 2_000 },
+        { id: "tool-1", role: "system", content: "Used ToolSearch", tool: "ToolSearch", requestId: "request-1", toolInput: { query: "repository tools" }, timestamp: 3_000 },
+        { id: "tool-2", role: "system", content: "Used Read", tool: "Read", requestId: "request-1", toolInput: { file_path: "/home/matrix/home/README.md" }, timestamp: 6_000 },
+        { id: "tool-3", role: "system", content: "Used Bash", tool: "Bash", requestId: "request-1", toolInput: { command: "git status --short", description: "Inspect the working tree" }, timestamp: 8_000 },
+        { id: "assistant-2", role: "assistant", content: "The repository is clean.", requestId: "request-1", timestamp: 13_000 },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByText("Worked for 12s")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "2 previous tool calls" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
+    expect(screen.getByText("The repository is clean.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "2 previous tool calls" }));
+    expect(screen.getByRole("button", { name: "Searched tools: repository tools" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Read file: README.md" })).toBeTruthy();
+  });
+
+  it("shows live turn and tool status without claiming unavailable reasoning", () => {
+    useHermesChat.setState({
+      status: "streaming",
+      activeRequestId: "request-live",
+      messages: [
+        { id: "user-live", role: "user", content: "Run the checks", requestId: "request-live", timestamp: Date.now() - 2_000 },
+        { id: "tool-live", role: "system", content: "Using Bash...", tool: "Bash", requestId: "request-live", toolInput: { command: "bun run test" }, timestamp: Date.now() - 1_000 },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByText(/^Working for \d+s$/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Running command: bun run test" })).toBeTruthy();
+    expect(screen.queryByText("Thought process")).toBeNull();
+  });
+
   it("renders the approved centered empty state and only working composer controls", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);

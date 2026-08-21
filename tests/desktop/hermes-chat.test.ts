@@ -207,7 +207,9 @@ describe("useHermesChat", () => {
 
     expect(opened).toBe(true);
     expect(get).toHaveBeenCalledWith("/api/conversations/conversation-two?limit=50");
-    expect(kernel.switchKernelSession).toHaveBeenCalledWith("conversation-two");
+    expect(kernel.switchKernelSession).toHaveBeenCalledWith("conversation-two", {
+      replayCompleted: false,
+    });
     expect(useHermesChat.getState()).toMatchObject({
       view: "conversation",
       sessionId: "conversation-two",

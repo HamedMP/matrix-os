@@ -76,12 +76,21 @@ export function abortKernelRequest(requestId: string): boolean {
   return true;
 }
 
-export function switchKernelSession(sessionId: string): boolean {
+export function switchKernelSession(
+  sessionId: string,
+  options?: { replayCompleted?: boolean },
+): boolean {
   if (!socket) {
     console.warn("[kernel-wiring] cannot switch kernel session before socket is connected");
     return false;
   }
-  socket.send({ type: "switch_session", sessionId });
+  socket.send({
+    type: "switch_session",
+    sessionId,
+    ...(options?.replayCompleted === undefined
+      ? {}
+      : { replayCompleted: options.replayCompleted }),
+  });
   return true;
 }
 

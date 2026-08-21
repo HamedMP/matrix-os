@@ -14,7 +14,8 @@ export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("switch_session"),
     sessionId: z.string().min(1).max(256),
-  }),
+    replayCompleted: z.boolean().optional(),
+  }).strict(),
   z.object({
     type: z.literal("approval_response"),
     id: z.string().min(1).max(256),

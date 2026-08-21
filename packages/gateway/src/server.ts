@@ -2045,6 +2045,7 @@ export async function createGateway(config: GatewayConfig) {
                 }
                 send(ws, message as ServerMessage);
               },
+              { replayCompleted: parsed.replayCompleted },
             );
             if (attachment) {
               detachConversationRun = attachment.detach;

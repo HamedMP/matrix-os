@@ -98,6 +98,29 @@ describe("ConversationRunRegistry", () => {
     ]);
   });
 
+  it("omits a completed replay when canonical history was already hydrated", () => {
+    const registry = new ConversationRunRegistry({
+      maxRuns: 5,
+      maxEventsPerRun: 10,
+      completedRunRetentionMs: 30_000,
+    });
+
+    registry.begin("sess-1");
+    registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
+    registry.publish("sess-1", { type: "kernel:text", text: "Persisted reply" });
+    registry.publish("sess-1", { type: "kernel:result", data: { ok: true } });
+    registry.complete("sess-1");
+
+    const attachment = registry.attachWithBufferedSnapshot(
+      "sess-1",
+      () => undefined,
+      { replayCompleted: false },
+    );
+
+    expect(attachment).not.toBeNull();
+    expect(attachment?.bufferedMessages).toEqual([]);
+  });
+
   it("evicts completed runs after the replay retention window", () => {
     vi.useFakeTimers();
     const registry = new ConversationRunRegistry({

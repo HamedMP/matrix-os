@@ -366,7 +366,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         loadingConversationId: null,
         seenReplayEventIds: [],
       });
-      switchKernelSession(parsedId.data);
+      switchKernelSession(parsedId.data, { replayCompleted: false });
       return true;
     } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(generation) || get().loadSequence !== sequence) return false;
