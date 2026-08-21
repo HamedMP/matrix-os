@@ -25,17 +25,22 @@ const STATUS_COLORS: Record<ThreadRailTone, { background: string; color: string 
   failed: { background: "var(--danger-muted)", color: "var(--danger)" },
 };
 
+const PROJECT_OVERVIEW_THREAD_LIMIT = 100;
+
 function allThreads(summary: RuntimeSummary, projectId: string, workspace: ProjectAgentWorkspace | null): AgentThreadSummary[] {
   const model = buildProjectThreadListModel(workspace ?? null, summary, projectId);
-  const deduped = new Map<string, AgentThreadSummary>();
-  for (const thread of [
+  const combined = [
     ...model.projectThreads,
     ...model.taskGroups.flatMap((group) => group.threads),
     ...model.otherThreads,
-  ]) {
+  ].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  const deduped = new Map<string, AgentThreadSummary>();
+  for (const thread of combined) {
+    if (deduped.has(thread.id)) continue;
+    if (deduped.size >= PROJECT_OVERVIEW_THREAD_LIMIT) break;
     deduped.set(thread.id, thread);
   }
-  return [...deduped.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  return [...deduped.values()];
 }
 
 export default function ProjectOverview({
@@ -119,7 +124,7 @@ export default function ProjectOverview({
           {workspaceEntry?.status === "error" && threads.length === 0 ? (
             <div className="flex items-center gap-3 py-6 text-sm" style={{ color: "var(--text-secondary)" }}>
               <AlertCircle size={15} style={{ color: "var(--warning)" }} />
-              <span>{workspaceEntry.error ?? "Project sessions are unavailable."}</span>
+              <span>Project sessions are unavailable.</span>
               <button
                 type="button"
                 onClick={() => void refreshWorkspace(projectId)}
