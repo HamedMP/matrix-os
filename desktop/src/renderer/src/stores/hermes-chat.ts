@@ -131,6 +131,7 @@ function historyMessages(
     content: message.content,
     timestamp: message.timestamp,
     ...(message.tool ? { tool: message.tool } : {}),
+    ...(message.toolDisplay ? { toolDisplay: message.toolDisplay } : {}),
   }));
 }
 

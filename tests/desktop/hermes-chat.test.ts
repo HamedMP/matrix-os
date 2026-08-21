@@ -194,10 +194,19 @@ describe("useHermesChat", () => {
       id: "conversation-two",
       createdAt: 10,
       updatedAt: 30,
-      totalCount: 2,
+      totalCount: 3,
       messages: [
         { index: 0, role: "user", content: "hello", contentTruncated: false, timestamp: 10 },
-        { index: 1, role: "assistant", content: "hi", contentTruncated: false, timestamp: 20 },
+        {
+          index: 1,
+          role: "system",
+          content: "Used Bash",
+          contentTruncated: false,
+          timestamp: 15,
+          tool: "Bash",
+          toolDisplay: { kind: "command", preview: "git status --short" },
+        },
+        { index: 2, role: "assistant", content: "hi", contentTruncated: false, timestamp: 20 },
       ],
       hasMore: false,
       limit: 50,
@@ -217,7 +226,15 @@ describe("useHermesChat", () => {
       loadError: null,
       messages: [
         { id: "conversation-two:0", role: "user", content: "hello", timestamp: 10 },
-        { id: "conversation-two:1", role: "assistant", content: "hi", timestamp: 20 },
+        {
+          id: "conversation-two:1",
+          role: "system",
+          content: "Used Bash",
+          timestamp: 15,
+          tool: "Bash",
+          toolDisplay: { kind: "command", preview: "git status --short" },
+        },
+        { id: "conversation-two:2", role: "assistant", content: "hi", timestamp: 20 },
       ],
     });
   });

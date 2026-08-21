@@ -1,4 +1,6 @@
-// Ported from shell/src/lib/chat.ts (spec 094 R4); keep semantics in sync.
+import type { KernelConversationToolDisplay } from "@matrix-os/contracts";
+
+// Ported from shell/src/lib/chat.ts (spec 094 R4); keep reducer semantics in sync.
 // Reducer rule (CLAUDE.md): never mutate -- always new objects; in-place
 // mutation causes streaming text duplication.
 
@@ -40,6 +42,7 @@ export interface ChatMessage {
   content: string;
   tool?: string;
   toolInput?: Record<string, unknown>;
+  toolDisplay?: KernelConversationToolDisplay;
   requestId?: string;
   metadata?: Record<string, unknown>;
   timestamp: number;

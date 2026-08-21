@@ -10,6 +10,7 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
+import type { KernelConversationToolDisplay } from "@matrix-os/contracts";
 import { useState } from "react";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 
@@ -19,6 +20,7 @@ interface ToolActivityPresentation {
   icon: LucideIcon;
   label: string;
   preview?: string;
+  previewKind?: "command" | "text";
 }
 
 const MAX_PREVIEW_CHARS = 140;
@@ -41,18 +43,45 @@ function activityPresentation(
   tool: string,
   state: ToolActivityState,
   input?: Record<string, unknown>,
+  display?: KernelConversationToolDisplay,
 ): ToolActivityPresentation {
   const normalized = tool.toLowerCase();
   const command = boundedText(input?.command, MAX_PREVIEW_CHARS);
   const rawPath = boundedText(input?.file_path ?? input?.path, MAX_PREVIEW_CHARS);
   const query = boundedText(input?.query ?? input?.pattern, MAX_PREVIEW_CHARS);
   const description = boundedText(input?.description, MAX_PREVIEW_CHARS);
+  const persistedPreview = display?.preview;
+
+  if (display?.kind === "command") {
+    return {
+      icon: SquareTerminal,
+      label: state === "running" ? "Running command" : state === "stopped" ? "Stopped command" : "Ran command",
+      preview: persistedPreview,
+      previewKind: "command",
+    };
+  }
+  if (display?.kind === "file") {
+    const editing = /write|edit|apply|patch|create/.test(normalized);
+    return {
+      icon: editing ? FilePenLine : Eye,
+      label: editing ? "Edited files" : "Read file",
+      preview: persistedPreview,
+      previewKind: "text",
+    };
+  }
+  if (display?.kind === "search") {
+    return { icon: Search, label: "Searched", preview: persistedPreview, previewKind: "text" };
+  }
+  if (display) {
+    return { icon: Wrench, label: `Used ${tool}`, preview: persistedPreview, previewKind: "text" };
+  }
 
   if (/bash|shell|command|terminal|exec|run/.test(normalized)) {
     return {
       icon: SquareTerminal,
       label: state === "running" ? "Running command" : state === "stopped" ? "Stopped command" : "Ran command",
       preview: command ?? description,
+      previewKind: "command",
     };
   }
   if (normalized === "toolsearch" || normalized.includes("tool_search")) {
@@ -60,6 +89,7 @@ function activityPresentation(
       icon: Search,
       label: state === "running" ? "Searching tools" : state === "stopped" ? "Stopped tool search" : "Searched tools",
       preview: query,
+      previewKind: "text",
     };
   }
   if (/read|view|open/.test(normalized)) {
@@ -67,6 +97,7 @@ function activityPresentation(
       icon: Eye,
       label: state === "running" ? "Reading" : state === "stopped" ? "Stopped reading" : "Read file",
       preview: rawPath ? basename(rawPath) : description,
+      previewKind: "text",
     };
   }
   if (/grep|glob|search|find/.test(normalized)) {
@@ -74,6 +105,7 @@ function activityPresentation(
       icon: Search,
       label: state === "running" ? "Searching" : state === "stopped" ? "Stopped search" : "Searched",
       preview: query ?? rawPath ?? description,
+      previewKind: "text",
     };
   }
   if (/write|edit|apply|patch|create/.test(normalized)) {
@@ -81,12 +113,14 @@ function activityPresentation(
       icon: FilePenLine,
       label: state === "running" ? "Editing" : state === "stopped" ? "Stopped editing" : "Edited files",
       preview: rawPath ? basename(rawPath) : description,
+      previewKind: "text",
     };
   }
   return {
     icon: Wrench,
     label: state === "running" ? `Using ${tool}` : state === "stopped" ? `Stopped ${tool}` : `Used ${tool}`,
     preview: description ?? query ?? rawPath,
+    previewKind: "text",
   };
 }
 
@@ -102,13 +136,15 @@ export function Tool({
   tool,
   state,
   input,
+  display,
 }: {
   tool: string;
   state: ToolActivityState;
   input?: Record<string, unknown>;
+  display?: KernelConversationToolDisplay;
 }) {
   const [open, setOpen] = useState(false);
-  const presentation = activityPresentation(tool, state, input);
+  const presentation = activityPresentation(tool, state, input, display);
   const detail = toolDetail(input);
   const Icon = presentation.icon;
   const accessibleLabel = presentation.preview
@@ -131,7 +167,12 @@ export function Tool({
           <MarkerContent className="flex min-w-0 items-baseline gap-1.5">
             <span className="shrink-0 font-medium text-[var(--text-primary)]">{presentation.label}</span>
             {presentation.preview ? (
-              <span className="truncate font-mono text-xs text-[var(--text-tertiary)]">
+              <span
+                title={presentation.preview}
+                className={presentation.previewKind === "command"
+                  ? "truncate rounded-md border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-secondary)]"
+                  : "truncate font-mono text-xs text-[var(--text-tertiary)]"}
+              >
                 {presentation.preview}
               </span>
             ) : null}

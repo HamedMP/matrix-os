@@ -3,6 +3,8 @@ import {
   KernelConversationHistoryQuerySchema,
   KernelConversationHistoryResponseSchema,
   KernelConversationIdSchema,
+  KernelConversationToolDisplaySchema,
+  type KernelConversationToolDisplay,
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -11,10 +13,65 @@ import type { ConversationStore } from "../conversations.js";
 
 const MAX_HISTORY_CONTENT_CHARS = 32_000;
 const MAX_DELETE_BODY_BYTES = 512;
+const MAX_TOOL_DISPLAY_CHARS = 160;
 const deleteBodyLimit = bodyLimit({
   maxSize: MAX_DELETE_BODY_BYTES,
   onError: () => new Response("Payload Too Large", { status: 413 }),
 });
+
+function boundedToolText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized) return undefined;
+  const redacted = normalized
+    .replace(/authorization\s*:\s*(?:bearer\s+)?[^'"\s]+/gi, "Authorization: [redacted]")
+    .replace(/((?:--?|\b)(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret)(?:=|\s+))(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1[redacted]")
+    .replace(/\b(?:sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|xox[baprs]-[A-Za-z0-9-]+)\b/g, "[redacted]")
+    .replace(/(^|[\s=(])\/(?:Users|home|tmp|var|opt|etc|root|private)(?:\/[^\s'";|&)]*)?/g, "$1[path]")
+    .replace(/(^|[\s=(])[A-Za-z]:\\[^\s'";|&)]*/g, "$1[path]");
+  return redacted.length > MAX_TOOL_DISPLAY_CHARS
+    ? `${redacted.slice(0, MAX_TOOL_DISPLAY_CHARS - 1)}…`
+    : redacted;
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function safeToolDisplay(
+  kind: KernelConversationToolDisplay["kind"],
+  preview: string | undefined,
+): KernelConversationToolDisplay | undefined {
+  if (!preview) return undefined;
+  const parsed = KernelConversationToolDisplaySchema.safeParse({ kind, preview });
+  return parsed.success ? parsed.data : undefined;
+}
+
+function toolDisplay(
+  tool: string | undefined,
+  input: Record<string, unknown> | undefined,
+): KernelConversationToolDisplay | undefined {
+  if (!tool || !input) return undefined;
+  const normalizedTool = tool.toLowerCase();
+  const command = boundedToolText(input.command);
+  const rawPath = typeof input.file_path === "string"
+    ? input.file_path
+    : typeof input.path === "string" ? input.path : undefined;
+  const path = rawPath ? boundedToolText(basename(rawPath)) : undefined;
+  const query = boundedToolText(input.query ?? input.pattern);
+  const description = boundedToolText(input.description);
+
+  if (/bash|shell|command|terminal|exec|run/.test(normalizedTool)) {
+    return safeToolDisplay("command", command ?? description);
+  }
+  if (/read|view|open|write|edit|apply|patch|create/.test(normalizedTool)) {
+    return safeToolDisplay("file", path ?? description);
+  }
+  if (/toolsearch|tool_search|grep|glob|search|find/.test(normalizedTool)) {
+    return safeToolDisplay("search", query ?? path ?? description);
+  }
+  return safeToolDisplay("text", description ?? query ?? path ?? command);
+}
 
 export interface ConversationHistoryRouteDeps {
   conversations: ConversationStore;
@@ -41,14 +98,18 @@ export function registerConversationHistoryRoutes(
       const totalCount = conversation.messages.length;
       const end = Math.min(query.data.cursor ?? totalCount, totalCount);
       const start = Math.max(0, end - query.data.limit);
-      const messages = conversation.messages.slice(start, end).map((message, offset) => ({
-        index: start + offset,
-        role: message.role,
-        content: message.content.slice(0, MAX_HISTORY_CONTENT_CHARS),
-        contentTruncated: message.content.length > MAX_HISTORY_CONTENT_CHARS,
-        timestamp: message.timestamp,
-        ...(message.tool ? { tool: message.tool.slice(0, 128) } : {}),
-      }));
+      const messages = conversation.messages.slice(start, end).map((message, offset) => {
+        const display = toolDisplay(message.tool, message.toolInput);
+        return {
+          index: start + offset,
+          role: message.role,
+          content: message.content.slice(0, MAX_HISTORY_CONTENT_CHARS),
+          contentTruncated: message.content.length > MAX_HISTORY_CONTENT_CHARS,
+          timestamp: message.timestamp,
+          ...(message.tool ? { tool: message.tool.slice(0, 128) } : {}),
+          ...(display ? { toolDisplay: display } : {}),
+        };
+      });
 
       const response = KernelConversationHistoryResponseSchema.parse({
         id: conversation.id,

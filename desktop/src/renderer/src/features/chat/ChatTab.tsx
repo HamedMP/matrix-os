@@ -13,7 +13,7 @@ import { useConversationAttachments } from "./attachments/use-conversation-attac
 import { Bubble, BubbleContent } from "./elements/bubble";
 import { Conversation, ConversationContent, ConversationItem } from "./elements/conversation";
 import { Marker, MarkerContent } from "./elements/marker";
-import { Message, MessageContent, MessageResponse } from "./elements/message";
+import { Message, MessageContent, MessageMetadata, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
 import { Tool, type ToolActivityState } from "./elements/tool";
 import { ChatResourcesPanel, conversationMessageDisplay } from "./ChatResourcesPanel";
@@ -112,6 +112,7 @@ function ToolActivityGroup({ messages }: { messages: ChatMessage[] }) {
           tool={message.tool ?? "Tool"}
           state={toolActivityState(message)}
           input={message.toolInput}
+          display={message.toolDisplay}
         />
       ))}
     </div>
@@ -143,13 +144,14 @@ function UserMessage({ message }: { message: ChatMessage }) {
               ) : null}
             </BubbleContent>
           </Bubble>
+          <MessageMetadata content={display.text} timestamp={message.timestamp} role="User" />
         </MessageContent>
       </Message>
     </ConversationItem>
   );
 }
 
-function ResponseMessage({ message }: { message: ChatMessage }) {
+function ResponseMessage({ message, showMetadata }: { message: ChatMessage; showMetadata: boolean }) {
   const systemMessage = message.role === "system";
   return (
     <ConversationItem messageId={`${message.role}:${message.id}`}>
@@ -165,6 +167,9 @@ function ResponseMessage({ message }: { message: ChatMessage }) {
               <MessageResponse>{message.content}</MessageResponse>
             </BubbleContent>
           </Bubble>
+          {!systemMessage && showMetadata ? (
+            <MessageMetadata content={message.content} timestamp={message.timestamp} role="Assistant" />
+          ) : null}
         </MessageContent>
       </Message>
     </ConversationItem>
@@ -209,7 +214,11 @@ function HermesTurn({ turn, active }: { turn: HermesTurnData; active: boolean })
             <ToolActivityGroup messages={group.messages} />
           </ConversationItem>
         ) : (
-          <ResponseMessage key={group.message.id} message={group.message} />
+          <ResponseMessage
+            key={group.message.id}
+            message={group.message}
+            showMetadata={!active && index === finalIndex}
+          />
         );
       })}
     </>

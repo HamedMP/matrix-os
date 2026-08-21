@@ -120,19 +120,37 @@ describe("kernel conversation history route", () => {
     expect(body.hasMore).toBe(true);
   });
 
-  it("truncates large content and never returns raw tool inputs", async () => {
+  it("truncates large content and returns only bounded, redacted tool display data", async () => {
     const app = createApp(createStore({
       get: vi.fn(() => ({
         id: "conversation-1",
         createdAt: 1,
         updatedAt: 2,
-        messages: [{
-          role: "system",
-          content: "x".repeat(40_000),
-          timestamp: 2,
-          tool: "Read",
-          toolInput: { path: "/home/private", token: "secret" },
-        }],
+        messages: [
+          {
+            role: "system",
+            content: "x".repeat(40_000),
+            timestamp: 2,
+            tool: "Read",
+            toolInput: { path: "/home/private/README.md", token: "secret" },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 3,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Authorization: Bearer super-secret' https://example.com && git status --short",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Grep",
+            timestamp: 4,
+            tool: "Grep",
+            toolInput: { query: "stack trace in /home/private" },
+          },
+        ],
       })),
     }));
 
@@ -142,6 +160,15 @@ describe("kernel conversation history route", () => {
     expect(body.messages[0]?.content).toHaveLength(32_000);
     expect(body.messages[0]?.contentTruncated).toBe(true);
     expect(body.messages[0]).not.toHaveProperty("toolInput");
+    expect(body.messages[0]?.toolDisplay).toEqual({ kind: "file", preview: "README.md" });
+    expect(body.messages[1]).not.toHaveProperty("toolInput");
+    expect(body.messages[1]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Authorization: [redacted]' https://example.com && git status --short",
+    });
+    expect(body.messages[2]).not.toHaveProperty("toolDisplay");
+    expect(JSON.stringify(body)).not.toContain("super-secret");
+    expect(JSON.stringify(body)).not.toContain("/home/private");
   });
 
   it("rejects invalid identifiers and pagination before reading storage", async () => {

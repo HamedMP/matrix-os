@@ -39,6 +39,10 @@ describe("ChatTab", () => {
       disconnect() {}
     }
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn(async () => undefined) },
+    });
     useBoard.setState({
       projects: [{ slug: "matrix-os", name: "Matrix OS" }],
     });
@@ -107,8 +111,8 @@ describe("ChatTab", () => {
         { id: "user-1", role: "user", content: "Inspect the repo", requestId: "request-1", timestamp: 1_000 },
         { id: "assistant-1", role: "assistant", content: "I’ll inspect it.", requestId: "request-1", timestamp: 2_000 },
         { id: "tool-1", role: "system", content: "Used ToolSearch", tool: "ToolSearch", requestId: "request-1", toolInput: { query: "repository tools" }, timestamp: 3_000 },
-        { id: "tool-2", role: "system", content: "Used Read", tool: "Read", requestId: "request-1", toolInput: { file_path: "/home/matrix/home/README.md" }, timestamp: 6_000 },
-        { id: "tool-3", role: "system", content: "Used Bash", tool: "Bash", requestId: "request-1", toolInput: { command: "git status --short", description: "Inspect the working tree" }, timestamp: 8_000 },
+        { id: "tool-2", role: "system", content: "Used Read", tool: "Read", requestId: "request-1", toolDisplay: { kind: "file", preview: "README.md" }, timestamp: 6_000 },
+        { id: "tool-3", role: "system", content: "Used Bash", tool: "Bash", requestId: "request-1", toolDisplay: { kind: "command", preview: "git status --short" }, timestamp: 8_000 },
         { id: "assistant-2", role: "assistant", content: "The repository is clean.", requestId: "request-1", timestamp: 13_000 },
       ],
     });
@@ -136,12 +140,86 @@ describe("ChatTab", () => {
     expect(screen.getByText("The repository is clean.")).toBeTruthy();
   });
 
+  it("renders T3-style path chips and hover metadata on the final assistant response", async () => {
+    const completedAt = new Date("2026-08-22T00:05:00.000+08:00").getTime();
+    const response = "- `pwd`: `/home/matrix/home/matrixos`\n- `uname -s`: `Darwin`";
+    useHermesChat.setState({
+      status: "idle",
+      messages: [
+        { id: "user-polish", role: "user", content: "Inspect this computer", requestId: "request-polish", timestamp: completedAt - 23_000 },
+        { id: "assistant-polish", role: "assistant", content: response, requestId: "request-polish", timestamp: completedAt },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    const folderChip = screen.getByLabelText("Folder path: matrixos");
+    expect(folderChip.getAttribute("title")).toBe("/home/matrix/home/matrixos");
+    expect(screen.getByText("pwd").className).toContain("border");
+    expect(screen.getByLabelText(`Assistant message sent at ${new Date(completedAt).toISOString()}`)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy assistant message" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(response));
+    expect(screen.getByRole("button", { name: "Copied assistant message" })).toBeTruthy();
+  });
+
+  it("offers the same hover copy and timestamp affordances on user input", async () => {
+    const sentAt = new Date("2026-08-22T00:04:37.000+08:00").getTime();
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{ id: "user-meta", role: "user", content: "Show the current folder", timestamp: sentAt }],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByLabelText(`User message sent at ${new Date(sentAt).toISOString()}`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy user message" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("Show the current folder"));
+    expect(screen.getByRole("button", { name: "Copied user message" })).toBeTruthy();
+  });
+
+  it("renders fenced commands as bounded code cards with copy feedback", async () => {
+    const response = "```sh\npwd && git status --short\n```";
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{ id: "assistant-code", role: "assistant", content: response, timestamp: 10_000 }],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByText("sh")).toBeTruthy();
+    expect(screen.getByText("pwd && git status --short").closest("pre")?.className).toContain("overflow-x-auto");
+    fireEvent.click(screen.getByRole("button", { name: "Copy code block" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("pwd && git status --short"));
+    expect(screen.getByRole("button", { name: "Copied code block" })).toBeTruthy();
+  });
+
+  it("keeps structured agent output readable with GFM tables", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{
+        id: "assistant-table",
+        role: "assistant",
+        content: "| File | Status |\n| --- | --- |\n| README.md | clean |",
+        timestamp: 10_000,
+      }],
+    });
+
+    render(<ChatTab />);
+
+    const table = screen.getByRole("table");
+    expect(table.className).toContain("border-collapse");
+    expect(screen.getByRole("columnheader", { name: "File" })).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "README.md" })).toBeTruthy();
+  });
+
   it("shows live turn and tool status without claiming unavailable reasoning", () => {
     useHermesChat.setState({
       status: "streaming",
       activeRequestId: "request-live",
       messages: [
         { id: "user-live", role: "user", content: "Run the checks", requestId: "request-live", timestamp: Date.now() - 2_000 },
+        { id: "assistant-live", role: "assistant", content: "I’ll run the checks.", requestId: "request-live", timestamp: Date.now() - 1_500 },
         { id: "tool-live", role: "system", content: "Using Bash...", tool: "Bash", requestId: "request-live", toolInput: { command: "bun run test" }, timestamp: Date.now() - 1_000 },
       ],
     });
@@ -150,6 +228,10 @@ describe("ChatTab", () => {
 
     expect(screen.getByText(/^Working for \d+s$/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Running command: bun run test" })).toBeTruthy();
+    const commandChip = screen.getByText("bun run test");
+    expect(commandChip.className).toContain("border");
+    expect(commandChip.getAttribute("title")).toBe("bun run test");
+    expect(screen.queryByRole("button", { name: "Copy assistant message" })).toBeNull();
     expect(screen.queryByText("Thought process")).toBeNull();
   });
 
