@@ -1461,6 +1461,48 @@ describe("zellij terminal WebSocket", () => {
     await handler.dispose();
   });
 
+  it("removes an earlier non-exclusive hard client from sizing before exclusive takeover", async () => {
+    const observerPty = new FakePty();
+    const holderPty = new FakePty();
+    const observerWs = socket();
+    const holderWs = socket();
+    const attachSession = vi.fn()
+      .mockReturnValueOnce(observerPty)
+      .mockReturnValueOnce(holderPty);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession },
+      sizingDebounceMs: 0,
+    });
+
+    await handler.open({
+      ws: observerWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 80, rows: 24 },
+    });
+    await handler.open({
+      ws: holderWs,
+      session: "main",
+      clientClass: "hard",
+      declaredSize: { cols: 160, rows: 50 },
+      exclusiveLease: true,
+    });
+
+    expect(observerWs.sent).toContainEqual({ type: "lease-revoked", epoch: null });
+    expect(observerWs.closed).toBe(true);
+    expect(attachSession).toHaveBeenLastCalledWith("main", expect.objectContaining({
+      size: { cols: 160, rows: 50 },
+    }));
+    expect(holderWs.sent).toContainEqual(expect.objectContaining({
+      type: "attached",
+      canonicalSize: { cols: 160, rows: 50 },
+      lease: { epoch: 1 },
+    }));
+    expect(holderPty.resizes.at(-1)).toEqual({ cols: 160, rows: 50 });
+    await handler.dispose();
+  });
+
   it("fences non-exclusive input and resize while an exclusive lease is active", async () => {
     const initialPty = new FakePty();
     const leasedPty = new FakePty();

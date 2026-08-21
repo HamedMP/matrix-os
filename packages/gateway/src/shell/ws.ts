@@ -141,7 +141,7 @@ interface ConnState {
   openedAt: number;
   lastActivityAt: number;
   closed: boolean;
-  close: () => void;
+  close: () => Promise<void>;
 }
 
 interface SessionRuntime {
@@ -243,7 +243,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
     }
     for (const conn of dead) {
-      conn.close();
+      void conn.close();
     }
   }
 
@@ -586,7 +586,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       // Free the slot synchronously so a concurrent open cannot observe the
       // evicted conn still occupying capacity while its close settles.
       runtime.conns.delete(stalest);
-      stalest.close();
+      void stalest.close();
       return true;
     }
     sendJson(ws, { type: "error", code: "attach_limit", message: "Too many clients attached" });
@@ -662,11 +662,10 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       openedAt: Date.now(),
       lastActivityAt: Date.now(),
       closed: false,
-      close: () => {
-        void closeSession().finally(() => {
+      close: () =>
+        closeSession().finally(() => {
           ws.close?.();
-        });
-      },
+        }),
     };
 
     const detachConn = () => {
@@ -745,7 +744,10 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         for (const prior of [...runtime.conns]) {
           if (prior === conn) continue;
           sendJson(prior.ws, { type: "lease-revoked", epoch: prior.leaseEpoch });
-          prior.close();
+          // Remove every prior sizing registration before computing the
+          // replacement bridge size. Awaiting this makes the cutover ordering
+          // explicit instead of relying on closeSession's synchronous prefix.
+          await prior.close();
         }
 
         // The Zellij client owns presentation modes (alternate screen, mouse
@@ -799,7 +801,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       for (const candidate of [...runtime.conns]) {
         if (!candidate.exclusiveLease || candidate.leaseEpoch === null || candidate.closed) continue;
         sendJson(candidate.ws, { type: "lease-revoked", epoch: candidate.leaseEpoch });
-        candidate.close();
+        void candidate.close();
       }
     };
 
