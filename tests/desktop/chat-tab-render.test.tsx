@@ -100,7 +100,7 @@ describe("ChatTab", () => {
       .not.toContain("30vh");
   });
 
-  it("renders a completed Hermes turn with elapsed time and compact semantic tool activity", () => {
+  it("collapses completed work behind the receipt while keeping the final response visible", () => {
     useHermesChat.setState({
       status: "idle",
       messages: [
@@ -115,14 +115,25 @@ describe("ChatTab", () => {
 
     render(<ChatTab />);
 
-    expect(screen.getByText("Worked for 12s")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "2 previous tool calls" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
+    const receipt = screen.getByRole("button", { name: "Worked for 12s" });
+    expect(receipt.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("I’ll inspect it.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "2 previous tool calls" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
     expect(screen.getByText("The repository is clean.")).toBeTruthy();
 
+    fireEvent.click(receipt);
+    expect(receipt.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("I’ll inspect it.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "2 previous tool calls" }));
     expect(screen.getByRole("button", { name: "Searched tools: repository tools" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Read file: README.md" })).toBeTruthy();
+
+    fireEvent.click(receipt);
+    expect(screen.queryByText("I’ll inspect it.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
+    expect(screen.getByText("The repository is clean.")).toBeTruthy();
   });
 
   it("shows live turn and tool status without claiming unavailable reasoning", () => {
@@ -494,6 +505,43 @@ describe("ChatTab", () => {
     rerender(<ChatTab />);
     expect(screen.getByRole("alert").textContent).toContain("Conversations could not be loaded. Try again.");
     expect(screen.getByRole("button", { name: "Retry chats" })).toBeTruthy();
+  });
+
+  it("automatically retries a transient initial conversation index failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const get = vi.fn()
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce([{
+          id: "conversation-recovered",
+          preview: "Back online",
+          messageCount: 1,
+          createdAt: 10,
+          updatedAt: 20,
+        }]);
+      useConnection.setState({ api: { get } as never });
+      useHermesChat.setState({
+        view: "index",
+        indexStatus: "idle",
+        indexError: null,
+        conversations: [],
+      });
+
+      render(<ChatTab />);
+      await act(async () => { await Promise.resolve(); });
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(useHermesChat.getState().indexStatus).toBe("error");
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(useHermesChat.getState().indexStatus).toBe("ready");
+      expect(useHermesChat.getState().conversations).toEqual([
+        expect.objectContaining({ id: "conversation-recovered", title: "Back online" }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("marks only the selected live conversation as running", () => {
