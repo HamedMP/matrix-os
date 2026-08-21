@@ -26,6 +26,10 @@ export interface ProjectWorkspaceEntry {
 
 export const MAX_PROJECT_WORKSPACE_ENTRIES = 12;
 
+export interface ProjectWorkspaceRefreshOptions {
+  preserveEmptySelection?: boolean;
+}
+
 interface ProjectWorkspacesState {
   entries: Record<string, ProjectWorkspaceEntry>;
   // Identity this cache belongs to. Project ids are board slugs, so two
@@ -35,7 +39,7 @@ interface ProjectWorkspacesState {
   runtimeScope: string | null;
   ensureRuntimeScope: (scope: string) => void;
   ensure: (projectId: string) => Promise<void>;
-  refresh: (projectId: string) => Promise<void>;
+  refresh: (projectId: string, options?: ProjectWorkspaceRefreshOptions) => Promise<void>;
   resolveNewChatTarget: (
     projectId: string,
     taskId?: string,
@@ -111,7 +115,10 @@ function isStaleLoad(projectId: string, runtimeGeneration: number, generation: n
   return !isCurrentRuntimeGeneration(runtimeGeneration) || loadGenerations[projectId] !== generation;
 }
 
-async function performWorkspaceLoad(projectId: string): Promise<void> {
+async function performWorkspaceLoad(
+  projectId: string,
+  options: ProjectWorkspaceRefreshOptions = {},
+): Promise<void> {
   const runtimeGeneration = captureRuntimeGeneration();
   const generation = nextGeneration(projectId);
   useProjectWorkspaces.setState((state) => ({
@@ -137,12 +144,14 @@ async function performWorkspaceLoad(projectId: string): Promise<void> {
     }));
     // Reconcile the persisted chat selection against the fresh projection.
     const projectView = useProjectView.getState();
+    const currentSelection = projectView.selectedThreadFor(projectId);
+    if (options.preserveEmptySelection && currentSelection === null) return;
     const selected = reconcileProjectChatSelection(
       workspace,
-      projectView.selectedThreadFor(projectId),
+      currentSelection,
       summaryThreadIdsFor(projectId),
     );
-    if (selected !== projectView.selectedThreadFor(projectId)) {
+    if (selected !== currentSelection) {
       projectView.setSelectedThread(projectId, selected);
     }
   } catch (error: unknown) {
@@ -168,8 +177,11 @@ async function performWorkspaceLoad(projectId: string): Promise<void> {
   }
 }
 
-function loadWorkspace(projectId: string): Promise<void> {
-  const pending = performWorkspaceLoad(projectId).finally(() => {
+function loadWorkspace(
+  projectId: string,
+  options?: ProjectWorkspaceRefreshOptions,
+): Promise<void> {
+  const pending = performWorkspaceLoad(projectId, options).finally(() => {
     if (activeLoadPromises[projectId] === pending) {
       delete activeLoadPromises[projectId];
     }
@@ -207,8 +219,8 @@ export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) 
     }
   },
 
-  refresh: async (projectId) => {
-    await loadWorkspace(projectId);
+  refresh: async (projectId, options) => {
+    await loadWorkspace(projectId, options);
   },
 
   resolveNewChatTarget: async (projectId, taskId) => {

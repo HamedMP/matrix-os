@@ -157,6 +157,7 @@ function resetStores() {
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {} });
   useProjectChatLauncher.setState({ composerRequest: null });
+  useUi.setState({ createTaskOpen: false });
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,
@@ -329,6 +330,45 @@ describe("ProjectTab", () => {
     await waitFor(() => {
       expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
     });
+  });
+
+  it("refreshes provider readiness when opening a new chat", async () => {
+    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByRole("button", { name: "Chat Plan the auth work" });
+    const summaryCallsBeforeNewChat = invoke.mock.calls.filter(
+      ([channel]) => channel === "runtime:get-summary",
+    ).length;
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+
+    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
+    await waitFor(() => {
+      expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-summary").length)
+        .toBe(summaryCallsBeforeNewChat + 1);
+    });
+  });
+
+  it("keeps the new-chat draft selected when the project workspace is refreshed", async () => {
+    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
+    render(<ProjectTab projectSlug="matrix-os" active />);
+    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+    await screen.findByRole("button", { name: "Chat Plan the auth work" });
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+    const workspaceCallsBeforeRefresh = invoke.mock.calls.filter(
+      ([channel]) => channel === "runtime:get-project-workspace",
+    ).length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    await waitFor(() => {
+      expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-project-workspace").length)
+        .toBe(workspaceCallsBeforeRefresh + 1);
+    });
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+    expect(screen.getByLabelText("Message new chat")).toBeTruthy();
   });
 
   it("keeps a compose request pending until runtime capabilities finish loading", async () => {

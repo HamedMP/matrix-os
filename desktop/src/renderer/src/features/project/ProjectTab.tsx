@@ -65,6 +65,7 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const refresh = useCodingAgentWorkspace((s) => s.refresh);
   const refreshWorkspace = useProjectWorkspaces((s) => s.refresh);
+  const selectedThreadId = useProjectView((s) => s.entries[projectSlug]?.selectedThreadId ?? null);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const api = useConnection((s) => s.api);
   const createTaskOpen = useUi((s) => s.createTaskOpen);
@@ -136,7 +137,9 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
               onClick={() => {
                 void (async () => {
                   await refresh();
-                  await refreshWorkspace(projectSlug);
+                  await refreshWorkspace(projectSlug, {
+                    preserveEmptySelection: selectedThreadId === null,
+                  });
                 })();
               }}
             >
