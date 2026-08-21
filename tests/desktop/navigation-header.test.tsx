@@ -300,6 +300,28 @@ describe("Desktop navigation header", () => {
     expect(activeTab).toMatchObject({ kind: "projects", title: "Projects" });
   });
 
+  it("does not revisit a directly opened task after using the Projects breadcrumb", () => {
+    const homeTabId = useTabs.getState().openTab({
+      kind: "home",
+      title: "Home",
+      closable: false,
+    });
+    useTabs.getState().openTab({
+      kind: "task",
+      projectSlug: "matrix-os",
+      taskId: "MAT-466",
+      title: "Fix Desktop navigation",
+    });
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent)
+      .toBe("HomeProjects");
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    expect(useTabs.getState().activeTabId).toBe(homeTabId);
+  });
+
   it("keeps the sidebar collapse control in the header", () => {
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 

@@ -13,7 +13,6 @@ import { useUi } from "../../stores/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import {
   openChatIndex,
-  openProjectsIndex,
   openTerminalIndex,
   returnToProjectsIndex,
 } from "./navigation-roots";
@@ -185,7 +184,7 @@ export default function NavigationHeader() {
     } else if (key === "terminal") {
       openTerminalIndex();
     } else if (key === "projects") {
-      openProjectsIndex();
+      returnToProjectsIndex();
     }
   };
   const hasContextActions = Boolean(
