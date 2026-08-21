@@ -223,13 +223,13 @@ describe("Codex app-server runner reliability", () => {
   });
 
   it("stops the long-lived provider on completed and failed turns", async () => {
-    for (const terminalMethod of ["turn/completed", "turn/failed"] as const) {
-      const runtime = await startFakeRuntime(`terminal_${terminalMethod.split("/")[1]}`, [
+    for (const turnStatus of ["completed", "failed"] as const) {
+      const runtime = await startFakeRuntime(`terminal_${turnStatus}`, [
         initialize,
         startThread,
         "else if (message.method === 'turn/start') {",
         "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
-        `  console.log(JSON.stringify({ method: '${terminalMethod}', params: { turn: { status: 'failed' } } }));`,
+        `  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: '${turnStatus}' } } }));`,
         "  setInterval(() => {}, 1000);",
         "}",
       ]);
@@ -237,8 +237,8 @@ describe("Codex app-server runner reliability", () => {
       try {
         const code = await waitForExit(runtime.child);
         const transcript = await readFile(runtime.eventPath, "utf8");
-        expect(code).toBe(terminalMethod === "turn/completed" ? 0 : 1);
-        expect(transcript).toContain(terminalMethod === "turn/completed"
+        expect(code).toBe(turnStatus === "completed" ? 0 : 1);
+        expect(transcript).toContain(turnStatus === "completed"
           ? '"type":"turn.completed"'
           : '"type":"turn.failed"');
       } finally {
