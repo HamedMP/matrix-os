@@ -404,9 +404,30 @@ export default function ChatTab() {
   const conversationView = useHermesChat((state) => state.view);
   const indexStatus = useHermesChat((state) => state.indexStatus);
   const refreshConversations = useHermesChat((state) => state.refreshConversations);
+  const indexAutoRetryCount = useRef(0);
 
   useEffect(() => {
-    if (api && indexStatus === "idle") void refreshConversations(api);
+    indexAutoRetryCount.current = 0;
+  }, [api]);
+
+  useEffect(() => {
+    if (!api) return;
+    if (indexStatus === "ready") {
+      indexAutoRetryCount.current = 0;
+      return;
+    }
+    if (indexStatus === "idle") {
+      void refreshConversations(api);
+      return;
+    }
+    if (indexStatus !== "error" || indexAutoRetryCount.current >= 2) return;
+
+    const delayMs = 1_000 * (2 ** indexAutoRetryCount.current);
+    indexAutoRetryCount.current += 1;
+    const timeout = window.setTimeout(() => {
+      void refreshConversations(api);
+    }, delayMs);
+    return () => window.clearTimeout(timeout);
   }, [api, indexStatus, refreshConversations]);
 
   return (

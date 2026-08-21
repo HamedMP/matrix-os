@@ -496,6 +496,43 @@ describe("ChatTab", () => {
     expect(screen.getByRole("button", { name: "Retry chats" })).toBeTruthy();
   });
 
+  it("automatically retries a transient initial conversation index failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const get = vi.fn()
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce([{
+          id: "conversation-recovered",
+          preview: "Back online",
+          messageCount: 1,
+          createdAt: 10,
+          updatedAt: 20,
+        }]);
+      useConnection.setState({ api: { get } as never });
+      useHermesChat.setState({
+        view: "index",
+        indexStatus: "idle",
+        indexError: null,
+        conversations: [],
+      });
+
+      render(<ChatTab />);
+      await act(async () => { await Promise.resolve(); });
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(useHermesChat.getState().indexStatus).toBe("error");
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(useHermesChat.getState().indexStatus).toBe("ready");
+      expect(useHermesChat.getState().conversations).toEqual([
+        expect.objectContaining({ id: "conversation-recovered", title: "Back online" }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("marks only the selected live conversation as running", () => {
     useHermesChat.setState({
       view: "index",
