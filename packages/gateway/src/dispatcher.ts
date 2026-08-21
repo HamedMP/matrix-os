@@ -162,6 +162,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
     const toolsUsed: string[] = [];
     let resultSessionId = "";
     let resultData: KernelResult | undefined;
+    let emittedAssistantText = false;
 
     try {
       let message = entry.message;
@@ -195,9 +196,20 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       };
 
       for await (const event of spawnFn(message, config, entry.abortController)) {
+        if (
+          event.type === "result"
+          && !emittedAssistantText
+          && typeof event.data.result === "string"
+          && event.data.result.length > 0
+        ) {
+          await entry.onEvent({ type: "text", text: event.data.result });
+          emittedAssistantText = true;
+        }
         await entry.onEvent(event);
         if (event.type === "init") {
           resultSessionId = event.sessionId;
+        } else if (event.type === "text") {
+          emittedAssistantText = true;
         } else if (event.type === "tool_start") {
           toolsUsed.push(event.tool);
         } else if (event.type === "result") {

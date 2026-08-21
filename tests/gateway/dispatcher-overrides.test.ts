@@ -121,4 +121,34 @@ describe("dispatcher per-message kernel overrides", () => {
 
     expect(order).toEqual(["adoption-start", "adoption-finished", "kernel-next"]);
   });
+
+  it("emits final result text before completion when the provider sent no text deltas", async () => {
+    const events: KernelEvent[] = [];
+    const spawn = vi.fn<SpawnFn>(async function* () {
+      yield { type: "init", sessionId: "provider-session" };
+      yield {
+        type: "result",
+        data: {
+          sessionId: "provider-session",
+          result: "pong",
+          cost: 0,
+          turns: 1,
+          tokensIn: 1,
+          tokensOut: 1,
+        },
+      };
+    });
+    const dispatcher = createDispatcher({
+      homePath: makeHomePath(),
+      spawnFn: spawn,
+      maxConcurrency: 1,
+    });
+
+    await dispatcher.dispatch("reply once", undefined, (event) => {
+      events.push(event);
+    });
+
+    expect(events.map((event) => event.type)).toEqual(["init", "text", "result"]);
+    expect(events[1]).toEqual({ type: "text", text: "pong" });
+  });
 });
