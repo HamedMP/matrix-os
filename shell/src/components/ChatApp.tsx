@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useVoice } from "@/hooks/useVoice";
+import { RuntimeSummarySchema, type GlobalChatProviderId } from "@matrix-os/contracts";
+import { getGatewayUrl } from "@/lib/gateway";
 import {
   DEFAULT_HERMES_MODEL,
   DEFAULT_HERMES_CHANNELS,
@@ -48,6 +50,7 @@ import {
   GithubIcon,
   MailIcon,
   Settings2Icon,
+  Code2Icon,
 } from "lucide-react";
 
 interface ConversationMeta {
@@ -55,9 +58,19 @@ interface ConversationMeta {
   preview: string;
   messageCount: number;
   updatedAt: number;
+  providerId: GlobalChatProviderId;
 }
 
 const HERMES_SETUP_STORAGE_KEY = "matrix:hermes-setup";
+
+const GLOBAL_CHAT_PROVIDER_PRESENTATION: Record<
+  GlobalChatProviderId,
+  { label: string; description: string }
+> = {
+  claude: { label: "Claude", description: "Claude Kernel" },
+  codex: { label: "Codex", description: "Codex coding agent" },
+  pi: { label: "Pi", description: "Pi coding agent" },
+};
 
 function readHermesSetup() {
   if (typeof window === "undefined") {
@@ -92,9 +105,12 @@ interface ChatAppProps {
   sessionId: string | undefined;
   busy: boolean;
   connected: boolean;
+  availableProviderIds?: readonly GlobalChatProviderId[];
+  providerId: GlobalChatProviderId;
   conversations: ConversationMeta[];
   onNewChat: () => void;
   onSwitchConversation: (id: string) => void;
+  onProviderChange: (providerId: GlobalChatProviderId) => void;
   onSubmit: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -135,9 +151,12 @@ export function ChatApp({
   sessionId,
   busy,
   connected,
+  availableProviderIds: providedAvailableProviderIds,
+  providerId,
   conversations,
   onNewChat,
   onSwitchConversation,
+  onProviderChange,
   onSubmit,
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields (sidebarOpen, searchQuery, setupOpen, model, channels) are independent UI concerns with separate update sites and lifecycles, not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
@@ -145,12 +164,43 @@ export function ChatApp({
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
+  const [discoveredProviderIds, setDiscoveredProviderIds] = useState<GlobalChatProviderId[]>(["claude"]);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
   const getInitialHermesSetup = () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower the `??=` logical-assignment operator (BuildHIR Todo); this lazy one-time ref cache is a deliberate first-render localStorage read and rewriting it would not change behavior.
     initialHermesSetupRef.current ??= readHermesSetup();
     return initialHermesSetupRef.current;
   };
+  useEffect(() => {
+    if (providedAvailableProviderIds || !connected) return;
+    let active = true;
+    void fetch(`${getGatewayUrl()}/api/coding-agents/summary`, {
+      signal: AbortSignal.timeout(10_000),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("ProviderSummaryUnavailable");
+      const parsed = RuntimeSummarySchema.safeParse(await response.json());
+      if (!parsed.success) throw new Error("ProviderSummaryInvalid");
+      if (!active) return;
+      const codingAgentIds = parsed.data.providers.flatMap<GlobalChatProviderId>((provider) => (
+        (provider.id === "codex" || provider.id === "pi")
+        && provider.availability === "available"
+        && provider.installStatus === "installed"
+        && provider.authStatus === "authenticated"
+          ? [provider.id]
+          : []
+      ));
+      setDiscoveredProviderIds(["claude", ...codingAgentIds]);
+    }).catch((error: unknown) => {
+      console.warn(
+        "[chat] provider summary unavailable",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      if (active) setDiscoveredProviderIds(["claude"]);
+    });
+    return () => {
+      active = false;
+    };
+  }, [connected, providedAvailableProviderIds]);
   // react-doctor-disable-next-line react-hooks-js/refs -- the ref read happens inside a lazy useState initializer (first render only); initialHermesSetupRef caches the one-time localStorage read so both useState initializers share a single readHermesSetup() result without re-reading storage.
   const [model, setModel] = useState(() => getInitialHermesSetup().model);
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy useState initializer reading the same one-time cached Hermes setup (see model above); ref read is first-render-only.
@@ -163,10 +213,14 @@ export function ChatApp({
   useEffect(() => {
     writeHermesSetup(model, selectedChannels);
   }, [model, selectedChannels]);
-  const submitWithHermesSetup = (
+  const submitWithProviderSetup = (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
   ) => {
+    if (providerId !== "claude") {
+      onSubmit(text, files, { displayText: text });
+      return;
+    }
     const promptText = createHermesConfiguredPrompt(text, model, selectedChannels);
     onSubmit(text, files, promptText === text ? { displayText: text } : { displayText: text, promptText });
   };
@@ -183,6 +237,11 @@ export function ChatApp({
   const suggestions = getMessageSuggestions(messages);
 
   const isEmpty = messages.length === 0 && !busy;
+  const providerPresentation = GLOBAL_CHAT_PROVIDER_PRESENTATION[providerId];
+  const providerLabel = providerPresentation.label;
+  const providerDescription = providerPresentation.description;
+  const availableProviderIds = providedAvailableProviderIds ?? discoveredProviderIds;
+  const providerReady = connected && availableProviderIds.includes(providerId);
 
   return (
     <div className="relative flex h-full bg-background">
@@ -253,6 +312,10 @@ export function ChatApp({
                         ? conv.preview.slice(0, 40) + (conv.preview.length > 40 ? "..." : "")
                         : "New chat"}
                     </span>
+                    <span className="shrink-0 text-[9px] uppercase tracking-wide text-muted-foreground/60">
+                      {(GLOBAL_CHAT_PROVIDER_PRESENTATION[conv.providerId]
+                        ?? GLOBAL_CHAT_PROVIDER_PRESENTATION.claude).label}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -300,25 +363,54 @@ export function ChatApp({
                 <BotIcon className="size-3.5" aria-hidden="true" />
               </span>
               <div className="min-w-0 text-center">
-                <p className="truncate text-sm font-semibold leading-4 text-foreground">Hermes</p>
-                <p className="truncate text-[10px] leading-3 text-muted-foreground">Matrix system agent</p>
+                <p className="truncate text-sm font-semibold leading-4 text-foreground">{providerLabel}</p>
+                <p className="truncate text-[10px] leading-3 text-muted-foreground">{providerDescription}</p>
               </div>
             </div>
           </div>
-          <Button
-            variant={setupOpen ? "secondary" : "ghost"}
-            size="sm"
-            className="h-8 gap-1.5 px-2.5 text-xs"
-            onClick={() => setSetupOpen((value) => !value)}
-          >
-            <Settings2Icon className="size-3.5" aria-hidden="true" />
-            Setup
-          </Button>
-          {!connected && (
-            <span className="text-[10px] text-destructive font-medium">Offline</span>
+          <div className="flex items-center rounded-lg border border-border/60 bg-muted/40 p-0.5" aria-label="Global Chat provider">
+            {(["claude", "codex", "pi"] as const).map((option) => {
+              const selected = providerId === option;
+              const Icon = option === "claude" ? BotIcon : option === "codex" ? Code2Icon : SparklesIcon;
+              const label = GLOBAL_CHAT_PROVIDER_PRESENTATION[option].label;
+              const optionReady = connected && availableProviderIds.includes(option);
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  aria-label={`Use ${label}`}
+                  aria-pressed={selected}
+                  disabled={!optionReady || busy}
+                  title={optionReady ? undefined : `Install or connect ${label} before using it.`}
+                  onClick={() => onProviderChange(option)}
+                  className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                    selected ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="size-3" aria-hidden="true" />
+                  <span className={mobile ? "sr-only" : undefined}>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+          {providerId === "claude" && (
+            <Button
+              variant={setupOpen ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 gap-1.5 px-2.5 text-xs"
+              onClick={() => setSetupOpen((value) => !value)}
+            >
+              <Settings2Icon className="size-3.5" aria-hidden="true" />
+              Setup
+            </Button>
+          )}
+          {!providerReady && (
+            <span className="text-[10px] text-destructive font-medium">
+              {connected ? "Provider unavailable" : "Offline"}
+            </span>
           )}
         </header>
-        {setupOpen && (
+        {providerId === "claude" && setupOpen && (
           <HermesSetupPanel
             model={model}
             onModelChange={setModel}
@@ -337,11 +429,12 @@ export function ChatApp({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
-            onSubmit={submitWithHermesSetup}
-            connected={connected}
+            onSubmit={submitWithProviderSetup}
+            connected={providerReady}
             suggestions={suggestions}
             mobile={mobile}
             model={model}
+            providerId={providerId}
           />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -365,7 +458,7 @@ export function ChatApp({
                           {msg.content}
                         </div>
                       ) : (
-                    <AssistantBubble content={msg.content} onAction={submitWithHermesSetup} />
+                    <AssistantBubble content={msg.content} onAction={submitWithProviderSetup} />
                       )}
                     </div>
                   );
@@ -390,11 +483,11 @@ export function ChatApp({
                 <div className="pb-3">
                   <SuggestionChips
                     suggestions={suggestions}
-                    onSelect={(text) => submitWithHermesSetup(text)}
+                    onSelect={(text) => submitWithProviderSetup(text)}
                   />
                 </div>
               )}
-              <ChatInput connected={connected} busy={busy} onSubmit={submitWithHermesSetup} />
+              <ChatInput connected={providerReady} busy={busy} onSubmit={submitWithProviderSetup} />
             </div>
           </div>
         )}
@@ -409,12 +502,14 @@ function EmptyState({
   suggestions,
   mobile,
   model,
+  providerId,
 }: {
   onSubmit: (text: string) => void;
   connected: boolean;
   suggestions: string[];
   mobile: boolean;
   model: string;
+  providerId: GlobalChatProviderId;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4">
@@ -422,9 +517,13 @@ function EmptyState({
         {/* Greeting */}
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
-            What should Hermes do?
+            What should {GLOBAL_CHAT_PROVIDER_PRESENTATION[providerId].label} do?
           </h1>
-          <p className="text-sm text-muted-foreground">Using {model}</p>
+          <p className="text-sm text-muted-foreground">
+            {providerId === "claude"
+              ? `Using ${model}`
+              : GLOBAL_CHAT_PROVIDER_PRESENTATION[providerId].description}
+          </p>
         </div>
 
         {/* Input */}

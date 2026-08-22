@@ -1,4 +1,5 @@
 import type { SpawnFn } from "../dispatcher.js";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 
 export interface GatewayConfig {
   homePath: string;
@@ -10,7 +11,7 @@ export interface GatewayConfig {
 }
 
 export type ServerMessage =
-  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
+  | { type: "kernel:init"; sessionId: string; providerId?: GlobalChatProviderId; requestId?: string; eventId?: string }
   | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }

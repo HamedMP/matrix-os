@@ -250,6 +250,21 @@ describe("ConversationStore", () => {
   });
 
   describe("create", () => {
+    it("persists the actual Global Chat provider across restart and list projection", () => {
+      const store = createConversationStore(homePath);
+      const codexId = store.create(undefined, "codex");
+      const piId = store.create(undefined, "pi");
+
+      expect(store.get(codexId)?.providerId).toBe("codex");
+      expect(store.get(piId)?.providerId).toBe("pi");
+      expect(createConversationStore(homePath).get(codexId)?.providerId).toBe("codex");
+      expect(createConversationStore(homePath).get(piId)?.providerId).toBe("pi");
+      expect(createConversationStore(homePath).list()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: codexId, providerId: "codex" }),
+        expect.objectContaining({ id: piId, providerId: "pi" }),
+      ]));
+    });
+
     it("returns a new session with unique ID", () => {
       const store = createConversationStore(homePath);
       const id1 = store.create();

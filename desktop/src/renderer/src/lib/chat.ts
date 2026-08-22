@@ -1,11 +1,11 @@
-import type { KernelConversationToolDisplay } from "@matrix-os/contracts";
+import type { GlobalChatProviderId, KernelConversationToolDisplay } from "@matrix-os/contracts";
 
 // Ported from shell/src/lib/chat.ts (spec 094 R4); keep reducer semantics in sync.
 // Reducer rule (CLAUDE.md): never mutate -- always new objects; in-place
 // mutation causes streaming text duplication.
 
 export type ChatEvent =
-  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
+  | { type: "kernel:init"; sessionId: string; providerId?: GlobalChatProviderId; requestId?: string; eventId?: string }
   | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }

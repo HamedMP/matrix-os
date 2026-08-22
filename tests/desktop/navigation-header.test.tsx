@@ -118,7 +118,7 @@ describe("Desktop navigation header", () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByRole("region", { name: "Hermes conversation" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Global Chat conversation" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Go back" }));
 
     expect(screen.getByRole("heading", { name: "Chats" })).toBeTruthy();

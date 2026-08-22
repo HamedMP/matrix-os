@@ -74,7 +74,9 @@ function ConversationRow({
             className="flex shrink-0 items-center gap-5 text-xs"
             style={{ color: "var(--text-tertiary)" }}
           >
-            <span className="rounded-full border px-2 py-1 font-medium" style={{ borderColor: "var(--border-default)" }}>Hermes</span>
+            <span className="rounded-full border px-2 py-1 font-medium" style={{ borderColor: "var(--border-default)" }}>
+              {{ claude: "Claude", codex: "Codex", pi: "Pi" }[conversation.providerId] ?? "Claude"}
+            </span>
             {running ? (
               <span className="flex items-center gap-1.5" style={{ color: "var(--accent)" }}>
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" aria-hidden />
@@ -253,7 +255,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
             </span>
             <h2 className="mt-4 text-base font-semibold" style={{ color: "var(--text-primary)" }}>No chats yet</h2>
             <p className="mt-1 max-w-sm text-sm" style={{ color: "var(--text-secondary)" }}>
-              Start a chat with Hermes, then return to it from any shell.
+              Start a chat with Claude or Codex, then return to it from any shell.
             </p>
           </div>
         ) : null}

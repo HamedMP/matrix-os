@@ -64,7 +64,7 @@ describe("Hermes chat project context", () => {
     expect(contextStrip.closest(".prompt-card")).toBeNull();
     expect(screen.getByRole("button", { name: "Add to project" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Repository/ })).toBeNull();
-    expect(contextStrip.compareDocumentPosition(screen.getByRole("textbox", { name: "Reply to Hermes…" }))
+    expect(contextStrip.compareDocumentPosition(screen.getByRole("textbox", { name: "Reply to Claude…" }))
       & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(screen.queryByText("main")).toBeNull();
     expect(screen.queryByText("On VPS")).toBeNull();
@@ -105,7 +105,7 @@ describe("Hermes chat project context", () => {
     });
     render(<ChatTab />);
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Reply to Hermes…" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Reply to Claude…" }), {
       target: { value: "continue" },
     });
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);

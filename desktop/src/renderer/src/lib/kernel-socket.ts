@@ -3,6 +3,7 @@
 // are injectable for tests. Known message types are validated with zod;
 // unknown types pass through to subscribers for forward compatibility.
 import { z } from "zod/v4";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 
 export type KernelConnectionState = "connecting" | "connected" | "reconnecting" | "offline";
 
@@ -12,7 +13,7 @@ export interface KernelServerMessage {
 }
 
 export type KernelClientMessage =
-  | { type: "message"; text: string; sessionId?: string; requestId: string }
+  | { type: "message"; text: string; sessionId?: string; requestId: string; providerId?: GlobalChatProviderId }
   | { type: "switch_session"; sessionId: string; replayCompleted?: boolean }
   | { type: "abort"; requestId: string }
   | { type: "approval_response"; id: string; approved: boolean }
@@ -51,7 +52,12 @@ const MAX_FRAME_CHARS = 1_000_000;
 const requestIdField = z.string().min(1).max(256).optional();
 
 export const KnownKernelMessageSchema = z.discriminatedUnion("type", [
-  z.looseObject({ type: z.literal("kernel:init"), sessionId: z.string(), requestId: requestIdField }),
+  z.looseObject({
+    type: z.literal("kernel:init"),
+    sessionId: z.string(),
+    providerId: z.enum(["claude", "codex", "pi"]).optional(),
+    requestId: requestIdField,
+  }),
   z.looseObject({ type: z.literal("kernel:text"), text: z.string(), requestId: requestIdField }),
   z.looseObject({ type: z.literal("kernel:tool_start"), tool: z.string(), requestId: requestIdField }),
   z.looseObject({

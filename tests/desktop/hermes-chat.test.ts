@@ -160,14 +160,15 @@ describe("useHermesChat", () => {
       },
     ]);
 
-    const created = await useHermesChat.getState().createConversation({ post, get } as never);
+    const created = await useHermesChat.getState().createConversation({ post, get } as never, "codex");
 
     expect(created).toBe("conversation-created");
-    expect(post).toHaveBeenCalledWith("/api/conversations", {});
+    expect(post).toHaveBeenCalledWith("/api/conversations", { providerId: "codex" });
     expect(get).toHaveBeenCalledWith("/api/conversations");
     expect(useHermesChat.getState()).toMatchObject({
       view: "conversation",
       sessionId: "conversation-created",
+      providerId: "codex",
       messages: [],
       loadStatus: "idle",
       loadError: null,

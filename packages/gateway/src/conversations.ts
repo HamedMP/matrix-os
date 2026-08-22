@@ -3,7 +3,11 @@ import { readFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
 import { lstat, open, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { KernelConversationId } from "@matrix-os/contracts";
+import {
+  GlobalChatProviderIdSchema,
+  type GlobalChatProviderId,
+  type KernelConversationId,
+} from "@matrix-os/contracts";
 import {
   createConversationMutationLock,
   type ConversationMutationLock,
@@ -20,6 +24,7 @@ export interface ConversationMessage {
 
 export interface ConversationFile {
   id: string;
+  providerId?: GlobalChatProviderId;
   createdAt: number;
   updatedAt: number;
   messages: ConversationMessage[];
@@ -32,6 +37,7 @@ export interface ConversationContext {
 
 export interface ConversationMeta {
   id: string;
+  providerId: GlobalChatProviderId;
   preview: string;
   messageCount: number;
   createdAt: number;
@@ -49,7 +55,7 @@ export interface SearchResult {
 }
 
 export interface ConversationStore {
-  begin(sessionId: string): void;
+  begin(sessionId: string, providerId?: GlobalChatProviderId): void;
   addUserMessage(sessionId: string, content: string): void;
   addSystemMessage(sessionId: string, content: string): void;
   appendAssistantText(sessionId: string, text: string): void;
@@ -58,7 +64,7 @@ export interface ConversationStore {
   finalize(sessionId: string, onFinalized?: () => void): Promise<void>;
   list(): ConversationMeta[];
   get(id: string): ConversationFile | null;
-  create(channel?: string): string;
+  create(channel?: string, providerId?: GlobalChatProviderId): string;
   rekey(
     id: KernelConversationId,
     providerSessionId: KernelConversationId,
@@ -174,11 +180,15 @@ export function createConversationStore(
   function readFromDisk(id: string): ConversationFile | null {
     const path = filePath(id);
     if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf-8")) as ConversationFile;
+    const conversation = JSON.parse(readFileSync(path, "utf-8")) as ConversationFile;
+    return {
+      ...conversation,
+      providerId: GlobalChatProviderIdSchema.catch("claude").parse(conversation.providerId),
+    };
   }
 
   return {
-    begin(sessionId) {
+    begin(sessionId, providerId = "claude") {
       evictStale();
       const existing = readFromDisk(sessionId);
       if (existing) {
@@ -190,6 +200,7 @@ export function createConversationStore(
       const now = Date.now();
       const conv: ConversationFile = {
         id: sessionId,
+        providerId,
         createdAt: now,
         updatedAt: now,
         messages: [],
@@ -302,6 +313,7 @@ export function createConversationStore(
         const firstUser = conv.messages.find((m) => m.role === "user");
         return {
           id: conv.id,
+          providerId: conv.providerId ?? "claude",
           preview: firstUser?.content ?? "",
           messageCount: conv.messages.length,
           createdAt: conv.createdAt,
@@ -317,13 +329,14 @@ export function createConversationStore(
       return readFromDisk(id);
     },
 
-    create(channel?) {
+    create(channel?, providerId = "claude") {
       evictStale();
       const uuid = randomUUID();
       const id = channel ? `${channel}:${uuid}` : uuid;
       const now = Date.now();
       const conv: ConversationFile = {
         id,
+        providerId,
         createdAt: now,
         updatedAt: now,
         messages: [],

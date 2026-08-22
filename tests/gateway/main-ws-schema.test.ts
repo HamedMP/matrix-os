@@ -13,6 +13,31 @@ describe("MainWsClientMessageSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it.each(["claude", "codex", "pi"])("accepts the %s Global Chat provider", (providerId) => {
+    const result = MainWsClientMessageSchema.safeParse({
+      type: "message",
+      text: "hello",
+      requestId: "req-provider",
+      providerId,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "message") {
+      expect(result.data.providerId).toBe(providerId);
+    }
+  });
+
+  it.each(["hermes", "openai", "unknown"])(
+    "rejects the unsupported %s Global Chat provider",
+    (providerId) => {
+      expect(MainWsClientMessageSchema.safeParse({
+        type: "message",
+        text: "hello",
+        providerId,
+      }).success).toBe(false);
+    },
+  );
+
   it("accepts allowlisted per-message model and effort overrides", () => {
     const result = MainWsClientMessageSchema.safeParse({
       type: "message",

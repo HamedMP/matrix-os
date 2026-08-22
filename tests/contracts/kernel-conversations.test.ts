@@ -45,6 +45,7 @@ describe("kernel conversation contracts", () => {
     } as const;
     const summary = {
       id: "conversation-1",
+      providerId: "claude" as const,
       preview: "Inspect the repository",
       messageCount: 1,
       createdAt: 1,
@@ -53,6 +54,7 @@ describe("kernel conversation contracts", () => {
     };
     const history = {
       id: "conversation-1",
+      providerId: "claude" as const,
       createdAt: 1,
       updatedAt: 2,
       totalCount: 0,
@@ -101,6 +103,7 @@ describe("kernel conversation contracts", () => {
   it("rejects unbounded or secret-bearing history payload fields", () => {
     const valid = {
       id: "conversation-1",
+      providerId: "claude" as const,
       createdAt: 1,
       updatedAt: 2,
       totalCount: 1,

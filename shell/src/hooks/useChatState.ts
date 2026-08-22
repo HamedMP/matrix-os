@@ -5,6 +5,7 @@ import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 import { useConversation } from "@/hooks/useConversation";
 import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
 import { getGatewayUrl } from "@/lib/gateway";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
@@ -13,6 +14,7 @@ interface QueuedMessage {
   text: string;
   displayText?: string;
   requestId: string;
+  providerId: GlobalChatProviderId;
 }
 
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
@@ -25,6 +27,7 @@ export interface ChatState {
       generating text. Drives the global AgentStatusCard's stage label. */
   currentTool: string | null;
   connected: boolean;
+  providerId: GlobalChatProviderId;
   queue: QueuedMessage[];
   conversations: ReturnType<typeof useConversation>["conversations"];
   submitMessage: (
@@ -32,7 +35,8 @@ export interface ChatState {
     files?: Array<{ name: string; type: string; data: string }>,
     options?: { displayText?: string; promptText?: string },
   ) => void;
-  newChat: () => Promise<void>;
+  newChat: (providerId?: GlobalChatProviderId) => Promise<void>;
+  selectProvider: (providerId: GlobalChatProviderId) => Promise<void>;
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
@@ -44,9 +48,11 @@ export function useChatState(): ChatState {
   const [busy, setBusy] = useState(false);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
+  const [providerId, setProviderId] = useState<GlobalChatProviderId>("claude");
   const { connected, connectionEpoch, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
+  const providerRef = useRef(providerId);
   const lastReattachKeyRef = useRef<string | null>(null);
   const seenReplayEventIdsRef = useRef<Set<string>>(new Set());
   // Tracks the requestId of the in-flight run so abortCurrent() can target
@@ -54,6 +60,7 @@ export function useChatState(): ChatState {
   const currentRequestIdRef = useRef<string | null>(null);
   // react-doctor-disable-next-line react-hooks-js/refs -- latest-value mirror of sessionId, read synchronously inside the async WS message handler (which is registered once via a stable subscribe and must not re-subscribe on every sessionId change); writing it in render keeps the mirror current for those deferred reads
   sessionRef.current = sessionId;
+  providerRef.current = providerId;
 
   useEffect(() => {
     if (conversations.length === 0) return;
@@ -69,6 +76,7 @@ export function useChatState(): ChatState {
         .then((conv) => {
           if (!aborted && conv) {
             setSessionId(conv.id);
+            setProviderId(conv.providerId);
             setMessages(hydrateMessages(conv.messages));
           }
         })
@@ -109,6 +117,7 @@ export function useChatState(): ChatState {
 
       if (msg.type === "kernel:init") {
         setSessionId(msg.sessionId);
+        if (msg.providerId) setProviderId(msg.providerId);
         if (msg.requestId) {
           currentRequestIdRef.current = msg.requestId;
         }
@@ -151,6 +160,7 @@ export function useChatState(): ChatState {
               displayText: next.displayText,
               sessionId: sessionRef.current,
               requestId: next.requestId,
+              providerId: next.providerId,
             });
             currentRequestIdRef.current = next.requestId;
             setBusy(true);
@@ -193,14 +203,14 @@ export function useChatState(): ChatState {
       ]);
 
       if (busy) {
-        setQueue((prev) => [...prev, { text: outboundText, displayText, requestId }]);
+        setQueue((prev) => [...prev, { text: outboundText, displayText, requestId, providerId }]);
       } else {
-        send({ type: "message", text: outboundText, displayText, sessionId, requestId });
+        send({ type: "message", text: outboundText, displayText, sessionId, requestId, providerId });
         currentRequestIdRef.current = requestId;
         setBusy(true);
       }
     },
-    [busy, send, sessionId],
+    [busy, providerId, send, sessionId],
   );
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
@@ -215,27 +225,39 @@ export function useChatState(): ChatState {
   }, [send]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
-  const newChat = useCallback(async () => {
-    setMessages([]);
-    setQueue([]);
+  const newChat = useCallback(async (nextProviderId: GlobalChatProviderId = providerRef.current) => {
     try {
       const res = await fetch(`${GATEWAY_URL}/api/conversations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ providerId: nextProviderId }),
         signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
       });
-      if (res.ok) {
-        const { id } = await res.json();
-        setSessionId(id);
-      } else {
-        setSessionId(undefined);
+      if (!res.ok) {
+        console.warn("[chat] Failed to create conversation");
+        return;
       }
+      const payload: unknown = await res.json();
+      const id = typeof payload === "object" && payload !== null && "id" in payload
+        ? (payload as { id?: unknown }).id
+        : undefined;
+      if (typeof id !== "string" || id.length === 0 || id.length > 256) {
+        console.warn("[chat] Conversation creation returned an invalid identifier");
+        return;
+      }
+      setMessages([]);
+      setQueue([]);
+      setProviderId(nextProviderId);
+      setSessionId(id);
     } catch (err) {
       console.warn("[chat] Failed to create conversation:", err);
-      setSessionId(undefined);
     }
   }, []);
+
+  const selectProvider = useCallback(async (nextProviderId: GlobalChatProviderId) => {
+    if (nextProviderId === providerRef.current) return;
+    await newChat(nextProviderId);
+  }, [newChat]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const switchConversation = useCallback(
@@ -244,6 +266,7 @@ export function useChatState(): ChatState {
         .then((conv) => {
           if (conv) {
             setSessionId(conv.id);
+            setProviderId(conv.providerId);
             setMessages(hydrateMessages(conv.messages));
             setQueue([]);
           }
@@ -261,10 +284,12 @@ export function useChatState(): ChatState {
     busy,
     currentTool,
     connected,
+    providerId,
     queue,
     conversations,
     submitMessage,
     newChat,
+    selectProvider,
     switchConversation,
     abortCurrent,
   };

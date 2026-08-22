@@ -13,6 +13,7 @@ describe("gateway main WebSocket message helpers", () => {
       type: "kernel:init",
       sessionId: "s1",
       requestId: "r1",
+      providerId: "claude",
     });
     expect(kernelEventToServerMessage({ type: "text", text: "hello" }, "r1")).toEqual({
       type: "kernel:text",

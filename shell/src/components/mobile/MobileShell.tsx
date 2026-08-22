@@ -598,9 +598,11 @@ function MobileAppFrame({
         sessionId={chat.sessionId}
         busy={chat.busy}
         connected={chat.connected}
+        providerId={chat.providerId}
         conversations={chat.conversations}
         onNewChat={() => void chat.newChat()}
         onSwitchConversation={chat.switchConversation}
+        onProviderChange={chat.selectProvider}
         onSubmit={chat.submitMessage}
       />
     );

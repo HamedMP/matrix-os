@@ -10,6 +10,7 @@ import {
   KernelConversationIdSchema,
   KernelConversationMutationErrorCodeSchema,
   KernelConversationSummarySchema,
+  type GlobalChatProviderId,
   type KernelConversationContextProjection,
   isKernelResultFailureText,
 } from "@matrix-os/contracts";
@@ -58,6 +59,7 @@ const ConversationContextUpdateResponseSchema = z.strictObject({
 
 export interface HermesConversationSummary {
   id: string;
+  providerId: GlobalChatProviderId;
   title: string;
   preview: string;
   messageCount: number;
@@ -142,10 +144,11 @@ export function normalizeConversationIndex(raw: unknown): HermesConversationSumm
 function historySnapshot(
   conversationId: string,
   raw: unknown,
-): { messages: ChatMessage[]; context: KernelConversationContextProjection | null } | null {
+): { messages: ChatMessage[]; context: KernelConversationContextProjection | null; providerId: GlobalChatProviderId } | null {
   const parsed = KernelConversationHistoryResponseSchema.safeParse(raw);
   if (!parsed.success || parsed.data.id !== conversationId) return null;
   return {
+    providerId: parsed.data.providerId,
     context: parsed.data.context ?? null,
     messages: parsed.data.messages.map((message) => ({
       id: `${conversationId}:${message.index}`,
@@ -161,6 +164,7 @@ function historySnapshot(
 interface HermesChatState {
   messages: ChatMessage[];
   sessionId: string | null;
+  providerId: GlobalChatProviderId;
   status: HermesStatus;
   activeRequestId: string | null;
   view: HermesConversationView;
@@ -186,7 +190,7 @@ interface HermesChatState {
   newChat: () => void;
   showIndex: () => void;
   refreshConversations: (api: ApiClient) => Promise<void>;
-  createConversation: (api: ApiClient) => Promise<string | null>;
+  createConversation: (api: ApiClient, providerId?: GlobalChatProviderId) => Promise<string | null>;
   openConversation: (api: ApiClient, id: string) => Promise<boolean>;
   refreshConversationHistory: (api: ApiClient, id: string) => Promise<boolean>;
   deleteConversation: (api: ApiClient, id: string) => Promise<boolean>;
@@ -228,6 +232,7 @@ function resultFallbackText(event: ChatEvent): string | null {
 export const useHermesChat = create<HermesChatState>()((set, get) => ({
   messages: [],
   sessionId: null,
+  providerId: "claude",
   status: "idle",
   activeRequestId: null,
   view: "index",
@@ -269,6 +274,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     const sent = sendKernelMessage({
       text: trimmed,
       requestId,
+      providerId: get().providerId,
       ...(get().sessionId ? { sessionId: get().sessionId! } : {}),
     });
     if (!sent) {
@@ -373,7 +379,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     }
   },
 
-  createConversation: async (api) => {
+  createConversation: async (api, providerId = get().providerId) => {
     const generation = captureRuntimeGeneration();
     const sequence = get().loadSequence + 1;
     set({
@@ -384,7 +390,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     });
     try {
       const parsed = ConversationCreateResponseSchema.safeParse(
-        await api.post<unknown>("/api/conversations", {}),
+        await api.post<unknown>("/api/conversations", { providerId }),
       );
       if (!isCurrentRuntimeGeneration(generation) || get().loadSequence !== sequence) return null;
       if (!parsed.success) {
@@ -396,6 +402,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       set((state) => ({
         view: "conversation",
         sessionId: parsed.data.id,
+        providerId,
         messages: [],
         status: "idle",
         activeRequestId: null,
@@ -448,6 +455,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       set((state) => ({
         view: "conversation",
         sessionId: parsedId.data,
+        providerId: snapshot.providerId,
         messages: snapshot.messages.slice(-TRANSCRIPT_CAP),
         status: "idle",
         activeRequestId: null,
@@ -639,6 +647,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     set((state) => ({
       messages: [],
       sessionId: null,
+      providerId: "claude",
       status: "idle",
       activeRequestId: null,
       view: "index",
@@ -675,6 +684,9 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       activeRequestId = event.requestId;
       set({
         sessionId: event.sessionId,
+        ...(event.providerId === "claude" || event.providerId === "codex" || event.providerId === "pi"
+          ? { providerId: event.providerId }
+          : {}),
         activeRequestId,
         status: "thinking",
       });

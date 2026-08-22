@@ -526,9 +526,11 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
               sessionId={chatState.sessionId}
               busy={chatState.busy}
               connected={chatState.connected}
+              providerId={chatState.providerId}
               conversations={chatState.conversations}
               onNewChat={chatState.newChat}
               onSwitchConversation={chatState.switchConversation}
+              onProviderChange={chatState.selectProvider}
               onSubmit={chatState.submitMessage}
               mobile={isMobile}
             />
