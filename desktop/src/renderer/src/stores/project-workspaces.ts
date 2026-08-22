@@ -179,17 +179,10 @@ function mergePage<T extends { id: string }>(
     const prepended = next.items.filter((item) => !knownIds.has(item.id));
     if (prepended.length === 0) return current;
     const mergedItems = [...prepended, ...current.items];
-    // A full bounded projection cannot prepend without making its displaced
-    // tail unreachable. Restart from the authoritative first page instead;
-    // its cursor leaves capacity to page the prior items back in.
-    if (mergedItems.length > MAX_WORKSPACE_PAGE_ITEMS) {
-      return {
-        items: next.items.slice(0, MAX_WORKSPACE_PAGE_ITEMS),
-        hasMore: next.hasMore,
-        ...(next.nextCursor ? { nextCursor: next.nextCursor } : {}),
-        limit: next.limit,
-      };
-    }
+    // A full bounded projection cannot prepend without making either its old
+    // tail or the restarted page unreachable. Keep the terminal cache stable;
+    // an explicit refresh can replace it with a new authoritative first page.
+    if (mergedItems.length > MAX_WORKSPACE_PAGE_ITEMS) return current;
     return {
       items: mergedItems,
       hasMore: next.hasMore,

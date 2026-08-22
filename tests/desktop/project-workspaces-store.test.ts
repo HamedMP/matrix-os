@@ -315,7 +315,7 @@ describe("project workspaces store", () => {
     });
   });
 
-  it("restarts a full exhausted collection so displaced items remain pageable", async () => {
+  it("keeps a full exhausted collection terminal until an explicit refresh", async () => {
     const first = workspace("matrix-os", "task_0", "thread_task");
     const taskTemplate = first.tasks.items[0];
     first.tasks = {
@@ -364,16 +364,7 @@ describe("project workspaces store", () => {
       limit: 1,
     };
     changedTasks.taskThreads = { items: [], hasMore: false, limit: 1 };
-    const continuedTasks = workspace("matrix-os", "task_0", "thread_task");
-    continuedTasks.tasks = {
-      ...continuedTasks.tasks,
-      hasMore: true,
-      nextCursor: "task_0",
-      limit: 1,
-    };
-    continuedTasks.projectThreads = { items: [], hasMore: false, limit: 1 };
-    continuedTasks.taskThreads = { items: [], hasMore: false, limit: 1 };
-    const responses = [first, changedTasks, continuedTasks];
+    const responses = [first, changedTasks];
     const invoke = vi.fn(async (channel: string) => {
       if (channel === "state:set") return { ok: true };
       if (channel !== "runtime:get-project-workspace") {
@@ -392,12 +383,13 @@ describe("project workspaces store", () => {
     await useProjectWorkspaces.getState().loadMore("matrix-os");
     await useProjectWorkspaces.getState().loadMore("matrix-os");
 
-    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.tasks).toMatchObject({
-      items: [{ id: "task_new" }, { id: "task_0" }],
-      hasMore: true,
-      nextCursor: "task_0",
-    });
-    expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-project-workspace")).toHaveLength(3);
+    const tasks = useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.tasks;
+    expect(tasks?.items).toHaveLength(100);
+    expect(tasks?.items[0]?.id).toBe("task_0");
+    expect(tasks?.items[99]?.id).toBe("task_99");
+    expect(tasks).toMatchObject({ hasMore: false });
+    expect(tasks).not.toHaveProperty("nextCursor");
+    expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-project-workspace")).toHaveLength(2);
   });
 
   it("retains every successful page when two load-more requests overlap", async () => {
