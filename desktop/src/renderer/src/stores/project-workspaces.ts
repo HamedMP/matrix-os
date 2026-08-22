@@ -169,12 +169,22 @@ function mergePage<T extends { id: string }>(
   current: WorkspacePage<T>,
   next: WorkspacePage<T>,
 ): WorkspacePage<T> {
+  const knownIds = new Set(current.items.map((item) => item.id));
   // The shared Gateway route always returns every collection. For a
   // collection that is already exhausted, a pagination request for another
-  // collection therefore contains a restarted first page. Keep the terminal
-  // state authoritative instead of resurrecting its cursor/hasMore flag.
-  if (!current.hasMore) return current;
-  const knownIds = new Set(current.items.map((item) => item.id));
+  // collection therefore contains a restarted first page. Ignore a pure
+  // replay, but surface genuinely new first-page items and reopen pagination
+  // so additional new items can be discovered without a full refresh.
+  if (!current.hasMore) {
+    const prepended = next.items.filter((item) => !knownIds.has(item.id));
+    if (prepended.length === 0) return current;
+    return {
+      items: [...prepended, ...current.items].slice(0, MAX_WORKSPACE_PAGE_ITEMS),
+      hasMore: next.hasMore,
+      ...(next.nextCursor ? { nextCursor: next.nextCursor } : {}),
+      limit: next.limit,
+    };
+  }
   const remaining = MAX_WORKSPACE_PAGE_ITEMS - current.items.length;
   const appended = next.items.filter((item) => !knownIds.has(item.id)).slice(0, remaining);
   return {

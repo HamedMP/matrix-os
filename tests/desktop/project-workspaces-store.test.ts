@@ -251,6 +251,70 @@ describe("project workspaces store", () => {
     });
   });
 
+  it("prepends a newly created item returned for an exhausted collection", async () => {
+    const first = workspace("matrix-os", "task_auth", "thread_task");
+    first.tasks = { ...first.tasks, hasMore: false, limit: 1 };
+    first.projectThreads = {
+      items: [{
+        id: "thread_page_1",
+        providerId: "codex",
+        title: "Newest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: true,
+      nextCursor: "thread_page_1",
+      limit: 1,
+    };
+    const changedTasks = workspace("matrix-os", "task_new", "thread_task");
+    changedTasks.tasks = {
+      ...changedTasks.tasks,
+      hasMore: true,
+      nextCursor: "task_new",
+      limit: 1,
+    };
+    changedTasks.projectThreads = {
+      items: [{
+        id: "thread_page_2",
+        providerId: "codex",
+        title: "Oldest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: false,
+      limit: 1,
+    };
+    changedTasks.taskThreads = { items: [], hasMore: false, limit: 1 };
+    let call = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:set") return { ok: true };
+      if (channel !== "runtime:get-project-workspace") {
+        throw new Error(`unexpected channel ${channel}`);
+      }
+      call += 1;
+      return call === 1 ? first : changedTasks;
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useProjectWorkspaces.getState().ensure("matrix-os");
+    await useProjectWorkspaces.getState().loadMore("matrix-os");
+
+    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.tasks).toMatchObject({
+      items: [{ id: "task_new" }, { id: "task_auth" }],
+      hasMore: true,
+      nextCursor: "task_new",
+    });
+  });
+
   it("retains every successful page when two load-more requests overlap", async () => {
     const first = workspace("matrix-os", "task_auth", "thread_task");
     first.projectThreads = {
