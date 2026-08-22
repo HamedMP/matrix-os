@@ -169,6 +169,11 @@ function mergePage<T extends { id: string }>(
   current: WorkspacePage<T>,
   next: WorkspacePage<T>,
 ): WorkspacePage<T> {
+  // The shared Gateway route always returns every collection. For a
+  // collection that is already exhausted, a pagination request for another
+  // collection therefore contains a restarted first page. Keep the terminal
+  // state authoritative instead of resurrecting its cursor/hasMore flag.
+  if (!current.hasMore) return current;
   const knownIds = new Set(current.items.map((item) => item.id));
   const remaining = MAX_WORKSPACE_PAGE_ITEMS - current.items.length;
   const appended = next.items.filter((item) => !knownIds.has(item.id)).slice(0, remaining);
@@ -268,6 +273,10 @@ async function performWorkspaceLoad(
 }
 
 function loadWorkspace(projectId: string, options: WorkspaceLoadOptions = {}): Promise<void> {
+  // A queued load must remain owned by the identity that enqueued it. Unlike
+  // the active load, it has not entered performWorkspaceLoad yet and therefore
+  // has not captured a generation of its own.
+  const queuedRuntimeGeneration = captureRuntimeGeneration();
   const token = loadQueueTokens[projectId] ?? Symbol(projectId);
   loadQueueTokens[projectId] = token;
   const previous = activeLoadPromises[projectId];
@@ -276,7 +285,10 @@ function loadWorkspace(projectId: string, options: WorkspaceLoadOptions = {}): P
   // its request before the caller can switch runtime/account scope.
   const work = previous
     ? previous.then(async () => {
-        if (loadQueueTokens[projectId] !== token) return;
+        if (
+          loadQueueTokens[projectId] !== token
+          || !isCurrentRuntimeGeneration(queuedRuntimeGeneration)
+        ) return;
         await performWorkspaceLoad(projectId, options);
       })
     : performWorkspaceLoad(projectId, options);

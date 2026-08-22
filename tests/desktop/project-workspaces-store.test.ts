@@ -188,6 +188,69 @@ describe("project workspaces store", () => {
       .toHaveLength(1);
   });
 
+  it("keeps an exhausted collection exhausted while another collection loads more", async () => {
+    const first = workspace("matrix-os", "task_auth", "thread_task");
+    first.tasks = { ...first.tasks, hasMore: false };
+    first.projectThreads = {
+      items: [{
+        id: "thread_page_1",
+        providerId: "codex",
+        title: "Newest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: true,
+      nextCursor: "thread_page_1",
+      limit: 1,
+    };
+    const restartedTasks = workspace("matrix-os", "task_auth", "thread_task");
+    restartedTasks.tasks = {
+      ...restartedTasks.tasks,
+      hasMore: true,
+      nextCursor: "task_auth",
+      limit: 1,
+    };
+    restartedTasks.projectThreads = {
+      items: [{
+        id: "thread_page_2",
+        providerId: "codex",
+        title: "Oldest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: false,
+      limit: 1,
+    };
+    restartedTasks.taskThreads = { items: [], hasMore: false, limit: 1 };
+    let call = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:set") return { ok: true };
+      if (channel !== "runtime:get-project-workspace") {
+        throw new Error(`unexpected channel ${channel}`);
+      }
+      call += 1;
+      return call === 1 ? first : restartedTasks;
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useProjectWorkspaces.getState().ensure("matrix-os");
+    await useProjectWorkspaces.getState().loadMore("matrix-os");
+
+    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.tasks).toMatchObject({
+      items: [{ id: "task_auth" }],
+      hasMore: false,
+    });
+  });
+
   it("retains every successful page when two load-more requests overlap", async () => {
     const first = workspace("matrix-os", "task_auth", "thread_task");
     first.projectThreads = {
@@ -280,6 +343,54 @@ describe("project workspaces store", () => {
       useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.projectThreads.items
         .map((thread) => thread.id),
     ).toEqual(["thread_page_1", "thread_page_2", "thread_page_3"]);
+  });
+
+  it("does not start a queued page load after the runtime identity changes", async () => {
+    const first = workspace("matrix-os", "task_auth", "thread_task");
+    first.projectThreads = {
+      items: [{
+        id: "thread_page_1",
+        providerId: "codex",
+        title: "Newest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: true,
+      nextCursor: "thread_page_1",
+      limit: 1,
+    };
+    let call = 0;
+    let resolveActivePage: (value: ProjectAgentWorkspace) => void = () => undefined;
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      if (channel !== "runtime:get-project-workspace") {
+        return Promise.reject(new Error(`unexpected channel ${channel}`));
+      }
+      call += 1;
+      if (call === 1) return Promise.resolve(first);
+      if (call > 2) return Promise.resolve(workspace("matrix-os", "task_leaked", "thread_leaked"));
+      return new Promise<ProjectAgentWorkspace>((resolve) => {
+        resolveActivePage = resolve;
+      });
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useProjectWorkspaces.getState().ensure("matrix-os");
+    const activePage = useProjectWorkspaces.getState().loadMore("matrix-os");
+    const queuedPage = useProjectWorkspaces.getState().loadMore("matrix-os");
+    await vi.waitFor(() => expect(call).toBe(2));
+
+    advanceRuntimeGeneration();
+    resolveActivePage(workspace("matrix-os", "task_new", "thread_new"));
+    await Promise.all([activePage, queuedPage]);
+
+    expect(call).toBe(2);
   });
 
   it("keeps project workspaces isolated per project", async () => {
