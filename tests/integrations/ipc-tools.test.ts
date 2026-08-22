@@ -4,6 +4,7 @@ import {
   callServiceHandler,
   describeServiceHandler,
   disconnectServiceHandler,
+  listConnectedServicesHandler,
   listIntegrationInventoryHandler,
   type GatewayFetcher,
 } from "../../packages/kernel/src/tools/integrations.js";
@@ -131,6 +132,24 @@ describe("integration discovery", () => {
 
     expect(result.content[0].text).toContain("Gmail (Work Gmail, work@example.com) [active]");
     expect(result.content[0].text).not.toContain("connection-1");
+  });
+
+  it("includes Matrix connection ids in the account-management listing", async () => {
+    const fetcher = mockFetcher({
+      body: [{
+        id: "11111111-1111-4111-8111-111111111111",
+        service: "gmail",
+        account_label: "Work Gmail",
+        account_email: "work@example.com",
+        status: "active",
+      }],
+    });
+
+    const result = await listConnectedServicesHandler(fetcher);
+
+    expect(result.content[0].text).toContain(
+      "[connection id: 11111111-1111-4111-8111-111111111111]",
+    );
   });
 
   it("describes actions from the Matrix registry rather than asking an agent to load a skill", async () => {

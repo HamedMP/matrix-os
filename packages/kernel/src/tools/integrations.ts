@@ -176,7 +176,7 @@ export async function listConnectedServicesHandler(
       );
     }
     const lines = services.map((s) =>
-      `- ${s.service} (${s.account_label}${s.account_email ? `, ${s.account_email}` : ""}) [${s.status}]`,
+      `- ${s.service} (${s.account_label}${s.account_email ? `, ${s.account_email}` : ""}) [${s.status}] [connection id: ${s.id}]`,
     );
     return textResult(`Connected services (${services.length}):\n${lines.join("\n")}`);
   } catch (err: unknown) {
