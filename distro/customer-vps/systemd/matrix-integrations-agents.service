@@ -1,0 +1,21 @@
+[Unit]
+Description=Reconcile Matrix integrations MCP registrations
+After=matrix-hermes.service matrix-developer-tools.service
+ConditionPathExists=/opt/matrix/bin/matrix-register-integrations-mcp
+StartLimitIntervalSec=1800
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=MATRIX_RUNTIME_USER=matrix
+Environment=MATRIX_RUNTIME_HOME=/home/matrix/home
+Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
+ExecStart=/opt/matrix/bin/matrix-register-integrations-mcp all
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

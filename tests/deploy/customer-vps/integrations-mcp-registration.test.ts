@@ -52,6 +52,26 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(gateway).toContain("matrix-register-integrations-mcp all");
   });
 
+  it("reconciles Codex, Claude, and Hermes registrations on boot and bundle updates", async () => {
+    const unit = await readFile(
+      "distro/customer-vps/systemd/matrix-integrations-agents.service",
+      "utf8",
+    );
+    const cloudInit = await readFile("distro/customer-vps/cloud-init.yaml", "utf8");
+    const updater = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
+
+    expect(unit).toContain("After=matrix-hermes.service matrix-developer-tools.service");
+    expect(unit).toContain("ExecStart=/opt/matrix/bin/matrix-register-integrations-mcp all");
+    expect(unit).toContain("Restart=on-failure");
+    expect(unit).toContain("RestartSec=60");
+    expect(cloudInit).toContain("install -o root -g root -m 0644 /opt/matrix/systemd/*.service");
+    expect(cloudInit).toContain("systemctl enable matrix-integrations-agents.service");
+    expect(cloudInit).toContain("systemctl start --no-block matrix-integrations-agents.service");
+    expect(updater).toContain('if [ -f "$extract_dir/systemd/matrix-integrations-agents.service" ]; then');
+    expect(updater).toContain("sudo systemctl enable matrix-integrations-agents.service");
+    expect(updater).toContain("sudo systemctl restart --no-block matrix-integrations-agents.service");
+  });
+
   it("applies one-time Matrix skill defaults after installing Hermes", async () => {
     const hermes = await readFile("distro/customer-vps/host-bin/matrix-install-hermes", "utf8");
     const build = await readFile("scripts/build-host-bundle.sh", "utf8");
