@@ -125,6 +125,7 @@ export default function NavigationHeader() {
   const collapsed = useUi((state) => state.sidebarCollapsed);
   const toggleSidebar = useUi((state) => state.toggleSidebar);
   const requestHomeRefresh = useUi((state) => state.requestHomeRefresh);
+  const requestTerminalOverview = useTabs((state) => state.requestTerminalOverview);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const activeThreadId = useThreads((state) => state.activeThreadId);
   const activeThreadTitle = useThreads((state) =>
@@ -177,17 +178,28 @@ export default function NavigationHeader() {
               {index > 0 ? (
                 <ChevronRight size={12} className="shrink-0" style={{ color: "var(--text-disabled)" }} />
               ) : null}
-              <span
-                className="max-w-[220px] truncate"
-                style={{
-                  color: index === breadcrumbs.length - 1
-                    ? "var(--text-primary)"
-                    : "var(--text-tertiary)",
-                  fontWeight: index === breadcrumbs.length - 1 ? 500 : 400,
-                }}
-              >
-                {breadcrumb.label}
-              </span>
+              {activeTab?.kind === "terminals" && index === 0 && breadcrumbs.length > 1 ? (
+                <button
+                  type="button"
+                  className="max-w-[220px] truncate rounded-sm px-0.5 hover:text-[var(--text-primary)]"
+                  style={{ color: "var(--text-tertiary)", fontWeight: 400 }}
+                  onClick={requestTerminalOverview}
+                >
+                  {breadcrumb.label}
+                </button>
+              ) : (
+                <span
+                  className="max-w-[220px] truncate"
+                  style={{
+                    color: index === breadcrumbs.length - 1
+                      ? "var(--text-primary)"
+                      : "var(--text-tertiary)",
+                    fontWeight: index === breadcrumbs.length - 1 ? 500 : 400,
+                  }}
+                >
+                  {breadcrumb.label}
+                </span>
+              )}
             </Fragment>
           ))}
           {breadcrumbs.length > 0 && hasContextActions ? (

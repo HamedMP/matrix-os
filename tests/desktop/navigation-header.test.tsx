@@ -153,7 +153,7 @@ describe("Desktop navigation header", () => {
     expect(screen.queryByRole("menuitem", { name: "Refresh Home" })).toBeNull();
   });
 
-  it("shows the current Terminal session in the breadcrumb without an action ellipsis", () => {
+  it("shows the current Terminal session in the breadcrumb and returns through the shared root", () => {
     useTabs.getState().openTab({
       kind: "terminals",
       title: "clever-comet",
@@ -165,6 +165,9 @@ describe("Desktop navigation header", () => {
     expect(breadcrumb.textContent).toBe("Terminalclever-comet");
     expect(breadcrumb.querySelectorAll(".lucide-chevron-right")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Actions for clever-comet" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({ sessionName: null });
   });
 
   it("uses the canonical session name for a native Terminal tab without an action ellipsis", () => {

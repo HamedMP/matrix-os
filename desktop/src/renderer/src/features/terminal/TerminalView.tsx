@@ -5,11 +5,12 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
-import { getThemeTerminalColors } from "../../design/themes";
-import { resolveThemeMode } from "../../design/themes/apply";
-import { useAppearance } from "../../stores/appearance";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import {
+  useTerminalAppearance,
+  type TerminalAppearanceMode,
+} from "../../stores/terminal-appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
@@ -31,6 +32,7 @@ import {
   safeTerminalUploadFilename,
   terminalPasteFiles,
 } from "./terminal-rich-paste";
+import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 const RECENT_ACTIVITY_THROTTLE_MS = 30_000;
@@ -61,16 +63,23 @@ interface TerminalViewProps {
   // is released so only the focused terminal holds a VPS attachment.
   active?: boolean;
   onRecreate?: () => void;
+  themeMode?: TerminalAppearanceMode;
 }
 
-export default function TerminalView({ sessionName, active = true, onRecreate }: TerminalViewProps) {
+// react-doctor-disable-next-line react-doctor/no-giant-component -- This component owns one xterm instance and its coupled attach, resize, link, paste, and teardown lifecycle. Splitting those effects across child components would obscure single-resource ownership; visual theme helpers and menus remain extracted.
+export default function TerminalView({
+  sessionName,
+  active = true,
+  onRecreate,
+  themeMode,
+}: TerminalViewProps) {
   const api = useConnection((state) => state.api);
-  const appearanceMode = useAppearance((state) => state.mode);
-  const appearanceThemeId = useAppearance((state) => state.themeId);
-  const terminalBackground = getThemeTerminalColors(
-    appearanceThemeId,
-    resolveThemeMode(appearanceMode),
-  ).background;
+  const persistedThemeMode = useTerminalAppearance((state) => state.mode);
+  const resolvedThemeMode = themeMode ?? persistedThemeMode;
+  const terminalTheme = getDesktopTerminalXtermTheme(resolvedThemeMode);
+  const terminalBackground = terminalTheme.background;
+  const latestThemeModeRef = useRef(resolvedThemeMode);
+  latestThemeModeRef.current = resolvedThemeMode;
   const hostRef = useRef<HTMLDivElement>(null);
   const [stateSessionName, setStateSessionName] = useState(sessionName);
   const termRef = useRef<Terminal | null>(null);
@@ -99,8 +108,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const appearance = useAppearance.getState();
-    const theme = getThemeTerminalColors(appearance.themeId, resolveThemeMode(appearance.mode));
+    const theme = getDesktopTerminalXtermTheme(latestThemeModeRef.current);
     const screenReaderMode = navigator.webdriver === true;
     const terminal = new Terminal({
       allowProposedApi: true,
@@ -192,15 +200,6 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     fitRef.current = fit;
     serializeRef.current = serialize;
 
-    // Restyle live terminals when the unified theme changes; unrelated store
-    // writes (hydration) must not reassign the palette.
-    const unsubscribeAppearance = useAppearance.subscribe((state, previous) => {
-      if (state.themeId === previous.themeId && state.mode === previous.mode) return;
-      const nextTheme = getThemeTerminalColors(state.themeId, resolveThemeMode(state.mode));
-      terminal.options.theme = nextTheme;
-      applyTerminalSurfaceTheme(terminal.element, nextTheme.background);
-    });
-
     let rafId: number | null = null;
     const observer = new ResizeObserver(() => {
       if (rafId !== null) cancelAnimationFrame(rafId);
@@ -218,7 +217,6 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onTerminalContextMenu);
       linkProviderDisposable.dispose();
-      unsubscribeAppearance();
       observer.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
@@ -235,6 +233,14 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
       termRef.current = null;
     };
   }, [closeTerminalContextMenu, sessionName]);
+
+  useEffect(() => {
+    const terminal = termRef.current;
+    if (!terminal) return;
+    const theme = getDesktopTerminalXtermTheme(resolvedThemeMode);
+    terminal.options.theme = theme;
+    applyTerminalSurfaceTheme(terminal.element, theme.background);
+  }, [resolvedThemeMode]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
   useEffect(() => {
@@ -404,7 +410,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
 
   return (
     <div
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4"
       data-terminal-surface
       style={{ backgroundColor: terminalBackground }}
     >
