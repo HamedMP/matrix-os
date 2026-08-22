@@ -38,14 +38,22 @@ Use this when the user wants Gmail, Calendar, Drive, GitHub, Slack, Discord, or 
 4. Call the service action through Matrix.
 5. Store resulting app data in Matrix/Postgres if needed.
 
-## Agent command
+## Agent tools
 
-Use the bundled `matrix-integrations` command. It supplies Matrix's local
-identity to the gateway without exposing that credential or any provider
-credential to the agent process.
+Prefer the native Matrix integrations MCP tools. They are registered for every
+supported agent and provide structured `list_integration_inventory`,
+`list_connected_services`, `describe_service`, `connect_service`,
+`sync_services`, `call_service`, and `disconnect_service` operations.
 
-Start a relevant task with `matrix-integrations inventory` so the user does
-not need to mention this skill or repeat which accounts are connected.
+At the start of a relevant task, call `list_integration_inventory` so the user
+does not need to mention this skill or repeat which accounts are connected.
+Use `describe_service` before an unfamiliar action, then use `call_service`.
+
+### Terminal fallback
+
+Only use the bundled `matrix-integrations` command when MCP tools are unavailable.
+It supplies Matrix's local identity to the gateway without exposing that
+credential or any provider credential to the agent process.
 
 ### List Connected Services
 

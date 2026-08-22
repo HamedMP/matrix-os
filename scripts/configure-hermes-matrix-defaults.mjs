@@ -8,6 +8,9 @@ import { parseDocument } from "yaml";
 const DEFAULTS_VERSION = 1;
 const MAX_CONFIG_BYTES = 1_048_576;
 const MATRIX_DISABLED_SKILLS = ["google-workspace", "himalaya"];
+const MATRIX_MCP_SERVER = {
+  command: "/opt/matrix/bin/matrix-integrations-mcp",
+};
 
 function errorCode(error) {
   return error && typeof error === "object" && "code" in error ? error.code : undefined;
@@ -81,15 +84,31 @@ async function main() {
   if (typeof current !== "object" || Array.isArray(current)) {
     throw new Error("Hermes config must be a mapping");
   }
-  const currentVersion = current.skills?.config?.matrix?.defaults_version;
-  if (Number.isInteger(currentVersion) && currentVersion >= DEFAULTS_VERSION) return;
 
-  const disabled = normalizedDisabledSkills(current.skills?.disabled);
-  document.setIn(
-    ["skills", "disabled"],
-    Array.from(new Set([...disabled, ...MATRIX_DISABLED_SKILLS])).sort(),
-  );
-  document.setIn(["skills", "config", "matrix", "defaults_version"], DEFAULTS_VERSION);
+  let changed = false;
+  const currentVersion = current.skills?.config?.matrix?.defaults_version;
+  if (!Number.isInteger(currentVersion) || currentVersion < DEFAULTS_VERSION) {
+    const disabled = normalizedDisabledSkills(current.skills?.disabled);
+    document.setIn(
+      ["skills", "disabled"],
+      Array.from(new Set([...disabled, ...MATRIX_DISABLED_SKILLS])).sort(),
+    );
+    document.setIn(["skills", "config", "matrix", "defaults_version"], DEFAULTS_VERSION);
+    changed = true;
+  }
+
+  const currentMcpServer = current.mcp_servers?.["matrix-integrations"];
+  if (
+    typeof currentMcpServer !== "object" ||
+    Array.isArray(currentMcpServer) ||
+    currentMcpServer.command !== MATRIX_MCP_SERVER.command ||
+    Object.keys(currentMcpServer).length !== 1
+  ) {
+    document.setIn(["mcp_servers", "matrix-integrations"], MATRIX_MCP_SERVER);
+    changed = true;
+  }
+
+  if (!changed) return;
 
   await atomicWrite(configPath, String(document));
 }

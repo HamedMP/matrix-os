@@ -33,8 +33,8 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(registration).toContain("codex mcp add matrix-integrations -- /opt/matrix/bin/matrix-integrations-mcp");
     expect(registration).toContain("claude mcp remove matrix-integrations");
     expect(registration).toContain("claude mcp add --transport stdio --scope user matrix-integrations -- /opt/matrix/bin/matrix-integrations-mcp");
-    expect(registration).toContain("hermes mcp remove matrix-integrations");
-    expect(registration).toContain("hermes mcp add matrix-integrations --command /opt/matrix/bin/matrix-integrations-mcp");
+    expect(registration).toContain("configure-hermes-matrix-defaults.mjs");
+    expect(registration).not.toContain("hermes mcp add matrix-integrations");
     expect(registration).toContain("openclaw mcp unset matrix-integrations");
     expect(registration).toContain("openclaw mcp add matrix-integrations --command /opt/matrix/bin/matrix-integrations-mcp --no-probe");
     await expect(access(registrationPath, constants.X_OK)).resolves.toBeUndefined();
@@ -78,6 +78,13 @@ describe("customer VPS integrations MCP wiring", () => {
 
     expect(hermes).toContain("configure-hermes-matrix-defaults.mjs");
     expect(build).toContain("configure-hermes-matrix-defaults.mjs");
+  });
+
+  it("teaches agents to prefer native MCP tools over the terminal fallback", async () => {
+    const skill = await readFile("skills/matrix/integrations/SKILL.md", "utf8");
+
+    expect(skill).toContain("Prefer the native Matrix integrations MCP tools");
+    expect(skill).toContain("Only use the bundled `matrix-integrations` command when MCP tools are unavailable");
   });
 
   it("packages the MCP launchers as host-bundle executables", async () => {

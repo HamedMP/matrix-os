@@ -35,6 +35,11 @@ describe("Matrix-managed Hermes defaults", () => {
 
       expect(await readConfig(hermesHome)).toEqual({
         model: "test/model",
+        mcp_servers: {
+          "matrix-integrations": {
+            command: "/opt/matrix/bin/matrix-integrations-mcp",
+          },
+        },
         skills: {
           disabled: ["google-workspace", "himalaya", "user-disabled-skill"],
           config: {
@@ -54,8 +59,10 @@ describe("Matrix-managed Hermes defaults", () => {
       await runDefaults(hermesHome);
       const configured = await readConfig(hermesHome) as {
         skills: { disabled: string[]; config: { matrix: { defaults_version: number } } };
+        mcp_servers?: Record<string, unknown>;
       };
       configured.skills.disabled = configured.skills.disabled.filter((name) => name !== "himalaya");
+      delete configured.mcp_servers;
       await writeFile(join(hermesHome, "config.yaml"), stringify(configured), { mode: 0o600 });
 
       await runDefaults(hermesHome);
@@ -64,6 +71,11 @@ describe("Matrix-managed Hermes defaults", () => {
         skills: { disabled: string[] };
       };
       expect(afterRestart.skills.disabled).toEqual(["google-workspace"]);
+      expect((await readConfig(hermesHome)).mcp_servers).toEqual({
+        "matrix-integrations": {
+          command: "/opt/matrix/bin/matrix-integrations-mcp",
+        },
+      });
     } finally {
       await rm(hermesHome, { recursive: true, force: true });
     }

@@ -50,8 +50,12 @@ register_claude() {
 
 register_hermes() {
   [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] || return 0
-  runtime_env hermes mcp remove matrix-integrations >/dev/null 2>&1 || true
-  runtime_env hermes mcp add matrix-integrations --command /opt/matrix/bin/matrix-integrations-mcp
+  local config_script="/opt/matrix/app/scripts/configure-hermes-matrix-defaults.mjs"
+  if [ ! -f "$config_script" ]; then
+    echo "matrix-register-integrations-mcp: Hermes Matrix configuration is unavailable" >&2
+    return 1
+  fi
+  runtime_env /opt/matrix/runtime/node/bin/node "$config_script"
 }
 
 register_openclaw() {
