@@ -388,6 +388,9 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         loadingConversationId: null,
         seenReplayEventIds: [],
       });
+      // The history endpoint excludes assistant/tool rows from an active run,
+      // so its snapshot and the request-scoped active replay are disjoint.
+      // Completed runs stay suppressed because their rows are fully persisted.
       switchKernelSession(parsedId.data, { replayCompleted: false });
       return true;
     } catch (error: unknown) {

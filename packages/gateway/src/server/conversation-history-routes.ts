@@ -27,6 +27,7 @@ function boundedToolText(value: unknown): string | undefined {
     .replace(/([?&](?:api[-_]?key|access[-_]?key|access[-_]?token|auth[-_]?token|client[-_]?secret|credential|id[-_]?token|refresh[-_]?token|token|password|passwd|secret)=)([^&#\s'"]+)/gi, "$1[redacted]")
     .replace(/(?<![?&])\b([A-Za-z_][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE_KEY|CREDENTIAL)[A-Za-z0-9_]*=)(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1[redacted]")
     .replace(/authorization\s*:\s*(?:bearer\s+)?[^'"\s]+/gi, "Authorization: [redacted]")
+    .replace(/(\b(?:x[-_])?(?:api[-_]?key|access[-_]?key|auth[-_]?token|access[-_]?token|client[-_]?secret|credential|token|password|passwd|secret)\s*:\s*)[^'"\s]+/gi, "$1[redacted]")
     .replace(/(^|\s)((?:--?)?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret)(?:=|\s+))(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2[redacted]")
     .replace(/(^|\s)(-u|--user)\s+(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2 [redacted]")
     .replace(/\b(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
@@ -100,6 +101,10 @@ export function registerConversationHistoryRoutes(
       }
 
       const activeHistoryStart = deps.conversationLifecycle.getActiveHistoryStart(id.data);
+      // The active run registry replays the current turn over the WebSocket.
+      // Keep the REST snapshot deliberately disjoint: settled history plus
+      // the already-persisted user prompt, but never the assistant/tool rows
+      // represented by that active buffer.
       const activePromptCount = activeHistoryStart !== null
         && conversation.messages[activeHistoryStart]?.role === "user" ? 1 : 0;
       const visibleMessages = activeHistoryStart === null

@@ -305,7 +305,10 @@ describe("ChatTab", () => {
           content: "Using Bash...",
           tool: "Bash",
           requestId: "request-command-copy",
-          toolInput: { command: "API_KEY=supersecret git status --short", unrelated: "do-not-render" },
+          toolInput: {
+            command: "curl -H 'X-Api-Key: header-secret' API_KEY=supersecret https://example.com",
+            unrelated: "do-not-render",
+          },
           timestamp: 2_000,
         },
       ],
@@ -314,10 +317,11 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     expect(screen.queryByText(/supersecret/)).toBeNull();
+    expect(screen.queryByText(/header-secret/)).toBeNull();
     expect(screen.queryByText(/do-not-render/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      "API_KEY=[redacted] git status --short",
+      "curl -H 'X-Api-Key: [redacted]' API_KEY=[redacted] https://example.com",
     ));
     expect(screen.getByRole("button", { name: "Copied command" })).toBeTruthy();
   });

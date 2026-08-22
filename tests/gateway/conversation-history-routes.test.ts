@@ -125,6 +125,18 @@ describe("kernel conversation history route", () => {
   it("omits persisted in-flight output when the active run will replay it", async () => {
     const runs = new ConversationRunRegistry();
     runs.begin("conversation-1", 2);
+    runs.publish("conversation-1", {
+      type: "kernel:text",
+      text: "in-flight answer",
+      requestId: "request-live",
+      eventId: "conversation-1:request-live:1",
+    });
+    runs.publish("conversation-1", {
+      type: "kernel:tool_start",
+      tool: "Bash",
+      requestId: "request-live",
+      eventId: "conversation-1:request-live:2",
+    });
     const app = createApp(createStore({
       get: vi.fn(() => ({
         id: "conversation-1",
@@ -154,6 +166,14 @@ describe("kernel conversation history route", () => {
       "previous answer",
       "current prompt",
     ]);
+    const attachment = runs.attachWithBufferedSnapshot("conversation-1", () => {});
+    expect(attachment?.bufferedMessages).toEqual([
+      expect.objectContaining({ type: "kernel:text", text: "in-flight answer" }),
+      expect.objectContaining({ type: "kernel:tool_start", tool: "Bash" }),
+    ]);
+    expect(JSON.stringify(body.messages)).not.toContain("in-flight answer");
+    expect(JSON.stringify(body.messages)).not.toContain("Using Bash");
+    attachment?.detach();
   });
 
   it("truncates large content and returns only bounded, redacted tool display data", async () => {
@@ -176,7 +196,7 @@ describe("kernel conversation history route", () => {
             timestamp: 3,
             tool: "Bash",
             toolInput: {
-              command: "curl -H 'Authorization: Bearer super-secret' https://example.com && git status --short",
+              command: "curl -H 'Authorization: Bearer super-secret' -H 'X-Api-Key: header-secret' https://example.com && git status --short",
             },
           },
           {
@@ -218,7 +238,7 @@ describe("kernel conversation history route", () => {
     expect(body.messages[1]).not.toHaveProperty("toolInput");
     expect(body.messages[1]?.toolDisplay).toEqual({
       kind: "command",
-      preview: "curl -H 'Authorization: [redacted]' https://example.com && git status --short",
+      preview: "curl -H 'Authorization: [redacted]' -H 'X-Api-Key: [redacted]' https://example.com && git status --short",
     });
     expect(body.messages[2]).not.toHaveProperty("toolDisplay");
     expect(body.messages[3]?.toolDisplay).toEqual({
@@ -233,6 +253,7 @@ describe("kernel conversation history route", () => {
     expect(JSON.stringify(body)).not.toContain("aws-secret");
     expect(JSON.stringify(body)).not.toContain("alice:pw");
     expect(JSON.stringify(body)).not.toContain("query-secret");
+    expect(JSON.stringify(body)).not.toContain("header-secret");
     expect(JSON.stringify(body)).not.toContain("oauth-secret");
     expect(JSON.stringify(body)).not.toContain("/home/private");
   });
