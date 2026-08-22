@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import * as Tooltip from "@radix-ui/react-tooltip";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
+import ProjectsIndex from "../../desktop/src/renderer/src/features/project/ProjectsIndex";
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
@@ -39,10 +38,10 @@ describe("add-project entry points", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens the add-project dialog from the sidebar projects plus button", () => {
-    render(<Tooltip.Provider><Sidebar /></Tooltip.Provider>);
+  it("opens the add-project dialog from the Projects index", () => {
+    render(<ProjectsIndex />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
 
     expect(useUi.getState().createProjectOpen).toBe(true);
   });

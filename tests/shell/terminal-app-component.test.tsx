@@ -682,6 +682,26 @@ describe("TerminalApp", () => {
     expect(contentSurface.style.background).toBe("rgb(28, 32, 25)");
   });
 
+  it("unmounts only the pane grid while a Canvas terminal is suspended", async () => {
+    const { rerender } = render(
+      <TerminalApp initialSessionId="canvas-session-123" suspended />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("terminal-pane-grid")).toBeNull();
+    expect(screen.getByRole("application", { name: "Terminal" })).toBeTruthy();
+
+    act(() => {
+      rerender(<TerminalApp initialSessionId="canvas-session-123" suspended={false} />);
+    });
+
+    expect(screen.getByTestId("terminal-pane-grid")).toBeTruthy();
+  });
+
   it("uses the selected non-system terminal theme background for the flush content surface", async () => {
     terminalSettingsState.themeId = "dark";
 
@@ -2276,7 +2296,7 @@ describe("TerminalApp", () => {
     ))).toHaveLength(0);
   });
 
-  it("focuses active shell rows without creating duplicate attached tabs or layout save noise", async () => {
+  it("re-requests focus for active shell rows without creating duplicate attached tabs or layout save noise", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -2288,6 +2308,9 @@ describe("TerminalApp", () => {
     const fetchMock = vi.mocked(global.fetch);
     fetchMock.mockClear();
     const paneRenderCount = paneGridSpy.mock.calls.length;
+    const focusRequestBeforeClick = (paneGridSpy.mock.lastCall?.[0] as {
+      focusRequestId: number;
+    }).focusRequestId;
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
@@ -2296,7 +2319,11 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(paneGridSpy.mock.calls).toHaveLength(paneRenderCount);
+    expect(paneGridSpy.mock.calls).toHaveLength(paneRenderCount + 1);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      focusRequestId: focusRequestBeforeClick + 1,
+      paneTree: { sessionId: "main" },
+    });
     const layoutSaveCalls = fetchMock.mock.calls.filter(([input, init]) => (
       String(input).includes("/api/terminal/layout") && init?.method === "PUT"
     ));

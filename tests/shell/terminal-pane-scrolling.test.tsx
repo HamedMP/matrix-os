@@ -90,6 +90,10 @@ const restorePlan = vi.hoisted(() => ({
   },
 }));
 
+const socketHealthConfigs = vi.hoisted(() => [] as Array<{ pingIntervalMs: number }>);
+
+const useActualRestorePlan = vi.hoisted(() => ({ current: false }));
+
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     element: HTMLElement | null = null;
@@ -236,18 +240,27 @@ vi.mock("@xterm/addon-image", () => ({
   ImageAddon: class MockImageAddon {},
 }));
 
-vi.mock("../../shell/src/components/terminal/terminal-cache.js", () => ({
-  cacheTerminal: vi.fn(),
-  takeCached: vi.fn(() => null),
-  removeCached: vi.fn(),
-  hasCached: vi.fn(() => false),
-}));
+vi.mock("../../shell/src/components/terminal/terminal-cache.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../shell/src/components/terminal/terminal-cache.js")>();
+  return {
+    ...actual,
+    cacheTerminal: vi.fn(actual.cacheTerminal),
+    takeCached: vi.fn(actual.takeCached),
+    removeCached: vi.fn(actual.removeCached),
+    hasCached: vi.fn(actual.hasCached),
+  };
+});
 
-vi.mock("../../shell/src/components/terminal/terminal-restore.js", () => ({
-  getCachedTerminalRestorePlan: vi.fn(() => restorePlan.current),
-  discardStaleCachedTerminal: vi.fn(),
-  closeStaleCachedSocket: vi.fn(),
-}));
+vi.mock("../../shell/src/components/terminal/terminal-restore.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../shell/src/components/terminal/terminal-restore.js")>();
+  return {
+    getCachedTerminalRestorePlan: vi.fn((cached) => (
+      useActualRestorePlan.current ? actual.getCachedTerminalRestorePlan(cached) : restorePlan.current
+    )),
+    discardStaleCachedTerminal: vi.fn(actual.discardStaleCachedTerminal),
+    closeStaleCachedSocket: vi.fn(actual.closeStaleCachedSocket),
+  };
+});
 
 vi.mock("../../shell/src/components/terminal/terminal-appearance.js", () => ({
   applyTerminalAppearance: vi.fn(),
@@ -258,12 +271,15 @@ vi.mock("@/lib/websocket-auth", () => ({
 }));
 
 vi.mock("@/lib/socket-health", () => ({
-  createSocketHealth: vi.fn(() => ({
+  createSocketHealth: vi.fn((config: { pingIntervalMs: number }) => {
+    socketHealthConfigs.push(config);
+    return {
     start: vi.fn(),
     stop: vi.fn(),
     pingNow: vi.fn(),
     receivedPong: vi.fn(),
-  })),
+    };
+  }),
 }));
 
 vi.mock("@/lib/posthog-client", () => ({
@@ -414,6 +430,7 @@ describe("TerminalPane scrolling", () => {
       lastSeq: 0,
       hasReplayCursor: false,
     };
+    useActualRestorePlan.current = false;
     globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
     globalThis.WebSocket = WebSocketMock as unknown as typeof WebSocket;
     globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
@@ -434,6 +451,7 @@ describe("TerminalPane scrolling", () => {
     WebSocketMock.instances.length = 0;
     ResizeObserverMock.instances.length = 0;
     buildAuthenticatedWebSocketUrl.mockClear();
+    socketHealthConfigs.length = 0;
     Reflect.deleteProperty(window, "visualViewport");
   });
 
@@ -458,6 +476,7 @@ describe("TerminalPane scrolling", () => {
       expect.objectContaining({
         session: "main",
         client: "hard",
+        lease: "exclusive",
         cols: "120",
         rows: "42",
       }),
@@ -465,6 +484,55 @@ describe("TerminalPane scrolling", () => {
     expect(createdFitAddons[0].proposeDimensions).toHaveBeenCalled();
     expect(createdFitAddons[0].fit).not.toHaveBeenCalled();
     expect(createdTerminals[0].resize).not.toHaveBeenCalled();
+  });
+
+  it("renews the focused web terminal lease well before gateway expiry", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-heartbeat"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    WebSocketMock.instances[0]!.onopen?.();
+
+    expect(socketHealthConfigs.at(-1)?.pingIntervalMs).toBe(10_000);
+  });
+
+  it("resets the web xterm before a replacement Zellij presentation", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-presentation-reset"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const socket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      socket.onmessage?.({ data: JSON.stringify({ type: "presentation-reset" }) });
+    });
+
+    expect(terminal.reset).toHaveBeenCalledOnce();
   });
 
   it("waits for a measurable hard pane instead of attaching with a destructive fallback", async () => {
@@ -499,6 +567,7 @@ describe("TerminalPane scrolling", () => {
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 1_010 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 660 });
     createdFitAddons[0].proposeDimensions.mockReturnValue({ cols: 999, rows: 999 });
+    await waitFor(() => expect(ResizeObserverMock.instances).not.toHaveLength(0));
     await act(async () => {
       ResizeObserverMock.instances.at(-1)!.trigger();
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1468,6 +1537,7 @@ describe("TerminalPane scrolling", () => {
     const firstMount = render(<TerminalPane {...props} />);
 
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
     const firstSocket = WebSocketMock.instances[0]!;
     const terminal = createdTerminals[0]!;
     await act(async () => {
@@ -1475,6 +1545,8 @@ describe("TerminalPane scrolling", () => {
         data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 7 }),
       });
       firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 7, data: "cached-output\r\n" }) });
+    });
+    await act(async () => {
       firstMount.unmount();
       await Promise.resolve();
     });
@@ -1510,6 +1582,63 @@ describe("TerminalPane scrolling", () => {
     expect(createdTerminals).toHaveLength(1);
     expect(terminal.write.mock.calls.filter(([data]) => data === "cached-output\r\n")).toHaveLength(1);
     expect(new URL(WebSocketMock.instances[1]!.url).searchParams.get("fromSeq")).toBe("8");
+  });
+
+  it("detaches and restores a suspended canonical pane with replay and current dimensions", async () => {
+    const props = {
+      paneId: "pane-suspension-lifecycle-test",
+      cwd: "",
+      theme,
+      isFocused: false,
+      isClosing: false,
+      sessionId: "main",
+      shouldCacheOnUnmount: () => true,
+      shouldDestroyOnUnmount: () => false,
+      onFocus: () => {},
+    } satisfies Parameters<typeof TerminalPane>[0];
+    useActualRestorePlan.current = true;
+    const firstMount = render(<TerminalPane {...props} />);
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+    await waitFor(() => expect(firstSocket.onmessage).not.toBeNull());
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      firstMount.unmount();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(mockedCacheTerminal).toHaveBeenCalled());
+    const cachedEntry = mockedCacheTerminal.mock.calls.at(-1)![1];
+    expect(cachedEntry.terminal).toBe(terminal);
+    expect(cachedEntry.lastSeq).toBe(0);
+    expect(cachedEntry.hasReplayCursor).toBe(false);
+    expect(mockedCacheTerminal.mock.calls.at(-1)![2]).toEqual({ retainSocket: false });
+    expect(firstSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: "detach" }));
+    expect(firstSocket.close).toHaveBeenCalledOnce();
+
+    render(<TerminalPane {...props} />);
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+
+    expect(createdTerminals).toHaveLength(1);
+    const restoredSocket = WebSocketMock.instances[1]!;
+    expect(new URL(restoredSocket.url).searchParams.get("fromSeq")).toBe("0");
+
+    await act(async () => {
+      restoredSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+      restoredSocket.onmessage?.({
+        data: JSON.stringify({ type: "output", seq: 0, data: "replayed-after-restore\r\n" }),
+      });
+      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "canonical-size", cols: 132, rows: 36 }) });
+      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-end", toSeq: 0 }) });
+    });
+
+    expect(terminal.write.mock.calls.filter(([data]) => data === "replayed-after-restore\r\n")).toHaveLength(1);
+    expect(terminal.resize).toHaveBeenLastCalledWith(132, 36);
   });
 
   it.each([0, 60])("uses attached fromSeq %i as the reconnect cursor before output arrives", async (fromSeq) => {

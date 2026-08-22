@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+unit="${1:-}"
+case "$unit" in
+  matrix-gateway.service|matrix-shell.service|matrix-sync-agent.service) ;;
+  *) echo "unsupported Matrix service diagnostic unit" >&2; exit 64 ;;
+esac
+
+root="${MATRIX_GOLDEN_DIAGNOSTICS_ROOT:-/run}"
+case "$root" in
+  /*) ;;
+  *) echo "Matrix service diagnostic root must be absolute" >&2; exit 64 ;;
+esac
+root="${root%/}"
+[ -n "$root" ] || root=/
+if [ -L "$root" ] || [ ! -d "$root" ]; then
+  echo "Matrix service diagnostic root must be a real directory" >&2
+  exit 64
+fi
+
+output="$root/matrix-golden-service-diagnostics.json"
+properties_file="$(mktemp "$root/matrix-golden-systemd-properties.XXXXXX")"
+journal_file="$(mktemp "$root/matrix-golden-systemd-journal.XXXXXX")"
+diagnostics_tmp="$(mktemp "$root/matrix-golden-service-diagnostics.XXXXXX")"
+cleanup() {
+  rm -f -- "$properties_file" "$journal_file" "$diagnostics_tmp"
+}
+trap cleanup EXIT HUP INT TERM
+chmod 0600 "$properties_file" "$journal_file" "$diagnostics_tmp"
+
+timeout --kill-after=2 5 systemctl show "$unit" --no-pager \
+  --property=LoadState --property=ActiveState --property=SubState --property=Result \
+  --property=ConditionResult --property=ExecMainCode --property=ExecMainStatus \
+  --property=NRestarts >"$properties_file" 2>/dev/null || true
+timeout --kill-after=2 5 journalctl --unit "$unit" --no-pager --output=cat \
+  --lines=40 >"$journal_file" 2>/dev/null || true
+
+python3 - "$unit" "$properties_file" "$journal_file" >"$diagnostics_tmp" <<'PY'
+import json
+import re
+import sys
+
+unit, properties_path, journal_path = sys.argv[1:]
+properties = {}
+with open(properties_path, encoding='utf-8', errors='replace') as handle:
+    for raw_line in handle:
+        key, separator, value = raw_line.rstrip('\n').partition('=')
+        if separator:
+            properties[key] = value
+
+def bounded_int(name, maximum):
+    try:
+        return max(0, min(int(properties.get(name, '0')), maximum))
+    except ValueError:
+        return 0
+
+def state(name):
+    value = properties.get(name, 'unknown')
+    return value if re.fullmatch(r'[A-Za-z0-9_.:@-]{1,64}', value) else 'unknown'
+
+def redact(line):
+    line = re.sub(r'([A-Za-z][A-Za-z0-9+.-]*://)[^/\s:@]+:[^@\s]+@', r'\1[REDACTED]@', line)
+    line = re.sub(
+        r'(?i)\b(authorization|token|secret|password|database_url)\b([:=\s]+)\S+',
+        r'\1\2[REDACTED]',
+        line,
+    )
+    line = re.sub(r'\b[A-Za-z0-9_+/=-]{32,}\b', '[REDACTED]', line)
+    return line[:512]
+
+with open(journal_path, encoding='utf-8', errors='replace') as handle:
+    journal_tail = [redact(line.rstrip('\r\n')) for line in handle][-40:]
+
+condition = properties.get('ConditionResult')
+payload = {
+    'unit': unit,
+    'loadState': state('LoadState'),
+    'activeState': state('ActiveState'),
+    'subState': state('SubState'),
+    'result': state('Result'),
+    'conditionResult': True if condition == 'yes' else False if condition == 'no' else None,
+    'execMainCode': state('ExecMainCode'),
+    'execMainStatus': bounded_int('ExecMainStatus', 2**31 - 1),
+    'nRestarts': bounded_int('NRestarts', 10_000),
+    'journalTail': journal_tail,
+}
+json.dump(payload, sys.stdout, separators=(',', ':'))
+PY
+
+mv -f -- "$diagnostics_tmp" "$output"
+trap - EXIT HUP INT TERM
+rm -f -- "$properties_file" "$journal_file"

@@ -27,6 +27,10 @@ export interface ProjectWorkspaceEntry {
 
 export const MAX_PROJECT_WORKSPACE_ENTRIES = 12;
 
+export interface ProjectWorkspaceRefreshOptions {
+  preserveEmptySelection?: boolean;
+}
+
 interface ProjectWorkspacesState {
   entries: Record<string, ProjectWorkspaceEntry>;
   // Identity this cache belongs to. Project ids are board slugs, so two
@@ -36,7 +40,7 @@ interface ProjectWorkspacesState {
   runtimeScope: string | null;
   ensureRuntimeScope: (scope: string) => void;
   ensure: (projectId: string) => Promise<void>;
-  refresh: (projectId: string) => Promise<void>;
+  refresh: (projectId: string, options?: ProjectWorkspaceRefreshOptions) => Promise<void>;
   loadMore: (projectId: string) => Promise<void>;
   resolveNewChatTarget: (
     projectId: string,
@@ -62,6 +66,9 @@ interface WorkspacePage<T extends { id: string }> {
   limit: number;
 }
 
+interface WorkspaceLoadOptions extends ProjectWorkspaceRefreshOptions {
+  append?: boolean;
+}
 
 function nextGeneration(projectId: string): number {
   const generation = (loadGenerations[projectId] ?? 0) + 1;
@@ -186,12 +193,16 @@ function mergeWorkspacePages(
   };
 }
 
-async function performWorkspaceLoad(projectId: string, append = false): Promise<void> {
+async function performWorkspaceLoad(
+  projectId: string,
+  options: WorkspaceLoadOptions = {},
+): Promise<void> {
   const previousWorkspace = useProjectWorkspaces.getState().entries[projectId]?.workspace ?? null;
-  const shouldAppend = append && previousWorkspace !== null;
+  const shouldAppend = options.append === true && previousWorkspace !== null;
   if (shouldAppend && !canLoadMoreWorkspace(previousWorkspace)) return;
   const runtimeGeneration = captureRuntimeGeneration();
   const generation = nextGeneration(projectId);
+  const selectionRevisionAtLoadStart = useProjectView.getState().selectionRevisionFor(projectId);
   useProjectWorkspaces.setState((state) => ({
     entries: {
       ...state.entries,
@@ -219,12 +230,18 @@ async function performWorkspaceLoad(projectId: string, append = false): Promise<
     }));
     // Reconcile the persisted chat selection against the fresh projection.
     const projectView = useProjectView.getState();
+    const currentSelection = projectView.selectedThreadFor(projectId);
+    const selectedNewChatDuringLoad = currentSelection === null
+      && projectView.selectionRevisionFor(projectId) !== selectionRevisionAtLoadStart;
+    if ((options.preserveEmptySelection || selectedNewChatDuringLoad) && currentSelection === null) {
+      return;
+    }
     const selected = reconcileProjectChatSelection(
       workspace,
-      projectView.selectedThreadFor(projectId),
+      currentSelection,
       summaryThreadIdsFor(projectId),
     );
-    if (selected !== projectView.selectedThreadFor(projectId)) {
+    if (selected !== currentSelection) {
       projectView.setSelectedThread(projectId, selected);
     }
   } catch (error: unknown) {
@@ -250,7 +267,7 @@ async function performWorkspaceLoad(projectId: string, append = false): Promise<
   }
 }
 
-function loadWorkspace(projectId: string, append = false): Promise<void> {
+function loadWorkspace(projectId: string, options: WorkspaceLoadOptions = {}): Promise<void> {
   const token = loadQueueTokens[projectId] ?? Symbol(projectId);
   loadQueueTokens[projectId] = token;
   const previous = activeLoadPromises[projectId];
@@ -260,9 +277,9 @@ function loadWorkspace(projectId: string, append = false): Promise<void> {
   const work = previous
     ? previous.then(async () => {
         if (loadQueueTokens[projectId] !== token) return;
-        await performWorkspaceLoad(projectId, append);
+        await performWorkspaceLoad(projectId, options);
       })
-    : performWorkspaceLoad(projectId, append);
+    : performWorkspaceLoad(projectId, options);
   const pending = work.finally(() => {
     if (activeLoadPromises[projectId] === pending) {
       delete activeLoadPromises[projectId];
@@ -303,12 +320,12 @@ export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) 
     }
   },
 
-  refresh: async (projectId) => {
-    await loadWorkspace(projectId);
+  refresh: async (projectId, options) => {
+    await loadWorkspace(projectId, options);
   },
 
   loadMore: async (projectId) => {
-    await loadWorkspace(projectId, true);
+    await loadWorkspace(projectId, { append: true });
   },
 
   resolveNewChatTarget: async (projectId, taskId) => {

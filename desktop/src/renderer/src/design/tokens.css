@@ -32,6 +32,7 @@
   --border-subtle: #ebe9e1;
   --border-default: #d6d3c8;
   --border-strong: #c4c0b2;
+  --sidebar-divider: color-mix(in srgb, var(--border-subtle) 62%, transparent);
 
   /* ── Text ───────────────────────────────────────────────────── */
   --text-primary: #282c25;
@@ -55,8 +56,9 @@
   --danger-muted: rgba(200, 85, 61, 0.12);
   --info: #4a7c92;
   --info-muted: rgba(74, 124, 146, 0.12);
-  --update-action: #5965e8;
-  --update-action-muted: rgba(89, 101, 232, 0.12);
+  --update-action: #2f9bff;
+  --update-action-foreground: #ffffff;
+  --update-action-muted: rgba(47, 155, 255, 0.12);
 
   /* ── Status (tasks / threads / sessions) ────────────────────── */
   --status-todo: #8a8576;
@@ -69,6 +71,7 @@
 
   /* ── Typography ─────────────────────────────────────────────── */
   --font-ui: "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-editorial: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   --font-mono: "JetBrains Mono", "MesloLGS NF", "SF Mono", ui-monospace, monospace;
   --text-xs: 11px;
   --text-sm: 12px;
@@ -83,11 +86,11 @@
   --radius: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
-  --titlebar-height: 40px;
+  --titlebar-height: 38px;
   --tabbar-height: 38px;
   --sidebar-expanded-width: 240px;
-  --sidebar-collapsed-width: 56px;
-  --sidebar-row-height: 32px;
+  --sidebar-collapsed-width: 0px;
+  --sidebar-row-height: 28px;
   --sidebar-menu-width: 248px;
   --sidebar-account-menu-width: 224px;
 
@@ -148,8 +151,9 @@
   --accent-muted: rgba(140, 199, 190, 0.16);
   --highlight: #d8853f;
   --highlight-muted: rgba(216, 133, 63, 0.18);
-  --update-action: #7c83ff;
-  --update-action-muted: rgba(124, 131, 255, 0.18);
+  --update-action: #2f9bff;
+  --update-action-foreground: #ffffff;
+  --update-action-muted: rgba(47, 155, 255, 0.18);
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.5);

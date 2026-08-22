@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -103,7 +103,7 @@ describe("Sidebar attention badges", () => {
     expect(screen.getByRole("button", { name: /^Chat\s*2$/ })).toBeTruthy();
   });
 
-  it("shows the coding-agent attention count on the project row", () => {
+  it("shows the aggregate coding-agent attention count on the Projects row", () => {
     useCodingAgentWorkspace.setState({ summary: summaryWithProjectAttention(3) });
 
     render(
@@ -112,8 +112,8 @@ describe("Sidebar attention badges", () => {
       </Tooltip.Provider>,
     );
 
-    const projectButton = screen.getByRole("button", { name: "Open Matrix OS" });
-    expect(within(projectButton).getByText("3")).toBeTruthy();
+    const projectsButton = screen.getByRole("button", { name: /^Projects\s*3$/ });
+    expect(within(projectsButton).getByText("3")).toBeTruthy();
   });
 
   it("no longer offers the retired Agents workspace row", () => {
@@ -138,13 +138,18 @@ describe("Sidebar attention badges", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toBeTruthy();
-    const projectButton = screen.getByRole("button", { name: "Open Matrix OS" });
-    expect(within(projectButton).queryByText("0")).toBeNull();
+    const projectsButton = screen.getByRole("button", { name: "Projects" });
+    expect(within(projectsButton).queryByText("0")).toBeNull();
   });
 
-  it("places a ready update outside and before the account row", () => {
+  it("places a ready update at the right edge of the account row", () => {
     useDesktopUpdate.setState({
-      snapshot: { status: "ready", version: "1.2.3", progress: 100 },
+      snapshot: {
+        status: "ready",
+        version: "1.2.3",
+        progress: 100,
+        release: { version: "1.2.3", notes: "## Improved\n\n- Faster updates" },
+      },
     });
 
     render(
@@ -156,7 +161,8 @@ describe("Sidebar attention badges", () => {
     const update = screen.getByRole("button", { name: "Update Matrix OS to 1.2.3" });
     const account = screen.getByRole("button", { name: "Open account menu" });
 
-    expect(update.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(update.parentElement).not.toBe(account.parentElement);
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+    expect(account.compareDocumentPosition(update) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(update.parentElement).toBe(account.parentElement);
   });
 });

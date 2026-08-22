@@ -39,6 +39,10 @@ describe("ChatTab", () => {
       disconnect() {}
     }
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn(async () => undefined) },
+    });
     useBoard.setState({
       projects: [{ slug: "matrix-os", name: "Matrix OS" }],
     });
@@ -98,6 +102,264 @@ describe("ChatTab", () => {
       .toContain("justify-start");
     expect(container.querySelector('[data-slot="message-scroller-content"]')?.className)
       .not.toContain("30vh");
+  });
+
+  it("collapses completed work behind the receipt while keeping the final response visible", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [
+        { id: "user-1", role: "user", content: "Inspect the repo", requestId: "request-1", timestamp: 1_000 },
+        { id: "assistant-1", role: "assistant", content: "I’ll inspect it.", requestId: "request-1", timestamp: 2_000 },
+        { id: "tool-1", role: "system", content: "Used ToolSearch", tool: "ToolSearch", requestId: "request-1", toolInput: { query: "repository tools" }, timestamp: 3_000 },
+        { id: "tool-2", role: "system", content: "Used Read", tool: "Read", requestId: "request-1", toolDisplay: { kind: "file", preview: "README.md" }, timestamp: 6_000 },
+        { id: "tool-3", role: "system", content: "Used Bash", tool: "Bash", requestId: "request-1", toolDisplay: { kind: "command", preview: "git status --short" }, timestamp: 8_000 },
+        { id: "assistant-2", role: "assistant", content: "The repository is clean.", requestId: "request-1", timestamp: 13_000 },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    const receipt = screen.getByRole("button", { name: "Worked for 12s" });
+    expect(receipt.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("I’ll inspect it.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "2 previous tool calls" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
+    expect(screen.getByText("The repository is clean.")).toBeTruthy();
+
+    fireEvent.click(receipt);
+    expect(receipt.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("I’ll inspect it.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ran command: git status --short" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "2 previous tool calls" }));
+    expect(screen.getByRole("button", { name: "Searched tools: repository tools" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Read file: README.md" })).toBeTruthy();
+
+    fireEvent.click(receipt);
+    expect(screen.queryByText("I’ll inspect it.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
+    expect(screen.getByText("The repository is clean.")).toBeTruthy();
+  });
+
+  it("renders T3-style path chips and hover metadata on the final assistant response", async () => {
+    const completedAt = new Date("2026-08-22T00:05:00.000+08:00").getTime();
+    const response = "- `pwd`: `/home/matrix/home/matrixos`\n- `uname -s`: `Darwin`";
+    useHermesChat.setState({
+      status: "idle",
+      messages: [
+        { id: "user-polish", role: "user", content: "Inspect this computer", requestId: "request-polish", timestamp: completedAt - 23_000 },
+        { id: "assistant-polish", role: "assistant", content: response, requestId: "request-polish", timestamp: completedAt },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    const folderChip = screen.getByLabelText("Folder path: matrixos");
+    expect(folderChip.getAttribute("title")).toBe("/home/matrix/home/matrixos");
+    expect(screen.getByText("pwd").className).toContain("border");
+    expect(screen.getByLabelText(`Assistant message sent at ${new Date(completedAt).toISOString()}`)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy assistant message" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(response));
+    expect(screen.getByRole("button", { name: "Copied assistant message" })).toBeTruthy();
+  });
+
+  it("offers the same hover copy and timestamp affordances on user input", async () => {
+    const sentAt = new Date("2026-08-22T00:04:37.000+08:00").getTime();
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{ id: "user-meta", role: "user", content: "Show the current folder", timestamp: sentAt }],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByLabelText(`User message sent at ${new Date(sentAt).toISOString()}`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy user message" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("Show the current folder"));
+    expect(screen.getByRole("button", { name: "Copied user message" })).toBeTruthy();
+  });
+
+  it("renders fenced commands as bounded code cards with copy feedback", async () => {
+    const response = "```sh\npwd && git status --short\n```";
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{ id: "assistant-code", role: "assistant", content: response, timestamp: 10_000 }],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByText("sh")).toBeTruthy();
+    const pre = screen.getByText("pwd && git status --short").closest("pre");
+    expect(pre?.className).toContain("overflow-x-auto");
+    fireEvent.click(screen.getByRole("button", { name: "Wrap code block" }));
+    expect(pre?.className).toContain("whitespace-pre-wrap");
+    expect(screen.getByRole("button", { name: "Disable code wrapping" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy code block" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("pwd && git status --short"));
+    expect(screen.getByRole("button", { name: "Copied code block" })).toBeTruthy();
+  });
+
+  it("keeps structured agent output readable and copyable with GFM tables", async () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{
+        id: "assistant-table",
+        role: "assistant",
+        content: "| File | Status |\n| --- | --- |\n| README.md | clean |",
+        timestamp: 10_000,
+      }],
+    });
+
+    render(<ChatTab />);
+
+    const table = screen.getByRole("table");
+    expect(table.className).toContain("border-collapse");
+    expect(screen.getByRole("columnheader", { name: "File" })).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "README.md" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy table as Markdown" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "| File | Status |\n| --- | --- |\n| README.md | clean |",
+    ));
+    expect(screen.getByRole("button", { name: "Copied table as Markdown" })).toBeTruthy();
+  });
+
+  it("renders safe external links and native GFM task state", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [{
+        id: "assistant-rich-markdown",
+        role: "assistant",
+        content: "- [x] Checked\n\n[Matrix](https://matrix-os.com)",
+        timestamp: 10_000,
+      }],
+    });
+
+    render(<ChatTab />);
+
+    const task = screen.getByRole("checkbox", { name: "Completed task" }) as HTMLInputElement;
+    expect(task.checked).toBe(true);
+    expect(task.disabled).toBe(true);
+    expect(task.hasAttribute("node")).toBe(false);
+    const link = screen.getByRole("link", { name: "Matrix" });
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(link.hasAttribute("node")).toBe(false);
+  });
+
+  it("shows live turn and tool status without claiming unavailable reasoning", () => {
+    useHermesChat.setState({
+      status: "streaming",
+      activeRequestId: "request-live",
+      messages: [
+        { id: "user-live", role: "user", content: "Run the checks", requestId: "request-live", timestamp: Date.now() - 2_000 },
+        { id: "assistant-live", role: "assistant", content: "I’ll run the checks.", requestId: "request-live", timestamp: Date.now() - 1_500 },
+        { id: "tool-live", role: "system", content: "Using Bash...", tool: "Bash", requestId: "request-live", toolInput: { command: "bun run test" }, timestamp: Date.now() - 1_000 },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.getByText(/^Working for \d+s$/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Running command: bun run test" })).toBeTruthy();
+    const commandChip = screen.getByText("bun run test");
+    expect(commandChip.className).toContain("border");
+    expect(commandChip.getAttribute("title")).toBe("bun run test");
+    expect(screen.queryByRole("button", { name: "Copy assistant message" })).toBeNull();
+    expect(screen.queryByText("Thought process")).toBeNull();
+  });
+
+  it("renders failed command work as failed instead of running or complete", () => {
+    useHermesChat.setState({
+      status: "idle",
+      messages: [
+        { id: "user-failed", role: "user", content: "Run the checks", requestId: "request-failed", timestamp: 1_000 },
+        {
+          id: "tool-failed",
+          role: "system",
+          content: "Failed Bash",
+          tool: "Bash",
+          requestId: "request-failed",
+          toolDisplay: { kind: "command", preview: "bun run test" },
+          timestamp: 2_000,
+        },
+        { id: "error-failed", role: "system", content: "The command failed.", requestId: "request-failed", timestamp: 3_000 },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Worked for 2s" }));
+    expect(screen.getByRole("button", { name: "Failed command: bun run test" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Agent work failed" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Running command: bun run test" })).toBeNull();
+  });
+
+  it("copies a command from its work row and redacts credential-shaped values", async () => {
+    useHermesChat.setState({
+      status: "streaming",
+      activeRequestId: "request-command-copy",
+      messages: [
+        { id: "user-command-copy", role: "user", content: "Inspect safely", requestId: "request-command-copy", timestamp: 1_000 },
+        {
+          id: "tool-command-copy",
+          role: "system",
+          content: "Using Bash...",
+          tool: "Bash",
+          requestId: "request-command-copy",
+          toolInput: {
+            command: "curl -H 'X-Api-Key: \"header-secret\"' API_KEY=supersecret https://example.com",
+            unrelated: "do-not-render",
+          },
+          timestamp: 2_000,
+        },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.queryByText(/supersecret/)).toBeNull();
+    expect(screen.queryByText(/header-secret/)).toBeNull();
+    expect(screen.queryByText(/do-not-render/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "curl -H 'X-Api-Key: [redacted]' API_KEY=[redacted] https://example.com",
+    ));
+    expect(screen.getByRole("button", { name: "Copied command" })).toBeTruthy();
+  });
+
+  it.each([
+    ["cookie request header", "curl -H 'Cookie: sessionid=cookie-secret; csrf=csrf-secret' https://example.com", "curl -H 'Cookie: [redacted]' https://example.com", "cookie-secret"],
+    ["cookie response header", "curl -H 'Set-Cookie: sessionid=response-cookie-secret' https://example.com", "curl -H 'Set-Cookie: [redacted]' https://example.com", "response-cookie-secret"],
+    ["short basic auth flag", "curl -u alice:short-secret https://example.com", "curl -u [redacted] https://example.com", "short-secret"],
+    ["long basic auth flag", "curl --user bob:long-secret https://example.com", "curl --user [redacted] https://example.com", "long-secret"],
+    ["equals basic auth flag", "curl --user='carol:quoted-secret' https://example.com", "curl --user=[redacted] https://example.com", "quoted-secret"],
+    ["quoted Authorization scheme and credential", "curl -H 'Authorization: \"Bearer outer-scheme-secret\"' https://example.com", "curl -H 'Authorization: [redacted]' https://example.com", "outer-scheme-secret"],
+    ["quoted Authorization credential", "curl -H 'Authorization: Bearer \"quoted-value-secret\"' https://example.com", "curl -H 'Authorization: [redacted]' https://example.com", "quoted-value-secret"],
+    ["quoted Proxy-Authorization value", "curl -H \"Proxy-Authorization: 'Basic proxy-secret'\" https://example.com", "curl -H \"Proxy-Authorization: [redacted]\" https://example.com", "proxy-secret"],
+    ["quoted raw Authorization credential", "curl -H 'Authorization: \"raw-credential-secret\"' https://example.com", "curl -H 'Authorization: [redacted]' https://example.com", "raw-credential-secret"],
+    ["non-HTTP URL userinfo", "psql postgres://alice:database-url-secret@db.example.com/app", "psql postgres://[redacted]@db.example.com/app", "database-url-secret"],
+  ])("redacts %s from command display and clipboard", async (_case, command, expected, secret) => {
+    useHermesChat.setState({
+      status: "streaming",
+      activeRequestId: "request-command-redaction",
+      messages: [
+        { id: "user-command-redaction", role: "user", content: "Inspect safely", requestId: "request-command-redaction", timestamp: 1_000 },
+        {
+          id: "tool-command-redaction",
+          role: "system",
+          content: "Using Bash...",
+          tool: "Bash",
+          requestId: "request-command-redaction",
+          toolInput: { command },
+          timestamp: 2_000,
+        },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.queryByText(new RegExp(secret))).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expected));
   });
 
   it("renders the approved centered empty state and only working composer controls", () => {
@@ -313,6 +575,18 @@ describe("ChatTab", () => {
     })));
   });
 
+  it("explains when a coding harness cannot open without a project", () => {
+    useBoard.setState({ projects: [], activeProjectSlug: null });
+    useHermesChat.setState({ messages: [], status: "idle" });
+
+    render(<ChatTab />);
+
+    const codex = screen.getByRole("option", {
+      name: "Codex — Create a project to use Codex.",
+    });
+    expect((codex as HTMLOptionElement).disabled).toBe(true);
+  });
+
   it("does not intercept a text-only drop in Chat", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);
@@ -380,6 +654,37 @@ describe("ChatTab", () => {
     expect(screen.queryByText("hello")).toBeNull();
   });
 
+  it("renders the Chat home with the approved handoff hierarchy", () => {
+    useHermesChat.setState({
+      view: "index",
+      indexStatus: "ready",
+      indexError: null,
+      conversations: [{
+        id: "conversation-one",
+        title: "Plan the launch",
+        preview: "Review the final launch checklist",
+        messageCount: 4,
+        createdAt: 20,
+        updatedAt: 30,
+      }],
+    });
+
+    const { container } = render(<ChatTab />);
+
+    const content = container.querySelector<HTMLElement>("[data-chat-index-content]");
+    const header = container.querySelector<HTMLElement>("[data-chat-index-header]");
+    const list = container.querySelector<HTMLElement>("[data-chat-index-list]");
+    const row = container.querySelector<HTMLElement>("[data-conversation-row]");
+    expect(content?.className).toContain("max-w-[1020px]");
+    expect(header?.className).toContain("min-h-[47px]");
+    expect(header?.className).toContain("mb-2");
+    expect(list?.className).not.toContain("rounded");
+    expect(list?.className).not.toContain("border");
+    expect(row?.className).toContain("h-16");
+    expect(screen.getByRole("button", { name: "Search chats" }).className).toContain("border");
+    expect(screen.getByRole("button", { name: "New chat" }).style.background).toBe("var(--accent)");
+  });
+
   it("reconciles stale Hermes Recents without removing coding-agent chats", async () => {
     useTabs.getState().recordRecentHermesConversation("conversation-live", "Live chat");
     useTabs.getState().recordRecentHermesConversation("conversation-deleted", "Deleted chat");
@@ -421,6 +726,43 @@ describe("ChatTab", () => {
     rerender(<ChatTab />);
     expect(screen.getByRole("alert").textContent).toContain("Conversations could not be loaded. Try again.");
     expect(screen.getByRole("button", { name: "Retry chats" })).toBeTruthy();
+  });
+
+  it("automatically retries a transient initial conversation index failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const get = vi.fn()
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce([{
+          id: "conversation-recovered",
+          preview: "Back online",
+          messageCount: 1,
+          createdAt: 10,
+          updatedAt: 20,
+        }]);
+      useConnection.setState({ api: { get } as never });
+      useHermesChat.setState({
+        view: "index",
+        indexStatus: "idle",
+        indexError: null,
+        conversations: [],
+      });
+
+      render(<ChatTab />);
+      await act(async () => { await Promise.resolve(); });
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(useHermesChat.getState().indexStatus).toBe("error");
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(useHermesChat.getState().indexStatus).toBe("ready");
+      expect(useHermesChat.getState().conversations).toEqual([
+        expect.objectContaining({ id: "conversation-recovered", title: "Back online" }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("marks only the selected live conversation as running", () => {

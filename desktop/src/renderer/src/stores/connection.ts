@@ -6,6 +6,7 @@ import { createApiClient, type ApiClient } from "../lib/api";
 import { clearDraftChats } from "./draft-chat";
 import { advanceRuntimeGeneration } from "./runtime-generation";
 import { reconcileDesktopRuntimeChange } from "./runtime-transition";
+import { resetAppsRuntime } from "./apps";
 
 export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 
@@ -56,6 +57,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       if (identityChanged) {
         advanceRuntimeGeneration();
         clearDraftChats();
+        resetAppsRuntime();
       }
       const api = status.signedIn
         ? createApiClient({
@@ -84,6 +86,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       if (get().status !== "signed-out") {
         advanceRuntimeGeneration();
         clearDraftChats();
+        resetAppsRuntime();
       }
       set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
     }

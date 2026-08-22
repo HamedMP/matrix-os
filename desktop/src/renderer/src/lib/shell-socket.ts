@@ -25,6 +25,9 @@ export interface WebSocketLike {
 export interface ShellSocketEvents {
   onState(state: ShellSocketState, detail?: { code?: string }): void;
   onOutput(data: string, seq: number): void;
+  onCanonicalSize?(size: { cols: number; rows: number }): void;
+  onLeaseRevoked?(): void;
+  onPresentationReset?(): void;
   onGap(): void;
   onExit(code: number): void;
 }
@@ -34,6 +37,7 @@ export interface ShellSocketOptions {
   sessionName?: string;
   cwd?: string;
   runtimeSlot: string;
+  clientClass?: "hard" | "soft";
   events: ShellSocketEvents;
   createWebSocket?: (url: string) => WebSocketLike;
   setTimeoutFn?: typeof setTimeout;
@@ -53,6 +57,7 @@ const RESIZE_DEBOUNCE_STARTUP_MS = 220;
 const RESIZE_DEBOUNCE_STEADY_MS = 90;
 const STARTUP_SETTLE_AFTER_ATTACH_MS = 300;
 const RESIZE_FALLBACK_AFTER_ATTACH_MS = 900;
+const LEASE_HEARTBEAT_INTERVAL_MS = 10_000;
 const MIN_COLS = 1;
 const MAX_COLS = 500;
 const MIN_ROWS = 1;
@@ -122,6 +127,8 @@ export class ShellSocket {
   private settleTimer: TimerHandle | null = null;
   private fallbackTimer: TimerHandle | null = null;
   private handshakeTimer: TimerHandle | null = null;
+  private leaseHeartbeatTimer: TimerHandle | null = null;
+  private leaseEpoch: number | null = null;
 
   constructor(options: ShellSocketOptions) {
     const hasSession = typeof options.sessionName === "string" && options.sessionName.length > 0;
@@ -219,6 +226,7 @@ export class ShellSocket {
     this.lastSentDims = null;
     this.resizeSentSinceAttach = false;
     this.inStartupWindow = true;
+    this.leaseEpoch = null;
 
     const url = this.buildUrl(isReconnect);
     let socket: WebSocketLike;
@@ -274,7 +282,11 @@ export class ShellSocket {
       : (this.opts.sessionName ?? null);
     if (sessionName !== null && sessionName.length > 0) {
       const fromSeq = isReconnect && this.receivedOutput ? this.lastSeqValue + 1 : LIVE_TAIL_FROM_SEQ;
-      return `${base}/ws/terminal/session?session=${encodeURIComponent(sessionName)}&fromSeq=${fromSeq}${runtimeSuffix}`;
+      const size = this.lastKnownDims;
+      const sizingSuffix = this.opts.clientClass && size
+        ? `&client=${this.opts.clientClass}&cols=${size.cols}&rows=${size.rows}&lease=exclusive`
+        : "";
+      return `${base}/ws/terminal/session?session=${encodeURIComponent(sessionName)}&fromSeq=${fromSeq}${runtimeSuffix}${sizingSuffix}`;
     }
     return `${base}/ws/terminal?cwd=${encodeURIComponent(this.opts.cwd ?? "")}${runtimeSuffix}`;
   }
@@ -340,6 +352,18 @@ export class ShellSocket {
         if (this.currentState !== "attached") return;
         this.handleOutput(frame);
         return;
+      case "canonical-size":
+        this.handleCanonicalSize(frame);
+        return;
+      case "lease-revoked":
+        this.teardownSocket();
+        this.clearAllTimers();
+        this.opts.events.onLeaseRevoked?.();
+        this.setState("ended");
+        return;
+      case "presentation-reset":
+        this.opts.events.onPresentationReset?.();
+        return;
       case "exit":
         if (this.currentState !== "attached") return;
         this.handleExit(frame);
@@ -369,9 +393,29 @@ export class ShellSocket {
       return;
     }
     this.failedAttempts = 0;
+    const lease = frame.lease;
+    const leaseEpoch = lease && typeof lease === "object"
+      ? (lease as Record<string, unknown>).epoch
+      : null;
+    this.leaseEpoch = typeof leaseEpoch === "number" && Number.isInteger(leaseEpoch) && leaseEpoch > 0
+      ? leaseEpoch
+      : null;
+    this.scheduleLeaseHeartbeat();
+    this.handleCanonicalSize(frame.canonicalSize && typeof frame.canonicalSize === "object"
+      ? frame.canonicalSize as Record<string, unknown>
+      : {});
     this.flushPendingInput();
     this.scheduleAttachTimers();
     this.setState("attached");
+  }
+
+  private handleCanonicalSize(frame: Record<string, unknown>): void {
+    const cols = frame.cols;
+    const rows = frame.rows;
+    if (typeof cols !== "number" || typeof rows !== "number" || !Number.isInteger(cols) || !Number.isInteger(rows) || cols < MIN_COLS || cols > MAX_COLS || rows < MIN_ROWS || rows > MAX_ROWS) {
+      return;
+    }
+    this.opts.events.onCanonicalSize?.({ cols, rows });
   }
 
   private handleOutput(frame: Record<string, unknown>): void {
@@ -425,6 +469,18 @@ export class ShellSocket {
         this.flushResize();
       }
     }, RESIZE_FALLBACK_AFTER_ATTACH_MS);
+  }
+
+  private scheduleLeaseHeartbeat(): void {
+    if (this.leaseHeartbeatTimer !== null) this.clearT(this.leaseHeartbeatTimer);
+    this.leaseHeartbeatTimer = null;
+    if (this.leaseEpoch === null || this.currentState === "ended" || this.currentState === "fatal") return;
+    this.leaseHeartbeatTimer = this.setT(() => {
+      this.leaseHeartbeatTimer = null;
+      if (this.leaseEpoch === null || this.currentState !== "attached" || this.socket === null) return;
+      this.sendFrame({ type: "ping" });
+      this.scheduleLeaseHeartbeat();
+    }, LEASE_HEARTBEAT_INTERVAL_MS);
   }
 
   private flushResize(): void {
@@ -501,6 +557,7 @@ export class ShellSocket {
       "settleTimer",
       "fallbackTimer",
       "handshakeTimer",
+      "leaseHeartbeatTimer",
     ] as const) {
       const handle = this[key];
       if (handle !== null) {
@@ -508,6 +565,7 @@ export class ShellSocket {
         this[key] = null;
       }
     }
+    this.leaseEpoch = null;
   }
 
   private setState(state: ShellSocketState, detail?: { code?: string }): void {

@@ -14,6 +14,7 @@ interface InspectorCounts {
 
 interface AgentConversationInspectorProps {
   defaultTab: AgentConversationInspectorTab;
+  tabs?: readonly AgentConversationInspectorTab[];
   // Optional controlled selection. When both are provided the parent owns the
   // active tab (e.g. to gate live resources like an embedded terminal socket
   // on the Terminal surface being visible).
@@ -59,6 +60,7 @@ const TAB_LABEL_MIN_WIDTH_PX = 96;
 
 export function AgentConversationInspector({
   defaultTab,
+  tabs: requestedTabs,
   selectedTab: controlledTab,
   onTabChange,
   changesFocusRequestId = 0,
@@ -73,17 +75,20 @@ export function AgentConversationInspector({
   preview,
   activity,
 }: AgentConversationInspectorProps) {
-  const [internalTab, setInternalTab] = useState<AgentConversationInspectorTab>(defaultTab);
-  const selectedTab = controlledTab ?? internalTab;
+  const defaultTabs: AgentConversationInspectorTab[] = files === undefined
+    ? ["changes", "terminal", "preview", "activity"]
+    : ["changes", "files", "terminal", "preview", "activity"];
+  const tabs = requestedTabs && requestedTabs.length > 0 ? [...requestedTabs] : defaultTabs;
+  const safeDefaultTab = tabs.includes(defaultTab) ? defaultTab : tabs[0]!;
+  const [internalTab, setInternalTab] = useState<AgentConversationInspectorTab>(safeDefaultTab);
+  const requestedSelectedTab = controlledTab ?? internalTab;
+  const selectedTab = tabs.includes(requestedSelectedTab) ? requestedSelectedTab : safeDefaultTab;
   const instanceId = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const tablistRef = useRef<HTMLDivElement | null>(null);
   // Icon-only until the tablist proves it has room for full labels.
   const [labelsVisible, setLabelsVisible] = useState(false);
 
-  const tabs: AgentConversationInspectorTab[] = files === undefined
-    ? ["changes", "terminal", "preview", "activity"]
-    : ["changes", "files", "terminal", "preview", "activity"];
   const content: Record<AgentConversationInspectorTab, ReactNode> = {
     changes,
     files,
@@ -96,9 +101,11 @@ export function AgentConversationInspector({
   // live previews) costs nothing; once visited a surface stays mounted across
   // switches so local state (drafts, scrollback, selection) survives.
   const [visitedTabs, setVisitedTabs] = useState<AgentConversationInspectorTab[]>(() =>
-    controlledTab === undefined || controlledTab === defaultTab
-      ? [defaultTab]
-      : [defaultTab, controlledTab],
+    controlledTab !== undefined
+      && controlledTab !== safeDefaultTab
+      && tabs.includes(controlledTab)
+      ? [safeDefaultTab, controlledTab]
+      : [safeDefaultTab],
   );
   const visitedTabSet = useMemo(() => new Set(visitedTabs), [visitedTabs]);
 
@@ -131,7 +138,7 @@ export function AgentConversationInspector({
   useEffect(() => {
     if (changesFocusRequestId <= changesFocusConsumedId) return;
     onChangesFocusConsumed?.(changesFocusRequestId);
-    selectTab("changes");
+    if (tabs.includes("changes")) selectTab("changes");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changesFocusConsumedId, changesFocusRequestId, onChangesFocusConsumed]);
 
@@ -155,26 +162,26 @@ export function AgentConversationInspector({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        className="shrink-0 space-y-3 border-b px-4 pb-3 pt-4"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-      >
-        {toolbar}
-        {composer}
-      </div>
-      <div
-        ref={tablistRef}
-        role="tablist"
-        aria-label="Conversation tools"
-        className="grid shrink-0 gap-1 border-b p-1.5"
-        style={{
-          gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))`,
-          borderColor: "var(--border-subtle)",
-          background: "var(--bg-sunken)",
-        }}
-      >
-        <RadixTooltip.Provider delayDuration={400}>
+    <RadixTooltip.Provider delayDuration={400}>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div
+          className="shrink-0 space-y-3 border-b px-4 pb-3 pt-4"
+          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+        >
+          {toolbar}
+          {composer}
+        </div>
+        <div
+          ref={tablistRef}
+          role="tablist"
+          aria-label="Conversation tools"
+          className="grid shrink-0 gap-1 border-b p-1.5"
+          style={{
+            gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))`,
+            borderColor: "var(--border-subtle)",
+            background: "var(--bg-sunken)",
+          }}
+        >
         {tabs.map((tabId, index) => {
           const selected = tabId === selectedTab;
           const label = TAB_LABELS[tabId];
@@ -230,26 +237,26 @@ export function AgentConversationInspector({
             </RadixTooltip.Root>
           );
         })}
-        </RadixTooltip.Provider>
+        </div>
+        {tabs.map((tabId) => {
+          const selected = tabId === selectedTab;
+          return (
+            <div
+              key={tabId}
+              id={`${instanceId}-${tabId}-panel`}
+              role="tabpanel"
+              aria-labelledby={`${instanceId}-${tabId}-tab`}
+              tabIndex={selected ? 0 : -1}
+              hidden={!selected}
+              className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+            >
+              {selected || visitedTabSet.has(tabId) ? (
+                <div className="flex min-h-0 flex-1 flex-col p-4">{content[tabId]}</div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
-      {tabs.map((tabId) => {
-        const selected = tabId === selectedTab;
-        return (
-          <div
-            key={tabId}
-            id={`${instanceId}-${tabId}-panel`}
-            role="tabpanel"
-            aria-labelledby={`${instanceId}-${tabId}-tab`}
-            tabIndex={selected ? 0 : -1}
-            hidden={!selected}
-            className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-          >
-            {selected || visitedTabSet.has(tabId) ? (
-              <div className="flex min-h-0 flex-1 flex-col p-4">{content[tabId]}</div>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
+    </RadixTooltip.Provider>
   );
 }

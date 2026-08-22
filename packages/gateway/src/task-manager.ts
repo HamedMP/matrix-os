@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { access, readdir, rm } from "node:fs/promises";
+import { opendir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX, type WorkspaceError } from "./project-manager.js";
-import { atomicWriteJson, readJsonFile } from "./state-ops.js";
+import { atomicCreateJson, atomicWriteJson, readJsonFile, type OwnerScope } from "./state-ops.js";
+import { createProjectRegistry } from "./project-registry.js";
+import {
+  projectStateRecoveryDir,
+  readBoundedJsonFileWithIdentity,
+  removeFileIfUnchanged,
+} from "./bounded-json-file.js";
 
 export type TaskStatus = "todo" | "running" | "waiting" | "blocked" | "complete" | "archived";
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
@@ -40,6 +45,8 @@ const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const WorktreeIdSchema = z.string().regex(/^wt_[A-Za-z0-9_-]{1,128}$/);
 const PreviewIdSchema = z.string().regex(/^prev_[A-Za-z0-9_-]{1,128}$/);
+const MAX_LEGACY_TASK_RECORD_BYTES = 256 * 1024;
+const MAX_TASK_DISCOVERY_IDS = 512;
 
 const CreateTaskSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -58,6 +65,24 @@ const UpdateTaskSchema = CreateTaskSchema.partial().extend({
   status: z.enum(["todo", "running", "waiting", "blocked", "complete", "archived"]).optional(),
 });
 
+const TaskRecordSchema = z.object({
+  id: TaskIdSchema,
+  projectSlug: ProjectSlugSchema,
+  title: z.string().min(1).max(200),
+  description: z.string().max(10_000).optional(),
+  status: z.enum(["todo", "running", "waiting", "blocked", "complete", "archived"]),
+  priority: z.enum(["low", "normal", "high", "urgent"]),
+  order: z.number().finite(),
+  parentTaskId: TaskIdSchema.optional(),
+  dueAt: z.string().min(1).max(64).optional(),
+  linkedSessionId: SessionIdSchema.optional(),
+  linkedWorktreeId: WorktreeIdSchema.optional(),
+  previewIds: z.array(PreviewIdSchema).max(20),
+  createdAt: z.string().min(1).max(64),
+  updatedAt: z.string().min(1).max(64),
+  archivedAt: z.string().max(64).optional(),
+});
+
 const ListTasksSchema = z.object({
   includeArchived: z.boolean().default(false),
   limit: z.number().int().min(1).max(100).default(100),
@@ -72,28 +97,16 @@ function failure(status: number, code: string, message: string): Failure {
   return { ok: false, status, error: { code, message } };
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw err;
-  }
-}
-
 function tasksDir(homePath: string, projectSlug: string): string {
-  return join(homePath, "projects", projectSlug, "tasks");
+  return createProjectRegistry({ homePath }).tasksDir(projectSlug);
 }
 
 function taskPath(homePath: string, projectSlug: string, taskId: string): string {
   return join(tasksDir(homePath, projectSlug), `${taskId}.json`);
 }
 
-function projectConfigPath(homePath: string, projectSlug: string): string {
-  return join(homePath, "projects", projectSlug, "config.json");
+function legacyTaskPath(homePath: string, projectSlug: string, taskId: string): string {
+  return join(createProjectRegistry({ homePath }).legacyTasksDir(projectSlug), `${taskId}.json`);
 }
 
 function validateProjectSlug(projectSlug: string): Failure | null {
@@ -102,8 +115,10 @@ function validateProjectSlug(projectSlug: string): Failure | null {
     : failure(400, "invalid_project_slug", "Project slug is invalid");
 }
 
-async function requireProject(homePath: string, projectSlug: string): Promise<Failure | null> {
-  return await pathExists(projectConfigPath(homePath, projectSlug))
+async function requireProject(homePath: string, projectSlug: string, ownerScope?: OwnerScope): Promise<Failure | null> {
+  const project = await createProjectRegistry({ homePath }).readConfig(projectSlug);
+  return project && (!ownerScope
+    || (project.ownerScope.type === ownerScope.type && project.ownerScope.id === ownerScope.id))
     ? null
     : failure(404, "not_found", "Project was not found");
 }
@@ -115,32 +130,62 @@ function validateTaskId(taskId: string): Failure | null {
 }
 
 async function readTask(homePath: string, projectSlug: string, taskId: string): Promise<TaskRecord | null> {
-  try {
-    return await readJsonFile<TaskRecord>(taskPath(homePath, projectSlug, taskId));
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
+  for (const path of [
+    taskPath(homePath, projectSlug, taskId),
+    legacyTaskPath(homePath, projectSlug, taskId),
+  ]) {
+    try {
+      const parsed = TaskRecordSchema.safeParse(await readJsonFile(path));
+      if (!parsed.success || parsed.data.projectSlug !== projectSlug || parsed.data.id !== taskId) continue;
+      if (path === legacyTaskPath(homePath, projectSlug, taskId)) {
+        await atomicCreateJson(taskPath(homePath, projectSlug, taskId), parsed.data);
+      }
+      return parsed.data;
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      if (err instanceof SyntaxError) continue;
+      throw err;
     }
-    throw err;
   }
+  return null;
 }
 
-async function listTaskRecords(homePath: string, projectSlug: string): Promise<TaskRecord[]> {
-  let entries;
-  try {
-    entries = await readdir(tasksDir(homePath, projectSlug), { withFileTypes: true });
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+async function removeValidatedLegacyTask(
+  homePath: string,
+  projectSlug: string,
+  taskId: string,
+): Promise<void> {
+  const path = legacyTaskPath(homePath, projectSlug, taskId);
+  const candidate = await readBoundedJsonFileWithIdentity(path, MAX_LEGACY_TASK_RECORD_BYTES);
+  if (!candidate) return;
+  const parsed = TaskRecordSchema.safeParse(candidate.value);
+  if (!parsed.success || parsed.data.projectSlug !== projectSlug || parsed.data.id !== taskId) return;
+  await removeFileIfUnchanged(path, candidate.identity, {
+    recoveryDir: projectStateRecoveryDir(homePath),
+  });
+}
+
+async function listTaskRecords(homePath: string, projectSlug: string): Promise<TaskRecord[] | null> {
+  const ids = new Set<string>();
+  for (const root of [tasksDir(homePath, projectSlug), createProjectRegistry({ homePath }).legacyTasksDir(projectSlug)]) {
+    let directory: Awaited<ReturnType<typeof opendir>>;
+    try {
+      directory = await opendir(root);
+      for await (const entry of directory) {
+        if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith(".json")) continue;
+        const taskId = entry.name.slice(0, -".json".length);
+        if (!TaskIdSchema.safeParse(taskId).success || ids.has(taskId)) continue;
+        if (ids.size >= MAX_TASK_DISCOVERY_IDS) return null;
+        ids.add(taskId);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
     }
-    throw err;
   }
 
   const tasks: TaskRecord[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const taskId = entry.name.slice(0, -".json".length);
-    if (!TaskIdSchema.safeParse(taskId).success) continue;
+  for (const taskId of ids) {
     const task = await readTask(homePath, projectSlug, taskId);
     if (task) tasks.push(task);
   }
@@ -151,10 +196,10 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
   const homePath = resolve(options.homePath);
 
   return {
-    async createTask(projectSlug: string, input: unknown): Promise<Result<{ task: TaskRecord }> | Failure> {
+    async createTask(projectSlug: string, input: unknown, ownerScope?: OwnerScope): Promise<Result<{ task: TaskRecord }> | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
-      const missingProject = await requireProject(homePath, projectSlug);
+      const missingProject = await requireProject(homePath, projectSlug, ownerScope);
       if (missingProject) return missingProject;
       const parsed = CreateTaskSchema.safeParse(input);
       if (!parsed.success) {
@@ -183,18 +228,20 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
       return { ok: true, status: 201, task };
     },
 
-    async listTasks(projectSlug: string, input: unknown = {}): Promise<
+    async listTasks(projectSlug: string, input: unknown = {}, ownerScope?: OwnerScope): Promise<
       Result<{ tasks: TaskRecord[]; nextCursor: string | null }> | Failure
     > {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
-      const missingProject = await requireProject(homePath, projectSlug);
+      const missingProject = await requireProject(homePath, projectSlug, ownerScope);
       if (missingProject) return missingProject;
       const parsed = ListTasksSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_task_query", "Task query is invalid");
 
       const query = parsed.data;
-      const allTasks = (await listTaskRecords(homePath, projectSlug))
+      const records = await listTaskRecords(homePath, projectSlug);
+      if (!records) return failure(409, "task_limit_exceeded", "Task limit exceeded");
+      const allTasks = records
         .filter((task) => query.includeArchived || task.status !== "archived")
         .sort((a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
       const startIndex = query.cursor ? allTasks.findIndex((task) => task.id === query.cursor) + 1 : 0;
@@ -203,10 +250,10 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
       return { ok: true, tasks: page, nextCursor };
     },
 
-    async updateTask(projectSlug: string, taskId: string, input: unknown): Promise<Result<{ task: TaskRecord }> | Failure> {
+    async updateTask(projectSlug: string, taskId: string, input: unknown, ownerScope?: OwnerScope): Promise<Result<{ task: TaskRecord }> | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
-      const missingProject = await requireProject(homePath, projectSlug);
+      const missingProject = await requireProject(homePath, projectSlug, ownerScope);
       if (missingProject) return missingProject;
       const taskError = validateTaskId(taskId);
       if (taskError) return taskError;
@@ -228,16 +275,18 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
       return { ok: true, task };
     },
 
-    async deleteTask(projectSlug: string, taskId: string): Promise<{ ok: true } | Failure> {
+    async deleteTask(projectSlug: string, taskId: string, ownerScope?: OwnerScope): Promise<{ ok: true } | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
-      const missingProject = await requireProject(homePath, projectSlug);
+      const missingProject = await requireProject(homePath, projectSlug, ownerScope);
       if (missingProject) return missingProject;
       const taskError = validateTaskId(taskId);
       if (taskError) return taskError;
-      const path = taskPath(homePath, projectSlug, taskId);
-      if (!await pathExists(path)) return failure(404, "not_found", "Task was not found");
-      await rm(path, { force: true });
+      if (!await readTask(homePath, projectSlug, taskId)) {
+        return failure(404, "not_found", "Task was not found");
+      }
+      await rm(taskPath(homePath, projectSlug, taskId), { force: true });
+      await removeValidatedLegacyTask(homePath, projectSlug, taskId);
       return { ok: true };
     },
   };

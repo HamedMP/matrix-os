@@ -5,7 +5,6 @@ import { INVOKE_CHANNELS, type InvokeChannel, type InvokeRequest, type InvokeRes
 import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
-import type { UpdateStatus } from "../updates";
 import type { DesktopReleaseNotes, DesktopUpdateSnapshot } from "../../shared/desktop-update";
 import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
@@ -28,7 +27,7 @@ export interface HandlerContext {
   setBadgeCount: (count: number) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
-  getUpdateStatus: () => UpdateStatus;
+  checkUpdate: () => Promise<DesktopUpdateSnapshot>;
   getUpdateSnapshot: () => DesktopUpdateSnapshot;
   installUpdate: () => Promise<boolean> | boolean;
   getWhatsNew: () => Promise<{
@@ -292,6 +291,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("embed:set-active", ({ embedId, active }) => ({
     ok: ctx.embeds.setActive(embedId, active),
   }));
+  handle("embed:suspend-all", () => ({ ok: ctx.embeds.suspendAll() }));
+  handle("embed:reload", async ({ embedId }) => ({ ok: await ctx.embeds.reload(embedId) }));
   handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));
   handle("embed:retry-auth", async ({ embedId }) => {
     try {
@@ -305,7 +306,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     }
   });
 
-  handle("update:check", () => ({ status: ctx.getUpdateStatus() }));
+  handle("update:check", () => ctx.checkUpdate());
   handle("update:get-state", () => ctx.getUpdateSnapshot());
   handle("update:install", async () => ({ ok: await ctx.installUpdate() }));
   handle("update:get-whats-new", () => ctx.getWhatsNew());

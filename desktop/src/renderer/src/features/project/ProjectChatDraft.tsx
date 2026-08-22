@@ -16,6 +16,8 @@ import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
 import { AgentComposerPickers } from "../coding-agents/composer-pickers";
 import { capabilityEnabled } from "../coding-agents/capabilities";
+import { ProviderReadinessNotice } from "../coding-agents/ProviderReadinessNotice";
+import { deriveProviderReadiness } from "../coding-agents/provider-readiness";
 import { isTypeToStartInteractiveTarget } from "../coding-agents/type-to-start";
 import {
   clearComposerLaunchContext,
@@ -42,6 +44,7 @@ export function ProjectChatDraft({
   focusRequestId,
   typeToStartEnabled,
   onCreated,
+  presentation = "hero",
 }: {
   summary: RuntimeSummary;
   projectId: string;
@@ -51,6 +54,7 @@ export function ProjectChatDraft({
   focusRequestId: number;
   typeToStartEnabled: boolean;
   onCreated: (threadId: string, label: string) => void;
+  presentation?: "hero" | "landing";
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
   const initialDraft = useMemo(() => {
@@ -100,6 +104,8 @@ export function ProjectChatDraft({
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);
   const createThread = useCodingAgentWorkspace((s) => s.createThread);
+  const workspaceStatus = useCodingAgentWorkspace((s) => s.status);
+  const refreshSummary = useCodingAgentWorkspace((s) => s.refresh);
   const resolveNewChatTarget = useProjectWorkspaces((s) => s.resolveNewChatTarget);
   const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
   const submitting = createStatus === "submitting";
@@ -123,6 +129,13 @@ export function ProjectChatDraft({
         mode: initialDraft.mode,
         sandboxMode: initialDraft.sandboxMode,
       };
+  const selectedProvider = summary.providers.find((provider) => provider.id === effectiveDraft.providerId)
+    ?? summary.providers[0];
+  const readiness = deriveProviderReadiness({
+    summary,
+    providerId: effectiveDraft.providerId ?? selectedProvider?.id,
+    loading: workspaceStatus === "loading",
+  });
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -146,7 +159,7 @@ export function ProjectChatDraft({
   }, [active, typeToStartEnabled, canCreate]);
 
   async function submit() {
-    if (submitting || submitInFlightRef.current) return;
+    if (readiness.blocked || submitting || submitInFlightRef.current) return;
     let effective = effectiveDraft;
     if (!effective.prompt.trim() && attachments.items.length === 0) return;
     submitInFlightRef.current = true;
@@ -190,75 +203,84 @@ export function ProjectChatDraft({
     }
   }
 
-  const selectedProvider = summary.providers.find((provider) => provider.id === effectiveDraft.providerId)
-    ?? summary.providers[0];
   const promptEmpty = effectiveDraft.prompt.trim().length === 0 && attachments.items.length === 0;
 
   return (
     <section
       aria-label={`New chat in ${projectLabel}`}
-      className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden"
+      className={`ph-no-capture flex min-w-0 flex-col overflow-hidden ${presentation === "landing" ? "shrink-0" : "min-h-[460px] flex-1"}`}
       style={{ background: "var(--bg-app)" }}
       data-slot="project-chat-draft"
       {...attachments.paneProps}
     >
-      <ProjectChatHero
-        projectLabel={projectLabel}
-        suggestionsVisible={canCreate && promptEmpty}
-        typeToStartEnabled={typeToStartEnabled}
-        onSuggestion={(prompt) => {
-          setDraft((current) => ({ ...current, prompt }));
-          focusComposer();
-        }}
-      />
-      <div className="shrink-0 px-6 pb-5">
-        <div className="mx-auto w-full max-w-[46rem]" data-slot="draft-composer">
+      {presentation === "hero" ? (
+        <ProjectChatHero
+          projectLabel={projectLabel}
+          suggestionsVisible={canCreate && promptEmpty}
+          typeToStartEnabled={typeToStartEnabled}
+          onSuggestion={(prompt) => {
+            setDraft((current) => ({ ...current, prompt }));
+            focusComposer();
+          }}
+        />
+      ) : null}
+      <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
+        <div className={`mx-auto w-full ${presentation === "landing" ? "max-w-none" : "max-w-[46rem]"}`} data-slot="draft-composer">
           {createError ? (
             <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{createError}</p>
           ) : null}
           {canCreate ? (
-            <PromptInput
-              value={effectiveDraft.prompt}
-              onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
-              onSubmit={() => void submit()}
-              busy={busy}
-              disabled={busy}
-              canSubmit={!busy && (effectiveDraft.prompt.trim().length > 0 || attachments.items.length > 0)}
-              attachments={(
-                <AttachmentPreviewRow
-                  items={attachments.items}
-                  disabled={busy}
-                  onRemove={attachments.remove}
-                  onRetry={(localId) => void attachments.retry(localId)}
+            <>
+              <div className="mb-2">
+                <ProviderReadinessNotice
+                  readiness={readiness}
+                  providers={summary.providers}
+                  onRefresh={refreshSummary}
                 />
-              )}
-              autoFocus={active}
-              focusRequestId={active ? focusRequestId + localFocusBumps : 0}
-              maxLength={24_000}
-              ariaLabel="Message new chat"
-              placeholder="Ask the agent to do anything…"
-              controls={(
-                <AgentComposerPickers
-                  summary={summary}
-                  providerId={selectedProvider?.id}
-                  mode={effectiveDraft.mode ?? selectedProvider?.defaultMode}
-                  onProviderChange={(providerId) => {
-                    providerSelectionTouchedRef.current = true;
-                    const provider = summary.providers.find((candidate) => candidate.id === providerId);
-                    setDraft((current) => ({
-                      ...current,
-                      providerId: provider?.id,
-                      mode: provider?.defaultMode ?? current.mode,
-                      sandboxMode: defaultSandboxModeForProvider(provider),
-                    }));
-                  }}
-                  onModeChange={(mode) => {
-                    providerSelectionTouchedRef.current = true;
-                    setDraft((current) => ({ ...current, mode }));
-                  }}
-                />
-              )}
-            />
+              </div>
+              <PromptInput
+                value={effectiveDraft.prompt}
+                onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
+                onSubmit={() => void submit()}
+                busy={busy}
+                disabled={busy}
+                canSubmit={!busy && !readiness.blocked && (effectiveDraft.prompt.trim().length > 0 || attachments.items.length > 0)}
+                attachments={(
+                  <AttachmentPreviewRow
+                    items={attachments.items}
+                    disabled={busy}
+                    onRemove={attachments.remove}
+                    onRetry={(localId) => void attachments.retry(localId)}
+                  />
+                )}
+                autoFocus={active}
+                focusRequestId={active ? focusRequestId + localFocusBumps : 0}
+                maxLength={24_000}
+                ariaLabel="Message new chat"
+                placeholder={presentation === "landing" ? "How can I help you today?" : "Ask the agent to do anything…"}
+                controls={(
+                  <AgentComposerPickers
+                    summary={summary}
+                    providerId={selectedProvider?.id}
+                    mode={effectiveDraft.mode ?? selectedProvider?.defaultMode}
+                    onProviderChange={(providerId) => {
+                      providerSelectionTouchedRef.current = true;
+                      const provider = summary.providers.find((candidate) => candidate.id === providerId);
+                      setDraft((current) => ({
+                        ...current,
+                        providerId: provider?.id,
+                        mode: provider?.defaultMode ?? current.mode,
+                        sandboxMode: defaultSandboxModeForProvider(provider),
+                      }));
+                    }}
+                    onModeChange={(mode) => {
+                      providerSelectionTouchedRef.current = true;
+                      setDraft((current) => ({ ...current, mode }));
+                    }}
+                  />
+                )}
+              />
+            </>
           ) : (
             <div
               className="rounded-[var(--radius-xl)] border p-4 text-sm"

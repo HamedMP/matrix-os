@@ -57,6 +57,27 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 }
 
 describe("coding agent workspace provider", () => {
+  it("uses device authentication for the remote Codex connect action", async () => {
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime: {
+        startSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+    });
+
+    const actions = await provider.buildSetupAction?.({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    });
+
+    expect(actions?.find((action) => action.id === "codex_connect")?.command).toBe(
+      'sh -lc \'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"; codex login --device-auth\'',
+    );
+  });
+
   it.each([
     ["claude", "@anthropic-ai/claude-code@latest", "claude"],
     ["codex", CODEX_VERIFIED_NPM_PACKAGE, "codex login"],
@@ -165,7 +186,7 @@ exit 0
       });
       const trace = await readFile(tracePath, "utf8");
 
-      expect(trace).toContain("connect-args=login");
+      expect(trace).toContain("connect-args=login --device-auth");
       expect(trace).not.toContain("bash-args=-l");
       expect(trace).toContain(`bash-args=--noprofile --rcfile ${bashrcPath} -i`);
       expect(trace).toContain("bash-prompt=owner-handle:\\w$ ");

@@ -225,6 +225,22 @@ describe("CanvasWindow terminal interactivity", () => {
     }));
   });
 
+  it("suspends a hidden Canvas terminal so it releases canonical sizing", () => {
+    const { rerender } = render(<CanvasWindow win={terminalWindow} hidden />);
+
+    expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({
+      launchTargetId: "win-terminal",
+      suspended: true,
+    }));
+
+    rerender(<CanvasWindow win={terminalWindow} hidden={false} />);
+
+    expect(terminalRender).toHaveBeenLastCalledWith(expect.objectContaining({
+      launchTargetId: "win-terminal",
+      suspended: false,
+    }));
+  });
+
   it("moves terminal Canvas windows through the delegated Terminal chrome drag handle", () => {
     useWindowManager.setState({
       windows: [terminalWindow],

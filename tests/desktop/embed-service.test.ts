@@ -18,6 +18,190 @@ describe("EmbedService", () => {
     vi.restoreAllMocks();
   });
 
+  it("reloads a live embed through the existing bounded manager", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      manager: { reload: (embedId: string) => boolean };
+    };
+    const reload = vi.spyOn(internals.manager, "reload").mockReturnValue(true);
+
+    await expect(service.reload("embed-shell")).resolves.toBe(true);
+    expect(reload).toHaveBeenCalledWith("embed-shell");
+  });
+
+  it("refreshes hosted-shell cookies before navigating the retained embed", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      hostedShellIds: Set<string>;
+      refreshHostedShellSession: (gatewayOrigin: string) => Promise<HandoffResult>;
+      manager: { reload: (embedId: string) => boolean };
+    };
+    let resolveRefresh!: (result: HandoffResult) => void;
+    vi.spyOn(internals, "refreshHostedShellSession").mockImplementation(
+      () => new Promise((resolve) => { resolveRefresh = resolve; }),
+    );
+    const reload = vi.spyOn(internals.manager, "reload").mockReturnValue(true);
+    internals.hostedShellIds.add("embed-shell");
+
+    const result = service.reload("embed-shell");
+    expect(reload).not.toHaveBeenCalled();
+    resolveRefresh({ ok: true });
+
+    await expect(result).resolves.toBe(true);
+    expect(reload).toHaveBeenCalledWith("embed-shell");
+  });
+
+  it("does not reuse or apply a stale hosted-shell handoff after runtime reset", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      hostedShellIds: Set<string>;
+      performHostedShellHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      scheduleHostedShellSessionRefresh: (gatewayOrigin: string) => void;
+      manager: { reload: (embedId: string) => boolean };
+    };
+    const handoffResolvers: Array<(result: HandoffResult) => void> = [];
+    const handoff = vi
+      .spyOn(internals, "performHostedShellHandoff")
+      .mockImplementation(
+        () => new Promise((resolve) => { handoffResolvers.push(resolve); }),
+      );
+    const reload = vi.spyOn(internals.manager, "reload").mockReturnValue(true);
+    vi.spyOn(internals, "scheduleHostedShellSessionRefresh").mockImplementation(() => {});
+
+    internals.hostedShellIds.add("old-shell");
+    const oldReload = service.reload("old-shell");
+
+    service.closeAll();
+    internals.hostedShellIds.add("new-shell");
+    const newReload = service.reload("new-shell");
+
+    expect(handoff).toHaveBeenCalledTimes(1);
+    handoffResolvers[0]?.({ ok: true });
+    await expect(oldReload).resolves.toBe(false);
+    expect(reload).not.toHaveBeenCalledWith("old-shell");
+
+    await vi.waitFor(() => expect(handoff).toHaveBeenCalledTimes(2));
+    handoffResolvers[1]?.({ ok: true });
+    await expect(newReload).resolves.toBe(true);
+    expect(reload).toHaveBeenCalledWith("new-shell");
+  });
+
+  it("does not attach a stale hosted-shell open after runtime reset", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      performHostedShellHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      scheduleHostedShellSessionRefresh: (gatewayOrigin: string) => void;
+      manager: {
+        open: (
+          kind: string,
+          slug: string | null,
+          bounds: Bounds,
+          url: string,
+          options: { id?: string },
+        ) => string;
+      };
+    };
+    const handoffResolvers: Array<(result: HandoffResult) => void> = [];
+    const handoff = vi
+      .spyOn(internals, "performHostedShellHandoff")
+      .mockImplementation(
+        () => new Promise((resolve) => { handoffResolvers.push(resolve); }),
+      );
+    const open = vi
+      .spyOn(internals.manager, "open")
+      .mockImplementation((_kind, _slug, _bounds, _url, options) => options.id ?? "missing");
+    vi.spyOn(internals, "scheduleHostedShellSessionRefresh").mockImplementation(() => {});
+
+    const oldOpen = service.open({ kind: "hosted-shell", bounds: BOUNDS });
+    service.closeAll();
+    const newOpen = service.open({ kind: "hosted-shell", bounds: BOUNDS });
+
+    expect(handoff).toHaveBeenCalledTimes(1);
+    handoffResolvers[0]?.({ ok: true });
+    await expect(oldOpen).resolves.toEqual(expect.objectContaining({ state: "failed" }));
+    expect(open).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => expect(handoff).toHaveBeenCalledTimes(2));
+    handoffResolvers[1]?.({ ok: true });
+    await expect(newOpen).resolves.toEqual(expect.objectContaining({ state: "loading" }));
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not attach a stale hosted-shell auth retry after runtime reset", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      pendingHostedShells: Map<string, Bounds>;
+      performHostedShellHandoff: (gatewayOrigin: string) => Promise<HandoffResult>;
+      scheduleHostedShellSessionRefresh: (gatewayOrigin: string) => void;
+      manager: {
+        open: (
+          kind: string,
+          slug: string | null,
+          bounds: Bounds,
+          url: string,
+          options: { id?: string },
+        ) => string;
+      };
+    };
+    const handoffResolvers: Array<(result: HandoffResult) => void> = [];
+    const handoff = vi
+      .spyOn(internals, "performHostedShellHandoff")
+      .mockImplementation(
+        () => new Promise((resolve) => { handoffResolvers.push(resolve); }),
+      );
+    const open = vi
+      .spyOn(internals.manager, "open")
+      .mockImplementation((_kind, _slug, _bounds, _url, options) => options.id ?? "missing");
+    vi.spyOn(internals, "scheduleHostedShellSessionRefresh").mockImplementation(() => {});
+
+    internals.pendingHostedShells.set("old-shell", BOUNDS);
+    const oldRetry = service.retryAuth("old-shell");
+    service.closeAll();
+    internals.pendingHostedShells.set("new-shell", BOUNDS);
+    const newRetry = service.retryAuth("new-shell");
+
+    expect(handoff).toHaveBeenCalledTimes(1);
+    handoffResolvers[0]?.({ ok: true });
+    await expect(oldRetry).resolves.toBe(false);
+    expect(open).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => expect(handoff).toHaveBeenCalledTimes(2));
+    handoffResolvers[1]?.({ ok: true });
+    await expect(newRetry).resolves.toBe(true);
+    expect(open).toHaveBeenCalledWith(
+      "hosted-shell",
+      null,
+      BOUNDS,
+      "https://gateway.test/",
+      expect.objectContaining({ id: "new-shell" }),
+    );
+  });
+
   it("honors pending hosted-shell inactive state when retry auth finishes", async () => {
     const emitState = vi.fn();
     const service = new EmbedService({
@@ -54,6 +238,31 @@ describe("EmbedService", () => {
       expect.objectContaining({ id: "embed-shell", active: false }),
     );
     expect(emitState).toHaveBeenCalledWith("embed-shell", "loading");
+  });
+
+  it("suspends live and pending embeds through the trusted core", () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const internals = service as unknown as {
+      pendingHostedShells: Map<string, Bounds>;
+      pendingApps: Map<string, { slug: string; bounds: Bounds }>;
+      pendingActive: Map<string, boolean>;
+      manager: { suspendAll: () => boolean };
+    };
+    const suspendAll = vi.spyOn(internals.manager, "suspendAll").mockReturnValue(true);
+    internals.pendingHostedShells.set("embed-shell", BOUNDS);
+    internals.pendingApps.set("embed-app", { slug: "notes", bounds: BOUNDS });
+    internals.pendingActive.set("embed-shell", true);
+    internals.pendingActive.set("embed-app", true);
+
+    expect(service.suspendAll()).toBe(true);
+    expect(suspendAll).toHaveBeenCalledOnce();
+    expect(internals.pendingActive.get("embed-shell")).toBe(false);
+    expect(internals.pendingActive.get("embed-app")).toBe(false);
   });
 
   it("schedules hosted-shell session refresh from the app-session cookie expiry", async () => {

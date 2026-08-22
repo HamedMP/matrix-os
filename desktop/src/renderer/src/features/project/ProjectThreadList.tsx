@@ -19,6 +19,7 @@ export {
   formatRelativeTime,
   threadRailStatus,
 } from "./project-thread-list-model";
+export type { ThreadRailTone } from "./project-thread-list-model";
 
 const RAIL_TONE_STYLES: Record<ThreadRailTone, { background: string; color: string }> = {
   running: { background: "var(--accent-muted)", color: "var(--status-running)" },

@@ -410,6 +410,16 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         run: bun run test:e2e
 
+      - name: Build Desktop for Electron E2E
+        if: needs.changes.outputs.should_run == 'true'
+        run: bun run build:desktop
+
+      - name: Run required MAT-335 Desktop regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts
+
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v7

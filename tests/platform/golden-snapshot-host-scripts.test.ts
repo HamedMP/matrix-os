@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,8 +9,353 @@ const execFileAsync = promisify(execFile);
 const sanitizePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-sanitize';
 const validatePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-validate';
 const activatePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-activate';
+const fastPathPath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-fast-path';
+const awsCliSmokePath = 'distro/customer-vps/host-bin/matrix-aws-cli-smoke';
+const prerequisitesPath = 'distro/customer-vps/host-bin/matrix-prepare-host-prerequisites';
+const serviceDiagnosticsPath = 'distro/customer-vps/host-bin/matrix-golden-service-diagnostics';
+const bootstrapAttestationPath = 'distro/customer-vps/host-bin/matrix-write-bootstrap-attestation';
 
 describe('golden snapshot host scripts', () => {
+  it('derives and atomically records coarse exact-snapshot bootstrap evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-'));
+    await mkdir(join(root, 'opt/matrix/env'), { recursive: true });
+    await mkdir(join(root, 'var/log'), { recursive: true });
+    await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
+    await mkdir(join(root, 'tmp'), { recursive: true });
+    await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_IMAGE_SOURCE=snapshot',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'a'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'var/log/cloud-init-output.log'), [
+      'matrix-host: exact golden snapshot fast path selected',
+      'matrix-host-timing phase=system_prerequisites_ready elapsed_seconds=1 image_source=snapshot',
+      'matrix-host-timing phase=host_bundle_ready elapsed_seconds=2 image_source=snapshot',
+      'matrix-host-timing phase=core_services_started elapsed_seconds=9 image_source=snapshot',
+      '',
+    ].join('\n'));
+
+    await expect(execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+
+    const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
+    expect(JSON.parse(await readFile(outputPath, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      targetBundleVersion: 'v2026.08.20-test',
+      imageSource: 'snapshot',
+      fastPathSelected: true,
+      fullBundleDownloaded: false,
+      systemPrerequisitesReused: true,
+      bundleArchivePresent: false,
+      targetBundleSha256: 'a'.repeat(64),
+      timing: {
+        systemPrerequisitesReadySeconds: 1,
+        hostBundleReadySeconds: 2,
+        coreServicesStartedSeconds: 9,
+      },
+    });
+    expect((await stat(outputPath)).mode & 0o777).toBe(0o644);
+  });
+
+  it('preserves valid first-boot evidence instead of rewriting it after an update', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-existing-'));
+    const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
+    const original = {
+      schemaVersion: 1,
+      targetBundleVersion: 'v2026.08.20-test',
+      imageSource: 'snapshot',
+      fastPathSelected: true,
+      fullBundleDownloaded: false,
+      systemPrerequisitesReused: true,
+      bundleArchivePresent: false,
+      targetBundleSha256: 'a'.repeat(64),
+      timing: {
+        systemPrerequisitesReadySeconds: 1,
+        hostBundleReadySeconds: 2,
+        coreServicesStartedSeconds: 9,
+      },
+    };
+    await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify(original)}\n`);
+
+    await expect(execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+
+    expect(JSON.parse(await readFile(outputPath, 'utf8'))).toEqual(original);
+  });
+
+  it('fails closed instead of replacing invalid existing bootstrap evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-invalid-'));
+    const outputPath = join(root, 'var/lib/matrix/bootstrap-attestation.json');
+    await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
+    await writeFile(outputPath, '{"schemaVersion":2}\n');
+
+    await expect(execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    })).rejects.toMatchObject({ code: 68 });
+    expect(await readFile(outputPath, 'utf8')).toBe('{"schemaVersion":2}\n');
+  });
+
+  it('rejects ambiguous bootstrap logs instead of guessing which path ran', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-ambiguous-'));
+    await mkdir(join(root, 'opt/matrix/env'), { recursive: true });
+    await mkdir(join(root, 'var/log'), { recursive: true });
+    await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_IMAGE_SOURCE=snapshot',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'a'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'var/log/cloud-init-output.log'), [
+      'matrix-host: exact golden snapshot fast path selected',
+      'matrix-host: full bootstrap required',
+      'matrix-host-timing phase=system_prerequisites_ready elapsed_seconds=1 image_source=snapshot',
+      'matrix-host-timing phase=host_bundle_ready elapsed_seconds=2 image_source=snapshot',
+      'matrix-host-timing phase=core_services_started elapsed_seconds=9 image_source=snapshot',
+      '',
+    ].join('\n'));
+
+    await expect(execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    })).rejects.toMatchObject({ code: 66 });
+    await expect(stat(join(root, 'var/lib/matrix/bootstrap-attestation.json')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('records full-download evidence for a clean-image bootstrap', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-full-'));
+    await mkdir(join(root, 'opt/matrix/env'), { recursive: true });
+    await mkdir(join(root, 'var/log'), { recursive: true });
+    await mkdir(join(root, 'var/lib/matrix'), { recursive: true });
+    await mkdir(join(root, 'tmp'), { recursive: true });
+    await writeFile(join(root, 'opt/matrix/env/host.env'), [
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_IMAGE_SOURCE=clean_image',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'b'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'var/log/cloud-init-output.log'), [
+      'matrix-host: full bootstrap required',
+      'matrix-host-timing phase=system_prerequisites_ready elapsed_seconds=31 image_source=clean_image',
+      'matrix-host-timing phase=host_bundle_ready elapsed_seconds=62 image_source=clean_image',
+      'matrix-host-timing phase=core_services_started elapsed_seconds=81 image_source=clean_image',
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'tmp/matrix-host.tgz'), 'bundle');
+    await writeFile(join(root, 'tmp/matrix-host.tgz.sha256'), `${'b'.repeat(64)}  matrix-host.tgz\n`);
+
+    await execFileAsync('bash', [bootstrapAttestationPath], {
+      env: {
+        ...process.env,
+        MATRIX_BOOTSTRAP_ATTESTATION_ROOT: root,
+        MATRIX_BOOTSTRAP_ATTESTATION_WAIT_SECONDS: '0',
+      },
+    });
+
+    expect(JSON.parse(await readFile(
+      join(root, 'var/lib/matrix/bootstrap-attestation.json'),
+      'utf8',
+    ))).toMatchObject({
+      targetBundleVersion: 'v2026.08.20-test',
+      imageSource: 'clean_image',
+      fastPathSelected: false,
+      fullBundleDownloaded: true,
+      systemPrerequisitesReused: false,
+      bundleArchivePresent: true,
+      targetBundleSha256: 'b'.repeat(64),
+    });
+  });
+
+  it('allows the fast path only for a baked exact-bundle snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-'));
+    const appDir = join(root, 'opt/matrix/app');
+    await mkdir(appDir, { recursive: true });
+    await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
+    await writeFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'version=1\n');
+    await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v2026.08.19-test\n');
+    await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'a'.repeat(64)}\n`);
+    await chmod(fastPathPath, 0o755);
+
+    const exactEnv = {
+      ...process.env,
+      MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+      MATRIX_IMAGE_SOURCE: 'snapshot',
+      MATRIX_IMAGE_VERSION: 'v2026.08.19-test',
+      MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.19-test',
+      MATRIX_TARGET_BUNDLE_SHA256: 'a'.repeat(64),
+    };
+    await expect(execFileAsync(fastPathPath, [], { env: exactEnv })).resolves.toMatchObject({ stdout: '' });
+
+    await expect(execFileAsync(fastPathPath, [], {
+      env: { ...exactEnv, MATRIX_TARGET_BUNDLE_SHA256: 'b'.repeat(64) },
+    })).rejects.toMatchObject({ code: 1 });
+    await expect(execFileAsync(fastPathPath, [], {
+      env: { ...exactEnv, MATRIX_SNAPSHOT_SOURCE_VERSION: 'older' },
+    })).rejects.toMatchObject({ code: 1 });
+  });
+
+  it('loads canonical snapshot inputs when the cloud-init launcher did not export them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-host-env-'));
+    const appDir = join(root, 'opt/matrix/app');
+    const envDir = join(root, 'opt/matrix/env');
+    await mkdir(appDir, { recursive: true });
+    await mkdir(envDir, { recursive: true });
+    await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
+    await writeFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'version=1\n');
+    await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v2026.08.20-test\n');
+    await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'e'.repeat(64)}\n`);
+    await writeFile(join(envDir, 'host.env'), [
+      'MATRIX_IMAGE_SOURCE=snapshot',
+      'MATRIX_IMAGE_VERSION=v2026.08.20-test',
+      'MATRIX_SNAPSHOT_SOURCE_VERSION=v2026.08.20-test',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'e'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await chmod(fastPathPath, 0o755);
+
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: '',
+        MATRIX_IMAGE_VERSION: '',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: '',
+        MATRIX_TARGET_BUNDLE_SHA256: '',
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+
+    await writeFile(join(envDir, 'host.env'), [
+      'MATRIX_IMAGE_SOURCE=clean_image',
+      'MATRIX_IMAGE_VERSION=older',
+      'MATRIX_SNAPSHOT_SOURCE_VERSION=',
+      `MATRIX_TARGET_BUNDLE_SHA256=${'f'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: 'snapshot',
+        MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
+        MATRIX_TARGET_BUNDLE_SHA256: 'e'.repeat(64),
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+  });
+
+  it('re-certifies a missing host-prerequisites marker without bootstrap work', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-recertify-'));
+    const appDir = join(root, 'opt/matrix/app');
+    const binDir = join(root, 'opt/matrix/bin');
+    const fakeBin = join(root, 'test-bin');
+    await mkdir(appDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    await mkdir(fakeBin, { recursive: true });
+    await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
+    await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v2026.08.20-test\n');
+    await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'d'.repeat(64)}\n`);
+    await copyFile(prerequisitesPath, join(binDir, 'matrix-prepare-host-prerequisites'));
+    await chmod(join(binDir, 'matrix-prepare-host-prerequisites'), 0o755);
+    for (const [command, target] of [
+      ['bash', '/bin/bash'],
+      ['chmod', '/usr/bin/chmod'],
+      ['install', '/usr/bin/install'],
+      ['mktemp', '/usr/bin/mktemp'],
+      ['mv', '/usr/bin/mv'],
+      ['rm', '/usr/bin/rm'],
+      ['tr', '/usr/bin/tr'],
+    ]) {
+      await symlink(target, join(fakeBin, command));
+    }
+    for (const command of [
+      'add-apt-repository', 'apparmor_parser', 'aws', 'bwrap', 'cmatrix', 'curl', 'docker',
+      'elixir', 'erl', 'file', 'git', 'nginx', 'openssl', 'psql', 'socat', 'sudo', 'unzip', 'zsh',
+    ]) {
+      await symlink('/bin/true', join(fakeBin, command));
+    }
+    await chmod(fastPathPath, 0o755);
+
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: 'snapshot',
+        MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
+        MATRIX_TARGET_BUNDLE_SHA256: 'd'.repeat(64),
+        PATH: fakeBin,
+      },
+    })).resolves.toMatchObject({ stdout: '' });
+
+    expect(await readFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'utf8'))
+      .toBe('version=1\n');
+
+    await unlink(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'));
+    await unlink(join(fakeBin, 'aws'));
+    await expect(execFileAsync(fastPathPath, [], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+        MATRIX_IMAGE_SOURCE: 'snapshot',
+        MATRIX_IMAGE_VERSION: 'v2026.08.20-test',
+        MATRIX_SNAPSHOT_SOURCE_VERSION: 'v2026.08.20-test',
+        MATRIX_TARGET_BUNDLE_SHA256: 'd'.repeat(64),
+        PATH: fakeBin,
+      },
+    })).rejects.toMatchObject({ code: 1 });
+  });
+
+  it('rejects missing or symlinked fast-path evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-evidence-'));
+    const appDir = join(root, 'opt/matrix/app');
+    await mkdir(appDir, { recursive: true });
+    await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v1\n');
+    await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'c'.repeat(64)}\n`);
+    await writeFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'version=1\n');
+    await chmod(fastPathPath, 0o755);
+    const env = {
+      ...process.env,
+      MATRIX_GOLDEN_SNAPSHOT_ROOT: root,
+      MATRIX_IMAGE_SOURCE: 'snapshot',
+      MATRIX_IMAGE_VERSION: 'v1',
+      MATRIX_SNAPSHOT_SOURCE_VERSION: 'v1',
+      MATRIX_TARGET_BUNDLE_SHA256: 'c'.repeat(64),
+    };
+
+    await expect(execFileAsync(fastPathPath, [], { env })).rejects.toMatchObject({ code: 1 });
+    const externalMarker = join(root, 'external-marker');
+    await writeFile(externalMarker, 'matrix-host-prerequisites-v1\n');
+    await symlink(externalMarker, join(root, 'opt/matrix/golden-snapshot-system-ready'));
+    await expect(execFileAsync(fastPathPath, [], { env })).rejects.toMatchObject({ code: 1 });
+
+    await unlink(join(root, 'opt/matrix/golden-snapshot-system-ready'));
+    await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
+    await unlink(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'));
+    const externalPrerequisites = join(root, 'external-prerequisites');
+    await writeFile(externalPrerequisites, 'version=1\n');
+    await symlink(externalPrerequisites, join(root, 'opt/matrix/HOST_PREREQUISITES_READY'));
+    await expect(execFileAsync(fastPathPath, [], { env })).rejects.toMatchObject({ code: 1 });
+  });
+
   it('removes every forbidden-state category from an isolated synthetic root', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-golden-sanitize-'));
     const forbidden = [
@@ -30,6 +375,7 @@ describe('golden snapshot host scripts', () => {
       'home/matrix/.bash_history',
       'home/matrix/.npmrc',
       'run/matrix/bootstrap-token',
+      'var/lib/matrix/bootstrap-attestation.json',
       'var/lib/docker/volumes/customer/_data/db',
       'var/log/matrix-builder.log',
       'var/crash/matrix-gateway.crash',
@@ -42,6 +388,8 @@ describe('golden snapshot host scripts', () => {
     }
     await mkdir(join(root, 'etc/matrix'), { recursive: true });
     await writeFile(join(root, 'etc/matrix/golden-snapshot-builder'), '1');
+    await mkdir(join(root, 'opt/matrix'), { recursive: true });
+    await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
     await writeFile(join(root, 'etc/machine-id'), 'builder-machine-id\n');
     await chmod(sanitizePath, 0o755);
 
@@ -75,6 +423,8 @@ describe('golden snapshot host scripts', () => {
     expect(evidence).toContain('clean:/etc/netplan/50-cloud-init.yaml');
     expect(evidence).toContain('clean:/etc/netplan/provider-state');
     expect(evidence).toContain('clean:/etc/systemd/network/provider-state');
+    expect(await readFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'utf8'))
+      .toBe('matrix-host-prerequisites-v1\n');
   });
 
   it('keeps the sanitized runtime state traversable under a restrictive builder umask', async () => {
@@ -122,6 +472,8 @@ describe('golden snapshot host scripts', () => {
     expect(source).toContain('"phase": "validated"');
     expect(source).toContain('"exactBundle"');
     expect(source).toContain('/opt/matrix/app/BUNDLE_SHA256');
+    expect(source).toContain('fast_path_ready');
+    expect(source).toContain('/opt/matrix/bin/matrix-golden-snapshot-fast-path');
     expect(source).not.toContain('json.load');
     expect(source).not.toContain('release_sha256');
     expect(source).not.toContain('cat /etc/matrix/platform.env');
@@ -151,7 +503,7 @@ describe('golden snapshot host scripts', () => {
 
   it('rejects a validation clone with baked matrix linger state before activation', async () => {
     const activationSource = await readFile(activatePath, 'utf8');
-    const preflight = activationSource.indexOf('set_activation_stage activation_preflight_runtime_state');
+    const preflight = activationSource.indexOf('set_activation_stage activation_preflight_user_state');
     const lingerMarker = activationSource.indexOf('/var/lib/systemd/linger/matrix', preflight);
     const lingerState = activationSource.indexOf('loginctl show-user matrix --property=Linger --value');
     const userManager = activationSource.indexOf('systemctl is-active --quiet "user@${matrix_uid}.service"');
@@ -191,10 +543,11 @@ describe('golden snapshot host scripts', () => {
       .toBeLessThan(runCommands.indexOf('MATRIX_GOLDEN_SNAPSHOT_ROOT=/ /opt/matrix/bin/matrix-golden-snapshot-sanitize'));
     expect(runCommands).toContain('curl --config -');
     expect(runCommands).not.toContain('-H "authorization: Bearer $callbackToken"');
-    expect(runCommands).toContain('"phase":"failed"');
-    expect(runCommands).toContain('"role":"builder"');
-    expect(runCommands).toContain('"stage":"%s"');
-    expect(runCommands).toContain('"$failureStage"');
+    expect(runCommands).toContain("'phase': 'failed'");
+    expect(runCommands).toContain("'role': 'builder'");
+    expect(runCommands).toContain("'stage': reported_stage");
+    expect(runCommands).toContain("payload['serviceDiagnostics'] = diagnostics");
+    expect(runCommands).toContain('/run/matrix-golden-service-diagnostics.json');
     expect(runCommands).toContain('trap reportFailure EXIT');
     expect(runCommands).not.toContain('trap reportFailure ERR');
     expect(runCommands).toContain("failureStage='activation'");
@@ -213,10 +566,216 @@ describe('golden snapshot host scripts', () => {
     );
     expect(source).toContain('builderMachineIdSha256');
     expect(source).toContain('builderSshHostKeySha256');
+    expect(source).toContain('/opt/matrix/bin/matrix-golden-service-diagnostics');
     expect(source).toContain("printf '%s\\n' '{{bundleVersion}}' >/opt/matrix/app/BUNDLE_VERSION");
     expect(source).toContain("printf '%s\\n' '{{bundleSha256}}' >/opt/matrix/app/BUNDLE_SHA256");
     expect(source).not.toContain('{{clerkUserId}}');
     expect(source).not.toContain('{{registrationToken}}');
+  });
+
+  it('captures bounded redacted systemd diagnostics before a failed activation callback', async () => {
+    const [activation, builder, diagnosticsScript, buildScript] = await Promise.all([
+      readFile(activatePath, 'utf8'),
+      readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8'),
+      readFile(serviceDiagnosticsPath, 'utf8'),
+      readFile('scripts/build-host-bundle.sh', 'utf8'),
+    ]);
+
+    expect(activation).toContain('capture_service_diagnostics()');
+    expect(activation).toContain('/opt/matrix/bin/matrix-golden-service-diagnostics');
+    expect(diagnosticsScript).toContain("journalctl --unit \"$unit\"");
+    expect(diagnosticsScript).toContain("--lines=40");
+    expect(diagnosticsScript).toContain("line[:512]");
+    expect(diagnosticsScript).toContain("'[REDACTED]'");
+    expect(diagnosticsScript).toContain('matrix-golden-service-diagnostics.json');
+    expect(builder).toContain("payload['serviceDiagnostics'] = diagnostics");
+    expect(builder).not.toContain("payload['error']");
+    expect(buildScript).toContain('$STAGE_DIR/bin/matrix-golden-service-diagnostics');
+  });
+
+  it('redacts and bounds captured service diagnostics with fake systemd output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-diagnostics-'));
+    const fakeBin = join(root, 'bin');
+    await mkdir(fakeBin);
+    await writeFile(join(fakeBin, 'systemctl'), `#!/usr/bin/env bash
+cat <<'EOF'
+LoadState=loaded
+ActiveState=failed
+SubState=failed
+Result=exit-code
+ConditionResult=yes
+ExecMainCode=exited
+ExecMainStatus=1
+NRestarts=3
+EOF
+`);
+    const secret = 'a'.repeat(64);
+    await writeFile(join(fakeBin, 'journalctl'), `#!/usr/bin/env bash
+for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secret}@127.0.0.1/matrix %0600d\\n' "$i" 0; done
+`);
+    await chmod(join(fakeBin, 'systemctl'), 0o755);
+    await chmod(join(fakeBin, 'journalctl'), 0o755);
+    await chmod(serviceDiagnosticsPath, 0o755);
+
+    await execFileAsync(serviceDiagnosticsPath, ['matrix-gateway.service'], {
+      env: {
+        ...process.env,
+        MATRIX_GOLDEN_DIAGNOSTICS_ROOT: root,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      },
+    });
+    const diagnostics = JSON.parse(
+      await readFile(join(root, 'matrix-golden-service-diagnostics.json'), 'utf8'),
+    ) as { execMainStatus: number; nRestarts: number; journalTail: string[] };
+
+    expect(diagnostics).toMatchObject({ execMainStatus: 1, nRestarts: 3 });
+    expect(diagnostics.journalTail).toHaveLength(40);
+    expect(diagnostics.journalTail.every((line) => line.length <= 512)).toBe(true);
+    expect(diagnostics.journalTail.join('\n')).toContain('[REDACTED]');
+    expect(diagnostics.journalTail.join('\n')).not.toContain(secret);
+  });
+
+  it('bakes all clean-boot prerequisites before certifying a fast snapshot', async () => {
+    const [source, activationSource, prerequisites, service] = await Promise.all([
+      readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8'),
+      readFile(activatePath, 'utf8'),
+      readFile(prerequisitesPath, 'utf8'),
+      readFile('packages/platform/src/golden-snapshot-service.ts', 'utf8'),
+    ]);
+    const prepare = source.indexOf('/opt/matrix/bin/matrix-prepare-host-prerequisites');
+    const activation = source.indexOf('/opt/matrix/bin/matrix-golden-snapshot-activate builder');
+    const normalizeOwnership = source.indexOf('chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime');
+    const normalizeWrites = source.indexOf('chmod -R g+rwX /opt/matrix/app');
+    const readiness = source.indexOf("printf '%s\\n' matrix-host-prerequisites-v1 >/opt/matrix/golden-snapshot-system-ready");
+
+    for (const packageName of [
+      'bubblewrap', 'build-essential', 'ca-certificates', 'cmatrix', 'curl', 'docker.io',
+      'elixir', 'erlang-base', 'file', 'git', 'nginx', 'openssl', 'postgresql-client',
+      'procps', 'socat', 'sudo', 'unzip', 'zsh',
+    ]) {
+      expect(source).toMatch(new RegExp(`^  - ${packageName}$`, 'm'));
+    }
+    expect(prepare).toBeGreaterThan(-1);
+    expect(prepare).toBeLessThan(activation);
+    expect(prerequisites).toContain('HOST_PREREQUISITES_VERSION=1');
+    expect(prerequisites).toContain('matrix_dir=/opt/matrix');
+    expect(prerequisites).toContain('marker="$matrix_dir/HOST_PREREQUISITES_READY"');
+    expect(prerequisites).toContain('timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive');
+    expect(prerequisites).toContain('timeout --kill-after=30 120 add-apt-repository -y universe');
+    expect(prerequisites).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
+    expect(prerequisites).toContain('--connect-timeout 10 --max-time 120');
+    expect(activationSource).toContain('/opt/matrix/HOST_PREREQUISITES_READY');
+    expect(activationSource).toContain('matrix host prerequisites are not ready');
+    expect(service).toContain("'host_prerequisites'");
+    expect(source).toContain('command -v "$required_command" >/dev/null');
+    expect(normalizeOwnership).toBeGreaterThan(activation);
+    expect(normalizeWrites).toBeGreaterThan(normalizeOwnership);
+    expect(readiness).toBeGreaterThan(normalizeWrites);
+    expect(readiness).toBeGreaterThan(activation);
+    const buildScript = await readFile('scripts/build-host-bundle.sh', 'utf8');
+    expect(buildScript).toContain('matrix-golden-snapshot-fast-path');
+    expect(buildScript).toContain('$STAGE_DIR/bin/matrix-prepare-host-prerequisites');
+  });
+
+  it('re-certifies host prerequisites after sanitation before requesting a snapshot', async () => {
+    const source = await readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8');
+    const sanitize = source.indexOf(
+      'MATRIX_GOLDEN_SNAPSHOT_ROOT=/ /opt/matrix/bin/matrix-golden-snapshot-sanitize',
+    );
+    const certify = source.indexOf(
+      '/opt/matrix/bin/matrix-prepare-host-prerequisites --certify-only',
+      sanitize,
+    );
+    const callback = source.indexOf("curl --config - --fail --silent --show-error", certify);
+
+    expect(sanitize).toBeGreaterThan(-1);
+    expect(certify).toBeGreaterThan(sanitize);
+    expect(callback).toBeGreaterThan(certify);
+  });
+
+  it('re-certifies an absent host marker before validation activation continues', async () => {
+    const source = await readFile(activatePath, 'utf8');
+    const validationBranch = source.indexOf('if [ "$mode" = validation ]; then');
+    const preflight = source.indexOf(
+      'set_activation_stage activation_preflight_host_prerequisites',
+      validationBranch,
+    );
+    const missingMarker = source.indexOf(
+      'if [ ! -e /opt/matrix/HOST_PREREQUISITES_READY ]',
+      preflight,
+    );
+    const certify = source.indexOf(
+      '/opt/matrix/bin/matrix-prepare-host-prerequisites --certify-only',
+      missingMarker,
+    );
+    const malformedMarker = source.indexOf(
+      'if [ ! -f /opt/matrix/HOST_PREREQUISITES_READY ]',
+      certify,
+    );
+
+    expect(validationBranch).toBeGreaterThan(-1);
+    expect(preflight).toBeGreaterThan(validationBranch);
+    expect(missingMarker).toBeGreaterThan(preflight);
+    expect(certify).toBeGreaterThan(missingMarker);
+    expect(malformedMarker).toBeGreaterThan(certify);
+  });
+
+  it('certifies prerequisite evidence without package or network work', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-host-prerequisites-'));
+    const fakeBin = join(root, 'bin');
+    await mkdir(fakeBin, { recursive: true });
+    for (const command of [
+      'add-apt-repository', 'apparmor_parser', 'aws', 'bwrap', 'cmatrix', 'curl', 'docker',
+      'elixir', 'erl', 'file', 'git', 'nginx', 'openssl', 'psql', 'socat', 'sudo', 'unzip', 'zsh',
+    ]) {
+      await symlink('/bin/true', join(fakeBin, command));
+    }
+    await chmod(prerequisitesPath, 0o755);
+
+    await execFileAsync(prerequisitesPath, ['--certify-only'], {
+      env: {
+        ...process.env,
+        MATRIX_HOST_PREREQUISITES_ROOT: root,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      },
+    });
+
+    expect(await readFile(join(root, 'opt/matrix/HOST_PREREQUISITES_READY'), 'utf8'))
+      .toBe('version=1\n');
+  });
+
+  it('functionally certifies the baked AWS CLI before snapshot readiness and validation', async () => {
+    const builder = await readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8');
+    const validator = await readFile(validatePath, 'utf8');
+    const awsExecution = builder.indexOf('/opt/matrix/bin/matrix-aws-cli-smoke');
+    const readiness = builder.indexOf(
+      "printf '%s\\n' matrix-host-prerequisites-v1 >/opt/matrix/golden-snapshot-system-ready",
+    );
+
+    expect(awsExecution).toBeGreaterThan(-1);
+    expect(readiness).toBeGreaterThan(awsExecution);
+    expect(validator).toContain('aws_cli_ready=false');
+    expect(validator).toContain('/opt/matrix/bin/matrix-aws-cli-smoke');
+    expect(validator).toContain('[ "$aws_cli_ready" = true ]');
+  });
+
+  it('certifies the baked AWS CLI through a credential-free S3-compatible boundary', async () => {
+    const [builder, validator, smoke, buildScript] = await Promise.all([
+      readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8'),
+      readFile(validatePath, 'utf8'),
+      readFile(awsCliSmokePath, 'utf8'),
+      readFile('scripts/build-host-bundle.sh', 'utf8'),
+    ]);
+
+    expect(builder).toContain('/opt/matrix/bin/matrix-aws-cli-smoke');
+    expect(validator).toContain('/opt/matrix/bin/matrix-aws-cli-smoke');
+    expect(smoke).toContain('s3api head-object');
+    expect(smoke).toContain('s3 cp');
+    expect(smoke).toContain('endpoint="http://127.0.0.1:${port}"');
+    expect(smoke).toContain('--endpoint-url "$endpoint"');
+    expect(smoke).toContain('AWS_ACCESS_KEY_ID=matrix-golden-smoke');
+    expect(smoke).toContain('timeout --preserve-status 20 aws');
+    expect(buildScript).toContain('matrix-aws-cli-smoke');
   });
 
   it('defers final sanitation until after the builder cloud-final command exits', async () => {
@@ -387,6 +946,21 @@ describe('golden snapshot host scripts', () => {
     expect(source.indexOf(parentHome)).toBeLessThan(source.indexOf(ownerDirectories));
   });
 
+  it('restores matrix traversal access before starting synthetic services', async () => {
+    const source = await readFile(activatePath, 'utf8');
+    const matrixUser = source.indexOf(
+      'id matrix >/dev/null 2>&1 || useradd --system --gid matrix --home-dir /home/matrix --shell /bin/bash matrix',
+    );
+    const accessibleWorkingDirectory = source.indexOf(
+      'install -d -o root -g matrix -m 0770 /opt/matrix',
+    );
+    const serviceStart = source.indexOf('set_activation_stage activation_services_start');
+
+    expect(matrixUser).toBeGreaterThan(-1);
+    expect(accessibleWorkingDirectory).toBeGreaterThan(matrixUser);
+    expect(accessibleWorkingDirectory).toBeLessThan(serviceStart);
+  });
+
   it('installs activated user-systemd terminal prerequisites before starting the gateway', async () => {
     const source = await readFile(activatePath, 'utf8');
     const runtimeSetup = source.indexOf('set_activation_stage activation_terminal_runtime');
@@ -419,6 +993,10 @@ describe('golden snapshot host scripts', () => {
     expect(source).toContain('ssh-keygen -A');
     expect(source).toMatch(/if \[ "\$\{MATRIX_IMAGE_SOURCE:-clean_image\}" = "snapshot" \]; then[\s\S]*systemctl enable --now docker\.service containerd\.service[\s\S]*fi/);
     expect(source).toContain('MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}');
+    expect(source).toContain('&& MATRIX_IMAGE_SOURCE="$MATRIX_IMAGE_SOURCE" \\');
+    expect(source).toContain('MATRIX_IMAGE_VERSION="$MATRIX_IMAGE_VERSION" \\');
+    expect(source).toContain('MATRIX_SNAPSHOT_SOURCE_VERSION="$MATRIX_SNAPSHOT_SOURCE_VERSION" \\');
+    expect(source).toContain('MATRIX_TARGET_BUNDLE_SHA256="$MATRIX_TARGET_BUNDLE_SHA256" \\');
     expect(source).toContain('target bundle provenance mismatch');
   });
 });

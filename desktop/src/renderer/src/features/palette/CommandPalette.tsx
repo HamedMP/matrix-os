@@ -12,6 +12,7 @@ import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../lib/project-chat";
+import { openProjectOverview } from "../../lib/project-navigation";
 import { handleNewAgentRunShortcut } from "../mission-control/shortcuts";
 import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../coding-agents/provider-setup-terminal";
 
@@ -106,6 +107,7 @@ export default function CommandPalette() {
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
 
   // Make sure apps are available the first time the palette opens.
   useEffect(() => {
@@ -269,7 +271,7 @@ export default function CommandPalette() {
                   key={p.slug}
                   icon={<Kanban size={14} />}
                   label={p.name || p.slug}
-                  onSelect={() => run(() => openTab({ kind: "project", projectSlug: p.slug, title: p.name || p.slug }))}
+                  onSelect={() => run(() => openProjectOverview(p.slug, p.name || p.slug))}
                 />
               ))}
             </Command.Group>
@@ -364,7 +366,7 @@ export default function CommandPalette() {
                   key={app.slug}
                   icon={<LayoutGrid size={14} />}
                   label={app.name}
-                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(appIconUrl(platformHost, app.slug) ? { icon: appIconUrl(platformHost, app.slug)! } : {}) }))}
+                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(appIconUrl(platformHost, app.slug, runtimeSlot) ? { icon: appIconUrl(platformHost, app.slug, runtimeSlot)! } : {}) }))}
                 />
               ))}
             </Command.Group>

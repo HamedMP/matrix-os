@@ -12,6 +12,16 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 describe("CreateProjectDialog", () => {
+  function openFolders() {
+    fireEvent.change(screen.getByLabelText("What are you working on?"), { target: { value: "Temporary" } });
+    fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
+  }
+
+  function openNewFolder() {
+    openFolders();
+    fireEvent.click(screen.getByRole("button", { name: /New folder in Projects/ }));
+  }
+
   beforeEach(() => {
     useConnection.setState({
       status: "signed-in",
@@ -36,6 +46,28 @@ describe("CreateProjectDialog", () => {
     vi.restoreAllMocks();
   });
 
+  it("starts with the Figma project details and source choices", () => {
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+
+    expect(screen.getAllByText("Create a project")).toHaveLength(2);
+    expect(screen.getByLabelText("What are you working on?")).toBeTruthy();
+    expect(screen.getByLabelText("What are you trying to achieve?")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Folders/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Clone from GitHub/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create project" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("opens the folder and GitHub source flows directly from their cards", () => {
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+
+    fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
+    expect(screen.getByText("Connect an existing folder")).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Back" })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+    expect(screen.getByPlaceholderText("https://github.com/owner/repo")).toBeTruthy();
+  });
+
   it("does not select or open a project after Cancel closes an in-flight create", async () => {
     let resolveCreate!: (project: Project) => void;
     const createProject = vi.fn(
@@ -53,9 +85,9 @@ describe("CreateProjectDialog", () => {
       return <CreateProjectDialog open={open} onClose={() => setOpen(false)} />;
     }
 
-    render(<Harness />);
+    render(<Tooltip.Provider><Harness /></Tooltip.Provider>);
 
-    fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
+    openNewFolder();
     fireEvent.change(screen.getByPlaceholderText("Project name"), {
       target: { value: "Desktop" },
     });
@@ -97,7 +129,7 @@ describe("CreateProjectDialog", () => {
     useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
     render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
 
-    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    openFolders();
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Customer app" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
@@ -111,6 +143,26 @@ describe("CreateProjectDialog", () => {
       mode: "folder",
       path: "workspaces/customer-app",
     }));
+  });
+
+  it("starts the safe new-folder flow from the existing-folder picker", async () => {
+    const get = vi.fn(async (requestPath: string) => {
+      if (requestPath === "/api/files/list?path=") {
+        return { entries: [{ name: "workspaces", type: "directory" }] };
+      }
+      return { entries: [] };
+    });
+    useConnection.setState({ api: { post: vi.fn(), get, baseUrl: "https://gateway.test" } as never });
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+
+    openFolders();
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+    fireEvent.click(workspaces);
+    fireEvent.click(screen.getByRole("button", { name: "New folder in workspaces" }));
+
+    expect(screen.getByText("New folder")).toBeTruthy();
+    expect(screen.getByText("Create in: workspaces")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Project name")).toHaveProperty("value", "");
   });
 
   it("opens a project when the selected folder is already connected", async () => {
@@ -138,13 +190,12 @@ describe("CreateProjectDialog", () => {
     useTabs.setState({ openTab });
 
     render(<Tooltip.Provider><CreateProjectDialog open onClose={onClose} /></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    openFolders();
     await waitFor(() => expect(screen.getByRole("button", { name: "Open apps" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open apps" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open matrix-os" })).not.toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-os" }));
-    fireEvent.click(screen.getByRole("button", { name: "Choose matrix-os" }));
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Matrix OS" }));
 
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "matrix-os"));
     expect(createProject).not.toHaveBeenCalled();
@@ -156,12 +207,13 @@ describe("CreateProjectDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("opens the existing project instead of connecting its Matrix-managed registry folder", async () => {
+  it("opens the existing project instead of reconnecting its legacy project container", async () => {
     const existingProject = {
       slug: "matrix-os",
       name: "Matrix OS",
-      localPath: "/home/matrix/home/apps/matrix-os",
-      githubBacked: false,
+      kind: "github" as const,
+      localPath: "/home/matrix/home/projects/matrix-os/repo",
+      githubBacked: true,
     };
     const get = vi.fn(async (requestPath: string) => {
       if (requestPath === "/api/files/list?path=") {
@@ -181,13 +233,13 @@ describe("CreateProjectDialog", () => {
     useTabs.setState({ openTab });
 
     render(<Tooltip.Provider><CreateProjectDialog open onClose={onClose} /></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    openFolders();
     await waitFor(() => expect(screen.getByRole("button", { name: "Open projects" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open projects" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open matrix-os" })).not.toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-os" }));
 
-    expect(screen.getByText("This folder contains Matrix project data, not a workspace.")).toBeTruthy();
+    expect(screen.getByText("This folder is already connected to Matrix OS.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open Matrix OS" }));
 
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "matrix-os"));
@@ -200,7 +252,44 @@ describe("CreateProjectDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("blocks Matrix registry metadata folders while keeping repo workspaces selectable", async () => {
+  it("allows an unrelated same-slug folder under Projects to be connected", async () => {
+    const existingProject = {
+      slug: "foo",
+      name: "Foo",
+      kind: "folder" as const,
+      localPath: "/home/matrix/home/workspaces/foo",
+      githubBacked: false,
+    };
+    const get = vi.fn(async (requestPath: string) => {
+      if (requestPath === "/api/files/list?path=") {
+        return { entries: [{ name: "projects", type: "directory" }] };
+      }
+      if (requestPath === "/api/files/list?path=projects") {
+        return { entries: [{ name: "foo", type: "directory" }] };
+      }
+      return { entries: [] };
+    });
+    const createProject = vi.fn(async () => ({
+      slug: "projects-foo",
+      name: "Projects Foo",
+      kind: "folder" as const,
+      localPath: "/home/matrix/home/projects/foo",
+      githubBacked: false,
+    }));
+    useConnection.setState({ api: { post: vi.fn(), get, baseUrl: "https://gateway.test" } as never });
+    useBoard.setState({ projects: [existingProject], createProject, selectProject: vi.fn(async () => undefined) });
+
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+    openFolders();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open projects" })).not.toBeNull());
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open projects" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open foo" }));
+
+    expect(screen.queryByRole("button", { name: "Open Foo" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Choose foo" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("connects an ordinary checkout directly under Projects", async () => {
     const get = vi.fn(async (requestPath: string) => {
       if (requestPath === "/api/files/list?path=") {
         return { entries: [{ name: "projects", type: "directory" }] };
@@ -208,37 +297,33 @@ describe("CreateProjectDialog", () => {
       if (requestPath === "/api/files/list?path=projects") {
         return { entries: [{ name: "unregistered", type: "directory" }] };
       }
-      if (requestPath === "/api/files/list?path=projects%2Funregistered") {
-        return {
-          entries: [
-            { name: "repo", type: "directory" },
-            { name: "worktrees", type: "directory" },
-          ],
-        };
-      }
       return { entries: [] };
     });
+    const createProject = vi.fn(async () => ({
+      slug: "unregistered",
+      name: "Unregistered",
+      localPath: "/home/matrix/home/projects/unregistered",
+      githubBacked: false,
+    }));
     useConnection.setState({ api: { post: vi.fn(), get, baseUrl: "https://gateway.test" } as never });
-    useBoard.setState({ projects: [] });
+    useBoard.setState({ projects: [], createProject, selectProject: vi.fn(async () => undefined) });
 
     render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    openFolders();
     await waitFor(() => expect(screen.getByRole("button", { name: "Open projects" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open projects" }));
     const registryFolder = await screen.findByRole("button", { name: "Open unregistered" });
     fireEvent.click(registryFolder);
+    expect(screen.getByRole("button", { name: "Choose unregistered" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Choose unregistered" }));
+    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Unregistered" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    expect(screen.getByText("This folder is managed by Matrix and can't be used as a workspace.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Choose unregistered" }).hasAttribute("disabled")).toBe(true);
-
-    fireEvent.doubleClick(registryFolder);
-    const worktrees = await screen.findByRole("button", { name: "Open worktrees" });
-    fireEvent.click(worktrees);
-    expect(screen.getByRole("button", { name: "Choose worktrees" }).hasAttribute("disabled")).toBe(true);
-
-    fireEvent.click(screen.getByRole("button", { name: "Open repo" }));
-    expect(screen.queryByText("This folder is managed by Matrix and can't be used as a workspace.")).toBeNull();
-    expect(screen.getByRole("button", { name: "Choose repo" }).hasAttribute("disabled")).toBe(false);
+    await waitFor(() => expect(createProject).toHaveBeenCalledWith(expect.anything(), {
+      name: "Unregistered",
+      mode: "folder",
+      path: "projects/unregistered",
+    }));
   });
 
   it("opens an existing project when its selected repo workspace has a different folder name", async () => {
@@ -269,16 +354,14 @@ describe("CreateProjectDialog", () => {
     useTabs.setState({ openTab });
 
     render(<Tooltip.Provider><CreateProjectDialog open onClose={onClose} /></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    openFolders();
     await waitFor(() => expect(screen.getByRole("button", { name: "Open projects" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open projects" }));
     const registryFolder = await screen.findByRole("button", { name: "Open scratch-project" });
     fireEvent.doubleClick(registryFolder);
     const repo = await screen.findByRole("button", { name: "Open repo" });
     fireEvent.click(repo);
-    fireEvent.click(screen.getByRole("button", { name: "Choose repo" }));
-    expect(screen.getByPlaceholderText("Project name")).toHaveProperty("value", "repo");
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Scratch Project" }));
 
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "scratch-project"));
     expect(createProject).not.toHaveBeenCalled();
@@ -323,7 +406,7 @@ describe("CreateProjectDialog", () => {
     useTabs.setState({ openTab });
 
     render(<Tooltip.Provider><CreateProjectDialog open onClose={onClose} /></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    openFolders();
     await waitFor(() => expect(screen.getByRole("button", { name: "Open apps" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open apps" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open matrix-os" })).not.toBeNull());
@@ -334,7 +417,7 @@ describe("CreateProjectDialog", () => {
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "matrix-os"));
     expect(post).toHaveBeenCalledWith(
       "/api/projects",
-      expect.objectContaining({ name: "matrix-os", mode: "folder", path: "apps/matrix-os" }),
+      expect.objectContaining({ name: "Temporary", mode: "folder", path: "apps/matrix-os" }),
       { timeoutMs: 30_000 },
     );
     expect(openTab).toHaveBeenCalledWith({
@@ -368,7 +451,7 @@ describe("CreateProjectDialog", () => {
     useBoard.setState({ projects: [existingProject], createProject, selectProject });
 
     render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    openFolders();
     await waitFor(() => expect(screen.getByRole("button", { name: "Open apps" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open apps" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open other-app" })).not.toBeNull());
@@ -393,8 +476,8 @@ describe("CreateProjectDialog", () => {
     useBoard.setState({ createProject, selectProject });
     useTabs.setState({ openTab });
 
-    render(<CreateProjectDialog open onClose={onClose} />);
-    fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={onClose} /></Tooltip.Provider>);
+    openNewFolder();
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
@@ -427,7 +510,7 @@ describe("CreateProjectDialog", () => {
     useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
     render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
 
-    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
+    openFolders();
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Customer app" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
@@ -456,8 +539,8 @@ describe("CreateProjectDialog", () => {
     useBoard.setState({ createProject, selectProject });
     useTabs.setState({ openTab });
 
-    render(<CreateProjectDialog open onClose={onClose} />);
-    fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={onClose} /></Tooltip.Provider>);
+    openNewFolder();
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 

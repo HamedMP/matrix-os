@@ -16,6 +16,7 @@ interface UiState {
   // active embed can detach until that surface closes.
   rendererOverlayCount: number;
   sidebarCollapsed: boolean;
+  homeRefreshRequest: number;
   // One-shot request for which Settings section the next Settings render
   // should select (consumed and cleared by SettingsView).
   requestedSettingsSection: string | null;
@@ -30,6 +31,7 @@ interface UiState {
   releaseRendererOverlay: () => void;
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  requestHomeRefresh: () => void;
   requestSettingsSection: (section: string) => void;
   clearRequestedSettingsSection: () => void;
 }
@@ -43,6 +45,7 @@ export const useUi = create<UiState>()((set) => ({
   quickOpenOpen: false,
   rendererOverlayCount: 0,
   sidebarCollapsed: false,
+  homeRefreshRequest: 0,
   requestedSettingsSection: null,
   setCreateProjectOpen: (open) => set({ createProjectOpen: open }),
   openCreateProject: () => set({ createProjectOpen: true }),
@@ -59,6 +62,9 @@ export const useUi = create<UiState>()((set) => ({
   })),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+  requestHomeRefresh: () => set((state) => ({
+    homeRefreshRequest: (state.homeRefreshRequest + 1) % 1_000_000,
+  })),
   requestSettingsSection: (section) => set({ requestedSettingsSection: section }),
   clearRequestedSettingsSection: () => set({ requestedSettingsSection: null }),
 }));

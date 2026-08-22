@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Exit successfully only when this clone contains the exact immutable bundle
+# and the builder certified the host-level prerequisites needed to skip the
+# clean-image bootstrap. Any legacy, partial, or mismatched snapshot falls
+# through to the existing full install path.
+root="${MATRIX_GOLDEN_SNAPSHOT_ROOT:-}"
+root="${root%/}"
+path() {
+  printf '%s%s\n' "$root" "$1"
+}
+
+if [ -z "${MATRIX_IMAGE_SOURCE:-}" ] \
+  || [ -z "${MATRIX_IMAGE_VERSION:-}" ] \
+  || [ -z "${MATRIX_SNAPSHOT_SOURCE_VERSION:-}" ] \
+  || [ -z "${MATRIX_TARGET_BUNDLE_SHA256:-}" ]; then
+  host_env="$(path /opt/matrix/env/host.env)"
+  if [ -e "$host_env" ] || [ -L "$host_env" ]; then
+    [ -f "$host_env" ] && [ ! -L "$host_env" ] || exit 1
+    host_env_size="$(stat -c %s "$host_env")" || exit 1
+    [[ "$host_env_size" =~ ^[0-9]+$ ]] && [ "$host_env_size" -le 65536 ] || exit 1
+    if [ -z "$root" ]; then
+      host_env_mode="$(stat -c %a "$host_env")" || exit 1
+      [ "$(stat -c %u "$host_env")" = 0 ] \
+        && (( (8#$host_env_mode & 8#022) == 0 )) || exit 1
+    fi
+    # Cloud-init writes this root-owned file immediately before runcmd. Loading
+    # the canonical inputs here keeps the fast path correct even when a caller
+    # sources the file without exporting its shell variables to this process.
+    # shellcheck disable=SC1090
+    source "$host_env"
+  fi
+fi
+
+[ "${MATRIX_IMAGE_SOURCE:-clean_image}" = snapshot ] || exit 1
+[ -n "${MATRIX_IMAGE_VERSION:-}" ] || exit 1
+[ "${MATRIX_SNAPSHOT_SOURCE_VERSION:-}" = "$MATRIX_IMAGE_VERSION" ] || exit 1
+[[ "${MATRIX_TARGET_BUNDLE_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] || exit 1
+
+readiness_file="$(path /opt/matrix/golden-snapshot-system-ready)"
+host_prerequisites_file="$(path /opt/matrix/HOST_PREREQUISITES_READY)"
+host_prerequisites_script="$(path /opt/matrix/bin/matrix-prepare-host-prerequisites)"
+version_file="$(path /opt/matrix/app/BUNDLE_VERSION)"
+sha256_file="$(path /opt/matrix/app/BUNDLE_SHA256)"
+for evidence_file in "$readiness_file" "$version_file" "$sha256_file"; do
+  [ -f "$evidence_file" ] && [ ! -L "$evidence_file" ] || exit 1
+done
+
+[ "$(tr -d '\r\n' < "$readiness_file")" = matrix-host-prerequisites-v1 ] || exit 1
+[ "$(tr -d '\r\n' < "$version_file")" = "$MATRIX_IMAGE_VERSION" ] || exit 1
+[ "$(tr -d '\r\n' < "$sha256_file")" = "$MATRIX_TARGET_BUNDLE_SHA256" ] || exit 1
+
+# A provider clone can lose the separately-written host marker even when the
+# exact immutable bundle and its final readiness proof survive. Repair only a
+# genuinely absent marker by re-checking every baked command. The certify-only
+# path performs no package or network work; malformed or symlinked evidence
+# still fails closed to the full bootstrap.
+if [ ! -e "$host_prerequisites_file" ] && [ ! -L "$host_prerequisites_file" ]; then
+  [ -f "$host_prerequisites_script" ] && [ ! -L "$host_prerequisites_script" ] \
+    && [ -x "$host_prerequisites_script" ] || exit 1
+  MATRIX_HOST_PREREQUISITES_ROOT="${root:-/}" \
+    "$host_prerequisites_script" --certify-only || exit 1
+fi
+[ -f "$host_prerequisites_file" ] && [ ! -L "$host_prerequisites_file" ] || exit 1
+[ "$(tr -d '\r\n' < "$host_prerequisites_file")" = version=1 ] || exit 1

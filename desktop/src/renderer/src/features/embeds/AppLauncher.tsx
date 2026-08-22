@@ -36,6 +36,7 @@ function AppIcon({ url, name }: { url: string | null; name: string }) {
 export default function AppLauncher() {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const openTab = useTabs((s) => s.openTab);
   const apps = useApps((s) => s.apps);
   const loaded = useApps((s) => s.loaded);
@@ -64,7 +65,7 @@ export default function AppLauncher() {
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
   const open = (slug: string, name: string) =>
-    openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug) ? { icon: appIconUrl(platformHost, slug)! } : {}) });
+    openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug, runtimeSlot) ? { icon: appIconUrl(platformHost, slug, runtimeSlot)! } : {}) });
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (filtered.length === 0) return;
@@ -160,7 +161,7 @@ export default function AppLauncher() {
                   onMouseEnter={() => setActive(i)}
                   onClick={() => open(app.slug, app.name)}
                 >
-                  <AppIcon url={appIconUrl(platformHost, app.slug)} name={app.name} />
+                  <AppIcon url={appIconUrl(platformHost, app.slug, runtimeSlot)} name={app.name} />
                   <span className="w-full truncate text-center text-sm" style={{ color: "var(--text-primary)" }}>
                     {app.name}
                   </span>

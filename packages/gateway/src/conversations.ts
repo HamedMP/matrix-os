@@ -44,6 +44,7 @@ export interface SearchResult {
 export interface ConversationStore {
   begin(sessionId: string): void;
   addUserMessage(sessionId: string, content: string): void;
+  addSystemMessage(sessionId: string, content: string): void;
   appendAssistantText(sessionId: string, text: string): void;
   addToolStart(sessionId: string, tool: string): void;
   addToolEnd(sessionId: string, tool: string, input?: Record<string, unknown>): void;
@@ -100,6 +101,13 @@ export function createConversationStore(
   function touch(id: string) {
     lastTouched.set(id, Date.now());
   }
+
+  function flushAssistantBuffer(sessionId: string, conv: ConversationFile) {
+    const buffered = buffers.get(sessionId);
+    if (!buffered) return;
+    conv.messages.push({ role: "assistant", content: buffered, timestamp: Date.now() });
+    buffers.delete(sessionId);
+  }
   const writeFileNow = fs.writeFileSync as (
     path: fs.PathOrFileDescriptor,
     data: string,
@@ -154,6 +162,17 @@ export function createConversationStore(
       writeToDisk(conv);
     },
 
+    addSystemMessage(sessionId, content) {
+      const conv = active.get(sessionId);
+      if (!conv) return;
+
+      flushAssistantBuffer(sessionId, conv);
+      conv.messages.push({ role: "system", content, timestamp: Date.now() });
+      conv.updatedAt = Date.now();
+      touch(sessionId);
+      writeToDisk(conv);
+    },
+
     appendAssistantText(sessionId, text) {
       const current = buffers.get(sessionId) ?? "";
       buffers.set(sessionId, current + text);
@@ -168,11 +187,7 @@ export function createConversationStore(
       const conv = active.get(sessionId);
       if (!conv) return;
 
-      const buffered = buffers.get(sessionId);
-      if (buffered) {
-        conv.messages.push({ role: "assistant", content: buffered, timestamp: Date.now() });
-        buffers.delete(sessionId);
-      }
+      flushAssistantBuffer(sessionId, conv);
 
       conv.messages.push({
         role: "system",

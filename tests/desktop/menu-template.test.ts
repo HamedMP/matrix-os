@@ -2,6 +2,60 @@ import { describe, expect, it, vi } from "vitest";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
 
 describe("createAppMenuTemplate", () => {
+  it("offers Check for Updates in installed and development application menus", () => {
+    for (const isPackaged of [true, false]) {
+      const checkForUpdates = vi.fn();
+      const send = vi.fn();
+      const template = createAppMenuTemplate({
+        appName: "Matrix OS",
+        isPackaged,
+        openExternal: vi.fn(),
+        send,
+        adjustZoom: vi.fn(),
+        checkForUpdates,
+      });
+      const appMenu = template.find((item) => item.label === "Matrix OS");
+      const updateItem = Array.isArray(appMenu?.submenu)
+        ? appMenu.submenu.find((item) => "label" in item && item.label === "Check for Updates…")
+        : null;
+
+      expect(updateItem, `isPackaged=${isPackaged}`).toBeTruthy();
+      if (!updateItem || !("click" in updateItem) || typeof updateItem.click !== "function") {
+        throw new Error("Check for Updates menu item is not clickable");
+      }
+      updateItem.click({} as never, {} as never, {} as never);
+      expect(send).toHaveBeenCalledWith("update:manual-check-requested", {});
+      expect(checkForUpdates).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("maps Cmd+R to hosted Home refresh in packaged and development builds", () => {
+    for (const isPackaged of [true, false]) {
+      const send = vi.fn();
+      const template = createAppMenuTemplate({
+        appName: "Matrix OS",
+        isPackaged,
+        openExternal: vi.fn(),
+        send,
+        adjustZoom: vi.fn(),
+        checkForUpdates: vi.fn(),
+      });
+      const viewMenu = template.find((item) => item.label === "View");
+      const submenu = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
+      const refreshItem = submenu.find((item) => "label" in item && item.label === "Refresh Home");
+
+      expect(refreshItem).toBeTruthy();
+      expect(refreshItem && "accelerator" in refreshItem ? refreshItem.accelerator : null)
+        .toBe("CmdOrCtrl+R");
+      expect(submenu.some((item) => "role" in item && item.role === "reload")).toBe(false);
+      if (!refreshItem || !("click" in refreshItem) || typeof refreshItem.click !== "function") {
+        throw new Error("Refresh Home menu item is not clickable");
+      }
+      refreshItem.click({} as never, {} as never, {} as never);
+      expect(send).toHaveBeenCalledWith("menu:action", { action: "refresh-home" });
+    }
+  });
+
   it("adds a Terminal menu entry that navigates to the terminal workspace", () => {
     const send = vi.fn();
     const template = createAppMenuTemplate({
@@ -10,6 +64,7 @@ describe("createAppMenuTemplate", () => {
       openExternal: vi.fn(),
       send,
       adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(),
     });
 
     const viewMenu = template.find((item) => item.label === "View");
@@ -36,6 +91,7 @@ describe("createAppMenuTemplate", () => {
       openExternal: vi.fn(),
       send,
       adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(),
     });
 
     const fileMenu = template.find((item) => item.label === "File");
@@ -61,6 +117,7 @@ describe("createAppMenuTemplate", () => {
       openExternal: vi.fn(),
       send: vi.fn(),
       adjustZoom,
+      checkForUpdates: vi.fn(),
     });
 
     const viewMenu = template.find((item) => item.label === "View");
@@ -96,6 +153,7 @@ describe("createAppMenuTemplate", () => {
       openExternal: vi.fn(),
       send: vi.fn(),
       adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(),
     });
 
     const viewMenu = template.find((item) => item.label === "View");

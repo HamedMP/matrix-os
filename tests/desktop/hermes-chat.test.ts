@@ -194,10 +194,19 @@ describe("useHermesChat", () => {
       id: "conversation-two",
       createdAt: 10,
       updatedAt: 30,
-      totalCount: 2,
+      totalCount: 3,
       messages: [
         { index: 0, role: "user", content: "hello", contentTruncated: false, timestamp: 10 },
-        { index: 1, role: "assistant", content: "hi", contentTruncated: false, timestamp: 20 },
+        {
+          index: 1,
+          role: "system",
+          content: "Used Bash",
+          contentTruncated: false,
+          timestamp: 15,
+          tool: "Bash",
+          toolDisplay: { kind: "command", preview: "git status --short" },
+        },
+        { index: 2, role: "assistant", content: "hi", contentTruncated: false, timestamp: 20 },
       ],
       hasMore: false,
       limit: 50,
@@ -207,7 +216,9 @@ describe("useHermesChat", () => {
 
     expect(opened).toBe(true);
     expect(get).toHaveBeenCalledWith("/api/conversations/conversation-two?limit=50");
-    expect(kernel.switchKernelSession).toHaveBeenCalledWith("conversation-two");
+    expect(kernel.switchKernelSession).toHaveBeenCalledWith("conversation-two", {
+      replayCompleted: false,
+    });
     expect(useHermesChat.getState()).toMatchObject({
       view: "conversation",
       sessionId: "conversation-two",
@@ -215,8 +226,91 @@ describe("useHermesChat", () => {
       loadError: null,
       messages: [
         { id: "conversation-two:0", role: "user", content: "hello", timestamp: 10 },
-        { id: "conversation-two:1", role: "assistant", content: "hi", timestamp: 20 },
+        {
+          id: "conversation-two:1",
+          role: "system",
+          content: "Used Bash",
+          timestamp: 15,
+          tool: "Bash",
+          toolDisplay: { kind: "command", preview: "git status --short" },
+        },
+        { id: "conversation-two:2", role: "assistant", content: "hi", timestamp: 20 },
       ],
+    });
+  });
+
+  it("replaces a suppressed completed replay with canonical history only", async () => {
+    useHermesChat.setState({
+      view: "conversation",
+      sessionId: "conversation-live",
+      messages: [{ id: "partial", role: "user", content: "current prompt", timestamp: 10 }],
+      status: "thinking",
+      activeRequestId: "request-live",
+      seenReplayEventIds: ["event-live"],
+    });
+    const get = vi.fn().mockResolvedValue({
+      id: "conversation-live",
+      createdAt: 10,
+      updatedAt: 40,
+      totalCount: 2,
+      messages: [
+        { index: 0, role: "user", content: "current prompt", contentTruncated: false, timestamp: 10 },
+        { index: 1, role: "assistant", content: "settled answer", contentTruncated: false, timestamp: 40 },
+      ],
+      hasMore: false,
+      limit: 50,
+    });
+
+    const refreshed = await useHermesChat.getState().refreshConversationHistory(
+      { get } as never,
+      "conversation-live",
+    );
+
+    expect(refreshed).toBe(true);
+    expect(kernel.switchKernelSession).not.toHaveBeenCalled();
+    expect(useHermesChat.getState()).toMatchObject({
+      messages: [
+        { id: "conversation-live:0", role: "user", content: "current prompt" },
+        { id: "conversation-live:1", role: "assistant", content: "settled answer" },
+      ],
+      status: "idle",
+      activeRequestId: null,
+      seenReplayEventIds: [],
+    });
+  });
+
+  it("does not let a stale history refresh overwrite a newer transcript revision", async () => {
+    useHermesChat.setState({
+      view: "conversation",
+      sessionId: "conversation-live",
+      messages: [{ id: "partial", role: "user", content: "current prompt", timestamp: 10 }],
+      status: "idle",
+      activeRequestId: null,
+    });
+    const pending = deferred<unknown>();
+    const refresh = useHermesChat.getState().refreshConversationHistory(
+      { get: vi.fn(() => pending.promise) } as never,
+      "conversation-live",
+    );
+
+    useHermesChat.getState().send("new prompt");
+    pending.resolve({
+      id: "conversation-live",
+      createdAt: 10,
+      updatedAt: 40,
+      totalCount: 2,
+      messages: [
+        { index: 0, role: "user", content: "current prompt", contentTruncated: false, timestamp: 10 },
+        { index: 1, role: "assistant", content: "old settled answer", contentTruncated: false, timestamp: 40 },
+      ],
+      hasMore: false,
+      limit: 50,
+    });
+
+    expect(await refresh).toBe(false);
+    expect(useHermesChat.getState().messages.at(-1)).toMatchObject({
+      role: "user",
+      content: "new prompt",
     });
   });
 
@@ -392,5 +486,94 @@ describe("useHermesChat", () => {
       activeRequestId: "request-live",
       messages: [expect.objectContaining({ content: "streamed once" })],
     });
+  });
+
+  it("shows a safe failure when Hermes ends with an unsuccessful result", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId,
+      data: {
+        errors: ["Anthropic API key failed at /home/matrix/private-config"],
+      },
+    });
+
+    expect(useHermesChat.getState()).toMatchObject({
+      status: "idle",
+      activeRequestId: null,
+      messages: [
+        expect.objectContaining({ role: "user", content: "hello" }),
+        expect.objectContaining({
+          role: "system",
+          content: "The agent could not complete this turn. Try again.",
+        }),
+      ],
+    });
+    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("Anthropic");
+    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("/home/matrix");
+  });
+
+  it("uses the completed result when Hermes emits no incremental text", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId,
+      data: { result: "Final answer from Hermes" },
+    });
+
+    expect(useHermesChat.getState()).toMatchObject({
+      status: "idle",
+      activeRequestId: null,
+      messages: [
+        expect.objectContaining({ role: "user", content: "hello" }),
+        expect.objectContaining({ role: "assistant", content: "Final answer from Hermes" }),
+      ],
+    });
+  });
+
+  it("does not duplicate a completed result after incremental text", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+    useHermesChat.getState().ingest({
+      type: "kernel:text",
+      requestId,
+      text: "Final answer from Hermes",
+    });
+
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId,
+      data: { result: "Final answer from Hermes" },
+    });
+
+    expect(useHermesChat.getState().messages.filter((message) => message.role === "assistant"))
+      .toEqual([expect.objectContaining({ content: "Final answer from Hermes" })]);
+  });
+
+  it("turns an error-shaped completed result into a safe failure notice", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+
+    useHermesChat.getState().ingest({
+      type: "kernel:result",
+      requestId,
+      data: {
+        result: "Failed to authenticate. API Error: 401 {\"type\":\"authentication_error\",\"message\":\"API key is invalid\"}",
+      },
+    });
+
+    expect(useHermesChat.getState().messages).toEqual([
+      expect.objectContaining({ role: "user", content: "hello" }),
+      expect.objectContaining({
+        role: "system",
+        content: "The agent could not complete this turn. Try again.",
+      }),
+    ]);
+    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("API key");
+    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("401");
   });
 });

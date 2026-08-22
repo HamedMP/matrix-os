@@ -34,12 +34,29 @@ missing; unsigned artifacts must never reach a release.
 ## Channels
 
 - Stable: tag `desktop-vX.Y.Z` or run `Desktop Release` with `channel=stable`
-  and `mode=publish`. Stable releases are eligible for GitHub's latest release.
-- Beta: run `Desktop Release` with `channel=beta`. The GitHub release is marked
-  prerelease and app builds allow prerelease updates.
+  and `mode=publish`. The immutable version release holds the signed artifacts;
+  `desktop-stable` points to its `latest-mac.yml` and `latest-linux.yml` manifests.
+- Beta: run `Desktop Release` with `channel=beta`. The immutable GitHub release
+  is marked prerelease and `desktop-beta` points to its channel manifests.
 - Canary: `Desktop Canary Release` runs every 12 hours and can be triggered
-  manually. It moves the `desktop-canary` prerelease and appends a
-  `-canary.YYYYMMDDHHMMSS` version suffix in CI.
+  manually. It publishes an immutable `desktop-vX.Y.Z-canary.YYYYMMDDHHMMSS`
+  prerelease, then advances the `desktop-canary` pointer.
+- Dev: run `Desktop Release` with `channel=dev`. It follows the same immutable
+  release plus `desktop-dev` pointer model for explicitly selected test builds.
+
+The repository-wide GitHub **Latest** release is not part of Desktop discovery.
+Every channel pointer release contains only update manifests. Those manifests
+embed the generated changelog and use absolute URLs for artifacts stored on the
+immutable version release. The pointer advances only after that release is
+published, so a failed promotion can leave an unused immutable release but
+cannot point clients at incomplete artifacts.
+
+Version releases are write-once. The publish workflow fails before building if
+the `desktop-v<version>` release already exists, and it also rejects an existing
+version tag that points at another commit. Never replace an immutable release;
+choose a new version instead. After new channel manifests are uploaded, the
+workflow removes legacy installer, blockmap, checksum, and obsolete manifest
+assets from the mutable `desktop-<channel>` release.
 
 ## Dry Run
 
@@ -67,19 +84,34 @@ git push origin desktop-v0.1.0
 ```
 
 The release workflow builds macOS arm64/x64 DMG+ZIP artifacts, Linux x64
-AppImage artifacts, merges `latest-mac.yml`, generates checksums, and creates
-the GitHub release with generated changelog notes. Before upload, each macOS
+AppImage artifacts, merges the channel manifests, generates checksums, and
+creates the immutable GitHub release with generated changelog notes. It then
+advances the selected `desktop-<channel>` pointer release. Before upload, each macOS
 build verifies its Developer ID signature, stapled notarization ticket, and
 Gatekeeper assessment; inspects the ASAR for raw workspace TypeScript; mounts
-the DMG; and launches the copied app in an isolated profile.
+the DMG; and launches the copied app in an isolated profile. That packaged app
+must also complete a real `electron-updater` check against a deterministic local
+Generic feed; module loading, provider configuration, or manifest-selection
+errors fail the build.
 
 ## Updates
 
-Packaged desktop builds default to GitHub releases as the update feed. The app
-checks on launch and then hourly. Downloads happen in the background. Once a
-download is ready, a blue **Update** control appears beside the account avatar;
+Packaged desktop builds use a channel-scoped Generic feed backed by GitHub
+release downloads:
+
+- `desktop-stable` serves `latest-mac.yml` and `latest-linux.yml`.
+- `desktop-beta`, `desktop-canary`, and `desktop-dev` serve their matching
+  `<channel>-mac.yml` and `<channel>-linux.yml` manifests.
+
+The app checks on launch and then hourly; **Matrix OS > Check for Updates…** is
+present in installed and development menus. It starts the same check manually
+and reports a safe result for unavailable development checks, updates already
+being downloaded or ready, newly found updates, up-to-date builds, and failures.
+Downloads happen in the background. Once a download is ready, a compact blue
+**Update** button appears at the trailing edge of the account/avatar row;
 selecting it immediately restarts the app and installs the downloaded version.
-Quitting normally also installs a ready update.
+Quitting normally also installs a ready update after its release notes have
+started persisting and the persistence operation has settled.
 
 Release notes from the downloaded artifact are bounded and persisted in the
 desktop's local recreatable state before restart. On the first launch of that
@@ -102,12 +134,16 @@ For every published run:
 
 ```bash
 gh release view desktop-v0.1.0 --json tagName,isPrerelease,latestRelease,assets
+gh release view desktop-stable --json tagName,isPrerelease,assets
 gh release download desktop-v0.1.0 --pattern SHA256SUMS.txt --pattern desktop-release-manifest.json
 ```
 
 Install the DMG on a clean macOS user, confirm Gatekeeper opens it without an
 unidentified-developer warning, sign in, then leave it running long enough to
-observe the update check in logs. For a canary smoke, install the canary DMG and
-confirm `MATRIX_DESKTOP_UPDATE_CHANNEL=canary` allows prerelease updates. Publish
-a newer canary, wait for the blue **Update** control, select it, verify the app
-relaunches on the new version, and confirm **What's New** opens exactly once.
+observe the update check in logs. For a canary A-to-B acceptance test, install
+signed Canary A, publish signed Canary B, and verify `desktop-canary` serves a
+manifest whose artifact URLs target B's immutable release. In A, use **Check for
+Updates…** or wait for the scheduled check, wait for the blue **Update** button,
+select it, verify the app relaunches on B, and confirm **What's New** displays
+B's generated changelog exactly once. Repeat the check after relaunch and verify
+that B is reported up to date.

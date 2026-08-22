@@ -37,7 +37,9 @@ export function CanvasTransform({
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPointer = useRef({ x: 0, y: 0 });
   const spaceDown = useRef(false);
+  const interactionOverlayActiveRef = useRef(false);
   const [grabCursor, setGrabCursor] = useState(false);
+  const [interactionOverlayActive, setInteractionOverlayActive] = useState(false);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -168,37 +170,48 @@ export function CanvasTransform({
     return () => window.removeEventListener("message", onMessage);
   }, [panEnabled]);
 
-  // Track space (for pan) and ctrl/cmd (for zoom overlay over iframes)
-  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- run-once mount setup for global window/document key + visibility listeners; the body only touches stable setters (setGrabCursor), refs (spaceDown, scrollTimeoutRef), and the mount-captured overlay element. Re-running would detach/reattach the global listeners on every render with no behavior change.
+  // Track space (for pan) and ctrl/cmd (for zoom overlay over iframes).
+  // System shortcuts such as macOS Cmd+Shift+5 are not guaranteed to deliver
+  // their matching keyup to the browser, so pointer movement without an active
+  // modifier is also an authoritative release signal.
   useEffect(() => {
-    const overlay = zoomOverlayRef.current;
+    const updateInteractionOverlay = (active: boolean) => {
+      if (interactionOverlayActiveRef.current === active) return;
+      interactionOverlayActiveRef.current = active;
+      setInteractionOverlayActive(active);
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!panEnabled) return;
       if (e.code === "Space" && !e.repeat) {
         spaceDown.current = true;
         setGrabCursor(true);
-        if (overlay) overlay.style.pointerEvents = "all";
+        updateInteractionOverlay(true);
       }
-      if ((e.ctrlKey || e.metaKey) && overlay) {
-        overlay.style.pointerEvents = "all";
+      if (e.ctrlKey || e.metaKey) {
+        updateInteractionOverlay(true);
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") {
         spaceDown.current = false;
         setGrabCursor(false);
-        if (!e.ctrlKey && !e.metaKey && overlay) {
-          overlay.style.pointerEvents = "none";
-        }
       }
-      if (!e.ctrlKey && !e.metaKey && !spaceDown.current && overlay) {
-        overlay.style.pointerEvents = "none";
+      if (!e.ctrlKey && !e.metaKey && !spaceDown.current) {
+        updateInteractionOverlay(false);
       }
     };
 
     const resetOverlay = () => {
       spaceDown.current = false;
       setGrabCursor(false);
-      if (overlay) overlay.style.pointerEvents = "none";
+      updateInteractionOverlay(false);
+    };
+
+    const releaseStaleModifierOverlay = (e: PointerEvent) => {
+      if (!e.ctrlKey && !e.metaKey && !spaceDown.current) {
+        updateInteractionOverlay(false);
+      }
     };
 
     const onVisibilityChange = () => {
@@ -208,15 +221,24 @@ export function CanvasTransform({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", resetOverlay);
+    window.addEventListener("focus", resetOverlay);
+    window.addEventListener("pointermove", releaseStaleModifierOverlay);
     document.addEventListener("visibilitychange", onVisibilityChange);
+
+    if (!panEnabled) resetOverlay();
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", resetOverlay);
+      window.removeEventListener("focus", resetOverlay);
+      window.removeEventListener("pointermove", releaseStaleModifierOverlay);
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
     };
+  }, [panEnabled]);
+
+  useEffect(() => () => {
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
   }, []);
 
   return (
@@ -238,7 +260,7 @@ export function CanvasTransform({
       <div
         ref={zoomOverlayRef}
         className="absolute inset-0 z-50"
-        style={{ pointerEvents: "none" }}
+        style={{ pointerEvents: panEnabled && interactionOverlayActive ? "all" : "none" }}
       />
       <div
         ref={transformRef}

@@ -46,6 +46,7 @@ export const PreviewProvisionRequestSchema = z.object({
   runtimeSlot: PreviewRuntimeSlotSchema,
   accessClerkUserIds: z.array(ClerkUserIdSchema).max(8).default([]),
   developerTools: DeveloperToolsSchema.optional(),
+  testSnapshotId: z.uuid().optional(),
 }).strict()
   .refine((request) => request.handle === request.runtimeSlot, {
     message: 'Preview handle and runtime slot must match',

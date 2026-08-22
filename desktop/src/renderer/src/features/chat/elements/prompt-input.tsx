@@ -45,6 +45,7 @@ export function PromptInput({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const submissionReady = canSubmit ?? value.trim().length > 0;
+  const submitEnabled = !disabled && submissionReady;
 
   useEffect(() => {
     if (!focusRequestId || focusRequestId <= 0) return;
@@ -81,7 +82,7 @@ export function PromptInput({
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            onSubmit();
+            if (submitEnabled) onSubmit();
           }
         }}
       />
@@ -105,10 +106,10 @@ export function PromptInput({
             <button
               type="button"
               aria-label="Send"
-              disabled={disabled || !submissionReady}
+              disabled={!submitEnabled}
               onClick={onSubmit}
               className="flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-40"
-              style={{ background: submissionReady ? "var(--accent)" : "var(--bg-active)", color: submissionReady ? "var(--text-on-accent)" : "var(--text-tertiary)" }}
+              style={{ background: submitEnabled ? "var(--accent)" : "var(--bg-active)", color: submitEnabled ? "var(--text-on-accent)" : "var(--text-tertiary)" }}
             >
               <ArrowUp size={16} />
             </button>

@@ -1,0 +1,43 @@
+name: Guard immutable Desktop release
+description: Fail closed before an existing Desktop version release can be replaced.
+
+inputs:
+  tag_name:
+    description: Immutable Desktop version tag.
+    required: true
+  expected_sha:
+    description: Commit SHA the version tag may already reference.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Reject an existing immutable release
+      shell: bash
+      env:
+        TAG_NAME: ${{ inputs.tag_name }}
+        EXPECTED_SHA: ${{ inputs.expected_sha }}
+      run: |
+        set -euo pipefail
+        error_file="$(mktemp)"
+        trap 'rm -f "$error_file"' EXIT
+
+        if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG_NAME}" \
+          >/dev/null 2>"$error_file"; then
+          echo "Desktop release $TAG_NAME already exists and cannot be overwritten." >&2
+          exit 1
+        fi
+        if ! grep -Fq "HTTP 404" "$error_file"; then
+          cat "$error_file" >&2
+          echo "Unable to prove that Desktop release $TAG_NAME is unused." >&2
+          exit 1
+        fi
+
+        REMOTE_TAG_SHA="$(
+          git ls-remote --tags origin "refs/tags/$TAG_NAME" "refs/tags/$TAG_NAME^{}" \
+            | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { direct=$1 } END { print peeled ? peeled : direct }'
+        )"
+        if [ -n "$REMOTE_TAG_SHA" ] && [ "$REMOTE_TAG_SHA" != "$EXPECTED_SHA" ]; then
+          echo "Desktop tag $TAG_NAME already points to $REMOTE_TAG_SHA, not $EXPECTED_SHA." >&2
+          exit 1
+        fi

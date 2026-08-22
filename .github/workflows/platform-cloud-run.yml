@@ -677,6 +677,7 @@ jobs:
             --tag production-candidate \
             --no-traffic \
             --min-instances "$min_instances" \
+            --no-cpu-throttling \
             --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=true,GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=false,GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=0" \
             --format=json)"
           production_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "production-candidate") | .revisionName // empty' | head -1)"

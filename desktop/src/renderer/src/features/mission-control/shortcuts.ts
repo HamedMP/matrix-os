@@ -214,6 +214,11 @@ export function useGlobalShortcuts(): void {
       }
       if (action === "palette") ui.setPaletteOpen(!ui.paletteOpen);
       if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
+      if (action === "refresh-home") {
+        const tabs = useTabs.getState();
+        const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
+        if (activeTab?.kind === "home") ui.requestHomeRefresh();
+      }
     });
     const offNavigate = onEvent("menu:navigate", ({ kind }) => {
       handleMenuNavigate(kind);

@@ -51,10 +51,30 @@ describe("inspector-layout-store", () => {
     vi.restoreAllMocks();
   });
 
-  it("defaults to an expanded inspector at the default width", () => {
+  it("defaults to a closed contextual inspector at the default width", () => {
+    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
+      widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
+      collapsed: true,
+      maximized: false,
+    });
+  });
+
+  it("persists maximize state and restores the inspector before maximizing", async () => {
+    const { saved } = mockOperator();
+    await useInspectorLayout.getState().hydrate("scope-a");
+
+    useInspectorLayout.getState().setMaximized("matrix-os", true);
+
     expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
       widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
       collapsed: false,
+      maximized: true,
+    });
+    await vi.waitFor(() => expect(saved.length).toBe(1));
+    expect(saved[0]!.layout.visible).toEqual({
+      conversation: true,
+      inspector: true,
+      inspectorMaximized: true,
     });
   });
 
@@ -67,7 +87,11 @@ describe("inspector-layout-store", () => {
     await vi.waitFor(() => expect(saved.length).toBe(1));
     expect(saved[0]!.taskKey).toBe(taskKeyFor("scope-a", "matrix-os"));
     expect(saved[0]!.layout.sizes).toEqual({ conversation: 58, inspector: 42 });
-    expect(saved[0]!.layout.visible).toEqual({ conversation: true, inspector: true });
+    expect(saved[0]!.layout.visible).toEqual({
+      conversation: true,
+      inspector: false,
+      inspectorMaximized: false,
+    });
   });
 
   it("clamps the width to the supported range", () => {
@@ -81,18 +105,27 @@ describe("inspector-layout-store", () => {
   it("keeps the last width when collapsing so re-expand restores it", async () => {
     const { saved } = mockOperator();
     await useInspectorLayout.getState().hydrate("scope-a");
+    useInspectorLayout.getState().setCollapsed("matrix-os", false);
     useInspectorLayout.getState().setWidthPct("matrix-os", 40);
     useInspectorLayout.getState().setCollapsed("matrix-os", true);
 
     const entry = useInspectorLayout.getState().layoutFor("matrix-os");
-    expect(entry).toEqual({ widthPct: 40, collapsed: true });
-    await vi.waitFor(() => expect(saved.length).toBe(2));
+    expect(entry).toEqual({ widthPct: 40, collapsed: true, maximized: false });
+    await vi.waitFor(() => expect(saved.length).toBe(3));
     // The envelope still carries the width so expansion restores it.
-    expect(saved[1]!.layout.visible).toEqual({ conversation: true, inspector: false });
-    expect(saved[1]!.layout.sizes.inspector).toBe(40);
+    expect(saved[2]!.layout.visible).toEqual({
+      conversation: true,
+      inspector: false,
+      inspectorMaximized: false,
+    });
+    expect(saved[2]!.layout.sizes.inspector).toBe(40);
 
     useInspectorLayout.getState().setCollapsed("matrix-os", false);
-    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({ widthPct: 40, collapsed: false });
+    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
+      widthPct: 40,
+      collapsed: false,
+      maximized: false,
+    });
   });
 
   it("hydrates persisted entries and ignores foreign or invalid layouts", async () => {
@@ -105,16 +138,39 @@ describe("inspector-layout-store", () => {
 
     await useInspectorLayout.getState().hydrate("scope-a");
 
-    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({ widthPct: 45, collapsed: false });
+    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({ widthPct: 45, collapsed: false, maximized: false });
     expect(useInspectorLayout.getState().hydratedScope).toBe("scope-a");
-    expect(useInspectorLayout.getState().layoutFor("website")).toEqual({ widthPct: 25, collapsed: true });
+    expect(useInspectorLayout.getState().layoutFor("website")).toEqual({ widthPct: 25, collapsed: true, maximized: false });
     expect(useInspectorLayout.getState().layoutFor("some-task")).toEqual({
       widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
-      collapsed: false,
+      collapsed: true,
+      maximized: false,
     });
     expect(useInspectorLayout.getState().layoutFor("broken")).toEqual({
       widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
-      collapsed: false,
+      collapsed: true,
+      maximized: false,
+    });
+  });
+
+  it("does not restore an impossible maximized state for a closed inspector", async () => {
+    mockOperator({
+      [taskKeyFor("scope-a", "matrix-os")]: {
+        ...persistedLayout(45, true),
+        visible: {
+          conversation: true,
+          inspector: false,
+          inspectorMaximized: true,
+        },
+      },
+    });
+
+    await useInspectorLayout.getState().hydrate("scope-a");
+
+    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
+      widthPct: 45,
+      collapsed: true,
+      maximized: false,
     });
   });
 
@@ -136,7 +192,8 @@ describe("inspector-layout-store", () => {
     expect(first.invoke.mock.calls.filter(([channel]) => channel === "state:get").length).toBe(2);
     expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
       widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
-      collapsed: false,
+      collapsed: true,
+      maximized: false,
     });
   });
 
@@ -156,7 +213,8 @@ describe("inspector-layout-store", () => {
 
     expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
       widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
-      collapsed: false,
+      collapsed: true,
+      maximized: false,
     });
   });
 
@@ -173,14 +231,15 @@ describe("inspector-layout-store", () => {
 
     expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
       widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
-      collapsed: false,
+      collapsed: true,
+      maximized: false,
     });
   });
 
   it("persists under a runtime-scoped key so runtimes cannot overwrite each other", async () => {
     const { saved } = mockOperator();
     await useInspectorLayout.getState().hydrate("scope-b");
-    useInspectorLayout.getState().setCollapsed("matrix-os", true);
+    useInspectorLayout.getState().setCollapsed("matrix-os", false);
 
     await vi.waitFor(() => expect(saved.length).toBe(1));
     expect(saved[0]!.taskKey).toBe(taskKeyFor("scope-b", "matrix-os"));

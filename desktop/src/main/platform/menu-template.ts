@@ -9,6 +9,7 @@ interface AppMenuTemplateOptions {
   openExternal(url: string): void;
   send: MenuEventSender;
   adjustZoom(action: ZoomAction): void;
+  checkForUpdates(): void;
 }
 
 export function createAppMenuTemplate({
@@ -17,6 +18,7 @@ export function createAppMenuTemplate({
   openExternal,
   send,
   adjustZoom,
+  checkForUpdates,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const viewSubmenu: MenuItemConstructorOptions[] = [
     {
@@ -33,6 +35,11 @@ export function createAppMenuTemplate({
       label: "Terminal",
       accelerator: "Cmd+Alt+T",
       click: () => send("menu:navigate", { kind: "terminals" }),
+    },
+    {
+      label: "Refresh Home",
+      accelerator: "CmdOrCtrl+R",
+      click: () => send("menu:action", { action: "refresh-home" }),
     },
   ];
 
@@ -60,7 +67,7 @@ export function createAppMenuTemplate({
     { role: "togglefullscreen" },
     ...(isPackaged
       ? []
-      : ([{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[])),
+      : ([{ type: "separator" }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[])),
   );
 
   return [
@@ -68,6 +75,13 @@ export function createAppMenuTemplate({
       label: appName,
       submenu: [
         { role: "about" },
+        {
+          label: "Check for Updates…",
+          click: () => {
+            send("update:manual-check-requested", {});
+            checkForUpdates();
+          },
+        },
         { type: "separator" },
         {
           label: "Settings…",

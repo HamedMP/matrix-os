@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasTransform } from "../../shell/src/components/canvas/CanvasTransform.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
@@ -37,6 +37,55 @@ describe("CanvasTransform app focus interactions", () => {
 
     expect(preventDefault).not.toHaveBeenCalled();
     expect(useCanvasTransform.getState().panY).toBe(0);
+  });
+
+  it("does not enable the canvas interaction overlay while app focus owns input", () => {
+    const { container } = render(
+      <CanvasTransform panEnabled={false}>
+        <div>App content</div>
+      </CanvasTransform>,
+    );
+    const overlay = container.querySelector(".absolute.inset-0.z-50") as HTMLElement;
+
+    fireEvent.keyDown(window, { code: "MetaLeft", key: "Meta", metaKey: true });
+
+    expect(overlay.style.pointerEvents).toBe("none");
+  });
+
+  it("releases a stale modifier overlay when pointer input resumes without modifiers", () => {
+    const { container } = render(
+      <CanvasTransform panEnabled>
+        <div>App content</div>
+      </CanvasTransform>,
+    );
+    const overlay = container.querySelector(".absolute.inset-0.z-50") as HTMLElement;
+
+    fireEvent.keyDown(window, { code: "MetaLeft", key: "Meta", metaKey: true });
+    expect(overlay.style.pointerEvents).toBe("all");
+
+    fireEvent.pointerMove(overlay, { ctrlKey: false, metaKey: false });
+
+    expect(overlay.style.pointerEvents).toBe("none");
+  });
+
+  it("releases the modifier overlay when an app takes canvas input ownership", () => {
+    const { container, rerender } = render(
+      <CanvasTransform panEnabled>
+        <div>App content</div>
+      </CanvasTransform>,
+    );
+    const overlay = container.querySelector(".absolute.inset-0.z-50") as HTMLElement;
+
+    fireEvent.keyDown(window, { code: "MetaLeft", key: "Meta", metaKey: true });
+    expect(overlay.style.pointerEvents).toBe("all");
+
+    rerender(
+      <CanvasTransform panEnabled={false}>
+        <div>App content</div>
+      </CanvasTransform>,
+    );
+
+    expect(overlay.style.pointerEvents).toBe("none");
   });
 
   it("pans wheel input after the canvas background is unfocused", () => {

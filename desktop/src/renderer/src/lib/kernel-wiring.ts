@@ -76,12 +76,21 @@ export function abortKernelRequest(requestId: string): boolean {
   return true;
 }
 
-export function switchKernelSession(sessionId: string): boolean {
+export function switchKernelSession(
+  sessionId: string,
+  options?: { replayCompleted?: boolean },
+): boolean {
   if (!socket) {
     console.warn("[kernel-wiring] cannot switch kernel session before socket is connected");
     return false;
   }
-  socket.send({ type: "switch_session", sessionId });
+  socket.send({
+    type: "switch_session",
+    sessionId,
+    ...(options?.replayCompleted === undefined
+      ? {}
+      : { replayCompleted: options.replayCompleted }),
+  });
   return true;
 }
 
@@ -136,13 +145,23 @@ export function wireKernel(): () => void {
         }
       }
     }
+    if (msg.type === "session:switched" && msg.historyRefreshRequired === true) {
+      const api = useConnection.getState().api;
+      if (api) {
+        void useHermesChat.getState().refreshConversationHistory(api, msg.sessionId as string);
+      }
+    }
   });
 
   const unsubscribeState = activeSocket.onStateChange((state) => {
     if (state !== "connected") return;
     const selectedSessionId = useHermesChat.getState().sessionId;
     if (selectedSessionId) {
-      activeSocket.send({ type: "switch_session", sessionId: selectedSessionId });
+      activeSocket.send({
+        type: "switch_session",
+        sessionId: selectedSessionId,
+        replayCompleted: false,
+      });
     }
   });
 

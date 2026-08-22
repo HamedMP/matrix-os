@@ -31,9 +31,41 @@ export function fileReferenceMatches(reference: FileReference | null, request: F
     && reference.path === request.path;
 }
 
-export function compareThreadEvents(left: AgentThreadSnapshotEvent, right: AgentThreadSnapshotEvent): number {
-  const occurredAt = left.occurredAt.localeCompare(right.occurredAt);
-  return occurredAt === 0 ? left.eventId.localeCompare(right.eventId) : occurredAt;
+function uniqueThreadEvents(events: AgentThreadSnapshotEvent[]): AgentThreadSnapshotEvent[] {
+  const seen: Record<string, true> = {};
+  return events.filter((event) => {
+    if (seen[event.eventId]) return false;
+    seen[event.eventId] = true;
+    return true;
+  });
+}
+
+function reconcileThreadEventOrder(
+  current: AgentThreadSnapshotEvent[],
+  authoritative: AgentThreadSnapshotEvent[],
+  limit: number,
+  currentIsNewer: boolean,
+): AgentThreadSnapshotEvent[] {
+  const next = uniqueThreadEvents(authoritative);
+  const currentLastId = current.at(-1)?.eventId;
+  if (!currentLastId || next.some((event) => event.eventId === currentLastId)) {
+    return next.slice(-limit);
+  }
+
+  const authoritativeLastId = next.at(-1)?.eventId;
+  const authoritativeEndInCurrent = authoritativeLastId
+    ? current.findIndex((event) => event.eventId === authoritativeLastId)
+    : -1;
+  if (authoritativeEndInCurrent >= 0) {
+    return uniqueThreadEvents([
+      ...next,
+      ...current.slice(authoritativeEndInCurrent + 1),
+    ]).slice(-limit);
+  }
+
+  // With no shared cursor in the bounded windows, the thread summary timestamp
+  // decides which complete window is newer. Never concatenate disjoint windows.
+  return uniqueThreadEvents(currentIsNewer ? current : next).slice(-limit);
 }
 
 export function mergeSelectedThreadSnapshot(
@@ -41,13 +73,13 @@ export function mergeSelectedThreadSnapshot(
   next: AgentThreadSnapshot,
 ): AgentThreadSnapshot {
   if (!current || current.thread.id !== next.thread.id) return next;
-  const eventById = new Map<string, AgentThreadSnapshotEvent>();
-  for (const event of current.events.items) eventById.set(event.eventId, event);
-  for (const event of next.events.items) eventById.set(event.eventId, event);
   const limit = Math.max(current.events.limit, next.events.limit);
-  const items = Array.from(eventById.values())
-    .sort(compareThreadEvents)
-    .slice(-limit);
+  const items = reconcileThreadEventOrder(
+    current.events.items,
+    next.events.items,
+    limit,
+    current.thread.updatedAt > next.thread.updatedAt,
+  );
   const thread = current.thread.updatedAt > next.thread.updatedAt ? current.thread : next.thread;
   return {
     ...next,
@@ -167,12 +199,9 @@ export function mergeLiveThreadEvent(
   event: AgentThreadEvent,
 ): AgentThreadSnapshot {
   if (event.threadId !== current.thread.id) return current;
-  const existing = new Map(current.events.items.map((item) => [item.eventId, item]));
-  existing.set(event.eventId, event);
+  if (current.events.items.some((item) => item.eventId === event.eventId)) return current;
   const limit = current.events.limit;
-  const items = Array.from(existing.values())
-    .sort(compareThreadEvents)
-    .slice(-limit);
+  const items = [...current.events.items, event].slice(-limit);
   return {
     ...current,
     thread: event.occurredAt.localeCompare(current.thread.updatedAt) >= 0

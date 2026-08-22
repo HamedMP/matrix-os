@@ -8,6 +8,8 @@ import {
   GripVertical,
   Layers,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RefreshCw,
   Search,
@@ -117,10 +119,13 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const reconcileRecentTerminals = useTabs((s) => s.reconcileRecentTerminals);
   const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
   const consumeTerminalSessionRequest = useTabs((s) => s.consumeTerminalSessionRequest);
+  const terminalsTabId = useTabs((s) => s.tabs.find((tab) => tab.kind === "terminals")?.id);
+  const renameTab = useTabs((s) => s.renameTab);
   const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
   const [openedSessionNames, setOpenedSessionNames] = useState<string[]>([]);
+  const [sessionRailOpen, setSessionRailOpen] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [busyNames, setBusyNames] = useState<string[]>([]);
@@ -170,6 +175,12 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
 
   const selectedShell = selectedName ? shells.find((shell) => shell.name === selectedName) ?? null : null;
   const selected = selectedShell?.name ?? selectedName;
+
+  useEffect(() => {
+    if (!terminalsTabId) return;
+    renameTab(terminalsTabId, selectedName ?? "Terminal");
+  }, [renameTab, selectedName, terminalsTabId]);
+
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
   const renamingNameRef = useRef<string | null>(null);
@@ -537,12 +548,67 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
                   Started at {sessionStart(shell.createdAt)} · {runtimeSlot === "primary" ? "main computer" : runtimeSlot}
                 </p>
               </div>
+              <IconButton
+                label={sessionRailOpen ? "Collapse terminal sessions" : "Show terminal sessions"}
+                onClick={() => setSessionRailOpen((open) => !open)}
+              >
+                {sessionRailOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+              </IconButton>
               <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
                 <StatusDot color={statusColor(shell)} pulse={shell.status !== "exited" && shell.visualStatus === "running"} />
                 {shellStatusLabel(shell)}
               </span>
             </header>
-            <TerminalView sessionName={sessionName} active={active && liveSessionName === sessionName} />
+            <div data-terminal-detail className="flex min-h-0 flex-1">
+              {sessionRailOpen ? (
+                <nav
+                  aria-label="Terminal session switcher"
+                  className="flex w-48 shrink-0 flex-col overflow-hidden border-r"
+                  style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}
+                >
+                  <div
+                    className="shrink-0 border-b px-3 py-2 text-[11px] font-semibold uppercase tracking-wide"
+                    style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+                  >
+                    Sessions
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+                    {shells.map((candidate) => {
+                      const current = candidate.name === sessionName;
+                      return (
+                        <button
+                          key={candidate.name}
+                          type="button"
+                          aria-label={`Switch to ${candidate.name}`}
+                          aria-current={current ? "page" : undefined}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+                          style={{
+                            background: current ? "var(--bg-selected)" : "transparent",
+                            color: current ? "var(--text-primary)" : "var(--text-secondary)",
+                          }}
+                          onClick={() => showShellDetail(candidate)}
+                        >
+                          <StatusDot
+                            color={statusColor(candidate)}
+                            pulse={candidate.status !== "exited" && candidate.visualStatus === "running"}
+                          />
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                            {candidate.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </nav>
+              ) : null}
+              <div
+                data-terminal-viewport
+                className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
+                style={{ background: "var(--bg-app)" }}
+              >
+                <TerminalView sessionName={sessionName} active={active && liveSessionName === sessionName} />
+              </div>
+            </div>
           </RetainedPane>
         );
       })}
