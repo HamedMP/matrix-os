@@ -35,7 +35,7 @@ function boundedToolText(value: unknown): string | undefined {
     .replace(/(\b(?:x[-_])?(?:api[-_]?key|access[-_]?key|auth[-_]?token|access[-_]?token|client[-_]?secret|credential|token|password|passwd|secret)\s*:\s*)(?:'[^']*'|"[^"]*"|[^'"\s]+)/gi, "$1[redacted]")
     .replace(/(^|\s)((?:--?)?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret)(?:=|\s+))(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2[redacted]")
     .replace(/(^|\s)(-u|--user)(=|\s+)(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2$3[redacted]")
-    .replace(/\b(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
     .replace(/\b(?:AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|sk-[A-Za-z0-9_-]+|sk_(?:live|test)_[A-Za-z0-9]+|ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|xox[baprs]-[A-Za-z0-9-]+)\b/g, "[redacted]")
     .replace(/(^|[\s=(])\/(?:Users|home|tmp|var|opt|etc|root|private)(?:\/[^\s'";|&)]*)?/g, "$1[path]")
     .replace(/(^|[\s=(])[A-Za-z]:\\[^\s'";|&)]*/g, "$1[path]");

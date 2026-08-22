@@ -336,6 +336,7 @@ describe("ChatTab", () => {
     ["quoted Authorization credential", "curl -H 'Authorization: Bearer \"quoted-value-secret\"' https://example.com", "curl -H 'Authorization: [redacted]' https://example.com", "quoted-value-secret"],
     ["quoted Proxy-Authorization value", "curl -H \"Proxy-Authorization: 'Basic proxy-secret'\" https://example.com", "curl -H \"Proxy-Authorization: [redacted]\" https://example.com", "proxy-secret"],
     ["quoted raw Authorization credential", "curl -H 'Authorization: \"raw-credential-secret\"' https://example.com", "curl -H 'Authorization: [redacted]' https://example.com", "raw-credential-secret"],
+    ["non-HTTP URL userinfo", "psql postgres://alice:database-url-secret@db.example.com/app", "psql postgres://[redacted]@db.example.com/app", "database-url-secret"],
   ])("redacts %s from command display and clipboard", async (_case, command, expected, secret) => {
     useHermesChat.setState({
       status: "streaming",

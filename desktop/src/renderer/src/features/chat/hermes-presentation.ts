@@ -19,7 +19,7 @@ const AUTHORIZATION_HEADER_VALUE = /(\b(?:authorization|proxy-authorization)\s*[
 const COOKIE_HEADER_VALUE = /(\b(?:cookie|set[-_]?cookie)\s*:\s*)[^'"\r\n]+/gi;
 const CREDENTIAL_HEADER_VALUE = /(\b(?:x[-_])?(?:api[-_]?key|access[-_]?key|auth[-_]?token|access[-_]?token|client[-_]?secret|credential|token|password|passwd|secret)\s*:\s*)(?:'[^']*'|"[^"]*"|[^'"\s]+)/gi;
 const BASIC_AUTH_VALUE = /(^|\s)(-u|--user)(=|\s+)(?:'[^']*'|"[^"]*"|[^\s]+)/gi;
-const CREDENTIAL_URL = /(https?:\/\/[^\s:@/]+:)[^\s@/]+@/gi;
+const CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+:[^/@\s]+@/gi;
 
 function boundedText(value: unknown, maxChars = MAX_PREVIEW_CHARS): string | undefined {
   if (typeof value !== "string") return undefined;

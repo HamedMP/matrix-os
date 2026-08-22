@@ -278,6 +278,15 @@ describe("kernel conversation history route", () => {
               command: "curl -H 'Authorization: \"raw-credential-secret\"' https://example.com",
             },
           },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 13,
+            tool: "Bash",
+            toolInput: {
+              command: "psql postgres://alice:database-url-secret@db.example.com/app",
+            },
+          },
         ],
       })),
     }));
@@ -327,6 +336,10 @@ describe("kernel conversation history route", () => {
       kind: "command",
       preview: "curl -H 'Authorization: [redacted]' https://example.com",
     });
+    expect(body.messages[11]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "psql postgres://[redacted]@db.example.com/app",
+    });
     expect(JSON.stringify(body)).not.toContain("super-secret");
     expect(JSON.stringify(body)).not.toContain("aws-secret");
     expect(JSON.stringify(body)).not.toContain("alice:pw");
@@ -343,6 +356,7 @@ describe("kernel conversation history route", () => {
     expect(JSON.stringify(body)).not.toContain("quoted-value-secret");
     expect(JSON.stringify(body)).not.toContain("proxy-secret");
     expect(JSON.stringify(body)).not.toContain("raw-credential-secret");
+    expect(JSON.stringify(body)).not.toContain("database-url-secret");
     expect(JSON.stringify(body)).not.toContain("/home/private");
   });
 
