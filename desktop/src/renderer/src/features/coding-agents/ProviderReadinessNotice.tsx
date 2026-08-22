@@ -1,4 +1,4 @@
-import type { AgentProviderSummary, SafeSetupAction } from "@matrix-os/contracts";
+import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { AlertCircle } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../design/primitives";
@@ -6,16 +6,13 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { executeProviderSetupAction } from "./provider-setup-terminal";
-import type { ProviderReadinessPresentation } from "./provider-readiness";
+import {
+  findProviderForSetupAction,
+  type ProviderReadinessPresentation,
+} from "./provider-readiness";
 
 const SETUP_ERROR = "Could not open provider setup. Open Providers settings to continue.";
 const REFRESH_ERROR = "Provider status is unavailable right now.";
-
-function sameSetupAction(left: SafeSetupAction, right: SafeSetupAction): boolean {
-  if (left.kind !== right.kind || left.id !== right.id || left.label !== right.label) return false;
-  return left.kind === "open_settings" ||
-    (right.kind === "foreground_terminal" && left.command === right.command);
-}
 
 export function ProviderReadinessNotice(props: {
   readiness: ProviderReadinessPresentation;
@@ -46,9 +43,7 @@ export function ProviderReadinessNotice(props: {
         openTab({ kind: "settings", title: "Settings" });
         return;
       }
-      const provider = props.providers.find((candidate) =>
-        candidate.setupActions.some((action) => sameSetupAction(action, readinessAction.action))
-      );
+      const provider = findProviderForSetupAction(props.providers, readinessAction.action);
       const opened = provider
         ? await executeProviderSetupAction({
             provider,

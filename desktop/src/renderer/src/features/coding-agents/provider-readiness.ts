@@ -1,4 +1,4 @@
-import type { RuntimeSummary, SafeSetupAction } from "@matrix-os/contracts";
+import type { AgentProviderSummary, RuntimeSummary, SafeSetupAction } from "@matrix-os/contracts";
 
 export type ProviderReadinessAction =
   | { kind: "setup"; action: SafeSetupAction }
@@ -34,6 +34,27 @@ const CLAUDE_CONNECT_ACTION: SafeSetupAction = {
   label: "Connect Claude",
   command: "claude",
 };
+
+function sameSetupAction(left: SafeSetupAction, right: SafeSetupAction): boolean {
+  if (left.kind !== right.kind || left.id !== right.id || left.label !== right.label) return false;
+  return left.kind === "open_settings" ||
+    (right.kind === "foreground_terminal" && left.command === right.command);
+}
+
+export function providerSupportsSetupAction(
+  provider: AgentProviderSummary,
+  action: SafeSetupAction,
+): boolean {
+  return provider.setupActions.some((candidate) => sameSetupAction(candidate, action)) ||
+    (provider.id === "claude" && sameSetupAction(CLAUDE_CONNECT_ACTION, action));
+}
+
+export function findProviderForSetupAction(
+  providers: AgentProviderSummary[],
+  action: SafeSetupAction,
+): AgentProviderSummary | undefined {
+  return providers.find((provider) => providerSupportsSetupAction(provider, action));
+}
 
 function unverifiedProvider(
   displayName?: string,

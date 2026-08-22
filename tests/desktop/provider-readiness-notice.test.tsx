@@ -167,6 +167,49 @@ describe("ProviderReadinessNotice", () => {
     ]);
   });
 
+  it("opens the trusted Claude fallback when an older Gateway omits setup actions", async () => {
+    const connectClaudeAction = {
+      id: "claude_connect",
+      kind: "foreground_terminal" as const,
+      label: "Connect Claude",
+      command: "claude",
+    };
+    const olderGatewayClaudeProvider: AgentProviderSummary = {
+      ...provider,
+      id: "claude",
+      kind: "claude",
+      displayName: "Claude",
+      availability: "unavailable",
+      installStatus: "unknown",
+      authStatus: "unknown",
+      setupActions: [],
+    };
+
+    render(
+      <ProviderReadinessNotice
+        readiness={readiness({
+          state: "unverified",
+          title: "Matrix could not verify Claude",
+          description: "Refresh provider status or connect Claude before sending.",
+          action: { kind: "setup", action: connectClaudeAction },
+        })}
+        providers={[olderGatewayClaudeProvider]}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({ cmd: "claude", cwd: "projects" }),
+    ));
+    expect(screen.queryByText("Could not open provider setup. Open Providers settings to continue.")).toBeNull();
+    expect(useTabs.getState().tabs).toEqual([
+      expect.objectContaining({ kind: "terminal", title: "Connect Claude" }),
+    ]);
+  });
+
   it("executes the current command in a fresh setup session on deliberate retry", async () => {
     render(
       <ProviderReadinessNotice
