@@ -3,6 +3,7 @@
 import { invoke, onEvent } from "./operator";
 import { KernelSocket, type KernelServerMessage } from "./kernel-socket";
 import type { ChatEvent } from "./chat";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 import {
   useBoard,
   type TaskEventCreated,
@@ -58,12 +59,19 @@ export function sendKernelMessage(msg: {
   text: string;
   sessionId?: string;
   requestId: string;
+  providerId?: GlobalChatProviderId;
 }): boolean {
   if (!socket) {
     console.warn("[kernel-wiring] cannot send kernel message before socket is connected");
     return false;
   }
-  socket.send({ type: "message", text: msg.text, requestId: msg.requestId, ...(msg.sessionId ? { sessionId: msg.sessionId } : {}) });
+  socket.send({
+    type: "message",
+    text: msg.text,
+    requestId: msg.requestId,
+    ...(msg.sessionId ? { sessionId: msg.sessionId } : {}),
+    ...(msg.providerId ? { providerId: msg.providerId } : {}),
+  });
   return true;
 }
 

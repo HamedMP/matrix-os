@@ -20,6 +20,7 @@ import { useTabs } from "@desktop/renderer/src/stores/tabs";
 const conversations: HermesConversationSummary[] = [
   {
     id: "launch-plan",
+    providerId: "claude",
     title: "Launch plan",
     preview: "Prepare the release checklist",
     messageCount: 4,
@@ -28,6 +29,7 @@ const conversations: HermesConversationSummary[] = [
   },
   {
     id: "support-notes",
+    providerId: "codex",
     title: "Customer notes",
     preview: "Review LAUNCH feedback from support",
     messageCount: 2,
@@ -36,6 +38,7 @@ const conversations: HermesConversationSummary[] = [
   },
   {
     id: "budget",
+    providerId: "claude",
     title: "Budget review",
     preview: "Compare infrastructure costs",
     messageCount: 1,
@@ -165,7 +168,9 @@ describe("HermesConversationIndex", () => {
     expect(row).not.toBeNull();
     expect(row?.className).toContain("h-16");
     expect(launch.textContent).toContain("Launch plan");
-    expect(launch.textContent).toContain("Hermes");
+    expect(launch.textContent).toContain("Claude");
+    expect(screen.getByRole("button", { name: "Customer notes conversation" }).textContent)
+      .toContain("Codex");
     expect(launch.textContent).not.toContain("Prepare the release checklist");
     expect(launch.textContent).not.toContain("4 messages");
     expect(row?.querySelector("time")).not.toBeNull();
@@ -236,7 +241,7 @@ describe("HermesConversationIndex", () => {
     launch.focus();
     expect(document.activeElement).toBe(launch);
     expect(metadata).not.toBeNull();
-    expect(metadata?.textContent).toContain("Hermes");
+    expect(metadata?.textContent).toContain("Claude");
     expect(metadata?.querySelector("time")).not.toBeNull();
     expect(metadata?.className).not.toContain("group-hover:opacity-0");
     expect(metadata?.className).not.toContain("group-focus-within:opacity-0");
@@ -245,7 +250,7 @@ describe("HermesConversationIndex", () => {
     remove.focus();
     expect(document.activeElement).toBe(remove);
     expect(remove.className).toContain("focus:opacity-100");
-    expect(metadata?.textContent).toContain("Hermes");
+    expect(metadata?.textContent).toContain("Claude");
     expect(metadata?.querySelector("time")).not.toBeNull();
   });
 

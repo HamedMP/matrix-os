@@ -123,7 +123,6 @@ describe("coding agent thread project relations", () => {
     const harness = await createHarness();
     try {
       const invalidRequests = [
-        { ...createBody, projectId: undefined, clientRequestId: "req_missing_project" },
         { ...createBody, projectId: "missing-project", clientRequestId: "req_stale_project" },
         {
           ...createBody,
@@ -161,6 +160,34 @@ describe("coding agent thread project relations", () => {
       expect(harness.startThread).not.toHaveBeenCalled();
       expect((await harness.threads.listThreads(ownerPrincipal)).items).toEqual([]);
       expect((await harness.threads.listThreads(otherPrincipal)).items).toEqual([]);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("GW-009 allows an owned root thread for Global Chat without project relations", async () => {
+    const harness = await createHarness();
+    try {
+      const response = await harness.app.request(jsonRequest({
+        ...createBody,
+        projectId: undefined,
+        clientRequestId: "req_global_chat_root",
+      }));
+      const snapshot = AgentThreadSnapshotSchema.parse(await response.json());
+
+      expect(response.status).toBe(202);
+      expect(snapshot.thread.projectId).toBeUndefined();
+      expect(snapshot.thread.taskId).toBeUndefined();
+      expect(harness.startThread).toHaveBeenCalledTimes(1);
+
+      harness.setPrincipal(otherPrincipal);
+      const unauthorized = await harness.app.request(jsonRequest({
+        ...createBody,
+        projectId: undefined,
+        clientRequestId: "req_unauthorized_global_chat_root",
+      }));
+      expect(unauthorized.status).toBe(400);
+      expect(harness.startThread).toHaveBeenCalledTimes(1);
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }

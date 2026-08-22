@@ -62,8 +62,14 @@ export function createCodingAgentThreadRelationValidator(
     principal: RequestPrincipal,
     relation: { projectId?: string; taskId?: string },
   ): Promise<void> {
-    if (!relation.projectId || !canCreate(principal, ownerIds)) {
+    if (!canCreate(principal, ownerIds)) {
       throw new CodingAgentThreadRelationError("invalid_relation");
+    }
+    if (!relation.projectId) {
+      if (relation.taskId) {
+        throw new CodingAgentThreadRelationError("invalid_relation");
+      }
+      return;
     }
     const projectResult = await options.projectManager.getProject(relation.projectId);
     if (!projectResult.ok || projectResult.project.slug !== relation.projectId) {

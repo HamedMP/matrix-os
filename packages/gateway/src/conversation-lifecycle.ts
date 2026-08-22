@@ -1,4 +1,4 @@
-import type { KernelConversationId } from "@matrix-os/contracts";
+import type { GlobalChatProviderId, KernelConversationId } from "@matrix-os/contracts";
 import type { ConversationMutationLock } from "./conversation-mutation-lock.js";
 import type { ConversationRunRegistry } from "./conversation-run-registry.js";
 import type { ConversationFile, ConversationStore } from "./conversations.js";
@@ -10,8 +10,10 @@ export type ConversationPreparedAdmissionResult<T> =
   | { status: "not_found" | "busy" | "unavailable" };
 
 export function providerResumeSessionId(
-  conversation: Pick<ConversationFile, "id" | "messages">,
+  conversation: Pick<ConversationFile, "id" | "messages" | "providerId">,
+  requestedProviderId: GlobalChatProviderId = conversation.providerId ?? "claude",
 ): string | undefined {
+  if ((conversation.providerId ?? "claude") !== requestedProviderId) return undefined;
   return conversation.messages.length > 0 ? conversation.id : undefined;
 }
 

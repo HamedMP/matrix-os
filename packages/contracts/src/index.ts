@@ -248,6 +248,9 @@ export const KernelConversationIdSchema = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/, "Invalid conversation id")
   .refine((value) => !value.includes(".."), { message: "Invalid conversation id" });
 
+export const GlobalChatProviderIdSchema = z.enum(["claude", "codex"]);
+export type GlobalChatProviderId = z.infer<typeof GlobalChatProviderIdSchema>;
+
 const KernelConversationContextLabelSchema = (maxChars: number) => boundedDisplayText(maxChars)
   .refine(
     (value) => !value.startsWith("/") && !value.startsWith("\\") && !/^[A-Za-z]:[\\/]/.test(value),
@@ -268,6 +271,7 @@ export const KernelConversationContextProjectionSchema = z.object({
 
 export const KernelConversationSummarySchema = z.object({
   id: KernelConversationIdSchema,
+  providerId: GlobalChatProviderIdSchema.default("claude"),
   preview: z.string().max(32_000),
   messageCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -297,6 +301,7 @@ export const KernelConversationHistoryMessageSchema = z.object({
 
 export const KernelConversationHistoryResponseSchema = z.object({
   id: KernelConversationIdSchema,
+  providerId: GlobalChatProviderIdSchema.default("claude"),
   createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   context: KernelConversationContextProjectionSchema.optional(),

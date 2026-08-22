@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useFileWatcherPattern } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 
 interface ConversationMeta {
   id: string;
@@ -10,12 +11,14 @@ interface ConversationMeta {
   messageCount: number;
   createdAt: number;
   updatedAt: number;
+  providerId: GlobalChatProviderId;
 }
 
 interface ConversationFile {
   id: string;
   createdAt: number;
   updatedAt: number;
+  providerId: GlobalChatProviderId;
   messages: Array<{
     role: "user" | "assistant" | "system";
     content: string;

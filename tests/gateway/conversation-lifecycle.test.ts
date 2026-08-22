@@ -60,6 +60,25 @@ describe("conversation lifecycle", () => {
     expect(providerResumeSessionId(resumed)).toBe("pending-session");
   });
 
+  it("never exposes a Claude conversation id as a Codex resume target", () => {
+    const claudeConversation = {
+      id: "claude-session",
+      providerId: "claude" as const,
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [{ role: "user" as const, content: "hello", timestamp: 2 }],
+    };
+    const codexConversation = {
+      ...claudeConversation,
+      id: "thread_codex",
+      providerId: "codex" as const,
+    };
+
+    expect(providerResumeSessionId(claudeConversation, "claude")).toBe("claude-session");
+    expect(providerResumeSessionId(claudeConversation, "codex")).toBeUndefined();
+    expect(providerResumeSessionId(codexConversation, "codex")).toBe("thread_codex");
+  });
+
   it("keeps a deleted conversation deleted when delete wins admission", async () => {
     const { mutationLock, conversations, lifecycle } = setup();
     const id = conversations.create();

@@ -1,4 +1,5 @@
-import { Code2, FolderOpen, GitBranch, Plus, Sparkles } from "lucide-react";
+import { Code2, FolderOpen, Plus, Sparkles } from "lucide-react";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { ConversationProviderSelector } from "../../components/conversation/provider-selector";
@@ -7,8 +8,6 @@ import { ConversationTranscript } from "../../components/conversation/transcript
 import { useConnection } from "../../stores/connection";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useTabs } from "../../stores/tabs";
-import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
-import { useProviderPreferences } from "../settings/provider-preferences";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
@@ -46,8 +45,9 @@ function HermesPane() {
   const send = useHermesChat((state) => state.send);
   const abort = useHermesChat((state) => state.abort);
   const updateConversationContext = useHermesChat((state) => state.updateConversationContext);
+  const providerId = useHermesChat((state) => state.providerId);
+  const createConversation = useHermesChat((state) => state.createConversation);
   const recordRecentHermesConversation = useTabs((state) => state.recordRecentHermesConversation);
-  const setDefaultProvider = useProviderPreferences((state) => state.setDefaultProvider);
   const [draft, setDraft] = useState("");
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [resourcesOpen, setResourcesOpen] = useState(false);
@@ -55,7 +55,6 @@ function HermesPane() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
-  const codexProjectId = defaultProjectId();
 
   const turns = hermesConversationPresentation(messages, status, activeRequestId);
   const copyText = useCallback(async (text: string) => {
@@ -105,23 +104,21 @@ function HermesPane() {
     }
   };
 
-  const startCodexChat = useCallback(async () => {
-    const projectId = defaultProjectId();
-    if (!projectId) {
-      setHarnessError("Create a project before starting a Codex chat.");
+  const selectProvider = useCallback(async (nextProviderId: GlobalChatProviderId) => {
+    if (nextProviderId === providerId) return;
+    if (!api) {
+      setHarnessError("Connect a computer before switching providers.");
       return;
     }
     setHarnessError(null);
-    setDefaultProvider("codex");
-    if (!await openProjectChat(projectId, { compose: true })) {
-      setHarnessError("Codex chat could not be opened. Try again from the project.");
+    if (!await createConversation(api, nextProviderId)) {
+      setHarnessError("A new provider conversation could not be created. Try again.");
     }
-  }, [setDefaultProvider]);
+  }, [api, createConversation, providerId]);
   const providerRegistry = createGlobalChatProviderRegistry({
-    hermesReady: Boolean(api),
-    hasProject: Boolean(codexProjectId),
-    onUseCurrentConversation: () => setDefaultProvider("hermes"),
-    onOpenProjectConversation: startCodexChat,
+    selectedId: providerId,
+    connected: Boolean(api),
+    onSelectProvider: selectProvider,
   });
 
   const attachmentPreviews = (
@@ -165,22 +162,13 @@ function HermesPane() {
       >
         <FolderOpen size={15} aria-hidden />
       </button>
-      <button
-        type="button"
-        aria-label="Use Codex for a project chat"
-        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-        style={{ color: "var(--text-secondary)" }}
-        onClick={() => void startCodexChat()}
-      >
-        <GitBranch size={15} aria-hidden />
-      </button>
     </>
   );
   const harnessBadge = (
     <ConversationProviderSelector
       value={providerRegistry.selectedId}
       options={providerRegistry.options}
-      renderIcon={(icon: ConversationProviderIcon) => icon === "hermes"
+      renderIcon={(icon: ConversationProviderIcon) => icon === "claude"
         ? <Sparkles className="size-3.5" />
         : <Code2 className="size-3.5" />}
       onSelect={(providerId) => void providerRegistry.activate(providerId)}
@@ -247,7 +235,7 @@ function HermesPane() {
   return (
     <div
       role="region"
-      aria-label="Hermes conversation"
+      aria-label="Global Chat conversation"
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
       {...attachments.paneProps}
     >
@@ -268,13 +256,13 @@ function HermesPane() {
               How can I help you?
             </h1>
           </div>
-          <div className="shrink-0">{renderComposer("How can I help you today?", true)}</div>
+          <div className="shrink-0">{renderComposer(`Ask ${providerId === "codex" ? "Codex" : "Claude"} anything…`, true)}</div>
         </div>
       ) : (
         <>
           <ConversationTranscript turns={turns} callbacks={{ copyText }} />
           <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
-            {renderComposer("Reply to Hermes…")}
+            {renderComposer(`Reply to ${providerId === "codex" ? "Codex" : "Claude"}…`)}
           </div>
         </>
       )}

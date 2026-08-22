@@ -8,9 +8,10 @@ import { capturePostHogEvent } from "@/lib/posthog-client";
 import { setConnectionHealthState, useConnectionHealth } from "./useConnectionHealth";
 import type { ConnectionState } from "./useConnectionHealth";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 
 export type ServerMessage =
-  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
+  | { type: "kernel:init"; sessionId: string; providerId?: GlobalChatProviderId; requestId?: string; eventId?: string }
   | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }
@@ -304,6 +305,7 @@ type ClientMessage = {
   displayText?: string;
   sessionId?: string;
   requestId?: string;
+  providerId?: GlobalChatProviderId;
 } | {
   type: "switch_session";
   sessionId: string;
@@ -320,6 +322,7 @@ type ClientMessage = {
   displayText?: string;
   sessionId?: string;
   requestId?: string;
+  providerId?: GlobalChatProviderId;
   id?: string;
   approved?: boolean;
 };

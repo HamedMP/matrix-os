@@ -104,6 +104,7 @@ import {
   mapRequestPrincipalError,
   ownerScopeFromPrincipal,
   requireRequestPrincipal,
+  type RequestPrincipal,
 } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
@@ -135,6 +136,7 @@ import { createCodingAgentSourceControlStore } from "./coding-agents/source-cont
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
+import { createGlobalChatCodexDispatcher } from "./global-chat-codex-dispatcher.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
@@ -191,6 +193,7 @@ import {
 } from "./integrations/routes.js";
 import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
 import { z } from "zod/v4";
+import { GlobalChatProviderIdSchema, type GlobalChatProviderId } from "@matrix-os/contracts";
 import {
   createPluginRegistry,
   loadAllPlugins,
@@ -691,6 +694,9 @@ export async function createGateway(config: GatewayConfig) {
     logFailure: logBestEffortFailure,
   });
   const codingAgentTurnsEnabled = codingAgentTurnLifecycle.turnsEnabled;
+  const globalChatCodexDispatcher = codingAgentThreadStore && codingAgentTurnsEnabled
+    ? createGlobalChatCodexDispatcher({ threads: codingAgentThreadStore })
+    : undefined;
   if (codingAgentThreadStore) {
     void codingAgentSessionStopReconciler.attachThreadStore(codingAgentThreadStore).catch((err: unknown) => {
       console.warn("[coding-agents] Failed to flush pending session stops:", err instanceof Error ? err.message : String(err));
@@ -1907,9 +1913,10 @@ export async function createGateway(config: GatewayConfig) {
       // stashed claims if a JWT was presented.
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
+      let wsPrincipal: RequestPrincipal | undefined;
       let conversationOwnerScope: ReturnType<typeof ownerScopeFromPrincipal> | undefined;
       try {
-        const wsPrincipal = requireRequestPrincipal(c);
+        wsPrincipal = requireRequestPrincipal(c);
         const wsSyncUserId = wsPrincipal.userId;
         conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
@@ -2139,20 +2146,37 @@ export async function createGateway(config: GatewayConfig) {
               let canonicalAdmittedSessionId = admittedSessionId;
               let dispatchSessionId = admittedSessionId;
               let workingDirectory: string | undefined;
+              let providerId: GlobalChatProviderId = parsed.providerId ?? "claude";
               if (admittedSessionId) {
+                const existingConversation = conversations.get(admittedSessionId);
+                const storedProviderId = existingConversation?.providerId ?? "claude";
+                if (parsed.providerId && parsed.providerId !== storedProviderId) {
+                  sendClientAck(ws, parsed, "rejected", false);
+                  send(ws, {
+                    type: "kernel:error",
+                    message: "Start a new conversation to switch providers.",
+                  });
+                  return;
+                }
+                providerId = storedProviderId;
                 const admission = await conversationLifecycle.admitExistingPrepared(
                   admittedSessionId,
                   async (conversation) => {
-                    const resumeSessionId = providerResumeSessionId(conversation);
+                    if ((conversation.providerId ?? "claude") !== providerId) return null;
+                    const resumeSessionId = providerResumeSessionId(conversation, providerId);
                     if (!conversation.context) {
-                      return { workingDirectory: undefined, resumeSessionId };
+                      return { workingDirectory: undefined, resumeSessionId, providerId };
                     }
                     const resolvedContext = await conversationContextResolver.resolve(
                       conversation.context.projectId,
                       conversationOwnerScope,
                     );
                     return resolvedContext
-                      ? { workingDirectory: resolvedContext.workingDirectory, resumeSessionId }
+                      ? {
+                          workingDirectory: resolvedContext.workingDirectory,
+                          resumeSessionId,
+                          providerId,
+                        }
                       : null;
                   },
                 );
@@ -2171,9 +2195,22 @@ export async function createGateway(config: GatewayConfig) {
                 admittedExistingConversation = true;
                 workingDirectory = admission.prepared.workingDirectory;
                 dispatchSessionId = admission.prepared.resumeSessionId;
+                providerId = admission.prepared.providerId;
                 activeSessionId = admittedSessionId;
               } else {
                 activeSessionId = undefined;
+              }
+
+              if (providerId === "codex" && (!globalChatCodexDispatcher || !wsPrincipal)) {
+                if (admittedExistingConversation && admittedSessionId) {
+                  void finalizeWithSummary(admittedSessionId);
+                }
+                sendClientAck(ws, parsed, "rejected", false);
+                send(ws, {
+                  type: "kernel:error",
+                  message: "Codex is unavailable on this computer.",
+                });
+                return;
               }
 
               clearConversationRunAttachment();
@@ -2215,86 +2252,121 @@ export async function createGateway(config: GatewayConfig) {
                 } as ServerMessage;
               };
 
-              dispatcher
-                .dispatch(parsed.text, dispatchSessionId, async (event) => {
-                  const msg = withReplayId(kernelEventToServerMessage(event, requestId));
+              const handleConversationMessage = async (
+                msg: ServerMessage,
+                claudeEvent?: KernelEvent,
+              ): Promise<void> => {
+                if (msg.type === "kernel:init") {
+                  if (
+                    canonicalAdmittedSessionId
+                    && canonicalAdmittedSessionId !== msg.sessionId
+                  ) {
+                    const adoption = await conversationLifecycle.adoptProviderSession(
+                      canonicalAdmittedSessionId,
+                      msg.sessionId,
+                    );
+                    if (adoption !== "adopted") {
+                      throw new Error("Conversation could not adopt provider session");
+                    }
+                    canonicalAdmittedSessionId = msg.sessionId;
+                  }
+                  activeSessionId = msg.sessionId;
+                  if (requestId) {
+                    const reconnectable = reconnectableAbortControllers.get(requestId);
+                    if (reconnectable) reconnectable.sessionId = msg.sessionId;
+                  }
+                  if (!canonicalAdmittedSessionId || canonicalAdmittedSessionId !== msg.sessionId) {
+                    conversations.begin(msg.sessionId, providerId);
+                    conversationRuns.begin(
+                      msg.sessionId,
+                      conversations.get(msg.sessionId)?.messages.length ?? 0,
+                    );
+                  }
+                  send(ws, msg);
+                  publishConversationRunMessage(msg.sessionId, msg);
+                  if (pendingText) {
+                    conversations.addUserMessage(msg.sessionId, pendingText);
+                    pendingText = undefined;
+                  }
+                } else {
+                  send(ws, msg);
+                }
+                if (msg.type === "kernel:text" && activeSessionId) {
+                  receivedAssistantText = true;
+                  publishConversationRunMessage(activeSessionId, msg);
+                  conversations.appendAssistantText(activeSessionId, msg.text);
+                } else if (msg.type === "kernel:tool_start" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
+                  lastToolName = msg.tool;
+                  conversations.addToolStart(activeSessionId, msg.tool);
+                } else if (msg.type === "kernel:tool_end" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
+                  conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
+                } else if (msg.type === "kernel:result" && activeSessionId) {
+                  const fallbackText = claudeEvent
+                    ? kernelResultFallbackText(claudeEvent, receivedAssistantText)
+                    : null;
+                  if (fallbackText) conversations.appendAssistantText(activeSessionId, fallbackText);
+                  captureGatewayProductEvent("agent_task_completed", {
+                    shell_surface: "gateway_ws",
+                    request_id_present: Boolean(requestId),
+                    provider_id: providerId,
+                  });
+                  publishConversationRunMessage(activeSessionId, msg);
+                  void finalizeWithSummary(activeSessionId);
+                } else if (msg.type === "kernel:error" && activeSessionId) {
+                  captureGatewayProductEvent("agent_task_failed", {
+                    shell_surface: "gateway_ws",
+                    request_id_present: Boolean(requestId),
+                    provider_id: providerId,
+                  });
+                  publishConversationRunMessage(activeSessionId, {
+                    ...msg,
+                    message: CLIENT_KERNEL_ERROR_MESSAGE,
+                  });
+                  conversations.addSystemMessage(activeSessionId, CLIENT_KERNEL_ERROR_MESSAGE);
+                  void finalizeWithSummary(activeSessionId);
+                } else if (msg.type === "kernel:aborted" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
+                  conversations.addSystemMessage(activeSessionId, "Stopped.");
+                  void finalizeWithSummary(activeSessionId);
+                }
+              };
 
-                  if (msg.type === "kernel:init") {
-                    if (
-                      canonicalAdmittedSessionId
-                      && canonicalAdmittedSessionId !== msg.sessionId
-                    ) {
-                      const adoption = await conversationLifecycle.adoptProviderSession(
-                        canonicalAdmittedSessionId,
-                        msg.sessionId,
-                      );
-                      if (adoption !== "adopted") {
-                        throw new Error("Conversation could not adopt provider session");
-                      }
-                      canonicalAdmittedSessionId = msg.sessionId;
-                    }
-                    activeSessionId = msg.sessionId;
-                    if (requestId) {
-                      const reconnectable = reconnectableAbortControllers.get(requestId);
-                      if (reconnectable) reconnectable.sessionId = msg.sessionId;
-                    }
-                    if (!canonicalAdmittedSessionId || canonicalAdmittedSessionId !== msg.sessionId) {
-                      conversations.begin(msg.sessionId);
-                      conversationRuns.begin(
-                        msg.sessionId,
-                        conversations.get(msg.sessionId)?.messages.length ?? 0,
-                      );
-                    }
-                    send(ws, msg);
-                    publishConversationRunMessage(msg.sessionId, msg);
-                    if (pendingText) {
-                      conversations.addUserMessage(msg.sessionId, pendingText);
-                      pendingText = undefined;
-                    }
-                  } else {
-                    send(ws, msg);
-                  }
-                  if (msg.type === "kernel:text" && activeSessionId) {
-                    receivedAssistantText = true;
-                    publishConversationRunMessage(activeSessionId, msg);
-                    conversations.appendAssistantText(activeSessionId, msg.text);
-                  } else if (msg.type === "kernel:tool_start" && activeSessionId) {
-                    publishConversationRunMessage(activeSessionId, msg);
-                    lastToolName = msg.tool;
-                    conversations.addToolStart(activeSessionId, msg.tool);
-                  } else if (msg.type === "kernel:tool_end" && activeSessionId) {
-                    publishConversationRunMessage(activeSessionId, msg);
-                    conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
-                  } else if (msg.type === "kernel:result" && activeSessionId) {
-                    const fallbackText = kernelResultFallbackText(event, receivedAssistantText);
-                    if (fallbackText) conversations.appendAssistantText(activeSessionId, fallbackText);
-                    captureGatewayProductEvent("agent_task_completed", {
-                      shell_surface: "gateway_ws",
-                      request_id_present: Boolean(requestId),
+              const dispatchPromise = providerId === "codex"
+                ? (() => {
+                    let eventQueue = Promise.resolve();
+                    const codexPrincipal = wsPrincipal!;
+                    return globalChatCodexDispatcher!.dispatch({
+                      principal: codexPrincipal,
+                      text: parsed.text,
+                      requestId: replayRequestId,
+                      threadId: dispatchSessionId,
+                      signal: abortController?.signal,
+                      onEvent: (event) => {
+                        eventQueue = eventQueue.then(() => handleConversationMessage(
+                          withReplayId(event as ServerMessage),
+                        ));
+                      },
+                    }).then(async () => {
+                      await eventQueue;
                     });
-                    publishConversationRunMessage(activeSessionId, msg);
-                    void finalizeWithSummary(activeSessionId);
-                  } else if (msg.type === "kernel:error" && activeSessionId) {
-                    captureGatewayProductEvent("agent_task_failed", {
-                      shell_surface: "gateway_ws",
-                      request_id_present: Boolean(requestId),
-                    });
-                    publishConversationRunMessage(activeSessionId, {
-                      ...msg,
-                      message: CLIENT_KERNEL_ERROR_MESSAGE,
-                    });
-                    conversations.addSystemMessage(activeSessionId, CLIENT_KERNEL_ERROR_MESSAGE);
-                    void finalizeWithSummary(activeSessionId);
-                  } else if (msg.type === "kernel:aborted" && activeSessionId) {
-                    publishConversationRunMessage(activeSessionId, msg);
-                    conversations.addSystemMessage(activeSessionId, "Stopped.");
-                    void finalizeWithSummary(activeSessionId);
-                  }
-                }, undefined, abortController, {
-                model: parsed.model,
-                effort: parsed.effort,
-                workingDirectory,
-              })
+                  })()
+                : dispatcher.dispatch(parsed.text, dispatchSessionId, async (event) => {
+                    const serverMessage = kernelEventToServerMessage(event, requestId);
+                    await handleConversationMessage(
+                      withReplayId(serverMessage.type === "kernel:init"
+                        ? { ...serverMessage, providerId }
+                        : serverMessage),
+                      event,
+                    );
+                  }, undefined, abortController, {
+                    model: parsed.model,
+                    effort: parsed.effort,
+                    workingDirectory,
+                  });
+
+              dispatchPromise
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
                 captureGatewayProductEvent("agent_task_dispatch_failed", {
@@ -3018,6 +3090,16 @@ export async function createGateway(config: GatewayConfig) {
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const conversationBodyLimit = bodyLimit({ maxSize: 4096 });
+  const conversationCreateBodySchema = z.object({
+    channel: z.string()
+      .trim()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/)
+      .refine((value) => !value.includes(".."))
+      .optional(),
+    providerId: GlobalChatProviderIdSchema.default("claude"),
+  }).strict();
   const layoutBodyLimit = bodyLimit({ maxSize: 100_000 });
   const canvasBodyLimit = bodyLimit({ maxSize: 100_000 });
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
@@ -3524,15 +3606,19 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/conversations", conversationBodyLimit, async (c) => {
-    let body: { channel?: string } = {};
+    let rawBody: unknown = {};
     try {
-      body = await c.req.json<{ channel?: string }>();
+      const rawText = await c.req.text();
+      rawBody = rawText.trim() ? JSON.parse(rawText) : {};
     } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        console.error("[gateway] Failed to read conversation create body:", err);
-      }
+      if (!(err instanceof SyntaxError)) console.error("[gateway] Failed to read conversation create body:", err);
+      return c.json({ error: "Invalid conversation settings" }, 400);
     }
-    const id = conversations.create(body.channel);
+    const parsedBody = conversationCreateBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ error: "Invalid conversation settings" }, 400);
+    }
+    const id = conversations.create(parsedBody.data.channel, parsedBody.data.providerId);
     return c.json({ id }, 201);
   });
 
@@ -4420,6 +4506,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await agentRuntimeServices.controller.close();
+      globalChatCodexDispatcher?.dispose();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();

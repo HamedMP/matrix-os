@@ -5,12 +5,13 @@ import {
   createConversationProviderRegistry,
   type ConversationProviderRegistry,
 } from "../../components/conversation/provider-registry";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 
 const GLOBAL_CHAT_PROVIDER_DEFINITIONS: readonly ConversationProviderDefinition[] = [
   {
-    id: "hermes",
-    label: "Hermes",
-    icon: "hermes",
+    id: "claude",
+    label: "Claude",
+    icon: "claude",
     capabilities: ["current-conversation", "attachments", "project-context", "tools"],
   },
   {
@@ -22,32 +23,30 @@ const GLOBAL_CHAT_PROVIDER_DEFINITIONS: readonly ConversationProviderDefinition[
 ];
 
 export function createGlobalChatProviderRegistry({
-  hermesReady,
-  hasProject,
-  onUseCurrentConversation,
-  onOpenProjectConversation,
+  selectedId,
+  connected,
+  onSelectProvider,
 }: {
-  hermesReady: boolean;
-  hasProject: boolean;
-  onUseCurrentConversation: () => void | Promise<void>;
-  onOpenProjectConversation: () => void | Promise<void>;
+  selectedId: GlobalChatProviderId;
+  connected: boolean;
+  onSelectProvider: (providerId: GlobalChatProviderId) => void | Promise<void>;
 }): ConversationProviderRegistry {
   return createConversationProviderRegistry({
-    selectedId: "hermes",
+    selectedId,
     providers: [
       {
         definition: GLOBAL_CHAT_PROVIDER_DEFINITIONS[0]!,
-        readiness: hermesReady
+        readiness: connected
           ? { state: "ready" }
-          : { state: "disabled", reason: "Connect a computer to use Hermes." },
-        onActivate: onUseCurrentConversation,
+          : { state: "disabled", reason: "Connect a computer to use Claude." },
+        onActivate: () => onSelectProvider("claude"),
       },
       {
         definition: GLOBAL_CHAT_PROVIDER_DEFINITIONS[1]!,
-        readiness: hasProject
+        readiness: connected
           ? { state: "ready" }
-          : { state: "disabled", reason: "Create a project to use Codex." },
-        onActivate: onOpenProjectConversation,
+          : { state: "disabled", reason: "Connect a computer to use Codex." },
+        onActivate: () => onSelectProvider("codex"),
       },
     ],
   });

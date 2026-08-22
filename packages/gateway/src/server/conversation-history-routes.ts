@@ -276,6 +276,7 @@ export function registerConversationHistoryRoutes(
 
       const response = KernelConversationHistoryResponseSchema.parse({
         id: conversation.id,
+        providerId: conversation.providerId ?? "claude",
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
         ...(conversation.context

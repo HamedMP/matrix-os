@@ -27,7 +27,7 @@ export function kernelResultFallbackText(
 export function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
     case "init":
-      return { type: "kernel:init", sessionId: event.sessionId, requestId };
+      return { type: "kernel:init", sessionId: event.sessionId, providerId: "claude", requestId };
     case "text":
       return { type: "kernel:text", text: event.text, requestId };
     case "tool_start":

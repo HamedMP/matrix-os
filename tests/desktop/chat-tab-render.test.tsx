@@ -367,11 +367,11 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     expect(screen.getByRole("heading", { name: "How can I help you?" })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Ask Claude anything…" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Resources" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Use Codex for a project chat" })).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "Chat harness" })).toHaveProperty("value", "hermes");
+    expect(screen.queryByRole("button", { name: "Use Codex for a project chat" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Chat harness" })).toHaveProperty("value", "claude");
     expect(screen.getByTestId("chat-empty-logo").style.height).toBe("208px");
     expect(screen.getByTestId("chat-empty-content").className).toContain("justify-center");
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
@@ -518,14 +518,14 @@ describe("ChatTab", () => {
     useConnection.setState({ api: { putBytes } as never });
     render(<React.StrictMode><ChatTab /></React.StrictMode>);
 
-    const pane = screen.getByRole("region", { name: "Hermes conversation" });
+    const pane = screen.getByRole("region", { name: "Global Chat conversation" });
     const pasted = new File(["screen"], "screen.png", { type: "image/png" });
     fireEvent.paste(pane, { clipboardData: { files: [pasted] } });
 
     expect(await screen.findByRole("button", { name: "Remove screen.png" })).toBeTruthy();
     const previewRow = screen.getByRole("group", { name: "Attachments" });
     expect(previewRow.className).toContain("overflow-x-auto");
-    const input = screen.getByLabelText("How can I help you today?");
+    const input = screen.getByLabelText("Ask Claude anything…");
     fireEvent.change(input, { target: { value: "Review this screenshot" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -547,7 +547,7 @@ describe("ChatTab", () => {
     });
     render(<ChatTab />);
 
-    fireEvent.change(screen.getByRole("textbox", { name: "How can I help you today?" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Ask Claude anything…" }), {
       target: { value: "Continue the release check" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -561,7 +561,10 @@ describe("ChatTab", () => {
     });
   });
 
-  it("routes the Codex harness to a project-bound durable chat", async () => {
+  it("keeps the Codex harness in Global Chat instead of opening a project tab", async () => {
+    const post = vi.fn().mockResolvedValue({ id: "global-codex" });
+    const get = vi.fn().mockResolvedValue([]);
+    useConnection.setState({ api: { post, get } as never });
     useHermesChat.setState({ messages: [], status: "idle" });
     render(<ChatTab />);
 
@@ -569,29 +572,29 @@ describe("ChatTab", () => {
       target: { value: "codex" },
     });
 
-    await waitFor(() => expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
-      kind: "project",
-      projectSlug: "matrix-os",
-    })));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/api/conversations",
+      { providerId: "codex" },
+    ));
+    expect(useTabs.getState().tabs).toEqual([]);
   });
 
-  it("explains when a coding harness cannot open without a project", () => {
+  it("allows a connected Codex Global Chat without requiring a project", () => {
+    useConnection.setState({ api: { post: vi.fn(), get: vi.fn() } as never });
     useBoard.setState({ projects: [], activeProjectSlug: null });
     useHermesChat.setState({ messages: [], status: "idle" });
 
     render(<ChatTab />);
 
-    const codex = screen.getByRole("option", {
-      name: "Codex — Create a project to use Codex.",
-    });
-    expect((codex as HTMLOptionElement).disabled).toBe(true);
+    const codex = screen.getByRole("option", { name: "Codex" });
+    expect((codex as HTMLOptionElement).disabled).toBe(false);
   });
 
   it("does not intercept a text-only drop in Chat", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);
 
-    const pane = screen.getByRole("region", { name: "Hermes conversation" });
+    const pane = screen.getByRole("region", { name: "Global Chat conversation" });
     const drop = new Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(drop, "dataTransfer", {
       value: { items: [{ kind: "string" }], files: [] },
@@ -607,7 +610,7 @@ describe("ChatTab", () => {
     useHermesChat.setState({ messages: [], status: "idle", send, abort: vi.fn() });
     useConnection.setState({ api: { putBytes: vi.fn().mockRejectedValue(new Error("offline")) } as never });
     render(<ChatTab />);
-    const pane = screen.getByRole("region", { name: "Hermes conversation" });
+    const pane = screen.getByRole("region", { name: "Global Chat conversation" });
     fireEvent.drop(pane, { dataTransfer: { files: [new File(["x"], "notes.txt", { type: "text/plain" })] } });
     fireEvent.click(await screen.findByRole("button", { name: "Send" }));
 
@@ -647,7 +650,7 @@ describe("ChatTab", () => {
     const newest = screen.getByRole("button", { name: "Plan the launch conversation" });
     const older = screen.getByRole("button", { name: "Earlier notes conversation" });
     expect(newest.textContent).toContain("Plan the launch");
-    expect(newest.textContent).toContain("Hermes");
+    expect(newest.textContent).toContain("Claude");
     expect(newest.textContent).not.toContain("4 messages");
     expect(newest.textContent).not.toContain("Review the final launch checklist");
     expect(older.textContent).toContain("Earlier notes");
@@ -814,13 +817,36 @@ describe("ChatTab", () => {
     render(<ChatTab />);
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
 
-    expect(await screen.findByRole("region", { name: "Hermes conversation" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Global Chat conversation" })).toBeTruthy();
     expect(useHermesChat.getState()).toMatchObject({
       view: "conversation",
       sessionId: "conversation-created",
       messages: [],
     });
     expect(useTabs.getState().recentViews).toEqual([]);
+  });
+
+  it("creates an isolated Codex conversation when the Global Chat provider changes", async () => {
+    const post = vi.fn().mockResolvedValue({ id: "conversation-codex" });
+    const get = vi.fn().mockResolvedValue([]);
+    useConnection.setState({ api: { post, get } as never });
+    useHermesChat.setState({ providerId: "claude", messages: [], view: "conversation" });
+
+    render(<ChatTab />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Chat harness" }), {
+      target: { value: "codex" },
+    });
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/api/conversations",
+      { providerId: "codex" },
+    ));
+    expect(useHermesChat.getState()).toMatchObject({
+      sessionId: "conversation-codex",
+      providerId: "codex",
+      messages: [],
+    });
+    expect(screen.getByRole("textbox", { name: "Ask Codex anything…" })).toBeTruthy();
   });
 
   it("opens the selected canonical conversation without duplicating global navigation", async () => {

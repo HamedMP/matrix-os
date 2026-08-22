@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createConversationProviderRegistry,
 } from "../../desktop/src/renderer/src/components/conversation/provider-registry";
+import { createGlobalChatProviderRegistry } from
+  "../../desktop/src/renderer/src/features/chat/global-chat-providers";
 
 describe("conversation provider registry", () => {
   it("injects selection actions for arbitrary provider surfaces", async () => {
@@ -39,6 +41,23 @@ describe("conversation provider registry", () => {
     ]);
     await expect(registry.activate("workspace-beta")).resolves.toBe(true);
     expect(openWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("uses the persisted Global Chat provider and switches in the current surface", async () => {
+    const selectProvider = vi.fn();
+    const registry = createGlobalChatProviderRegistry({
+      selectedId: "codex",
+      connected: true,
+      onSelectProvider: selectProvider,
+    });
+
+    expect(registry.selectedId).toBe("codex");
+    expect(registry.options.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: "claude", label: "Claude" },
+      { id: "codex", label: "Codex" },
+    ]);
+    await expect(registry.activate("claude")).resolves.toBe(true);
+    expect(selectProvider).toHaveBeenCalledWith("claude");
   });
 
   it("fails closed without invoking disabled or unknown provider actions", async () => {

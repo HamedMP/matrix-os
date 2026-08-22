@@ -280,6 +280,7 @@ describe("kernel conversation history route", () => {
     const app = createApp(createStore({
       list: vi.fn(() => [{
         id: record.id,
+        providerId: "claude",
         preview: "Inspect repository",
         messageCount: 0,
         createdAt: record.createdAt,
@@ -303,6 +304,7 @@ describe("kernel conversation history route", () => {
     expect(list.status).toBe(200);
     expect(listBody).toEqual([{
       id: record.id,
+      providerId: "claude",
       preview: "Inspect repository",
       messageCount: 0,
       createdAt: record.createdAt,

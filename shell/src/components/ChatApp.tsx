@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useVoice } from "@/hooks/useVoice";
+import type { GlobalChatProviderId } from "@matrix-os/contracts";
 import {
   DEFAULT_HERMES_MODEL,
   DEFAULT_HERMES_CHANNELS,
@@ -48,6 +49,7 @@ import {
   GithubIcon,
   MailIcon,
   Settings2Icon,
+  Code2Icon,
 } from "lucide-react";
 
 interface ConversationMeta {
@@ -55,6 +57,7 @@ interface ConversationMeta {
   preview: string;
   messageCount: number;
   updatedAt: number;
+  providerId: GlobalChatProviderId;
 }
 
 const HERMES_SETUP_STORAGE_KEY = "matrix:hermes-setup";
@@ -92,9 +95,11 @@ interface ChatAppProps {
   sessionId: string | undefined;
   busy: boolean;
   connected: boolean;
+  providerId: GlobalChatProviderId;
   conversations: ConversationMeta[];
   onNewChat: () => void;
   onSwitchConversation: (id: string) => void;
+  onProviderChange: (providerId: GlobalChatProviderId) => void;
   onSubmit: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -135,9 +140,11 @@ export function ChatApp({
   sessionId,
   busy,
   connected,
+  providerId,
   conversations,
   onNewChat,
   onSwitchConversation,
+  onProviderChange,
   onSubmit,
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields (sidebarOpen, searchQuery, setupOpen, model, channels) are independent UI concerns with separate update sites and lifecycles, not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
@@ -163,10 +170,14 @@ export function ChatApp({
   useEffect(() => {
     writeHermesSetup(model, selectedChannels);
   }, [model, selectedChannels]);
-  const submitWithHermesSetup = (
+  const submitWithProviderSetup = (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
   ) => {
+    if (providerId === "codex") {
+      onSubmit(text, files, { displayText: text });
+      return;
+    }
     const promptText = createHermesConfiguredPrompt(text, model, selectedChannels);
     onSubmit(text, files, promptText === text ? { displayText: text } : { displayText: text, promptText });
   };
@@ -183,6 +194,8 @@ export function ChatApp({
   const suggestions = getMessageSuggestions(messages);
 
   const isEmpty = messages.length === 0 && !busy;
+  const providerLabel = providerId === "codex" ? "Codex" : "Claude";
+  const providerDescription = providerId === "codex" ? "Codex coding agent" : "Claude Kernel";
 
   return (
     <div className="relative flex h-full bg-background">
@@ -253,6 +266,9 @@ export function ChatApp({
                         ? conv.preview.slice(0, 40) + (conv.preview.length > 40 ? "..." : "")
                         : "New chat"}
                     </span>
+                    <span className="shrink-0 text-[9px] uppercase tracking-wide text-muted-foreground/60">
+                      {conv.providerId === "codex" ? "Codex" : "Claude"}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -300,25 +316,50 @@ export function ChatApp({
                 <BotIcon className="size-3.5" aria-hidden="true" />
               </span>
               <div className="min-w-0 text-center">
-                <p className="truncate text-sm font-semibold leading-4 text-foreground">Hermes</p>
-                <p className="truncate text-[10px] leading-3 text-muted-foreground">Matrix system agent</p>
+                <p className="truncate text-sm font-semibold leading-4 text-foreground">{providerLabel}</p>
+                <p className="truncate text-[10px] leading-3 text-muted-foreground">{providerDescription}</p>
               </div>
             </div>
           </div>
-          <Button
-            variant={setupOpen ? "secondary" : "ghost"}
-            size="sm"
-            className="h-8 gap-1.5 px-2.5 text-xs"
-            onClick={() => setSetupOpen((value) => !value)}
-          >
-            <Settings2Icon className="size-3.5" aria-hidden="true" />
-            Setup
-          </Button>
+          <div className="flex items-center rounded-lg border border-border/60 bg-muted/40 p-0.5" aria-label="Global Chat provider">
+            {(["claude", "codex"] as const).map((option) => {
+              const selected = providerId === option;
+              const Icon = option === "codex" ? Code2Icon : BotIcon;
+              const label = option === "codex" ? "Codex" : "Claude";
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  aria-label={`Use ${label}`}
+                  aria-pressed={selected}
+                  disabled={!connected || busy}
+                  onClick={() => onProviderChange(option)}
+                  className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                    selected ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="size-3" aria-hidden="true" />
+                  <span className={mobile ? "sr-only" : undefined}>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+          {providerId === "claude" && (
+            <Button
+              variant={setupOpen ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 gap-1.5 px-2.5 text-xs"
+              onClick={() => setSetupOpen((value) => !value)}
+            >
+              <Settings2Icon className="size-3.5" aria-hidden="true" />
+              Setup
+            </Button>
+          )}
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header>
-        {setupOpen && (
+        {providerId === "claude" && setupOpen && (
           <HermesSetupPanel
             model={model}
             onModelChange={setModel}
@@ -337,11 +378,12 @@ export function ChatApp({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
-            onSubmit={submitWithHermesSetup}
+            onSubmit={submitWithProviderSetup}
             connected={connected}
             suggestions={suggestions}
             mobile={mobile}
             model={model}
+            providerId={providerId}
           />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -365,7 +407,7 @@ export function ChatApp({
                           {msg.content}
                         </div>
                       ) : (
-                    <AssistantBubble content={msg.content} onAction={submitWithHermesSetup} />
+                    <AssistantBubble content={msg.content} onAction={submitWithProviderSetup} />
                       )}
                     </div>
                   );
@@ -390,11 +432,11 @@ export function ChatApp({
                 <div className="pb-3">
                   <SuggestionChips
                     suggestions={suggestions}
-                    onSelect={(text) => submitWithHermesSetup(text)}
+                    onSelect={(text) => submitWithProviderSetup(text)}
                   />
                 </div>
               )}
-              <ChatInput connected={connected} busy={busy} onSubmit={submitWithHermesSetup} />
+              <ChatInput connected={connected} busy={busy} onSubmit={submitWithProviderSetup} />
             </div>
           </div>
         )}
@@ -409,12 +451,14 @@ function EmptyState({
   suggestions,
   mobile,
   model,
+  providerId,
 }: {
   onSubmit: (text: string) => void;
   connected: boolean;
   suggestions: string[];
   mobile: boolean;
   model: string;
+  providerId: GlobalChatProviderId;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4">
@@ -422,9 +466,11 @@ function EmptyState({
         {/* Greeting */}
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
-            What should Hermes do?
+            What should {providerId === "codex" ? "Codex" : "Claude"} do?
           </h1>
-          <p className="text-sm text-muted-foreground">Using {model}</p>
+          <p className="text-sm text-muted-foreground">
+            {providerId === "codex" ? "Codex coding agent" : `Using ${model}`}
+          </p>
         </div>
 
         {/* Input */}

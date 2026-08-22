@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { GlobalChatProviderIdSchema } from "@matrix-os/contracts";
 import { KernelEffortSchema, KernelModelSchema } from "./kernel-settings.js";
 
 export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
@@ -8,6 +9,7 @@ export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
     displayText: z.string().trim().min(1).max(100_000).optional(),
     sessionId: z.string().min(1).max(256).optional(),
     requestId: z.string().min(1).max(256).optional(),
+    providerId: GlobalChatProviderIdSchema.optional(),
     model: KernelModelSchema.optional(),
     effort: KernelEffortSchema.optional(),
   }).strict(),

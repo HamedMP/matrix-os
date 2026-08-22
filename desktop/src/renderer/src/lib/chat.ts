@@ -5,7 +5,7 @@ import type { KernelConversationToolDisplay } from "@matrix-os/contracts";
 // mutation causes streaming text duplication.
 
 export type ChatEvent =
-  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
+  | { type: "kernel:init"; sessionId: string; providerId?: "claude" | "codex"; requestId?: string; eventId?: string }
   | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }

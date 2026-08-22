@@ -14,6 +14,7 @@ let mockConversations: Array<{
   messageCount: number;
   createdAt: number;
   updatedAt: number;
+  providerId: "claude" | "codex";
 }> = [];
 
 vi.mock("../../shell/src/hooks/useSocket.js", () => ({
@@ -59,6 +60,7 @@ describe("useChatState refresh recovery", () => {
     subscribeMock.mockReset();
     subscribeMock.mockImplementation(() => () => {});
     loadMock.mockReset();
+    vi.unstubAllGlobals();
     mockConnectionEpoch = 0;
     mockConversations = [];
   });
@@ -71,6 +73,7 @@ describe("useChatState refresh recovery", () => {
         messageCount: 2,
         createdAt: 1,
         updatedAt: 2,
+        providerId: "claude",
       },
     ];
 
@@ -78,6 +81,7 @@ describe("useChatState refresh recovery", () => {
       id: "conv-1",
       createdAt: 1,
       updatedAt: 2,
+      providerId: "claude",
       messages: [
         { role: "user", content: "hello", timestamp: 1 },
         { role: "assistant", content: "hi", timestamp: 2 },
@@ -116,6 +120,7 @@ describe("useChatState refresh recovery", () => {
       displayText: "Build a calendar app",
       sessionId: undefined,
       requestId: expect.stringMatching(/^req-/),
+      providerId: "claude",
     });
     await waitFor(() => {
       expect(latestState?.messages[0]?.content).toBe("Build a calendar app");
@@ -130,6 +135,7 @@ describe("useChatState refresh recovery", () => {
       createdAt: 1,
       updatedAt: 2,
       messages: [],
+      providerId: "claude",
     });
     const { rerender } = render(<Probe onState={(state) => { latestState = state; }} />);
 
@@ -215,12 +221,14 @@ describe("useChatState refresh recovery", () => {
       createdAt: 1,
       updatedAt: 2,
       messages: [{ role: "user", content: "hello", timestamp: 1 }],
+      providerId: "claude" as const,
     };
     const conv2 = {
       id: "conv-2",
       createdAt: 2,
       updatedAt: 3,
       messages: [{ role: "assistant", content: "newer", timestamp: 3 }],
+      providerId: "codex" as const,
     };
     const firstLoad = deferred<typeof conv1 | null>();
     const secondLoad = deferred<typeof conv2 | null>();
@@ -232,6 +240,7 @@ describe("useChatState refresh recovery", () => {
         messageCount: 1,
         createdAt: 1,
         updatedAt: 2,
+        providerId: "claude",
       },
     ];
 
@@ -254,6 +263,7 @@ describe("useChatState refresh recovery", () => {
         messageCount: 1,
         createdAt: 2,
         updatedAt: 3,
+        providerId: "codex",
       },
     ];
     rerender(<Probe onState={() => {}} />);
@@ -286,5 +296,98 @@ describe("useChatState refresh recovery", () => {
       type: "switch_session",
       sessionId: "conv-1",
     });
+  });
+
+  it("restores the actual provider recorded on the conversation", async () => {
+    mockConversations = [{
+      id: "codex-conv",
+      preview: "inspect repo",
+      messageCount: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      providerId: "codex",
+    }];
+    loadMock.mockResolvedValue({
+      id: "codex-conv",
+      createdAt: 1,
+      updatedAt: 2,
+      providerId: "codex",
+      messages: [{ role: "user", content: "inspect repo", timestamp: 1 }],
+    });
+
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await waitFor(() => {
+      expect(latestState?.providerId).toBe("codex");
+    });
+  });
+
+  it("creates a new isolated conversation when the provider changes", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "codex-conv" }),
+    }));
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await act(async () => {
+      await latestState?.selectProvider("codex");
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/conversations"),
+      expect.objectContaining({ body: JSON.stringify({ providerId: "codex" }) }),
+    );
+    expect(latestState?.sessionId).toBe("codex-conv");
+    expect(latestState?.providerId).toBe("codex");
+
+    await act(async () => {
+      latestState?.submitMessage("inspect this repo");
+    });
+    expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "message",
+      text: "inspect this repo",
+      sessionId: "codex-conv",
+      providerId: "codex",
+    }));
+  });
+
+  it("preserves the active conversation when provider switching fails", async () => {
+    let handler: ((msg: unknown) => void) | null = null;
+    subscribeMock.mockImplementation((next: (msg: unknown) => void) => {
+      handler = next;
+      return () => {};
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await act(async () => {
+      handler?.({
+        type: "kernel:init",
+        sessionId: "claude-conv",
+        providerId: "claude",
+        requestId: "req-1",
+        eventId: "evt-init",
+      });
+      handler?.({
+        type: "kernel:text",
+        text: "keep this conversation",
+        requestId: "req-1",
+        eventId: "evt-text",
+      });
+    });
+    expect(latestState?.sessionId).toBe("claude-conv");
+    expect(latestState?.messages[0]?.content).toBe("keep this conversation");
+
+    await act(async () => {
+      await latestState?.selectProvider("codex");
+    });
+
+    expect(latestState?.sessionId).toBe("claude-conv");
+    expect(latestState?.providerId).toBe("claude");
+    expect(latestState?.messages[0]?.content).toBe("keep this conversation");
   });
 });
