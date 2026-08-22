@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { createHmac } from "node:crypto";
 import {
   insertContainer,
+  insertUserMachine,
   type PlatformDB,
 } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
@@ -81,5 +82,51 @@ describe("platform/internal-integration-routes", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ clerkUserId: "user_alice" });
+  });
+
+  it("authorizes VPS-native user machines when no legacy container row exists", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-bob",
+      clerkUserId: "user_bob",
+      handle: "bob",
+      hetznerServerId: 456,
+      publicIPv4: "203.0.113.12",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/bob/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("bob", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ clerkUserId: "user_bob" });
+  });
+
+  it("rejects handles whose VPS machine and legacy container owners differ", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice-mismatch",
+      clerkUserId: "user_other",
+      handle: "alice",
+      hetznerServerId: 789,
+      publicIPv4: "203.0.113.13",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: "Handle owner mismatch" });
   });
 });
