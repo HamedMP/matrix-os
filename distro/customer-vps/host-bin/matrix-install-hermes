@@ -93,6 +93,16 @@ if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scri
     XDG_CACHE_HOME="$MATRIX_RUNTIME_HOME/.cache" \
     PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
     "$MATRIX_RUNTIME_HOME/.local/bin/hermes" config set skills.config.matrix.gateway_url "$MATRIX_GATEWAY_URL" || true
+
+  if [ -f "$MATRIX_APP_DIR/scripts/configure-hermes-matrix-defaults.mjs" ]; then
+    log "applying one-time Matrix Hermes defaults"
+    run_installer_as_runtime_user env \
+      HOME="$MATRIX_RUNTIME_HOME" \
+      HERMES_HOME="$HERMES_HOME" \
+      PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
+      /opt/matrix/runtime/node/bin/node \
+      "$MATRIX_APP_DIR/scripts/configure-hermes-matrix-defaults.mjs"
+  fi
 fi
 
 if [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then

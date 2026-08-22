@@ -52,6 +52,14 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(gateway).toContain("matrix-register-integrations-mcp all");
   });
 
+  it("applies one-time Matrix skill defaults after installing Hermes", async () => {
+    const hermes = await readFile("distro/customer-vps/host-bin/matrix-install-hermes", "utf8");
+    const build = await readFile("scripts/build-host-bundle.sh", "utf8");
+
+    expect(hermes).toContain("configure-hermes-matrix-defaults.mjs");
+    expect(build).toContain("configure-hermes-matrix-defaults.mjs");
+  });
+
   it("packages the MCP launchers as host-bundle executables", async () => {
     const build = await readFile("scripts/build-host-bundle.sh", "utf8");
     const cloudInit = await readFile("distro/customer-vps/cloud-init.yaml", "utf8");
