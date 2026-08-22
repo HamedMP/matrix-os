@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { getMissingFileFallback } from "../../packages/gateway/src/file-fallbacks.js";
 import {
   isDeniedFileApiPath,
+  normalizeHomeRelativePath,
   resolveExistingFileApiPath,
   resolveWithinHome,
   resolveWritableFileApiPath,
@@ -44,6 +45,14 @@ describe("/files/* path containment", () => {
   it("allows nested paths within home", () => {
     const result = resolveWithinHome(homePath, "modules/../modules/hello.html");
     expect(result).toBe(join(homePath, "modules/hello.html"));
+  });
+
+  it("normalizes a contained home-relative name beginning with two dots", () => {
+    expect(normalizeHomeRelativePath(homePath, join(homePath, "..notes.md"))).toBe("..notes.md");
+  });
+
+  it("resolves a contained home-relative name beginning with two dots", () => {
+    expect(resolveWithinHome(homePath, "..notes.md")).toBe(join(homePath, "..notes.md"));
   });
 
   it("blocks absolute path escape", () => {

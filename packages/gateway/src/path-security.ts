@@ -9,11 +9,19 @@ export function resolveWithinHome(
   const target = resolve(base, requestedPath);
   const rel = relative(base, target);
 
-  if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
+  if (rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
     return target;
   }
 
   return null;
+}
+
+export function normalizeHomeRelativePath(homePath: string, resolvedPath: string): string | null {
+  const base = resolve(homePath);
+  const target = resolve(resolvedPath);
+  const rel = relative(base, target);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+  return rel.split(sep).join("/");
 }
 
 const DENIED_FILE_API_PREFIXES = ["data/browser-profiles"];
@@ -29,7 +37,7 @@ export function isProtectedHomeSubpath(homePath: string, resolvedPath: string): 
   if (rel === "") return true;
   const firstSegment = rel.split(sep)[0];
   if (firstSegment === undefined) return false;
-  if (firstSegment.startsWith(".")) return true;
+  if (firstSegment.startsWith(".") && !firstSegment.startsWith("..")) return true;
   return PROTECTED_HOME_PREFIXES.includes(firstSegment);
 }
 

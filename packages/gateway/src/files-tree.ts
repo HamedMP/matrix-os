@@ -3,8 +3,14 @@ import type { Dirent } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, relative, extname } from "node:path";
 import { promisify } from "node:util";
-import { isDeniedFileApiPath, resolveWithinHome } from "./path-security.js";
+import {
+  isDeniedFileApiPath,
+  normalizeHomeRelativePath,
+  resolveWithinHome,
+} from "./path-security.js";
 import { getMimeType } from "./file-utils.js";
+import { getFileEntryCapabilities } from "./file-management/policy.js";
+import type { FileEntryCapabilities } from "./file-management/contracts.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +24,7 @@ export interface FileTreeEntry {
   created?: string;
   mime?: string;
   children?: number;
+  capabilities: FileEntryCapabilities;
 }
 
 interface GitStatusCache {
@@ -122,7 +129,8 @@ export async function listDirectory(
   const dirs: FileTreeEntry[] = [];
   const files: FileTreeEntry[] = [];
 
-  const visible = entries.filter((e) => !e.name.startsWith("."));
+  const isVisibleOwnerEntry = (name: string) => !name.startsWith(".") || name.startsWith("..");
+  const visible = entries.filter((entry) => isVisibleOwnerEntry(entry.name));
 
   const dirEntries = visible.filter((e) => e.isDirectory());
   const fileEntries = visible.filter((e) => e.isFile());
@@ -142,7 +150,7 @@ export async function listDirectory(
           readdir(fullPath, { encoding: "utf8" }),
         ]);
         modified = new Date(dirStat.mtimeMs).toISOString();
-        children = childEntries.filter((c) => !c.startsWith(".")).length;
+        children = childEntries.filter(isVisibleOwnerEntry).length;
       } catch (err: unknown) {
         console.warn(
           `[files-tree] Failed to inspect directory ${entry.name}:`,
@@ -157,6 +165,10 @@ export async function listDirectory(
         changedCount,
         modified,
         children,
+        capabilities: getFileEntryCapabilities(
+          homePath,
+          normalizeHomeRelativePath(homePath, fullPath) ?? "/invalid",
+        ),
       };
     }),
   );
@@ -193,6 +205,10 @@ export async function listDirectory(
         modified,
         created,
         mime: getMimeType(extname(entry.name)),
+        capabilities: getFileEntryCapabilities(
+          homePath,
+          normalizeHomeRelativePath(homePath, fullPath) ?? "/invalid",
+        ),
       };
     }),
   );

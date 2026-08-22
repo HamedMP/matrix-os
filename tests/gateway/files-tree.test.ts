@@ -98,11 +98,61 @@ describe("listDirectory", () => {
     expect(hidden).toBeUndefined();
   });
 
+  it("lists valid double-dot owner files while hiding single-dot state", async () => {
+    writeFileSync(join(TEST_HOME, "projects", "myapp", "..notes.md"), "owned");
+    writeFileSync(join(TEST_HOME, "projects", "myapp", ".hidden"), "secret");
+
+    const result = (await listDirectory(TEST_HOME, "projects/myapp"))!;
+
+    expect(result.find((entry) => entry.name === "..notes.md")).toMatchObject({
+      name: "..notes.md",
+      type: "file",
+      capabilities: { canRename: true, canMove: true, canTrash: true },
+    });
+    expect(result.find((entry) => entry.name === ".hidden")).toBeUndefined();
+  });
+
   it("lists root directory", async () => {
     const result = await listDirectory(TEST_HOME, "");
     expect(result).not.toBeNull();
     const names = result!.map((e) => e.name);
     expect(names).toContain("projects");
+  });
+
+  it("hides dot roots and exposes capabilities for visible protected, denied-ancestor, and owner roots", async () => {
+    mkdirSync(join(TEST_HOME, "system"), { recursive: true });
+    mkdirSync(join(TEST_HOME, "agents"), { recursive: true });
+    mkdirSync(join(TEST_HOME, "data", "browser-profiles"), { recursive: true });
+    mkdirSync(join(TEST_HOME, ".trash"), { recursive: true });
+    mkdirSync(join(TEST_HOME, ".ssh"), { recursive: true });
+    writeFileSync(join(TEST_HOME, "owner.md"), "owned");
+
+    const result = (await listDirectory(TEST_HOME, ""))!;
+    const systemRoot = result.find((entry) => entry.name === "system");
+    const agentsRoot = result.find((entry) => entry.name === "agents");
+    const deniedAncestor = result.find((entry) => entry.name === "data");
+    const ownerFile = result.find((entry) => entry.name === "owner.md");
+
+    expect(result.map((entry) => entry.name)).not.toContain(".trash");
+    expect(result.map((entry) => entry.name)).not.toContain(".ssh");
+    expect(systemRoot?.capabilities).toEqual({
+      canRename: false,
+      canMove: false,
+      canTrash: false,
+      readOnlyReason: "protected",
+    });
+    expect(agentsRoot?.capabilities).toEqual(systemRoot?.capabilities);
+    expect(deniedAncestor?.capabilities).toEqual({
+      canRename: false,
+      canMove: false,
+      canTrash: false,
+      readOnlyReason: "policy",
+    });
+    expect(ownerFile?.capabilities).toEqual({
+      canRename: true,
+      canMove: true,
+      canTrash: true,
+    });
   });
 
   it("clean files have null gitStatus", async () => {
