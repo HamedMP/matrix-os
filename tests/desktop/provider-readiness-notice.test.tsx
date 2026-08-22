@@ -223,6 +223,34 @@ describe("ProviderReadinessNotice", () => {
     expect(screen.getByText("Refresh status")).toBeTruthy();
   });
 
+  it("keeps manual status refresh available while authentication is required", async () => {
+    const connectAction = {
+      ...installAction,
+      id: "codex_auth_required",
+      label: "Connect Codex",
+      command: "codex login --device-auth",
+    };
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ProviderReadinessNotice
+        readiness={readiness({
+          state: "auth_required",
+          title: "Connect Codex to continue",
+          description: "Sign in to Codex before sending a message.",
+          action: { kind: "setup", action: connectAction },
+        })}
+        providers={[{ ...provider, setupActions: [connectAction] }]}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Connect Codex" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh provider status" }));
+
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Connect Codex" })).toBeTruthy();
+  });
+
   it("fails safely without an API while keeping the recovery notice visible", async () => {
     useConnection.setState({ api: null });
     render(

@@ -25,18 +25,19 @@ export function ProviderReadinessNotice(props: {
   const api = useConnection((state) => state.api);
   const openTab = useTabs((state) => state.openTab);
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
-  const [pending, setPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"primary" | "refresh" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   if (!props.readiness.blocked || props.readiness.state === "ready") return null;
 
-  const runAction = async () => {
+  const runAction = async (requestedAction: "primary" | "refresh") => {
     const readinessAction = props.readiness.action;
-    if (!readinessAction || pending) return;
-    setPending(true);
+    if (!readinessAction || pendingAction) return;
+    const refreshing = requestedAction === "refresh" || readinessAction.kind === "refresh";
+    setPendingAction(requestedAction);
     setError(null);
     try {
-      if (readinessAction.kind === "refresh") {
+      if (refreshing) {
         await props.onRefresh();
         return;
       }
@@ -63,16 +64,17 @@ export function ProviderReadinessNotice(props: {
         "[provider-readiness] Recovery action failed:",
         err instanceof Error ? err.name : typeof err,
       );
-      setError(readinessAction.kind === "refresh" ? REFRESH_ERROR : SETUP_ERROR);
+      setError(refreshing ? REFRESH_ERROR : SETUP_ERROR);
     } finally {
-      setPending(false);
+      setPendingAction(null);
     }
   };
 
   const actionLabel = props.readiness.action?.kind === "setup"
     ? props.readiness.action.action.label
     : "Refresh status";
-  const pendingLabel = props.readiness.action?.kind === "refresh" ? "Refreshing…" : "Opening…";
+  const primaryPendingLabel = props.readiness.action?.kind === "refresh" ? "Refreshing…" : "Opening…";
+  const showSecondaryRefresh = props.readiness.action?.kind === "setup";
 
   return (
     <div
@@ -104,14 +106,26 @@ export function ProviderReadinessNotice(props: {
         ) : null}
       </div>
       {props.readiness.action ? (
-        <Button
-          variant="subtle"
-          disabled={pending}
-          aria-label={props.readiness.action.kind === "refresh" ? "Refresh provider status" : actionLabel}
-          onClick={() => void runAction()}
-        >
-          {pending ? pendingLabel : actionLabel}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {showSecondaryRefresh ? (
+            <Button
+              variant="ghost"
+              disabled={pendingAction !== null}
+              aria-label="Refresh provider status"
+              onClick={() => void runAction("refresh")}
+            >
+              {pendingAction === "refresh" ? "Refreshing…" : "Refresh status"}
+            </Button>
+          ) : null}
+          <Button
+            variant="subtle"
+            disabled={pendingAction !== null}
+            aria-label={props.readiness.action.kind === "refresh" ? "Refresh provider status" : actionLabel}
+            onClick={() => void runAction("primary")}
+          >
+            {pendingAction === "primary" ? primaryPendingLabel : actionLabel}
+          </Button>
+        </div>
       ) : null}
     </div>
   );
