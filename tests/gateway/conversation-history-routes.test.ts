@@ -242,6 +242,42 @@ describe("kernel conversation history route", () => {
               command: "curl -u alice:short-secret --user bob:long-secret --user='carol:quoted-secret' https://example.com",
             },
           },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 9,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Authorization: \"Bearer outer-scheme-secret\"' https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 10,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Authorization: Bearer \"quoted-value-secret\"' https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 11,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H \"Proxy-Authorization: 'Basic proxy-secret'\" https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 12,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Authorization: \"raw-credential-secret\"' https://example.com",
+            },
+          },
         ],
       })),
     }));
@@ -275,6 +311,22 @@ describe("kernel conversation history route", () => {
       kind: "command",
       preview: "curl -u [redacted] --user [redacted] --user=[redacted] https://example.com",
     });
+    expect(body.messages[7]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Authorization: [redacted]' https://example.com",
+    });
+    expect(body.messages[8]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Authorization: [redacted]' https://example.com",
+    });
+    expect(body.messages[9]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H \"Proxy-Authorization: [redacted]\" https://example.com",
+    });
+    expect(body.messages[10]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Authorization: [redacted]' https://example.com",
+    });
     expect(JSON.stringify(body)).not.toContain("super-secret");
     expect(JSON.stringify(body)).not.toContain("aws-secret");
     expect(JSON.stringify(body)).not.toContain("alice:pw");
@@ -287,6 +339,10 @@ describe("kernel conversation history route", () => {
     expect(JSON.stringify(body)).not.toContain("short-secret");
     expect(JSON.stringify(body)).not.toContain("long-secret");
     expect(JSON.stringify(body)).not.toContain("quoted-secret");
+    expect(JSON.stringify(body)).not.toContain("outer-scheme-secret");
+    expect(JSON.stringify(body)).not.toContain("quoted-value-secret");
+    expect(JSON.stringify(body)).not.toContain("proxy-secret");
+    expect(JSON.stringify(body)).not.toContain("raw-credential-secret");
     expect(JSON.stringify(body)).not.toContain("/home/private");
   });
 

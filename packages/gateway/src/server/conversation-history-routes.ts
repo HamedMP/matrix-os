@@ -14,6 +14,7 @@ import type { ConversationStore } from "../conversations.js";
 const MAX_HISTORY_CONTENT_CHARS = 32_000;
 const MAX_DELETE_BODY_BYTES = 512;
 const MAX_TOOL_DISPLAY_CHARS = 160;
+const AUTHORIZATION_HEADER_VALUE = /(\b(?:authorization|proxy-authorization)\s*[:=]\s*)(?:(?:"(?:bearer|basic)?\s*[^"]*"|'(?:bearer|basic)?\s*[^']*')|(?:(?:bearer|basic)\s+(?:"[^"]*"|'[^']*'|[^\s'"]+))|(?:"[^"]*"|'[^']*'|[^\s'"]+))/gi;
 const deleteBodyLimit = bodyLimit({
   maxSize: MAX_DELETE_BODY_BYTES,
   onError: () => new Response("Payload Too Large", { status: 413 }),
@@ -30,7 +31,7 @@ function boundedToolText(value: unknown): string | undefined {
     // space-separated attributes. Fail closed through the shell quote (or the
     // rest of an unquoted command) instead of leaking later cookie pairs.
     .replace(/(\b(?:cookie|set[-_]?cookie)\s*:\s*)[^'"\r\n]+/gi, "$1[redacted]")
-    .replace(/authorization\s*:\s*(?:bearer\s+)?[^'"\s]+/gi, "Authorization: [redacted]")
+    .replace(AUTHORIZATION_HEADER_VALUE, "$1[redacted]")
     .replace(/(\b(?:x[-_])?(?:api[-_]?key|access[-_]?key|auth[-_]?token|access[-_]?token|client[-_]?secret|credential|token|password|passwd|secret)\s*:\s*)(?:'[^']*'|"[^"]*"|[^'"\s]+)/gi, "$1[redacted]")
     .replace(/(^|\s)((?:--?)?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret)(?:=|\s+))(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2[redacted]")
     .replace(/(^|\s)(-u|--user)(=|\s+)(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2$3[redacted]")

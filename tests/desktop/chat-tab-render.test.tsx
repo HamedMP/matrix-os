@@ -332,6 +332,10 @@ describe("ChatTab", () => {
     ["short basic auth flag", "curl -u alice:short-secret https://example.com", "curl -u [redacted] https://example.com", "short-secret"],
     ["long basic auth flag", "curl --user bob:long-secret https://example.com", "curl --user [redacted] https://example.com", "long-secret"],
     ["equals basic auth flag", "curl --user='carol:quoted-secret' https://example.com", "curl --user=[redacted] https://example.com", "quoted-secret"],
+    ["quoted Authorization scheme and credential", "curl -H 'Authorization: \"Bearer outer-scheme-secret\"' https://example.com", "curl -H 'Authorization: [redacted]' https://example.com", "outer-scheme-secret"],
+    ["quoted Authorization credential", "curl -H 'Authorization: Bearer \"quoted-value-secret\"' https://example.com", "curl -H 'Authorization: [redacted]' https://example.com", "quoted-value-secret"],
+    ["quoted Proxy-Authorization value", "curl -H \"Proxy-Authorization: 'Basic proxy-secret'\" https://example.com", "curl -H \"Proxy-Authorization: [redacted]\" https://example.com", "proxy-secret"],
+    ["quoted raw Authorization credential", "curl -H 'Authorization: \"raw-credential-secret\"' https://example.com", "curl -H 'Authorization: [redacted]' https://example.com", "raw-credential-secret"],
   ])("redacts %s from command display and clipboard", async (_case, command, expected, secret) => {
     useHermesChat.setState({
       status: "streaming",
