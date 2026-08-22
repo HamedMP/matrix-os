@@ -3,7 +3,11 @@ import { readFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
 import { lstat, open, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { GlobalChatProviderId, KernelConversationId } from "@matrix-os/contracts";
+import {
+  GlobalChatProviderIdSchema,
+  type GlobalChatProviderId,
+  type KernelConversationId,
+} from "@matrix-os/contracts";
 import {
   createConversationMutationLock,
   type ConversationMutationLock,
@@ -179,7 +183,7 @@ export function createConversationStore(
     const conversation = JSON.parse(readFileSync(path, "utf-8")) as ConversationFile;
     return {
       ...conversation,
-      providerId: conversation.providerId === "codex" ? "codex" : "claude",
+      providerId: GlobalChatProviderIdSchema.catch("claude").parse(conversation.providerId),
     };
   }
 

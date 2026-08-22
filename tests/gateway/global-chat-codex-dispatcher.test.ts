@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createGlobalChatCodexDispatcher } from
+import { createGlobalChatCodingAgentDispatcher } from
   "../../packages/gateway/src/global-chat-codex-dispatcher.js";
 
 const principal = { userId: "owner", source: "configured-container" as const };
@@ -24,7 +24,7 @@ function harness() {
     acceptedAt: "2026-08-22T00:00:00.000Z",
   }));
   const abortThread = vi.fn(async () => ({ thread: { id: "thread_codex" }, events: [] }));
-  const dispatcher = createGlobalChatCodexDispatcher({
+  const dispatcher = createGlobalChatCodingAgentDispatcher({
     threads: {
       createThread,
       acceptTurn,
@@ -44,17 +44,30 @@ function harness() {
     createThread,
     acceptTurn,
     abortThread,
-    publish(events: unknown[]) {
-      sink?.({ ownerId: principal.userId, threadId: "thread_codex", events });
+    publish(events: unknown[], threadId = "thread_codex") {
+      sink?.({ ownerId: principal.userId, threadId, events });
     },
   };
 }
 
-describe("Global Chat Codex dispatcher", () => {
+function providerHarness(providerId: "codex" | "pi") {
+  const runtime = harness();
+  runtime.createThread.mockResolvedValue({
+    existing: false,
+    snapshot: {
+      thread: { id: `thread_${providerId}`, providerId },
+      events: { items: [], nextCursor: null, hasMore: false },
+    },
+  });
+  return runtime;
+}
+
+describe("Global Chat coding-agent dispatcher", () => {
   it("adapts Global Chat request ids to the coding-agent request contract", async () => {
     const runtime = harness();
     const pending = runtime.dispatcher.dispatch({
       principal,
+      providerId: "codex",
       text: "inspect this computer",
       requestId: "req-global-hyphenated",
       onEvent: () => undefined,
@@ -75,6 +88,7 @@ describe("Global Chat Codex dispatcher", () => {
     const frames: unknown[] = [];
     const pending = runtime.dispatcher.dispatch({
       principal,
+      providerId: "codex",
       text: "inspect this computer",
       requestId: "req_first",
       onEvent: (frame) => frames.push(frame),
@@ -99,11 +113,42 @@ describe("Global Chat Codex dispatcher", () => {
     runtime.dispatcher.dispose();
   });
 
+  it("starts every supported coding-agent provider without rewriting it to Codex", async () => {
+    const runtime = providerHarness("pi");
+    const frames: unknown[] = [];
+    const pending = runtime.dispatcher.dispatch({
+      principal,
+      providerId: "pi",
+      text: "inspect this computer",
+      requestId: "req_pi",
+      onEvent: (frame) => frames.push(frame),
+    });
+
+    await vi.waitFor(() => expect(runtime.createThread).toHaveBeenCalledWith(principal, expect.objectContaining({
+      providerId: "pi",
+      prompt: "inspect this computer",
+    })));
+    runtime.publish(
+      [{ ...eventBase("thread.completed", "event_pi_done", "thread_pi"), outcome: "completed" }],
+      "thread_pi",
+    );
+
+    await expect(pending).resolves.toEqual({ threadId: "thread_pi" });
+    expect(frames[0]).toEqual({
+      type: "kernel:init",
+      sessionId: "thread_pi",
+      providerId: "pi",
+      requestId: "req_pi",
+    });
+    runtime.dispatcher.dispose();
+  });
+
   it("resumes only the existing Codex thread and aborts it through the coding-agent store", async () => {
     const runtime = harness();
     const controller = new AbortController();
     const pending = runtime.dispatcher.dispatch({
       principal,
+      providerId: "codex",
       threadId: "thread_codex",
       text: "continue",
       requestId: "req_second",
@@ -136,6 +181,7 @@ describe("Global Chat Codex dispatcher", () => {
     const frames: unknown[] = [];
     const pending = runtime.dispatcher.dispatch({
       principal,
+      providerId: "codex",
       text: "produce a long response",
       requestId: "req_capacity",
       onEvent: (frame) => frames.push(frame),
@@ -148,7 +194,7 @@ describe("Global Chat Codex dispatcher", () => {
       delta: "x",
     })));
 
-    await expect(pending).rejects.toThrow("Codex event tracking capacity exceeded");
+    await expect(pending).rejects.toThrow("Coding-agent event tracking capacity exceeded");
     expect(frames).toHaveLength(2_001); // init plus the 2,000 safely tracked deltas
     runtime.dispatcher.dispose();
   });

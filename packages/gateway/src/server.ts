@@ -136,7 +136,7 @@ import { createCodingAgentSourceControlStore } from "./coding-agents/source-cont
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
-import { createGlobalChatCodexDispatcher } from "./global-chat-codex-dispatcher.js";
+import { createGlobalChatCodingAgentDispatcher } from "./global-chat-codex-dispatcher.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
@@ -694,8 +694,8 @@ export async function createGateway(config: GatewayConfig) {
     logFailure: logBestEffortFailure,
   });
   const codingAgentTurnsEnabled = codingAgentTurnLifecycle.turnsEnabled;
-  const globalChatCodexDispatcher = codingAgentThreadStore && codingAgentTurnsEnabled
-    ? createGlobalChatCodexDispatcher({ threads: codingAgentThreadStore })
+  const globalChatCodingAgentDispatcher = codingAgentThreadStore && codingAgentTurnsEnabled
+    ? createGlobalChatCodingAgentDispatcher({ threads: codingAgentThreadStore })
     : undefined;
   if (codingAgentThreadStore) {
     void codingAgentSessionStopReconciler.attachThreadStore(codingAgentThreadStore).catch((err: unknown) => {
@@ -2201,14 +2201,14 @@ export async function createGateway(config: GatewayConfig) {
                 activeSessionId = undefined;
               }
 
-              if (providerId === "codex" && (!globalChatCodexDispatcher || !wsPrincipal)) {
+              if (providerId !== "claude" && (!globalChatCodingAgentDispatcher || !wsPrincipal)) {
                 if (admittedExistingConversation && admittedSessionId) {
                   void finalizeWithSummary(admittedSessionId);
                 }
                 sendClientAck(ws, parsed, "rejected", false);
                 send(ws, {
                   type: "kernel:error",
-                  message: "Codex is unavailable on this computer.",
+                  message: "The selected provider is unavailable on this computer.",
                 });
                 return;
               }
@@ -2333,12 +2333,13 @@ export async function createGateway(config: GatewayConfig) {
                 }
               };
 
-              const dispatchPromise = providerId === "codex"
+              const dispatchPromise = providerId !== "claude"
                 ? (() => {
                     let eventQueue = Promise.resolve();
                     const codexPrincipal = wsPrincipal!;
-                    return globalChatCodexDispatcher!.dispatch({
+                    return globalChatCodingAgentDispatcher!.dispatch({
                       principal: codexPrincipal,
+                      providerId,
                       text: parsed.text,
                       requestId: replayRequestId,
                       threadId: dispatchSessionId,
@@ -4506,7 +4507,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await agentRuntimeServices.controller.close();
-      globalChatCodexDispatcher?.dispose();
+      globalChatCodingAgentDispatcher?.dispose();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();

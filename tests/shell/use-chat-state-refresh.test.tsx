@@ -14,7 +14,7 @@ let mockConversations: Array<{
   messageCount: number;
   createdAt: number;
   updatedAt: number;
-  providerId: "claude" | "codex";
+  providerId: "claude" | "codex" | "pi";
 }> = [];
 
 vi.mock("../../shell/src/hooks/useSocket.js", () => ({

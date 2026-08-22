@@ -48,6 +48,7 @@ describe("conversation provider registry", () => {
     const registry = createGlobalChatProviderRegistry({
       selectedId: "codex",
       connected: true,
+      availableProviderIds: ["claude", "codex", "pi"],
       onSelectProvider: selectProvider,
     });
 
@@ -55,9 +56,40 @@ describe("conversation provider registry", () => {
     expect(registry.options.map(({ id, label }) => ({ id, label }))).toEqual([
       { id: "claude", label: "Claude" },
       { id: "codex", label: "Codex" },
+      { id: "pi", label: "Pi" },
     ]);
     await expect(registry.activate("claude")).resolves.toBe(true);
     expect(selectProvider).toHaveBeenCalledWith("claude");
+  });
+
+  it("activates Pi through the same provider-neutral Global Chat seam", async () => {
+    const selectProvider = vi.fn();
+    const registry = createGlobalChatProviderRegistry({
+      selectedId: "pi",
+      connected: true,
+      availableProviderIds: ["claude", "codex", "pi"],
+      onSelectProvider: selectProvider,
+    });
+
+    await expect(registry.activate("pi")).resolves.toBe(true);
+    expect(selectProvider).toHaveBeenCalledWith("pi");
+  });
+
+  it("fails closed when a coding-agent provider is not runtime-ready", async () => {
+    const selectProvider = vi.fn();
+    const registry = createGlobalChatProviderRegistry({
+      selectedId: "claude",
+      connected: true,
+      availableProviderIds: ["claude", "codex"],
+      onSelectProvider: selectProvider,
+    });
+
+    expect(registry.options.find((option) => option.id === "pi")?.readiness).toEqual({
+      state: "disabled",
+      reason: "Install or connect Pi before using it.",
+    });
+    await expect(registry.activate("pi")).resolves.toBe(false);
+    expect(selectProvider).not.toHaveBeenCalled();
   });
 
   it("fails closed without invoking disabled or unknown provider actions", async () => {

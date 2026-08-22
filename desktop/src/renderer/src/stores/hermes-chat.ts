@@ -684,7 +684,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       activeRequestId = event.requestId;
       set({
         sessionId: event.sessionId,
-        ...(event.providerId === "claude" || event.providerId === "codex"
+        ...(event.providerId === "claude" || event.providerId === "codex" || event.providerId === "pi"
           ? { providerId: event.providerId }
           : {}),
         activeRequestId,

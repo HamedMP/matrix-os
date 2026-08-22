@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import type { RuntimeSummary } from "@matrix-os/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
@@ -11,6 +12,7 @@ import {
 import { useIntegrations } from "../../desktop/src/renderer/src/features/integrations/integrations-store";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads, type AgentThread } from "../../desktop/src/renderer/src/stores/threads";
@@ -28,6 +30,50 @@ function thread(id: string, title: string): AgentThread {
     unread: false,
     createdAt: 1,
     updatedAt: 1,
+  };
+}
+
+function readyGlobalChatSummary(): RuntimeSummary {
+  return {
+    runtime: { id: "rt_primary", label: "Primary", status: "available" },
+    capabilities: [{ id: "codingAgentsRuntimeSummary", enabled: true }],
+    providers: [
+      {
+        id: "codex",
+        kind: "codex",
+        displayName: "Codex",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default"],
+        defaultMode: "default",
+        setupActions: [],
+      },
+      {
+        id: "pi",
+        kind: "pi",
+        displayName: "Pi",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default"],
+        defaultMode: "default",
+        setupActions: [],
+      },
+    ],
+    projects: { items: [], hasMore: false, limit: 20 },
+    activeThreads: { items: [], hasMore: false, limit: 20 },
+    attentionThreads: { items: [], hasMore: false, limit: 20 },
+    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    previewSessions: { items: [], hasMore: false, limit: 50 },
+    recentActivity: { items: [], hasMore: false, limit: 20 },
+    limits: {
+      maxPromptBytes: 16_384,
+      maxAttachmentCount: 8,
+      maxTerminalInputBytes: 8_192,
+      maxListItems: 20,
+    },
+    serverTime: "2026-08-22T12:00:00.000Z",
   };
 }
 
@@ -60,6 +106,10 @@ describe("ChatTab", () => {
       abort: vi.fn(),
     });
     useThreads.setState({ threads: [], activeThreadId: null });
+    useCodingAgentWorkspace.setState({
+      summary: null,
+      refresh: vi.fn(async () => undefined),
+    });
     useTabs.setState(useTabs.getInitialState(), true);
     useUi.setState({ requestedSettingsSection: null });
     useIntegrations.setState({
@@ -565,6 +615,7 @@ describe("ChatTab", () => {
     const post = vi.fn().mockResolvedValue({ id: "global-codex" });
     const get = vi.fn().mockResolvedValue([]);
     useConnection.setState({ api: { post, get } as never });
+    useCodingAgentWorkspace.setState({ summary: readyGlobalChatSummary() });
     useHermesChat.setState({ messages: [], status: "idle" });
     render(<ChatTab />);
 
@@ -581,6 +632,7 @@ describe("ChatTab", () => {
 
   it("allows a connected Codex Global Chat without requiring a project", () => {
     useConnection.setState({ api: { post: vi.fn(), get: vi.fn() } as never });
+    useCodingAgentWorkspace.setState({ summary: readyGlobalChatSummary() });
     useBoard.setState({ projects: [], activeProjectSlug: null });
     useHermesChat.setState({ messages: [], status: "idle" });
 
@@ -830,6 +882,7 @@ describe("ChatTab", () => {
     const post = vi.fn().mockResolvedValue({ id: "conversation-codex" });
     const get = vi.fn().mockResolvedValue([]);
     useConnection.setState({ api: { post, get } as never });
+    useCodingAgentWorkspace.setState({ summary: readyGlobalChatSummary() });
     useHermesChat.setState({ providerId: "claude", messages: [], view: "conversation" });
 
     render(<ChatTab />);
@@ -847,6 +900,30 @@ describe("ChatTab", () => {
       messages: [],
     });
     expect(screen.getByRole("textbox", { name: "Ask Codex anything…" })).toBeTruthy();
+  });
+
+  it("creates an isolated Pi conversation when the Global Chat provider changes", async () => {
+    const post = vi.fn().mockResolvedValue({ id: "conversation-pi" });
+    const get = vi.fn().mockResolvedValue([]);
+    useConnection.setState({ api: { post, get } as never });
+    useCodingAgentWorkspace.setState({ summary: readyGlobalChatSummary() });
+    useHermesChat.setState({ providerId: "claude", messages: [], view: "conversation" });
+
+    render(<ChatTab />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Chat harness" }), {
+      target: { value: "pi" },
+    });
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/api/conversations",
+      { providerId: "pi" },
+    ));
+    expect(useHermesChat.getState()).toMatchObject({
+      sessionId: "conversation-pi",
+      providerId: "pi",
+      messages: [],
+    });
+    expect(screen.getByRole("textbox", { name: "Ask Pi anything…" })).toBeTruthy();
   });
 
   it("opens the selected canonical conversation without duplicating global navigation", async () => {

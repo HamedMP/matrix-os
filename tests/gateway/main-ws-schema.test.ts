@@ -13,7 +13,7 @@ describe("MainWsClientMessageSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it.each(["claude", "codex"])("accepts the %s Global Chat provider", (providerId) => {
+  it.each(["claude", "codex", "pi"])("accepts the %s Global Chat provider", (providerId) => {
     const result = MainWsClientMessageSchema.safeParse({
       type: "message",
       text: "hello",

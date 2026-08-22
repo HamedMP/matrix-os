@@ -248,7 +248,7 @@ export const KernelConversationIdSchema = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/, "Invalid conversation id")
   .refine((value) => !value.includes(".."), { message: "Invalid conversation id" });
 
-export const GlobalChatProviderIdSchema = z.enum(["claude", "codex"]);
+export const GlobalChatProviderIdSchema = z.enum(["claude", "codex", "pi"]);
 export type GlobalChatProviderId = z.infer<typeof GlobalChatProviderIdSchema>;
 
 const KernelConversationContextLabelSchema = (maxChars: number) => boundedDisplayText(maxChars)

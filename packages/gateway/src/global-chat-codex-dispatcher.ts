@@ -1,4 +1,4 @@
-import type { AgentThreadEvent } from "@matrix-os/contracts";
+import type { AgentThreadEvent, GlobalChatProviderId } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import type {
   CodingAgentThreadStore,
@@ -6,12 +6,14 @@ import type {
 } from "./coding-agents/thread-store.js";
 import type { RequestPrincipal } from "./request-principal.js";
 
-const MAX_ACTIVE_GLOBAL_CODEX_RUNS = 64;
+const MAX_ACTIVE_GLOBAL_CODING_AGENT_RUNS = 64;
 const MAX_SEEN_EVENTS_PER_RUN = 2_000;
 const MAX_TRACKED_TOOLS_PER_RUN = 128;
 
-export type GlobalChatCodexFrame =
-  | { type: "kernel:init"; sessionId: string; providerId: "codex"; requestId: string }
+type GlobalChatCodingAgentProviderId = Exclude<GlobalChatProviderId, "claude">;
+
+export type GlobalChatCodingAgentFrame =
+  | { type: "kernel:init"; sessionId: string; providerId: GlobalChatCodingAgentProviderId; requestId: string }
   | { type: "kernel:text"; text: string; requestId: string }
   | { type: "kernel:tool_start"; tool: string; requestId: string }
   | { type: "kernel:tool_end"; input: { outcome: string }; requestId: string }
@@ -23,8 +25,9 @@ interface ActiveRun {
   principal: RequestPrincipal;
   requestId: string;
   agentRequestId: string;
+  providerId: GlobalChatCodingAgentProviderId;
   threadId?: string;
-  onEvent: (frame: GlobalChatCodexFrame) => void;
+  onEvent: (frame: GlobalChatCodingAgentFrame) => void;
   seenEventIds: Set<string>;
   toolNames: Map<string, string>;
   abortRequested: boolean;
@@ -35,25 +38,26 @@ interface ActiveRun {
   removeAbortListener?: () => void;
 }
 
-export interface GlobalChatCodexDispatcher {
+export interface GlobalChatCodingAgentDispatcher {
   dispatch(input: {
     principal: RequestPrincipal;
+    providerId: GlobalChatCodingAgentProviderId;
     text: string;
     requestId: string;
     threadId?: string;
     signal?: AbortSignal;
-    onEvent: (frame: GlobalChatCodexFrame) => void;
+    onEvent: (frame: GlobalChatCodingAgentFrame) => void;
   }): Promise<{ threadId: string }>;
   dispose(): void;
 }
 
-function genericCodexFailure(): string {
-  return "Codex could not complete this turn. Try again.";
+function genericCodingAgentFailure(): string {
+  return "The coding agent could not complete this turn. Try again.";
 }
 
-export function createGlobalChatCodexDispatcher(options: {
+export function createGlobalChatCodingAgentDispatcher(options: {
   threads: CodingAgentThreadStore & CodingAgentTurnStore;
-}): GlobalChatCodexDispatcher {
+}): GlobalChatCodingAgentDispatcher {
   const pendingByRequest = new Map<string, ActiveRun>();
   const activeByThread = new Map<string, ActiveRun>();
 
@@ -81,12 +85,12 @@ export function createGlobalChatCodexDispatcher(options: {
     run.onEvent({
       type: "kernel:init",
       sessionId: threadId,
-      providerId: "codex",
+      providerId: run.providerId,
       requestId: run.requestId,
     });
     if (run.abortRequested) {
       void options.threads.abortThread(run.principal, threadId, run.agentRequestId).catch((error: unknown) => {
-        console.warn("[global-chat] Codex abort failed after thread initialization", error);
+        console.warn("[global-chat] Coding-agent abort failed after thread initialization", error);
       });
     }
   }
@@ -95,7 +99,7 @@ export function createGlobalChatCodexDispatcher(options: {
     for (const event of events) {
       if (run.seenEventIds.has(event.eventId)) continue;
       if (run.seenEventIds.size >= MAX_SEEN_EVENTS_PER_RUN) {
-        throw new Error("Codex event tracking capacity exceeded");
+        throw new Error("Coding-agent event tracking capacity exceeded");
       }
       run.seenEventIds.add(event.eventId);
 
@@ -104,7 +108,7 @@ export function createGlobalChatCodexDispatcher(options: {
       } else if (event.type === "tool.started") {
         if (!run.toolNames.has(event.toolCallId)) {
           if (run.toolNames.size >= MAX_TRACKED_TOOLS_PER_RUN) {
-            throw new Error("Codex tool tracking capacity exceeded");
+            throw new Error("Coding-agent tool tracking capacity exceeded");
           }
           run.toolNames.set(event.toolCallId, event.displayName);
         }
@@ -119,7 +123,7 @@ export function createGlobalChatCodexDispatcher(options: {
       } else if (event.type === "thread.error") {
         if (!run.errorEmitted) {
           run.errorEmitted = true;
-          run.onEvent({ type: "kernel:error", message: genericCodexFailure(), requestId: run.requestId });
+          run.onEvent({ type: "kernel:error", message: genericCodingAgentFailure(), requestId: run.requestId });
         }
       } else if (event.type === "thread.completed") {
         if (event.outcome === "aborted") {
@@ -127,7 +131,7 @@ export function createGlobalChatCodexDispatcher(options: {
         } else if (event.outcome === "failed") {
           if (!run.errorEmitted) {
             run.errorEmitted = true;
-            run.onEvent({ type: "kernel:error", message: genericCodexFailure(), requestId: run.requestId });
+            run.onEvent({ type: "kernel:error", message: genericCodingAgentFailure(), requestId: run.requestId });
           }
         } else {
           run.onEvent({
@@ -161,19 +165,19 @@ export function createGlobalChatCodexDispatcher(options: {
     } catch (error: unknown) {
       run.settled = true;
       cleanup(run);
-      run.reject(error instanceof Error ? error : new Error("Codex event translation failed"));
+      run.reject(error instanceof Error ? error : new Error("Coding-agent event translation failed"));
     }
   });
 
   return {
     dispatch(input) {
-      if (pendingByRequest.size + activeByThread.size >= MAX_ACTIVE_GLOBAL_CODEX_RUNS) {
-        return Promise.reject(new Error("Global Codex run capacity exceeded"));
+      if (pendingByRequest.size + activeByThread.size >= MAX_ACTIVE_GLOBAL_CODING_AGENT_RUNS) {
+        return Promise.reject(new Error("Global coding-agent run capacity exceeded"));
       }
       const hasDuplicateRequest = [...pendingByRequest.values(), ...activeByThread.values()]
         .some((run) => run.requestId === input.requestId);
       if (hasDuplicateRequest) {
-        return Promise.reject(new Error("Duplicate Global Codex request"));
+        return Promise.reject(new Error("Duplicate Global coding-agent request"));
       }
 
       return new Promise<{ threadId: string }>((resolve, reject) => {
@@ -182,6 +186,7 @@ export function createGlobalChatCodexDispatcher(options: {
           principal: input.principal,
           requestId: input.requestId,
           agentRequestId,
+          providerId: input.providerId,
           onEvent: input.onEvent,
           seenEventIds: new Set(),
           toolNames: new Map(),
@@ -202,7 +207,7 @@ export function createGlobalChatCodexDispatcher(options: {
                 run.threadId,
                 run.agentRequestId,
               ).catch((error: unknown) => {
-                console.warn("[global-chat] Codex abort failed", error);
+                console.warn("[global-chat] Coding-agent abort failed", error);
               });
             }
           };
@@ -212,8 +217,8 @@ export function createGlobalChatCodexDispatcher(options: {
 
         const start = input.threadId
           ? options.threads.getThread(input.principal, input.threadId).then((snapshot) => {
-              if (snapshot.thread.providerId !== "codex") {
-                throw new Error("Conversation provider does not match Codex thread");
+              if (snapshot.thread.providerId !== input.providerId) {
+                throw new Error("Conversation provider does not match coding-agent thread");
               }
               emitInit(run, input.threadId!);
               return options.threads.acceptTurn(input.principal, input.threadId!, {
@@ -222,7 +227,7 @@ export function createGlobalChatCodexDispatcher(options: {
               });
             })
           : options.threads.createThread(input.principal, {
-              providerId: "codex",
+              providerId: input.providerId,
               prompt: input.text,
               clientRequestId: run.agentRequestId,
             }).then((result) => {
@@ -234,7 +239,7 @@ export function createGlobalChatCodexDispatcher(options: {
           if (run.settled) return;
           run.settled = true;
           cleanup(run);
-          reject(error instanceof Error ? error : new Error("Codex dispatch failed"));
+          reject(error instanceof Error ? error : new Error("Coding-agent dispatch failed"));
         });
       });
     },
@@ -245,7 +250,7 @@ export function createGlobalChatCodexDispatcher(options: {
         if (run.settled) continue;
         run.settled = true;
         cleanup(run);
-        run.reject(new Error("Global Codex dispatcher closed"));
+        run.reject(new Error("Global coding-agent dispatcher closed"));
       }
     },
   };

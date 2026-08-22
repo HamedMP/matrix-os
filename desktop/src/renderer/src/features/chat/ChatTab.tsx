@@ -6,6 +6,7 @@ import { ConversationProviderSelector } from "../../components/conversation/prov
 import type { ConversationProviderIcon } from "../../components/conversation/provider-options";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { useConnection } from "../../stores/connection";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useTabs } from "../../stores/tabs";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
@@ -32,6 +33,12 @@ export function canSubmitChatDraft(
     && !contextBlocksSend;
 }
 
+const GLOBAL_CHAT_PROVIDER_LABELS: Record<GlobalChatProviderId, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  pi: "Pi",
+};
+
 function HermesPane() {
   const api = useConnection((state) => state.api);
   const messages = useHermesChat((state) => state.messages);
@@ -55,6 +62,13 @@ function HermesPane() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
+  const providerSummary = useCodingAgentWorkspace((state) => state.summary);
+  const refreshProviderSummary = useCodingAgentWorkspace((state) => state.refresh);
+
+  useEffect(() => {
+    if (!api) return;
+    void refreshProviderSummary();
+  }, [api, refreshProviderSummary]);
 
   const turns = hermesConversationPresentation(messages, status, activeRequestId);
   const copyText = useCallback(async (text: string) => {
@@ -118,6 +132,17 @@ function HermesPane() {
   const providerRegistry = createGlobalChatProviderRegistry({
     selectedId: providerId,
     connected: Boolean(api),
+    availableProviderIds: [
+      ...(api ? ["claude" as const] : []),
+      ...(providerSummary?.providers
+        .filter((provider) => (
+          (provider.id === "codex" || provider.id === "pi")
+          && provider.availability === "available"
+          && provider.installStatus === "installed"
+          && provider.authStatus === "authenticated"
+        ))
+        .map((provider) => provider.id as "codex" | "pi") ?? []),
+    ],
     onSelectProvider: selectProvider,
   });
 
@@ -168,9 +193,9 @@ function HermesPane() {
     <ConversationProviderSelector
       value={providerRegistry.selectedId}
       options={providerRegistry.options}
-      renderIcon={(icon: ConversationProviderIcon) => icon === "claude"
-        ? <Sparkles className="size-3.5" />
-        : <Code2 className="size-3.5" />}
+      renderIcon={(icon: ConversationProviderIcon) => icon === "codex"
+        ? <Code2 className="size-3.5" />
+        : <Sparkles className="size-3.5" />}
       onSelect={(providerId) => void providerRegistry.activate(providerId)}
     />
   );
@@ -256,13 +281,13 @@ function HermesPane() {
               How can I help you?
             </h1>
           </div>
-          <div className="shrink-0">{renderComposer(`Ask ${providerId === "codex" ? "Codex" : "Claude"} anything…`, true)}</div>
+          <div className="shrink-0">{renderComposer(`Ask ${GLOBAL_CHAT_PROVIDER_LABELS[providerId]} anything…`, true)}</div>
         </div>
       ) : (
         <>
           <ConversationTranscript turns={turns} callbacks={{ copyText }} />
           <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
-            {renderComposer(`Reply to ${providerId === "codex" ? "Codex" : "Claude"}…`)}
+            {renderComposer(`Reply to ${GLOBAL_CHAT_PROVIDER_LABELS[providerId]}…`)}
           </div>
         </>
       )}

@@ -75,7 +75,7 @@ function ConversationRow({
             style={{ color: "var(--text-tertiary)" }}
           >
             <span className="rounded-full border px-2 py-1 font-medium" style={{ borderColor: "var(--border-default)" }}>
-              {conversation.providerId === "codex" ? "Codex" : "Claude"}
+              {{ claude: "Claude", codex: "Codex", pi: "Pi" }[conversation.providerId] ?? "Claude"}
             </span>
             {running ? (
               <span className="flex items-center gap-1.5" style={{ color: "var(--accent)" }}>

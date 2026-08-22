@@ -55,7 +55,7 @@ export const KnownKernelMessageSchema = z.discriminatedUnion("type", [
   z.looseObject({
     type: z.literal("kernel:init"),
     sessionId: z.string(),
-    providerId: z.enum(["claude", "codex"]).optional(),
+    providerId: z.enum(["claude", "codex", "pi"]).optional(),
     requestId: requestIdField,
   }),
   z.looseObject({ type: z.literal("kernel:text"), text: z.string(), requestId: requestIdField }),

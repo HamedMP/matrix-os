@@ -60,7 +60,7 @@ describe("conversation lifecycle", () => {
     expect(providerResumeSessionId(resumed)).toBe("pending-session");
   });
 
-  it("never exposes a Claude conversation id as a Codex resume target", () => {
+  it("never exposes a conversation id as another provider's resume target", () => {
     const claudeConversation = {
       id: "claude-session",
       providerId: "claude" as const,
@@ -73,10 +73,17 @@ describe("conversation lifecycle", () => {
       id: "thread_codex",
       providerId: "codex" as const,
     };
+    const piConversation = {
+      ...claudeConversation,
+      id: "thread_pi",
+      providerId: "pi" as const,
+    };
 
     expect(providerResumeSessionId(claudeConversation, "claude")).toBe("claude-session");
     expect(providerResumeSessionId(claudeConversation, "codex")).toBeUndefined();
     expect(providerResumeSessionId(codexConversation, "codex")).toBe("thread_codex");
+    expect(providerResumeSessionId(codexConversation, "pi")).toBeUndefined();
+    expect(providerResumeSessionId(piConversation, "pi")).toBe("thread_pi");
   });
 
   it("keeps a deleted conversation deleted when delete wins admission", async () => {

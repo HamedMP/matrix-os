@@ -545,8 +545,8 @@ Client flags:
 Server flags:
 
 - Fake provider: `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
-- Workspace providers: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex` (bounded explicit list; both adapters are executable through the gateway-owned workspace runtime).
-- Customer host bundles set the legacy Codex-only workspace provider flag so thread routes are registered on fresh runtimes. Provider readiness still requires the installed and authenticated provider CLI. An explicit `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` value overrides this default.
+- Workspace providers: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi` (bounded explicit list; all three adapters are executable through the gateway-owned workspace runtime).
+- Customer host bundles register the explicit Claude, Codex, and Pi provider set so Global Chat and Project surfaces share one runtime-backed provider boundary. Provider readiness still requires each provider CLI to be installed and authenticated. The legacy Codex-only setting remains available for older deployments when the explicit list is unset.
 
 Current behavior:
 
