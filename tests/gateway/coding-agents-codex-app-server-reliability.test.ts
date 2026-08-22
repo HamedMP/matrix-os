@@ -63,7 +63,11 @@ async function sendControl(path: string, payload: unknown): Promise<unknown> {
 async function startFakeRuntime(
   name: string,
   handlerLines: string[],
-  options: { initialTranscriptBytes?: number; stubControlServer?: boolean } = {},
+  options: {
+    failFirstToolCompletionWrite?: boolean;
+    initialTranscriptBytes?: number;
+    stubControlServer?: boolean;
+  } = {},
 ): Promise<FakeRuntime> {
   const shortName = name.slice(0, 8);
   const homePath = await mkdtemp(join("/tmp", `mx-${shortName}-`));
@@ -92,6 +96,24 @@ async function startFakeRuntime(
       "import { createRequire, syncBuiltinESMExports } from 'node:module';",
       "const require = createRequire(import.meta.url);",
       "const net = require('node:net');",
+      ...(options.failFirstToolCompletionWrite ? [
+        "const fsPromises = require('node:fs/promises');",
+        "const originalOpen = fsPromises.open;",
+        "fsPromises.open = async (...args) => {",
+        "  const handle = await originalOpen(...args);",
+        "  if (!process.argv[1]?.endsWith('codex-app-server-runner.mjs')) return handle;",
+        "  const originalWrite = handle.write.bind(handle);",
+        "  let injected = false;",
+        "  handle.write = async (...writeArgs) => {",
+        "    if (!injected && String(writeArgs[0]).includes('matrix.codex.tool.completed')) {",
+        "      injected = true;",
+        "      throw new Error('injected_cleanup_persist_failure');",
+        "    }",
+        "    return originalWrite(...writeArgs);",
+        "  };",
+        "  return handle;",
+        "};",
+      ] : []),
       "net.createServer = () => {",
       "  const server = new EventEmitter();",
       "  server.listen = (path, callback) => {",
@@ -139,13 +161,21 @@ async function cleanup(runtime: FakeRuntime, socket?: Socket): Promise<void> {
 }
 
 async function replayTranscript(path: string) {
+  return (await replayTranscriptResult(path)).events;
+}
+
+async function replayTranscriptResult(path: string) {
   let sequence = 0;
   const transcript = await readFile(path, "utf8");
-  return transcript.trim().split("\n").flatMap((line) => parseCodexExecJsonLine(line, {
+  const results = transcript.trim().split("\n").map((line) => parseCodexExecJsonLine(line, {
     threadId: "thread_matrix_replay",
     now: () => new Date("2026-08-22T10:00:00.000Z"),
     nextEventId: () => `evt_replay_${++sequence}`,
-  }).events);
+  }));
+  return {
+    events: results.flatMap((result) => result.events),
+    outcomes: results.flatMap((result) => result.outcome ? [result.outcome] : []),
+  };
 }
 
 const initialize = "if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));";
@@ -200,6 +230,41 @@ describe("Codex app-server runner reliability", () => {
         toolCallId: toolStarted && "toolCallId" in toolStarted ? toolStarted.toolCallId : undefined,
         outcome: "cancelled",
       }));
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("retries partial terminal cleanup without duplicating settled items", async () => {
+    const runtime = await startFakeRuntime("cleanup_retry", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: 'native-assistant', delta: 'Partial answer.' } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'native-tool', type: 'commandExecution', status: 'inProgress' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { failFirstToolCompletionWrite: true, stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      expect(exitCode, await readFile(runtime.eventPath, "utf8")).toBe(1);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      const assistantDelta = events.find((event) => event.type === "assistant.text.delta");
+      const toolStarted = events.find((event) => event.type === "tool.started");
+      expect(events.filter((event) => event.type === "assistant.text.completed")).toEqual([
+        expect.objectContaining({
+          messageId: assistantDelta && "messageId" in assistantDelta ? assistantDelta.messageId : undefined,
+        }),
+      ]);
+      expect(events.filter((event) => event.type === "tool.completed")).toEqual([
+        expect.objectContaining({
+          toolCallId: toolStarted && "toolCallId" in toolStarted ? toolStarted.toolCallId : undefined,
+          outcome: "cancelled",
+        }),
+      ]);
+      expect(outcomes).toEqual(["failed"]);
     } finally {
       await cleanup(runtime);
     }

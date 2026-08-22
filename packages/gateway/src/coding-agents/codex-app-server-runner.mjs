@@ -364,8 +364,8 @@ async function persist(value) {
 async function flushAssistantDelta(messageId) {
   const delta = assistantDeltaBuffers.get(messageId);
   if (!delta) return;
-  assistantDeltaBuffers.delete(messageId);
   await persist({ type: "matrix.codex.assistant.delta", messageId, delta });
+  assistantDeltaBuffers.delete(messageId);
 }
 
 async function bufferAssistantDelta(messageId, delta) {
@@ -795,11 +795,11 @@ function stop() {
 
 async function finishTurn(outcome) {
   if (terminalOutcome) return;
-  terminalOutcome = outcome;
   activeTurn = false;
   for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
     await persist({ type: "matrix.codex.assistant.completed", messageId });
+    assistantItemsWithDelta.delete(messageId);
   }
   for (const toolCallId of startedToolItems) {
     await persist({
@@ -807,13 +807,14 @@ async function finishTurn(outcome) {
       toolCallId,
       outcome: "cancelled",
     });
+    startedToolItems.delete(toolCallId);
+    toolItemsWithOutput.delete(toolCallId);
   }
-  assistantItemsWithDelta.clear();
   assistantDeltaBuffers.clear();
-  startedToolItems.clear();
   toolItemsWithOutput.clear();
   try {
     await persist({ type: outcome === "completed" ? "turn.completed" : "turn.failed" });
+    terminalOutcome = outcome;
   } finally {
     stop();
   }
