@@ -22,7 +22,13 @@ function parseParams(value: string | undefined): Record<string, unknown> | undef
   if (Buffer.byteLength(value, "utf8") > 65_536) throw new Error(usage);
   try {
     return z.record(z.string(), z.unknown()).parse(JSON.parse(value));
-  } catch {
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError) && !(error instanceof z.ZodError)) {
+      console.error(
+        "matrix-integrations: unexpected params parsing failure",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
     throw new Error(`${usage}\nparams must be a JSON object`);
   }
 }
