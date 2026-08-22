@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -14,7 +14,7 @@ import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 vi.mock("../../desktop/src/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
-  default: () => null,
+  default: () => <button type="button">Main computer</button>,
 }));
 
 const invoke = vi.fn(async () => ({ ok: true }));
@@ -199,7 +199,7 @@ describe("Desktop sidebar navigation shell", () => {
     expect(useTabs.getState().terminalIndexRequestId).toBe(1);
   });
 
-  it("exposes Projects as a persistent primary navigation destination", () => {
+  it("matches the Figma navigation hierarchy and keeps the sidebar borderless", () => {
     useBoard.setState({
       projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "scratch" }],
     });
@@ -208,10 +208,65 @@ describe("Desktop sidebar navigation shell", () => {
     const sidebar = screen.getByRole("complementary", { name: "Matrix OS navigation" });
     expect(sidebar.getAttribute("data-sidebar-state")).toBe("expanded");
     expect(sidebar.style.width).toBe("var(--sidebar-expanded-width)");
-    expect(screen.getByTestId("matrix-sidebar-logo")).toBeTruthy();
+    expect(sidebar.style.borderRight).toBe("");
+    expect(screen.queryByTestId("matrix-sidebar-logo")).toBeNull();
 
     expect(screen.getByRole("button", { name: "Terminal" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBeNull();
+
+    const dividers = screen.getAllByRole("separator");
+    expect(dividers).toHaveLength(2);
+    for (const divider of dividers) {
+      expect(divider.style.marginInline).toBe("16px");
+      expect(divider.style.background).toBe("var(--sidebar-divider)");
+    }
+
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    expect(terminal.style.background).toBe("var(--bg-surface)");
+    expect(terminal.style.boxShadow).toBe("inset 0 0 0 1px var(--border-subtle)");
+    expect(terminal.style.borderWidth).toBe("");
+    expect(terminal.style.fontWeight).toBe("500");
+
+    const figmaGlyphs = {
+      Home: ".lucide-house",
+      Chat: ".lucide-message-circle",
+      Terminal: ".lucide-terminal",
+      Files: ".lucide-file",
+      Apps: ".lucide-layout-grid",
+      Projects: ".lucide-folder-open",
+    } as const;
+    for (const [label, selector] of Object.entries(figmaGlyphs)) {
+      expect(screen.getByRole("button", { name: label }).querySelector(selector)).toBeTruthy();
+    }
+    const pluginsGlyph = screen.getByRole("button", { name: "Plugins" })
+      .querySelector<HTMLElement>('[data-figma-icon="phosphor-plugs"]');
+    expect(pluginsGlyph).toBeTruthy();
+    expect(pluginsGlyph?.style.maskImage).toContain("plugs.svg");
+    expect(pluginsGlyph?.style.maskRepeat).toBe("no-repeat");
+
+    for (const label of ["Home", "Chat", "Terminal", "Files", "Apps", "Plugins", "Projects"]) {
+      const icon = screen.getByRole("button", { name: label }).querySelector<HTMLElement>("[data-sidebar-icon]");
+      expect(icon?.style.width).toBe("14px");
+      expect(icon?.style.height).toBe("14px");
+    }
+
+    const orderedLabels = [
+      "Main computer",
+      "Home",
+      "Chat",
+      "Terminal",
+      "Files",
+      "Apps",
+      "Plugins",
+      "Projects",
+      "Filter recents",
+      "Open account menu",
+    ];
+    const orderedButtons = orderedLabels.map((label) => screen.getByRole("button", { name: label }));
+    for (let index = 1; index < orderedButtons.length; index += 1) {
+      expect(orderedButtons[index - 1]!.compareDocumentPosition(orderedButtons[index]!))
+        .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    }
 
     const projects = screen.getByRole("button", { name: "Projects" });
     fireEvent.click(projects);
@@ -262,18 +317,20 @@ describe("Desktop sidebar navigation shell", () => {
     )).toMatchObject({ kind: "home" });
   });
 
-  it("keeps the collapsed rail labelled while hiding expanded-only chrome", () => {
+  it("removes the navigation column below the title bar when collapsed", () => {
     useUi.setState({ sidebarCollapsed: true });
-    renderSidebar();
+    const { container } = renderSidebar();
 
-    const sidebar = screen.getByRole("complementary", { name: "Matrix OS navigation" });
+    const sidebar = container.querySelector("aside")!;
+    expect(sidebar).not.toBeNull();
     expect(sidebar.getAttribute("data-sidebar-state")).toBe("collapsed");
     expect(sidebar.style.width).toBe("var(--sidebar-collapsed-width)");
+    expect(sidebar.getAttribute("aria-hidden")).toBe("true");
     expect(screen.queryByTestId("matrix-sidebar-logo")).toBeNull();
     expect(screen.queryByText("Recents")).toBeNull();
     expect(screen.queryByText("Projects")).toBeNull();
-    expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open account menu" })).toBeNull();
   });
 
   it("opens Recents and account menus from the keyboard", async () => {

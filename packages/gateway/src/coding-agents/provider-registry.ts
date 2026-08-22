@@ -89,34 +89,18 @@ function kindForAgent(agent: AgentId): AgentProviderSummary["kind"] {
 }
 
 function summaryFromCredential(credential: AgentCredentialSummary): AgentProviderSummary {
-  const isAvailable = credential.status === "available";
-  const isMissing = credential.status === "missing";
-  const isExpired = credential.status === "expired" || credential.status === "revoked";
-  const failed = credential.status === "failed";
-  return AgentProviderSummarySchema.parse({
+  return AgentProviderSummarySchema.parse(applyCredentialState({
     id: credential.agent,
     displayName: displayNameForAgent(credential.agent),
     kind: kindForAgent(credential.agent),
     availability: "unavailable",
-    installStatus: isAvailable || isExpired
-      ? "installed"
-      : isMissing
-        ? "missing"
-        : failed
-          ? "failed"
-          : "unknown",
-    authStatus: isAvailable
-      ? "authenticated"
-      : isExpired
-        ? "expired"
-        : isMissing
-          ? "missing"
-          : "unknown",
+    installStatus: "unknown",
+    authStatus: "unknown",
     supportedModes: ["default", "review"],
     defaultMode: "default",
     setupActions: [],
     lastCheckedAt: credential.verifiedAt ?? undefined,
-  });
+  }, credential));
 }
 
 async function callWithTimeout<T>(
@@ -134,40 +118,61 @@ async function callWithTimeout<T>(
   });
 }
 
-function applyCredentialState(
+export function applyCredentialState(
   summary: AgentProviderSummary,
   credential: AgentCredentialSummary | undefined,
 ): AgentProviderSummary {
-  if (!credential || credential.status === "not_applicable") return summary;
-  if (credential.status === "missing") {
-    return {
-      ...summary,
-      availability: "setup_required",
-      installStatus: "missing",
-      authStatus: "missing",
-    };
+  if (!credential) return summary;
+  switch (credential.status) {
+    case "available":
+      return {
+        ...summary,
+        installStatus: "installed",
+        authStatus: "authenticated",
+      };
+    case "missing":
+      return {
+        ...summary,
+        availability: "setup_required",
+        installStatus: "missing",
+        authStatus: "missing",
+      };
+    case "auth_required":
+      return {
+        ...summary,
+        availability: "auth_required",
+        installStatus: "installed",
+        authStatus: "missing",
+      };
+    case "expired":
+    case "revoked":
+      return {
+        ...summary,
+        availability: "auth_required",
+        installStatus: "installed",
+        authStatus: "expired",
+      };
+    case "failed":
+    case "version_unsupported":
+      return {
+        ...summary,
+        availability: "unavailable",
+        installStatus: "failed",
+        authStatus: "unknown",
+      };
+    case "check_failed":
+    case "not_applicable":
+      return {
+        ...summary,
+        availability: "unavailable",
+        installStatus: "unknown",
+        authStatus: "unknown",
+      };
+    default: {
+      const unhandledStatus: never = credential.status;
+      return unhandledStatus;
+    }
   }
-  if (credential.status === "expired" || credential.status === "revoked") {
-    return {
-      ...summary,
-      availability: "auth_required",
-      installStatus: "installed",
-      authStatus: "expired",
-    };
-  }
-  if (credential.status === "failed") {
-    return {
-      ...summary,
-      availability: "unavailable",
-      installStatus: "failed",
-      authStatus: "unknown",
-    };
-  }
-  return {
-    ...summary,
-    installStatus: "installed",
-    authStatus: "authenticated",
-  };
 }
 
 function shouldCheckHealth(summary: AgentProviderSummary): boolean {

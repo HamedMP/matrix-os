@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { AgentThreadSummary, RuntimeSummary } from "@matrix-os/contracts";
-import { reconcileSummaryThread } from "../../desktop/src/renderer/src/stores/coding-agent/thread-model";
+import type {
+  AgentThreadEvent,
+  AgentThreadSnapshot,
+  AgentThreadSummary,
+  RuntimeSummary,
+} from "@matrix-os/contracts";
+import {
+  mergeLiveThreadEvent,
+  mergeSelectedThreadSnapshot,
+  reconcileSummaryThread,
+} from "../../desktop/src/renderer/src/stores/coding-agent/thread-model";
 
 function thread(overrides: Partial<AgentThreadSummary> = {}): AgentThreadSummary {
   return {
@@ -43,6 +52,137 @@ function summary(overrides: {
     serverTime: "2026-07-06T00:03:00.000Z",
   } as RuntimeSummary;
 }
+
+function threadSnapshot(events: AgentThreadEvent[] = [], threadId = "thread_alpha"): AgentThreadSnapshot {
+  return {
+    thread: thread({ id: threadId }),
+    events: {
+      items: events,
+      hasMore: false,
+      limit: 200,
+    },
+  };
+}
+
+function assistantDelta(
+  eventId: string,
+  delta: string,
+  options: { messageId?: string; threadId?: string; occurredAt?: string } = {},
+): AgentThreadEvent {
+  return {
+    type: "assistant.text.delta",
+    eventId,
+    threadId: options.threadId ?? "thread_alpha",
+    occurredAt: options.occurredAt ?? "2026-07-06T00:02:00.000Z",
+    messageId: options.messageId ?? "msg_alpha",
+    delta,
+  };
+}
+
+describe("thread event projection", () => {
+  it("preserves sequential same-timestamp deltas in Gateway arrival order without mutating prior snapshots", () => {
+    const initial = threadSnapshot();
+    const first = assistantDelta("evt_z", "first ");
+    const second = assistantDelta("evt_a", "second");
+
+    const afterFirst = mergeLiveThreadEvent(initial, first);
+    const afterSecond = mergeLiveThreadEvent(afterFirst, second);
+
+    expect(afterSecond.events.items.map((event) => event.eventId)).toEqual(["evt_z", "evt_a"]);
+    expect(afterSecond.events.items.map((event) => event.type === "assistant.text.delta" ? event.delta : "").join(""))
+      .toBe("first second");
+    expect(initial.events.items).toEqual([]);
+    expect(afterFirst.events.items).toEqual([first]);
+  });
+
+  it("preserves tool and assistant interleaving instead of sorting opaque event IDs", () => {
+    const occurredAt = "2026-07-06T00:02:00.000Z";
+    const events: AgentThreadEvent[] = [
+      assistantDelta("evt_z", "before", { occurredAt }),
+      {
+        type: "tool.started",
+        eventId: "evt_y",
+        threadId: "thread_alpha",
+        occurredAt,
+        toolCallId: "tool_alpha",
+        displayName: "Read file",
+        kind: "read",
+      },
+      {
+        type: "tool.output",
+        eventId: "evt_x",
+        threadId: "thread_alpha",
+        occurredAt,
+        toolCallId: "tool_alpha",
+        text: "result",
+      },
+      assistantDelta("evt_w", "after", { occurredAt }),
+    ];
+
+    const projected = events.reduce(mergeLiveThreadEvent, threadSnapshot());
+
+    expect(projected.events.items.map((event) => event.eventId))
+      .toEqual(["evt_z", "evt_y", "evt_x", "evt_w"]);
+  });
+
+  it("treats a duplicate event identity as an idempotent no-op", () => {
+    const first = assistantDelta("evt_same", "canonical");
+    const current = mergeLiveThreadEvent(threadSnapshot(), first);
+
+    const duplicate = mergeLiveThreadEvent(current, { ...first, delta: "corrupted duplicate" });
+
+    expect(duplicate).toBe(current);
+    expect(duplicate.events.items).toEqual([first]);
+  });
+
+  it("lets authoritative snapshot order replace a divergent live order", () => {
+    const first = assistantDelta("evt_z", "first ");
+    const second = assistantDelta("evt_a", "second");
+    const divergentLive = threadSnapshot([second, first]);
+    const authoritativeReload = threadSnapshot([first, second]);
+
+    const reconciled = mergeSelectedThreadSnapshot(divergentLive, authoritativeReload);
+
+    expect(reconciled.events.items.map((event) => event.eventId)).toEqual(["evt_z", "evt_a"]);
+    expect(authoritativeReload.events.items).toEqual([first, second]);
+  });
+
+  it("reconciles a stale reconnect snapshot before retaining unseen live tail events", () => {
+    const first = assistantDelta("evt_z", "first ");
+    const second = assistantDelta("evt_y", "second ");
+    const unseenLive = assistantDelta("evt_a", "third");
+    const current = threadSnapshot([first, second, unseenLive]);
+    const staleSnapshot = threadSnapshot([first, second]);
+
+    const reconciled = mergeSelectedThreadSnapshot(current, staleSnapshot);
+
+    expect(reconciled.events.items.map((event) => event.eventId)).toEqual(["evt_z", "evt_y", "evt_a"]);
+    expect(reconciled.events.items).toHaveLength(3);
+  });
+
+  it("keeps a newer live window when a stale bounded snapshot no longer overlaps it", () => {
+    const live = {
+      ...threadSnapshot([assistantDelta("evt_live", "new")]),
+      thread: thread({ updatedAt: "2026-07-06T00:03:00.000Z" }),
+    };
+    const stale = {
+      ...threadSnapshot([assistantDelta("evt_stale", "old")]),
+      thread: thread({ updatedAt: "2026-07-06T00:02:00.000Z" }),
+    };
+
+    const reconciled = mergeSelectedThreadSnapshot(live, stale);
+
+    expect(reconciled.events.items.map((event) => event.eventId)).toEqual(["evt_live"]);
+    expect(reconciled.thread.updatedAt).toBe("2026-07-06T00:03:00.000Z");
+  });
+
+  it("ignores a stale event from a previously selected thread", () => {
+    const current = threadSnapshot([], "thread_beta");
+    const stale = assistantDelta("evt_old", "stale", { threadId: "thread_alpha" });
+
+    expect(mergeLiveThreadEvent(current, stale)).toBe(current);
+  });
+});
 
 describe("reconcileSummaryThread", () => {
   it("updates a thread in place in both lists", () => {

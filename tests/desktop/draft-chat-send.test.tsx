@@ -18,7 +18,17 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 const NOW = "2026-07-12T12:00:00.000Z";
 const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
 
-function summaryFixture(): RuntimeSummary {
+function summaryFixture(providers: RuntimeSummary["providers"] = [{
+  id: "codex",
+  kind: "codex",
+  displayName: "Codex",
+  availability: "available",
+  installStatus: "installed",
+  authStatus: "authenticated",
+  supportedModes: ["default", "plan"],
+  defaultMode: "default",
+  setupActions: [],
+}]): RuntimeSummary {
   return {
     runtime: { id: "rt_primary", label: "Primary", status: "available" },
     capabilities: [
@@ -28,17 +38,7 @@ function summaryFixture(): RuntimeSummary {
       { id: "codingAgentsReview", enabled: true },
       { id: "codingAgentsProjectWorkspace", enabled: true },
     ],
-    providers: [{
-      id: "codex",
-      kind: "codex",
-      displayName: "Codex",
-      availability: "available",
-      installStatus: "installed",
-      authStatus: "authenticated",
-      supportedModes: ["default", "plan"],
-      defaultMode: "default",
-      setupActions: [],
-    }],
+    providers,
     projects: {
       items: [{ id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 2, attentionCount: 0 }],
       hasMore: false,
@@ -93,11 +93,12 @@ function createdThreadSnapshot(prompt: string) {
   };
 }
 
-function mockOperator({ createImpl }: {
+function mockOperator({ createImpl, summary = summaryFixture() }: {
   createImpl?: (payload: unknown) => Promise<unknown>;
+  summary?: RuntimeSummary;
 } = {}) {
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
-    if (channel === "runtime:get-summary") return summaryFixture();
+    if (channel === "runtime:get-summary") return summary;
     if (channel === "runtime:get-reviews") return { items: [], hasMore: false, limit: 50 };
     if (channel === "runtime:get-notification-preferences") {
       return { attentionPush: { approval: true, input: true, failed: true, completed: true } };
@@ -250,6 +251,101 @@ describe("draft chat implicit thread creation", () => {
     await waitFor(() => {
       expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_new_draft");
     });
+  });
+
+  it.each([
+    {
+      name: "no provider",
+      providers: [],
+      notice: "No coding agent provider is configured",
+      action: "Open provider settings",
+    },
+    {
+      name: "missing provider install",
+      providers: [{
+        ...summaryFixture().providers[0]!,
+        availability: "setup_required" as const,
+        installStatus: "missing" as const,
+        authStatus: "missing" as const,
+        setupActions: [{
+          id: "codex_install",
+          kind: "foreground_terminal" as const,
+          label: "Install Codex",
+          command: "npm install -g @openai/codex",
+        }],
+      }],
+      notice: "Codex is not installed",
+      action: "Install Codex",
+    },
+    {
+      name: "provider authentication required",
+      providers: [{
+        ...summaryFixture().providers[0]!,
+        availability: "auth_required" as const,
+        authStatus: "missing" as const,
+        setupActions: [{
+          id: "codex_connect",
+          kind: "foreground_terminal" as const,
+          label: "Connect Codex",
+          command: "codex login",
+        }],
+      }],
+      notice: "Connect Codex to continue",
+      action: "Connect Codex",
+    },
+    {
+      name: "expired provider authentication",
+      providers: [{
+        ...summaryFixture().providers[0]!,
+        availability: "auth_required" as const,
+        authStatus: "expired" as const,
+        setupActions: [{
+          id: "codex_reconnect",
+          kind: "foreground_terminal" as const,
+          label: "Reconnect Codex",
+          command: "codex login",
+        }],
+      }],
+      notice: "Codex needs to be reconnected",
+      action: "Reconnect Codex",
+    },
+    {
+      name: "provider install in progress",
+      providers: [{
+        ...summaryFixture().providers[0]!,
+        availability: "installing" as const,
+        installStatus: "installing" as const,
+        authStatus: "unknown" as const,
+      }],
+      notice: "Installing Codex",
+      action: "Refresh provider status",
+    },
+    {
+      name: "unverified provider",
+      providers: [{
+        ...summaryFixture().providers[0]!,
+        availability: "unknown" as const,
+        installStatus: "unknown" as const,
+        authStatus: "unknown" as const,
+      }],
+      notice: "Matrix could not verify Codex",
+      action: "Refresh provider status",
+    },
+  ])("blocks $name without losing the editable draft", async ({ providers, notice, action }) => {
+    const { invoke } = mockOperator({ summary: summaryFixture(providers) });
+    const composer = await openDraft();
+    const prompt = `Preserve this ${notice}`;
+
+    fireEvent.change(composer, { target: { value: prompt } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    expect(screen.getByText(notice)).toBeTruthy();
+    expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    expect(composer.disabled).toBe(false);
+    expect(composer.value).toBe(prompt);
+    expect(useDraftChat.getState().draftFor("matrix-os")?.prompt).toBe(prompt);
+    expect(vi.mocked(invoke).mock.calls.filter(([channel]) => channel === "runtime:create-thread")).toHaveLength(0);
   });
 
   it("resolves the project relation lazily when the draft was typed without a seed", async () => {

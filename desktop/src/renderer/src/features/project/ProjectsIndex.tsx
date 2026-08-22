@@ -1,12 +1,15 @@
-import { Folder, GitBranch, GitFork, Search } from "lucide-react";
+import { AlertCircle, Folder, GitBranch, GitFork, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod/v4";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useBoard, type Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
-import { useProjectView } from "../../stores/project-view";
-import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
+import { AppError } from "../../../../shared/app-error";
+import type { ApiClient } from "../../lib/api";
+import { toUserMessage } from "../../lib/errors";
+import { openProjectOverview } from "../../lib/project-navigation";
+import { Button, EmptyState } from "../../design/primitives";
 
 function projectCaption(project: Project): string {
   if (project.description) return project.description;
@@ -41,6 +44,88 @@ const ProjectCodeMetadataSchema = z.object({
 
 type ProjectCodeMetadata = z.infer<typeof ProjectCodeMetadataSchema>;
 
+const PROJECTS_PAGE_SIZE = 24;
+const PROJECT_METADATA_CONCURRENCY = 4;
+const PROJECT_METADATA_QUEUE_LIMIT = PROJECTS_PAGE_SIZE;
+const PROJECT_METADATA_CACHE_MS = 30_000;
+const PROJECT_METADATA_CACHE_LIMIT = 48;
+
+interface MetadataTask {
+  cancelled: boolean;
+  run: () => Promise<ProjectCodeMetadata | null>;
+  resolve: (value: ProjectCodeMetadata | null) => void;
+  reject: (error: unknown) => void;
+}
+
+const metadataQueue: MetadataTask[] = [];
+let activeMetadataRequests = 0;
+const metadataCache = new WeakMap<object, Map<string, { value: ProjectCodeMetadata | null; expiresAt: number }>>();
+
+function drainMetadataQueue(): void {
+  while (activeMetadataRequests < PROJECT_METADATA_CONCURRENCY && metadataQueue.length > 0) {
+    const task = metadataQueue.shift();
+    if (!task || task.cancelled) continue;
+    activeMetadataRequests += 1;
+    void task.run()
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        activeMetadataRequests -= 1;
+        drainMetadataQueue();
+      });
+  }
+}
+
+function scheduleProjectMetadata(api: ApiClient, slug: string) {
+  let task: MetadataTask | null = null;
+  const apiCache = metadataCache.get(api);
+  const cached = apiCache?.get(slug);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { promise: Promise.resolve(cached.value), cancel: () => undefined };
+  }
+  if (cached) apiCache?.delete(slug);
+  const promise = new Promise<ProjectCodeMetadata | null>((resolve, reject) => {
+    if (metadataQueue.length >= PROJECT_METADATA_QUEUE_LIMIT) {
+      reject(new Error("project_metadata_queue_full"));
+      return;
+    }
+    task = {
+      cancelled: false,
+      resolve,
+      reject,
+      run: async () => {
+        const value = await api.get<unknown>(`/api/projects/${encodeURIComponent(slug)}/code-metadata`);
+        const parsed = ProjectCodeMetadataSchema.safeParse(value);
+        const metadata = parsed.success ? parsed.data : null;
+        let cache = metadataCache.get(api);
+        if (!cache) {
+          cache = new Map();
+          metadataCache.set(api, cache);
+        }
+        if (!cache.has(slug) && cache.size >= PROJECT_METADATA_CACHE_LIMIT) {
+          const oldestKey = cache.keys().next().value;
+          if (oldestKey !== undefined) cache.delete(oldestKey);
+        }
+        cache.set(slug, { value: metadata, expiresAt: Date.now() + PROJECT_METADATA_CACHE_MS });
+        return metadata;
+      },
+    };
+    metadataQueue.push(task);
+    drainMetadataQueue();
+  });
+  return {
+    promise,
+    cancel: () => {
+      if (!task || task.cancelled) return;
+      task.cancelled = true;
+      const queuedIndex = metadataQueue.indexOf(task);
+      if (queuedIndex >= 0) {
+        metadataQueue.splice(queuedIndex, 1);
+        task.reject(new DOMException("Project metadata request cancelled", "AbortError"));
+      }
+    },
+  };
+}
+
 function ProjectCard(props: {
   project: Project;
   summaryUpdatedAt?: string;
@@ -54,17 +139,21 @@ function ProjectCard(props: {
     let active = true;
     setMetadata(null);
     if (!api) return () => { active = false; };
-    void api.get<unknown>(`/api/projects/${encodeURIComponent(project.slug)}/code-metadata`)
+    const request = scheduleProjectMetadata(api, project.slug);
+    void request.promise
       .then((value) => {
         if (!active) return;
-        const parsed = ProjectCodeMetadataSchema.safeParse(value);
-        if (parsed.success) setMetadata(parsed.data);
-        else console.warn("[projects-index] Ignoring invalid project code metadata");
+        if (value) setMetadata(value);
       })
       .catch((err: unknown) => {
-        if (active) console.warn("[projects-index] Project code metadata unavailable:", err instanceof Error ? err.name : typeof err);
+        if (active && (!(err instanceof DOMException) || err.name !== "AbortError")) {
+          console.warn("[projects-index] Project code metadata unavailable:", err instanceof Error ? err.name : typeof err);
+        }
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      request.cancel();
+    };
   }, [api, project.slug]);
 
   const path = metadata?.path ?? project.localPath;
@@ -118,17 +207,28 @@ function ProjectCard(props: {
 
 export default function ProjectsIndex() {
   const projects = useBoard((state) => state.projects);
+  const projectsStatus = useBoard((state) => state.projectsStatus);
+  const projectsError = useBoard((state) => state.projectsError);
+  const loadProjects = useBoard((state) => state.loadProjects);
+  const api = useConnection((state) => state.api);
   const summaryProjects = useCodingAgentWorkspace((state) => state.summary?.projects.items);
-  const openTab = useTabs((state) => state.openTab);
-  const setProjectView = useProjectView((state) => state.setView);
   const setCreateProjectOpen = useUi((state) => state.setCreateProjectOpen);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [projectPage, setProjectPage] = useState(0);
   const visibleProjects = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     if (!normalized) return projects;
     return projects.filter((project) => `${project.name} ${project.slug} ${project.description ?? ""} ${project.localPath ?? ""} ${project.repository ?? ""}`.toLocaleLowerCase().includes(normalized));
   }, [projects, query]);
+  const lastProjectPage = Math.max(0, Math.ceil(visibleProjects.length / PROJECTS_PAGE_SIZE) - 1);
+  const currentProjectPage = Math.min(projectPage, lastProjectPage);
+  const pageStart = currentProjectPage * PROJECTS_PAGE_SIZE;
+  const pagedProjects = visibleProjects.slice(pageStart, pageStart + PROJECTS_PAGE_SIZE);
+
+  useEffect(() => {
+    setProjectPage(0);
+  }, [query]);
 
   return (
     <main className="min-h-0 flex-1 overflow-y-auto" style={{ background: "var(--bg-app)" }}>
@@ -173,19 +273,25 @@ export default function ProjectsIndex() {
           </button>
         </div>
 
-        {visibleProjects.length > 0 ? (
+        {projectsStatus === "loading" && projects.length === 0 ? (
+          <p className="py-10 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>Loading projects…</p>
+        ) : projectsStatus === "error" && projects.length === 0 ? (
+          <EmptyState
+            icon={<AlertCircle size={24} />}
+            headline="Can't load projects"
+            description={toUserMessage(new AppError(projectsError ?? "server"))}
+            action={api ? <Button variant="primary" onClick={() => void loadProjects(api)}>Retry</Button> : undefined}
+          />
+        ) : visibleProjects.length > 0 ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {visibleProjects.map((project) => {
+            {pagedProjects.map((project) => {
               const summary = summaryProjects?.find((candidate) => candidate.id === project.slug);
               return (
                 <ProjectCard
                   key={project.slug}
                   project={project}
                   summaryUpdatedAt={summary?.updatedAt}
-                  onOpen={() => {
-                    setProjectView(project.slug, "overview");
-                    openTab({ kind: "project", projectSlug: project.slug, title: project.name || project.slug });
-                  }}
+                  onOpen={() => openProjectOverview(project.slug, project.name || project.slug)}
                 />
               );
             })}
@@ -195,6 +301,29 @@ export default function ProjectsIndex() {
             {query ? "No projects match your search." : "Create your first project to get started."}
           </div>
         )}
+        {visibleProjects.length > PROJECTS_PAGE_SIZE ? (
+          <nav aria-label="Project pages" className="mt-4 flex items-center justify-end gap-2">
+            <span className="mr-auto text-xs" style={{ color: "var(--text-tertiary)" }}>
+              {pageStart + 1}–{Math.min(pageStart + PROJECTS_PAGE_SIZE, visibleProjects.length)} of {visibleProjects.length}
+            </span>
+            <Button
+              variant="ghost"
+              aria-label="Previous projects page"
+              disabled={currentProjectPage === 0}
+              onClick={() => setProjectPage((page) => Math.max(0, page - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="ghost"
+              aria-label="Next projects page"
+              disabled={currentProjectPage >= lastProjectPage}
+              onClick={() => setProjectPage((page) => Math.min(lastProjectPage, page + 1))}
+            >
+              Next
+            </Button>
+          </nav>
+        ) : null}
       </div>
     </main>
   );

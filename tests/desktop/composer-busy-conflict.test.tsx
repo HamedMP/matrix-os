@@ -3,7 +3,7 @@
 // SPEC 105 FR-027/FR-101: at most one normal turn may be active per thread, and
 // a follow-up aimed at a busy conversation must return a safe recoverable
 // conflict. Clients must not invent a local queue, so these tests pin the
-// composer to direct-send semantics with no client-side queueing.
+// composer to truthful busy semantics with no client-side queueing.
 
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -89,34 +89,17 @@ describe("AgentConversationView composer busy conflict", () => {
     vi.restoreAllMocks();
   });
 
-  it("sends directly instead of queueing while the agent is running", async () => {
+  it("keeps a busy-thread draft without sending or queueing it", () => {
     const { invoke } = mockOperator();
-    render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
-
-    typeAndEnter("Follow-up while busy");
-
-    // The runtime owns the decision. The client does not withhold the message.
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("runtime:create-turn", expect.objectContaining({ threadId: "thread_alpha" })),
-    );
-    expect(screen.queryByLabelText("Queued follow-ups")).toBeNull();
-    expect(useTabs.getState().recentViews[0]).toMatchObject({
-      kind: "conversation",
-      conversationType: "coding-agent",
-      id: "thread_alpha",
-      label: "Fix settings route",
-    });
-  });
-
-  it("keeps the draft and surfaces the safe conflict when the runtime reports the thread busy", async () => {
-    mockOperator(() => ({ ok: false, error: { code: "thread_busy" } }));
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
     const input = typeAndEnter("Follow-up while busy");
 
-    await waitFor(() => expect(screen.getByText(/already running/i)).toBeTruthy());
-    // The draft survives so the message is never silently swallowed.
+    expect(invoke).not.toHaveBeenCalledWith("runtime:create-turn", expect.anything());
     expect(input.value).toBe("Follow-up while busy");
+    expect(screen.queryByLabelText("Queued follow-ups")).toBeNull();
+    expect(useTabs.getState().recentViews).toHaveLength(0);
+    expect(screen.getByText("Agent is working — draft now, send when this turn finishes")).toBeTruthy();
   });
 
   it("does not render a queued-follow-up strip in any state", async () => {

@@ -104,6 +104,16 @@ export class EmbedService {
     return this.manager.setActive(embedId, active) || pending;
   }
 
+  suspendAll(): boolean {
+    for (const embedId of this.pendingHostedShells.keys()) {
+      this.pendingActive.set(embedId, false);
+    }
+    for (const embedId of this.pendingApps.keys()) {
+      this.pendingActive.set(embedId, false);
+    }
+    return this.manager.suspendAll();
+  }
+
   async reload(embedId: string): Promise<boolean> {
     if (this.hostedShellIds.has(embedId)) {
       const generation = this.hostedShellGeneration;

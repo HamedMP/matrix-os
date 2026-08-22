@@ -496,6 +496,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       url.searchParams.set("client", "hard");
       url.searchParams.set("cols", String(attachOptions.size.cols));
       url.searchParams.set("rows", String(attachOptions.size.rows));
+      url.searchParams.set("lease", "exclusive");
     }
     if (typeof attachOptions.fromSeq === "number") {
       url.searchParams.set("fromSeq", String(attachOptions.fromSeq));
@@ -1332,6 +1333,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
           } else if (msg.type === "pong") {
             noteRemoteActivity();
+          } else if (msg.type === "lease-revoked") {
+            // Another focused renderer took control. Do not reconnect and
+            // immediately steal the lease back; leave the local TTY cleanly.
+            settle(() => resolve({ detached: true }));
           } else if (msg.type === "error") {
             const code = typeof msg.code === "string" && SAFE_SHELL_SERVER_ERROR_CODES.has(msg.code)
               ? msg.code

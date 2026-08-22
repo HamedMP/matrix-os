@@ -169,6 +169,7 @@ EOF
     /opt/matrix/secrets \
     /opt/matrix/tls \
     /opt/matrix/restore-complete \
+    /var/lib/matrix/bootstrap-attestation.json \
     /run/matrix/bootstrap-token \
     /home/matrix/home \
     /home/matrix/.hermes \

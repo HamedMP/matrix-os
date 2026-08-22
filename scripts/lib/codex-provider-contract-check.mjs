@@ -59,4 +59,9 @@ export function verifyCodexProviderContracts({
       throw new Error(`Codex app-server method is unavailable: ${method}`);
     }
   }
+  for (const notification of appServerContract.requiredServerNotifications ?? []) {
+    if (!serializedAppServerSchema.includes(JSON.stringify(notification))) {
+      throw new Error(`Codex app-server notification is unavailable: ${notification}`);
+    }
+  }
 }

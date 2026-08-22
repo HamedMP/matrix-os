@@ -207,6 +207,14 @@ describe("shell REST client", () => {
     );
   });
 
+  it("requests an exclusive live lease when attaching from a sized TTY", () => {
+    const client = createShellClient({ gatewayUrl: "https://gateway.example", token: "tok" });
+
+    expect(client.createAttachUrl("main", { size: { cols: 120, rows: 40 } })).toBe(
+      "wss://gateway.example/ws/terminal/session?session=main&client=hard&cols=120&rows=40&lease=exclusive",
+    );
+  });
+
   it("sends one-shot input over HTTP without opening a websocket attach", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
     const client = createShellClient({

@@ -637,13 +637,29 @@ export class GatewayClient {
     };
   }
 
-  openTerminalWebSocket(token?: string | null, sessionName?: string, fromSeq?: number): WebSocket {
+  openTerminalWebSocket(
+    token?: string | null,
+    sessionName?: string,
+    fromSeq?: number,
+    presentation?: {
+      client: "hard" | "soft";
+      cols: number;
+      rows: number;
+      lease?: "exclusive";
+    },
+  ): WebSocket {
     if (token || this.token) {
       assertSecureTokenTransport(this.baseUrl);
     }
     const params = new URLSearchParams();
     if (sessionName) params.set("session", sessionName);
     if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
+    if (presentation) {
+      params.set("client", presentation.client);
+      params.set("cols", String(presentation.cols));
+      params.set("rows", String(presentation.rows));
+      if (presentation.lease) params.set("lease", presentation.lease);
+    }
     if (token) params.set("token", token);
     const query = params.toString();
     const wsUrl = query ? appendQuery(this.terminalWsUrl, query) : this.terminalWsUrl;

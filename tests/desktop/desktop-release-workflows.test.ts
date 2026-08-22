@@ -28,6 +28,14 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain("Smoke test macOS DMG mount");
     expect(workflow).toContain("desktop-update-fixture-server.mjs");
     expect(workflow).toContain('OPERATOR_UPDATE_FEED="http://127.0.0.1:${update_port}/"');
+    expect(workflow).toContain("runs-on: ${{ matrix.runner }}");
+    expect(workflow).toMatch(
+      /include:\n\s+- arch: arm64\n\s+runner: macos-latest\n\s+- arch: x64\n\s+runner: macos-15-intel/,
+    );
+    expect(workflow).toMatch(
+      /launch_attempts=20\n\s+for \(\(attempt = 1; attempt <= launch_attempts; attempt \+= 1\)\); do/,
+    );
+    expect(workflow).not.toContain("starts through Rosetta");
     expect(workflow).toContain('grep -Fq "[updates] update check completed: up to date" "$app_log"');
     expect(workflow).toContain('grep -Fq "[updates] check failed:" "$app_log"');
     expect(workflow).toContain('hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly');

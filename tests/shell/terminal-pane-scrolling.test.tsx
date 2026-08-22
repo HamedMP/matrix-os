@@ -90,6 +90,8 @@ const restorePlan = vi.hoisted(() => ({
   },
 }));
 
+const socketHealthConfigs = vi.hoisted(() => [] as Array<{ pingIntervalMs: number }>);
+
 const useActualRestorePlan = vi.hoisted(() => ({ current: false }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -269,12 +271,15 @@ vi.mock("@/lib/websocket-auth", () => ({
 }));
 
 vi.mock("@/lib/socket-health", () => ({
-  createSocketHealth: vi.fn(() => ({
+  createSocketHealth: vi.fn((config: { pingIntervalMs: number }) => {
+    socketHealthConfigs.push(config);
+    return {
     start: vi.fn(),
     stop: vi.fn(),
     pingNow: vi.fn(),
     receivedPong: vi.fn(),
-  })),
+    };
+  }),
 }));
 
 vi.mock("@/lib/posthog-client", () => ({
@@ -446,6 +451,7 @@ describe("TerminalPane scrolling", () => {
     WebSocketMock.instances.length = 0;
     ResizeObserverMock.instances.length = 0;
     buildAuthenticatedWebSocketUrl.mockClear();
+    socketHealthConfigs.length = 0;
     Reflect.deleteProperty(window, "visualViewport");
   });
 
@@ -470,6 +476,7 @@ describe("TerminalPane scrolling", () => {
       expect.objectContaining({
         session: "main",
         client: "hard",
+        lease: "exclusive",
         cols: "120",
         rows: "42",
       }),
@@ -477,6 +484,55 @@ describe("TerminalPane scrolling", () => {
     expect(createdFitAddons[0].proposeDimensions).toHaveBeenCalled();
     expect(createdFitAddons[0].fit).not.toHaveBeenCalled();
     expect(createdTerminals[0].resize).not.toHaveBeenCalled();
+  });
+
+  it("renews the focused web terminal lease well before gateway expiry", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-heartbeat"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    WebSocketMock.instances[0]!.onopen?.();
+
+    expect(socketHealthConfigs.at(-1)?.pingIntervalMs).toBe(10_000);
+  });
+
+  it("resets the web xterm before a replacement Zellij presentation", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-presentation-reset"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId="main"
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const socket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      socket.onmessage?.({ data: JSON.stringify({ type: "presentation-reset" }) });
+    });
+
+    expect(terminal.reset).toHaveBeenCalledOnce();
   });
 
   it("waits for a measurable hard pane instead of attaching with a destructive fallback", async () => {

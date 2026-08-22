@@ -247,6 +247,61 @@ describe("project-manager", () => {
     expect(runCommand.mock.calls.some(([, args]) => args.includes("fetch"))).toBe(false);
   });
 
+  it("treats a detached HEAD as a repository without an upstream", async () => {
+    const ownerScope = { type: "user" as const, id: "user_123" };
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      expect(command).toBe("git");
+      const invocation = args.join(" ");
+      if (invocation === "rev-parse --show-toplevel") {
+        return { stdout: `${join(homePath, "projects", "detached", "repo")}\n`, stderr: "" };
+      }
+      if (invocation === "status --porcelain --untracked-files=normal") {
+        return { stdout: "", stderr: "" };
+      }
+      if (invocation === "rev-parse --abbrev-ref HEAD") {
+        return { stdout: "HEAD\n", stderr: "" };
+      }
+      if (invocation === "rev-parse --abbrev-ref @{upstream}") {
+        const error = new Error("git exited with code 128") as Error & { stderr: string };
+        error.stderr = "fatal: HEAD does not point to a branch\n";
+        throw error;
+      }
+      throw new Error(`Unexpected command: ${command} ${invocation}`);
+    });
+    const manager = createProjectManager({ homePath, runCommand });
+    const created = await manager.createProject({
+      mode: "scratch",
+      name: "Detached",
+      slug: "detached",
+      ownerScope,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    await atomicWriteJson(join(homePath, "system", "projects", "detached", "config.json"), {
+      ...created.project,
+      kind: "github",
+      remote: "https://github.com/Matrix-OS/repo.git",
+      github: {
+        owner: "Matrix-OS",
+        repo: "repo",
+        htmlUrl: "https://github.com/Matrix-OS/repo",
+        authState: "ok",
+      },
+    });
+
+    await expect(manager.getCodeMetadata("detached", ownerScope)).resolves.toEqual({
+      ok: true,
+      path: join(homePath, "projects", "detached", "repo"),
+      repository: "Matrix-OS/repo",
+      isGitRepository: true,
+      branch: null,
+      clean: true,
+      ahead: 0,
+      behind: 0,
+      hasUpstream: false,
+    });
+  });
+
   it("lists branches for a folder project nested inside a repository", async () => {
     const repoRoot = join(homePath, "workspaces", "monorepo");
     await mkdir(join(repoRoot, "packages", "app"), { recursive: true });

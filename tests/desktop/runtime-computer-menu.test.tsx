@@ -148,11 +148,35 @@ describe("sidebar computer menu", () => {
     });
     render(<RuntimeComputerMenu collapsed={false} />);
     await waitFor(() => expect(screen.getByRole("button", { name: /Computer list unavailable/i })).not.toBeNull());
+    expect(screen.getByText("Main computer unavailable")).not.toBeNull();
     fireEvent.pointerDown(screen.getByRole("button", { name: /Computer list unavailable/i }), { button: 0, ctrlKey: false });
 
     expect(screen.getByText("Computers unavailable")).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "Retry computers" })).not.toBeNull();
     expect(screen.queryByText(/raw-secret|\/home\/matrix/i)).toBeNull();
+  });
+
+  it("distinguishes inventory loading from a computer that is starting", async () => {
+    let resolveInventory: ((value: typeof computers) => void) | undefined;
+    window.operator.invoke = vi.fn(async (channel: string) => {
+      if (channel !== "runtime:list-computers") return { ok: true };
+      return await new Promise<typeof computers>((resolve) => {
+        resolveInventory = resolve;
+      });
+    });
+
+    const view = render(<RuntimeComputerMenu collapsed={false} />);
+    expect(screen.getByText("Loading computers…")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Loading computers" })).not.toBeNull();
+
+    await act(async () => {
+      resolveInventory?.({ ...computers, selectedSlot: "preview" });
+    });
+    await waitFor(() => expect(screen.getByText("Preview Computer starting…")).not.toBeNull());
+    expect(screen.getByRole("button", {
+      name: "Change computer, currently Preview Computer, starting",
+    })).not.toBeNull();
+    view.unmount();
   });
 
   it("clears owner-scoped inventory across sign-out even when the visible identity is reused", async () => {

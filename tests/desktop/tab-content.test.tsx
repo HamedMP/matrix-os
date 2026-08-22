@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TabContent, { TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
+import { useUi } from "@desktop/renderer/src/stores/ui";
 
 const taskWorkspaceMock = vi.hoisted(() =>
   vi.fn(({ taskId, projectSlug }: { taskId: string; projectSlug?: string }) => (
@@ -35,7 +36,9 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({
   default: terminalsTabMock,
 }));
 vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({
-  default: () => <button type="button">Home workspace</button>,
+  default: ({ active }: { active: boolean }) => (
+    <button type="button" data-active={String(active)}>Home workspace</button>
+  ),
 }));
 vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
   default: () => <button type="button">Chat workspace</button>,
@@ -57,6 +60,7 @@ describe("TabContent", () => {
       api: null,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useUi.setState({ rendererOverlayCount: 0 });
   });
 
   afterEach(() => {
@@ -150,6 +154,20 @@ describe("TabContent", () => {
 
     act(() => useTabs.getState().focusTab(workspaceId));
     expect(workspace.getAttribute("data-active")).toBe("true");
+  });
+
+  it("detaches the active Home native view while a renderer overlay lease is held", () => {
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    render(<TabContent />);
+
+    const home = screen.getByRole("button", { name: "Home workspace" });
+    expect(home.getAttribute("data-active")).toBe("true");
+
+    act(() => useUi.getState().acquireRendererOverlay());
+    expect(home.getAttribute("data-active")).toBe("false");
+
+    act(() => useUi.getState().releaseRendererOverlay());
+    expect(home.getAttribute("data-active")).toBe("true");
   });
 
   it("renders the apps tab through the tracked AppLauncher module", () => {

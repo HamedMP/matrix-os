@@ -49,6 +49,7 @@ describe("kernel conversation contracts", () => {
         contentTruncated: false,
         timestamp: 2,
         tool: "Read",
+        toolDisplay: { kind: "file", preview: "README.md" },
       }],
       hasMore: false,
       limit: 50,
@@ -65,6 +66,13 @@ describe("kernel conversation contracts", () => {
     expect(KernelConversationHistoryResponseSchema.safeParse({
       ...valid,
       messages: [{ ...valid.messages[0], toolInput: { token: "secret" } }],
+    }).success).toBe(false);
+    expect(KernelConversationHistoryResponseSchema.safeParse({
+      ...valid,
+      messages: [{
+        ...valid.messages[0],
+        toolDisplay: { kind: "command", preview: "x".repeat(161) },
+      }],
     }).success).toBe(false);
     expect(KernelConversationHistoryResponseSchema.safeParse({
       ...valid,
