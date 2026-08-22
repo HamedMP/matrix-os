@@ -14,6 +14,7 @@ source /opt/matrix/env/host.env
 readonly APP_DIR="/opt/matrix/app"
 readonly STAGING_DIR="/opt/matrix/staging"
 readonly BIN_DIR="/opt/matrix/bin"
+readonly BOOTSTRAP_ATTESTATION_WRITER="$BIN_DIR/matrix-write-bootstrap-attestation"
 readonly VERSION_FILE="$APP_DIR/BUNDLE_VERSION"
 readonly RELEASE_FILE="/opt/matrix/release.json"
 readonly RELEASE_ROLLBACK_FILE="/opt/matrix/release.json.rollback"
@@ -1125,6 +1126,13 @@ maybe_clean_staging() {
   last_staging_cleanup="$now"
   clean_staging || true
 }
+
+if [ -x "$BOOTSTRAP_ATTESTATION_WRITER" ]; then
+  sudo -- "$BOOTSTRAP_ATTESTATION_WRITER" \
+    || log "WARN: bootstrap attestation unavailable"
+else
+  log "WARN: bootstrap attestation unavailable"
+fi
 
 # ── Main loop ────────────────────────────────────────────────────────
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"

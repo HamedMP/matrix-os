@@ -42,6 +42,7 @@ describe("IPC contract", () => {
       "state:set",
       "embed:open",
       "embed:set-bounds",
+      "embed:suspend-all",
       "embed:reload",
       "embed:close",
       "embed:retry-auth",
@@ -933,6 +934,7 @@ describe("IPC contract", () => {
       "notification:clicked",
       "update:available",
       "update:ready",
+      "update:manual-check-requested",
       "update:state-changed",
       "window:focus-changed",
     ] as const) {
@@ -945,18 +947,23 @@ describe("IPC contract", () => {
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "project" }).success).toBe(true);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "agents" }).success).toBe(false);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "terminals" }).success).toBe(true);
+    expect(EVENT_CHANNELS["update:manual-check-requested"].safeParse({}).success).toBe(true);
+    expect(
+      EVENT_CHANNELS["update:manual-check-requested"].safeParse({ source: "untrusted" }).success,
+    ).toBe(false);
   });
 
   it("bounds desktop update state and changelog payloads", () => {
-    const state = {
-      status: "ready",
-      version: "1.2.3",
-      progress: 100,
-    };
     const release = {
       version: "1.2.3",
       releaseDate: "2026-08-11T09:00:00.000Z",
       notes: "## Fixed\n\n- Terminal focus",
+    };
+    const state = {
+      status: "ready",
+      version: "1.2.3",
+      progress: 100,
+      release,
     };
 
     expect(INVOKE_CHANNELS["update:get-state"].response.safeParse(state).success).toBe(true);
@@ -966,6 +973,29 @@ describe("IPC contract", () => {
       }).success,
     ).toBe(true);
     expect(EVENT_CHANNELS["update:state-changed"].safeParse(state).success).toBe(true);
+    expect(
+      EVENT_CHANNELS["update:state-changed"].safeParse({
+        status: "ready",
+        version: "1.2.3",
+        progress: 100,
+      }).success,
+    ).toBe(false);
+    expect(
+      EVENT_CHANNELS["update:state-changed"].safeParse(state).success,
+    ).toBe(true);
+    expect(
+      EVENT_CHANNELS["update:state-changed"].safeParse({
+        ...state,
+        release: { ...release, version: "1.2.4" },
+      }).success,
+    ).toBe(false);
+    expect(
+      EVENT_CHANNELS["update:state-changed"].safeParse({
+        ...state,
+        status: "downloading",
+        release,
+      }).success,
+    ).toBe(false);
     expect(
       INVOKE_CHANNELS["update:get-whats-new"].response.safeParse({
         release,

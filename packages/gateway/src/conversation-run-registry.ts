@@ -27,16 +27,27 @@ type Subscriber = (message: ConversationRunMessage) => void;
 
 interface AttachOptions {
   replayBuffered?: boolean;
+  replayCompleted?: boolean;
 }
 
 export interface ConversationRunAttachment {
   detach: () => void;
   bufferedMessages: ConversationRunMessage[];
+  runState: "active" | "completed";
+}
+
+export function conversationHistoryRefreshRequired(
+  attachment: ConversationRunAttachment | null,
+  replayCompleted?: boolean,
+): boolean {
+  return attachment === null
+    || (attachment.runState === "completed" && replayCompleted === false);
 }
 
 interface RunState {
   readonly sessionId: string;
   readonly createdAt: number;
+  readonly activeHistoryStart: number;
   readonly messages: ConversationRunMessage[];
   readonly subscribers: Set<Subscriber>;
   completedAt: number | null;
@@ -56,12 +67,13 @@ export class ConversationRunRegistry {
     this.completedRunRetentionMs = options?.completedRunRetentionMs ?? 30_000;
   }
 
-  begin(sessionId: string): void {
+  begin(sessionId: string, activeHistoryStart = 0): void {
     this.evictExpiredCompletedRuns();
     this.evictIfNeeded(sessionId);
     this.runs.set(sessionId, {
       sessionId,
       createdAt: Date.now(),
+      activeHistoryStart,
       messages: [],
       subscribers: new Set(),
       completedAt: null,
@@ -119,9 +131,15 @@ export class ConversationRunRegistry {
     return true;
   }
 
+  getActiveHistoryStart(sessionId: string): number | null {
+    const run = this.runs.get(sessionId);
+    return run && run.completedAt === null ? run.activeHistoryStart : null;
+  }
+
   attachWithBufferedSnapshot(
     sessionId: string,
     subscriber: Subscriber,
+    options?: Pick<AttachOptions, "replayCompleted">,
   ): ConversationRunAttachment | null {
     this.evictExpiredCompletedRuns();
     const run = this.runs.get(sessionId);
@@ -131,8 +149,9 @@ export class ConversationRunRegistry {
 
     if (run.completedAt !== null) {
       return {
-        bufferedMessages: [...run.messages],
+        bufferedMessages: options?.replayCompleted === false ? [] : [...run.messages],
         detach: () => {},
+        runState: "completed",
       };
     }
 
@@ -149,6 +168,7 @@ export class ConversationRunRegistry {
       detach: () => {
         run.subscribers.delete(subscriber);
       },
+      runState: "active",
     };
   }
 
@@ -157,7 +177,7 @@ export class ConversationRunRegistry {
     subscriber: Subscriber,
     options?: AttachOptions,
   ): (() => void) | null {
-    const attachment = this.attachWithBufferedSnapshot(sessionId, subscriber);
+    const attachment = this.attachWithBufferedSnapshot(sessionId, subscriber, options);
     if (!attachment) {
       return null;
     }

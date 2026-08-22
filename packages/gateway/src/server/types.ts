@@ -22,7 +22,11 @@ export type ServerMessage =
   | { type: "task:updated"; taskId: string; status: string }
   | { type: "provision:start"; appCount: number }
   | { type: "provision:complete"; total: number; succeeded: number; failed: number }
-  | { type: "session:switched"; sessionId: string }
+  | {
+      type: "session:switched";
+      sessionId: string;
+      historyRefreshRequired: boolean;
+    }
   | {
       type: "approval:request";
       id: string;

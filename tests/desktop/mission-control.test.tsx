@@ -9,6 +9,7 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useBoard, type Project } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
+import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 vi.mock("../../desktop/src/renderer/src/features/mission-control/Sidebar", () => ({
@@ -54,6 +55,7 @@ vi.mock("../../desktop/src/renderer/src/lib/kernel-wiring", () => ({
 describe("MissionControl", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useApps.setState(useApps.getInitialState(), true);
     useShellSessions.setState({
       ...useShellSessions.getInitialState(),
       load: vi.fn().mockResolvedValue([]),
@@ -143,6 +145,40 @@ describe("MissionControl", () => {
     render(<MissionControl />);
 
     await waitFor(() => expect(load).toHaveBeenCalledWith(api));
+  });
+
+  it("warms the app catalog before the Apps tab is opened", async () => {
+    const api = { get: vi.fn() };
+    const load = vi.fn().mockResolvedValue(undefined);
+    useApps.setState({ apps: [], loaded: false, loading: false, error: null, load });
+    useBoard.setState({ loadProjects: vi.fn(async () => undefined) });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: api as never,
+    });
+
+    render(<MissionControl />);
+
+    await waitFor(() => expect(load).toHaveBeenCalledWith(api));
+  });
+
+  it("warms resolved catalog icons during desktop startup", async () => {
+    const api = { get: vi.fn().mockResolvedValue({ apps: [{ slug: "notes", name: "Notes" }] }) };
+    useBoard.setState({ loadProjects: vi.fn(async () => undefined) });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: api as never,
+    });
+
+    render(<MissionControl />);
+
+    await waitFor(() => expect(document.head.querySelector('link[href="https://platform.test/icons/notes.png"]')).not.toBeNull());
   });
 
   it("restarts shell synchronization when the selected runtime changes", async () => {

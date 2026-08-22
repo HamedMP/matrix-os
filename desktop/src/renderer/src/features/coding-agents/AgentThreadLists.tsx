@@ -89,9 +89,11 @@ export function ThreadList({
 export function CreatedThreadHandleList({
   summary,
   onOpenThread,
+  projectId,
 }: {
   summary: RuntimeSummary;
   onOpenThread?: (thread: AgentThreadSummary) => void;
+  projectId?: string;
 }) {
   const createdThreadHandles = useCodingAgentWorkspace((s) => s.createdThreadHandles);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
@@ -100,7 +102,10 @@ export function CreatedThreadHandleList({
     ...summary.activeThreads.items.map((thread) => thread.id),
     ...summary.attentionThreads.items.map((thread) => thread.id),
   ]);
-  const visibleHandles = createdThreadHandles.filter((thread) => !summaryThreadIds.has(thread.id));
+  const visibleHandles = createdThreadHandles.filter((thread) =>
+    !summaryThreadIds.has(thread.id)
+    && (projectId === undefined || thread.projectId === projectId)
+  );
   const openThread = onOpenThread ?? ((thread: AgentThreadSummary) => void loadThreadSnapshot(thread.id));
 
   if (visibleHandles.length === 0) return null;

@@ -461,6 +461,12 @@ runcmd:
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix || true
   - |
     set -eu
+    bootstrap_started_at="$(date +%s)"
+    log_bootstrap_phase() {
+      phase_now="$(date +%s)"
+      printf 'matrix-host-timing phase=%s elapsed_seconds=%s image_source=%s\n' \
+        "$1" "$((phase_now - bootstrap_started_at))" "${MATRIX_IMAGE_SOURCE:-clean_image}"
+    }
     # Swap first so nothing later in provisioning (or after) can OOM the box.
     # Fleet default 8GiB, shrunk to keep >=10GiB free on /; skipped below 2GiB.
     # matrix-ensure-swap (host bundle) reconciles the same policy on updates.
@@ -485,28 +491,64 @@ runcmd:
       printf 'vm.swappiness=10\n' > /etc/sysctl.d/99-matrix-swap.conf
       sysctl -p /etc/sysctl.d/99-matrix-swap.conf
     ) || echo "matrix-host: swap setup failed (non-fatal)" >&2
-    apt_get_update() {
-      apt-get update \
-        -o Acquire::Retries=5 \
-        -o Acquire::http::Timeout=20 \
-        -o Acquire::https::Timeout=20
-    }
-
-    if ! apt_get_update; then
-      find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i \
-          -e 's|https://mirror.hetzner.com/ubuntu/packages|http://archive.ubuntu.com/ubuntu|g' \
-          -e 's|https://mirror.hetzner.com/ubuntu/security|http://security.ubuntu.com/ubuntu|g' \
-          {} +
-      apt_get_update
+    . /opt/matrix/env/host.env
+    exact_snapshot_fast_path=false
+    if [ -x /opt/matrix/bin/matrix-golden-snapshot-fast-path ] \
+      && MATRIX_IMAGE_SOURCE="$MATRIX_IMAGE_SOURCE" \
+        MATRIX_IMAGE_VERSION="$MATRIX_IMAGE_VERSION" \
+        MATRIX_SNAPSHOT_SOURCE_VERSION="$MATRIX_SNAPSHOT_SOURCE_VERSION" \
+        MATRIX_TARGET_BUNDLE_SHA256="$MATRIX_TARGET_BUNDLE_SHA256" \
+        /opt/matrix/bin/matrix-golden-snapshot-fast-path; then
+      exact_snapshot_fast_path=true
+      echo "matrix-host: exact golden snapshot fast path selected"
+    else
+      echo "matrix-host: full bootstrap required"
     fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
-    add-apt-repository -y universe
-    apt_get_update
+    if [ "$exact_snapshot_fast_path" != true ]; then
+      [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }
+      curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 900 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz
+      curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256" -o /tmp/matrix-host.tgz.sha256
+      expected="$(awk '{print $1}' /tmp/matrix-host.tgz.sha256)"
+      if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ] && [ "$expected" != "$MATRIX_TARGET_BUNDLE_SHA256" ]; then
+        echo "matrix-host: target bundle provenance mismatch" >&2
+        exit 1
+      fi
+      actual="$(sha256sum /tmp/matrix-host.tgz | awk '{print $1}')"
+      [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
+      if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ]; then
+        rm -rf /opt/matrix/app /opt/matrix/bin /opt/matrix/runtime /opt/matrix/systemd
+      fi
+      tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
+    fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh
-    install -d -o root -g root -m 0755 /etc/apparmor.d
-    cat >/etc/apparmor.d/bwrap <<'EOF'
+    if [ -x /opt/matrix/bin/matrix-prepare-host-prerequisites ]; then
+      timeout --kill-after=30 1800 /opt/matrix/bin/matrix-prepare-host-prerequisites
+    else
+      # Transitional fallback for releases built before the extracted
+      # prerequisite script existed. Remove after stable no longer references
+      # such a bundle.
+      apt_get_update() {
+        timeout --kill-after=30 300 apt-get update \
+          -o Acquire::Retries=5 \
+          -o Acquire::http::Timeout=20 \
+          -o Acquire::https::Timeout=20
+      }
+
+      if ! apt_get_update; then
+        find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i \
+            -e 's|https://mirror.hetzner.com/ubuntu/packages|http://archive.ubuntu.com/ubuntu|g' \
+            -e 's|https://mirror.hetzner.com/ubuntu/security|http://security.ubuntu.com/ubuntu|g' \
+            {} +
+        apt_get_update
+      fi
+
+      timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
+      timeout --kill-after=30 120 add-apt-repository -y universe
+      apt_get_update
+      timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh
+      install -d -o root -g root -m 0755 /etc/apparmor.d
+      cat >/etc/apparmor.d/bwrap <<'EOF'
     abi <abi/4.0>,
     include <tunables/global>
 
@@ -515,10 +557,14 @@ runcmd:
       include if exists <local/bwrap>
     }
     EOF
-    systemctl reload apparmor
-    curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
-    unzip -q /tmp/awscliv2.zip -d /tmp
-    /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+      systemctl reload apparmor
+      if ! command -v aws >/dev/null 2>&1; then
+        curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+        unzip -q /tmp/awscliv2.zip -d /tmp
+        /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+      fi
+    fi
+    log_bootstrap_phase system_prerequisites_ready
 
     install -d -o root -g matrix -m 0770 /opt/matrix
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
@@ -587,31 +633,23 @@ runcmd:
     ln -sfn /home/matrix/home /home/matrixos/home
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/r2.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
-    . /opt/matrix/env/host.env
-    [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }
-    curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 900 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz
-    curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256" -o /tmp/matrix-host.tgz.sha256
-    expected="$(awk '{print $1}' /tmp/matrix-host.tgz.sha256)"
-    if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ] && [ "$expected" != "$MATRIX_TARGET_BUNDLE_SHA256" ]; then
-      echo "matrix-host: target bundle provenance mismatch" >&2
-      exit 1
-    fi
-    actual="$(sha256sum /tmp/matrix-host.tgz | awk '{print $1}')"
-    [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
-    if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ] \
-      && [ -n "${MATRIX_SNAPSHOT_SOURCE_VERSION:-}" ] \
-      && [ "$MATRIX_SNAPSHOT_SOURCE_VERSION" != "${MATRIX_IMAGE_VERSION:-}" ]; then
-      rm -rf /opt/matrix/app /opt/matrix/bin /opt/matrix/runtime /opt/matrix/systemd
-    fi
-    tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
-    chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
-    if [ -d /opt/matrix/terminal-runtime ]; then
-      chown -R root:root /opt/matrix/terminal-runtime
-      if [ -x /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs ]; then
-        install -o root -g root -m 0755 /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs /usr/local/bin/matrix-terminal-attach
+    # The builder performs this recursive normalization before writing the
+    # exact-bundle readiness proof. A certified immutable clone preserves that
+    # tree, so walking it again only delays first boot. Clean images, legacy
+    # snapshots, and mismatched snapshots retain the full repair path.
+    if [ "$exact_snapshot_fast_path" != true ]; then
+      chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+      if [ -d /opt/matrix/terminal-runtime ]; then
+        chown -R root:root /opt/matrix/terminal-runtime
       fi
+      chmod -R g+rwX /opt/matrix/app
     fi
-    chmod -R g+rwX /opt/matrix/app
+    log_bootstrap_phase host_bundle_ready
+    chown root:matrix /opt/matrix/app
+    chmod g+rwx /opt/matrix/app
+    if [ -x /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs ]; then
+      install -o root -g root -m 0755 /opt/matrix/terminal-runtime/current/matrix-terminal-attach.mjs /usr/local/bin/matrix-terminal-attach
+    fi
     if [ -f /opt/matrix/release.json ]; then
       bundle_version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' /opt/matrix/release.json | head -n 1)"
       if [ -n "$bundle_version" ]; then
@@ -683,6 +721,7 @@ runcmd:
     systemctl disable matrix-openclaw-gateway.service || true
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
+    log_bootstrap_phase core_services_started
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2
     systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2

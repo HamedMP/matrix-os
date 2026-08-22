@@ -49,7 +49,6 @@ import { CodingAgentProjectWorkspaceRequestSchema } from "./coding-agent-project
 import {
   DesktopReleaseNotesSchema,
   DesktopUpdateSnapshotSchema,
-  DesktopUpdateStatusSchema,
   DesktopUpdateVersionSchema,
 } from "./desktop-update";
 
@@ -322,6 +321,10 @@ export const INVOKE_CHANNELS = {
     request: z.object({ embedId: z.string().min(1).max(64), active: z.boolean() }).strict(),
     response: Ok,
   },
+  "embed:suspend-all": {
+    request: Empty,
+    response: Ok,
+  },
   "embed:reload": {
     request: z.object({ embedId: z.string().min(1).max(64) }).strict(),
     response: Ok,
@@ -368,7 +371,7 @@ export const INVOKE_CHANNELS = {
   },
   "update:check": {
     request: Empty,
-    response: z.object({ status: DesktopUpdateStatusSchema }).strict(),
+    response: DesktopUpdateSnapshotSchema,
   },
   "update:get-state": {
     request: Empty,
@@ -420,6 +423,7 @@ export const EVENT_CHANNELS = {
   }).strict(),
   "update:available": z.object({ version: z.string().max(64) }).strict(),
   "update:ready": z.object({ version: z.string().max(64) }).strict(),
+  "update:manual-check-requested": z.strictObject({}),
   "update:state-changed": DesktopUpdateSnapshotSchema,
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
   "app:zoom-changed": ZoomFactorResultSchema,

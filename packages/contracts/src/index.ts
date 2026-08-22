@@ -1,10 +1,11 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.147.0";
+export const CODEX_VERIFIED_VERSION = "0.149.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#agent-runtime-config";
 export * from "#hermes-configuration";
+export * from "#kernel-result";
 export * from "#terminal-links";
 export { IsoTimestampSchema } from "#contract-primitives";
 
@@ -279,6 +280,11 @@ export const KernelConversationHistoryQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(50),
 }).strict();
 
+export const KernelConversationToolDisplaySchema = z.object({
+  kind: z.enum(["command", "file", "search", "text"]),
+  preview: boundedDisplayText(160),
+}).strict();
+
 export const KernelConversationHistoryMessageSchema = z.object({
   index: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   role: z.enum(["user", "assistant", "system"]),
@@ -286,6 +292,7 @@ export const KernelConversationHistoryMessageSchema = z.object({
   contentTruncated: z.boolean(),
   timestamp: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   tool: z.string().min(1).max(128).optional(),
+  toolDisplay: KernelConversationToolDisplaySchema.optional(),
 }).strict();
 
 export const KernelConversationHistoryResponseSchema = z.object({
@@ -329,6 +336,7 @@ export type KernelConversationSummary = z.infer<typeof KernelConversationSummary
 export type KernelConversationHistoryQuery = z.infer<typeof KernelConversationHistoryQuerySchema>;
 export type KernelConversationHistoryMessage = z.infer<typeof KernelConversationHistoryMessageSchema>;
 export type KernelConversationHistoryResponse = z.infer<typeof KernelConversationHistoryResponseSchema>;
+export type KernelConversationToolDisplay = z.infer<typeof KernelConversationToolDisplaySchema>;
 export type KernelConversationDeleteResponse = z.infer<typeof KernelConversationDeleteResponseSchema>;
 export type KernelConversationMutationErrorCode = z.infer<
   typeof KernelConversationMutationErrorCodeSchema

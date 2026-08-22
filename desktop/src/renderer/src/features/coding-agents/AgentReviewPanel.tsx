@@ -7,6 +7,7 @@ import {
   type FileReadRequest,
   type FileReadResponse,
   type FileSearchResponse,
+  type ReviewSummary,
   type ReviewSnapshot,
   type RuntimeSummary,
   type SourceControlCreatePullRequestRequest,
@@ -50,11 +51,15 @@ export function ReviewList({
   canPrepareCommit,
   canCreateFollowUp,
   onAskHunkFollowUp,
+  items: scopedItems,
+  projectId,
 }: {
   canReadFiles: boolean;
   canPrepareCommit: boolean;
   canCreateFollowUp: boolean;
   onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
+  items?: readonly ReviewSummary[];
+  projectId?: string;
 }) {
   const reviewsStatus = useCodingAgentWorkspace((s) => s.reviewsStatus);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
@@ -79,7 +84,15 @@ export function ReviewList({
   const saveFileContent = useCodingAgentWorkspace((s) => s.saveFileContent);
   const prepareSourceCommit = useCodingAgentWorkspace((s) => s.prepareSourceCommit);
   const createSourcePullRequest = useCodingAgentWorkspace((s) => s.createSourcePullRequest);
-  const items = reviews?.items ?? [];
+  const items = scopedItems ?? reviews?.items ?? [];
+  const selectedReview = selectedReviewId
+    ? reviews?.items.find((review) => review.id === selectedReviewId)
+    : undefined;
+  const reviewSelectionInScope = projectId === undefined || selectedReview?.projectId === projectId;
+  const visibleReviewSnapshot = reviewSelectionInScope
+    && (projectId === undefined || reviewSnapshot?.review.projectId === projectId)
+    ? reviewSnapshot
+    : null;
 
   return (
     <Section title="Review" count={items.length}>
@@ -124,9 +137,9 @@ export function ReviewList({
           </button>
         ))}
         <ReviewSnapshotPanel
-          status={reviewSnapshotStatus}
-          snapshot={reviewSnapshot}
-          error={reviewSnapshotError}
+          status={reviewSelectionInScope ? reviewSnapshotStatus : "idle"}
+          snapshot={visibleReviewSnapshot}
+          error={reviewSelectionInScope ? reviewSnapshotError : null}
           canReadFiles={canReadFiles}
           fileReadStatus={fileReadStatus}
           fileRead={fileRead}

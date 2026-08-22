@@ -185,6 +185,27 @@ describe("CommandPalette", () => {
     expect(screen.queryByText("Open Agents")).toBeNull();
   });
 
+  it("opens project results on the sessions overview instead of restoring a stale subview", () => {
+    const openTab = vi.fn();
+    useTabs.setState({ openTab });
+    useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
+    useProjectView.setState({
+      entries: {
+        "matrix-os": { view: "board", selectedThreadId: "thread-old", touchedAt: Date.now() },
+      },
+    });
+
+    render(<CommandPalette />);
+    fireEvent.click(screen.getByText("Matrix OS"));
+
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("overview");
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+    });
+  });
+
   it("routes new agent runs into the default project's chats view", async () => {
     const openTab = vi.fn();
     useTabs.setState({ openTab });

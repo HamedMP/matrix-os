@@ -11,6 +11,7 @@ import {
   KernelConversationMutationErrorCodeSchema,
   KernelConversationSummarySchema,
   type KernelConversationContextProjection,
+  isKernelResultFailureText,
 } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { z } from "zod/v4";
@@ -152,6 +153,7 @@ function historySnapshot(
       content: message.content,
       timestamp: message.timestamp,
       ...(message.tool ? { tool: message.tool } : {}),
+      ...(message.toolDisplay ? { toolDisplay: message.toolDisplay } : {}),
     })),
   };
 }
@@ -177,6 +179,7 @@ interface HermesChatState {
   indexSequence: number;
   loadSequence: number;
   contextSequence: number;
+  transcriptRevision: number;
   seenReplayEventIds: string[];
   send: (text: string) => void;
   abort: () => void;
@@ -185,6 +188,7 @@ interface HermesChatState {
   refreshConversations: (api: ApiClient) => Promise<void>;
   createConversation: (api: ApiClient) => Promise<string | null>;
   openConversation: (api: ApiClient, id: string) => Promise<boolean>;
+  refreshConversationHistory: (api: ApiClient, id: string) => Promise<boolean>;
   deleteConversation: (api: ApiClient, id: string) => Promise<boolean>;
   updateConversationContext: (
     api: ApiClient,
@@ -199,6 +203,26 @@ interface HermesChatState {
 
 function nextId(): string {
   return crypto.randomUUID();
+}
+
+const UNSUCCESSFUL_RESULT_MESSAGE = "The agent could not complete this turn. Try again.";
+
+function resultHasErrors(event: ChatEvent): boolean {
+  if (event.type !== "kernel:result" || !event.data || typeof event.data !== "object") {
+    return false;
+  }
+  const errors = Reflect.get(event.data, "errors");
+  return (Array.isArray(errors) && errors.length > 0)
+    || isKernelResultFailureText(Reflect.get(event.data, "result"));
+}
+
+function resultFallbackText(event: ChatEvent): string | null {
+  if (event.type !== "kernel:result" || resultHasErrors(event) || !event.data || typeof event.data !== "object") {
+    return null;
+  }
+  const result = Reflect.get(event.data, "result");
+  if (typeof result !== "string") return null;
+  return result.trim() || null;
 }
 
 export const useHermesChat = create<HermesChatState>()((set, get) => ({
@@ -222,6 +246,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   indexSequence: 0,
   loadSequence: 0,
   contextSequence: 0,
+  transcriptRevision: 0,
   seenReplayEventIds: [],
 
   send: (text) => {
@@ -239,6 +264,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       messages: [...state.messages, userMessage].slice(-TRANSCRIPT_CAP),
       status: "thinking",
       activeRequestId: requestId,
+      transcriptRevision: state.transcriptRevision + 1,
     }));
     const sent = sendKernelMessage({
       text: trimmed,
@@ -270,7 +296,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   newChat: () => {
     const { activeRequestId } = get();
     if (activeRequestId) abortKernelRequest(activeRequestId);
-    set({
+    set((state) => ({
       messages: [],
       sessionId: null,
       status: "idle",
@@ -283,7 +309,8 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       contextStatus: "idle",
       contextError: null,
       seenReplayEventIds: [],
-    });
+      transcriptRevision: state.transcriptRevision + 1,
+    }));
   },
 
   showIndex: () => {
@@ -366,7 +393,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       }
       const activeRequestId = get().activeRequestId;
       if (activeRequestId) abortKernelRequest(activeRequestId);
-      set({
+      set((state) => ({
         view: "conversation",
         sessionId: parsed.data.id,
         messages: [],
@@ -379,7 +406,8 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         contextStatus: "ready",
         contextError: null,
         seenReplayEventIds: [],
-      });
+        transcriptRevision: state.transcriptRevision + 1,
+      }));
       switchKernelSession(parsed.data.id);
       await get().refreshConversations(api);
       return isCurrentRuntimeGeneration(generation) ? parsed.data.id : null;
@@ -431,13 +459,54 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         contextError: null,
         contextSequence: state.contextSequence + 1,
         seenReplayEventIds: [],
+        transcriptRevision: state.transcriptRevision + 1,
       }));
-      switchKernelSession(parsedId.data);
+      // The history endpoint excludes assistant/tool rows from an active run,
+      // so its snapshot and the request-scoped active replay are disjoint.
+      // Completed replay stays suppressed; if the run settles between this
+      // snapshot and attachment, the Gateway ack requests a canonical refresh.
+      switchKernelSession(parsedId.data, { replayCompleted: false });
       return true;
     } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(generation) || get().loadSequence !== sequence) return false;
       console.warn("[hermes-chat] conversation load failed", error instanceof Error ? error.name : typeof error);
       set({ loadStatus: "error", loadError: LOAD_ERROR_MESSAGE, loadingConversationId: null });
+      return false;
+    }
+  },
+
+  refreshConversationHistory: async (api, id) => {
+    const parsedId = KernelConversationIdSchema.safeParse(id);
+    if (!parsedId.success || get().sessionId !== parsedId.data) return false;
+    const generation = captureRuntimeGeneration();
+    const revision = get().transcriptRevision;
+    try {
+      const snapshot = historySnapshot(
+        parsedId.data,
+        await api.get<unknown>(`/api/conversations/${encodeURIComponent(parsedId.data)}?limit=50`),
+      );
+      const state = get();
+      if (
+        !snapshot
+        || !isCurrentRuntimeGeneration(generation)
+        || state.sessionId !== parsedId.data
+        || state.transcriptRevision !== revision
+      ) {
+        return false;
+      }
+      set((current) => ({
+        messages: snapshot.messages.slice(-TRANSCRIPT_CAP),
+        status: "idle",
+        activeRequestId: null,
+        seenReplayEventIds: [],
+        transcriptRevision: current.transcriptRevision + 1,
+      }));
+      return true;
+    } catch (error: unknown) {
+      console.warn(
+        "[hermes-chat] conversation history refresh failed",
+        error instanceof Error ? error.name : typeof error,
+      );
       return false;
     }
   },
@@ -480,6 +549,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
                 contextStatus: "idle" as const,
                 contextError: null,
                 seenReplayEventIds: [],
+                transcriptRevision: state.transcriptRevision + 1,
               }
             : {}),
         };
@@ -587,6 +657,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       indexSequence: state.indexSequence + 1,
       loadSequence: state.loadSequence + 1,
       contextSequence: state.contextSequence + 1,
+      transcriptRevision: state.transcriptRevision + 1,
       seenReplayEventIds: [],
     }));
   },
@@ -615,7 +686,31 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       const seenReplayEventIds = eventId
         ? [...state.seenReplayEventIds, eventId].slice(-REPLAY_EVENT_CAP)
         : state.seenReplayEventIds;
-      const messages = reduceChat(state.messages, event).slice(-TRANSCRIPT_CAP);
+      // Agent SDK unsuccessful results arrive as terminal `kernel:result`
+      // frames whose data contains provider errors. Keep those details out of
+      // renderer state while making the otherwise silent failed turn visible.
+      const fallbackText = resultFallbackText(event);
+      const alreadyStreamed = event.requestId
+        ? state.messages.some((message) => (
+            message.requestId === event.requestId
+            && message.role === "assistant"
+            && !message.tool
+          ))
+        : false;
+      const presentationEvent: ChatEvent = resultHasErrors(event)
+        ? {
+            type: "kernel:error",
+            message: UNSUCCESSFUL_RESULT_MESSAGE,
+            ...(event.requestId ? { requestId: event.requestId } : {}),
+          }
+        : fallbackText && !alreadyStreamed
+          ? {
+              type: "kernel:text",
+              text: fallbackText,
+              ...(event.requestId ? { requestId: event.requestId } : {}),
+            }
+        : event;
+      const messages = reduceChat(state.messages, presentationEvent).slice(-TRANSCRIPT_CAP);
       let status = state.status;
       let active: string | null = state.activeRequestId;
       if (event.type === "kernel:text") status = "streaming";
@@ -623,7 +718,13 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         status = "idle";
         active = null;
       }
-      return { messages, status, activeRequestId: active, seenReplayEventIds };
+      return {
+        messages,
+        status,
+        activeRequestId: active,
+        seenReplayEventIds,
+        transcriptRevision: state.transcriptRevision + 1,
+      };
     });
     return true;
   },

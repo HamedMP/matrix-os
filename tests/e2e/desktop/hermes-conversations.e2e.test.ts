@@ -87,6 +87,7 @@ suite("persistent Hermes Desktop conversations", () => {
     await expect.poll(() => gateway.state.kernelMessages).toContainEqual({
       type: "switch_session",
       sessionId: "hermes-desktop-index",
+      replayCompleted: false,
     });
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();
@@ -97,6 +98,7 @@ suite("persistent Hermes Desktop conversations", () => {
     await expect.poll(() => gateway.state.kernelMessages).toContainEqual({
       type: "switch_session",
       sessionId: "hermes-provider-check",
+      replayCompleted: false,
     });
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();

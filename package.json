@@ -22,6 +22,7 @@
     "dev:mobile-shell": "pnpm --filter '@matrix-os/observability' build && pnpm --filter '@matrix-os/kernel' build && echo 'Mobile shell: http://localhost:3000/?launch=__terminal__' && (MATRIX_AUTH_ALLOW_INSECURE_DEV=1 bun run --filter '@matrix-os/gateway' dev & E2E_TEST_BYPASS=1 NEXT_PUBLIC_E2E_TEST_BYPASS=1 bun run --filter './shell' dev)",
     "dev:desktop": "pnpm --filter desktop dev",
     "build:desktop": "pnpm --filter desktop build",
+    "generate:desktop-dmg-background": "node scripts/generate-desktop-dmg-background.mjs",
     "build:shell:production": "pnpm --filter './shell' build",
     "dev:proxy": "pnpm --filter '@matrix-os/observability' build && bun run --filter '@matrix-os/proxy' dev",
     "dev:platform": "pnpm --filter '@matrix-os/observability' build && bun run --filter '@matrix-os/platform' dev",

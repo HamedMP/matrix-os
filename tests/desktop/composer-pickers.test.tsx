@@ -459,18 +459,19 @@ describe("composer provider/mode pickers", () => {
     });
   });
 
-  it("shows the thread provider as a display-only picker and no mode picker in a live thread", async () => {
+  it("shows the thread provider as a semantic label and no mode picker in a live thread", async () => {
     mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("region", { name: "Conversation Plan the auth work" });
 
     const composer = (await screen.findByLabelText("Message conversation")) as HTMLTextAreaElement;
-    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
-    expect(provider.value).toBe("codex");
+    const provider = await screen.findByLabelText("Agent provider");
+    expect(provider.textContent).toBe("Codex");
     // Turns cannot change provider or mode (CreateAgentTurnRequest carries only
     // message/attachments/clientRequestId), so the picker is display-only and
     // no mode picker is offered in a thread.
-    expect(provider.disabled).toBe(true);
+    expect(provider.tagName).toBe("SPAN");
+    expect(screen.queryByRole("combobox", { name: "Agent provider" })).toBeNull();
     expect(provider.closest(".prompt-card")).not.toBeNull();
     expect(screen.queryByLabelText("Agent mode")).toBeNull();
     expect(composer).toBeTruthy();
@@ -481,10 +482,10 @@ describe("composer provider/mode pickers", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("region", { name: "Conversation Plan the auth work" });
 
-    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
-    expect(provider.value).toBe("removed-provider");
-    expect(provider.selectedOptions[0]?.textContent).toBe("removed-provider (unavailable)");
-    expect(provider.disabled).toBe(true);
+    const provider = await screen.findByLabelText("Agent provider");
+    expect(provider.textContent).toBe("removed-provider (unavailable)");
+    expect(provider.tagName).toBe("SPAN");
+    expect(screen.queryByRole("combobox", { name: "Agent provider" })).toBeNull();
     expect(screen.queryByLabelText("Agent mode")).toBeNull();
   });
 });

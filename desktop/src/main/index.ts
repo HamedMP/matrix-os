@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell } from "electron";
+import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
@@ -35,11 +35,20 @@ import {
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
+import {
+  fitWindowBoundsToWorkArea,
+  type FittedWindowBounds,
+  type WindowBounds,
+} from "./platform/window-bounds";
 import { createUpdater } from "./updates";
+import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
+const DESKTOP_APP_NAME = "Matrix OS";
+
+app.setName(DESKTOP_APP_NAME);
 
 // Test isolation: e2e runs point userData at a temp dir so they never touch
 // the real profile or credential.
@@ -50,6 +59,7 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
+let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
   try {
@@ -88,11 +98,9 @@ async function openExternalHttpUrl(url: string): Promise<void> {
   await shell.openExternal(externalUrl);
 }
 
-function createWindow(bounds: { x?: number; y?: number; width: number; height: number }): BrowserWindow {
+function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const win = new BrowserWindow({
     ...bounds,
-    minWidth: 880,
-    minHeight: 560,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 14, y: 13 },
     backgroundColor: "#0e0e13",
@@ -235,6 +243,18 @@ if (!gotLock) {
           }).show();
         },
       });
+      handleUpdateBeforeQuit = createUpdateAwareBeforeQuit({
+        status: () => updater.status(),
+        isInstallStarted: () => updater.isInstallStarted(),
+        install: () => updater.install(),
+        quit: () => app.quit(),
+        reportError: (error) => {
+          console.warn(
+            "[updates] could not install ready update while quitting:",
+            error instanceof Error ? error.message : String(error),
+          );
+        },
+      });
       const codingAgentThreadEvents = createCodingAgentThreadEventStreamer({
         auth,
         emit: sendEvent,
@@ -266,7 +286,10 @@ if (!gotLock) {
           codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
         },
-        getUpdateStatus: () => updater.status(),
+        checkUpdate: async () => {
+          await updater.check();
+          return updater.snapshot();
+        },
         getUpdateSnapshot: () => updater.snapshot(),
         installUpdate: () => updater.install(),
         getWhatsNew: async () => {
@@ -336,7 +359,14 @@ if (!gotLock) {
       };
       const openMainWindow = async () => {
         const savedBounds = await store.get("windowBounds");
-        mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });
+        const requestedBounds: WindowBounds = savedBounds ?? { width: 1280, height: 820 };
+        const display = screen.getDisplayMatching({
+          x: requestedBounds.x ?? 0,
+          y: requestedBounds.y ?? 0,
+          width: requestedBounds.width,
+          height: requestedBounds.height,
+        });
+        mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
         mainWindow.on("resize", persistBounds);
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
@@ -347,7 +377,13 @@ if (!gotLock) {
       };
 
       await openMainWindow();
-      installAppMenu(() => mainWindow);
+      installAppMenu(
+        () => mainWindow,
+        () => {
+          focusMainWindow();
+          void updater.check();
+        },
+      );
 
       void updater.check();
       updateCheckTimer = setInterval(() => {
@@ -364,13 +400,14 @@ if (!gotLock) {
       logMainError("failed to start app", err);
     });
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;
     }
     closeCodingAgentThreadEvents?.();
     closeCodingAgentThreadEvents = null;
+    handleUpdateBeforeQuit?.(event);
   });
 
   app.on("window-all-closed", () => {

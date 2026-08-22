@@ -194,6 +194,37 @@ describe("reduceChat: abort and error", () => {
     });
     expect(out[0]!.content).toBe("Something went wrong. Please try again.");
   });
+
+  it("kernel:error settles the active tool as failed before appending the safe error", () => {
+    const activeTool: ChatMessage = {
+      id: "tool-1",
+      role: "system",
+      content: "Using Bash...",
+      tool: "Bash",
+      requestId: "r1",
+      toolInput: { command: "bun run test" },
+      timestamp: 1,
+    };
+
+    const out = reduceChat([activeTool], {
+      type: "kernel:error",
+      message: "The command failed.",
+      requestId: "r1",
+    });
+
+    expect(out[0]).toMatchObject({
+      id: "tool-1",
+      content: "Failed Bash",
+      tool: "Bash",
+      requestId: "r1",
+    });
+    expect(out[1]).toMatchObject({
+      role: "system",
+      content: "The command failed.",
+      requestId: "r1",
+    });
+    expect(activeTool.content).toBe("Using Bash...");
+  });
 });
 
 describe("reduceChat: purity", () => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   actionIdForClientMessage,
   kernelEventToServerMessage,
+  kernelResultFallbackText,
   send,
   sendClientAck,
 } from "../../packages/gateway/src/server/main-ws-messages.js";
@@ -33,6 +34,36 @@ describe("gateway main WebSocket message helpers", () => {
       data: { done: true },
       requestId: "r1",
     });
+    expect(kernelEventToServerMessage({
+      type: "result",
+      data: {
+        sessionId: "s1",
+        cost: 0,
+        turns: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        errors: ["Anthropic failed at /home/matrix/private-config"],
+      },
+    }, "r1")).toEqual({
+      type: "kernel:error",
+      message: "Request failed",
+      requestId: "r1",
+    });
+    expect(kernelEventToServerMessage({
+      type: "result",
+      data: {
+        sessionId: "s1",
+        result: "Failed to authenticate. API Error: 401 API key is invalid.",
+        cost: 0,
+        turns: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+      },
+    }, "r1")).toEqual({
+      type: "kernel:error",
+      message: "Request failed",
+      requestId: "r1",
+    });
     expect(kernelEventToServerMessage({ type: "aborted" }, "r1")).toEqual({
       type: "kernel:aborted",
       requestId: "r1",
@@ -44,6 +75,35 @@ describe("gateway main WebSocket message helpers", () => {
     expect(actionIdForClientMessage({ type: "approval_response", id: "approval-1", approved: true })).toBe("approval-1");
     expect(actionIdForClientMessage({ type: "switch_session", sessionId: "s1" })).toBe("switch_session:s1");
     expect(actionIdForClientMessage({ type: "ping" })).toBeNull();
+  });
+
+  it("uses the SDK result only when no incremental text was received", () => {
+    const result = {
+      type: "result" as const,
+      data: {
+        sessionId: "s1",
+        result: "Final answer from Hermes",
+        cost: 0,
+        turns: 1,
+        tokensIn: 1,
+        tokensOut: 1,
+      },
+    };
+
+    expect(kernelResultFallbackText(result, false)).toBe("Final answer from Hermes");
+    expect(kernelResultFallbackText(result, true)).toBeNull();
+    expect(kernelResultFallbackText({
+      ...result,
+      data: { ...result.data, result: "   " },
+    }, false)).toBeNull();
+    expect(kernelResultFallbackText({
+      ...result,
+      data: { ...result.data, errors: ["private provider failure"] },
+    }, false)).toBeNull();
+    expect(kernelResultFallbackText({
+      ...result,
+      data: { ...result.data, result: "Failed to authenticate. API Error: 401 API key is invalid." },
+    }, false)).toBeNull();
   });
 
   it("sends client acknowledgements only for actions with ids", () => {

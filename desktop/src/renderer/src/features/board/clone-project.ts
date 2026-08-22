@@ -37,6 +37,8 @@ export async function cloneProject(options: {
   api: ApiClient;
   url: string;
   name?: string;
+  displayName?: string;
+  description?: string;
   branch?: string;
   clientRequestId: string;
 }): Promise<CloneResult> {
@@ -46,6 +48,8 @@ export async function cloneProject(options: {
       {
         url: options.url,
         ...(options.name ? { name: options.name } : {}),
+        ...(options.displayName ? { displayName: options.displayName } : {}),
+        ...(options.description ? { description: options.description } : {}),
         ...(options.branch ? { branch: options.branch } : {}),
         clientRequestId: options.clientRequestId,
       },

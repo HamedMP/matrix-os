@@ -9,6 +9,9 @@ The 075 mobile shell work makes the phone experience launcher-first while keepin
 - Apps open full screen through `MobileAppSurface` in the browser shell and native runtime routes in Expo.
 - Canvas is reachable through an explicit launcher action, not as the default phone home.
 - Terminal uses Matrix-authenticated gateway sessions and WebSockets; users do not need SSH keys.
+- The focused native Terminal participates in gateway-coordinated presentation
+  ownership: it owns one canonical grid while visible, releases on blur or app
+  background, and offers **Resume here** after another renderer takes over.
 
 ## Local Dev Build
 

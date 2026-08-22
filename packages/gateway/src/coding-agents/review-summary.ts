@@ -11,6 +11,7 @@ import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ReviewLoopRecord } from "../review-loop.js";
+import { resolveWorktreeCheckoutPath } from "../worktree-manager.js";
 import {
   parseFindingsFile,
   type FindingsParseFailure,
@@ -143,23 +144,28 @@ function reviewOwnerMatchesPrincipal(review: ReviewLoopRecord, principal: Reques
   return ownerIds.includes(review.ownerId);
 }
 
-function safeFindingsPath(input: { homePath?: string; review: ReviewLoopRecord; round: number; findingsPath?: string }): string | null {
+async function safeFindingsPath(input: { homePath?: string; review: ReviewLoopRecord; round: number; findingsPath?: string }): Promise<string | null> {
   if (!input.homePath || !input.findingsPath) return null;
   if (input.findingsPath !== `.matrix/review-round-${input.round}.md`) return null;
   const safeProject = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(input.review.projectSlug);
   const safeWorktree = /^wt_[A-Za-z0-9_-]{1,128}$/.test(input.review.worktreeId);
   if (!safeProject || !safeWorktree) return null;
-  const worktreeRoot = resolve(input.homePath, "projects", input.review.projectSlug, "worktrees", input.review.worktreeId);
+  const worktreeRoot = await resolveWorktreeCheckoutPath(
+    input.homePath,
+    input.review.projectSlug,
+    input.review.worktreeId,
+  );
+  if (!worktreeRoot) return null;
   const resolved = resolve(worktreeRoot, input.findingsPath);
   return resolved.startsWith(`${worktreeRoot}${sep}`) ? resolved : null;
 }
 
-function safeWorktreeRoot(input: { homePath?: string; review: ReviewLoopRecord }): string | null {
+async function safeWorktreeRoot(input: { homePath?: string; review: ReviewLoopRecord }): Promise<string | null> {
   if (!input.homePath) return null;
   const safeProject = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(input.review.projectSlug);
   const safeWorktree = /^wt_[A-Za-z0-9_-]{1,128}$/.test(input.review.worktreeId);
   if (!safeProject || !safeWorktree) return null;
-  return resolve(input.homePath, "projects", input.review.projectSlug, "worktrees", input.review.worktreeId);
+  return await resolveWorktreeCheckoutPath(input.homePath, input.review.projectSlug, input.review.worktreeId);
 }
 
 function hunkIdFor(path: string, index: number): string {
@@ -606,7 +612,7 @@ async function toPartialReviewSnapshot(
   if (!summary) return null;
   const findingsRound = latestSuccessfulFindingsRound(review);
   const findingsPath = findingsRound
-    ? safeFindingsPath({
+    ? await safeFindingsPath({
       homePath: options.homePath,
       review,
       round: findingsRound.round,
@@ -614,7 +620,7 @@ async function toPartialReviewSnapshot(
     })
     : null;
   const parsedFindings = findingsPath ? await options.findingsReader(findingsPath) : null;
-  const worktreeRoot = safeWorktreeRoot({ homePath: options.homePath, review });
+  const worktreeRoot = await safeWorktreeRoot({ homePath: options.homePath, review });
   const parsedDiff = worktreeRoot ? await options.diffReader(worktreeRoot) : null;
   const findingsFiles = parsedFindings?.ok ? snapshotFilesFromFindings(review, parsedFindings.findings) : { items: [], hasMore: false };
   const files = mergeDiffAndFindings({ diff: parsedDiff, findings: findingsFiles });

@@ -30,6 +30,7 @@ describe('platform/customer-vps provisioning durability', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await destroyTestPlatformDb(db);
   });
 
@@ -172,6 +173,48 @@ describe('platform/customer-vps provisioning durability', () => {
       failed: 0,
     });
     expect(hetzner.createServer).toHaveBeenCalledOnce();
+    await expect(listProvisioningJobs(db, 10)).resolves.toEqual([
+      expect.objectContaining({ status: 'completed', attempts: 1, encryptedPayload: null }),
+    ]);
+  });
+
+  it('keeps polling a running provider create action instead of holding the lease idle', async () => {
+    vi.useFakeTimers();
+    let currentTime = new Date('2026-07-12T01:00:00.000Z');
+    const enqueueProvisioningJob = vi.fn(async (transaction: PlatformDB, job: NewProvisioningJob) => {
+      await insertProvisioningJob(transaction, {
+        ...job,
+        availableAt: '2026-07-12T01:01:00.000Z',
+      });
+    });
+    let actionReads = 0;
+    const getAction = vi.fn(async () => ({
+      id: 1777,
+      status: ++actionReads <= 8 ? 'running' as const : 'success' as const,
+      command: 'create_server',
+    }));
+    const { app, service } = createHarness({
+      enqueueProvisioningJob,
+      hetzner: {
+        createServer: vi.fn().mockResolvedValue({
+          id: 654321,
+          status: 'initializing',
+          publicIPv4: '203.0.113.20',
+          publicIPv6: '2001:db8::20',
+          createActionId: 1777,
+        }),
+        getAction,
+      },
+      now: () => currentTime,
+    });
+
+    expect((await previewProvision(app)).status).toBe(202);
+    currentTime = new Date('2026-07-12T01:02:00.000Z');
+    const dispatching = service.dispatchProvisioningJobs();
+    await vi.advanceTimersByTimeAsync(8_000);
+
+    await expect(dispatching).resolves.toEqual({ checked: 1, completed: 1, failed: 0 });
+    expect(getAction).toHaveBeenCalledTimes(9);
     await expect(listProvisioningJobs(db, 10)).resolves.toEqual([
       expect.objectContaining({ status: 'completed', attempts: 1, encryptedPayload: null }),
     ]);

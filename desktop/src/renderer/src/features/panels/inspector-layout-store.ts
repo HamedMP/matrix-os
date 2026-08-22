@@ -53,11 +53,13 @@ type PanelLayout = z.infer<typeof PanelLayoutSchema>;
 export interface InspectorLayout {
   widthPct: number;
   collapsed: boolean;
+  maximized: boolean;
 }
 
 const DEFAULT_LAYOUT: InspectorLayout = {
   widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
-  collapsed: false,
+  collapsed: true,
+  maximized: false,
 };
 
 interface InspectorLayoutState {
@@ -68,6 +70,7 @@ interface InspectorLayoutState {
   layoutFor: (projectId: string) => InspectorLayout;
   setWidthPct: (projectId: string, widthPct: number) => void;
   setCollapsed: (projectId: string, collapsed: boolean) => void;
+  setMaximized: (projectId: string, maximized: boolean) => void;
 }
 
 function clampWidthPct(widthPct: number): number {
@@ -93,7 +96,11 @@ function envelopeFor(entry: InspectorLayout, now: number): PanelLayout {
   const widthPct = clampWidthPct(entry.widthPct);
   return {
     order: ["conversation", "inspector"],
-    visible: { conversation: true, inspector: !entry.collapsed },
+    visible: {
+      conversation: true,
+      inspector: !entry.collapsed,
+      inspectorMaximized: entry.maximized,
+    },
     sizes: { conversation: 100 - widthPct, inspector: widthPct },
     touchedAt: now,
   };
@@ -104,9 +111,11 @@ function envelopeFor(entry: InspectorLayout, now: number): PanelLayout {
 function entryFromEnvelope(layout: PanelLayout): InspectorLayout | null {
   const widthPct = layout.sizes.inspector;
   if (typeof widthPct !== "number" || !Number.isFinite(widthPct)) return null;
+  const collapsed = layout.visible.inspector === false;
   return {
     widthPct: clampWidthPct(widthPct),
-    collapsed: layout.visible.inspector === false,
+    collapsed,
+    maximized: !collapsed && layout.visible.inspectorMaximized === true,
   };
 }
 
@@ -184,8 +193,24 @@ export const useInspectorLayout = create<InspectorLayoutState>()((set, get) => (
 
   setCollapsed: (projectId, collapsed) => {
     const current = get().entries[projectId] ?? DEFAULT_LAYOUT;
-    if (current.collapsed === collapsed) return;
-    const next: InspectorLayout = { ...current, collapsed };
+    if (current.collapsed === collapsed && (!collapsed || !current.maximized)) return;
+    const next: InspectorLayout = {
+      ...current,
+      collapsed,
+      maximized: collapsed ? false : current.maximized,
+    };
+    set((state) => ({ entries: { ...state.entries, [projectId]: next } }));
+    persistEntry(projectId, next);
+  },
+
+  setMaximized: (projectId, maximized) => {
+    const current = get().entries[projectId] ?? DEFAULT_LAYOUT;
+    if (current.maximized === maximized && (!maximized || !current.collapsed)) return;
+    const next: InspectorLayout = {
+      ...current,
+      collapsed: maximized ? false : current.collapsed,
+      maximized,
+    };
     set((state) => ({ entries: { ...state.entries, [projectId]: next } }));
     persistEntry(projectId, next);
   },

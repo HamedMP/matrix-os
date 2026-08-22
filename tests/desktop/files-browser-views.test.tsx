@@ -39,6 +39,7 @@ function renderBrowser(props?: {
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
   onChooseFolder?: (path: string) => void;
+  onCreateFolder?: (path: string) => void;
 }) {
   return render(
     <Tooltip.Provider>
@@ -203,6 +204,54 @@ describe("ComputerFileBrowser view options", () => {
     });
   });
 
+  it("returns keyboard focus to the listing after closing search", async () => {
+    renderBrowser();
+    await screen.findByRole("button", { name: "Open README.md" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Search files" }));
+    const searchbox = screen.getByRole("searchbox", { name: "Search files" });
+    expect(document.activeElement).toBe(searchbox);
+
+    fireEvent.keyDown(searchbox, { key: "Escape" });
+
+    expect(screen.queryByRole("searchbox", { name: "Search files" })).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement?.getAttribute("aria-label")).toMatch(/^Open /);
+    });
+  });
+
+  it("returns keyboard focus after closing a search with no results", async () => {
+    renderBrowser();
+    await screen.findByRole("button", { name: "Open README.md" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Search files" }));
+    const searchbox = screen.getByRole("searchbox", { name: "Search files" });
+    fireEvent.change(searchbox, { target: { value: "no-match" } });
+    expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
+
+    fireEvent.keyDown(searchbox, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(document.activeElement?.getAttribute("aria-label")).toMatch(/^Open /);
+    });
+  });
+
+  it("returns keyboard focus to the search control in an empty listing", async () => {
+    api.get.mockResolvedValue({ entries: [] });
+    renderBrowser();
+    await screen.findByText("This folder is empty.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Search files" }));
+    const searchbox = screen.getByRole("searchbox", { name: "Search files" });
+    expect(document.activeElement).toBe(searchbox);
+
+    fireEvent.keyDown(searchbox, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Search files" }));
+    });
+  });
+
   it("switches between list and grid from the segmented control", async () => {
     renderBrowser();
     expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
@@ -242,6 +291,31 @@ describe("ComputerFileBrowser view options", () => {
     expect(screen.getByText("3 items")).toBeTruthy();
   });
 
+  it("matches the Files list handoff geometry and filters from the toolbar search", async () => {
+    const { container } = renderBrowser();
+    const readme = await screen.findByRole("button", { name: "Open README.md" });
+
+    const toolbar = container.querySelector<HTMLElement>("[data-files-toolbar]");
+    const header = container.querySelector<HTMLElement>("[data-files-list-header]");
+    expect(toolbar?.className).toContain("h-[37px]");
+    expect(header?.className).toContain("h-9");
+    expect(header?.textContent).toContain("Date modified");
+    expect(readme.getAttribute("data-files-list-row")).toBe("true");
+    expect(readme.className).toContain("h-[54px]");
+    expect(readme.className).toContain("rounded-none");
+    expect(readme.className).toContain("px-4");
+    expect(readme.getAttribute("style")).toContain("minmax(0,1fr) 110px 110px");
+    expect(screen.queryByRole("button", { name: "Up one level" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Refresh folder" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search files" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "readme" },
+    });
+    expect(screen.getByRole("button", { name: "Open README.md" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open hero.png" })).toBeNull();
+  });
+
   it("gives the name column the flexible track with fixed right-aligned meta columns", async () => {
     renderBrowser();
     const row = await screen.findByRole("button", { name: "Open README.md" });
@@ -249,10 +323,26 @@ describe("ComputerFileBrowser view options", () => {
     // Name owns the flexible minmax track; Size/Modified are fixed-width
     // columns sized to the format.ts outputs so names only truncate when the
     // pane is genuinely out of room.
-    expect(row.getAttribute("style")).toContain("minmax(0,1fr) 72px 104px");
+    expect(row.getAttribute("style")).toContain("minmax(0,1fr) 110px 110px");
     expect(screen.getByText("2 KB").className).toContain("text-right");
     const modifiedHeader = screen.getByRole("button", { name: "Sort by modified" });
     expect(modifiedHeader.className).toContain("justify-end");
+  });
+
+  it("uses tighter metadata tracks in the compact folder picker", async () => {
+    renderBrowser({ compact: true, mode: "folder-picker", onChooseFolder: vi.fn() });
+    const row = await screen.findByRole("button", { name: "Open workspaces" });
+    const listing = document.querySelector<HTMLElement>("[data-files-listing]");
+
+    expect(row.getAttribute("style")).toContain("minmax(0,1fr) 56px 80px");
+    expect(screen.getByRole("button", { name: "Sort by name" }).parentElement?.className)
+      .toContain("gap-1");
+    expect(listing?.classList.contains("px-1.5")).toBe(true);
+    expect(listing?.classList.contains("pb-1.5")).toBe(true);
+    expect(listing?.classList.contains("p-1.5")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Grid view" }));
+    expect(listing?.classList.contains("p-1.5")).toBe(true);
   });
 
   it("sorts the list when a column header is clicked", async () => {
@@ -391,8 +481,8 @@ describe("ComputerFileBrowser view options", () => {
 
   it("goes up one level from the toolbar button", async () => {
     renderBrowser();
-    const up = await screen.findByRole("button", { name: "Up one level" });
-    expect(up.hasAttribute("disabled")).toBe(true);
+    await screen.findByRole("button", { name: "Open workspaces" });
+    expect(screen.queryByRole("button", { name: "Up one level" })).toBeNull();
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
     await screen.findByRole("button", { name: "Open app.ts" });
@@ -424,6 +514,127 @@ describe("ComputerFileBrowser view options", () => {
     // Double-click still drills into a folder inside the picker.
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
     await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces"));
+  });
+
+  it("offers the selected safe folder to the caller as a new-folder parent", async () => {
+    const onCreateFolder = vi.fn();
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder,
+    });
+    await screen.findByRole("button", { name: "Open workspaces" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(screen.getByRole("button", { name: "New folder in workspaces" }));
+
+    expect(onCreateFolder).toHaveBeenCalledWith("workspaces");
+  });
+
+  it("does not offer managed owner state as a new-folder parent", async () => {
+    const managedApi = {
+      get: vi.fn(async (path: string) => path === "/api/files/list?path="
+        ? { entries: [{ name: "system", type: "directory", children: 1 }] }
+        : { entries: [] }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    useConnection.setState({ api: managedApi as never });
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder: vi.fn(),
+    });
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open system" }));
+    await waitFor(() => expect(managedApi.get).toHaveBeenCalledWith("/api/files/list?path=system"));
+
+    expect(screen.queryByRole("button", { name: "New folder in system" })).toBeNull();
+  });
+
+  it("blocks choosing a denied subtree ancestor while allowing a safe child folder there", async () => {
+    const protectedApi = {
+      get: vi.fn(async (path: string) => path === "/api/files/list?path="
+        ? { entries: [{ name: "data", type: "directory", children: 1 }] }
+        : { entries: [] }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    const onCreateFolder = vi.fn();
+    useConnection.setState({ api: protectedApi as never });
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open data" }));
+
+    expect(screen.getByRole("button", { name: "Choose data" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "New folder in data" }));
+    expect(onCreateFolder).toHaveBeenCalledWith("data");
+  });
+
+  it("blocks denied browser profile state as a folder or new-folder parent", async () => {
+    const protectedApi = {
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/files/list?path=") {
+          return { entries: [{ name: "data", type: "directory", children: 1 }] };
+        }
+        if (path === "/api/files/list?path=data") {
+          return { entries: [{ name: "browser-profiles", type: "directory", children: 1 }] };
+        }
+        return { entries: [] };
+      }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    useConnection.setState({ api: protectedApi as never });
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder: vi.fn(),
+    });
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open data" }));
+    const browserProfiles = await screen.findByRole("button", { name: "Open browser-profiles" });
+    fireEvent.click(browserProfiles);
+
+    expect(screen.getByRole("button", { name: "Choose browser-profiles" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "New folder in data/browser-profiles" })).toBeNull();
+  });
+
+  it("keeps project checkout descendants available after registry separation", async () => {
+    const projectApi = {
+      get: vi.fn(async (path: string) => {
+        const name = decodeURIComponent(path.split("path=")[1] ?? "");
+        const children: Record<string, string> = {
+          "": "projects",
+          projects: "demo",
+          "projects/demo": "repo",
+          "projects/demo/repo": "src",
+        };
+        const child = children[name];
+        return { entries: child ? [{ name: child, type: "directory", children: 1 }] : [] };
+      }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    useConnection.setState({ api: projectApi as never });
+    renderBrowser({
+      compact: true,
+      mode: "folder-picker",
+      onChooseFolder: vi.fn(),
+      onCreateFolder: vi.fn(),
+    });
+
+    for (const name of ["projects", "demo", "repo"]) {
+      fireEvent.doubleClick(await screen.findByRole("button", { name: `Open ${name}` }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "Open src" }));
+
+    expect(screen.getByRole("button", { name: "Choose src" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "New folder in projects/demo/repo/src" })).toBeTruthy();
   });
 
   it("shows the empty state in grid view too", async () => {

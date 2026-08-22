@@ -15,6 +15,7 @@ import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
 import FilesWorkspace from "../files/FilesWorkspace";
+import ProjectsIndex from "../project/ProjectsIndex";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -58,6 +59,8 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
       return <FilesWorkspace />;
     case "apps":
       return <AppLauncher />;
+    case "projects":
+      return <ProjectsIndex />;
     case "app":
       return tab.slug ? <EmbedHost kind="app" slug={tab.slug} active={active} /> : null;
     case "project":

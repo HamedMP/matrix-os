@@ -27,17 +27,22 @@ export interface ConversationLifecycle {
   ): Promise<"adopted" | "not_found" | "conflict">;
   deleteIfIdle(id: KernelConversationId): Promise<ConversationDeleteResult>;
   finalize(id: string): Promise<void>;
+  getActiveHistoryStart(id: KernelConversationId): number | null;
 }
 
 export function createConversationLifecycle(deps: {
   mutationLock: ConversationMutationLock;
   conversations: ConversationStore;
-  conversationRuns: Pick<ConversationRunRegistry, "begin" | "complete" | "has" | "isActive" | "rekey">;
+  conversationRuns: Pick<
+    ConversationRunRegistry,
+    "begin" | "complete" | "has" | "isActive" | "rekey" | "getActiveHistoryStart"
+  >;
 }): ConversationLifecycle {
   return {
     admitExisting(id) {
       return deps.mutationLock.run(id, async () => {
-        if (!deps.conversations.get(id)) {
+        const existing = deps.conversations.get(id);
+        if (!existing) {
           return "not_found";
         }
         if (deps.conversationRuns.isActive(id)) {
@@ -45,7 +50,7 @@ export function createConversationLifecycle(deps: {
         }
 
         deps.conversations.begin(id);
-        deps.conversationRuns.begin(id);
+        deps.conversationRuns.begin(id, existing.messages.length);
         return "admitted";
       });
     },
@@ -90,6 +95,10 @@ export function createConversationLifecycle(deps: {
 
     finalize(id) {
       return deps.conversations.finalize(id, () => deps.conversationRuns.complete(id));
+    },
+
+    getActiveHistoryStart(id) {
+      return deps.conversationRuns.getActiveHistoryStart(id);
     },
   };
 }

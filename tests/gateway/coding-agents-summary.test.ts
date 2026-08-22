@@ -128,6 +128,49 @@ describe("coding agent runtime summary", () => {
     expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|\/bin\/bash|token|secret|Postgres/i);
   });
 
+  it.each([
+    ["available", "available", "installed", "authenticated"],
+    ["missing", "setup_required", "missing", "missing"],
+    ["auth_required", "auth_required", "installed", "missing"],
+    ["expired", "auth_required", "installed", "expired"],
+    ["revoked", "auth_required", "installed", "expired"],
+    ["failed", "unavailable", "failed", "unknown"],
+    ["check_failed", "unavailable", "unknown", "unknown"],
+    ["version_unsupported", "unavailable", "failed", "unknown"],
+    ["not_applicable", "unavailable", "unknown", "unknown"],
+  ] as const)(
+    "fails closed when the fallback credential summary reports %s",
+    async (status, availability, installStatus, authStatus) => {
+      const service = createCodingAgentRuntimeSummaryService({
+        homePath: "/home/matrix/home",
+        agentCredentials: {
+          getStatus: async () => ({
+            systemAgent: "hermes",
+            activeAgents: status === "available" ? ["codex", "hermes"] : ["hermes"],
+            routingExplanation: "Provider state is runtime-owned.",
+            agents: [{
+              agent: "codex",
+              status,
+              coordinationRole: "coding_specialist",
+              workflows: ["coding"],
+              degradedWorkflows: status === "available" ? [] : ["coding"],
+              verifiedAt: status === "available" ? now.toISOString() : null,
+              nextAction: null,
+            }],
+          }),
+        },
+        providerIds: ["codex"],
+        now: () => now,
+      });
+
+      const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+      expect(summary.providers).toEqual([
+        expect.objectContaining({ availability, installStatus, authStatus }),
+      ]);
+    },
+  );
+
   it("only advertises providers registered for coding-agent thread starts", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",

@@ -1,17 +1,9 @@
-// Exclusive folder creation for the desktop add-project flow. Mirrors
-// project-manager.ts patterns: zod-validated names, home-scoped path
-// resolution with symlink/protected-subtree guards, atomic mkdir for
-// conflict semantics, and generic client-facing errors with server-side
-// logging. Two layouts are supported:
-//   - default ("projects" root): projects/<name>/repo, the same checkout
-//     layout scratch projects use, so the result can be bound as a folder
-//     project (the registry only allows projects/<slug>/repo bindings);
-//   - custom parent: <parent>/<name> anywhere else non-protected in the
-//     home. The projects registry itself is manager-owned metadata and is
-//     rejected as a custom parent.
+// Exclusive owner-folder creation for the Desktop add-project flow. Matrix
+// registry metadata lives separately in system/projects; projects/<name> is
+// therefore an ordinary owner workspace and may be selected or created.
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, realpath, rm } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { PROJECT_SLUG_REGEX } from "./project-manager.js";
 import {
@@ -52,14 +44,6 @@ function failure(status: number, code: string, message: string): Failure {
 
 function toHomeRelative(homePath: string, target: string): string {
   return relative(homePath, target).split(sep).join("/");
-}
-
-// True when `path` is `root`, inside it, or an ancestor of it.
-function overlapsRoot(root: string, path: string): boolean {
-  const fromRoot = relative(root, path);
-  if (fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot))) return true;
-  const toRoot = relative(path, root);
-  return toRoot === "" || (!toRoot.startsWith("..") && !isAbsolute(toRoot));
 }
 
 export function createProjectFolders(options: { homePath: string }) {
@@ -148,14 +132,12 @@ export function createProjectFolders(options: { homePath: string }) {
     return null;
   }
 
-  // Creates projects/<name>/repo atomically: mkdir without recursive fails
+  // Creates the owner workspace at projects/<name> atomically: mkdir without recursive fails
   // with EEXIST when the slug slot is taken, so a conflict can never
-  // overwrite an existing project. The slot is rolled back if the inner
-  // checkout dir cannot be created.
+  // overwrite an existing project. Matrix registry state lives in system.
   async function createRegistryFolder(name: string): Promise<Result<{ path: string }> | Failure> {
     const projectsRoot = join(homePath, "projects");
     const slotPath = join(projectsRoot, name);
-    const repoPath = join(slotPath, "repo");
     try {
       await mkdir(projectsRoot, { recursive: true });
       await mkdir(slotPath);
@@ -166,14 +148,7 @@ export function createProjectFolders(options: { homePath: string }) {
       console.warn("[project-folders] Failed to create project slot:", err instanceof Error ? err.message : err);
       return failure(500, "folder_create_failed", "The folder could not be created");
     }
-    try {
-      await mkdir(repoPath);
-    } catch (err: unknown) {
-      console.warn("[project-folders] Failed to create checkout dir:", err instanceof Error ? err.message : err);
-      await rm(slotPath, { recursive: true, force: true });
-      return failure(500, "folder_create_failed", "The folder could not be created");
-    }
-    return { ok: true, status: 201, path: toHomeRelative(homePath, repoPath) };
+    return { ok: true, status: 201, path: toHomeRelative(homePath, slotPath) };
   }
 
   async function createNestedFolder(name: string, parent: string): Promise<Result<{ path: string }> | Failure> {
@@ -199,11 +174,14 @@ export function createProjectFolders(options: { homePath: string }) {
       console.warn("[project-folders] Failed to inspect parent:", err instanceof Error ? err.message : err);
       return failure(400, "invalid_parent", "Parent folder is invalid");
     }
+    if (realParent === realHome) {
+      return failure(400, "invalid_parent", "Parent folder is invalid");
+    }
     // Check the lexical path AND the fully resolved path against the same
     // rules so a symlinked ancestor cannot alias a protected subtree. The
-    // projects registry is manager-owned metadata (config.json, sibling
-    // projects): creating loose folders inside it would squat on slug
-    // namespaces, so only the default registry layout may write there.
+    // Matrix-owned registry state lives under system/projects. The owner may
+    // create ordinary workspaces under projects, while system/agents and
+    // denied browser state remain protected.
     for (const candidate of [
       { base: homePath, path: resolvedParent },
       { base: realHome, path: realParent },
@@ -213,7 +191,6 @@ export function createProjectFolders(options: { homePath: string }) {
         isProtectedHomeSubpath(candidate.base, target)
         || containsDeniedFileApiPath(candidate.base, target)
         || isDeniedFileApiPath(candidate.base, toHomeRelative(candidate.base, target))
-        || overlapsRoot(join(candidate.base, "projects"), candidate.path)
       ) {
         return failure(400, "invalid_parent", "Parent folder is invalid");
       }

@@ -37,6 +37,20 @@ function makeGitLog(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeProjectManager(
+  getProject = vi.fn(async () => ({ ok: true as const, project: { slug: "repo" } })),
+) {
+  return {
+    getGithubStatus: vi.fn(),
+    createProject: vi.fn(),
+    listManagedProjects: vi.fn(),
+    getProject,
+    deleteProject: vi.fn(),
+    listPullRequests: vi.fn(),
+    listBranches: vi.fn(),
+  };
+}
+
 describe("git log routes", () => {
   let homePath: string;
 
@@ -52,7 +66,7 @@ describe("git log routes", () => {
   describe("GET /api/projects/:slug/commits", () => {
     it("returns commits with defaults for limit and cursor", async () => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, projectManager: makeProjectManager() });
 
       const res = await app.request("/api/projects/repo/commits");
 
@@ -67,7 +81,7 @@ describe("git log routes", () => {
 
     it("passes bounded limit and cursor through to the service", async () => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, projectManager: makeProjectManager() });
 
       const cursor = `${"a".repeat(24)}.120`;
       const res = await app.request(`/api/projects/repo/commits?limit=50&cursor=${cursor}`);
@@ -84,7 +98,7 @@ describe("git log routes", () => {
       "/api/projects/repo/commits?cursor=-5",
     ])("rejects invalid query parameters: %s", async (path) => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, projectManager: makeProjectManager() });
 
       const res = await app.request(path);
 
@@ -92,6 +106,31 @@ describe("git log routes", () => {
       const body = await res.json();
       expect(body.error.code).toBe("invalid_request");
       expect(body.error.message).not.toMatch(/limit|cursor|Expected/i);
+      expect(gitLog.listCommits).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing or unauthorized project before reading git", async () => {
+      const ownerScope = { type: "user" as const, id: "user_a" };
+      const getProject = vi.fn(async () => ({
+        ok: false as const,
+        status: 404,
+        error: { code: "not_found", message: "Project was not found" },
+      }));
+      const gitLog = makeGitLog();
+      const app = createWorkspaceRoutes({
+        homePath,
+        gitLog,
+        projectManager: makeProjectManager(getProject),
+        getOwnerScope: () => ownerScope,
+      });
+
+      const res = await app.request("/api/projects/repo/commits");
+
+      expect(res.status).toBe(404);
+      await expect(res.json()).resolves.toEqual({
+        error: { code: "not_found", message: "Project was not found" },
+      });
+      expect(getProject).toHaveBeenCalledWith("repo", ownerScope);
       expect(gitLog.listCommits).not.toHaveBeenCalled();
     });
 
@@ -103,19 +142,20 @@ describe("git log routes", () => {
           error: { code: "not_found", message: "Project was not found" },
         })),
       });
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, projectManager: makeProjectManager() });
 
-      const res = await app.request("/api/projects/missing/commits");
+      const res = await app.request("/api/projects/repo/commits");
 
       expect(res.status).toBe(404);
       await expect(res.json()).resolves.toEqual({ error: { code: "not_found", message: "Project was not found" } });
+      expect(gitLog.listCommits).toHaveBeenCalledWith("repo", { limit: 200, cursor: undefined });
     });
   });
 
   describe("GET /api/projects/:slug/commits/:sha/diff", () => {
     it("returns parsed diff files", async () => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, projectManager: makeProjectManager() });
 
       const res = await app.request(`/api/projects/repo/commits/${SHA}/diff`);
 
@@ -130,7 +170,7 @@ describe("git log routes", () => {
 
     it("accepts bounded maxFiles and maxLines overrides", async () => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, projectManager: makeProjectManager() });
 
       const res = await app.request(`/api/projects/repo/commits/${SHA}/diff?maxFiles=50&maxLines=100`);
 
@@ -146,7 +186,7 @@ describe("git log routes", () => {
       `/api/projects/repo/commits/${SHA}/diff?maxLines=2001`,
     ])("rejects invalid parameters: %s", async (path) => {
       const gitLog = makeGitLog();
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, projectManager: makeProjectManager() });
 
       const res = await app.request(path);
 
@@ -164,7 +204,7 @@ describe("git log routes", () => {
           error: { code: "not_found", message: "Commit was not found" },
         })),
       });
-      const app = createWorkspaceRoutes({ homePath, gitLog });
+      const app = createWorkspaceRoutes({ homePath, gitLog, projectManager: makeProjectManager() });
 
       const res = await app.request(`/api/projects/repo/commits/${SHA}/diff`);
 

@@ -77,14 +77,16 @@ export function AgentComposerPickers({
 }) {
   const providers = summary.providers;
   const storedProvider = providers.find((provider) => provider.id === providerId);
-  if (readOnly && providerId && !storedProvider) {
+  if (readOnly) {
+    if (!providerId) return null;
     return (
-      <ComposerPicker
-        ariaLabel="Agent provider"
-        value={providerId}
-        options={[{ value: providerId, label: `${providerId} (unavailable)` }]}
-        disabled
-      />
+      <span
+        aria-label="Agent provider"
+        className="inline-flex h-6 max-w-[9.5rem] items-center truncate rounded-md px-1.5 text-xs font-medium"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        {storedProvider?.displayName ?? `${providerId} (unavailable)`}
+      </span>
     );
   }
   const selected = storedProvider ?? providers[0];
@@ -100,18 +102,16 @@ export function AgentComposerPickers({
         ariaLabel="Agent provider"
         value={selected.id}
         options={providerOptions}
-        disabled={readOnly}
-        onChange={readOnly ? undefined : onProviderChange}
+        disabled={false}
+        onChange={onProviderChange}
       />
-      {readOnly ? null : (
-        <ComposerPicker
-          ariaLabel="Agent mode"
-          value={mode ?? selected.defaultMode}
-          options={modeOptions}
-          disabled={false}
-          onChange={(value) => onModeChange?.(value as ComposerMode)}
-        />
-      )}
+      <ComposerPicker
+        ariaLabel="Agent mode"
+        value={mode ?? selected.defaultMode}
+        options={modeOptions}
+        disabled={false}
+        onChange={(value) => onModeChange?.(value as ComposerMode)}
+      />
     </>
   );
 }

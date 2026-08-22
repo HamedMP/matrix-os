@@ -208,6 +208,11 @@ function resetStores() {
   });
 }
 
+async function openInspector(): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: "Show conversation tools" }));
+  await screen.findByTestId("inspector-split");
+}
+
 describe("ProjectChatsView hero layout", () => {
   beforeEach(() => {
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
@@ -230,28 +235,47 @@ describe("ProjectChatsView hero layout", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows the conversation and inspector in a resizable split by default", async () => {
+  it("keeps the conversation full width until contextual tools are requested", async () => {
     mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
+
+    expect(await screen.findByRole("button", { name: "Show conversation tools" })).toBeTruthy();
+    expect(screen.queryByTestId("inspector-split")).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Conversation tools" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show conversation tools" }));
 
     expect(await screen.findByTestId("inspector-split")).toBeTruthy();
     expect(screen.getByTestId("panel-conversation")).toBeTruthy();
     expect(screen.getByTestId("panel-inspector")).toBeTruthy();
     expect(screen.getByRole("separator")).toBeTruthy();
-    // The inspector starts open at the default width with a visible toggle.
     expect(panelsMock.lastDefaultLayout).toEqual({ conversation: 66, inspector: 34 });
     expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
-    const toggle = screen.getByRole("button", { name: "Hide conversation tools" });
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Close conversation tools" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Maximize conversation tools" })).toBeTruthy();
+  });
+
+  it("maximizes the contextual workbench without unmounting the conversation", async () => {
+    mockOperator();
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Show conversation tools" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Maximize conversation tools" }));
+
+    expect(await screen.findByTestId("inspector-maximized")).toBeTruthy();
+    expect(screen.getByTestId("conversation-underlay")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Restore conversation tools" })).toBeTruthy();
+    expect(useInspectorLayout.getState().layoutFor("matrix-os").maximized).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore conversation tools" }));
+    expect(await screen.findByTestId("inspector-split")).toBeTruthy();
   });
 
   it("hides the inspector entirely while the draft pane is showing", async () => {
     mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
 
-    // The first listed chat auto-selects, so the inspector split appears once
-    // the workspace finishes loading.
-    expect(await screen.findByTestId("inspector-split")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Show conversation tools" })).toBeTruthy();
 
     act(() => {
       useProjectView.getState().setSelectedThread("matrix-os", null);
@@ -266,10 +290,10 @@ describe("ProjectChatsView hero layout", () => {
     expect(screen.queryByRole("button", { name: "Show conversation tools" })).toBeNull();
   });
 
-  it("brings the inspector back when a thread is selected from the rail", async () => {
+  it("keeps contextual tools closed when a thread is selected from the rail", async () => {
     mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
-    await screen.findByTestId("inspector-split");
+    await screen.findByRole("button", { name: "Show conversation tools" });
 
     act(() => {
       useProjectView.getState().setSelectedThread("matrix-os", null);
@@ -279,9 +303,8 @@ describe("ProjectChatsView hero layout", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
 
-    expect(await screen.findByTestId("inspector-split")).toBeTruthy();
-    expect(screen.getByRole("complementary", { name: "Conversation tools" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Hide conversation tools" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Show conversation tools" })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Conversation tools" })).toBeNull();
   });
 
   it("does not record a rail selection when its snapshot fails to load", async () => {
@@ -296,7 +319,7 @@ describe("ProjectChatsView hero layout", () => {
     });
     useCodingAgentWorkspace.setState({ loadThreadSnapshot });
     render(<ProjectChatsView projectId="matrix-os" active />);
-    await screen.findByTestId("inspector-split");
+    await screen.findByRole("button", { name: "Show conversation tools" });
 
     act(() => {
       useProjectView.getState().setSelectedThread("matrix-os", null);
@@ -313,11 +336,61 @@ describe("ProjectChatsView hero layout", () => {
     );
   });
 
+  it("does not bind a cached workspace terminal while the selected thread snapshot is loading", async () => {
+    const { invoke } = mockOperator();
+    const defaultInvoke = invoke.getMockImplementation()!;
+    const pendingSnapshot = new Promise<never>(() => undefined);
+    invoke.mockImplementation(async (channel: string, payload: unknown) => {
+      if (channel === "runtime:get-summary") {
+        return {
+          ...summaryFixture(),
+          terminalSessions: {
+            items: [{
+              id: "term_cached",
+              name: "cached-shell",
+              status: "running",
+              attachable: true,
+              createdAt: NOW,
+              updatedAt: NOW,
+            }],
+            hasMore: false,
+            limit: 20,
+          },
+        };
+      }
+      if (channel === "runtime:get-project-workspace") {
+        const workspace = workspaceFixture();
+        return {
+          ...workspace,
+          projectThreads: {
+            ...workspace.projectThreads,
+            items: workspace.projectThreads.items.map((thread) => ({
+              ...thread,
+              terminalSessionId: "term_cached",
+            })),
+          },
+        };
+      }
+      if (channel === "runtime:get-thread-snapshot") return pendingSnapshot;
+      return defaultInvoke(channel, payload);
+    });
+
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_plan");
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    await openInspector();
+    fireEvent.click(await screen.findByRole("tab", { name: /^Terminal\b/ }));
+
+    expect(await screen.findByText("This chat has no linked terminal session.")).toBeTruthy();
+    expect(screen.queryByText("cached-shell")).toBeNull();
+  });
+
   it("collapses to a full-width hero transcript and persists the choice", async () => {
     const { saved } = mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Hide conversation tools" }));
+    await openInspector();
+    fireEvent.click(screen.getByRole("button", { name: "Close conversation tools" }));
 
     expect(screen.queryByTestId("inspector-split")).toBeNull();
     expect(screen.queryByRole("complementary", { name: "Conversation tools" })).toBeNull();
@@ -385,7 +458,7 @@ describe("ProjectChatsView hero layout", () => {
 
     act(() => useCodingAgentWorkspace.setState({ reviewFocusRequestId: 1, reviewFocusConsumedId: 0 }));
 
-    expect(await screen.findByRole("button", { name: "Hide conversation tools" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Close conversation tools" })).toBeTruthy();
     expect(useInspectorLayout.getState().layoutFor("matrix-os").collapsed).toBe(false);
   });
 
@@ -402,7 +475,7 @@ describe("ProjectChatsView hero layout", () => {
 
     render(<ProjectChatsView projectId="matrix-os" active />);
 
-    await screen.findByTestId("inspector-split");
+    await openInspector();
     expect(panelsMock.lastOrientation).toBe("vertical");
     expect(panelsMock.lastDefaultLayout).toEqual({ conversation: 55, inspector: 45 });
   });
@@ -410,7 +483,7 @@ describe("ProjectChatsView hero layout", () => {
   it("persists inspector width changes from the split", async () => {
     mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
-    await screen.findByTestId("inspector-split");
+    await openInspector();
 
     act(() => {
       panelsMock.lastOnLayoutChange?.({ conversation: 55, inspector: 45 });
@@ -422,7 +495,7 @@ describe("ProjectChatsView hero layout", () => {
   it("keeps layouts independent per project", async () => {
     mockOperator();
     render(<ProjectChatsView projectId="matrix-os" active />);
-    await screen.findByTestId("inspector-split");
+    await openInspector();
 
     act(() => {
       panelsMock.lastOnLayoutChange?.({ conversation: 50, inspector: 50 });

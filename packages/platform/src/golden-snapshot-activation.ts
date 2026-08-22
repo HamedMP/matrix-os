@@ -17,6 +17,12 @@ const ServerProfiles: Record<string, { architecture: 'x86' | 'arm'; diskGb: numb
   cax41: { architecture: 'arm', diskGb: 320 },
 };
 
+export function getGoldenSnapshotServerProfile(
+  serverType: string,
+): { architecture: 'x86' | 'arm'; diskGb: number } | undefined {
+  return ServerProfiles[serverType];
+}
+
 const SelectionInputSchema = z.object({
   jobId: z.string().uuid(),
   machineId: z.string().uuid(),
@@ -49,6 +55,7 @@ export type ProvisioningImageDecision =
       sourceBundleVersion: string;
       sourceBaseGeneration: string;
       rolloutGeneration: number;
+      previewTest?: true;
       exact: boolean;
       requiresExactUpdate: boolean;
     };

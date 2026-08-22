@@ -1,14 +1,18 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { constants, type Dirent } from "node:fs";
+import { constants } from "node:fs";
 import { access, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { atomicCreateJson, atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
+import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
 import { containsDeniedFileApiPath, resolveExistingFileApiPath } from "./path-security.js";
+import { isMatrixManagedProjectSource } from "./project-registry-layout.js";
+import { createProjectRegistry, PROJECT_SLUG_REGEX } from "./project-registry.js";
+import { removeValidatedLegacyProjectState } from "./legacy-project-state.js";
+import { projectStateRecoveryDir } from "./bounded-json-file.js";
 
-export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export { PROJECT_SLUG_REGEX } from "./project-registry.js";
 
 export type ProjectKind = "scratch" | "github" | "folder";
 export type ProjectVisibility = "active" | "archived" | "all";
@@ -16,6 +20,7 @@ export type ProjectVisibility = "active" | "archived" | "all";
 export interface ProjectConfig {
   id: string;
   name: string;
+  description?: string;
   slug: string;
   kind: ProjectKind;
   remote?: string;
@@ -28,6 +33,7 @@ export interface ProjectConfig {
   deletingAt?: string;
   createRequestId?: string;
   createRequestFingerprint?: string;
+  legacyKindInferred?: true;
   github?: {
     owner: string;
     repo: string;
@@ -51,6 +57,17 @@ export interface BranchSummary {
   name: string;
   current?: boolean;
   default?: boolean;
+}
+
+export interface ProjectCodeMetadata {
+  path: string;
+  repository: string | null;
+  isGitRepository: boolean;
+  branch: string | null;
+  clean: boolean | null;
+  ahead: number;
+  behind: number;
+  hasUpstream: boolean;
 }
 
 export interface GithubRepoSummary {
@@ -82,6 +99,8 @@ const CLONE_TIMEOUT_MS = 5 * 60_000;
 
 const GitHubUrlSchema = z.string().trim().min(1).max(512);
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
+const ProjectNameSchema = z.string().trim().min(1).max(128);
+const ProjectDescriptionSchema = z.string().trim().max(1_000).optional();
 const CreateRequestIdSchema = z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/);
 
 const BRANCH_FORBIDDEN_CHARS = /[\x00-\x20 ~^:?*[\]\\]/;
@@ -108,6 +127,7 @@ function createRequestFingerprint(input: {
   mode: CreateProjectMode;
   slug: string;
   name?: string;
+  description?: string;
   localPath?: string;
   repositoryUrl?: string;
   branch?: string;
@@ -148,6 +168,23 @@ function isNotAGitRepositoryError(err: unknown): boolean {
     ? (err as { stderr: string }).stderr
     : "";
   return /not a git repository/i.test(stderr) || /not a git repository/i.test(err.message);
+}
+
+function isMissingGitUpstreamError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const stderr = "stderr" in err && typeof (err as { stderr?: unknown }).stderr === "string"
+    ? (err as { stderr: string }).stderr
+    : "";
+  return /no upstream configured|no such branch.*@\{upstream\}|ambiguous argument.*@\{upstream\}|HEAD does not point to a branch/i.test(`${err.message}\n${stderr}`);
+}
+
+function repositoryNameFromRemote(remote: string | undefined): string | null {
+  if (!remote) return null;
+  const github = validateGitHubUrl(remote);
+  if (github.ok) return `${github.owner}/${github.repo}`;
+  const normalized = remote.replace(/\.git\/?$/, "").replace(/\/$/, "");
+  const match = /(?:[:/])([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(normalized);
+  return match ? `${match[1]}/${match[2]}` : null;
 }
 
 function nowIso(now?: () => string): string {
@@ -209,14 +246,6 @@ function projectPath(homePath: string, slug: string): string {
   return join(homePath, "projects", slug);
 }
 
-function projectDeletionTombstoneDir(homePath: string): string {
-  return join(homePath, "projects", ".deleting");
-}
-
-function projectDeletionTombstonePath(homePath: string, slug: string): string {
-  return join(projectDeletionTombstoneDir(homePath), `${slug}.json`);
-}
-
 // OS-owned subtrees that must never become an agent-accessible project root.
 // A folder project's localPath is handed to shells and coding-agent sandboxes
 // as a workspace cwd, so granting these would expose kernel/agent state.
@@ -231,7 +260,28 @@ function isProtectedFolderProjectPath(homePath: string, resolvedPath: string): b
   // state (.trash, .hermes, .claude, .codex, .ssh, ...), never a user
   // workspace; deny the whole class instead of chasing individual names.
   if (firstSegment.startsWith(".")) return true;
+  // Selecting the whole workspace root would make every sibling project
+  // writable. Direct children remain valid owner workspaces.
+  if (rel === "projects") return true;
   return PROTECTED_FOLDER_PROJECT_PREFIXES.includes(firstSegment);
+}
+
+async function isManagedProjectContainer(homePath: string, resolvedPath: string): Promise<boolean> {
+  const rel = relative(join(resolve(homePath), "projects"), resolvedPath);
+  const segments = rel.split(sep);
+  if (rel === "" || rel.startsWith("..") || segments.length < 1) return false;
+  const registry = createProjectRegistry({ homePath });
+  const project = await registry.readConfig<ProjectConfig | Omit<ProjectConfig, "kind">>(segments[0]!);
+  if (!project) return false;
+  const kind = normalizeProjectConfig(homePath, project).kind;
+  if (kind === "folder") return false;
+  const managedRoot = join(resolve(homePath), "projects", segments[0]!);
+  const localPath = resolve(project.localPath);
+  if (localPath !== managedRoot && !localPath.startsWith(`${managedRoot}${sep}`)) return false;
+  // A legacy managed container and its managed worktree roots stay behind
+  // the project/worktree APIs. An unrelated owner checkout is not blocked
+  // merely because one of its own directories happens to be named worktrees.
+  return segments.length === 1 || segments[1] === "worktrees";
 }
 
 async function resolveEligibleProjectWorkingDirectory(
@@ -303,7 +353,7 @@ function normalizeProjectConfig(homePath: string, config: ProjectConfig | Omit<P
   if ("kind" in config && (config.kind === "scratch" || config.kind === "github" || config.kind === "folder")) {
     return config;
   }
-  return { ...config, kind: classifyLegacyProject(homePath, config) };
+  return { ...config, kind: classifyLegacyProject(homePath, config), legacyKindInferred: true };
 }
 
 function ownerScopeMatches(actual: OwnerScope, expected?: OwnerScope): boolean {
@@ -311,31 +361,15 @@ function ownerScopeMatches(actual: OwnerScope, expected?: OwnerScope): boolean {
 }
 
 async function readProjectConfig(homePath: string, slug: string): Promise<ProjectConfig | null> {
-  try {
-    const config = await readJsonFile<ProjectConfig | Omit<ProjectConfig, "kind">>(
-      join(projectPath(homePath, slug), "config.json"),
-    );
-    return normalizeProjectConfig(homePath, config);
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
+  const config = await createProjectRegistry({ homePath })
+    .readConfig<ProjectConfig | Omit<ProjectConfig, "kind">>(slug);
+  return config ? normalizeProjectConfig(homePath, config) : null;
 }
 
 async function readProjectDeletionTombstone(homePath: string, slug: string): Promise<ProjectConfig | null> {
-  try {
-    const config = await readJsonFile<ProjectConfig | Omit<ProjectConfig, "kind">>(
-      projectDeletionTombstonePath(homePath, slug),
-    );
-    return normalizeProjectConfig(homePath, config);
-  } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
+  const config = await createProjectRegistry({ homePath })
+    .readTombstone<ProjectConfig | Omit<ProjectConfig, "kind">>(slug);
+  return config ? normalizeProjectConfig(homePath, config) : null;
 }
 
 function normalizePr(raw: unknown): PullRequestSummary | null {
@@ -362,12 +396,14 @@ export function createProjectManager(options: {
 }) {
   const homePath = resolve(options.homePath);
   const runCommand = options.runCommand ?? defaultRunCommand;
+  const registry = createProjectRegistry({ homePath });
 
   return {
     async createProject(input: {
       url?: string;
       slug?: string;
       name?: string;
+      description?: string;
       path?: string;
       branch?: string;
       mode?: CreateProjectMode;
@@ -380,6 +416,11 @@ export function createProjectManager(options: {
       if (input.branch !== undefined && !GitBranchSchema.safeParse(input.branch).success) {
         return genericError(400, "invalid_branch", "Branch name is invalid");
       }
+      const parsedDescription = ProjectDescriptionSchema.safeParse(input.description);
+      if (!parsedDescription.success) {
+        return genericError(400, "invalid_project_description", "Project description is invalid");
+      }
+      const description = parsedDescription.data || undefined;
       const mode = input.mode ?? (input.url ? "github" : "scratch");
       if (mode === "folder") {
         const name = input.name?.trim() || "";
@@ -409,20 +450,16 @@ export function createProjectManager(options: {
           return genericError(400, "invalid_project_path", "Project folder is invalid");
         }
         // Check the lexical path AND the fully resolved path against the same
-        // rules so a symlinked ancestor cannot alias a protected subtree, and
-        // reject any root that would contain the project registry: metadata
-        // (config.json, sibling projects) must never live inside an
-        // agent-writable workspace.
+        // rules so a symlinked ancestor cannot alias a protected subtree. The
+        // registry now lives under system/projects, so ordinary owner folders
+        // below projects are valid workspaces.
         for (const candidate of [
           { base: homePath, path: localPath },
           { base: realHomePath, path: realLocalPath },
         ]) {
-          const registryEntry = join(candidate.base, "projects", slug);
           if (
-            candidate.path === registryEntry
-            || candidate.path.startsWith(`${registryEntry}${sep}`)
-            || registryEntry.startsWith(`${candidate.path}${sep}`)
-            || isProtectedFolderProjectPath(candidate.base, candidate.path)
+            isProtectedFolderProjectPath(candidate.base, candidate.path)
+            || await isManagedProjectContainer(candidate.base, candidate.path)
             // An ancestor of a denied subtree (data/browser-profiles holds
             // persistent browser login state) would expose it as part of the
             // agent-writable workspace.
@@ -430,31 +467,18 @@ export function createProjectManager(options: {
           ) {
             return genericError(400, "invalid_project_path", "Project folder is invalid");
           }
-          // Inside the registry only the repo checkout (projects/<slug>/repo
-          // and below) is user content. The project root holds config.json,
-          // and worktrees/ holds Matrix-owned leases and .matrix metadata;
-          // none of it may become an agent-writable workspace root.
-          const relFromRegistry = relative(join(candidate.base, "projects"), candidate.path);
-          const insideRegistry = relFromRegistry !== "" && !relFromRegistry.startsWith("..");
-          if (insideRegistry) {
-            const segments = relFromRegistry.split(sep);
-            if (segments.length === 1 || segments[1] !== "repo") {
-              return genericError(400, "invalid_project_path", "Project folder is invalid");
-            }
-          }
         }
-        const metadataPath = projectPath(homePath, slug);
         const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
-        const fingerprint = createRequestFingerprint({ mode, slug, name, localPath: realLocalPath, ownerScope });
+        const fingerprint = createRequestFingerprint({ mode, slug, name, description, localPath: realLocalPath, ownerScope });
         return withProjectLock(slug, async () => {
-          if (await pathExists(projectDeletionTombstonePath(homePath, slug))) {
+          if (await registry.hasTombstone(slug)) {
             return genericError(409, "slug_conflict", "Project slug already exists");
           }
-          await mkdir(metadataPath, { recursive: true });
           const timestamp = nowIso(options.now);
           const project: ProjectConfig = {
             id: `proj_${randomUUID()}`,
             name,
+            description,
             slug,
             kind: "folder",
             // Persist the fully resolved path: session launches use the stored
@@ -468,7 +492,7 @@ export function createProjectManager(options: {
             createRequestId: input.clientRequestId,
             createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           };
-          const created = await atomicCreateJson(join(metadataPath, "config.json"), project);
+          const created = await registry.createConfig(slug, project);
           if (!created) {
             const existing = await readProjectConfig(homePath, slug);
             const idempotentProject = isIdempotentProjectRetry({
@@ -494,12 +518,12 @@ export function createProjectManager(options: {
           return genericError(400, "invalid_slug", "Project slug is invalid");
         }
         const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
-        const fingerprint = createRequestFingerprint({ mode, slug, name, ownerScope });
+        const fingerprint = createRequestFingerprint({ mode, slug, name, description, ownerScope });
         return withProjectLock(slug, async () => {
           const targetProjectPath = projectPath(homePath, slug);
           if (
             await pathExists(targetProjectPath)
-            || await pathExists(projectDeletionTombstonePath(homePath, slug))
+            || await registry.hasTombstone(slug)
           ) {
             const existing = await readProjectConfig(homePath, slug);
             const idempotentProject = isIdempotentProjectRetry({
@@ -518,6 +542,7 @@ export function createProjectManager(options: {
           const project: ProjectConfig = {
             id: `proj_${randomUUID()}`,
             name,
+            description,
             slug,
             kind: "scratch",
             localPath: repoPath,
@@ -527,7 +552,7 @@ export function createProjectManager(options: {
             createRequestId: input.clientRequestId,
             createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           };
-          await atomicWriteJson(join(targetProjectPath, "config.json"), project);
+          await registry.writeConfig(slug, project);
           return { ok: true, status: 201, project };
         });
       }
@@ -544,9 +569,15 @@ export function createProjectManager(options: {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
       const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+      const name = input.name?.trim() || github.repo;
+      if (!ProjectNameSchema.safeParse(name).success) {
+        return genericError(400, "invalid_project_name", "Project name is invalid");
+      }
       const fingerprint = createRequestFingerprint({
         mode,
         slug,
+        name,
+        description,
         repositoryUrl: github.htmlUrl,
         branch: input.branch,
         ownerScope,
@@ -555,7 +586,7 @@ export function createProjectManager(options: {
         const targetProjectPath = projectPath(homePath, slug);
         if (
           await pathExists(targetProjectPath)
-          || await pathExists(projectDeletionTombstonePath(homePath, slug))
+          || await registry.hasTombstone(slug)
         ) {
           const existing = await readProjectConfig(homePath, slug);
           const idempotentProject = isIdempotentProjectRetry({
@@ -611,7 +642,8 @@ export function createProjectManager(options: {
         const timestamp = nowIso(options.now);
         const project: ProjectConfig = {
           id: `proj_${randomUUID()}`,
-          name: github.repo,
+          name,
+          description,
           slug,
           kind: "github",
           remote: input.url,
@@ -628,7 +660,7 @@ export function createProjectManager(options: {
             authState: "ok",
           },
         };
-        await atomicWriteJson(join(targetProjectPath, "config.json"), project);
+        await registry.writeConfig(slug, project);
         return { ok: true, status: 201, project };
       });
     },
@@ -637,21 +669,10 @@ export function createProjectManager(options: {
       visibility?: ProjectVisibility;
       ownerScope?: OwnerScope;
     } = {}): Promise<{ projects: ProjectConfig[]; nextCursor: null }> {
-      let entries;
-      try {
-        entries = await readdir(join(homePath, "projects"), { withFileTypes: true });
-      } catch (err: unknown) {
-        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-          return { projects: [], nextCursor: null };
-        }
-        throw err;
-      }
-
       const projects: ProjectConfig[] = [];
       const visibility = input.visibility ?? "active";
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-        const project = await readProjectConfig(homePath, entry.name);
+      for (const slug of await registry.listSlugs()) {
+        const project = await readProjectConfig(homePath, slug);
         if (!project || !ownerScopeMatches(project.ownerScope, input.ownerScope) || project.deletingAt) continue;
         const archived = project.archivedAt !== undefined;
         if (visibility === "active" && archived) continue;
@@ -663,34 +684,12 @@ export function createProjectManager(options: {
     },
 
     async listDeletingProjects(): Promise<{ projects: ProjectConfig[]; nextCursor: null }> {
-      let entries;
-      try {
-        entries = await readdir(join(homePath, "projects"), { withFileTypes: true });
-      } catch (err: unknown) {
-        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-          return { projects: [], nextCursor: null };
-        }
-        throw err;
-      }
       const projects: ProjectConfig[] = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-        const project = await readProjectConfig(homePath, entry.name);
+      for (const slug of await registry.listSlugs()) {
+        const project = await readProjectConfig(homePath, slug);
         if (project?.deletingAt) projects.push(project);
       }
-      let tombstoneEntries: Dirent[];
-      try {
-        tombstoneEntries = await readdir(projectDeletionTombstoneDir(homePath), { withFileTypes: true });
-      } catch (err: unknown) {
-        if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
-          throw err;
-        }
-        tombstoneEntries = [];
-      }
-      for (const entry of tombstoneEntries) {
-        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-        const slug = entry.name.slice(0, -".json".length);
-        if (!PROJECT_SLUG_REGEX.test(slug)) continue;
+      for (const slug of await registry.listTombstoneSlugs()) {
         const project = await readProjectDeletionTombstone(homePath, slug);
         if (!project?.deletingAt) continue;
         const duplicateIndex = projects.findIndex((candidate) => candidate.slug === project.slug);
@@ -759,11 +758,11 @@ export function createProjectManager(options: {
         if (input.deletingAt === null) delete updated.deletingAt;
         else updated.deletingAt = input.deletingAt;
       }
-      await atomicWriteJson(join(projectPath(homePath, input.slug), "config.json"), updated);
+      await registry.writeConfig(input.slug, updated);
       if (updated.deletingAt) {
-        await atomicWriteJson(projectDeletionTombstonePath(homePath, input.slug), updated);
+        await registry.writeTombstone(input.slug, updated);
       } else {
-        await rm(projectDeletionTombstonePath(homePath, input.slug), { force: true });
+        await registry.removeTombstone(input.slug, current.project);
       }
       return { ok: true, project: updated };
     },
@@ -775,13 +774,19 @@ export function createProjectManager(options: {
       const current = await this.getProjectForLifecycle(input);
       if (!current.ok) return current;
       if (current.project.deletingAt) {
-        await atomicWriteJson(
-          projectDeletionTombstonePath(homePath, input.slug),
-          current.project,
-        );
+        await registry.writeTombstone(input.slug, current.project);
       }
-      await rm(projectPath(homePath, input.slug), { recursive: true, force: true });
-      await rm(projectDeletionTombstonePath(homePath, input.slug), { force: true });
+      if (isMatrixManagedProjectSource(homePath, current.project)) {
+        await rm(projectPath(homePath, input.slug), { recursive: true, force: true });
+      }
+      await removeValidatedLegacyProjectState({
+        projectSlug: input.slug,
+        tasksDir: registry.legacyTasksDir(input.slug),
+        previewsDir: registry.legacyPreviewsDir(input.slug),
+        recoveryDir: projectStateRecoveryDir(homePath),
+      });
+      await registry.removeConfig(input.slug);
+      await registry.removeTombstone(input.slug, current.project);
       return { ok: true };
     },
 
@@ -805,8 +810,8 @@ export function createProjectManager(options: {
       }
     },
 
-    async listPullRequests(slug: string): Promise<Result<{ prs: PullRequestSummary[]; refreshedAt: string }> | Failure> {
-      const projectResult = await this.getProject(slug);
+    async listPullRequests(slug: string, ownerScope?: OwnerScope): Promise<Result<{ prs: PullRequestSummary[]; refreshedAt: string }> | Failure> {
+      const projectResult = await this.getProject(slug, ownerScope);
       if (!projectResult.ok) return projectResult;
       const project = projectResult.project;
       if (!project.github) {
@@ -830,8 +835,8 @@ export function createProjectManager(options: {
       }
     },
 
-    async listBranches(slug: string): Promise<Result<{ branches: BranchSummary[]; refreshedAt: string }> | Failure> {
-      const projectResult = await this.getProject(slug);
+    async listBranches(slug: string, ownerScope?: OwnerScope): Promise<Result<{ branches: BranchSummary[]; refreshedAt: string }> | Failure> {
+      const projectResult = await this.getProject(slug, ownerScope);
       if (!projectResult.ok) return projectResult;
       const refreshedAt = nowIso(options.now);
       // Probe Git itself instead of checking for a local .git entry: a folder
@@ -873,6 +878,117 @@ export function createProjectManager(options: {
         };
       } catch (err: unknown) {
         if (err instanceof Error) console.warn("[project-manager] Failed to list branches:", err.message);
+        return genericError(502, "git_request_failed", "Git request failed");
+      }
+    },
+
+    async getCodeMetadata(slug: string, ownerScope?: OwnerScope): Promise<Result<ProjectCodeMetadata> | Failure> {
+      const projectResult = await this.getProject(slug, ownerScope);
+      if (!projectResult.ok) return projectResult;
+      const project = projectResult.project;
+      let repository = project.github
+        ? `${project.github.owner}/${project.github.repo}`
+        : repositoryNameFromRemote(project.remote);
+      let repoTopLevel: string;
+      try {
+        const probe = await runCommand("git", ["rev-parse", "--show-toplevel"], {
+          cwd: project.localPath,
+          timeout: DEFAULT_TIMEOUT_MS,
+        });
+        repoTopLevel = probe.stdout.trim();
+      } catch (err: unknown) {
+        if (isNotAGitRepositoryError(err)) {
+          return {
+            ok: true,
+            path: project.localPath,
+            repository,
+            isGitRepository: false,
+            branch: null,
+            clean: null,
+            ahead: 0,
+            behind: 0,
+            hasUpstream: false,
+          };
+        }
+        console.warn("[project-manager] Failed to probe project git metadata:", err instanceof Error ? err.message : typeof err);
+        return genericError(502, "git_request_failed", "Git request failed");
+      }
+
+      try {
+        const [homeReal, repoReal] = await Promise.all([realpath(homePath), realpath(repoTopLevel)]);
+        if (homeReal === repoReal) {
+          return {
+            ok: true,
+            path: project.localPath,
+            repository,
+            isGitRepository: false,
+            branch: null,
+            clean: null,
+            ahead: 0,
+            behind: 0,
+            hasUpstream: false,
+          };
+        }
+
+        if (!repository) {
+          try {
+            const remote = await runCommand("git", ["remote", "get-url", "origin"], {
+              cwd: project.localPath,
+              timeout: DEFAULT_TIMEOUT_MS,
+            });
+            repository = repositoryNameFromRemote(remote.stdout.trim());
+          } catch (err: unknown) {
+            console.info("[project-manager] Project has no readable origin remote:", err instanceof Error ? err.message : typeof err);
+          }
+        }
+
+        const statusResult = await runCommand("git", ["status", "--porcelain", "--untracked-files=normal"], {
+          cwd: project.localPath,
+          timeout: DEFAULT_TIMEOUT_MS,
+        });
+        const branchResult = await runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: project.localPath,
+          timeout: DEFAULT_TIMEOUT_MS,
+        });
+        const branchValue = branchResult.stdout.trim();
+        const branch = branchValue && branchValue !== "HEAD" ? branchValue : null;
+        let ahead = 0;
+        let behind = 0;
+        let hasUpstream = false;
+        try {
+          await runCommand("git", ["rev-parse", "--abbrev-ref", "@{upstream}"], {
+            cwd: project.localPath,
+            timeout: DEFAULT_TIMEOUT_MS,
+          });
+          const divergence = await runCommand("git", ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], {
+            cwd: project.localPath,
+            timeout: DEFAULT_TIMEOUT_MS,
+          });
+          const [behindText, aheadText] = divergence.stdout.trim().split(/\s+/);
+          behind = Number.parseInt(behindText ?? "0", 10);
+          ahead = Number.parseInt(aheadText ?? "0", 10);
+          if (!Number.isFinite(behind) || behind < 0) behind = 0;
+          if (!Number.isFinite(ahead) || ahead < 0) ahead = 0;
+          hasUpstream = true;
+        } catch (err: unknown) {
+          if (!isMissingGitUpstreamError(err)) {
+            console.warn("[project-manager] Failed to read project upstream metadata:", err instanceof Error ? err.message : typeof err);
+            return genericError(502, "git_request_failed", "Git request failed");
+          }
+        }
+        return {
+          ok: true,
+          path: project.localPath,
+          repository,
+          isGitRepository: true,
+          branch,
+          clean: statusResult.stdout.trim().length === 0,
+          ahead,
+          behind,
+          hasUpstream,
+        };
+      } catch (err: unknown) {
+        console.warn("[project-manager] Failed to read project git metadata:", err instanceof Error ? err.message : typeof err);
         return genericError(502, "git_request_failed", "Git request failed");
       }
     },

@@ -28,6 +28,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
       open: vi.fn(),
       setBounds: vi.fn(),
       setActive: vi.fn(),
+      suspendAll: vi.fn(),
       reload: vi.fn(),
       close: vi.fn(),
       retryAuth: vi.fn(),
@@ -36,7 +37,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     setBadgeCount: vi.fn(),
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
-    getUpdateStatus: vi.fn(() => "disabled"),
+    checkUpdate: vi.fn(async () => ({ status: "disabled" })),
     getUpdateSnapshot: vi.fn(() => ({ status: "disabled" })),
     installUpdate: vi.fn(() => false),
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
@@ -185,6 +186,14 @@ describe("registerIpcHandlers", () => {
     expect(console.warn).toHaveBeenCalledWith("[ipc] embed:retry-auth failed:", "handoff unavailable");
   });
 
+  it("waits for the trusted core to suspend native embeds", async () => {
+    const harness = makeHarness();
+    vi.mocked(harness.ctx.embeds.suspendAll).mockReturnValue(true);
+
+    await expect(harness.invoke("embed:suspend-all")).resolves.toEqual({ ok: true });
+    expect(harness.ctx.embeds.suspendAll).toHaveBeenCalledOnce();
+  });
+
   it("reloads an existing embed through the trusted core", async () => {
     const harness = makeHarness();
     vi.mocked(harness.ctx.embeds.reload).mockResolvedValue(true);
@@ -195,10 +204,20 @@ describe("registerIpcHandlers", () => {
     expect(harness.ctx.embeds.reload).toHaveBeenCalledWith("embed-1");
   });
 
-  it("reports the live updater status from the handler context", async () => {
-    const harness = makeHarness({ getUpdateStatus: vi.fn(() => "ready") });
+  it("starts a user-requested check and returns the resulting updater snapshot", async () => {
+    const checkUpdate = vi.fn(async () => ({
+      status: "downloading" as const,
+      version: "1.3.0",
+      progress: 4,
+    }));
+    const harness = makeHarness({ checkUpdate });
 
-    await expect(harness.invoke("update:check")).resolves.toEqual({ status: "ready" });
+    await expect(harness.invoke("update:check")).resolves.toEqual({
+      status: "downloading",
+      version: "1.3.0",
+      progress: 4,
+    });
+    expect(checkUpdate).toHaveBeenCalledOnce();
   });
 
   it("exposes typed update state and performs the user-authorized install", async () => {
@@ -206,6 +225,10 @@ describe("registerIpcHandlers", () => {
       status: "ready" as const,
       version: "1.2.3",
       progress: 100,
+      release: {
+        version: "1.2.3",
+        notes: "## Improved\n\n- Faster updates",
+      },
     }));
     const installUpdate = vi.fn(() => true);
     const harness = makeHarness({ getUpdateSnapshot, installUpdate });
@@ -214,6 +237,10 @@ describe("registerIpcHandlers", () => {
       status: "ready",
       version: "1.2.3",
       progress: 100,
+      release: {
+        version: "1.2.3",
+        notes: "## Improved\n\n- Faster updates",
+      },
     });
     await expect(harness.invoke("update:install")).resolves.toEqual({ ok: true });
   });

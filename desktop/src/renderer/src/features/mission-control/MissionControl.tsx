@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -17,8 +17,36 @@ import { useGlobalShortcuts } from "./shortcuts";
 import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
-import DesktopUpdateExperience from "../updates/DesktopUpdateExperience";
 import { useShellSessionSync } from "../../lib/shell-session-sync";
+import { preloadAppIcons, useApps } from "../../stores/apps";
+
+export function MissionControlContentSurface({
+  collapsed,
+  children,
+}: {
+  collapsed: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <main
+      data-testid="mission-control-content-surface"
+      className="absolute flex min-h-0 min-w-0 flex-col"
+      style={{
+        left: collapsed ? "4px" : "var(--sidebar-expanded-width)",
+        top: "var(--titlebar-height)",
+        right: "4px",
+        bottom: "4px",
+        overflow: "hidden",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "var(--radius)",
+        background: "var(--bg-app)",
+        transition: "left 140ms var(--ease-out)",
+      }}
+    >
+      {children}
+    </main>
+  );
+}
 
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
@@ -27,10 +55,12 @@ export default function MissionControl() {
   const runtimeScope = useConnection(codingAgentRuntimeScope);
   const authGeneration = useConnection((s) => s.authGeneration);
   const loadProjects = useBoard((s) => s.loadProjects);
+  const loadApps = useApps((s) => s.load);
   const openTab = useTabs((s) => s.openTab);
   const tabCount = useTabs((s) => s.tabs.length);
   const createProjectOpen = useUi((s) => s.createProjectOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
+  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
 
   useGlobalShortcuts();
   useShellSessionSync(api, `${runtimeScope}|${authGeneration}|${runtimeSlot}`);
@@ -101,6 +131,21 @@ export default function MissionControl() {
     };
   }, [api, loadProjects, runtimeSlot]);
 
+  // Warm the catalog and icon cache as soon as this computer is connected,
+  // rather than making the first Apps-tab visit wait for both request stages.
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    void loadApps(api).then(() => {
+      if (!cancelled) {
+        preloadAppIcons(platformHost, runtimeSlot, useApps.getState().apps);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, loadApps, platformHost, runtimeSlot]);
+
   useEffect(() => {
     if (!api) return;
     const dispose = wireKernel();
@@ -124,17 +169,21 @@ export default function MissionControl() {
   }, [api, runtimeScope, runtimeSlot]);
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col" style={{ background: "var(--bg-app)" }}>
-        <NavigationHeader />
-        <TabContent />
+    <div className="relative flex flex-1 overflow-hidden" style={{ background: "var(--bg-sunken)" }}>
+      <NavigationHeader />
+      <div
+        className="absolute bottom-0 left-0"
+        style={{ top: "var(--titlebar-height)" }}
+      >
+        <Sidebar />
       </div>
+      <MissionControlContentSurface collapsed={sidebarCollapsed}>
+        <TabContent />
+      </MissionControlContentSurface>
       <Composer />
       <CommandPalette />
       <QuickOpen />
       <CreateProjectDialog open={createProjectOpen} onClose={() => setCreateProjectOpen(false)} />
-      <DesktopUpdateExperience />
     </div>
   );
 }

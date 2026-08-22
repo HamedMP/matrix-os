@@ -29,7 +29,11 @@ import { createConversationContextResolver } from "./conversation-context.js";
 import { createConversationMutationLock } from "./conversation-mutation-lock.js";
 import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
 import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
-import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
+import {
+  conversationHistoryRefreshRequired,
+  ConversationRunRegistry,
+  type ConversationRunMessage,
+} from "./conversation-run-registry.js";
 import {
   clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
   drainReconnectableAbortEntries,
@@ -237,6 +241,7 @@ import {
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import {
   kernelEventToServerMessage,
+  kernelResultFallbackText,
   send,
   sendClientAck,
 } from "./server/main-ws-messages.js";
@@ -602,6 +607,7 @@ export async function createGateway(config: GatewayConfig) {
   );
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
+  const codingAgentWorktreeManager = createWorktreeManager({ homePath });
   const codingAgentFileStore = createCodingAgentFileStore({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
@@ -609,11 +615,13 @@ export async function createGateway(config: GatewayConfig) {
     projects: {
       getProjectBySlug: (projectSlug) => codingAgentProjectManager.getProject(projectSlug),
     },
+    worktrees: codingAgentWorktreeManager,
   });
   const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
+    worktrees: codingAgentWorktreeManager,
   });
   const codingAgentNotificationPreferenceStore = createCodingAgentNotificationPreferenceStore({ homePath });
   const workspaceEventPublisher = createWorkspaceEventPublisher({
@@ -627,7 +635,6 @@ export async function createGateway(config: GatewayConfig) {
     codexEventBridge = codexExecutable
       ? createCodexEventBridge({ homePath, codexExecutable })
       : undefined;
-    const codingAgentWorktreeManager = createWorktreeManager({ homePath });
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: codingAgentWorktreeManager,
@@ -2056,6 +2063,7 @@ export async function createGateway(config: GatewayConfig) {
                 }
                 send(ws, message as ServerMessage);
               },
+              { replayCompleted: parsed.replayCompleted },
             );
             if (attachment) {
               detachConversationRun = attachment.detach;
@@ -2064,6 +2072,10 @@ export async function createGateway(config: GatewayConfig) {
                 send(ws, {
                   type: "session:switched",
                   sessionId: parsed.sessionId,
+                  historyRefreshRequired: conversationHistoryRefreshRequired(
+                    attachment,
+                    parsed.replayCompleted,
+                  ),
                 });
                 for (const message of pendingLiveMessages) {
                   send(ws, message as ServerMessage);
@@ -2073,7 +2085,11 @@ export async function createGateway(config: GatewayConfig) {
               return;
             }
 
-            send(ws, { type: "session:switched", sessionId: parsed.sessionId });
+            send(ws, {
+              type: "session:switched",
+              sessionId: parsed.sessionId,
+              historyRefreshRequired: true,
+            });
             return;
           }
 
@@ -2164,6 +2180,7 @@ export async function createGateway(config: GatewayConfig) {
               pendingText = parsed.displayText ?? parsed.text;
               const requestId = parsed.requestId;
               let lastToolName: string | undefined;
+              let receivedAssistantText = false;
               captureGatewayProductEvent("agent_task_started", {
                 shell_surface: "gateway_ws",
                 request_id_present: Boolean(requestId),
@@ -2222,8 +2239,11 @@ export async function createGateway(config: GatewayConfig) {
                       if (reconnectable) reconnectable.sessionId = msg.sessionId;
                     }
                     if (!canonicalAdmittedSessionId || canonicalAdmittedSessionId !== msg.sessionId) {
-                      conversationRuns.begin(msg.sessionId);
                       conversations.begin(msg.sessionId);
+                      conversationRuns.begin(
+                        msg.sessionId,
+                        conversations.get(msg.sessionId)?.messages.length ?? 0,
+                      );
                     }
                     send(ws, msg);
                     publishConversationRunMessage(msg.sessionId, msg);
@@ -2235,6 +2255,7 @@ export async function createGateway(config: GatewayConfig) {
                     send(ws, msg);
                   }
                   if (msg.type === "kernel:text" && activeSessionId) {
+                    receivedAssistantText = true;
                     publishConversationRunMessage(activeSessionId, msg);
                     conversations.appendAssistantText(activeSessionId, msg.text);
                   } else if (msg.type === "kernel:tool_start" && activeSessionId) {
@@ -2245,6 +2266,8 @@ export async function createGateway(config: GatewayConfig) {
                     publishConversationRunMessage(activeSessionId, msg);
                     conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
                   } else if (msg.type === "kernel:result" && activeSessionId) {
+                    const fallbackText = kernelResultFallbackText(event, receivedAssistantText);
+                    if (fallbackText) conversations.appendAssistantText(activeSessionId, fallbackText);
                     captureGatewayProductEvent("agent_task_completed", {
                       shell_surface: "gateway_ws",
                       request_id_present: Boolean(requestId),
@@ -2260,9 +2283,11 @@ export async function createGateway(config: GatewayConfig) {
                       ...msg,
                       message: CLIENT_KERNEL_ERROR_MESSAGE,
                     });
+                    conversations.addSystemMessage(activeSessionId, CLIENT_KERNEL_ERROR_MESSAGE);
                     void finalizeWithSummary(activeSessionId);
                   } else if (msg.type === "kernel:aborted" && activeSessionId) {
                     publishConversationRunMessage(activeSessionId, msg);
+                    conversations.addSystemMessage(activeSessionId, "Stopped.");
                     void finalizeWithSummary(activeSessionId);
                   }
                 }, undefined, abortController, {
@@ -2287,6 +2312,7 @@ export async function createGateway(config: GatewayConfig) {
                     activeSessionId,
                     failureReplay.runMessage as ConversationRunMessage,
                   );
+                  conversations.addSystemMessage(activeSessionId, CLIENT_KERNEL_ERROR_MESSAGE);
                   void finalizeWithSummary(activeSessionId);
                 }
                 send(ws, failureReplay.liveMessage);
@@ -2365,6 +2391,7 @@ export async function createGateway(config: GatewayConfig) {
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
       const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
+      const exclusiveLease = c.req.query("lease") === "exclusive";
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let namedSocketClosed = false;
       const pendingInput = createPendingTerminalInputQueue();
@@ -2390,6 +2417,7 @@ export async function createGateway(config: GatewayConfig) {
             fromSeq,
             clientClass: sizingParams.clientClass,
             declaredSize: sizingParams.declaredSize,
+            exclusiveLease,
           }).then((session) => {
             if (namedSocketClosed) {
               session.onClose();
@@ -2562,6 +2590,7 @@ export async function createGateway(config: GatewayConfig) {
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
       const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
+      const exclusiveLease = c.req.query("lease") === "exclusive";
       let handle: SessionHandle | null = null;
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let namedSocketClosed = false;
@@ -2616,6 +2645,7 @@ export async function createGateway(config: GatewayConfig) {
               fromSeq,
               clientClass: sizingParams.clientClass,
               declaredSize: sizingParams.declaredSize,
+              exclusiveLease,
             }).then((session) => {
               if (namedSocketClosed) {
                 session.onClose();

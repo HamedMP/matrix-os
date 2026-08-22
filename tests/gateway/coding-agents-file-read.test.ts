@@ -8,6 +8,7 @@ import { createCodingAgentFileStore } from "../../packages/gateway/src/coding-ag
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = "2026-07-06T12:00:00.000Z";
@@ -65,6 +66,14 @@ async function createRouteHarness(options: {
           },
         }),
       },
+      worktrees: {
+        listWorktrees: async (_projectSlug, ownerScope) => (
+          (options.projectOwnerType ?? "user") === "user"
+          && ownerScope.id === (options.projectOwnerId ?? testPrincipal.userId)
+            ? { ok: true as const, worktrees: [{ id: worktreeId, path: worktreeRoot }] }
+            : { ok: false as const, status: 404, error: { code: "not_found" } }
+        ),
+      },
       readLimitBytes: options.readLimitBytes,
     }),
     getPrincipal: () => {
@@ -111,6 +120,62 @@ describe("coding agent file read route", () => {
     }
   });
 
+  it("uses the canonical project localPath for a directly connected owner folder", async () => {
+    const harness = await createRouteHarness({ ownerIds: [testPrincipal.userId] });
+    const directRoot = join(harness.homePath, "projects", "direct-checkout");
+    try {
+      await mkdir(join(directRoot, "src"), { recursive: true });
+      await writeFile(join(directRoot, "src", "direct.ts"), "export const direct = true;\n");
+      await atomicWriteJson(join(harness.homePath, "system", "projects", projectId, "config.json"), {
+        id: "proj_matrix_os",
+        name: "Matrix OS",
+        slug: projectId,
+        kind: "folder",
+        localPath: directRoot,
+        addedAt: now,
+        updatedAt: now,
+        ownerScope: { type: "user", id: testPrincipal.userId },
+      });
+
+      const read = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&path=src%2Fdirect.ts`,
+      );
+
+      expect(read.status).toBe(200);
+      expect(await read.json()).toMatchObject({ content: "export const direct = true;\n" });
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a persisted project root that resolves outside Matrix home", async () => {
+    const harness = await createRouteHarness({ ownerIds: [testPrincipal.userId] });
+    const outsideRoot = await mkdtemp(join(tmpdir(), "matrix-coding-agent-outside-"));
+    try {
+      await writeFile(join(outsideRoot, "secret.txt"), "outside secret");
+      await atomicWriteJson(join(harness.homePath, "projects", projectId, "config.json"), {
+        id: "proj_matrix_os",
+        name: "Matrix OS",
+        slug: projectId,
+        kind: "folder",
+        localPath: outsideRoot,
+        addedAt: now,
+        updatedAt: now,
+        ownerScope: { type: "user", id: testPrincipal.userId },
+      });
+
+      const response = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&path=secret.txt`,
+      );
+
+      expect(response.status).toBe(404);
+      expect(JSON.stringify(await response.json())).not.toContain("outside secret");
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps primary project checkout access owner-scoped and traversal-safe", async () => {
     const harness = await createRouteHarness({
       principal: { userId: "other_user", source: "jwt" },
@@ -148,6 +213,40 @@ describe("coding agent file read route", () => {
 
       expect(response.status).toBe(404);
       expect(JSON.stringify(await response.json())).not.toMatch(/other_project_owner|primary\.ts|\/tmp/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects worktree reads and writes when the authenticated user does not own the project", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      projectOwnerId: "other_project_owner",
+    });
+    try {
+      const filePath = join(harness.worktreeRoot, "src", "private.ts");
+      await writeFile(filePath, "owner content\n");
+
+      const read = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&worktreeId=${worktreeId}&path=src%2Fprivate.ts`,
+      );
+      const write = await harness.app.request("/api/coding-agents/files/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          path: "src/private.ts",
+          content: "intruder content\n",
+          encoding: "utf8",
+          baseEtag: null,
+          clientRequestId: "req_cross_owner_write",
+        }),
+      });
+
+      expect(read.status).toBe(404);
+      expect(write.status).toBe(404);
+      expect(await readFile(filePath, "utf8")).toBe("owner content\n");
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }

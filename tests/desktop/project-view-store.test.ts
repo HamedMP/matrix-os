@@ -32,8 +32,8 @@ describe("project view store", () => {
     resetStore();
   });
 
-  it("defaults every project to the board view with no thread selection", () => {
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+  it("defaults every project to the sessions overview with no thread selection", () => {
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("overview");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
   });
 
@@ -107,7 +107,7 @@ describe("project view store", () => {
 
     await useProjectView.getState().hydrate(SCOPE);
 
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("overview");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
   });
 
@@ -170,6 +170,6 @@ describe("project view store", () => {
     clearProjectViewRuntime();
 
     expect(useProjectView.getState().entries).toEqual({});
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("overview");
   });
 });
