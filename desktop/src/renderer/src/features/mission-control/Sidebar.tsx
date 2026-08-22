@@ -46,6 +46,7 @@ export default function Sidebar() {
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
   const openTab = useTabs((s) => s.openTab);
+  const requestTerminalOverview = useTabs((s) => s.requestTerminalOverview);
   const chatAttention = useThreads((s) => kernelThreadAttentionCount(s.threads));
   const summaryProjects = useCodingAgentWorkspace((s) => s.summary?.projects.items);
   const collapsed = useUi((s) => s.sidebarCollapsed);
@@ -101,7 +102,10 @@ export default function Sidebar() {
                 label="Terminal"
                 collapsed={false}
                 active={activeTab?.kind === "terminals" || activeTab?.kind === "terminal"}
-                onClick={() => openTab({ kind: "terminals", title: "Terminal" })}
+                onClick={() => {
+                  openTab({ kind: "terminals", title: "Terminal" });
+                  requestTerminalOverview();
+                }}
               />
               <SidebarNavRow
                 icon={<File size={14} />}
