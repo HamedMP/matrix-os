@@ -28,6 +28,13 @@ const OPEN_PROVIDER_SETTINGS_ACTION: SafeSetupAction = {
   label: "Open provider settings",
 };
 
+const CLAUDE_CONNECT_ACTION: SafeSetupAction = {
+  id: "claude_connect",
+  kind: "foreground_terminal",
+  label: "Connect Claude",
+  command: "claude",
+};
+
 function unverifiedProvider(
   displayName?: string,
   recoveryAction?: SafeSetupAction,
@@ -64,7 +71,8 @@ function findAuthenticationAction(
     `${providerId}_connect`,
     `${providerId}_reconnect`,
   ]);
-  return setupActions.find((action) => trustedActionIds.has(action.id));
+  return setupActions.find((action) => trustedActionIds.has(action.id))
+    ?? (providerId === "claude" ? CLAUDE_CONNECT_ACTION : undefined);
 }
 
 function authenticationAction(

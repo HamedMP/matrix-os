@@ -140,6 +140,28 @@ describe("deriveProviderReadiness", () => {
     });
   });
 
+  it("keeps Claude connection recovery available with an older Gateway summary", () => {
+    expect(deriveProviderReadiness({
+      summary: summary([provider({
+        id: "claude",
+        displayName: "Claude",
+        kind: "claude",
+        availability: "unavailable",
+        installStatus: "unknown",
+        authStatus: "unknown",
+        setupActions: [],
+      })]),
+      providerId: "claude",
+      loading: false,
+    })).toEqual({
+      state: "unverified",
+      blocked: true,
+      title: "Matrix could not verify Claude",
+      description: "Refresh provider status or connect Claude before sending.",
+      action: { kind: "setup", action: connectClaudeAction },
+    });
+  });
+
   it("allows sending only for an available, installed, authenticated provider", () => {
     expect(deriveProviderReadiness({
       summary: summary([provider()]),
