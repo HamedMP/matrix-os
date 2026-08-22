@@ -343,7 +343,7 @@ describe("AgentConversationView worked-for rows", () => {
       />,
     );
 
-    const tool = screen.getByText("Run checks");
+    const tool = screen.getByRole("button", { name: "1 tool call, completed" });
     const summary = screen.getByText("Worked for 12s");
     expect(tool.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

@@ -13,8 +13,14 @@ import { useProjectView } from "../../desktop/src/renderer/src/stores/project-vi
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
+import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
 
 const NOW = "2026-07-12T12:00:00.000Z";
+const RUNTIME_SCOPE = codingAgentRuntimeScope({
+  handle: "operator",
+  platformHost: "https://platform.test",
+  runtimeSlot: "primary",
+});
 const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
 
 function summaryFixture(): RuntimeSummary {
@@ -206,7 +212,15 @@ function resetStores() {
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {}, resolveNewChatTarget: defaultResolveNewChatTarget });
   useProjectChatLauncher.setState({ composerRequest: null });
-  useInspectorLayout.setState({ entries: {}, runtimeScope: null });
+  // Most of this suite covers draft replacement; keep the inspector expanded
+  // for the one review-follow-up case that intentionally enters that surface.
+  useInspectorLayout.setState({
+    entries: {
+      "matrix-os": { widthPct: 34, collapsed: false, maximized: false },
+    },
+    runtimeScope: RUNTIME_SCOPE,
+    hydratedScope: RUNTIME_SCOPE,
+  });
   useProviderPreferences.setState({ defaultProviderId: null, hydrated: false });
   useCodingAgentWorkspace.setState({
     status: "idle",

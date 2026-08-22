@@ -36,6 +36,18 @@ describe("PromptInput actions", () => {
     expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
   });
 
+  it("does not submit with Enter when the current state cannot send", () => {
+    const onSubmit = vi.fn();
+    render(
+      <PromptInput value="draft" onChange={() => {}} onSubmit={onSubmit} busy canSubmit={false} />,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send" }).getAttribute("disabled")).not.toBeNull();
+  });
+
   it("hides the textarea scrollbar until the composer reaches its height cap", () => {
     const view = render(
       <PromptInput value="short" onChange={() => {}} onSubmit={() => {}} busy={false} />,

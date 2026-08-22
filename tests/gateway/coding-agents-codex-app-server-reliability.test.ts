@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
+import { parseCodexExecJsonLine } from "../../packages/gateway/src/coding-agents/codex-events.js";
 
 interface FakeRuntime {
   child: ChildProcess;
@@ -63,10 +63,14 @@ async function sendControl(path: string, payload: unknown): Promise<unknown> {
 async function startFakeRuntime(
   name: string,
   handlerLines: string[],
-  options: { initialTranscriptBytes?: number } = {},
+  options: {
+    failFirstToolCompletionWrite?: boolean;
+    initialTranscriptBytes?: number;
+    stubControlServer?: boolean;
+  } = {},
 ): Promise<FakeRuntime> {
   const shortName = name.slice(0, 8);
-  const homePath = await mkdtemp(join(tmpdir(), `mx-${shortName}-`));
+  const homePath = await mkdtemp(join("/tmp", `mx-${shortName}-`));
   const fakePath = join(homePath, "fake-codex.mjs");
   const eventPath = codexProviderEventPath(homePath, `sess_${shortName}`);
   const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
@@ -84,6 +88,45 @@ async function startFakeRuntime(
     "}",
   ].join("\n"), "utf8");
   await chmod(fakePath, 0o700);
+  const stubControlServerPath = join(homePath, "stub-control-server.mjs");
+  if (options.stubControlServer) {
+    await writeFile(stubControlServerPath, [
+      "import { EventEmitter } from 'node:events';",
+      "import { writeFileSync } from 'node:fs';",
+      "import { createRequire, syncBuiltinESMExports } from 'node:module';",
+      "const require = createRequire(import.meta.url);",
+      "const net = require('node:net');",
+      ...(options.failFirstToolCompletionWrite ? [
+        "const fsPromises = require('node:fs/promises');",
+        "const originalOpen = fsPromises.open;",
+        "fsPromises.open = async (...args) => {",
+        "  const handle = await originalOpen(...args);",
+        "  if (!process.argv[1]?.endsWith('codex-app-server-runner.mjs')) return handle;",
+        "  const originalWrite = handle.write.bind(handle);",
+        "  let injected = false;",
+        "  handle.write = async (...writeArgs) => {",
+        "    if (!injected && String(writeArgs[0]).includes('matrix.codex.tool.completed')) {",
+        "      injected = true;",
+        "      throw new Error('injected_cleanup_persist_failure');",
+        "    }",
+        "    return originalWrite(...writeArgs);",
+        "  };",
+        "  return handle;",
+        "};",
+      ] : []),
+      "net.createServer = () => {",
+      "  const server = new EventEmitter();",
+      "  server.listen = (path, callback) => {",
+      "    writeFileSync(path, '', { mode: 0o600 });",
+      "    queueMicrotask(callback);",
+      "    return server;",
+      "  };",
+      "  server.close = (callback) => { queueMicrotask(callback); return server; };",
+      "  return server;",
+      "};",
+      "syncBuiltinESMExports();",
+    ].join("\n"), "utf8");
+  }
   const config = Buffer.from(JSON.stringify({
     prompt: "Fix the route.",
     approvalPolicy: "on-request",
@@ -103,6 +146,9 @@ async function startFakeRuntime(
     config,
   ], {
     cwd: homePath,
+    env: options.stubControlServer
+      ? { ...process.env, NODE_OPTIONS: `--import=${stubControlServerPath}` }
+      : process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   return { child, controlPath, eventPath, homePath };
@@ -114,10 +160,195 @@ async function cleanup(runtime: FakeRuntime, socket?: Socket): Promise<void> {
   await rm(runtime.homePath, { recursive: true, force: true });
 }
 
+async function replayTranscript(path: string) {
+  return (await replayTranscriptResult(path)).events;
+}
+
+async function replayTranscriptResult(path: string) {
+  let sequence = 0;
+  const transcript = await readFile(path, "utf8");
+  const results = transcript.trim().split("\n").map((line) => parseCodexExecJsonLine(line, {
+    threadId: "thread_matrix_replay",
+    now: () => new Date("2026-08-22T10:00:00.000Z"),
+    nextEventId: () => `evt_replay_${++sequence}`,
+  }));
+  return {
+    events: results.flatMap((result) => result.events),
+    outcomes: results.flatMap((result) => result.outcome ? [result.outcome] : []),
+  };
+}
+
 const initialize = "if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));";
 const startThread = "else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));";
 
 describe("Codex app-server runner reliability", () => {
+  it("settles an in-flight assistant item before a completed turn is replayed", async () => {
+    const runtime = await startFakeRuntime("assistant_cleanup", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: 'native-assistant', delta: 'Partial answer.' } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      expect(exitCode, await readFile(runtime.eventPath, "utf8")).toBe(0);
+      const events = await replayTranscript(runtime.eventPath);
+      const assistantDelta = events.find((event) => event.type === "assistant.text.delta");
+      expect(assistantDelta).toMatchObject({ type: "assistant.text.delta", delta: "Partial answer." });
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "assistant.text.completed",
+        messageId: assistantDelta && "messageId" in assistantDelta ? assistantDelta.messageId : undefined,
+      }));
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("settles an in-flight tool as cancelled before a failed turn is replayed", async () => {
+    const runtime = await startFakeRuntime("tool_cleanup", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'native-tool', type: 'commandExecution', status: 'inProgress' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'interrupted' } } }));",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      expect(exitCode, await readFile(runtime.eventPath, "utf8")).toBe(1);
+      const events = await replayTranscript(runtime.eventPath);
+      const toolStarted = events.find((event) => event.type === "tool.started");
+      expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command" });
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "tool.completed",
+        toolCallId: toolStarted && "toolCallId" in toolStarted ? toolStarted.toolCallId : undefined,
+        outcome: "cancelled",
+      }));
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("retries partial terminal cleanup without duplicating settled items", async () => {
+    const runtime = await startFakeRuntime("cleanup_retry", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: 'native-assistant', delta: 'Partial answer.' } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'native-tool', type: 'commandExecution', status: 'inProgress' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { failFirstToolCompletionWrite: true, stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      expect(exitCode, await readFile(runtime.eventPath, "utf8")).toBe(1);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      const assistantDelta = events.find((event) => event.type === "assistant.text.delta");
+      const toolStarted = events.find((event) => event.type === "tool.started");
+      expect(events.filter((event) => event.type === "assistant.text.completed")).toEqual([
+        expect.objectContaining({
+          messageId: assistantDelta && "messageId" in assistantDelta ? assistantDelta.messageId : undefined,
+        }),
+      ]);
+      expect(events.filter((event) => event.type === "tool.completed")).toEqual([
+        expect.objectContaining({
+          toolCallId: toolStarted && "toolCallId" in toolStarted ? toolStarted.toolCallId : undefined,
+          outcome: "cancelled",
+        }),
+      ]);
+      expect(outcomes).toEqual(["failed"]);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("fails the 501st tool admission before replay can orphan a started item", async () => {
+    const runtime = await startFakeRuntime("tool_limit", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  for (let index = 0; index < 501; index += 1) console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: `native-tool-${index}`, type: 'commandExecution', status: 'inProgress' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      const startedIds = events.flatMap((event) => event.type === "tool.started" ? [event.toolCallId] : []);
+      const completedIds = events.flatMap((event) => event.type === "tool.completed" ? [event.toolCallId] : []);
+      expect(startedIds).toHaveLength(500);
+      expect(completedIds).toHaveLength(500);
+      expect(new Set(completedIds)).toEqual(new Set(startedIds));
+      expect(outcomes).toEqual(["failed"]);
+      expect(exitCode).toBe(1);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("fails the 501st assistant admission before replay can orphan a delta", async () => {
+    const runtime = await startFakeRuntime("assistant_limit", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  for (let index = 0; index < 501; index += 1) console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: `native-assistant-${index}`, delta: `Partial answer ${index}.` } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      const deltaIds = events.flatMap((event) => event.type === "assistant.text.delta" ? [event.messageId] : []);
+      const completedIds = events.flatMap((event) => event.type === "assistant.text.completed" ? [event.messageId] : []);
+      expect(deltaIds).toHaveLength(500);
+      expect(completedIds).toHaveLength(500);
+      expect(new Set(completedIds)).toEqual(new Set(deltaIds));
+      expect(outcomes).toEqual(["failed"]);
+      expect(exitCode).toBe(1);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("tracks a synthesized tool start until its completion persists", async () => {
+    const runtime = await startFakeRuntime("synthetic_start", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn', item: { id: 'native-tool', type: 'commandExecution', status: 'completed' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { failFirstToolCompletionWrite: true, stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      const startedIds = events.flatMap((event) => event.type === "tool.started" ? [event.toolCallId] : []);
+      const completed = events.filter((event) => event.type === "tool.completed");
+      expect(startedIds).toHaveLength(1);
+      expect(completed).toEqual([
+        expect.objectContaining({ toolCallId: startedIds[0], outcome: "cancelled" }),
+      ]);
+      expect(outcomes).toEqual(["failed"]);
+      expect(exitCode).toBe(1);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
   it("answers duplicate input questions with a fail-closed empty result", async () => {
     const runtime = await startFakeRuntime("duplicate_questions", [
       initialize,
@@ -224,13 +455,13 @@ describe("Codex app-server runner reliability", () => {
   });
 
   it("stops the long-lived provider on completed and failed turns", async () => {
-    for (const terminalMethod of ["turn/completed", "turn/failed"] as const) {
-      const runtime = await startFakeRuntime(`terminal_${terminalMethod.split("/")[1]}`, [
+    for (const turnStatus of ["completed", "failed"] as const) {
+      const runtime = await startFakeRuntime(`terminal_${turnStatus}`, [
         initialize,
         startThread,
         "else if (message.method === 'turn/start') {",
         "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
-        `  console.log(JSON.stringify({ method: '${terminalMethod}', params: { turn: { status: 'failed' } } }));`,
+        `  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: '${turnStatus}' } } }));`,
         "  setInterval(() => {}, 1000);",
         "}",
       ]);
@@ -238,8 +469,8 @@ describe("Codex app-server runner reliability", () => {
       try {
         const code = await waitForExit(runtime.child);
         const transcript = await readFile(runtime.eventPath, "utf8");
-        expect(code).toBe(terminalMethod === "turn/completed" ? 0 : 1);
-        expect(transcript).toContain(terminalMethod === "turn/completed"
+        expect(code).toBe(turnStatus === "completed" ? 0 : 1);
+        expect(transcript).toContain(turnStatus === "completed"
           ? '"type":"turn.completed"'
           : '"type":"turn.failed"');
       } finally {
@@ -299,7 +530,7 @@ describe("Codex app-server runner reliability", () => {
       startThread,
       "else if (message.method === 'turn/start') {",
       "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
-      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'a'.repeat(1000) } }));",
+      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: 'native-message', delta: 'a'.repeat(1000) } }));",
       "  setInterval(() => {}, 1000);",
       "}",
     ], { initialTranscriptBytes: 16 * 1024 * 1024 - 100 });

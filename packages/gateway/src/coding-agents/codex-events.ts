@@ -116,7 +116,29 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
   }).strict(),
   z.object({
     type: z.literal("matrix.codex.assistant.delta"),
+    messageId: CodexItemIdSchema.optional(),
     delta: CodexTextSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("matrix.codex.assistant.completed"),
+    messageId: CodexItemIdSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("matrix.codex.tool.started"),
+    toolCallId: CodexItemIdSchema,
+    displayName: SafeDisplayStringSchema,
+    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan"]),
+  }).strict(),
+  z.object({
+    type: z.literal("matrix.codex.tool.output"),
+    toolCallId: CodexItemIdSchema,
+    text: SafeDisplayStringSchema,
+    truncated: z.boolean(),
+  }).strict(),
+  z.object({
+    type: z.literal("matrix.codex.tool.completed"),
+    toolCallId: CodexItemIdSchema,
+    outcome: z.enum(["success", "failed", "cancelled"]),
   }).strict(),
 ]);
 
@@ -193,16 +215,45 @@ function appServerRecordEvents(
       },
     })];
   }
-  const codePoints = Array.from(record.delta);
-  const events: AgentThreadEvent[] = [];
-  for (let offset = 0; offset < codePoints.length; offset += MAX_ASSISTANT_DELTA_CHARS) {
-    events.push(event(context, {
-      type: "assistant.text.delta",
-      messageId: "codex_app_server",
-      delta: codePoints.slice(offset, offset + MAX_ASSISTANT_DELTA_CHARS).join(""),
-    }));
+  if (record.type === "matrix.codex.assistant.delta") {
+    const codePoints = Array.from(record.delta);
+    const events: AgentThreadEvent[] = [];
+    for (let offset = 0; offset < codePoints.length; offset += MAX_ASSISTANT_DELTA_CHARS) {
+      events.push(event(context, {
+        type: "assistant.text.delta",
+        messageId: record.messageId ?? "codex_app_server",
+        delta: codePoints.slice(offset, offset + MAX_ASSISTANT_DELTA_CHARS).join(""),
+      }));
+    }
+    return events;
   }
-  return events;
+  if (record.type === "matrix.codex.assistant.completed") {
+    return [event(context, {
+      type: "assistant.text.completed",
+      messageId: record.messageId,
+    })];
+  }
+  if (record.type === "matrix.codex.tool.started") {
+    return [event(context, {
+      type: "tool.started",
+      toolCallId: record.toolCallId,
+      displayName: record.displayName,
+      kind: record.kind,
+    })];
+  }
+  if (record.type === "matrix.codex.tool.output") {
+    return [event(context, {
+      type: "tool.output",
+      toolCallId: record.toolCallId,
+      text: record.text,
+      truncated: record.truncated,
+    })];
+  }
+  return [event(context, {
+    type: "tool.completed",
+    toolCallId: record.toolCallId,
+    outcome: record.outcome,
+  })];
 }
 
 function toolStarted(

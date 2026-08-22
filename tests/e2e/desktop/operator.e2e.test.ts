@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { _electron, type ElectronApplication, type Page } from "playwright";
+import { _electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { inspectDesktopHandoffBaseline } from "./handoff-electron-baseline";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
@@ -17,6 +17,7 @@ const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../desktop/screenshots");
 const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
 const MAT_327_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-327");
+const MAT_348_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-348");
 const hasBuild = existsSync(DESKTOP_MAIN);
 
 const suite = hasBuild ? describe : describe.skip;
@@ -51,6 +52,23 @@ async function openMatrixProjectOverview(page: Page): Promise<void> {
   await page.getByRole("heading", { name: "Matrix OS" }).waitFor({ timeout: 10_000 });
 }
 
+async function ensureSignedIn(page: Page): Promise<void> {
+  const continueButton = page.getByRole("button", { name: /continue in browser/i });
+  const terminalNavigation = page.locator("aside button", { hasText: "Terminal" }).first();
+  const bootState = await Promise.race([
+    continueButton.waitFor({ state: "visible", timeout: 15_000 }).then(() => "signed-out" as const),
+    terminalNavigation.waitFor({ state: "visible", timeout: 15_000 }).then(() => "signed-in" as const),
+  ]);
+  if (bootState === "signed-out") await continueButton.click();
+  await terminalNavigation.waitFor({ timeout: 15_000 });
+}
+
+async function verticalGap(before: Locator, after: Locator): Promise<number> {
+  const [beforeBox, afterBox] = await Promise.all([before.boundingBox(), after.boundingBox()]);
+  if (!beforeBox || !afterBox) throw new Error("Could not measure transcript rows");
+  return afterBox.y - (beforeBox.y + beforeBox.height);
+}
+
 suite("operator desktop e2e", () => {
   let gateway: StubGateway;
   let app: ElectronApplication;
@@ -68,6 +86,7 @@ suite("operator desktop e2e", () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_322_SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_327_SCREENSHOT_DIR, { recursive: true });
+    mkdirSync(MAT_348_SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
     userDataDir = mkdtempSync(join(tmpdir(), "operator-e2e-"));
     app = await _electron.launch({
@@ -162,23 +181,12 @@ suite("operator desktop e2e", () => {
     await page.getByText("Trace why the OAuth callback drops the return path.").waitFor();
     await page.getByText("auth-callback.ts").waitFor();
     await page.getByRole("button", { name: "Tool call Read auth callback" }).waitFor();
+    await page.getByRole("button", { name: "Show conversation tools" }).click();
     await page.getByRole("tablist", { name: "Conversation tools" }).waitFor();
     await page.getByRole("button", { name: "Open review PR #917" }).click();
     await page.getByText("PR #917 review details").waitFor();
     await page.getByRole("button", { name: "Prepare commit for review PR #917" }).waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "04d-chats-changes-inspector.png") });
-    await page.setViewportSize({ width: 820, height: 720 });
-    await page.getByRole("complementary", { name: "Conversation tools" }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "04e-chats-changes-inspector-narrow.png") });
-    await page.setViewportSize({ width: 1280, height: 720 });
-
-    await page.getByRole("tab", { name: /^Terminal\b/ }).click();
-    await page.getByText("Matrix shell").waitFor();
-    await page.getByRole("tab", { name: /^Preview\b/ }).click();
-    await page.getByRole("button", { name: "Inspect preview Matrix OS web" }).waitFor();
-    await page.getByRole("tab", { name: /^Activity\b/ }).click();
-    await page.getByRole("heading", { name: "Codex" }).waitFor();
-    await page.getByRole("tab", { name: /^Changes\b/ }).click();
   }, 30_000);
 
   it("starts an agent thread from the project chats composer", async () => {
@@ -195,6 +203,70 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05-project-chats-composer.png") });
     await page.locator("span:visible", { hasText: /^Done$/ }).first().waitFor({ timeout: 10_000 });
   }, 30_000);
+
+  it("validates MAT-348 tool hierarchy and composer in built Electron", async () => {
+    await ensureSignedIn(page);
+    await page.locator("aside button", { hasText: "Matrix OS" }).first().click();
+    await page.getByRole("button", { name: "Chats" }).click();
+    await page.getByRole("button", { name: "New chat in Matrix OS" }).click();
+
+    const prompt = "MAT-348: validate a long tool-heavy agent turn";
+    await page.getByLabel("Message new chat").fill(prompt);
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const toolSummary = page.getByRole("button", { name: "9 tool calls, completed" });
+    await toolSummary.waitFor({ timeout: 10_000 });
+    await page.getByText("Historical tool activity is grouped", { exact: false }).waitFor();
+    expect(await toolSummary.getAttribute("aria-expanded")).toBe("false");
+    expect(await page.getByRole("button", { name: "Tool call Read conversation renderer" }).count()).toBe(0);
+    expect(await page.getByLabel("Agent provider").textContent()).toBe("Codex");
+
+    const userRow = page.locator('[data-message-id="user:msg_mat_348_user"]');
+    const introRow = page.locator('[data-message-id="assistant:msg_mat_348_intro"]');
+    const toolRow = toolSummary.locator('xpath=ancestor::*[@data-message-id][1]');
+    const resultRow = page.locator('[data-message-id="assistant:msg_mat_348_result"]');
+    const gaps = await Promise.all([
+      verticalGap(userRow, introRow),
+      verticalGap(introRow, toolRow),
+      verticalGap(toolRow, resultRow),
+    ]);
+    const visibleGaps = await Promise.all([
+      verticalGap(userRow.locator('[data-slot="bubble-content"]'), introRow.locator("[data-selectable]")),
+      verticalGap(introRow.locator("[data-selectable]"), toolSummary),
+      verticalGap(toolSummary, resultRow.locator("[data-selectable]")),
+    ]);
+    // T3's current timeline uses a 16px boundary after a user message and an
+    // 8px cadence for commentary/work/result rows. Matrix may preserve its
+    // own typography, but a settled turn must keep that compact hierarchy.
+    expect(gaps[0]).toBeLessThanOrEqual(20);
+    expect(gaps[1]).toBeLessThanOrEqual(12);
+    expect(gaps[2]).toBeLessThanOrEqual(12);
+    expect(visibleGaps[0]).toBeLessThanOrEqual(44);
+    expect(visibleGaps[1]).toBeLessThanOrEqual(20);
+    expect(visibleGaps[2]).toBeLessThanOrEqual(20);
+    await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "01-settled-tool-group.png") });
+
+    await toolSummary.click();
+    await page.getByRole("button", { name: "Tool call Read conversation renderer" }).waitFor();
+    await page.getByRole("button", { name: "Tool call Summarize validation" }).waitFor();
+    await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "02-expanded-tool-group.png") });
+
+    await toolSummary.click();
+    await page.setViewportSize({ width: 820, height: 720 });
+    await toolSummary.scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "03-settled-tool-group-narrow.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await page.getByRole("button", { name: "Chat Investigate auth callback" }).click();
+    const busyDraft = page.getByLabel("Message conversation");
+    await busyDraft.fill("Draft this follow-up while the agent is working");
+    await busyDraft.press("Enter");
+    expect(await busyDraft.inputValue()).toBe("Draft this follow-up while the agent is working");
+    await page.getByRole("button", { name: "Stop" }).waitFor();
+    await page.getByText("Agent is working — draft now, send when this turn finishes").waitFor();
+    await page.screenshot({ path: join(MAT_348_SCREENSHOT_DIR, "04-running-composer-draft.png") });
+  }, 40_000);
 
   it("shows provider and integration settings for the selected computer", async () => {
     await openSettings(page);

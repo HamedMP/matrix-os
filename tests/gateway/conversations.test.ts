@@ -92,6 +92,17 @@ describe("ConversationStore", () => {
     });
   });
 
+  it("persists safe system notices for failed turns", () => {
+    const store = createConversationStore(homePath);
+    store.begin("sess-1");
+
+    store.addSystemMessage("sess-1", "Request failed");
+
+    expect(createConversationStore(homePath).get("sess-1")?.messages).toEqual([
+      expect.objectContaining({ role: "system", content: "Request failed" }),
+    ]);
+  });
+
   it("appendAssistantText buffers in memory without disk write", () => {
     const store = createConversationStore(homePath);
     store.begin("sess-1");
