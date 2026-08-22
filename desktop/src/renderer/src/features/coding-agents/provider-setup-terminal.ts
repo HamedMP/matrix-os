@@ -1,6 +1,7 @@
 import type { AgentProviderSummary, SafeSetupAction } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
 import type { useTabs } from "../../stores/tabs";
+import { providerSupportsSetupAction } from "./provider-readiness";
 
 const MAX_PROVIDER_SETUP_ACTIONS = 10;
 const MAX_SETUP_SESSION_NAME_LENGTH = 31;
@@ -116,18 +117,12 @@ export async function executeProviderSetupAction(input: {
   if (!input.api) return false;
   const foregroundAction = input.action;
 
-  const trustedAction = input.provider.setupActions.find((candidate) =>
-    candidate.kind === "foreground_terminal" &&
-    candidate.id === foregroundAction.id &&
-    candidate.label === foregroundAction.label &&
-    candidate.command === foregroundAction.command
-  );
-  if (!trustedAction || trustedAction.kind !== "foreground_terminal") return false;
-  const setup = providerSetupCommands([input.provider]).find((candidate) =>
-    candidate.key === `${input.provider.id}:${trustedAction.id}` &&
-    candidate.label === trustedAction.label &&
-    candidate.command === trustedAction.command
-  );
-  if (!setup) return false;
+  if (!providerSupportsSetupAction(input.provider, foregroundAction)) return false;
+  const setup = {
+    key: `${input.provider.id}:${foregroundAction.id}`,
+    label: foregroundAction.label,
+    command: foregroundAction.command,
+    sessionName: setupSessionName(input.provider.id, foregroundAction.id),
+  };
   return await openProviderSetupTerminal(input.api, setup, input.openTab, "provider-readiness");
 }

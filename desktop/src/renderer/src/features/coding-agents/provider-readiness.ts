@@ -1,4 +1,4 @@
-import type { RuntimeSummary, SafeSetupAction } from "@matrix-os/contracts";
+import type { AgentProviderSummary, RuntimeSummary, SafeSetupAction } from "@matrix-os/contracts";
 
 export type ProviderReadinessAction =
   | { kind: "setup"; action: SafeSetupAction }
@@ -28,15 +28,50 @@ const OPEN_PROVIDER_SETTINGS_ACTION: SafeSetupAction = {
   label: "Open provider settings",
 };
 
-function unverifiedProvider(displayName?: string): ProviderReadinessPresentation {
+const CLAUDE_CONNECT_ACTION: SafeSetupAction = {
+  id: "claude_connect",
+  kind: "foreground_terminal",
+  label: "Connect Claude",
+  command: "claude",
+};
+
+function sameSetupAction(left: SafeSetupAction, right: SafeSetupAction): boolean {
+  if (left.kind !== right.kind || left.id !== right.id || left.label !== right.label) return false;
+  return left.kind === "open_settings" ||
+    (right.kind === "foreground_terminal" && left.command === right.command);
+}
+
+export function providerSupportsSetupAction(
+  provider: AgentProviderSummary,
+  action: SafeSetupAction,
+): boolean {
+  return provider.setupActions.some((candidate) => sameSetupAction(candidate, action)) ||
+    (provider.id === "claude" && sameSetupAction(CLAUDE_CONNECT_ACTION, action));
+}
+
+export function findProviderForSetupAction(
+  providers: AgentProviderSummary[],
+  action: SafeSetupAction,
+): AgentProviderSummary | undefined {
+  return providers.find((provider) => providerSupportsSetupAction(provider, action));
+}
+
+function unverifiedProvider(
+  displayName?: string,
+  recoveryAction?: SafeSetupAction,
+): ProviderReadinessPresentation {
   return {
     state: "unverified",
     blocked: true,
     title: displayName
       ? `Matrix could not verify ${displayName}`
       : "Matrix could not verify this provider",
-    description: "Refresh provider status before sending.",
-    action: { kind: "refresh" },
+    description: recoveryAction && displayName
+      ? `Refresh provider status or connect ${displayName} before sending.`
+      : "Refresh provider status before sending.",
+    action: recoveryAction
+      ? { kind: "setup", action: recoveryAction }
+      : { kind: "refresh" },
   };
 }
 
@@ -49,17 +84,25 @@ function setupAction(
   };
 }
 
-function authenticationAction(
+function findAuthenticationAction(
   providerId: string,
   setupActions: SafeSetupAction[],
-): Extract<ProviderReadinessAction, { kind: "setup" }> {
+): SafeSetupAction | undefined {
   const trustedActionIds = new Set([
     `${providerId}_connect`,
     `${providerId}_reconnect`,
   ]);
+  return setupActions.find((action) => trustedActionIds.has(action.id))
+    ?? (providerId === "claude" ? CLAUDE_CONNECT_ACTION : undefined);
+}
+
+function authenticationAction(
+  providerId: string,
+  setupActions: SafeSetupAction[],
+): Extract<ProviderReadinessAction, { kind: "setup" }> {
   return {
     kind: "setup",
-    action: setupActions.find((action) => trustedActionIds.has(action.id))
+    action: findAuthenticationAction(providerId, setupActions)
       ?? OPEN_PROVIDER_SETTINGS_ACTION,
   };
 }
@@ -150,5 +193,8 @@ export function deriveProviderReadiness(input: {
       action: setupAction(provider.setupActions),
     };
   }
-  return unverifiedProvider(provider.displayName);
+  return unverifiedProvider(
+    provider.displayName,
+    findAuthenticationAction(provider.id, provider.setupActions),
+  );
 }

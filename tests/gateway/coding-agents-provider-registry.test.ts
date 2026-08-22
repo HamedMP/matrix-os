@@ -130,16 +130,32 @@ describe("coding-agent provider registry", () => {
     },
   );
 
-  it("fails closed when credential status cannot be read", async () => {
+  it("fails closed while preserving Claude connection recovery when credential status cannot be read", async () => {
     const healthCheck = vi.fn(() => ({ ok: true }));
     const buildSetupAction = vi.fn(() => [{
-      id: "codex_login",
+      id: "claude_connect",
       kind: "foreground_terminal" as const,
-      label: "Connect Codex",
-      command: "codex login",
+      label: "Connect Claude",
+      command: "claude",
     }]);
     const registry = createCodingAgentProviderRegistry({
-      providers: [adapter({ healthCheck, buildSetupAction })],
+      providers: [adapter({
+        providerId: "claude",
+        getSummary: ({ now }) => ({
+          id: "claude",
+          displayName: "Claude",
+          kind: "claude",
+          availability: "available",
+          installStatus: "installed",
+          authStatus: "authenticated",
+          supportedModes: ["default", "review"],
+          defaultMode: "default",
+          setupActions: [],
+          lastCheckedAt: now().toISOString(),
+        }),
+        healthCheck,
+        buildSetupAction,
+      })],
       agentCredentials: {
         getStatus: vi.fn(async () => {
           throw new Error("credential backend unavailable");
@@ -151,15 +167,20 @@ describe("coding-agent provider registry", () => {
     const [summary] = await registry.listProviders(owner);
 
     expect(summary).toMatchObject({
-      id: "codex",
+      id: "claude",
       availability: "unavailable",
       installStatus: "unknown",
       authStatus: "unknown",
-      setupActions: [],
+      setupActions: [{
+        id: "claude_connect",
+        kind: "foreground_terminal",
+        label: "Connect Claude",
+        command: "claude",
+      }],
       lastCheckedAt: baseNow.toISOString(),
     });
     expect(healthCheck).not.toHaveBeenCalled();
-    expect(buildSetupAction).not.toHaveBeenCalled();
+    expect(buildSetupAction).toHaveBeenCalledOnce();
   });
 
   it("keeps credential-known providers without execution adapters in the summary", async () => {

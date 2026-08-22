@@ -19,6 +19,13 @@ const connectAction = {
   command: "codex login",
 };
 
+const connectClaudeAction = {
+  id: "claude_connect",
+  kind: "foreground_terminal" as const,
+  label: "Connect Claude",
+  command: "claude",
+};
+
 function provider(overrides: Partial<AgentProviderSummary> = {}): AgentProviderSummary {
   return {
     id: "codex",
@@ -108,6 +115,50 @@ describe("deriveProviderReadiness", () => {
       title: "Matrix could not verify this provider",
       description: "Refresh provider status before sending.",
       action: { kind: "refresh" },
+    });
+  });
+
+  it("keeps Claude connection recovery available when verification is inconclusive", () => {
+    expect(deriveProviderReadiness({
+      summary: summary([provider({
+        id: "claude",
+        displayName: "Claude",
+        kind: "claude",
+        availability: "unavailable",
+        installStatus: "unknown",
+        authStatus: "unknown",
+        setupActions: [connectClaudeAction],
+      })]),
+      providerId: "claude",
+      loading: false,
+    })).toEqual({
+      state: "unverified",
+      blocked: true,
+      title: "Matrix could not verify Claude",
+      description: "Refresh provider status or connect Claude before sending.",
+      action: { kind: "setup", action: connectClaudeAction },
+    });
+  });
+
+  it("keeps Claude connection recovery available with an older Gateway summary", () => {
+    expect(deriveProviderReadiness({
+      summary: summary([provider({
+        id: "claude",
+        displayName: "Claude",
+        kind: "claude",
+        availability: "unavailable",
+        installStatus: "unknown",
+        authStatus: "unknown",
+        setupActions: [],
+      })]),
+      providerId: "claude",
+      loading: false,
+    })).toEqual({
+      state: "unverified",
+      blocked: true,
+      title: "Matrix could not verify Claude",
+      description: "Refresh provider status or connect Claude before sending.",
+      action: { kind: "setup", action: connectClaudeAction },
     });
   });
 
