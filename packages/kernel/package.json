@@ -28,6 +28,11 @@
       "types": "./src/skill-registry.ts",
       "import": "./dist/skill-registry.js",
       "default": "./dist/skill-registry.js"
+    },
+    "./tools/integrations": {
+      "types": "./src/tools/integrations.ts",
+      "import": "./dist/tools/integrations.js",
+      "default": "./dist/tools/integrations.js"
     }
   },
   "scripts": {

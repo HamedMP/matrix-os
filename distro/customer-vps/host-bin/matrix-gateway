@@ -82,6 +82,10 @@ if [ -f "$APP_DIR/packages/gateway/dist/shell/register-agent-bridges-cli.js" ]; 
     "$NODE_BIN" "$APP_DIR/packages/gateway/dist/shell/register-agent-bridges-cli.js" || \
     echo "matrix-gateway: agent bridge registration skipped" >&2
 fi
+if [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
+  /opt/matrix/bin/matrix-register-integrations-mcp all || \
+    echo "matrix-gateway: integrations MCP registration skipped" >&2
+fi
 cd "$APP_DIR"
 if [ -f "$APP_DIR/packages/gateway/dist/main.js" ]; then
   "$NODE_BIN" "$APP_DIR/packages/gateway/dist/main.js" &

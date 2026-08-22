@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST_ENV_FILE="/opt/matrix/env/host.env"
+NODE_BIN="/opt/matrix/runtime/node/bin/node"
+SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"
+
+read_host_value() {
+  local key value
+  key="$1"
+  value="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$HOST_ENV_FILE")"
+  [ -n "$value" ] || return 1
+  printf '%s\n' "$value"
+}
+
+if [ ! -r "$HOST_ENV_FILE" ]; then
+  echo "matrix-integrations-mcp: Matrix identity is unavailable" >&2
+  exit 3
+fi
+MATRIX_AUTH_TOKEN_VALUE="$(read_host_value MATRIX_AUTH_TOKEN)" || {
+  echo "matrix-integrations-mcp: Matrix authentication is unavailable" >&2
+  exit 3
+}
+MATRIX_CLERK_USER_ID_VALUE="$(read_host_value MATRIX_CLERK_USER_ID)" || {
+  echo "matrix-integrations-mcp: Matrix identity is unavailable" >&2
+  exit 3
+}
+if [[ ! "$MATRIX_AUTH_TOKEN_VALUE" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]] || \
+   [[ ! "$MATRIX_CLERK_USER_ID_VALUE" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
+  echo "matrix-integrations-mcp: Matrix identity is invalid" >&2
+  exit 3
+fi
+if [ ! -x "$NODE_BIN" ] || [ ! -f "$SERVER_PATH" ]; then
+  echo "matrix-integrations-mcp: runtime is unavailable" >&2
+  exit 3
+fi
+
+# Start from an empty environment so database, storage, analytics, and provider
+# secrets in host.env cannot cross into the agent-owned MCP process.
+exec /usr/bin/env -i \
+  PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
+  GATEWAY_URL="http://127.0.0.1:4000" \
+  MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN_VALUE" \
+  MATRIX_CLERK_USER_ID="$MATRIX_CLERK_USER_ID_VALUE" \
+  "$NODE_BIN" "$SERVER_PATH"

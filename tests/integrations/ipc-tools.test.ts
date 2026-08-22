@@ -3,6 +3,7 @@ import {
   connectServiceHandler,
   callServiceHandler,
   describeServiceHandler,
+  disconnectServiceHandler,
   listIntegrationInventoryHandler,
   type GatewayFetcher,
 } from "../../packages/kernel/src/tools/integrations.js";
@@ -148,6 +149,23 @@ describe("integration discovery", () => {
     expect(result.content[0].text).toContain("Gmail actions");
     expect(result.content[0].text).toContain("list_messages");
     expect(result.content[0].text).toContain("maxResults");
+  });
+});
+
+describe("disconnect_service handler", () => {
+  it("uses the owned Matrix connection id and returns a safe confirmation", async () => {
+    const fetcher = mockFetcher({ body: { ok: true } });
+
+    const result = await disconnectServiceHandler(
+      { connection_id: "11111111-1111-4111-8111-111111111111" },
+      fetcher,
+    );
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:4000/api/integrations/11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(result.content[0].text).toBe("Disconnected the integration.");
   });
 });
 

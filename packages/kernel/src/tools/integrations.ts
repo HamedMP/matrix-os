@@ -271,3 +271,34 @@ export async function callServiceHandler(
     return textResult("Integration service is temporarily unavailable. Please try again later.");
   }
 }
+
+// ---------------------------------------------------------------------------
+// disconnect_service
+// ---------------------------------------------------------------------------
+
+export interface DisconnectServiceInput {
+  connection_id: string;
+}
+
+export async function disconnectServiceHandler(
+  input: DisconnectServiceInput,
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const res = await fetcher(
+      `${GATEWAY_BASE}/api/integrations/${encodeURIComponent(input.connection_id)}`,
+      {
+        method: "DELETE",
+        headers: authHeaders(),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      },
+    );
+    if (!res.ok) {
+      return textResult("The integration could not be disconnected. Please try again.");
+    }
+    return textResult("Disconnected the integration.");
+  } catch (err: unknown) {
+    console.error("[integrations] disconnect_service error:", err instanceof Error ? err.message : err);
+    return textResult("The integration could not be disconnected. Please try again.");
+  }
+}

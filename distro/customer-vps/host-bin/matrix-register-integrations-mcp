@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET="${1:-all}"
+case "$TARGET" in
+  all|coding-agents|codex|claude|hermes|openclaw) ;;
+  *)
+    echo "matrix-register-integrations-mcp: expected all, coding-agents, codex, claude, hermes, or openclaw" >&2
+    exit 64
+    ;;
+esac
+
+MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
+MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
+MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
+RUNTIME_PATH="$MATRIX_RUNTIME_HOME/.local/bin:$MATRIX_NODE_PREFIX/bin:/opt/matrix/bin:/usr/local/bin:/usr/bin:/bin"
+
+run_as_runtime_user() {
+  if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
+    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
+    return
+  fi
+  if [ "$(id -un)" = "$MATRIX_RUNTIME_USER" ]; then
+    "$@"
+    return
+  fi
+  sudo -H -u "$MATRIX_RUNTIME_USER" "$@"
+}
+
+runtime_env() {
+  run_as_runtime_user /usr/bin/env -i \
+    HOME="$MATRIX_RUNTIME_HOME" \
+    HERMES_HOME="$MATRIX_RUNTIME_HOME/.hermes" \
+    OPENCLAW_STATE_DIR="$MATRIX_RUNTIME_HOME/.openclaw" \
+    PATH="$RUNTIME_PATH" \
+    "$@"
+}
+
+register_codex() {
+  [ -x "$MATRIX_NODE_PREFIX/bin/codex" ] || return 0
+  runtime_env codex mcp remove matrix-integrations >/dev/null 2>&1 || true
+  runtime_env codex mcp add matrix-integrations -- /opt/matrix/bin/matrix-integrations-mcp
+}
+
+register_claude() {
+  [ -x "$MATRIX_NODE_PREFIX/bin/claude" ] || return 0
+  runtime_env claude mcp remove matrix-integrations --scope user >/dev/null 2>&1 || true
+  runtime_env claude mcp add --transport stdio --scope user matrix-integrations -- /opt/matrix/bin/matrix-integrations-mcp
+}
+
+register_hermes() {
+  [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] || return 0
+  runtime_env hermes mcp remove matrix-integrations >/dev/null 2>&1 || true
+  runtime_env hermes mcp add matrix-integrations --command /opt/matrix/bin/matrix-integrations-mcp
+}
+
+register_openclaw() {
+  [ -x "$MATRIX_NODE_PREFIX/bin/openclaw" ] || return 0
+  runtime_env openclaw mcp unset matrix-integrations >/dev/null 2>&1 || true
+  runtime_env openclaw mcp add matrix-integrations --command /opt/matrix/bin/matrix-integrations-mcp --no-probe
+}
+
+failed=0
+if [ "$TARGET" = "all" ] || [ "$TARGET" = "coding-agents" ] || [ "$TARGET" = "codex" ]; then
+  register_codex || failed=1
+fi
+if [ "$TARGET" = "all" ] || [ "$TARGET" = "coding-agents" ] || [ "$TARGET" = "claude" ]; then
+  register_claude || failed=1
+fi
+if [ "$TARGET" = "all" ] || [ "$TARGET" = "hermes" ]; then
+  register_hermes || failed=1
+fi
+if [ "$TARGET" = "all" ] || [ "$TARGET" = "openclaw" ]; then
+  register_openclaw || failed=1
+fi
+
+if [ "$failed" -ne 0 ]; then
+  echo "matrix-register-integrations-mcp: one or more agent registrations failed" >&2
+  exit 1
+fi

@@ -95,4 +95,9 @@ if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scri
     "$MATRIX_RUNTIME_HOME/.local/bin/hermes" config set skills.config.matrix.gateway_url "$MATRIX_GATEWAY_URL" || true
 fi
 
+if [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
+  /opt/matrix/bin/matrix-register-integrations-mcp hermes || \
+    log "integrations MCP registration will retry on gateway restart"
+fi
+
 log "Hermes and uv are installed"
