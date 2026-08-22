@@ -28,15 +28,22 @@ const OPEN_PROVIDER_SETTINGS_ACTION: SafeSetupAction = {
   label: "Open provider settings",
 };
 
-function unverifiedProvider(displayName?: string): ProviderReadinessPresentation {
+function unverifiedProvider(
+  displayName?: string,
+  recoveryAction?: SafeSetupAction,
+): ProviderReadinessPresentation {
   return {
     state: "unverified",
     blocked: true,
     title: displayName
       ? `Matrix could not verify ${displayName}`
       : "Matrix could not verify this provider",
-    description: "Refresh provider status before sending.",
-    action: { kind: "refresh" },
+    description: recoveryAction && displayName
+      ? `Refresh provider status or connect ${displayName} before sending.`
+      : "Refresh provider status before sending.",
+    action: recoveryAction
+      ? { kind: "setup", action: recoveryAction }
+      : { kind: "refresh" },
   };
 }
 
@@ -49,17 +56,24 @@ function setupAction(
   };
 }
 
-function authenticationAction(
+function findAuthenticationAction(
   providerId: string,
   setupActions: SafeSetupAction[],
-): Extract<ProviderReadinessAction, { kind: "setup" }> {
+): SafeSetupAction | undefined {
   const trustedActionIds = new Set([
     `${providerId}_connect`,
     `${providerId}_reconnect`,
   ]);
+  return setupActions.find((action) => trustedActionIds.has(action.id));
+}
+
+function authenticationAction(
+  providerId: string,
+  setupActions: SafeSetupAction[],
+): Extract<ProviderReadinessAction, { kind: "setup" }> {
   return {
     kind: "setup",
-    action: setupActions.find((action) => trustedActionIds.has(action.id))
+    action: findAuthenticationAction(providerId, setupActions)
       ?? OPEN_PROVIDER_SETTINGS_ACTION,
   };
 }
@@ -150,5 +164,8 @@ export function deriveProviderReadiness(input: {
       action: setupAction(provider.setupActions),
     };
   }
-  return unverifiedProvider(provider.displayName);
+  return unverifiedProvider(
+    provider.displayName,
+    findAuthenticationAction(provider.id, provider.setupActions),
+  );
 }
