@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import phosphorPlugsUrl from "../../assets/phosphor/plugs.svg?no-inline";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
-import { useHermesChat } from "../../stores/hermes-chat";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { kernelThreadAttentionCount } from "../../stores/unified-threads";
@@ -16,6 +15,7 @@ import { useUi } from "../../stores/ui";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import AccountMenu from "./AccountMenu";
+import { openChatIndex, openProjectsIndex, openTerminalIndex } from "./navigation-roots";
 import RecentViews from "./RecentViews";
 import {
   SidebarDivider,
@@ -46,7 +46,6 @@ export default function Sidebar() {
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
   const openTab = useTabs((s) => s.openTab);
-  const requestTerminalOverview = useTabs((s) => s.requestTerminalOverview);
   const chatAttention = useThreads((s) => kernelThreadAttentionCount(s.threads));
   const summaryProjects = useCodingAgentWorkspace((s) => s.summary?.projects.items);
   const collapsed = useUi((s) => s.sidebarCollapsed);
@@ -91,21 +90,14 @@ export default function Sidebar() {
                 collapsed={false}
                 active={activeTab?.kind === "chat"}
                 badge={chatAttention}
-                onClick={() => {
-                  useThreads.getState().setActiveThread(null);
-                  useHermesChat.getState().showIndex();
-                  openTab({ kind: "chat", title: "Hermes", closable: false });
-                }}
+                onClick={openChatIndex}
               />
               <SidebarNavRow
                 icon={<Terminal size={14} />}
                 label="Terminal"
                 collapsed={false}
                 active={activeTab?.kind === "terminals" || activeTab?.kind === "terminal"}
-                onClick={() => {
-                  openTab({ kind: "terminals", title: "Terminal" });
-                  requestTerminalOverview();
-                }}
+                onClick={openTerminalIndex}
               />
               <SidebarNavRow
                 icon={<File size={14} />}
@@ -134,7 +126,7 @@ export default function Sidebar() {
                 collapsed={false}
                 active={activeTab?.kind === "projects" || activeTab?.kind === "project"}
                 badge={projectAttention}
-                onClick={() => openTab({ kind: "projects", title: "Projects", closable: false })}
+                onClick={openProjectsIndex}
               />
             </nav>
 

@@ -11,6 +11,11 @@ import { useTabs, type Tab } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
+import {
+  openChatIndex,
+  openTerminalIndex,
+  returnToProjectsIndex,
+} from "./navigation-roots";
 
 interface BreadcrumbItem {
   key: string;
@@ -117,6 +122,8 @@ function HeaderButton({
 export default function NavigationHeader() {
   const tabs = useTabs((state) => state.tabs);
   const activeTabId = useTabs((state) => state.activeTabId);
+  const viewHistory = useTabs((state) => state.viewHistory);
+  const historyIndex = useTabs((state) => state.historyIndex);
   const canGoBack = useTabs((state) => state.canGoBack);
   const canGoForward = useTabs((state) => state.canGoForward);
   const goBack = useTabs((state) => state.goBack);
@@ -132,15 +139,57 @@ export default function NavigationHeader() {
     state.threads.find((thread) => thread.id === activeThreadId)?.title,
   );
   const hermesSessionId = useHermesChat((state) => state.sessionId);
+  const hermesConversationView = useHermesChat((state) => state.view);
   const hermesConversations = useHermesChat((state) => state.conversations);
   const hermesConversationTitle = hermesSessionId
     ? hermesConversations.find((conversation) => conversation.id === hermesSessionId)?.title
     : undefined;
-  const activeConversationTitle = activeThreadTitle ?? hermesConversationTitle;
+  const activeConversationTitle = activeThreadTitle
+    ?? (hermesConversationView === "conversation" ? hermesConversationTitle : undefined);
   const breadcrumbs = breadcrumbItemsForTab(activeTab, activeConversationTitle);
   const hasContextActions = Boolean(
     activeTab && activeTab.kind !== "terminals" && activeTab.kind !== "terminal",
   );
+  const canReturnToChatIndex = activeTab?.kind === "chat"
+    && (activeThreadId !== null || hermesConversationView === "conversation");
+  const canReturnToTerminalIndex = activeTab?.kind === "terminal"
+    || (activeTab?.kind === "terminals" && activeTab.title !== "Terminal");
+  const canReturnToProjectsIndex = activeTab?.kind === "project"
+    || activeTab?.kind === "task";
+  const previousTab = historyIndex > 0
+    ? tabs.find((tab) => tab.id === viewHistory[historyIndex - 1])
+    : undefined;
+  const handleBack = () => {
+    if (canReturnToChatIndex) {
+      openChatIndex();
+      return;
+    }
+    if (canReturnToTerminalIndex) {
+      if (activeTab?.kind === "terminals") {
+        requestTerminalOverview();
+      } else if (previousTab?.kind === "terminals") {
+        requestTerminalOverview();
+        goBack();
+      } else {
+        openTerminalIndex();
+      }
+      return;
+    }
+    if (canReturnToProjectsIndex) {
+      returnToProjectsIndex();
+      return;
+    }
+    goBack();
+  };
+  const navigateBreadcrumb = (key: string) => {
+    if (key === "chat") {
+      openChatIndex();
+    } else if (key === "terminal") {
+      openTerminalIndex();
+    } else if (key === "projects") {
+      returnToProjectsIndex();
+    }
+  };
 
   return (
     <header
@@ -157,7 +206,16 @@ export default function NavigationHeader() {
         data-testid="sidebar-navigation-actions"
         style={{ gap: "8px" }}
       >
-        <HeaderButton label="Go back" disabled={!canGoBack} onClick={goBack}>
+        <HeaderButton
+          label="Go back"
+          disabled={
+            !canGoBack
+            && !canReturnToChatIndex
+            && !canReturnToTerminalIndex
+            && !canReturnToProjectsIndex
+          }
+          onClick={handleBack}
+        >
           <ChevronLeft size={14} />
         </HeaderButton>
         <HeaderButton label="Go forward" disabled={!canGoForward} onClick={goForward}>
@@ -178,12 +236,13 @@ export default function NavigationHeader() {
               {index > 0 ? (
                 <ChevronRight size={12} className="shrink-0" style={{ color: "var(--text-disabled)" }} />
               ) : null}
-              {activeTab?.kind === "terminals" && index === 0 && breadcrumbs.length > 1 ? (
+              {["chat", "terminal", "projects"].includes(breadcrumb.key)
+                && index < breadcrumbs.length - 1 ? (
                 <button
                   type="button"
-                  className="max-w-[220px] truncate rounded-sm px-0.5 hover:text-[var(--text-primary)]"
+                  className="max-w-[220px] truncate rounded-sm outline-none hover:text-[var(--text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
                   style={{ color: "var(--text-tertiary)", fontWeight: 400 }}
-                  onClick={requestTerminalOverview}
+                  onClick={() => navigateBreadcrumb(breadcrumb.key)}
                 >
                   {breadcrumb.label}
                 </button>

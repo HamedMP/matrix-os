@@ -14,12 +14,23 @@ import { appendHermesAttachmentPaths } from "./attachments/local-attachment-cont
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { PromptInput } from "./elements/prompt-input";
 import { ChatResourcesPanel } from "./ChatResourcesPanel";
+import {
+  ConversationContextControls,
+  ConversationContextFeedback,
+} from "./ConversationContextComposer";
 import { hermesConversationPresentation } from "./hermes-presentation";
 import { HermesConversationIndex } from "./HermesConversationIndex";
 import { createGlobalChatProviderRegistry } from "./global-chat-providers";
 
-export function canSubmitChatDraft(draft: string, status: HermesStatus, attachmentCount = 0): boolean {
-  return (draft.trim().length > 0 || attachmentCount > 0) && status === "idle";
+export function canSubmitChatDraft(
+  draft: string,
+  status: HermesStatus,
+  attachmentCount = 0,
+  contextBlocksSend = false,
+): boolean {
+  return (draft.trim().length > 0 || attachmentCount > 0)
+    && status === "idle"
+    && !contextBlocksSend;
 }
 
 function HermesPane() {
@@ -29,8 +40,12 @@ function HermesPane() {
   const status = useHermesChat((state) => state.status);
   const activeRequestId = useHermesChat((state) => state.activeRequestId);
   const loadError = useHermesChat((state) => state.loadError);
+  const conversationContext = useHermesChat((state) => state.conversationContext);
+  const contextStatus = useHermesChat((state) => state.contextStatus);
+  const contextError = useHermesChat((state) => state.contextError);
   const send = useHermesChat((state) => state.send);
   const abort = useHermesChat((state) => state.abort);
+  const updateConversationContext = useHermesChat((state) => state.updateConversationContext);
   const recordRecentHermesConversation = useTabs((state) => state.recordRecentHermesConversation);
   const setDefaultProvider = useProviderPreferences((state) => state.setDefaultProvider);
   const [draft, setDraft] = useState("");
@@ -48,6 +63,14 @@ function HermesPane() {
     await navigator.clipboard.writeText(text);
   }, []);
   const empty = messages.length === 0;
+  const contextBlocksSend = conversationContext?.status === "unavailable";
+  const contextMutationPending = contextStatus === "loading";
+  const contextPreventsSend = contextBlocksSend || contextMutationPending;
+  const contextControlsDisabled = status !== "idle"
+    || uploadingAttachments
+    || contextMutationPending
+    || !api
+    || !sessionId;
 
   const closeResources = useCallback((restoreFocus = true) => {
     setResourcesOpen(false);
@@ -57,7 +80,10 @@ function HermesPane() {
   }, []);
 
   const submit = async () => {
-    if (uploadingAttachments || !canSubmitChatDraft(draft, status, attachments.items.length)) return;
+    if (
+      uploadingAttachments
+      || !canSubmitChatDraft(draft, status, attachments.items.length, contextPreventsSend)
+    ) return;
     setUploadingAttachments(true);
     try {
       const uploaded = await attachments.uploadAll();
@@ -106,7 +132,16 @@ function HermesPane() {
       onRetry={(localId) => void attachments.retry(localId)}
     />
   );
-  const composerReady = canSubmitChatDraft(draft, status, attachments.items.length);
+  const updateProjectContext = useCallback((projectId: string | null) => {
+    if (!api || !sessionId || contextControlsDisabled) return;
+    void updateConversationContext(api, sessionId, projectId);
+  }, [api, contextControlsDisabled, sessionId, updateConversationContext]);
+  const composerReady = canSubmitChatDraft(
+    draft,
+    status,
+    attachments.items.length,
+    contextPreventsSend,
+  );
   const composerControls = (
     <>
       <button
@@ -151,6 +186,24 @@ function HermesPane() {
       onSelect={(providerId) => void providerRegistry.activate(providerId)}
     />
   );
+  const contextStrip = (
+    <div
+      className="flex min-w-0 flex-col gap-2 px-1 text-sm"
+      style={{ color: "var(--text-tertiary)" }}
+    >
+      <ConversationContextControls
+        context={conversationContext}
+        disabled={contextControlsDisabled}
+        onUpdate={updateProjectContext}
+      />
+      <ConversationContextFeedback
+        context={conversationContext}
+        disabled={contextControlsDisabled}
+        error={contextError}
+        onUpdate={updateProjectContext}
+      />
+    </div>
+  );
   const renderComposer = (placeholder: string, autoFocus = false) => (
     <>
       <input
@@ -164,21 +217,24 @@ function HermesPane() {
           event.currentTarget.value = "";
         }}
       />
-      <PromptInput
-        value={draft}
-        onChange={setDraft}
-        onSubmit={() => void submit()}
-        onAbort={status !== "idle" ? abort : undefined}
-        busy={status !== "idle" || uploadingAttachments}
-        disabled={uploadingAttachments}
-        canSubmit={composerReady}
-        attachments={attachmentPreviews}
-        autoFocus={autoFocus}
-        placeholder={placeholder}
-        ariaLabel={placeholder}
-        controls={composerControls}
-        trailingControls={harnessBadge}
-      />
+      <div className="flex min-w-0 flex-col gap-2">
+        <PromptInput
+          value={draft}
+          onChange={setDraft}
+          onSubmit={() => void submit()}
+          onAbort={status !== "idle" ? abort : undefined}
+          busy={status !== "idle" || uploadingAttachments}
+          disabled={uploadingAttachments}
+          canSubmit={composerReady}
+          attachments={attachmentPreviews}
+          autoFocus={autoFocus}
+          placeholder={placeholder}
+          ariaLabel={placeholder}
+          controls={composerControls}
+          trailingControls={harnessBadge}
+        />
+        {contextStrip}
+      </div>
     </>
   );
 

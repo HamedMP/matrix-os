@@ -58,10 +58,13 @@ suite("project chat contextual inspector", () => {
   it("keeps chat primary while contextual tools are opened and maximized", async () => {
     await page.getByRole("button", { name: /continue in browser/i }).click();
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
-    await page.locator("aside button", { hasText: "Matrix OS" }).last().click();
+    await page.locator("aside button", { hasText: "Projects" }).first().click();
+    await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Open project Matrix OS" }).click();
+    await page.getByRole("heading", { name: "Matrix OS" }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Chats" }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Chats" }).click();
-    await page.getByRole("button", { name: "Chat Investigate auth callback" }).click();
+    await page.getByRole("button", { name: "Open session Investigate auth callback" }).click();
     await page.getByRole("region", { name: "Conversation Investigate auth callback" }).waitFor();
 
     const showTools = page.getByRole("button", { name: "Show conversation tools" });

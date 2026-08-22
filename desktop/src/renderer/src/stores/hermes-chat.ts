@@ -3,10 +3,14 @@
 // snapshots and live WebSocket state. Task-bound coding-agent runs remain in
 // the threads/workspace stores as a separate typed source.
 import {
+  KernelConversationContextProjectionSchema,
+  KernelConversationContextUpdateSchema,
   KernelConversationDeleteResponseSchema,
   KernelConversationHistoryResponseSchema,
   KernelConversationIdSchema,
   KernelConversationMutationErrorCodeSchema,
+  KernelConversationSummarySchema,
+  type KernelConversationContextProjection,
   isKernelResultFailureText,
 } from "@matrix-os/contracts";
 import { create } from "zustand";
@@ -35,21 +39,21 @@ const LOAD_ERROR_MESSAGE = "Conversation could not be opened. Try again.";
 const DELETE_ERROR_MESSAGE = "Chat could not be deleted. Try again.";
 const DELETE_BUSY_MESSAGE = "Stop the active response before deleting this chat.";
 const DELETE_NOT_FOUND_MESSAGE = "This chat no longer exists. Chats were refreshed.";
+const CONTEXT_ERROR_MESSAGE = "Project context could not be updated. Try again.";
+const CONTEXT_BUSY_MESSAGE = "Stop the active response before changing its project.";
+const CONTEXT_PROJECT_UNAVAILABLE_MESSAGE = "That project is unavailable. Choose another project.";
+const CONTEXT_STALE_MESSAGE = "Project context is unavailable. Choose another project or remove it.";
 
 export type HermesStatus = "idle" | "thinking" | "streaming";
 export type HermesConversationView = "index" | "conversation";
 export type HermesLoadStatus = "idle" | "loading" | "ready" | "error";
 
-const ConversationSummaryWireSchema = z.strictObject({
-  id: KernelConversationIdSchema,
-  preview: z.string(),
-  messageCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-});
-
 const ConversationCreateResponseSchema = z.strictObject({
   id: KernelConversationIdSchema,
+});
+
+const ConversationContextUpdateResponseSchema = z.strictObject({
+  context: KernelConversationContextProjectionSchema.nullable(),
 });
 
 export interface HermesConversationSummary {
@@ -59,6 +63,7 @@ export interface HermesConversationSummary {
   messageCount: number;
   createdAt: number;
   updatedAt: number;
+  context?: KernelConversationContextProjection;
 }
 
 interface ConversationIndexSnapshot {
@@ -91,12 +96,26 @@ function safeConversationDeleteMessage(error: unknown): string {
   }
 }
 
+function safeConversationContextMessage(error: unknown): string {
+  switch (conversationMutationCode(error)) {
+    case "conversation_busy":
+    case "project_context_conflict":
+      return CONTEXT_BUSY_MESSAGE;
+    case "project_unavailable":
+      return CONTEXT_PROJECT_UNAVAILABLE_MESSAGE;
+    case "conversation_context_unavailable":
+      return CONTEXT_STALE_MESSAGE;
+    default:
+      return CONTEXT_ERROR_MESSAGE;
+  }
+}
+
 function normalizeConversationIndexSnapshot(raw: unknown): ConversationIndexSnapshot | null {
   if (!Array.isArray(raw)) return null;
   const summaries: HermesConversationSummary[] = [];
   let complete = raw.length <= CONVERSATION_INDEX_CAP;
   for (const candidate of raw.slice(0, CONVERSATION_INDEX_CAP)) {
-    const parsed = ConversationSummaryWireSchema.safeParse(candidate);
+    const parsed = KernelConversationSummarySchema.safeParse(candidate);
     if (!parsed.success) {
       complete = false;
       continue;
@@ -120,20 +139,23 @@ export function normalizeConversationIndex(raw: unknown): HermesConversationSumm
   return normalizeConversationIndexSnapshot(raw)?.conversations ?? null;
 }
 
-function historyMessages(
+function historySnapshot(
   conversationId: string,
   raw: unknown,
-): ChatMessage[] | null {
+): { messages: ChatMessage[]; context: KernelConversationContextProjection | null } | null {
   const parsed = KernelConversationHistoryResponseSchema.safeParse(raw);
   if (!parsed.success || parsed.data.id !== conversationId) return null;
-  return parsed.data.messages.map((message) => ({
-    id: `${conversationId}:${message.index}`,
-    role: message.role,
-    content: message.content,
-    timestamp: message.timestamp,
-    ...(message.tool ? { tool: message.tool } : {}),
-    ...(message.toolDisplay ? { toolDisplay: message.toolDisplay } : {}),
-  }));
+  return {
+    context: parsed.data.context ?? null,
+    messages: parsed.data.messages.map((message) => ({
+      id: `${conversationId}:${message.index}`,
+      role: message.role,
+      content: message.content,
+      timestamp: message.timestamp,
+      ...(message.tool ? { tool: message.tool } : {}),
+      ...(message.toolDisplay ? { toolDisplay: message.toolDisplay } : {}),
+    })),
+  };
 }
 
 interface HermesChatState {
@@ -151,8 +173,12 @@ interface HermesChatState {
   loadingConversationId: string | null;
   deletingConversationId: string | null;
   deleteError: string | null;
+  conversationContext: KernelConversationContextProjection | null;
+  contextStatus: HermesLoadStatus;
+  contextError: string | null;
   indexSequence: number;
   loadSequence: number;
+  contextSequence: number;
   transcriptRevision: number;
   seenReplayEventIds: string[];
   send: (text: string) => void;
@@ -164,6 +190,11 @@ interface HermesChatState {
   openConversation: (api: ApiClient, id: string) => Promise<boolean>;
   refreshConversationHistory: (api: ApiClient, id: string) => Promise<boolean>;
   deleteConversation: (api: ApiClient, id: string) => Promise<boolean>;
+  updateConversationContext: (
+    api: ApiClient,
+    id: string,
+    projectId: string | null,
+  ) => Promise<boolean>;
   clearDeleteError: () => void;
   resetRuntime: () => void;
   // Fed by the single kernel subscription in kernel-wiring.
@@ -209,8 +240,12 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   loadingConversationId: null,
   deletingConversationId: null,
   deleteError: null,
+  conversationContext: null,
+  contextStatus: "idle",
+  contextError: null,
   indexSequence: 0,
   loadSequence: 0,
+  contextSequence: 0,
   transcriptRevision: 0,
   seenReplayEventIds: [],
 
@@ -270,6 +305,9 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       loadStatus: "idle",
       loadError: null,
       loadingConversationId: null,
+      conversationContext: null,
+      contextStatus: "idle",
+      contextError: null,
       seenReplayEventIds: [],
       transcriptRevision: state.transcriptRevision + 1,
     }));
@@ -284,6 +322,8 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   refreshConversations: async (api) => {
     const generation = captureRuntimeGeneration();
     const sequence = get().indexSequence + 1;
+    const contextSequenceAtStart = get().contextSequence;
+    const contextMutationActiveAtStart = get().contextStatus === "loading";
     set((state) => ({
       indexSequence: sequence,
       indexStatus: state.conversations.length === 0 ? "loading" : state.indexStatus,
@@ -298,11 +338,30 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         set({ indexStatus: "error", indexError: INDEX_ERROR_MESSAGE });
         return;
       }
-      set({
-        conversations: snapshot.conversations,
-        isConversationIndexComplete: snapshot.complete,
-        indexStatus: "ready",
-        indexError: null,
+      set((state) => {
+        const selectedSummary = state.sessionId
+          ? snapshot.conversations.find(
+              (conversation) => conversation.id === state.sessionId,
+            )
+          : undefined;
+        const canApplySelectedContext =
+          !contextMutationActiveAtStart
+          && state.contextSequence === contextSequenceAtStart
+          && state.contextStatus !== "loading";
+
+        return {
+          conversations: snapshot.conversations,
+          isConversationIndexComplete: snapshot.complete,
+          indexStatus: "ready",
+          indexError: null,
+          ...(canApplySelectedContext && selectedSummary
+            ? {
+                conversationContext: selectedSummary.context ?? null,
+                contextStatus: "ready" as const,
+                contextError: null,
+              }
+            : {}),
+        };
       });
     } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(generation) || get().indexSequence !== sequence) return;
@@ -343,6 +402,9 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         loadStatus: "idle",
         loadError: null,
         loadingConversationId: null,
+        conversationContext: null,
+        contextStatus: "ready",
+        contextError: null,
         seenReplayEventIds: [],
         transcriptRevision: state.transcriptRevision + 1,
       }));
@@ -372,12 +434,12 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       loadingConversationId: parsedId.data,
     });
     try {
-      const messages = historyMessages(
+      const snapshot = historySnapshot(
         parsedId.data,
         await api.get<unknown>(`/api/conversations/${encodeURIComponent(parsedId.data)}?limit=50`),
       );
       if (!isCurrentRuntimeGeneration(generation) || get().loadSequence !== sequence) return false;
-      if (!messages) {
+      if (!snapshot) {
         set({ loadStatus: "error", loadError: LOAD_ERROR_MESSAGE, loadingConversationId: null });
         return false;
       }
@@ -386,12 +448,16 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       set((state) => ({
         view: "conversation",
         sessionId: parsedId.data,
-        messages: messages.slice(-TRANSCRIPT_CAP),
+        messages: snapshot.messages.slice(-TRANSCRIPT_CAP),
         status: "idle",
         activeRequestId: null,
         loadStatus: "idle",
         loadError: null,
         loadingConversationId: null,
+        conversationContext: snapshot.context,
+        contextStatus: "ready",
+        contextError: null,
+        contextSequence: state.contextSequence + 1,
         seenReplayEventIds: [],
         transcriptRevision: state.transcriptRevision + 1,
       }));
@@ -415,13 +481,13 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     const generation = captureRuntimeGeneration();
     const revision = get().transcriptRevision;
     try {
-      const messages = historyMessages(
+      const snapshot = historySnapshot(
         parsedId.data,
         await api.get<unknown>(`/api/conversations/${encodeURIComponent(parsedId.data)}?limit=50`),
       );
       const state = get();
       if (
-        !messages
+        !snapshot
         || !isCurrentRuntimeGeneration(generation)
         || state.sessionId !== parsedId.data
         || state.transcriptRevision !== revision
@@ -429,7 +495,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         return false;
       }
       set((current) => ({
-        messages: messages.slice(-TRANSCRIPT_CAP),
+        messages: snapshot.messages.slice(-TRANSCRIPT_CAP),
         status: "idle",
         activeRequestId: null,
         seenReplayEventIds: [],
@@ -479,6 +545,9 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
                 loadStatus: "idle" as const,
                 loadError: null,
                 loadingConversationId: null,
+                conversationContext: null,
+                contextStatus: "idle" as const,
+                contextError: null,
                 seenReplayEventIds: [],
                 transcriptRevision: state.transcriptRevision + 1,
               }
@@ -506,6 +575,62 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     }
   },
 
+  updateConversationContext: async (api, id, projectId) => {
+    const parsedId = KernelConversationIdSchema.safeParse(id);
+    const parsedUpdate = KernelConversationContextUpdateSchema.safeParse({ projectId });
+    if (!parsedId.success || !parsedUpdate.success || get().contextStatus === "loading") {
+      if (!parsedId.success || !parsedUpdate.success) {
+        set({ contextStatus: "error", contextError: CONTEXT_ERROR_MESSAGE });
+      }
+      return false;
+    }
+
+    const generation = captureRuntimeGeneration();
+    const selectedSessionId = get().sessionId;
+    const sequence = get().contextSequence + 1;
+    set({ contextSequence: sequence, contextStatus: "loading", contextError: null });
+    try {
+      const response = ConversationContextUpdateResponseSchema.safeParse(
+        await api.patch<unknown>(
+          `/api/conversations/${encodeURIComponent(parsedId.data)}/context`,
+          parsedUpdate.data,
+        ),
+      );
+      if (
+        !isCurrentRuntimeGeneration(generation)
+        || get().contextSequence !== sequence
+        || get().sessionId !== selectedSessionId
+      ) return false;
+      if (!response.success) throw new AppError("server");
+
+      set((state) => ({
+        conversationContext: response.data.context,
+        contextStatus: "ready",
+        contextError: null,
+        conversations: state.conversations.map((conversation) =>
+          conversation.id === parsedId.data
+            ? { ...conversation, context: response.data.context ?? undefined }
+            : conversation,
+        ),
+      }));
+      return true;
+    } catch (error: unknown) {
+      if (
+        !isCurrentRuntimeGeneration(generation)
+        || get().contextSequence !== sequence
+        || get().sessionId !== selectedSessionId
+      ) return false;
+      if (!conversationMutationCode(error)) {
+        console.warn(
+          "[hermes-chat] conversation context update failed",
+          error instanceof Error ? error.name : typeof error,
+        );
+      }
+      set({ contextStatus: "error", contextError: safeConversationContextMessage(error) });
+      return false;
+    }
+  },
+
   clearDeleteError: () => {
     set({ deleteError: null });
   },
@@ -526,8 +651,12 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       loadingConversationId: null,
       deletingConversationId: null,
       deleteError: null,
+      conversationContext: null,
+      contextStatus: "idle",
+      contextError: null,
       indexSequence: state.indexSequence + 1,
       loadSequence: state.loadSequence + 1,
+      contextSequence: state.contextSequence + 1,
       transcriptRevision: state.transcriptRevision + 1,
       seenReplayEventIds: [],
     }));

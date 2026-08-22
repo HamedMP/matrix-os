@@ -117,6 +117,20 @@ export class ConversationRunRegistry {
     return Boolean(run && run.completedAt === null);
   }
 
+  has(sessionId: string): boolean {
+    this.evictExpiredCompletedRuns();
+    return this.runs.has(sessionId);
+  }
+
+  rekey(sessionId: string, providerSessionId: string): boolean {
+    if (sessionId === providerSessionId) return this.runs.has(sessionId);
+    const run = this.runs.get(sessionId);
+    if (!run || this.runs.has(providerSessionId)) return false;
+    this.runs.delete(sessionId);
+    this.runs.set(providerSessionId, { ...run, sessionId: providerSessionId });
+    return true;
+  }
+
   getActiveHistoryStart(sessionId: string): number | null {
     const run = this.runs.get(sessionId);
     return run && run.completedAt === null ? run.activeHistoryStart : null;

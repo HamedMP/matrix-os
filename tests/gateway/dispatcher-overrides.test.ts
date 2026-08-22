@@ -62,4 +62,63 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs[1]).toMatchObject({ model: "claude-opus-4-6" });
     expect(configs[1].effort).toBeUndefined();
   });
+
+  it("passes a validated working directory to only the selected queued dispatch", async () => {
+    const homePath = makeHomePath();
+    const workingDirectory = resolve(homePath, "projects", "matrix-os", "repo");
+    mkdirSync(workingDirectory, { recursive: true });
+    const configs: KernelConfig[] = [];
+    const spawn = vi.fn<SpawnFn>(async function* (_message, config) {
+      configs.push(config);
+      yield resultEvent();
+    });
+    const dispatcher = createDispatcher({
+      homePath,
+      spawnFn: spawn,
+      maxConcurrency: 1,
+    });
+
+    const first = dispatcher.dispatch(
+      "work in the selected project",
+      "session-one",
+      () => {},
+      undefined,
+      undefined,
+      { workingDirectory },
+    );
+    const second = dispatcher.dispatch("use the home directory", "session-two", () => {});
+    await Promise.all([first, second]);
+
+    expect(configs).toHaveLength(2);
+    expect(configs[0]).toMatchObject({ homePath, workingDirectory });
+    expect(configs[1]).toMatchObject({ homePath });
+    expect(configs[1].workingDirectory).toBeUndefined();
+  });
+
+  it("waits for async event admission before consuming the next kernel event", async () => {
+    const order: string[] = [];
+    const gate = Promise.withResolvers<void>();
+    const spawn = vi.fn<SpawnFn>(async function* () {
+      yield { type: "init", sessionId: "provider-session" };
+      order.push("kernel-next");
+      yield resultEvent();
+    });
+    const dispatcher = createDispatcher({
+      homePath: makeHomePath(),
+      spawnFn: spawn,
+      maxConcurrency: 1,
+    });
+
+    const dispatched = dispatcher.dispatch("first turn", "pending-session", async (event) => {
+      if (event.type !== "init") return;
+      order.push("adoption-start");
+      await gate.promise;
+      order.push("adoption-finished");
+    });
+    await vi.waitFor(() => expect(order).toEqual(["adoption-start"]));
+    gate.resolve();
+    await dispatched;
+
+    expect(order).toEqual(["adoption-start", "adoption-finished", "kernel-next"]);
+  });
 });

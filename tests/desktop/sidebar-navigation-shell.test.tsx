@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Sidebar from "../../desktop/src/renderer/src/features/mission-control/Sidebar";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -187,6 +187,18 @@ describe("Desktop sidebar navigation shell", () => {
       .toBe(false);
   });
 
+  it("uses the global Terminal navigation to open the Terminal list root", () => {
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+
+    const activeTab = useTabs.getState().tabs.find(
+      (tab) => tab.id === useTabs.getState().activeTabId,
+    );
+    expect(activeTab).toMatchObject({ kind: "terminals", title: "Terminal" });
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({ sessionName: null });
+  });
+
   it("matches the Figma navigation hierarchy and keeps the sidebar borderless", () => {
     useBoard.setState({
       projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "scratch" }],
@@ -276,6 +288,33 @@ describe("Desktop sidebar navigation shell", () => {
     fireEvent.click(projects);
     expect(useTabs.getState().tabs.filter((tab) => tab.kind === "projects")).toHaveLength(1);
     expect(useTabs.getState().activeTabId).toBe(first?.id);
+  });
+
+  it("does not reopen a Project detail after using the global Projects navigation", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().ensureNavigationScope("runtime-a");
+    const home = useTabs.getState().openTab({
+      kind: "home",
+      title: "Home",
+      closable: false,
+    });
+    useTabs.getState().openTab({
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
+    });
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    expect(useTabs.getState().tabs.find(
+      (tab) => tab.id === useTabs.getState().activeTabId,
+    )).toMatchObject({ kind: "projects" });
+
+    act(() => useTabs.getState().goBack());
+    expect(useTabs.getState().activeTabId).toBe(home);
+    expect(useTabs.getState().tabs.find(
+      (tab) => tab.id === useTabs.getState().activeTabId,
+    )).toMatchObject({ kind: "home" });
   });
 
   it("removes the navigation column below the title bar when collapsed", () => {

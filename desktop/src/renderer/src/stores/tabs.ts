@@ -122,6 +122,10 @@ interface TabsState {
   terminalSessionRequest: TerminalSessionRequest | null;
   terminalSessionRequestSequence: number;
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
+  openTabAtHistoryRoot(
+    spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
+    detailKinds: readonly TabKind[],
+  ): string;
   closeTab(id: string): void;
   closeProjectTabs(projectSlug: string): void;
   focusTab(id: string): void;
@@ -191,6 +195,30 @@ export const useTabs = create<TabsState>()((set, get) => ({
         tabs,
         activeTabId: id,
         ...recordHistory(pruned.viewHistory, pruned.historyIndex, id),
+      };
+    });
+    return id;
+  },
+
+  openTabAtHistoryRoot: (spec, detailKinds) => {
+    const previousState = get();
+    const id = previousState.openTab(spec);
+    set((state) => {
+      const retainedTabIds = new Set(state.tabs.map((tab) => tab.id));
+      const priorHistory = previousState.viewHistory
+        .slice(0, previousState.historyIndex + 1)
+        .filter((tabId) => retainedTabIds.has(tabId));
+      const isDetailTab = (tabId: string) => {
+        const tabKind = state.tabs.find((tab) => tab.id === tabId)?.kind;
+        return tabKind !== undefined && detailKinds.includes(tabKind);
+      };
+      const nextHistory = [
+        ...priorHistory.filter((tabId) => tabId !== id && !isDetailTab(tabId)),
+        id,
+      ].slice(-MAX_VIEW_HISTORY);
+      return {
+        activeTabId: id,
+        ...historyPatch(nextHistory, nextHistory.length - 1),
       };
     });
     return id;

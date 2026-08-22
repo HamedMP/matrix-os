@@ -21,7 +21,11 @@ import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServe
 import { logTerminalDebug } from "./terminal-debug.js";
 import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
-import { createConversationLifecycle } from "./conversation-lifecycle.js";
+import {
+  createConversationLifecycle,
+  providerResumeSessionId,
+} from "./conversation-lifecycle.js";
+import { createConversationContextResolver } from "./conversation-context.js";
 import { createConversationMutationLock } from "./conversation-mutation-lock.js";
 import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
 import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
@@ -95,7 +99,12 @@ import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
 } from "./auth.js";
-import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
+import {
+  isRequestPrincipalError,
+  mapRequestPrincipalError,
+  ownerScopeFromPrincipal,
+  requireRequestPrincipal,
+} from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
@@ -597,6 +606,7 @@ export async function createGateway(config: GatewayConfig) {
     (id): id is string => Boolean(id),
   );
   const codingAgentProjectManager = createProjectManager({ homePath });
+  const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentWorktreeManager = createWorktreeManager({ homePath });
   const codingAgentFileStore = createCodingAgentFileStore({
     homePath,
@@ -1897,8 +1907,11 @@ export async function createGateway(config: GatewayConfig) {
       // stashed claims if a JWT was presented.
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
+      let conversationOwnerScope: ReturnType<typeof ownerScopeFromPrincipal> | undefined;
       try {
-        const wsSyncUserId = requireRequestPrincipal(c).userId;
+        const wsPrincipal = requireRequestPrincipal(c);
+        const wsSyncUserId = wsPrincipal.userId;
+        conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
           ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
               send: (data: string) => syncPeerSocket?.send(data),
@@ -2123,19 +2136,41 @@ export async function createGateway(config: GatewayConfig) {
             let admittedExistingConversation = false;
             void (async () => {
               const admittedSessionId = requestedSessionId;
+              let canonicalAdmittedSessionId = admittedSessionId;
+              let dispatchSessionId = admittedSessionId;
+              let workingDirectory: string | undefined;
               if (admittedSessionId) {
-                const admission = await conversationLifecycle.admitExisting(admittedSessionId);
-                if (admission !== "admitted") {
-                  sendClientAck(ws, parsed, "rejected", admission === "busy");
+                const admission = await conversationLifecycle.admitExistingPrepared(
+                  admittedSessionId,
+                  async (conversation) => {
+                    const resumeSessionId = providerResumeSessionId(conversation);
+                    if (!conversation.context) {
+                      return { workingDirectory: undefined, resumeSessionId };
+                    }
+                    const resolvedContext = await conversationContextResolver.resolve(
+                      conversation.context.projectId,
+                      conversationOwnerScope,
+                    );
+                    return resolvedContext
+                      ? { workingDirectory: resolvedContext.workingDirectory, resumeSessionId }
+                      : null;
+                  },
+                );
+                if (admission.status !== "admitted") {
+                  sendClientAck(ws, parsed, "rejected", admission.status === "busy");
                   send(ws, {
                     type: "kernel:error",
-                    message: admission === "busy"
+                    message: admission.status === "busy"
                       ? "Conversation already has an active turn."
-                      : "Conversation is unavailable. Refresh and try again.",
+                      : admission.status === "unavailable"
+                        ? "conversation_context_unavailable"
+                        : "Conversation is unavailable. Refresh and try again.",
                   });
                   return;
                 }
                 admittedExistingConversation = true;
+                workingDirectory = admission.prepared.workingDirectory;
+                dispatchSessionId = admission.prepared.resumeSessionId;
                 activeSessionId = admittedSessionId;
               } else {
                 activeSessionId = undefined;
@@ -2181,70 +2216,84 @@ export async function createGateway(config: GatewayConfig) {
               };
 
               dispatcher
-                .dispatch(parsed.text, parsed.sessionId, (event) => {
-                const msg = withReplayId(kernelEventToServerMessage(event, requestId));
-                send(ws, msg);
+                .dispatch(parsed.text, dispatchSessionId, async (event) => {
+                  const msg = withReplayId(kernelEventToServerMessage(event, requestId));
 
-                if (msg.type === "kernel:init") {
-                  activeSessionId = msg.sessionId;
-                  if (requestId) {
-                    const reconnectable = reconnectableAbortControllers.get(requestId);
-                    if (reconnectable) reconnectable.sessionId = msg.sessionId;
-                  }
-                  if (!admittedSessionId || admittedSessionId !== msg.sessionId) {
-                    if (admittedSessionId) {
-                      void finalizeWithSummary(admittedSessionId);
+                  if (msg.type === "kernel:init") {
+                    if (
+                      canonicalAdmittedSessionId
+                      && canonicalAdmittedSessionId !== msg.sessionId
+                    ) {
+                      const adoption = await conversationLifecycle.adoptProviderSession(
+                        canonicalAdmittedSessionId,
+                        msg.sessionId,
+                      );
+                      if (adoption !== "adopted") {
+                        throw new Error("Conversation could not adopt provider session");
+                      }
+                      canonicalAdmittedSessionId = msg.sessionId;
                     }
-                    conversations.begin(msg.sessionId);
-                    conversationRuns.begin(
-                      msg.sessionId,
-                      conversations.get(msg.sessionId)?.messages.length ?? 0,
-                    );
+                    activeSessionId = msg.sessionId;
+                    if (requestId) {
+                      const reconnectable = reconnectableAbortControllers.get(requestId);
+                      if (reconnectable) reconnectable.sessionId = msg.sessionId;
+                    }
+                    if (!canonicalAdmittedSessionId || canonicalAdmittedSessionId !== msg.sessionId) {
+                      conversations.begin(msg.sessionId);
+                      conversationRuns.begin(
+                        msg.sessionId,
+                        conversations.get(msg.sessionId)?.messages.length ?? 0,
+                      );
+                    }
+                    send(ws, msg);
+                    publishConversationRunMessage(msg.sessionId, msg);
+                    if (pendingText) {
+                      conversations.addUserMessage(msg.sessionId, pendingText);
+                      pendingText = undefined;
+                    }
+                  } else {
+                    send(ws, msg);
                   }
-                  publishConversationRunMessage(msg.sessionId, msg);
-                  if (pendingText) {
-                    conversations.addUserMessage(msg.sessionId, pendingText);
-                    pendingText = undefined;
+                  if (msg.type === "kernel:text" && activeSessionId) {
+                    receivedAssistantText = true;
+                    publishConversationRunMessage(activeSessionId, msg);
+                    conversations.appendAssistantText(activeSessionId, msg.text);
+                  } else if (msg.type === "kernel:tool_start" && activeSessionId) {
+                    publishConversationRunMessage(activeSessionId, msg);
+                    lastToolName = msg.tool;
+                    conversations.addToolStart(activeSessionId, msg.tool);
+                  } else if (msg.type === "kernel:tool_end" && activeSessionId) {
+                    publishConversationRunMessage(activeSessionId, msg);
+                    conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
+                  } else if (msg.type === "kernel:result" && activeSessionId) {
+                    const fallbackText = kernelResultFallbackText(event, receivedAssistantText);
+                    if (fallbackText) conversations.appendAssistantText(activeSessionId, fallbackText);
+                    captureGatewayProductEvent("agent_task_completed", {
+                      shell_surface: "gateway_ws",
+                      request_id_present: Boolean(requestId),
+                    });
+                    publishConversationRunMessage(activeSessionId, msg);
+                    void finalizeWithSummary(activeSessionId);
+                  } else if (msg.type === "kernel:error" && activeSessionId) {
+                    captureGatewayProductEvent("agent_task_failed", {
+                      shell_surface: "gateway_ws",
+                      request_id_present: Boolean(requestId),
+                    });
+                    publishConversationRunMessage(activeSessionId, {
+                      ...msg,
+                      message: CLIENT_KERNEL_ERROR_MESSAGE,
+                    });
+                    conversations.addSystemMessage(activeSessionId, CLIENT_KERNEL_ERROR_MESSAGE);
+                    void finalizeWithSummary(activeSessionId);
+                  } else if (msg.type === "kernel:aborted" && activeSessionId) {
+                    publishConversationRunMessage(activeSessionId, msg);
+                    conversations.addSystemMessage(activeSessionId, "Stopped.");
+                    void finalizeWithSummary(activeSessionId);
                   }
-                } else if (msg.type === "kernel:text" && activeSessionId) {
-                  receivedAssistantText = true;
-                  publishConversationRunMessage(activeSessionId, msg);
-                  conversations.appendAssistantText(activeSessionId, msg.text);
-                } else if (msg.type === "kernel:tool_start" && activeSessionId) {
-                  publishConversationRunMessage(activeSessionId, msg);
-                  lastToolName = msg.tool;
-                  conversations.addToolStart(activeSessionId, msg.tool);
-                } else if (msg.type === "kernel:tool_end" && activeSessionId) {
-                  publishConversationRunMessage(activeSessionId, msg);
-                  conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
-                } else if (msg.type === "kernel:result" && activeSessionId) {
-                  const fallbackText = kernelResultFallbackText(event, receivedAssistantText);
-                  if (fallbackText) conversations.appendAssistantText(activeSessionId, fallbackText);
-                  captureGatewayProductEvent("agent_task_completed", {
-                    shell_surface: "gateway_ws",
-                    request_id_present: Boolean(requestId),
-                  });
-                  publishConversationRunMessage(activeSessionId, msg);
-                  void finalizeWithSummary(activeSessionId);
-                } else if (msg.type === "kernel:error" && activeSessionId) {
-                  captureGatewayProductEvent("agent_task_failed", {
-                    shell_surface: "gateway_ws",
-                    request_id_present: Boolean(requestId),
-                  });
-                  publishConversationRunMessage(activeSessionId, {
-                    ...msg,
-                    message: CLIENT_KERNEL_ERROR_MESSAGE,
-                  });
-                  conversations.addSystemMessage(activeSessionId, CLIENT_KERNEL_ERROR_MESSAGE);
-                  void finalizeWithSummary(activeSessionId);
-                } else if (msg.type === "kernel:aborted" && activeSessionId) {
-                  publishConversationRunMessage(activeSessionId, msg);
-                  conversations.addSystemMessage(activeSessionId, "Stopped.");
-                  void finalizeWithSummary(activeSessionId);
-                }
-              }, undefined, abortController, {
+                }, undefined, abortController, {
                 model: parsed.model,
                 effort: parsed.effort,
+                workingDirectory,
               })
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
@@ -3466,10 +3515,12 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  registerConversationHistoryRoutes(app, { conversations, conversationLifecycle });
-
-  app.get("/api/conversations", (c) => {
-    return c.json(conversations.list());
+  registerConversationHistoryRoutes(app, {
+    conversations,
+    conversationLifecycle,
+    conversationRuns,
+    contextResolver: conversationContextResolver,
+    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   });
 
   app.post("/api/conversations", conversationBodyLimit, async (c) => {

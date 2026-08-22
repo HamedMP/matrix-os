@@ -5,6 +5,7 @@ import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalsTab from "../../desktop/src/renderer/src/features/terminal/TerminalsTab";
+import NavigationHeader from "../../desktop/src/renderer/src/features/mission-control/NavigationHeader";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
@@ -217,6 +218,59 @@ describe("TerminalsTab", () => {
     expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
     expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
+  it("returns from a selected Terminal session to the Terminal list before older history", async () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    const workspaceTabId = useTabs.getState().openTab({
+      kind: "terminals",
+      title: "Terminal",
+      closable: false,
+    });
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    render(
+      <Tooltip.Provider>
+        <NavigationHeader />
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(useTabs.getState().activeTabId).toBe(workspaceTabId);
+  });
+
+  it("uses the Terminal breadcrumb root to return to the Terminal list", async () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    const workspaceTabId = useTabs.getState().openTab({
+      kind: "terminals",
+      title: "Terminal",
+      closable: false,
+    });
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    render(
+      <Tooltip.Provider>
+        <NavigationHeader />
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+
+    expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
+    expect(useTabs.getState().activeTabId).toBe(workspaceTabId);
   });
 
   it("publishes the selected session name to the shared Terminal breadcrumb", async () => {
