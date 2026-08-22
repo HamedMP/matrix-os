@@ -134,6 +134,15 @@ Filter syntax: {"done":false}, {"amount":{"$gt":10}}, {"text":{"$ilike":"%milk%"
 IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/data which is the old KV path).`,
   );
 
+  sections.push("\n## Matrix Integrations\n");
+  sections.push(
+    "External services connected in Matrix Settings are available through the Matrix integration tools. " +
+    "At the start of a conversation, call `mcp__matrix-os-ipc__list_integration_inventory` when connected services could help. " +
+    "This inventory contains account labels and connection state only; never assume or expose provider data until the user asks for it. " +
+    "Use `mcp__matrix-os-ipc__describe_service` to learn Matrix-approved actions, then `call_service` to perform the requested action. " +
+    "Do not ask the user for provider API keys or tell them to install a separate integration skill.",
+  );
+
   const configPath = join(homePath, "system", "config.json");
   if (existsSync(configPath)) {
     try {

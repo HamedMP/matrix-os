@@ -30,6 +30,8 @@ import { createWebSearchTool, type ApiKeys } from "./tools/web-search.js";
 import {
   connectServiceHandler,
   callServiceHandler,
+  describeServiceHandler,
+  listIntegrationInventoryHandler,
   listConnectedServicesHandler,
   syncServicesHandler,
 } from "./tools/integrations.js";
@@ -1107,6 +1109,20 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
       ),
 
       ...(await createWebTools(homePath, tool)),
+
+      tool(
+        "list_integration_inventory",
+        "List the user's connected external-service capabilities. Use this at the start of a conversation when an external service may help; it returns account labels and status only, never provider content.",
+        {},
+        async () => listIntegrationInventoryHandler(),
+      ),
+
+      tool(
+        "describe_service",
+        "Describe Matrix-approved actions and parameters for a connected-service type before making an unfamiliar integration call.",
+        { service: z.string().describe("Service to describe, for example gmail, github, slack, or google_calendar") },
+        async ({ service }) => describeServiceHandler({ service }),
+      ),
 
       tool(
         "connect_service",
