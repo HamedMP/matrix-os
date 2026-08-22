@@ -43,6 +43,15 @@ async function openSettings(page: Page): Promise<void> {
     .waitFor({ timeout: 10_000 });
 }
 
+async function openMatrixProjectOverview(page: Page): Promise<void> {
+  await page.locator("aside button", { hasText: "Projects" }).first().click({ timeout: 5_000 });
+  await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 10_000 });
+  const projectCard = page.getByRole("button", { name: "Open project Matrix OS" });
+  await projectCard.waitFor({ timeout: 10_000 });
+  await projectCard.click({ timeout: 5_000 });
+  await page.getByRole("heading", { name: "Matrix OS" }).waitFor({ timeout: 10_000 });
+}
+
 async function ensureSignedIn(page: Page): Promise<void> {
   const continueButton = page.getByRole("button", { name: /continue in browser/i });
   const terminalNavigation = page.locator("aside button", { hasText: "Terminal" }).first();
@@ -109,16 +118,18 @@ suite("operator desktop e2e", () => {
   });
 
   it("signs in via the device flow and reaches Home, then opens a project board", async () => {
-    // Browser sign-in unambiguously starts the device flow; the approval page
-    // presents the available providers and the stub approves instantly.
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    // Start the stubbed device flow in the background so the canonical E2E
+    // never opens or focuses an external browser during local validation.
+    await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
     // Poll loop approves; the signed-in shell (sidebar nav) renders.
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
     expect(gateway.state.tokenRequests).toBeGreaterThan(0);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "01-home.png") });
 
-    // Open the project board from the sidebar; tasks render.
-    await page.locator("aside button", { hasText: "Matrix OS" }).last().click();
+    // Open Projects through its canonical index, enter the project overview,
+    // then switch to Board; the retired sidebar project row no longer exists.
+    await openMatrixProjectOverview(page);
+    await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Fix the failing auth tests").waitFor({ timeout: 10_000 });
     await page.getByText("Polish the board design").waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "02-board.png") });
@@ -144,31 +155,28 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "03b-git-dag.png") });
   }, 30_000);
 
-  it("opens the project chats from the command palette", async () => {
+  it("opens a project session from the command palette", async () => {
     await page.locator("aside button", { hasText: "Home" }).first().click();
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Command palette" });
     await palette.waitFor({ timeout: 10_000 });
     await palette.getByRole("group", { name: "Projects" }).getByText("Matrix OS").click();
-    // The project tab opens on the board; switching to Chats shows the threads.
-    await page.getByRole("button", { name: "Chats" }).waitFor({ timeout: 10_000 });
-    await page.getByRole("button", { name: "Chats" }).click();
-    await page.getByRole("button", { name: "New chat in Matrix OS" }).waitFor({ timeout: 10_000 });
-    await page.getByRole("navigation", { name: "Project conversations" }).waitFor();
-    await page.getByRole("group", { name: "Project chats" }).waitFor();
-    await page.getByRole("group", { name: "Task Fix the failing auth tests" }).waitFor();
-    await page.getByRole("button", { name: "Chat Investigate auth callback" }).waitFor();
-    await page.getByRole("button", { name: "Chat Verify token refresh" }).waitFor();
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-project-chats-list.png") });
+    // Project-only entry points land on the sessions overview. Enter the
+    // detailed Chats surface through a concrete session row.
+    await page.getByRole("button", { name: "Open session Investigate auth callback" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Open session Investigate auth callback" }).click();
+    await page.getByRole("region", { name: "Conversation Investigate auth callback" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-project-session.png") });
 
     // The segmented control switches back to the project's board.
     await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.getByText("Polish the board design").waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "04b-project-board.png") });
 
-    // Back in Chats, the selected conversation keeps the shared inspector.
+    // Back in Chats, the overview remains canonical; re-entering the session
+    // restores the selected conversation and its shared inspector.
     await page.getByRole("button", { name: "Chats" }).click();
-    await page.getByRole("button", { name: "Chat Investigate auth callback" }).click();
+    await page.getByRole("button", { name: "Open session Investigate auth callback" }).click();
     await page.getByRole("region", { name: "Conversation Investigate auth callback" }).waitFor();
     await page.getByText("Trace why the OAuth callback drops the return path.").waitFor();
     await page.getByText("auth-callback.ts").waitFor();
@@ -182,9 +190,8 @@ suite("operator desktop e2e", () => {
   }, 30_000);
 
   it("starts an agent thread from the project chats composer", async () => {
-    await page.locator("aside button", { hasText: "Matrix OS" }).first().click({ timeout: 5_000 });
-    await page.getByRole("button", { name: "Chats" }).click();
-    await page.getByRole("button", { name: "New chat in Matrix OS" }).click();
+    await openMatrixProjectOverview(page);
+    await page.getByRole("button", { name: "Chats" }).click({ timeout: 5_000 });
     await page.getByLabel("Message new chat").waitFor({ timeout: 5_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05a-draft-chat.png") });
     await page.getByLabel("Message new chat").fill("fix the failing auth tests");
@@ -480,10 +487,9 @@ suite("operator desktop e2e", () => {
     // The earlier computer switch cleared the workspace summary. Create a
     // project chat through the fixture-supported path so the successful run
     // is promoted into the shared Recents section.
-    await page.locator("aside button", { hasText: "Matrix OS" }).last().click();
-    await page.getByRole("button", { name: "Board", exact: true }).waitFor({ timeout: 10_000 });
+    await openMatrixProjectOverview(page);
     await page.getByRole("button", { name: "Chats" }).click();
-    await page.getByRole("button", { name: "New chat in Matrix OS" }).click();
+    await page.getByLabel("Message new chat").waitFor({ timeout: 10_000 });
     await page.getByLabel("Message new chat").fill("verify global Recents navigation");
     await page.getByRole("button", { name: "Send" }).focus();
     await page.keyboard.press("Enter");
@@ -497,7 +503,6 @@ suite("operator desktop e2e", () => {
 
     // Global Recents owns the route back to the project conversation.
     await recent.click();
-    await page.getByRole("button", { name: "New chat in Matrix OS" }).waitFor({ timeout: 10_000 });
     await page.getByRole("region", { name: "Conversation verify global Recents navigation" }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "18-global-recent-routes-to-project.png") });
   }, 30_000);

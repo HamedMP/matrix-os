@@ -7,6 +7,7 @@ import { create } from "zustand";
 export type TabKind =
   | "home"
   | "chat"
+  | "projects"
   | "project"
   | "task"
   | "terminal"

@@ -44,6 +44,7 @@ export function ProjectChatDraft({
   focusRequestId,
   typeToStartEnabled,
   onCreated,
+  presentation = "hero",
 }: {
   summary: RuntimeSummary;
   projectId: string;
@@ -53,6 +54,7 @@ export function ProjectChatDraft({
   focusRequestId: number;
   typeToStartEnabled: boolean;
   onCreated: (threadId: string, label: string) => void;
+  presentation?: "hero" | "landing";
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
   const initialDraft = useMemo(() => {
@@ -206,22 +208,24 @@ export function ProjectChatDraft({
   return (
     <section
       aria-label={`New chat in ${projectLabel}`}
-      className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden"
+      className={`ph-no-capture flex min-w-0 flex-col overflow-hidden ${presentation === "landing" ? "shrink-0" : "min-h-[460px] flex-1"}`}
       style={{ background: "var(--bg-app)" }}
       data-slot="project-chat-draft"
       {...attachments.paneProps}
     >
-      <ProjectChatHero
-        projectLabel={projectLabel}
-        suggestionsVisible={canCreate && promptEmpty}
-        typeToStartEnabled={typeToStartEnabled}
-        onSuggestion={(prompt) => {
-          setDraft((current) => ({ ...current, prompt }));
-          focusComposer();
-        }}
-      />
-      <div className="shrink-0 px-6 pb-5">
-        <div className="mx-auto w-full max-w-[46rem]" data-slot="draft-composer">
+      {presentation === "hero" ? (
+        <ProjectChatHero
+          projectLabel={projectLabel}
+          suggestionsVisible={canCreate && promptEmpty}
+          typeToStartEnabled={typeToStartEnabled}
+          onSuggestion={(prompt) => {
+            setDraft((current) => ({ ...current, prompt }));
+            focusComposer();
+          }}
+        />
+      ) : null}
+      <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
+        <div className={`mx-auto w-full ${presentation === "landing" ? "max-w-none" : "max-w-[46rem]"}`} data-slot="draft-composer">
           {createError ? (
             <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{createError}</p>
           ) : null}
@@ -253,7 +257,7 @@ export function ProjectChatDraft({
                 focusRequestId={active ? focusRequestId + localFocusBumps : 0}
                 maxLength={24_000}
                 ariaLabel="Message new chat"
-                placeholder="Ask the agent to do anything…"
+                placeholder={presentation === "landing" ? "How can I help you today?" : "Ask the agent to do anything…"}
                 controls={(
                   <AgentComposerPickers
                     summary={summary}

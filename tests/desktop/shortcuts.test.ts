@@ -223,7 +223,7 @@ describe("handleNewAgentRunShortcut", () => {
     expect(useTabs.getState().tabs.filter((tab) => tab.kind === "project")).toHaveLength(1);
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
-    expect(useProjectView.getState().viewFor("website")).toBe("board");
+    expect(useProjectView.getState().viewFor("website")).toBe("overview");
   });
 
   it("keeps the legacy composer open when desktop workspace routing is disabled", () => {

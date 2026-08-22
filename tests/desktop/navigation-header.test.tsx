@@ -42,8 +42,8 @@ describe("Desktop navigation header", () => {
     };
 
     expect(breadcrumbsForTab({ ...project, kind: "home", title: "Home" })).toEqual(["Home"]);
-    expect(breadcrumbsForTab(project)).toEqual(["Projects", "Matrix OS"]);
-    expect(breadcrumbsForTab(task)).toEqual(["Projects", "matrix-os", "Desktop navigation"]);
+    expect(breadcrumbsForTab(project)).toEqual(["Home", "Projects", "Matrix OS"]);
+    expect(breadcrumbsForTab(task)).toEqual(["Home", "Projects", "matrix-os", "Desktop navigation"]);
   });
 
   it("uses stable semantic paths for breadcrumb identity", () => {
@@ -64,10 +64,12 @@ describe("Desktop navigation header", () => {
     };
 
     expect(breadcrumbItemsForTab(project)).toEqual([
+      { key: "home", label: "Home" },
       { key: "projects", label: "Projects" },
       { key: "projects/matrix-os", label: "Matrix OS" },
     ]);
     expect(breadcrumbItemsForTab(task)).toEqual([
+      { key: "home", label: "Home" },
       { key: "projects", label: "Projects" },
       { key: "projects/matrix-os", label: "matrix-os" },
       { key: "projects/matrix-os/tasks/MAT-301", label: "Desktop navigation" },

@@ -23,13 +23,20 @@ export function breadcrumbItemsForTab(
 ): BreadcrumbItem[] {
   if (!tab) return [];
   switch (tab.kind) {
+    case "projects":
+      return [
+        { key: "home", label: "Home" },
+        { key: "projects", label: "Projects" },
+      ];
     case "project":
       return [
+        { key: "home", label: "Home" },
         { key: "projects", label: "Projects" },
         { key: `projects/${tab.projectSlug ?? tab.id}`, label: tab.title },
       ];
     case "task":
       return [
+        { key: "home", label: "Home" },
         { key: "projects", label: "Projects" },
         {
           key: `projects/${tab.projectSlug ?? "project"}`,
@@ -93,7 +100,7 @@ function HeaderButton({
       aria-label={label}
       title={label}
       disabled={disabled}
-      className="no-drag relative -mx-[5px] inline-flex h-7 w-6 items-center justify-center rounded-sm text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-35"
+      className="no-drag relative -mx-1 inline-flex h-7 w-6 items-center justify-center rounded-sm text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-35"
       onClick={onClick}
     >
       <span
