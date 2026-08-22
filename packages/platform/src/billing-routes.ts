@@ -895,6 +895,20 @@ async function projectSubscription(
   const existing = await getBillingSubscriptionByStripeId(db, sub.id);
   const runtimeSlot = readRuntimeSlotFromStripeMetadata(sub.metadata) ?? 'primary';
   const data = Array.isArray(sub.items?.data) ? sub.items.data : [];
+  const itemPeriodBoundaries = data.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const candidate = item as {
+      current_period_start?: unknown;
+      current_period_end?: unknown;
+    };
+    const boundary = status === 'past_due' || status === 'unpaid'
+      ? candidate.current_period_start
+      : candidate.current_period_end;
+    return typeof boundary === 'number' ? [boundary] : [];
+  });
+  const itemPeriodBoundary = itemPeriodBoundaries.length > 0
+    ? Math.min(...itemPeriodBoundaries)
+    : null;
   return {
     clerkUserId: customer.clerkUserId,
     stripeCustomerId: customer.stripeCustomerId,
@@ -903,7 +917,7 @@ async function projectSubscription(
     status,
     currentPeriodEnd: typeof sub.current_period_end === 'number'
       ? epochSecondsToIso(sub.current_period_end)
-      : null,
+      : (itemPeriodBoundary === null ? null : epochSecondsToIso(itemPeriodBoundary)),
     trialStartedAt: typeof sub.trial_start === 'number'
       ? epochSecondsToIso(sub.trial_start)
       : (existing?.trialStartedAt ?? null),
