@@ -306,7 +306,9 @@ describe('CI workflows', () => {
 
     expect(production).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
     expect(production).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
-    expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED=true');
+    expect(preview).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
+    expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
+    expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED must be true or false.');
     for (const eventType of [
       'customer.subscription.trial_will_end',
       'invoice.paid',
