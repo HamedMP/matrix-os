@@ -10,8 +10,8 @@ export function openChatIndex(): void {
 
 export function openTerminalIndex(): void {
   const tabs = useTabs.getState();
-  tabs.requestTerminalIndex();
   tabs.openTab({ kind: "terminals", title: "Terminal", closable: false });
+  tabs.requestTerminalOverview();
 }
 
 export function openProjectsIndex(): void {

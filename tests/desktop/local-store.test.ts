@@ -101,6 +101,16 @@ describe("local store", () => {
     await expect(store.setUnknown("appearance", { theme: "dark", zoom: 0.1 })).rejects.toThrow();
   });
 
+  it("persists only a bounded Terminal-local light or dark preference", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+
+    await store.set("terminalAppearance", { mode: "light" });
+
+    expect(await store.get("terminalAppearance")).toEqual({ mode: "light" });
+    await expect(store.setUnknown("terminalAppearance", { mode: "system" })).rejects.toThrow();
+    await expect(store.setUnknown("terminalAppearance", { mode: "dark", themeId: "dracula" })).rejects.toThrow();
+  });
+
   it("validates unknown IPC state values before writing", async () => {
     const store = createLocalStore({ dir: await makeDir() });
     await store.setUnknown("appearance", { theme: "system" });

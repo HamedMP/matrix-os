@@ -128,11 +128,11 @@ export default function NavigationHeader() {
   const canGoForward = useTabs((state) => state.canGoForward);
   const goBack = useTabs((state) => state.goBack);
   const goForward = useTabs((state) => state.goForward);
-  const requestTerminalIndex = useTabs((state) => state.requestTerminalIndex);
   const closeTab = useTabs((state) => state.closeTab);
   const collapsed = useUi((state) => state.sidebarCollapsed);
   const toggleSidebar = useUi((state) => state.toggleSidebar);
   const requestHomeRefresh = useUi((state) => state.requestHomeRefresh);
+  const requestTerminalOverview = useTabs((state) => state.requestTerminalOverview);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const activeThreadId = useThreads((state) => state.activeThreadId);
   const activeThreadTitle = useThreads((state) =>
@@ -166,9 +166,9 @@ export default function NavigationHeader() {
     }
     if (canReturnToTerminalIndex) {
       if (activeTab?.kind === "terminals") {
-        requestTerminalIndex();
+        requestTerminalOverview();
       } else if (previousTab?.kind === "terminals") {
-        requestTerminalIndex();
+        requestTerminalOverview();
         goBack();
       } else {
         openTerminalIndex();
@@ -238,27 +238,27 @@ export default function NavigationHeader() {
               ) : null}
               {["chat", "terminal", "projects"].includes(breadcrumb.key)
                 && index < breadcrumbs.length - 1 ? (
-                  <button
-                    type="button"
-                    className="max-w-[220px] truncate rounded-sm outline-none hover:text-[var(--text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-                    style={{ color: "var(--text-tertiary)", fontWeight: 400 }}
-                    onClick={() => navigateBreadcrumb(breadcrumb.key)}
-                  >
-                    {breadcrumb.label}
-                  </button>
-                ) : (
-                  <span
-                    className="max-w-[220px] truncate"
-                    style={{
-                      color: index === breadcrumbs.length - 1
-                        ? "var(--text-primary)"
-                        : "var(--text-tertiary)",
-                      fontWeight: index === breadcrumbs.length - 1 ? 500 : 400,
-                    }}
-                  >
-                    {breadcrumb.label}
-                  </span>
-                )}
+                <button
+                  type="button"
+                  className="max-w-[220px] truncate rounded-sm outline-none hover:text-[var(--text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+                  style={{ color: "var(--text-tertiary)", fontWeight: 400 }}
+                  onClick={() => navigateBreadcrumb(breadcrumb.key)}
+                >
+                  {breadcrumb.label}
+                </button>
+              ) : (
+                <span
+                  className="max-w-[220px] truncate"
+                  style={{
+                    color: index === breadcrumbs.length - 1
+                      ? "var(--text-primary)"
+                      : "var(--text-tertiary)",
+                    fontWeight: index === breadcrumbs.length - 1 ? 500 : 400,
+                  }}
+                >
+                  {breadcrumb.label}
+                </span>
+              )}
             </Fragment>
           ))}
           {breadcrumbs.length > 0 && hasContextActions ? (

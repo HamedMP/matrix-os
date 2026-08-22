@@ -44,7 +44,7 @@ export interface RecentView {
 }
 
 export interface TerminalSessionRequest {
-  sessionName: string;
+  sessionName: string | null;
   requestId: number;
 }
 
@@ -121,7 +121,6 @@ interface TabsState {
   recentFilter: RecentViewFilter;
   terminalSessionRequest: TerminalSessionRequest | null;
   terminalSessionRequestSequence: number;
-  terminalIndexRequestId: number;
   openTab(spec: Omit<Tab, "id" | "closable"> & { closable?: boolean }): string;
   openTabAtHistoryRoot(
     spec: Omit<Tab, "id" | "closable"> & { closable?: boolean },
@@ -142,7 +141,7 @@ interface TabsState {
   reconcileRecentTerminals(ids: string[]): void;
   reconcileTerminalSessions(liveSessionNames: string[]): void;
   requestTerminalSession(sessionName: string): void;
-  requestTerminalIndex(): void;
+  requestTerminalOverview(): void;
   consumeTerminalSessionRequest(requestId: number): void;
   setRecentFilter(filter: RecentViewFilter): void;
   renameTab(id: string, title: string): void;
@@ -163,7 +162,6 @@ export const useTabs = create<TabsState>()((set, get) => ({
   recentFilter: "all",
   terminalSessionRequest: null,
   terminalSessionRequestSequence: 0,
-  terminalIndexRequestId: 0,
 
   openTab: (spec) => {
     const key = identityKey(spec);
@@ -315,7 +313,6 @@ export const useTabs = create<TabsState>()((set, get) => ({
       recentFilter: "all",
       terminalSessionRequest: null,
       terminalSessionRequestSequence: 0,
-      terminalIndexRequestId: 0,
     };
   }),
 
@@ -418,6 +415,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
       ? state.recentViews.filter((recent) => recent.kind !== "terminal" || liveNames.has(recent.id))
       : state.recentViews;
     const terminalSessionRequest = state.terminalSessionRequest
+      && state.terminalSessionRequest.sessionName !== null
       && !liveNames.has(state.terminalSessionRequest.sessionName)
       ? null
       : state.terminalSessionRequest;
@@ -449,9 +447,13 @@ export const useTabs = create<TabsState>()((set, get) => ({
     };
   }),
 
-  requestTerminalIndex: () => set((state) => ({
-    terminalIndexRequestId: state.terminalIndexRequestId + 1,
-  })),
+  requestTerminalOverview: () => set((state) => {
+    const requestId = state.terminalSessionRequestSequence + 1;
+    return {
+      terminalSessionRequest: { sessionName: null, requestId },
+      terminalSessionRequestSequence: requestId,
+    };
+  }),
 
   consumeTerminalSessionRequest: (requestId) => set((state) => (
     state.terminalSessionRequest?.requestId === requestId

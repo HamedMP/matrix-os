@@ -196,7 +196,7 @@ describe("Desktop sidebar navigation shell", () => {
       (tab) => tab.id === useTabs.getState().activeTabId,
     );
     expect(activeTab).toMatchObject({ kind: "terminals", title: "Terminal" });
-    expect(useTabs.getState().terminalIndexRequestId).toBe(1);
+    expect(useTabs.getState().terminalSessionRequest).toMatchObject({ sessionName: null });
   });
 
   it("matches the Figma navigation hierarchy and keeps the sidebar borderless", () => {

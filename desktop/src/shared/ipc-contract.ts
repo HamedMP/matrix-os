@@ -101,6 +101,7 @@ const STATE_KEYS = [
   "lastProjectSlug",
   "panelLayouts",
   "appearance",
+  "terminalAppearance",
   "recents",
   "projectViews",
   "providerPreferences",
