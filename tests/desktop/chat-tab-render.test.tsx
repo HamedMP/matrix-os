@@ -326,6 +326,37 @@ describe("ChatTab", () => {
     expect(screen.getByRole("button", { name: "Copied command" })).toBeTruthy();
   });
 
+  it.each([
+    ["cookie request header", "curl -H 'Cookie: sessionid=cookie-secret; csrf=csrf-secret' https://example.com", "curl -H 'Cookie: [redacted]' https://example.com", "cookie-secret"],
+    ["cookie response header", "curl -H 'Set-Cookie: sessionid=response-cookie-secret' https://example.com", "curl -H 'Set-Cookie: [redacted]' https://example.com", "response-cookie-secret"],
+    ["short basic auth flag", "curl -u alice:short-secret https://example.com", "curl -u [redacted] https://example.com", "short-secret"],
+    ["long basic auth flag", "curl --user bob:long-secret https://example.com", "curl --user [redacted] https://example.com", "long-secret"],
+    ["equals basic auth flag", "curl --user='carol:quoted-secret' https://example.com", "curl --user=[redacted] https://example.com", "quoted-secret"],
+  ])("redacts %s from command display and clipboard", async (_case, command, expected, secret) => {
+    useHermesChat.setState({
+      status: "streaming",
+      activeRequestId: "request-command-redaction",
+      messages: [
+        { id: "user-command-redaction", role: "user", content: "Inspect safely", requestId: "request-command-redaction", timestamp: 1_000 },
+        {
+          id: "tool-command-redaction",
+          role: "system",
+          content: "Using Bash...",
+          tool: "Bash",
+          requestId: "request-command-redaction",
+          toolInput: { command },
+          timestamp: 2_000,
+        },
+      ],
+    });
+
+    render(<ChatTab />);
+
+    expect(screen.queryByText(new RegExp(secret))).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expected));
+  });
+
   it("renders the approved centered empty state and only working composer controls", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);

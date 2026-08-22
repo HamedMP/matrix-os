@@ -16,7 +16,9 @@ const MAX_PREVIEW_CHARS = 140;
 const MAX_DETAIL_CHARS = 2_000;
 const SECRET_ASSIGNMENT = /(\b(?:[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|PASSWORD|PASSWD|SECRET|CREDENTIAL)[A-Z0-9_]*)\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s]+)/gi;
 const AUTHORIZATION_VALUE = /(\b(?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic)\s+)[^\s]+/gi;
+const COOKIE_HEADER_VALUE = /(\b(?:cookie|set[-_]?cookie)\s*:\s*)[^'"\r\n]+/gi;
 const CREDENTIAL_HEADER_VALUE = /(\b(?:x[-_])?(?:api[-_]?key|access[-_]?key|auth[-_]?token|access[-_]?token|client[-_]?secret|credential|token|password|passwd|secret)\s*:\s*)(?:'[^']*'|"[^"]*"|[^'"\s]+)/gi;
+const BASIC_AUTH_VALUE = /(^|\s)(-u|--user)(=|\s+)(?:'[^']*'|"[^"]*"|[^\s]+)/gi;
 const CREDENTIAL_URL = /(https?:\/\/[^\s:@/]+:)[^\s@/]+@/gi;
 
 function boundedText(value: unknown, maxChars = MAX_PREVIEW_CHARS): string | undefined {
@@ -26,7 +28,9 @@ function boundedText(value: unknown, maxChars = MAX_PREVIEW_CHARS): string | und
   const redacted = normalized
     .replace(SECRET_ASSIGNMENT, "$1[redacted]")
     .replace(AUTHORIZATION_VALUE, "$1[redacted]")
+    .replace(COOKIE_HEADER_VALUE, "$1[redacted]")
     .replace(CREDENTIAL_HEADER_VALUE, "$1[redacted]")
+    .replace(BASIC_AUTH_VALUE, "$1$2$3[redacted]")
     .replace(CREDENTIAL_URL, "$1[redacted]@");
   return redacted.length > maxChars ? `${redacted.slice(0, maxChars - 1)}…` : redacted;
 }

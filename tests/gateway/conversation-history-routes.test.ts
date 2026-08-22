@@ -224,6 +224,24 @@ describe("kernel conversation history route", () => {
               command: "curl 'https://example.com/run?token=query-secret&mode=read' 'https://example.com/auth?client_secret=oauth-secret'",
             },
           },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 7,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Cookie: sessionid=cookie-secret; csrf=csrf-secret' -H 'Set-Cookie: sessionid=response-cookie-secret; Secure; HttpOnly' https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 8,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -u alice:short-secret --user bob:long-secret --user='carol:quoted-secret' https://example.com",
+            },
+          },
         ],
       })),
     }));
@@ -249,12 +267,26 @@ describe("kernel conversation history route", () => {
       kind: "command",
       preview: "curl 'https://example.com/run?token=[redacted]&mode=read' 'https://example.com/auth?client_secret=[redacted]'",
     });
+    expect(body.messages[5]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Cookie: [redacted]' -H 'Set-Cookie: [redacted]' https://example.com",
+    });
+    expect(body.messages[6]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -u [redacted] --user [redacted] --user=[redacted] https://example.com",
+    });
     expect(JSON.stringify(body)).not.toContain("super-secret");
     expect(JSON.stringify(body)).not.toContain("aws-secret");
     expect(JSON.stringify(body)).not.toContain("alice:pw");
     expect(JSON.stringify(body)).not.toContain("query-secret");
     expect(JSON.stringify(body)).not.toContain("header-secret");
     expect(JSON.stringify(body)).not.toContain("oauth-secret");
+    expect(JSON.stringify(body)).not.toContain("cookie-secret");
+    expect(JSON.stringify(body)).not.toContain("csrf-secret");
+    expect(JSON.stringify(body)).not.toContain("response-cookie-secret");
+    expect(JSON.stringify(body)).not.toContain("short-secret");
+    expect(JSON.stringify(body)).not.toContain("long-secret");
+    expect(JSON.stringify(body)).not.toContain("quoted-secret");
     expect(JSON.stringify(body)).not.toContain("/home/private");
   });
 
