@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { createHmac } from "node:crypto";
 import {
   insertContainer,
+  insertUserMachine,
   type PlatformDB,
 } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
@@ -81,5 +82,27 @@ describe("platform/internal-integration-routes", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ clerkUserId: "user_alice" });
+  });
+
+  it("resolves preview VPS handles from user_machines", async () => {
+    await insertUserMachine(db, {
+      machineId: "00000000-0000-4000-8000-000000001298",
+      clerkUserId: "user_preview_owner",
+      handle: "pr-1298",
+      runtimeSlot: "pr-1298",
+      provisioningClass: "preview",
+      status: "running",
+      provisionedAt: "2026-08-22T00:00:00.000Z",
+    });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/pr-1298/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("pr-1298", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ clerkUserId: "user_preview_owner" });
   });
 });

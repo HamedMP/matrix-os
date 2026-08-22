@@ -30,6 +30,9 @@ import { createWebSearchTool, type ApiKeys } from "./tools/web-search.js";
 import {
   connectServiceHandler,
   callServiceHandler,
+  describeServiceHandler,
+  disconnectServiceHandler,
+  listIntegrationInventoryHandler,
   listConnectedServicesHandler,
   syncServicesHandler,
 } from "./tools/integrations.js";
@@ -1109,6 +1112,20 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
       ...(await createWebTools(homePath, tool)),
 
       tool(
+        "list_integration_inventory",
+        "List the user's connected external-service capabilities. Use this at the start of a conversation when an external service may help; it returns account labels and status only, never provider content.",
+        {},
+        async () => listIntegrationInventoryHandler(),
+      ),
+
+      tool(
+        "describe_service",
+        "Describe Matrix-approved actions and parameters for a connected-service type before making an unfamiliar integration call.",
+        { service: z.string().describe("Service to describe, for example gmail, github, slack, or google_calendar") },
+        async ({ service }) => describeServiceHandler({ service }),
+      ),
+
+      tool(
         "connect_service",
         "Connect an external service (Gmail, Google Calendar, Google Drive, GitHub, Slack, Discord) via OAuth. Returns a URL for the user to authorize.",
         {
@@ -1136,7 +1153,7 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
 
       tool(
         "list_connected_services",
-        "List all external services currently connected to this user's account. Use this BEFORE claiming a service is not connected -- the local DB may be stale if the user just finished OAuth in a separate tab. If empty, call sync_services to pull the latest state from Pipedream.",
+        "List all external services currently connected to this user's account. Use this before claiming a service is not connected. If empty after the user just authorized an account, call sync_services to refresh Matrix connection state.",
         {},
         async () => {
           return listConnectedServicesHandler();
@@ -1145,11 +1162,18 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
 
       tool(
         "sync_services",
-        "Force-sync connected services from Pipedream into the local DB. Use this AFTER the user tells you they authorized a service but list_connected_services doesn't show it yet -- this happens in local dev because Pipedream's webhook can't reach the gateway. Safe to call repeatedly; no-op if nothing new.",
+        "Refresh connected services through Matrix. Use this after the user tells you they authorized a service but list_connected_services does not show it yet. Safe to call repeatedly; no-op if nothing changed.",
         {},
         async () => {
           return syncServicesHandler();
         },
+      ),
+
+      tool(
+        "disconnect_service",
+        "Disconnect one external account by its explicit Matrix connection id. Only use when the user asks to disconnect it.",
+        { connection_id: z.string().uuid() },
+        async ({ connection_id }) => disconnectServiceHandler({ connection_id }),
       ),
     ],
   });

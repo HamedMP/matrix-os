@@ -170,6 +170,10 @@ sync_agent_skills() {
 finish_agent_install() {
   runtime_chmod
   sync_agent_skills
+  if [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
+    /opt/matrix/bin/matrix-register-integrations-mcp coding-agents || \
+      log "coding-agent integrations MCP registration will retry on gateway restart"
+  fi
 }
 
 install_claude_code_package() {

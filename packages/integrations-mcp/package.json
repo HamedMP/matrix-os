@@ -1,0 +1,21 @@
+{
+  "name": "@matrix-os/integrations-mcp",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@matrix-os/kernel": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "typescript": "^5.9.3"
+  }
+}

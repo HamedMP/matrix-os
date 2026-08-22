@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   connectServiceHandler,
   callServiceHandler,
+  describeServiceHandler,
+  disconnectServiceHandler,
+  listIntegrationInventoryHandler,
   type GatewayFetcher,
 } from "../../packages/kernel/src/tools/integrations.js";
 
@@ -109,6 +112,60 @@ describe("connect_service handler", () => {
       "Content-Type": "application/json",
       "x-platform-user-id": "user_clerk_123",
     });
+  });
+});
+
+describe("integration discovery", () => {
+  it("returns a safe connection inventory without provider content", async () => {
+    const fetcher = mockFetcher({
+      body: [{
+        id: "connection-1",
+        service: "gmail",
+        account_label: "Work Gmail",
+        account_email: "work@example.com",
+        status: "active",
+      }],
+    });
+
+    const result = await listIntegrationInventoryHandler(fetcher);
+
+    expect(result.content[0].text).toContain("Gmail (Work Gmail, work@example.com) [active]");
+    expect(result.content[0].text).not.toContain("connection-1");
+  });
+
+  it("describes actions from the Matrix registry rather than asking an agent to load a skill", async () => {
+    const fetcher = mockFetcher({
+      body: [{
+        id: "gmail",
+        name: "Gmail",
+        actions: {
+          list_messages: { description: "List recent email messages", params: { maxResults: { type: "number" } } },
+        },
+      }],
+    });
+
+    const result = await describeServiceHandler({ service: "gmail" }, fetcher);
+
+    expect(result.content[0].text).toContain("Gmail actions");
+    expect(result.content[0].text).toContain("list_messages");
+    expect(result.content[0].text).toContain("maxResults");
+  });
+});
+
+describe("disconnect_service handler", () => {
+  it("uses the owned Matrix connection id and returns a safe confirmation", async () => {
+    const fetcher = mockFetcher({ body: { ok: true } });
+
+    const result = await disconnectServiceHandler(
+      { connection_id: "11111111-1111-4111-8111-111111111111" },
+      fetcher,
+    );
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:4000/api/integrations/11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(result.content[0].text).toBe("Disconnected the integration.");
   });
 });
 

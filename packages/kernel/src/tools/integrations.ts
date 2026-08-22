@@ -36,6 +36,80 @@ function defaultFetcher(): GatewayFetcher {
   return fetch as unknown as GatewayFetcher;
 }
 
+interface ConnectedServiceInventoryItem {
+  service: string;
+  account_label: string;
+  account_email: string | null;
+  status: string;
+}
+
+/**
+ * Returns only connection metadata. This is safe to put in an agent's working
+ * context: it makes a newly-connected service discoverable without pulling
+ * provider data such as messages, files, or repositories into an unrelated
+ * conversation.
+ */
+export async function listIntegrationInventoryHandler(
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const res = await fetcher(`${GATEWAY_BASE}/api/integrations`, {
+      method: "GET",
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      return textResult("Connected integrations are currently unavailable.");
+    }
+    const services = (await res.json()) as ConnectedServiceInventoryItem[];
+    if (services.length === 0) return textResult("No external services are connected.");
+    return textResult(
+      `Connected integrations:\n${services.map((service) =>
+        `- ${service.service === "gmail" ? "Gmail" : service.service} (${service.account_label}${service.account_email ? `, ${service.account_email}` : ""}) [${service.status}]`,
+      ).join("\n")}`,
+    );
+  } catch (err: unknown) {
+    console.error("[integrations] list inventory error:", err instanceof Error ? err.message : err);
+    return textResult("Connected integrations are currently unavailable.");
+  }
+}
+
+export interface DescribeServiceInput {
+  service: string;
+}
+
+/** Lists Matrix-approved actions and parameter names for one service. */
+export async function describeServiceHandler(
+  input: DescribeServiceInput,
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const res = await fetcher(`${GATEWAY_BASE}/api/integrations/available`, {
+      method: "GET",
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!res.ok) return textResult("Integration service details are currently unavailable.");
+    const available = (await res.json()) as Array<{
+      id: string;
+      name: string;
+      actions?: Record<string, { description?: string; params?: Record<string, { type?: string; required?: boolean }> }>;
+    }>;
+    const service = available.find((item) => item.id === input.service);
+    if (!service) return textResult(`No Matrix integration is available for ${input.service}.`);
+    const actions = Object.entries(service.actions ?? {}).map(([name, action]) => {
+      const params = Object.entries(action.params ?? {}).map(([param, definition]) =>
+        `${param}${definition.required ? " (required)" : ""}${definition.type ? `: ${definition.type}` : ""}`,
+      );
+      return `- ${name}${action.description ? ` — ${action.description}` : ""}${params.length > 0 ? ` (${params.join(", ")})` : ""}`;
+    });
+    return textResult(`${service.name} actions:\n${actions.length > 0 ? actions.join("\n") : "No approved actions are currently available."}`);
+  } catch (err: unknown) {
+    console.error("[integrations] describe service error:", err instanceof Error ? err.message : err);
+    return textResult("Integration service details are currently unavailable.");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // connect_service
 // ---------------------------------------------------------------------------
@@ -195,5 +269,36 @@ export async function callServiceHandler(
   } catch (err: unknown) {
     console.error("[integrations] call_service error:", err instanceof Error ? err.message : err);
     return textResult("Integration service is temporarily unavailable. Please try again later.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// disconnect_service
+// ---------------------------------------------------------------------------
+
+export interface DisconnectServiceInput {
+  connection_id: string;
+}
+
+export async function disconnectServiceHandler(
+  input: DisconnectServiceInput,
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const res = await fetcher(
+      `${GATEWAY_BASE}/api/integrations/${encodeURIComponent(input.connection_id)}`,
+      {
+        method: "DELETE",
+        headers: authHeaders(),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      },
+    );
+    if (!res.ok) {
+      return textResult("The integration could not be disconnected. Please try again.");
+    }
+    return textResult("Disconnected the integration.");
+  } catch (err: unknown) {
+    console.error("[integrations] disconnect_service error:", err instanceof Error ? err.message : err);
+    return textResult("The integration could not be disconnected. Please try again.");
   }
 }

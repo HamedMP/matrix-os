@@ -164,6 +164,11 @@ main() {
     mv -f "$token_tmp" "$OPENCLAW_ENV_FILE"
   fi
 
+  if [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
+    /opt/matrix/bin/matrix-register-integrations-mcp openclaw || \
+      log "integrations MCP registration will retry on gateway restart"
+  fi
+
   log "OpenClaw ${OPENCLAW_VERSION} installed"
 }
 
