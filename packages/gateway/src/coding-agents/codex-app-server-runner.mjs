@@ -797,8 +797,16 @@ async function finishTurn(outcome) {
   if (terminalOutcome) return;
   terminalOutcome = outcome;
   activeTurn = false;
-  for (const messageId of assistantDeltaBuffers.keys()) {
+  for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
+    await persist({ type: "matrix.codex.assistant.completed", messageId });
+  }
+  for (const toolCallId of startedToolItems) {
+    await persist({
+      type: "matrix.codex.tool.completed",
+      toolCallId,
+      outcome: "cancelled",
+    });
   }
   assistantItemsWithDelta.clear();
   assistantDeltaBuffers.clear();

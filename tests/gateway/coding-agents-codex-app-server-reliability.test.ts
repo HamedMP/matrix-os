@@ -4,6 +4,7 @@ import { createConnection, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
+import { parseCodexExecJsonLine } from "../../packages/gateway/src/coding-agents/codex-events.js";
 
 interface FakeRuntime {
   child: ChildProcess;
@@ -62,7 +63,7 @@ async function sendControl(path: string, payload: unknown): Promise<unknown> {
 async function startFakeRuntime(
   name: string,
   handlerLines: string[],
-  options: { initialTranscriptBytes?: number } = {},
+  options: { initialTranscriptBytes?: number; stubControlServer?: boolean } = {},
 ): Promise<FakeRuntime> {
   const shortName = name.slice(0, 8);
   const homePath = await mkdtemp(join("/tmp", `mx-${shortName}-`));
@@ -83,6 +84,27 @@ async function startFakeRuntime(
     "}",
   ].join("\n"), "utf8");
   await chmod(fakePath, 0o700);
+  const stubControlServerPath = join(homePath, "stub-control-server.mjs");
+  if (options.stubControlServer) {
+    await writeFile(stubControlServerPath, [
+      "import { EventEmitter } from 'node:events';",
+      "import { writeFileSync } from 'node:fs';",
+      "import { createRequire, syncBuiltinESMExports } from 'node:module';",
+      "const require = createRequire(import.meta.url);",
+      "const net = require('node:net');",
+      "net.createServer = () => {",
+      "  const server = new EventEmitter();",
+      "  server.listen = (path, callback) => {",
+      "    writeFileSync(path, '', { mode: 0o600 });",
+      "    queueMicrotask(callback);",
+      "    return server;",
+      "  };",
+      "  server.close = (callback) => { queueMicrotask(callback); return server; };",
+      "  return server;",
+      "};",
+      "syncBuiltinESMExports();",
+    ].join("\n"), "utf8");
+  }
   const config = Buffer.from(JSON.stringify({
     prompt: "Fix the route.",
     approvalPolicy: "on-request",
@@ -102,6 +124,9 @@ async function startFakeRuntime(
     config,
   ], {
     cwd: homePath,
+    env: options.stubControlServer
+      ? { ...process.env, NODE_OPTIONS: `--import=${stubControlServerPath}` }
+      : process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   return { child, controlPath, eventPath, homePath };
@@ -113,10 +138,73 @@ async function cleanup(runtime: FakeRuntime, socket?: Socket): Promise<void> {
   await rm(runtime.homePath, { recursive: true, force: true });
 }
 
+async function replayTranscript(path: string) {
+  let sequence = 0;
+  const transcript = await readFile(path, "utf8");
+  return transcript.trim().split("\n").flatMap((line) => parseCodexExecJsonLine(line, {
+    threadId: "thread_matrix_replay",
+    now: () => new Date("2026-08-22T10:00:00.000Z"),
+    nextEventId: () => `evt_replay_${++sequence}`,
+  }).events);
+}
+
 const initialize = "if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));";
 const startThread = "else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));";
 
 describe("Codex app-server runner reliability", () => {
+  it("settles an in-flight assistant item before a completed turn is replayed", async () => {
+    const runtime = await startFakeRuntime("assistant_cleanup", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: 'native-assistant', delta: 'Partial answer.' } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      expect(exitCode, await readFile(runtime.eventPath, "utf8")).toBe(0);
+      const events = await replayTranscript(runtime.eventPath);
+      const assistantDelta = events.find((event) => event.type === "assistant.text.delta");
+      expect(assistantDelta).toMatchObject({ type: "assistant.text.delta", delta: "Partial answer." });
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "assistant.text.completed",
+        messageId: assistantDelta && "messageId" in assistantDelta ? assistantDelta.messageId : undefined,
+      }));
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("settles an in-flight tool as cancelled before a failed turn is replayed", async () => {
+    const runtime = await startFakeRuntime("tool_cleanup", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'native-tool', type: 'commandExecution', status: 'inProgress' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'interrupted' } } }));",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      expect(exitCode, await readFile(runtime.eventPath, "utf8")).toBe(1);
+      const events = await replayTranscript(runtime.eventPath);
+      const toolStarted = events.find((event) => event.type === "tool.started");
+      expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command" });
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "tool.completed",
+        toolCallId: toolStarted && "toolCallId" in toolStarted ? toolStarted.toolCallId : undefined,
+        outcome: "cancelled",
+      }));
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
   it("answers duplicate input questions with a fail-closed empty result", async () => {
     const runtime = await startFakeRuntime("duplicate_questions", [
       initialize,
