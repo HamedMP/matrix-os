@@ -276,13 +276,10 @@ function itemIdentity(nativeTurnId, nativeItemId) {
   return `codex_item_${digest([nativeTurnId, nativeItemId])}`;
 }
 
-function rememberBounded(collection, value) {
-  if (collection.has(value)) return;
-  if (collection.size >= MAX_TRACKED_ITEMS) {
-    const oldest = collection.values().next().value;
-    if (oldest) collection.delete(oldest);
+function assertTrackedItemCapacity(collection, value) {
+  if (!collection.has(value) && collection.size >= MAX_TRACKED_ITEMS) {
+    throw new Error("provider_item_limit");
   }
-  collection.add(value);
 }
 
 function toolPresentation(type) {
@@ -555,21 +552,24 @@ async function handleItemLifecycle(raw) {
 
   const presentation = toolPresentation(item.type);
   if (parsed.data.method === "item/started") {
+    assertTrackedItemCapacity(startedToolItems, matrixItemId);
     await persist({
       type: "matrix.codex.tool.started",
       toolCallId: matrixItemId,
       ...presentation,
     });
-    rememberBounded(startedToolItems, matrixItemId);
+    startedToolItems.add(matrixItemId);
     return true;
   }
 
   if (!startedToolItems.has(matrixItemId)) {
+    assertTrackedItemCapacity(startedToolItems, matrixItemId);
     await persist({
       type: "matrix.codex.tool.started",
       toolCallId: matrixItemId,
       ...presentation,
     });
+    startedToolItems.add(matrixItemId);
   }
   if (toolItemsWithOutput.has(matrixItemId) || itemHasOutput(item)) {
     await persist({
@@ -604,17 +604,20 @@ async function handleProviderMessage(raw) {
   if (await handleItemLifecycle(raw)) return;
   const outputDelta = ToolOutputDeltaSchema.safeParse(raw);
   if (outputDelta.success) {
-    rememberBounded(toolItemsWithOutput, itemIdentity(
+    const toolCallId = itemIdentity(
       outputDelta.data.params.turnId,
       outputDelta.data.params.itemId,
-    ));
+    );
+    assertTrackedItemCapacity(toolItemsWithOutput, toolCallId);
+    toolItemsWithOutput.add(toolCallId);
     return;
   }
   const delta = AgentDeltaSchema.safeParse(raw);
   if (delta.success) {
     const messageId = itemIdentity(delta.data.params.turnId, delta.data.params.itemId);
-    rememberBounded(assistantItemsWithDelta, messageId);
+    assertTrackedItemCapacity(assistantItemsWithDelta, messageId);
     await bufferAssistantDelta(messageId, delta.data.params.delta);
+    assistantItemsWithDelta.add(messageId);
     return;
   }
   const completed = TurnCompletedSchema.safeParse(raw);

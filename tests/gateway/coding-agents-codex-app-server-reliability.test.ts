@@ -270,6 +270,85 @@ describe("Codex app-server runner reliability", () => {
     }
   });
 
+  it("fails the 501st tool admission before replay can orphan a started item", async () => {
+    const runtime = await startFakeRuntime("tool_limit", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  for (let index = 0; index < 501; index += 1) console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: `native-tool-${index}`, type: 'commandExecution', status: 'inProgress' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      const startedIds = events.flatMap((event) => event.type === "tool.started" ? [event.toolCallId] : []);
+      const completedIds = events.flatMap((event) => event.type === "tool.completed" ? [event.toolCallId] : []);
+      expect(startedIds).toHaveLength(500);
+      expect(completedIds).toHaveLength(500);
+      expect(new Set(completedIds)).toEqual(new Set(startedIds));
+      expect(outcomes).toEqual(["failed"]);
+      expect(exitCode).toBe(1);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("fails the 501st assistant admission before replay can orphan a delta", async () => {
+    const runtime = await startFakeRuntime("assistant_limit", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  for (let index = 0; index < 501; index += 1) console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { turnId: 'native-turn', itemId: `native-assistant-${index}`, delta: `Partial answer ${index}.` } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      const deltaIds = events.flatMap((event) => event.type === "assistant.text.delta" ? [event.messageId] : []);
+      const completedIds = events.flatMap((event) => event.type === "assistant.text.completed" ? [event.messageId] : []);
+      expect(deltaIds).toHaveLength(500);
+      expect(completedIds).toHaveLength(500);
+      expect(new Set(completedIds)).toEqual(new Set(deltaIds));
+      expect(outcomes).toEqual(["failed"]);
+      expect(exitCode).toBe(1);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("tracks a synthesized tool start until its completion persists", async () => {
+    const runtime = await startFakeRuntime("synthetic_start", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn', item: { id: 'native-tool', type: 'commandExecution', status: 'completed' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { failFirstToolCompletionWrite: true, stubControlServer: true });
+
+    try {
+      const exitCode = await waitForExit(runtime.child);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      const startedIds = events.flatMap((event) => event.type === "tool.started" ? [event.toolCallId] : []);
+      const completed = events.filter((event) => event.type === "tool.completed");
+      expect(startedIds).toHaveLength(1);
+      expect(completed).toEqual([
+        expect.objectContaining({ toolCallId: startedIds[0], outcome: "cancelled" }),
+      ]);
+      expect(outcomes).toEqual(["failed"]);
+      expect(exitCode).toBe(1);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
   it("answers duplicate input questions with a fail-closed empty result", async () => {
     const runtime = await startFakeRuntime("duplicate_questions", [
       initialize,
