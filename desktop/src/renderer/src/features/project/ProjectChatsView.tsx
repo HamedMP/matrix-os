@@ -56,7 +56,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const status = useCodingAgentWorkspace((s) => s.status);
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const error = useCodingAgentWorkspace((s) => s.error);
-  const refresh = useCodingAgentWorkspace((s) => s.refresh);
+  const refreshRuntimeSummary = useCodingAgentWorkspace((s) => s.refresh);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const threadSnapshotStatus = useCodingAgentWorkspace((s) => s.threadSnapshotStatus);
@@ -82,6 +82,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
   const [inspectorTabOverride, setInspectorTabOverride] = useState<AgentConversationInspectorTab | null>(null);
   const newChatRequestIdRef = useRef(0);
+  const draftReadinessRefreshedRef = useRef(false);
 
   // Runtime-scope reconciliation + self-sufficiency bootstrap: the first
   // mounted view claims the scope (clearing the previous account's data),
@@ -105,6 +106,25 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     ? capabilityEnabled(summary, "codingAgentsProjectWorkspace")
     : false;
   const capabilitiesLoaded = summary !== null;
+
+  // Terminal-based provider setup changes readiness outside React. Refresh
+  // once whenever the active project enters its New Chat surface so the
+  // composer does not wait for unrelated navigation to discover login/logout.
+  // This is transition-driven, not a polling loop; leaving the draft resets
+  // the guard so the next deliberate New Chat entry checks again.
+  useEffect(() => {
+    if (!active || selectedThreadId !== null) {
+      draftReadinessRefreshedRef.current = false;
+      return;
+    }
+    if (
+      !projectWorkspaceEnabled
+      || workspaceEntry?.status !== "ready"
+      || draftReadinessRefreshedRef.current
+    ) return;
+    draftReadinessRefreshedRef.current = true;
+    void refreshRuntimeSummary();
+  }, [active, projectWorkspaceEnabled, refreshRuntimeSummary, selectedThreadId, workspaceEntry?.status]);
 
   useEffect(() => {
     if (!projectWorkspaceEnabled) return;
@@ -307,7 +327,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         icon={<Server size={28} />}
         headline={error ?? "Runtime summary unavailable"}
         description="Refresh the workspace or check your selected runtime."
-        action={<Button onClick={() => void refresh()}>Retry</Button>}
+        action={<Button onClick={() => void refreshRuntimeSummary()}>Retry</Button>}
       />
     );
   }

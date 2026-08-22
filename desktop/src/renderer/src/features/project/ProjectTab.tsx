@@ -136,7 +136,11 @@ export default function ProjectTab({ projectSlug, active }: { projectSlug: strin
               onClick={() => {
                 void (async () => {
                   await refresh();
-                  await refreshWorkspace(projectSlug);
+                  const currentViewEntry = useProjectView.getState().entries[projectSlug];
+                  await refreshWorkspace(projectSlug, {
+                    preserveEmptySelection:
+                      currentViewEntry !== undefined && currentViewEntry.selectedThreadId === null,
+                  });
                 })();
               }}
             >
