@@ -190,7 +190,7 @@ describe("kernel wiring", () => {
     cleanup();
   });
 
-  it("reattaches the selected Hermes conversation when the kernel socket reconnects", () => {
+  it("reattaches the selected Hermes conversation without replaying completed output", () => {
     useHermesChat.setState({ sessionId: "conversation-live", view: "conversation" });
     const cleanup = wireKernel();
     const instance = kernelSocketMocks.instances[0]!;
@@ -201,7 +201,35 @@ describe("kernel wiring", () => {
     expect(instance.send).toHaveBeenCalledWith({
       type: "switch_session",
       sessionId: "conversation-live",
+      replayCompleted: false,
     });
+    cleanup();
+  });
+
+  it("refreshes canonical history when a suppressed completed replay requires it", async () => {
+    const refreshConversationHistory = vi.fn().mockResolvedValue(true);
+    const api = { get: vi.fn() } as never;
+    useConnection.setState({ api });
+    useHermesChat.setState({
+      sessionId: "conversation-live",
+      view: "conversation",
+      refreshConversationHistory,
+    });
+    const cleanup = wireKernel();
+    const handleMessage = kernelSocketMocks.instances[0]?.subscribe.mock.calls[0]?.[0] as (
+      msg: unknown,
+    ) => void;
+
+    handleMessage({
+      type: "session:switched",
+      sessionId: "conversation-live",
+      historyRefreshRequired: true,
+    });
+
+    await vi.waitFor(() => expect(refreshConversationHistory).toHaveBeenCalledWith(
+      api,
+      "conversation-live",
+    ));
     cleanup();
   });
 

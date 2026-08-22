@@ -33,6 +33,15 @@ interface AttachOptions {
 export interface ConversationRunAttachment {
   detach: () => void;
   bufferedMessages: ConversationRunMessage[];
+  runState: "active" | "completed";
+}
+
+export function conversationHistoryRefreshRequired(
+  attachment: ConversationRunAttachment | null,
+  replayCompleted?: boolean,
+): boolean {
+  return attachment === null
+    || (attachment.runState === "completed" && replayCompleted === false);
 }
 
 interface RunState {
@@ -128,6 +137,7 @@ export class ConversationRunRegistry {
       return {
         bufferedMessages: options?.replayCompleted === false ? [] : [...run.messages],
         detach: () => {},
+        runState: "completed",
       };
     }
 
@@ -144,6 +154,7 @@ export class ConversationRunRegistry {
       detach: () => {
         run.subscribers.delete(subscriber);
       },
+      runState: "active",
     };
   }
 

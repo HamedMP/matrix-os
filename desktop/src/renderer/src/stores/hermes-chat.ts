@@ -153,6 +153,7 @@ interface HermesChatState {
   deleteError: string | null;
   indexSequence: number;
   loadSequence: number;
+  transcriptRevision: number;
   seenReplayEventIds: string[];
   send: (text: string) => void;
   abort: () => void;
@@ -161,6 +162,7 @@ interface HermesChatState {
   refreshConversations: (api: ApiClient) => Promise<void>;
   createConversation: (api: ApiClient) => Promise<string | null>;
   openConversation: (api: ApiClient, id: string) => Promise<boolean>;
+  refreshConversationHistory: (api: ApiClient, id: string) => Promise<boolean>;
   deleteConversation: (api: ApiClient, id: string) => Promise<boolean>;
   clearDeleteError: () => void;
   resetRuntime: () => void;
@@ -209,6 +211,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   deleteError: null,
   indexSequence: 0,
   loadSequence: 0,
+  transcriptRevision: 0,
   seenReplayEventIds: [],
 
   send: (text) => {
@@ -226,6 +229,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       messages: [...state.messages, userMessage].slice(-TRANSCRIPT_CAP),
       status: "thinking",
       activeRequestId: requestId,
+      transcriptRevision: state.transcriptRevision + 1,
     }));
     const sent = sendKernelMessage({
       text: trimmed,
@@ -257,7 +261,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
   newChat: () => {
     const { activeRequestId } = get();
     if (activeRequestId) abortKernelRequest(activeRequestId);
-    set({
+    set((state) => ({
       messages: [],
       sessionId: null,
       status: "idle",
@@ -267,7 +271,8 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       loadError: null,
       loadingConversationId: null,
       seenReplayEventIds: [],
-    });
+      transcriptRevision: state.transcriptRevision + 1,
+    }));
   },
 
   showIndex: () => {
@@ -329,7 +334,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       }
       const activeRequestId = get().activeRequestId;
       if (activeRequestId) abortKernelRequest(activeRequestId);
-      set({
+      set((state) => ({
         view: "conversation",
         sessionId: parsed.data.id,
         messages: [],
@@ -339,7 +344,8 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         loadError: null,
         loadingConversationId: null,
         seenReplayEventIds: [],
-      });
+        transcriptRevision: state.transcriptRevision + 1,
+      }));
       switchKernelSession(parsed.data.id);
       await get().refreshConversations(api);
       return isCurrentRuntimeGeneration(generation) ? parsed.data.id : null;
@@ -377,7 +383,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       }
       const previousRequestId = get().activeRequestId;
       if (previousRequestId) abortKernelRequest(previousRequestId);
-      set({
+      set((state) => ({
         view: "conversation",
         sessionId: parsedId.data,
         messages: messages.slice(-TRANSCRIPT_CAP),
@@ -387,16 +393,54 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         loadError: null,
         loadingConversationId: null,
         seenReplayEventIds: [],
-      });
+        transcriptRevision: state.transcriptRevision + 1,
+      }));
       // The history endpoint excludes assistant/tool rows from an active run,
       // so its snapshot and the request-scoped active replay are disjoint.
-      // Completed runs stay suppressed because their rows are fully persisted.
+      // Completed replay stays suppressed; if the run settles between this
+      // snapshot and attachment, the Gateway ack requests a canonical refresh.
       switchKernelSession(parsedId.data, { replayCompleted: false });
       return true;
     } catch (error: unknown) {
       if (!isCurrentRuntimeGeneration(generation) || get().loadSequence !== sequence) return false;
       console.warn("[hermes-chat] conversation load failed", error instanceof Error ? error.name : typeof error);
       set({ loadStatus: "error", loadError: LOAD_ERROR_MESSAGE, loadingConversationId: null });
+      return false;
+    }
+  },
+
+  refreshConversationHistory: async (api, id) => {
+    const parsedId = KernelConversationIdSchema.safeParse(id);
+    if (!parsedId.success || get().sessionId !== parsedId.data) return false;
+    const generation = captureRuntimeGeneration();
+    const revision = get().transcriptRevision;
+    try {
+      const messages = historyMessages(
+        parsedId.data,
+        await api.get<unknown>(`/api/conversations/${encodeURIComponent(parsedId.data)}?limit=50`),
+      );
+      const state = get();
+      if (
+        !messages
+        || !isCurrentRuntimeGeneration(generation)
+        || state.sessionId !== parsedId.data
+        || state.transcriptRevision !== revision
+      ) {
+        return false;
+      }
+      set((current) => ({
+        messages: messages.slice(-TRANSCRIPT_CAP),
+        status: "idle",
+        activeRequestId: null,
+        seenReplayEventIds: [],
+        transcriptRevision: current.transcriptRevision + 1,
+      }));
+      return true;
+    } catch (error: unknown) {
+      console.warn(
+        "[hermes-chat] conversation history refresh failed",
+        error instanceof Error ? error.name : typeof error,
+      );
       return false;
     }
   },
@@ -436,6 +480,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
                 loadError: null,
                 loadingConversationId: null,
                 seenReplayEventIds: [],
+                transcriptRevision: state.transcriptRevision + 1,
               }
             : {}),
         };
@@ -483,6 +528,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       deleteError: null,
       indexSequence: state.indexSequence + 1,
       loadSequence: state.loadSequence + 1,
+      transcriptRevision: state.transcriptRevision + 1,
       seenReplayEventIds: [],
     }));
   },
@@ -543,7 +589,13 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         status = "idle";
         active = null;
       }
-      return { messages, status, activeRequestId: active, seenReplayEventIds };
+      return {
+        messages,
+        status,
+        activeRequestId: active,
+        seenReplayEventIds,
+        transcriptRevision: state.transcriptRevision + 1,
+      };
     });
     return true;
   },

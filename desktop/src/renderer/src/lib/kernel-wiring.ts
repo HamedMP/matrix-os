@@ -145,13 +145,23 @@ export function wireKernel(): () => void {
         }
       }
     }
+    if (msg.type === "session:switched" && msg.historyRefreshRequired === true) {
+      const api = useConnection.getState().api;
+      if (api) {
+        void useHermesChat.getState().refreshConversationHistory(api, msg.sessionId as string);
+      }
+    }
   });
 
   const unsubscribeState = activeSocket.onStateChange((state) => {
     if (state !== "connected") return;
     const selectedSessionId = useHermesChat.getState().sessionId;
     if (selectedSessionId) {
-      activeSocket.send({ type: "switch_session", sessionId: selectedSessionId });
+      activeSocket.send({
+        type: "switch_session",
+        sessionId: selectedSessionId,
+        replayCompleted: false,
+      });
     }
   });
 

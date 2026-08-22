@@ -25,7 +25,11 @@ import { createConversationLifecycle } from "./conversation-lifecycle.js";
 import { createConversationMutationLock } from "./conversation-mutation-lock.js";
 import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
 import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
-import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
+import {
+  conversationHistoryRefreshRequired,
+  ConversationRunRegistry,
+  type ConversationRunMessage,
+} from "./conversation-run-registry.js";
 import {
   clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
   drainReconnectableAbortEntries,
@@ -2055,6 +2059,10 @@ export async function createGateway(config: GatewayConfig) {
                 send(ws, {
                   type: "session:switched",
                   sessionId: parsed.sessionId,
+                  historyRefreshRequired: conversationHistoryRefreshRequired(
+                    attachment,
+                    parsed.replayCompleted,
+                  ),
                 });
                 for (const message of pendingLiveMessages) {
                   send(ws, message as ServerMessage);
@@ -2064,7 +2072,11 @@ export async function createGateway(config: GatewayConfig) {
               return;
             }
 
-            send(ws, { type: "session:switched", sessionId: parsed.sessionId });
+            send(ws, {
+              type: "session:switched",
+              sessionId: parsed.sessionId,
+              historyRefreshRequired: true,
+            });
             return;
           }
 

@@ -239,6 +239,81 @@ describe("useHermesChat", () => {
     });
   });
 
+  it("replaces a suppressed completed replay with canonical history only", async () => {
+    useHermesChat.setState({
+      view: "conversation",
+      sessionId: "conversation-live",
+      messages: [{ id: "partial", role: "user", content: "current prompt", timestamp: 10 }],
+      status: "thinking",
+      activeRequestId: "request-live",
+      seenReplayEventIds: ["event-live"],
+    });
+    const get = vi.fn().mockResolvedValue({
+      id: "conversation-live",
+      createdAt: 10,
+      updatedAt: 40,
+      totalCount: 2,
+      messages: [
+        { index: 0, role: "user", content: "current prompt", contentTruncated: false, timestamp: 10 },
+        { index: 1, role: "assistant", content: "settled answer", contentTruncated: false, timestamp: 40 },
+      ],
+      hasMore: false,
+      limit: 50,
+    });
+
+    const refreshed = await useHermesChat.getState().refreshConversationHistory(
+      { get } as never,
+      "conversation-live",
+    );
+
+    expect(refreshed).toBe(true);
+    expect(kernel.switchKernelSession).not.toHaveBeenCalled();
+    expect(useHermesChat.getState()).toMatchObject({
+      messages: [
+        { id: "conversation-live:0", role: "user", content: "current prompt" },
+        { id: "conversation-live:1", role: "assistant", content: "settled answer" },
+      ],
+      status: "idle",
+      activeRequestId: null,
+      seenReplayEventIds: [],
+    });
+  });
+
+  it("does not let a stale history refresh overwrite a newer transcript revision", async () => {
+    useHermesChat.setState({
+      view: "conversation",
+      sessionId: "conversation-live",
+      messages: [{ id: "partial", role: "user", content: "current prompt", timestamp: 10 }],
+      status: "idle",
+      activeRequestId: null,
+    });
+    const pending = deferred<unknown>();
+    const refresh = useHermesChat.getState().refreshConversationHistory(
+      { get: vi.fn(() => pending.promise) } as never,
+      "conversation-live",
+    );
+
+    useHermesChat.getState().send("new prompt");
+    pending.resolve({
+      id: "conversation-live",
+      createdAt: 10,
+      updatedAt: 40,
+      totalCount: 2,
+      messages: [
+        { index: 0, role: "user", content: "current prompt", contentTruncated: false, timestamp: 10 },
+        { index: 1, role: "assistant", content: "old settled answer", contentTruncated: false, timestamp: 40 },
+      ],
+      hasMore: false,
+      limit: 50,
+    });
+
+    expect(await refresh).toBe(false);
+    expect(useHermesChat.getState().messages.at(-1)).toMatchObject({
+      role: "user",
+      content: "new prompt",
+    });
+  });
+
   it("keeps the current conversation visible when switching fails", async () => {
     useHermesChat.setState({
       view: "conversation",

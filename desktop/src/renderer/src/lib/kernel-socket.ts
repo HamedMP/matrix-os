@@ -62,7 +62,13 @@ export const KnownKernelMessageSchema = z.discriminatedUnion("type", [
   z.looseObject({ type: z.literal("kernel:result"), data: z.unknown(), requestId: requestIdField }),
   z.looseObject({ type: z.literal("kernel:error"), message: z.string(), requestId: requestIdField }),
   z.looseObject({ type: z.literal("kernel:aborted"), requestId: requestIdField }),
-  z.looseObject({ type: z.literal("session:switched"), sessionId: z.string() }),
+  z.looseObject({
+    type: z.literal("session:switched"),
+    sessionId: z.string(),
+    // Optional for compatibility with older Gateways. Current Gateways always
+    // send the flag so Desktop can repair a suppressed completed replay.
+    historyRefreshRequired: z.boolean().optional(),
+  }),
   z.looseObject({
     type: z.literal("task:created"),
     task: z.looseObject({ id: z.string(), type: z.string(), status: z.string(), input: z.string() }),
