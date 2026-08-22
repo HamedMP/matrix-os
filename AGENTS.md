@@ -323,6 +323,50 @@ a screenshot is practical.
 
 3. **Atomicity/failure-mode review**: For each subsystem touched, answer: What is the source of truth? What is inside the lock/transaction? What happens on partial failure? What happens on shutdown? What is explicitly deferred?
 
+### Local review before Greptile (mandatory)
+
+Greptile is the **paid final gate, not the first reviewer**. Every PR gets a local
+review pass first, performed by whichever coding agent is doing the work -- Claude
+Code, Codex, or another. Run it on the actual diff (`git diff origin/main...HEAD`)
+after the local gates pass and before mentioning `@greptileai`.
+
+Opening a non-draft PR spends one automatic review on whatever the initial head
+happens to be, so do the local pass **before** you open the PR, not after. Every
+review from then on is one you explicitly pay for.
+
+- **Claude Code**: `/code-review`, or `/pr-review-toolkit:review-pr`, which launches
+  the specialist agents (`silent-failure-hunter`, `code-reviewer`,
+  `pr-test-analyzer`, `comment-analyzer`, `type-design-analyzer`). Note
+  `/code-review` is user-invocable only and cannot be launched programmatically;
+  `review-pr` can.
+- **Codex**: its equivalent review command, or the same three passes run explicitly
+  against the diff.
+- **Any agent**: apply the three passes above -- mechanical `check:patterns` sweep,
+  trust-boundary sweep, atomicity/failure-mode review -- plus the Hard Rules list.
+
+**Running the gates is not a review.** `typecheck`, `test`, `check:patterns`, and
+`react-doctor` prove the code runs; they do not find defects. Both steps are
+required, and the review step is the one that must happen before `@greptileai`.
+
+**Give the review a defect class, not "review this."** Name the specific shape you
+want hunted -- "state written after an `await` with no generation guard", "failures
+swallowed and returned to a fire-and-forget caller", "renderer-built ids that fail
+their Zod contract schema" -- and ask for an exhaustive sweep of every file touched.
+
+**Fix the class, not the finding.** When a reviewer names one instance, search for
+every sibling instance and fix them together. Patching only what was named means
+the next paid round rediscovers the same defect one file over: on the 2026-07-27
+desktop stack, `integrations-store` needed `refresh`, then `syncNow`, then
+`startConnect` -- three separate 12-PR review rounds for one defect class, with
+scores crawling 2/5 to 3/5. A review round should validate the work, not discover it.
+
+Fix everything the local pass finds and re-run the gates before requesting Greptile.
+The point is that Greptile should be confirming a diff you already believe is
+correct, not discovering problems the local pass would have caught. Reviewer
+findings are also not automatically right: verify a claim against the code and
+the tool's real behavior before acting on it, and reply with the evidence and ask
+before changing behavior when a finding conflicts with product intent.
+
 ### PR Size Limits
 
 - **> 3000 additions or > 50 files**: split the PR
@@ -387,7 +431,8 @@ blocker, not a green light):
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
-- **Do not spam Greptile re-review comments** -- Greptile is configured to review every new commit. If the score/footer is stale after a push, it means the review is still running; wait and poll instead of repeatedly mentioning it.
+- **Greptile reviews the opening head automatically, then only when you mention `@greptileai`, and every run costs money** -- opening a non-draft PR triggers one review of the initial head within a few minutes; draft PRs get none. It does NOT re-review later commits on its own. After any push that changes the head, request a review with a single `gh pr comment <number> --body "@greptileai review"`, and only once the branch is final and every local gate has passed (`bun run typecheck`, `bun run check:patterns`, `bun run test`, plus `npx react-doctor@latest <project-dir>` for changed React projects). Never request a review to find out whether the change works. On a freshly opened non-draft PR, wait a few minutes for the automatic review rather than paying for a mention you did not need.
+- **Do not spam Greptile re-review comments** -- one request per head SHA. A push that changes the head makes the previous review stale and needs exactly one new mention; while a review for the current head is running, wait and poll instead of mentioning it again. Always check which commit the existing review covers -- the Greptile footer names its last reviewed commit, and a 5/5 against an older head does not satisfy the merge gate.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
