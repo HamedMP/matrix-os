@@ -5,8 +5,8 @@ export const CODEX_VERIFIED_VERSION = "0.149.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#agent-runtime-config";
 export * from "#hermes-configuration";
+export * from "#kernel-result";
 export * from "#terminal-links";
-export * from "./kernel-result.js";
 export { IsoTimestampSchema } from "#contract-primitives";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;

@@ -40,6 +40,7 @@ function createApp(
     conversations: store,
     conversationLifecycle: {
       deleteIfIdle: (id) => store.delete(id, () => conversationRuns.isActive(id)),
+      getActiveHistoryStart: (id) => conversationRuns.getActiveHistoryStart(id),
     },
   });
   return app;
@@ -121,6 +122,40 @@ describe("kernel conversation history route", () => {
     expect(body.hasMore).toBe(true);
   });
 
+  it("omits persisted in-flight output when the active run will replay it", async () => {
+    const runs = new ConversationRunRegistry();
+    runs.begin("conversation-1", 2);
+    const app = createApp(createStore({
+      get: vi.fn(() => ({
+        id: "conversation-1",
+        createdAt: 1,
+        updatedAt: 5,
+        messages: [
+          { role: "user" as const, content: "previous prompt", timestamp: 1 },
+          { role: "assistant" as const, content: "previous answer", timestamp: 2 },
+          { role: "user" as const, content: "current prompt", timestamp: 3 },
+          { role: "assistant" as const, content: "in-flight answer", timestamp: 4 },
+          {
+            role: "system" as const,
+            content: "Using Bash...",
+            tool: "Bash",
+            timestamp: 5,
+          },
+        ],
+      })),
+    }), runs);
+
+    const response = await app.request(authenticated("/api/conversations/conversation-1"));
+    const body = KernelConversationHistoryResponseSchema.parse(await response.json());
+
+    expect(body.totalCount).toBe(3);
+    expect(body.messages.map((message) => message.content)).toEqual([
+      "previous prompt",
+      "previous answer",
+      "current prompt",
+    ]);
+  });
+
   it("truncates large content and returns only bounded, redacted tool display data", async () => {
     const app = createApp(createStore({
       get: vi.fn(() => ({
@@ -160,6 +195,15 @@ describe("kernel conversation history route", () => {
               command: "AWS_SECRET_ACCESS_KEY=aws-secret curl -u alice:pw https://example.com",
             },
           },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 6,
+            tool: "Bash",
+            toolInput: {
+              command: "curl 'https://example.com/run?token=query-secret&mode=read' 'https://example.com/auth?client_secret=oauth-secret'",
+            },
+          },
         ],
       })),
     }));
@@ -181,9 +225,15 @@ describe("kernel conversation history route", () => {
       kind: "command",
       preview: "AWS_SECRET_ACCESS_KEY=[redacted] curl -u [redacted] https://example.com",
     });
+    expect(body.messages[4]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl 'https://example.com/run?token=[redacted]&mode=read' 'https://example.com/auth?client_secret=[redacted]'",
+    });
     expect(JSON.stringify(body)).not.toContain("super-secret");
     expect(JSON.stringify(body)).not.toContain("aws-secret");
     expect(JSON.stringify(body)).not.toContain("alice:pw");
+    expect(JSON.stringify(body)).not.toContain("query-secret");
+    expect(JSON.stringify(body)).not.toContain("oauth-secret");
     expect(JSON.stringify(body)).not.toContain("/home/private");
   });
 

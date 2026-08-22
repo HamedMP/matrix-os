@@ -2183,8 +2183,11 @@ export async function createGateway(config: GatewayConfig) {
                     if (admittedSessionId) {
                       void finalizeWithSummary(admittedSessionId);
                     }
-                    conversationRuns.begin(msg.sessionId);
                     conversations.begin(msg.sessionId);
+                    conversationRuns.begin(
+                      msg.sessionId,
+                      conversations.get(msg.sessionId)?.messages.length ?? 0,
+                    );
                   }
                   publishConversationRunMessage(msg.sessionId, msg);
                   if (pendingText) {

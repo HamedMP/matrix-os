@@ -24,7 +24,8 @@ function boundedToolText(value: unknown): string | undefined {
   const normalized = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized) return undefined;
   const redacted = normalized
-    .replace(/\b([A-Za-z_][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE_KEY|CREDENTIAL)[A-Za-z0-9_]*=)(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1[redacted]")
+    .replace(/([?&](?:api[-_]?key|access[-_]?key|access[-_]?token|auth[-_]?token|client[-_]?secret|credential|id[-_]?token|refresh[-_]?token|token|password|passwd|secret)=)([^&#\s'"]+)/gi, "$1[redacted]")
+    .replace(/(?<![?&])\b([A-Za-z_][A-Za-z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE_KEY|CREDENTIAL)[A-Za-z0-9_]*=)(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1[redacted]")
     .replace(/authorization\s*:\s*(?:bearer\s+)?[^'"\s]+/gi, "Authorization: [redacted]")
     .replace(/(^|\s)((?:--?)?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret)(?:=|\s+))(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2[redacted]")
     .replace(/(^|\s)(-u|--user)\s+(?:'[^']*'|"[^"]*"|[^\s]+)/gi, "$1$2 [redacted]")
@@ -78,7 +79,7 @@ function toolDisplay(
 
 export interface ConversationHistoryRouteDeps {
   conversations: ConversationStore;
-  conversationLifecycle: Pick<ConversationLifecycle, "deleteIfIdle">;
+  conversationLifecycle: Pick<ConversationLifecycle, "deleteIfIdle" | "getActiveHistoryStart">;
 }
 
 export function registerConversationHistoryRoutes(
@@ -98,10 +99,16 @@ export function registerConversationHistoryRoutes(
         return c.json({ error: "Conversation unavailable. Refresh and try again." }, 404);
       }
 
-      const totalCount = conversation.messages.length;
+      const activeHistoryStart = deps.conversationLifecycle.getActiveHistoryStart(id.data);
+      const activePromptCount = activeHistoryStart !== null
+        && conversation.messages[activeHistoryStart]?.role === "user" ? 1 : 0;
+      const visibleMessages = activeHistoryStart === null
+        ? conversation.messages
+        : conversation.messages.slice(0, activeHistoryStart + activePromptCount);
+      const totalCount = visibleMessages.length;
       const end = Math.min(query.data.cursor ?? totalCount, totalCount);
       const start = Math.max(0, end - query.data.limit);
-      const messages = conversation.messages.slice(start, end).map((message, offset) => {
+      const messages = visibleMessages.slice(start, end).map((message, offset) => {
         const display = toolDisplay(message.tool, message.toolInput);
         return {
           index: start + offset,

@@ -38,6 +38,7 @@ export interface ConversationRunAttachment {
 interface RunState {
   readonly sessionId: string;
   readonly createdAt: number;
+  readonly activeHistoryStart: number;
   readonly messages: ConversationRunMessage[];
   readonly subscribers: Set<Subscriber>;
   completedAt: number | null;
@@ -57,12 +58,13 @@ export class ConversationRunRegistry {
     this.completedRunRetentionMs = options?.completedRunRetentionMs ?? 30_000;
   }
 
-  begin(sessionId: string): void {
+  begin(sessionId: string, activeHistoryStart = 0): void {
     this.evictExpiredCompletedRuns();
     this.evictIfNeeded(sessionId);
     this.runs.set(sessionId, {
       sessionId,
       createdAt: Date.now(),
+      activeHistoryStart,
       messages: [],
       subscribers: new Set(),
       completedAt: null,
@@ -104,6 +106,11 @@ export class ConversationRunRegistry {
   isActive(sessionId: string): boolean {
     const run = this.runs.get(sessionId);
     return Boolean(run && run.completedAt === null);
+  }
+
+  getActiveHistoryStart(sessionId: string): number | null {
+    const run = this.runs.get(sessionId);
+    return run && run.completedAt === null ? run.activeHistoryStart : null;
   }
 
   attachWithBufferedSnapshot(
