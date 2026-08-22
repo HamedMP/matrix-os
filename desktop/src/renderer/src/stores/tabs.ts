@@ -43,7 +43,7 @@ export interface RecentView {
 }
 
 export interface TerminalSessionRequest {
-  sessionName: string;
+  sessionName: string | null;
   requestId: number;
 }
 
@@ -136,6 +136,7 @@ interface TabsState {
   reconcileRecentTerminals(ids: string[]): void;
   reconcileTerminalSessions(liveSessionNames: string[]): void;
   requestTerminalSession(sessionName: string): void;
+  requestTerminalOverview(): void;
   consumeTerminalSessionRequest(requestId: number): void;
   setRecentFilter(filter: RecentViewFilter): void;
   renameTab(id: string, title: string): void;
@@ -374,6 +375,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
       ? state.recentViews.filter((recent) => recent.kind !== "terminal" || liveNames.has(recent.id))
       : state.recentViews;
     const terminalSessionRequest = state.terminalSessionRequest
+      && state.terminalSessionRequest.sessionName !== null
       && !liveNames.has(state.terminalSessionRequest.sessionName)
       ? null
       : state.terminalSessionRequest;
@@ -401,6 +403,14 @@ export const useTabs = create<TabsState>()((set, get) => ({
     const requestId = state.terminalSessionRequestSequence + 1;
     return {
       terminalSessionRequest: { sessionName, requestId },
+      terminalSessionRequestSequence: requestId,
+    };
+  }),
+
+  requestTerminalOverview: () => set((state) => {
+    const requestId = state.terminalSessionRequestSequence + 1;
+    return {
+      terminalSessionRequest: { sessionName: null, requestId },
       terminalSessionRequestSequence: requestId,
     };
   }),

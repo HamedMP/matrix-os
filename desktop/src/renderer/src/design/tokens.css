@@ -32,6 +32,7 @@
   --border-subtle: #ebe9e1;
   --border-default: #d6d3c8;
   --border-strong: #c4c0b2;
+  --sidebar-divider: color-mix(in srgb, var(--border-subtle) 62%, transparent);
 
   /* ── Text ───────────────────────────────────────────────────── */
   --text-primary: #282c25;
@@ -84,11 +85,11 @@
   --radius: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
-  --titlebar-height: 40px;
+  --titlebar-height: 38px;
   --tabbar-height: 38px;
   --sidebar-expanded-width: 240px;
-  --sidebar-collapsed-width: 56px;
-  --sidebar-row-height: 32px;
+  --sidebar-collapsed-width: 0px;
+  --sidebar-row-height: 28px;
   --sidebar-menu-width: 248px;
   --sidebar-account-menu-width: 224px;
 

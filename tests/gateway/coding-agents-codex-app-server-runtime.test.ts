@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
+import { parseCodexExecJsonLine } from "../../packages/gateway/src/coding-agents/codex-events.js";
 
 async function waitForTranscript(path: string, pattern: RegExp): Promise<string> {
   const deadline = Date.now() + 5_000;
@@ -46,10 +46,10 @@ async function sendControl(path: string, payload: unknown): Promise<unknown> {
 
 describe("Codex app-server control runtime", () => {
   it("durably publishes a safe approval before accepting one idempotent decision", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-app-server-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-appr-"));
     const fakeCodexPath = join(homePath, "fake-codex-app-server.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
-    const eventPath = codexProviderEventPath(homePath, "sess_app_server_1");
+    const eventPath = codexProviderEventPath(homePath, "sess_appr_1");
     const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
     await writeFile(fakeCodexPath, [
       "#!/usr/bin/env node",
@@ -145,10 +145,10 @@ describe("Codex app-server control runtime", () => {
   });
 
   it("maps structured answers to native questions without persisting secret input", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-app-server-input-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-input-"));
     const fakeCodexPath = join(homePath, "fake-codex-input.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
-    const eventPath = codexProviderEventPath(homePath, "sess_app_server_input_1");
+    const eventPath = codexProviderEventPath(homePath, "sess_input_1");
     const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
     await writeFile(fakeCodexPath, [
       "#!/usr/bin/env node",
@@ -235,10 +235,10 @@ describe("Codex app-server control runtime", () => {
   });
 
   it("caps pending requests and fails the excess request closed", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-app-server-cap-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-cap-"));
     const fakeCodexPath = join(homePath, "fake-codex-cap.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
-    const eventPath = codexProviderEventPath(homePath, "sess_app_server_cap_1");
+    const eventPath = codexProviderEventPath(homePath, "sess_cap_1");
     await writeFile(fakeCodexPath, [
       "#!/usr/bin/env node",
       "import { appendFile } from 'node:fs/promises';",
@@ -295,10 +295,103 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
+  it("publishes typed app-server items without exposing provider payloads", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-items-"));
+    const fakeCodexPath = join(homePath, "fake-codex-items.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_items_1");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-items' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-items' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-commentary-item', type: 'agentMessage', text: '', phase: 'commentary' } } }));",
+      "    for (const delta of ['I will ', 'inspect ', 'the repository.']) console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-commentary-item', delta } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-commentary-item', type: 'agentMessage', text: 'I will inspect the repository.', phase: 'commentary' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-command-item', type: 'commandExecution', command: 'cat /home/matrix/.codex/auth.json', cwd: '/private/project', aggregatedOutput: '', exitCode: null, status: 'inProgress', durationMs: null } } }));",
+      "    console.log(JSON.stringify({ method: 'item/commandExecution/outputDelta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-command-item', delta: 'secret-token-output' } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-command-item', type: 'commandExecution', command: 'cat /home/matrix/.codex/auth.json', cwd: '/private/project', aggregatedOutput: 'secret-token-output', exitCode: 0, status: 'completed', durationMs: 12 } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-final-item', type: 'agentMessage', text: '', phase: 'final_answer' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-final-item', delta: 'The repository is ready.' } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-final-item', type: 'agentMessage', text: 'The repository is ready.', phase: 'final_answer' } } }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { threadId: 'native-thread-items', turn: { id: 'native-turn-items', status: 'completed', items: [] } } }));",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "Inspect the repository.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+    let runnerStderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk) => {
+      runnerStderr += chunk;
+    });
+
+    try {
+      expect(await waitForExit(child), runnerStderr).toBe(0);
+      const transcript = await readFile(eventPath, "utf8");
+      expect(transcript).not.toMatch(/native-|auth\.json|private\/project|secret-token-output/);
+
+      let sequence = 0;
+      const events = transcript.trim().split("\n").flatMap((line) => parseCodexExecJsonLine(line, {
+        threadId: "thread_matrix_1",
+        now: () => new Date("2026-08-21T10:00:00.000Z"),
+        nextEventId: () => `evt_${++sequence}`,
+      }).events);
+      expect(events.map((event) => event.type)).toEqual([
+        "assistant.text.delta",
+        "assistant.text.completed",
+        "tool.started",
+        "tool.output",
+        "tool.completed",
+        "assistant.text.delta",
+        "assistant.text.completed",
+      ]);
+      const [commentaryDelta, commentaryCompleted, toolStarted, toolOutput, toolCompleted, finalDelta, finalCompleted] = events;
+      expect(commentaryDelta).toMatchObject({ type: "assistant.text.delta", delta: "I will inspect the repository." });
+      expect(commentaryCompleted).toMatchObject({
+        type: "assistant.text.completed",
+        messageId: commentaryDelta && "messageId" in commentaryDelta ? commentaryDelta.messageId : undefined,
+      });
+      expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command", kind: "command" });
+      expect(toolOutput).toMatchObject({ type: "tool.output", text: "Command produced output.", truncated: true });
+      expect(toolCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
+      expect(finalDelta).toMatchObject({ type: "assistant.text.delta", delta: "The repository is ready." });
+      expect(finalCompleted).toMatchObject({
+        type: "assistant.text.completed",
+        messageId: finalDelta && "messageId" in finalDelta ? finalDelta.messageId : undefined,
+      });
+      expect(commentaryDelta && "messageId" in commentaryDelta ? commentaryDelta.messageId : undefined)
+        .not.toBe(finalDelta && "messageId" in finalDelta ? finalDelta.messageId : undefined);
+      expect(toolStarted && "toolCallId" in toolStarted ? toolStarted.toolCallId : undefined)
+        .toBe(toolCompleted && "toolCallId" in toolCompleted ? toolCompleted.toolCallId : undefined);
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("persists a generic failure and removes the control socket when the provider exits", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-app-server-exit-"));
+    const homePath = await mkdtemp(join("/tmp", "codex-exit-"));
     const fakeCodexPath = join(homePath, "fake-codex-exit.mjs");
-    const eventPath = codexProviderEventPath(homePath, "sess_app_server_exit_1");
+    const eventPath = codexProviderEventPath(homePath, "sess_exit_1");
     const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
     await writeFile(fakeCodexPath, [
       "#!/usr/bin/env node",

@@ -482,6 +482,36 @@ exit 99
     expect(cloudInit).toContain('matrix-host: full bootstrap required');
   });
 
+  it('skips recursive immutable release normalization for exact certified snapshots', () => {
+    const cloudInit = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/cloud-init.yaml'),
+      'utf8',
+    );
+    const sharedSetup = cloudInit.indexOf(
+      'install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls',
+    );
+    const permissionSlowPath = cloudInit.indexOf(
+      'if [ "$exact_snapshot_fast_path" != true ]; then',
+      sharedSetup,
+    );
+    const recursiveOwnership = cloudInit.indexOf(
+      'chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime',
+      sharedSetup,
+    );
+    const recursiveWrites = cloudInit.indexOf(
+      'chmod -R g+rwX /opt/matrix/app',
+      sharedSetup,
+    );
+    const permissionSlowPathEnd = cloudInit.indexOf('\n    fi', recursiveWrites);
+    const bundleReady = cloudInit.indexOf('log_bootstrap_phase host_bundle_ready', sharedSetup);
+
+    expect(permissionSlowPath).toBeGreaterThan(sharedSetup);
+    expect(recursiveOwnership).toBeGreaterThan(permissionSlowPath);
+    expect(recursiveWrites).toBeGreaterThan(recursiveOwnership);
+    expect(permissionSlowPathEnd).toBeGreaterThan(recursiveWrites);
+    expect(bundleReady).toBeGreaterThan(permissionSlowPathEnd);
+  });
+
   it('logs coarse monotonic bootstrap phases for live latency attribution', () => {
     const cloudInit = readFileSync(
       join(process.cwd(), 'distro/customer-vps/cloud-init.yaml'),

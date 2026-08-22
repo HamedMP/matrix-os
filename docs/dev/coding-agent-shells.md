@@ -118,6 +118,8 @@ Pi (`@earendil-works/pi-coding-agent`) is an executable direct-spawn adapter, no
 
 Claude and Codex workspace adapters expose only fixed server-owned foreground setup actions. Every setup action defaults `MATRIX_NODE_PREFIX` to the canonical `/opt/matrix/runtime/node` prefix and prepends `$MATRIX_NODE_PREFIX/bin` to `PATH` before invoking a provider command. Install actions run the existing npm package install in a visible terminal, connect actions launch the provider's interactive local login flow, and both leave an interactive shell open afterward. Commands are bounded by `SafeSetupActionSchema`; clients must not render command text, persist it, or accept client-supplied replacements.
 
+Desktop project-chat composers derive readiness only from the validated runtime summary. A send is allowed only when the selected new-chat provider, or the existing thread's stored provider, is explicitly `available`, `installed`, and `authenticated`. Missing, setup-required, auth-required, expired, installing, unsupported, unknown, and summary-check failure states all fail closed. The blocked composer remains editable and keeps its draft, but button and keyboard submission must not invoke a thread mutation. Recovery renders the server-owned safe setup action in a foreground terminal, or a summary refresh when no setup action is appropriate; the shell must re-read readiness before sending and must not infer success from a terminal opening.
+
 When adding a provider:
 
 1. Add a provider summary state through the provider registry.
@@ -129,6 +131,11 @@ When adding a provider:
 ## Terminal Binding
 
 Coding-agent threads may point at a canonical terminal session using bounded terminal identifiers. The binding rules are:
+
+Cross-surface input, presentation, and canonical-size ownership follow
+[Terminal session ownership](./terminal-session-ownership.md). In particular,
+local command-line handoff uses `mos shell attach <session>`; raw
+`zellij attach` is not a coordinated Matrix client.
 
 - Workspace orchestration owns `/api/sessions`; canonical named terminal sessions use `/api/terminal/sessions`. The assembled gateway mounts the legacy terminal compatibility routes after workspace routes so task-session requests cannot be parsed as legacy terminal creates.
 
@@ -379,30 +386,36 @@ launch tokens, or customer identifiers.
 4. If a provider requires setup, use the foreground setup action. Confirm it
    opens a canonical terminal session and does not expose setup commands,
    credentials, or provider raw errors in renderer state or screenshots.
-5. Open an existing thread, or create a disposable test thread only when a
-   provider is ready. Confirm the detail snapshot loads, event grouping is
-   bounded, stream updates do not duplicate replayed events, and unresolved
-   approval/input controls stay idempotent while a request is in flight.
-6. Use a bound terminal action from Agents or thread detail. Confirm it opens
+5. Before provider recovery, confirm both a new-chat draft and a stored-thread
+   follow-up remain editable, keep their text, show a visible recovery notice,
+   and invoke no create/turn mutation from either the Send button or Enter.
+   Complete the real provider setup, refresh readiness, and confirm the same
+   drafts remain present until explicitly sent.
+6. Open an existing thread, or create a disposable test thread only when a
+   provider is ready. Confirm one new chat and one follow-up each produce an
+   accepted gateway turn, the detail snapshot loads, event grouping is bounded,
+   stream updates do not duplicate replayed events, and unresolved approval/input
+   controls stay idempotent while a request is in flight.
+7. Use a bound terminal action from Agents or thread detail. Confirm it opens
    the existing Terminal tab/model for the canonical Matrix terminal session;
    detaching or leaving the tab must not terminate the underlying process.
-7. Open review, file, and preview surfaces. Confirm review/file content loads
+8. Open review, file, and preview surfaces. Confirm review/file content loads
    through trusted IPC, file edits remain transient until saved through the
    gateway, large/partial data shows recoverable UI, HTTPS previews open through
    safe desktop open paths, and failures remain generic.
-8. Trigger or simulate a coding-agent attention notification with a bounded
+9. Trigger or simulate a coding-agent attention notification with a bounded
    thread reference. Confirm clicking the native notification focuses the
    Agents workspace and visibly selects the matching thread. Confirm the badge
    count reflects bounded gateway-owned attention state and uses overflow
    behavior when the list is truncated.
-9. Put the runtime in an unavailable or offline state, or switch away from it,
+10. Put the runtime in an unavailable or offline state, or switch away from it,
    then return. Confirm stale thread, terminal, review, and preview references
    are dropped or shown as recoverable, and the UI rehydrates from the gateway
    instead of trusting local renderer state.
-10. Recheck Terminal Shells, Apps, Settings, Chat, hosted shell embeds, updater
+11. Recheck Terminal Shells, Apps, Settings, Chat, hosted shell embeds, updater
     entry points, deep links, native menus, shortcuts, and window restore after
     the Agents pass.
-11. Record branch, commit, desktop app build type, selected validation commands,
+12. Record branch, commit, desktop app build type, selected validation commands,
     pass/fail notes, and any deferred manual step with the automated or manual
     coverage that still applies.
 

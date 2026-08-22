@@ -8,6 +8,8 @@ export type TerminalServerMessage =
       canonicalSize: TerminalCanonicalSize | null;
     }
   | { type: "canonical-size"; cols: number; rows: number }
+  | { type: "lease-revoked" }
+  | { type: "presentation-reset" }
   | { type: "output"; data: string; seq: number | null }
   | { type: "block-mark"; seq: number | null; mark: { code: "A" | "B" | "C" | "D"; exitCode?: number } }
   | { type: "replay-start" }
@@ -76,6 +78,10 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
       const canonicalSize = toCanonicalSize(msg);
       return canonicalSize ? { type: "canonical-size", ...canonicalSize } : null;
     }
+    case "lease-revoked":
+      return { type: "lease-revoked" };
+    case "presentation-reset":
+      return { type: "presentation-reset" };
     case "output":
       if (typeof msg.data !== "string") {
         return null;

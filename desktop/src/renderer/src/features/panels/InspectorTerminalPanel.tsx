@@ -22,9 +22,11 @@ const STATUS_COLOR: Record<string, string> = {
 export function InspectorTerminalPanel({
   summary,
   active = true,
+  emptyMessage = "No terminal sessions.",
 }: {
   summary: RuntimeSummary;
   active?: boolean;
+  emptyMessage?: string;
 }) {
   const [embeddedId, setEmbeddedId] = useState<string | null>(null);
   const sessions = summary.terminalSessions.items;
@@ -79,7 +81,7 @@ export function InspectorTerminalPanel({
           className="rounded-md border p-3 text-sm"
           style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
         >
-          No terminal sessions.
+          {emptyMessage}
         </p>
       ) : null}
     </div>

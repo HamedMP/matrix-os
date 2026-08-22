@@ -633,11 +633,17 @@ runcmd:
     ln -sfn /home/matrix/home /home/matrixos/home
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/r2.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
-    chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
-    if [ -d /opt/matrix/terminal-runtime ]; then
-      chown -R root:root /opt/matrix/terminal-runtime
+    # The builder performs this recursive normalization before writing the
+    # exact-bundle readiness proof. A certified immutable clone preserves that
+    # tree, so walking it again only delays first boot. Clean images, legacy
+    # snapshots, and mismatched snapshots retain the full repair path.
+    if [ "$exact_snapshot_fast_path" != true ]; then
+      chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+      if [ -d /opt/matrix/terminal-runtime ]; then
+        chown -R root:root /opt/matrix/terminal-runtime
+      fi
+      chmod -R g+rwX /opt/matrix/app
     fi
-    chmod -R g+rwX /opt/matrix/app
     log_bootstrap_phase host_bundle_ready
     chown root:matrix /opt/matrix/app
     chmod g+rwx /opt/matrix/app

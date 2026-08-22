@@ -268,4 +268,25 @@ describe("AgentConversationInspector", () => {
     });
     expect(within(tablist).queryByText("Terminal")).toBeNull();
   });
+
+  it("renders only the contextual surfaces supplied by the project model", () => {
+    render(
+      <AgentConversationInspector
+        defaultTab="files"
+        tabs={["files", "terminal", "activity"]}
+        counts={{ changes: 0, files: undefined, terminal: 1, preview: 0, activity: 2 }}
+        toolbar={<div>Tools</div>}
+        changes={<div>Reviews</div>}
+        files={<div>Matrix Home files</div>}
+        terminal={<div>Linked terminal</div>}
+        preview={<div>Project preview</div>}
+        activity={<div>Project activity</div>}
+      />,
+    );
+
+    expect(screen.queryByRole("tab", { name: /^Changes\b/ })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /^Preview\b/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: /^Files\b/ })).toBeTruthy();
+    expect(screen.getByText("Matrix Home files")).toBeTruthy();
+  });
 });

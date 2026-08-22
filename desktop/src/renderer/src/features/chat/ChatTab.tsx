@@ -1,7 +1,9 @@
-import { FileText, FolderOpen, GitBranch, Plus } from "lucide-react";
+import { Code2, FolderOpen, GitBranch, Plus, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
-import { groupMessages } from "../../lib/chat";
+import { ConversationProviderSelector } from "../../components/conversation/provider-selector";
+import type { ConversationProviderIcon } from "../../components/conversation/provider-options";
+import { ConversationTranscript } from "../../components/conversation/transcript";
 import { useConnection } from "../../stores/connection";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useTabs } from "../../stores/tabs";
@@ -10,23 +12,22 @@ import { useProviderPreferences } from "../settings/provider-preferences";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
-import { Bubble, BubbleContent } from "./elements/bubble";
-import { Conversation, ConversationContent, ConversationItem } from "./elements/conversation";
-import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
-import { Reasoning } from "./elements/reasoning";
-import { Tool } from "./elements/tool";
-import { ChatResourcesPanel, conversationMessageDisplay } from "./ChatResourcesPanel";
+import { ChatResourcesPanel } from "./ChatResourcesPanel";
+import { hermesConversationPresentation } from "./hermes-presentation";
 import { HermesConversationIndex } from "./HermesConversationIndex";
+import { createGlobalChatProviderRegistry } from "./global-chat-providers";
 
 export function canSubmitChatDraft(draft: string, status: HermesStatus, attachmentCount = 0): boolean {
   return (draft.trim().length > 0 || attachmentCount > 0) && status === "idle";
 }
 
 function HermesPane() {
+  const api = useConnection((state) => state.api);
   const messages = useHermesChat((state) => state.messages);
   const sessionId = useHermesChat((state) => state.sessionId);
   const status = useHermesChat((state) => state.status);
+  const activeRequestId = useHermesChat((state) => state.activeRequestId);
   const loadError = useHermesChat((state) => state.loadError);
   const send = useHermesChat((state) => state.send);
   const abort = useHermesChat((state) => state.abort);
@@ -39,8 +40,13 @@ function HermesPane() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
+  const codexProjectId = defaultProjectId();
 
-  const groups = groupMessages(messages);
+  const turns = hermesConversationPresentation(messages, status, activeRequestId);
+  const copyText = useCallback(async (text: string) => {
+    if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
+    await navigator.clipboard.writeText(text);
+  }, []);
   const empty = messages.length === 0;
 
   const closeResources = useCallback((restoreFocus = true) => {
@@ -85,6 +91,12 @@ function HermesPane() {
       setHarnessError("Codex chat could not be opened. Try again from the project.");
     }
   }, [setDefaultProvider]);
+  const providerRegistry = createGlobalChatProviderRegistry({
+    hermesReady: Boolean(api),
+    hasProject: Boolean(codexProjectId),
+    onUseCurrentConversation: () => setDefaultProvider("hermes"),
+    onOpenProjectConversation: startCodexChat,
+  });
 
   const attachmentPreviews = (
     <AttachmentPreviewRow
@@ -130,19 +142,14 @@ function HermesPane() {
     </>
   );
   const harnessBadge = (
-    <select
-      aria-label="Chat harness"
-      value="hermes"
-      className="h-7 appearance-none rounded-full border bg-transparent px-2 text-xs font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-      style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-      title="Choose chat harness"
-      onChange={(event) => {
-        if (event.currentTarget.value === "codex") void startCodexChat();
-      }}
-    >
-      <option value="hermes">Hermes</option>
-      <option value="codex">Codex</option>
-    </select>
+    <ConversationProviderSelector
+      value={providerRegistry.selectedId}
+      options={providerRegistry.options}
+      renderIcon={(icon: ConversationProviderIcon) => icon === "hermes"
+        ? <Sparkles className="size-3.5" />
+        : <Code2 className="size-3.5" />}
+      onSelect={(providerId) => void providerRegistry.activate(providerId)}
+    />
   );
   const renderComposer = (placeholder: string, autoFocus = false) => (
     <>
@@ -209,69 +216,7 @@ function HermesPane() {
         </div>
       ) : (
         <>
-          <Conversation>
-            <ConversationContent className="justify-start pt-8 sm:pt-12">
-              {groups.map((group) =>
-                group.type === "tool_group" ? (
-                  <ConversationItem key={group.messages[0]?.id ?? "tools"} messageId={group.messages[0]?.id}>
-                    <div className="flex flex-col gap-1.5">
-                      {group.messages.map((message) => (
-                        <Tool key={message.id} name={message.content} detail={message.toolInput ? JSON.stringify(message.toolInput, null, 2) : undefined} />
-                      ))}
-                    </div>
-                  </ConversationItem>
-                ) : group.message.role === "user" ? (
-                  <ConversationItem key={group.message.id} messageId={`user:${group.message.id}`} scrollAnchor>
-                    <Message align="end">
-                      <MessageContent>
-                        <Bubble variant="secondary" align="end">
-                          {(() => {
-                            const display = conversationMessageDisplay(group.message.content);
-                            return (
-                              <BubbleContent className="max-w-[580px] whitespace-pre-wrap" data-selectable>
-                                {display.text}
-                                {display.attachments.length > 0 ? (
-                                  <span className="mt-2 flex flex-wrap justify-end gap-1.5">
-                                    {display.attachments.map((name) => (
-                                      <span
-                                        key={name}
-                                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
-                                        style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-                                      >
-                                        <FileText size={12} aria-hidden className="shrink-0" />
-                                        <span className="truncate">{name}</span>
-                                      </span>
-                                    ))}
-                                  </span>
-                                ) : null}
-                              </BubbleContent>
-                            );
-                          })()}
-                        </Bubble>
-                      </MessageContent>
-                    </Message>
-                  </ConversationItem>
-                ) : (
-                  <ConversationItem key={group.message.id} messageId={`assistant:${group.message.id}`}>
-                    <Message>
-                      <MessageContent>
-                        <Bubble variant="ghost">
-                          <BubbleContent className="max-w-[620px] overflow-visible">
-                            <MessageResponse>{group.message.content}</MessageResponse>
-                          </BubbleContent>
-                        </Bubble>
-                      </MessageContent>
-                    </Message>
-                  </ConversationItem>
-                ),
-              )}
-              {status === "thinking" ? (
-                <ConversationItem messageId="hermes:working">
-                  <Reasoning streaming><span className="shimmer">Working on it…</span></Reasoning>
-                </ConversationItem>
-              ) : null}
-            </ConversationContent>
-          </Conversation>
+          <ConversationTranscript turns={turns} callbacks={{ copyText }} />
           <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
             {renderComposer("Reply to Hermes…")}
           </div>
@@ -297,9 +242,30 @@ export default function ChatTab() {
   const conversationView = useHermesChat((state) => state.view);
   const indexStatus = useHermesChat((state) => state.indexStatus);
   const refreshConversations = useHermesChat((state) => state.refreshConversations);
+  const indexAutoRetryCount = useRef(0);
 
   useEffect(() => {
-    if (api && indexStatus === "idle") void refreshConversations(api);
+    indexAutoRetryCount.current = 0;
+  }, [api]);
+
+  useEffect(() => {
+    if (!api) return;
+    if (indexStatus === "ready") {
+      indexAutoRetryCount.current = 0;
+      return;
+    }
+    if (indexStatus === "idle") {
+      void refreshConversations(api);
+      return;
+    }
+    if (indexStatus !== "error" || indexAutoRetryCount.current >= 2) return;
+
+    const delayMs = 1_000 * (2 ** indexAutoRetryCount.current);
+    indexAutoRetryCount.current += 1;
+    const timeout = window.setTimeout(() => {
+      void refreshConversations(api);
+    }, delayMs);
+    return () => window.clearTimeout(timeout);
   }, [api, indexStatus, refreshConversations]);
 
   return (

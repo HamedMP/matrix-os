@@ -322,6 +322,10 @@ export const INVOKE_CHANNELS = {
     request: z.object({ embedId: z.string().min(1).max(64), active: z.boolean() }).strict(),
     response: Ok,
   },
+  "embed:suspend-all": {
+    request: Empty,
+    response: Ok,
+  },
   "embed:reload": {
     request: z.object({ embedId: z.string().min(1).max(64) }).strict(),
     response: Ok,

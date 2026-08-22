@@ -16,6 +16,7 @@ function createStore(overrides: Partial<ConversationStore> = {}): ConversationSt
   return {
     begin: vi.fn(),
     addUserMessage: vi.fn(),
+    addSystemMessage: vi.fn(),
     appendAssistantText: vi.fn(),
     addToolStart: vi.fn(),
     addToolEnd: vi.fn(),
@@ -39,6 +40,7 @@ function createApp(
     conversations: store,
     conversationLifecycle: {
       deleteIfIdle: (id) => store.delete(id, () => conversationRuns.isActive(id)),
+      getActiveHistoryStart: (id) => conversationRuns.getActiveHistoryStart(id),
     },
   });
   return app;
@@ -120,19 +122,172 @@ describe("kernel conversation history route", () => {
     expect(body.hasMore).toBe(true);
   });
 
-  it("truncates large content and never returns raw tool inputs", async () => {
+  it("omits persisted in-flight output when the active run will replay it", async () => {
+    const runs = new ConversationRunRegistry();
+    runs.begin("conversation-1", 2);
+    runs.publish("conversation-1", {
+      type: "kernel:text",
+      text: "in-flight answer",
+      requestId: "request-live",
+      eventId: "conversation-1:request-live:1",
+    });
+    runs.publish("conversation-1", {
+      type: "kernel:tool_start",
+      tool: "Bash",
+      requestId: "request-live",
+      eventId: "conversation-1:request-live:2",
+    });
+    const app = createApp(createStore({
+      get: vi.fn(() => ({
+        id: "conversation-1",
+        createdAt: 1,
+        updatedAt: 5,
+        messages: [
+          { role: "user" as const, content: "previous prompt", timestamp: 1 },
+          { role: "assistant" as const, content: "previous answer", timestamp: 2 },
+          { role: "user" as const, content: "current prompt", timestamp: 3 },
+          { role: "assistant" as const, content: "in-flight answer", timestamp: 4 },
+          {
+            role: "system" as const,
+            content: "Using Bash...",
+            tool: "Bash",
+            timestamp: 5,
+          },
+        ],
+      })),
+    }), runs);
+
+    const response = await app.request(authenticated("/api/conversations/conversation-1"));
+    const body = KernelConversationHistoryResponseSchema.parse(await response.json());
+
+    expect(body.totalCount).toBe(3);
+    expect(body.messages.map((message) => message.content)).toEqual([
+      "previous prompt",
+      "previous answer",
+      "current prompt",
+    ]);
+    const attachment = runs.attachWithBufferedSnapshot("conversation-1", () => {});
+    expect(attachment?.bufferedMessages).toEqual([
+      expect.objectContaining({ type: "kernel:text", text: "in-flight answer" }),
+      expect.objectContaining({ type: "kernel:tool_start", tool: "Bash" }),
+    ]);
+    expect(JSON.stringify(body.messages)).not.toContain("in-flight answer");
+    expect(JSON.stringify(body.messages)).not.toContain("Using Bash");
+    attachment?.detach();
+  });
+
+  it("truncates large content and returns only bounded, redacted tool display data", async () => {
     const app = createApp(createStore({
       get: vi.fn(() => ({
         id: "conversation-1",
         createdAt: 1,
         updatedAt: 2,
-        messages: [{
-          role: "system",
-          content: "x".repeat(40_000),
-          timestamp: 2,
-          tool: "Read",
-          toolInput: { path: "/home/private", token: "secret" },
-        }],
+        messages: [
+          {
+            role: "system",
+            content: "x".repeat(40_000),
+            timestamp: 2,
+            tool: "Read",
+            toolInput: { path: "/home/private/README.md", token: "secret" },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 3,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Authorization: Bearer super-secret' -H 'X-Api-Key: \"header-secret\"' https://example.com && git status --short",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Grep",
+            timestamp: 4,
+            tool: "Grep",
+            toolInput: { query: "stack trace in /home/private" },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 5,
+            tool: "Bash",
+            toolInput: {
+              command: "AWS_SECRET_ACCESS_KEY=aws-secret curl -u alice:pw https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 6,
+            tool: "Bash",
+            toolInput: {
+              command: "curl 'https://example.com/run?token=query-secret&mode=read' 'https://example.com/auth?client_secret=oauth-secret'",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 7,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Cookie: sessionid=cookie-secret; csrf=csrf-secret' -H 'Set-Cookie: sessionid=response-cookie-secret; Secure; HttpOnly' https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 8,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -u alice:short-secret --user bob:long-secret --user='carol:quoted-secret' https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 9,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Authorization: \"Bearer outer-scheme-secret\"' https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 10,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Authorization: Bearer \"quoted-value-secret\"' https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 11,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H \"Proxy-Authorization: 'Basic proxy-secret'\" https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 12,
+            tool: "Bash",
+            toolInput: {
+              command: "curl -H 'Authorization: \"raw-credential-secret\"' https://example.com",
+            },
+          },
+          {
+            role: "system",
+            content: "Used Bash",
+            timestamp: 13,
+            tool: "Bash",
+            toolInput: {
+              command: "psql postgres://alice:database-url-secret@db.example.com/app",
+            },
+          },
+        ],
       })),
     }));
 
@@ -142,6 +297,67 @@ describe("kernel conversation history route", () => {
     expect(body.messages[0]?.content).toHaveLength(32_000);
     expect(body.messages[0]?.contentTruncated).toBe(true);
     expect(body.messages[0]).not.toHaveProperty("toolInput");
+    expect(body.messages[0]?.toolDisplay).toEqual({ kind: "file", preview: "README.md" });
+    expect(body.messages[1]).not.toHaveProperty("toolInput");
+    expect(body.messages[1]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Authorization: [redacted]' -H 'X-Api-Key: [redacted]' https://example.com && git status --short",
+    });
+    expect(body.messages[2]).not.toHaveProperty("toolDisplay");
+    expect(body.messages[3]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "AWS_SECRET_ACCESS_KEY=[redacted] curl -u [redacted] https://example.com",
+    });
+    expect(body.messages[4]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl 'https://example.com/run?token=[redacted]&mode=read' 'https://example.com/auth?client_secret=[redacted]'",
+    });
+    expect(body.messages[5]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Cookie: [redacted]' -H 'Set-Cookie: [redacted]' https://example.com",
+    });
+    expect(body.messages[6]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -u [redacted] --user [redacted] --user=[redacted] https://example.com",
+    });
+    expect(body.messages[7]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Authorization: [redacted]' https://example.com",
+    });
+    expect(body.messages[8]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Authorization: [redacted]' https://example.com",
+    });
+    expect(body.messages[9]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H \"Proxy-Authorization: [redacted]\" https://example.com",
+    });
+    expect(body.messages[10]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "curl -H 'Authorization: [redacted]' https://example.com",
+    });
+    expect(body.messages[11]?.toolDisplay).toEqual({
+      kind: "command",
+      preview: "psql postgres://[redacted]@db.example.com/app",
+    });
+    expect(JSON.stringify(body)).not.toContain("super-secret");
+    expect(JSON.stringify(body)).not.toContain("aws-secret");
+    expect(JSON.stringify(body)).not.toContain("alice:pw");
+    expect(JSON.stringify(body)).not.toContain("query-secret");
+    expect(JSON.stringify(body)).not.toContain("header-secret");
+    expect(JSON.stringify(body)).not.toContain("oauth-secret");
+    expect(JSON.stringify(body)).not.toContain("cookie-secret");
+    expect(JSON.stringify(body)).not.toContain("csrf-secret");
+    expect(JSON.stringify(body)).not.toContain("response-cookie-secret");
+    expect(JSON.stringify(body)).not.toContain("short-secret");
+    expect(JSON.stringify(body)).not.toContain("long-secret");
+    expect(JSON.stringify(body)).not.toContain("quoted-secret");
+    expect(JSON.stringify(body)).not.toContain("outer-scheme-secret");
+    expect(JSON.stringify(body)).not.toContain("quoted-value-secret");
+    expect(JSON.stringify(body)).not.toContain("proxy-secret");
+    expect(JSON.stringify(body)).not.toContain("raw-credential-secret");
+    expect(JSON.stringify(body)).not.toContain("database-url-secret");
+    expect(JSON.stringify(body)).not.toContain("/home/private");
   });
 
   it("rejects invalid identifiers and pagination before reading storage", async () => {

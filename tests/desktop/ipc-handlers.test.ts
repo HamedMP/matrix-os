@@ -28,6 +28,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
       open: vi.fn(),
       setBounds: vi.fn(),
       setActive: vi.fn(),
+      suspendAll: vi.fn(),
       reload: vi.fn(),
       close: vi.fn(),
       retryAuth: vi.fn(),
@@ -183,6 +184,14 @@ describe("registerIpcHandlers", () => {
       ok: false,
     });
     expect(console.warn).toHaveBeenCalledWith("[ipc] embed:retry-auth failed:", "handoff unavailable");
+  });
+
+  it("waits for the trusted core to suspend native embeds", async () => {
+    const harness = makeHarness();
+    vi.mocked(harness.ctx.embeds.suspendAll).mockReturnValue(true);
+
+    await expect(harness.invoke("embed:suspend-all")).resolves.toEqual({ ok: true });
+    expect(harness.ctx.embeds.suspendAll).toHaveBeenCalledOnce();
   });
 
   it("reloads an existing embed through the trusted core", async () => {

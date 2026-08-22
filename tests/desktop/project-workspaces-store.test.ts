@@ -205,6 +205,57 @@ describe("project workspaces store", () => {
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_plan");
   });
 
+  it("preserves New Chat selected during a first load without a view entry", async () => {
+    let resolveWorkspace: (value: ProjectAgentWorkspace) => void = () => undefined;
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn((channel: string) => {
+          if (channel !== "runtime:get-project-workspace") return Promise.resolve({ ok: true });
+          return new Promise<ProjectAgentWorkspace>((resolve) => {
+            resolveWorkspace = resolve;
+          });
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
+
+    const pendingLoad = useProjectWorkspaces.getState().refresh("matrix-os");
+    expect(useProjectView.getState().entries["matrix-os"]).toBeUndefined();
+
+    useProjectView.getState().setSelectedThread("matrix-os", null);
+    resolveWorkspace(workspace("matrix-os", "task_auth", "thread_plan"));
+    await pendingLoad;
+
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+  });
+
+  it("still reconciles the first thread when only the project view changes during loading", async () => {
+    let resolveWorkspace: (value: ProjectAgentWorkspace) => void = () => undefined;
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn((channel: string) => {
+          if (channel === "runtime:get-project-workspace") {
+            return new Promise<ProjectAgentWorkspace>((resolve) => {
+              resolveWorkspace = resolve;
+            });
+          }
+          if (channel === "state:set") return Promise.resolve({ ok: true });
+          throw new Error(`unexpected channel ${channel}`);
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
+
+    const load = useProjectWorkspaces.getState().ensure("matrix-os");
+    useProjectView.getState().setView("matrix-os", "chats");
+    resolveWorkspace(workspace("matrix-os", "task_auth", "thread_plan"));
+    await load;
+
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_plan");
+  });
+
   it("keeps a selection that is only known through the runtime summary lists", async () => {
     mockOperator({ "matrix-os": workspace("matrix-os", "task_auth", "thread_plan") });
     useCodingAgentWorkspace.setState({

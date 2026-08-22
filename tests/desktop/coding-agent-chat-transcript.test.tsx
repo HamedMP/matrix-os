@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { mergeLiveThreadEvent } from "../../desktop/src/renderer/src/stores/coding-agent/thread-model";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
@@ -45,7 +46,7 @@ function completedEvent(messageId: string): AgentThreadEvent {
   } as AgentThreadEvent;
 }
 
-function toolEvents(id: string, displayName: string, outcome: "success" | "failed" | null): AgentThreadEvent[] {
+function toolEvents(id: string, displayName: string, outcome: "success" | "failed" | "cancelled" | null): AgentThreadEvent[] {
   const events: AgentThreadEvent[] = [
     {
       type: "tool.started",
@@ -67,6 +68,17 @@ function toolEvents(id: string, displayName: string, outcome: "success" | "faile
     } as AgentThreadEvent);
   }
   return events;
+}
+
+function userMessage(id: string, text: string, second: number): AgentThreadEvent {
+  return {
+    type: "user.message",
+    eventId: `evt_user_${id}`,
+    threadId: "thread_alpha",
+    occurredAt: `2026-07-15T00:00:${String(second).padStart(2, "0")}.000Z`,
+    messageId: id,
+    text,
+  } as AgentThreadEvent;
 }
 
 describe("AgentConversationView transcript", () => {
@@ -189,6 +201,81 @@ describe("AgentConversationView transcript", () => {
     expect(screen.getByText("Reading the failing test now.")).toBeTruthy();
   });
 
+  it("preserves whitespace, Markdown code boundaries, and multibyte text across same-timestamp live chunks", () => {
+    const occurredAt = "2026-07-15T00:01:00.000Z";
+    const chunks = [
+      { eventId: "evt_z", text: "# Result\n\n你好" },
+      { eventId: "evt_y", text: " 👋\n\n```ts\n" },
+      { eventId: "evt_x", text: "const greeting = \"你好 👋\";\n" },
+      { eventId: "evt_w", text: "```\n\nDone." },
+    ];
+    const live = chunks.reduce(
+      (current, chunk) => mergeLiveThreadEvent(current, {
+        type: "assistant.text.delta",
+        eventId: chunk.eventId,
+        threadId: "thread_alpha",
+        occurredAt,
+        messageId: "msg_multibyte",
+        delta: chunk.text,
+      }),
+      snapshot([]),
+    );
+
+    render(
+      <AgentConversationView status="ready" snapshot={live} error={null} canSendTurns />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Result" })).toBeTruthy();
+    expect(screen.getByText("你好 👋")).toBeTruthy();
+    expect(document.querySelector("pre code")?.textContent).toContain('const greeting = "你好 👋";');
+    expect(screen.getByText("Done.")).toBeTruthy();
+  });
+
+  it("does not let a late delta for completed A mutate A after turn B starts", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          delta("msg_a", "Stable answer.", 1),
+          completedEvent("msg_a"),
+          {
+            type: "turn.accepted",
+            eventId: "evt_turn_b",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:03:00.000Z",
+            turnId: "turn_b",
+            clientRequestId: "req_b",
+            acceptedAt: "2026-07-15T00:03:00.000Z",
+          },
+          {
+            type: "user.message",
+            eventId: "evt_user_b",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:03:00.000Z",
+            messageId: "msg_user_b",
+            text: "Follow-up B",
+            clientRequestId: "req_b",
+            turnId: "turn_b",
+          },
+          {
+            type: "assistant.text.delta",
+            eventId: "evt_late_a",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-15T00:04:00.000Z",
+            messageId: "msg_a",
+            delta: " STALE",
+          },
+        ])}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect(screen.getByText("Stable answer.")).toBeTruthy();
+    expect(screen.queryByText(/STALE/)).toBeNull();
+    expect(screen.getByText("Follow-up B")).toBeTruthy();
+  });
+
   it("collapses long user messages behind a show-more toggle", () => {
     const long = Array.from({ length: 14 }, (_, index) => `line ${index}`).join("\n");
     render(
@@ -231,16 +318,114 @@ describe("AgentConversationView transcript", () => {
     expect(screen.getAllByText(/completed with errors/).length).toBeGreaterThan(0);
   });
 
-  it("collapses long tool runs behind an earlier-calls toggle", () => {
-    const events = Array.from({ length: 7 }, (_, index) => toolEvents(`tc_${index}`, `Tool ${index}`, "success")).flat();
+  it("keeps the active turn and latest tool-call tail visible", () => {
+    const events = [
+      userMessage("msg_user_active", "Inspect the project", 1),
+      ...Array.from({ length: 7 }, (_, index) => toolEvents(`tc_${index}`, `Tool ${index}`, "success")).flat(),
+    ];
     render(
       <AgentConversationView status="ready" snapshot={snapshot(events)} error={null} canSendTurns />,
     );
 
+    expect(document.querySelectorAll('[data-slot="agent-turn"]')).toHaveLength(1);
     expect(screen.getByRole("button", { name: "+4 earlier tool calls" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Tool call Tool 0" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Tool call Tool 6" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "+4 earlier tool calls" }));
     expect(screen.getByRole("button", { name: "Tool call Tool 0" })).toBeTruthy();
+  });
+
+  it("collapses a settled turn's tool activity behind one truthful summary", () => {
+    const events = [
+      userMessage("msg_user_settled", "Run the checks", 1),
+      ...Array.from({ length: 7 }, (_, index) => toolEvents(`settled_${index}`, `Check ${index}`, "success")).flat(),
+      delta("msg_result", "All checks passed.", 40),
+      completedEvent("msg_result"),
+    ];
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot(events, { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    const turn = document.querySelector('[data-slot="agent-turn"]');
+    expect(turn).not.toBeNull();
+    expect(turn?.textContent).toContain("All checks passed.");
+    const summary = screen.getByRole("button", { name: "7 tool calls, completed" });
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Tool call Check 0" })).toBeNull();
+
+    fireEvent.click(summary);
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Tool call Check 0" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tool call Check 6" })).toBeTruthy();
+  });
+
+  it("keeps message actions on the terminal result without spacing out commentary", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          userMessage("msg_user_meta", "Inspect the transcript", 1),
+          delta("msg_commentary", "I’ll inspect the renderer first.", 2),
+          completedEvent("msg_commentary"),
+          ...toolEvents("tc_meta", "Read renderer", "success"),
+          delta("msg_result", "The renderer is verified.", 20),
+          completedEvent("msg_result"),
+        ], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Copy assistant message" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Copy your message" })).toBeTruthy();
+  });
+
+  it("keeps multiple turn sections in received chronology", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          userMessage("msg_user_1", "First request", 1),
+          delta("msg_first_result", "First result", 2),
+          completedEvent("msg_first_result"),
+          userMessage("msg_user_2", "Second request", 3),
+          delta("msg_second_result", "Second result", 4),
+          completedEvent("msg_second_result"),
+        ], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    const turns = Array.from(document.querySelectorAll('[data-slot="agent-turn"]'));
+    expect(turns).toHaveLength(2);
+    expect(turns[0]?.textContent).toContain("First request");
+    expect(turns[0]?.textContent).toContain("First result");
+    expect(turns[1]?.textContent).toContain("Second request");
+    expect(turns[1]?.textContent).toContain("Second result");
+  });
+
+  it("renders a cancelled tool result as cancelled instead of completed", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([
+          userMessage("msg_user_cancelled", "Stop the check", 1),
+          ...toolEvents("tc_cancelled", "Cancelled check", "cancelled"),
+        ], { status: "completed" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "1 tool call, cancelled" }));
+    expect(screen.getByLabelText("Cancelled")).toBeTruthy();
+    expect(screen.queryByLabelText("Completed")).toBeNull();
   });
 
   it("shows a working indicator while the thread runs without streaming text", () => {

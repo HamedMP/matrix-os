@@ -170,13 +170,17 @@ suite("Desktop terminal session handoff", () => {
     }).toBeGreaterThan(20);
     await expectTerminalViewportToFill(viewport);
 
-    await page.getByRole("button", { name: "Back to terminal sessions" }).click();
+    await page.getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("button", { name: "Terminal" })
+      .click();
     await page.getByRole("heading", { name: "Terminal" }).waitFor();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await expect.poll(() => viewport.getAttribute("data-mat-300-identity")).toBe("preserved");
     await expectTerminalViewportToFill(viewport);
 
-    await page.getByRole("button", { name: "Back to terminal sessions" }).click();
+    await page.getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("button", { name: "Terminal" })
+      .click();
     await page.getByRole("button", { name: "New shell" }).click();
     const newSessionViewport = page.locator(
       'section[aria-hidden="false"] [data-terminal-surface]',

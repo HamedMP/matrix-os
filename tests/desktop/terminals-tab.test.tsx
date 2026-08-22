@@ -219,6 +219,32 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
+  it("publishes the selected session name to the shared Terminal breadcrumb", async () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    const workspaceTabId = useTabs.getState().openTab({
+      kind: "terminals",
+      title: "Terminal",
+      closable: false,
+    });
+    useShellSessions.setState({
+      sessions: [{ name: "clever-comet", status: "active", placement: "active" }],
+    });
+
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Open clever-comet" }));
+
+    await waitFor(() => {
+      expect(useTabs.getState().tabs.find((tab) => tab.id === workspaceTabId)?.title)
+        .toBe("clever-comet");
+    });
+
+    act(() => useTabs.getState().requestTerminalOverview());
+    await waitFor(() => {
+      expect(useTabs.getState().tabs.find((tab) => tab.id === workspaceTabId)?.title)
+        .toBe("Terminal");
+    });
+  });
+
   it("uses the Figma session frame without a secondary session rail", () => {
     useShellSessions.setState({
       sessions: [

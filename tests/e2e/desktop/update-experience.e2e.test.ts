@@ -18,6 +18,13 @@ suite("desktop update experience", () => {
   let page: Page;
   let userDataDir: string;
 
+  function attachedNativeViewCount(): Promise<number> {
+    return app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return window?.contentView.children.length ?? 0;
+    });
+  }
+
   function seedRelease(version: string): void {
     const statePath = join(userDataDir, "state.json");
     const state = existsSync(statePath)
@@ -91,8 +98,10 @@ suite("desktop update experience", () => {
     await page.getByRole("heading", {
       name: "Updates are unavailable in this preview",
     }).waitFor();
+    await expect.poll(attachedNativeViewCount).toBe(0);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-441-manual-update-dialog.png") });
     await page.getByRole("button", { name: "Close" }).click();
+    await expect.poll(attachedNativeViewCount).toBe(0);
   });
 
   it("shows What's New after launch and places Update at the right edge of the account row", async () => {
@@ -111,6 +120,7 @@ suite("desktop update experience", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
 
     await page.getByRole("button", { name: "Close What's New" }).click();
+    await expect.poll(attachedNativeViewCount).toBe(1);
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.webContents.send("update:state-changed", {
         status: "ready",

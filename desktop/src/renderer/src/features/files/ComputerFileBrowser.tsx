@@ -109,6 +109,8 @@ export default function ComputerFileBrowser({
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<BrowserSortKey>("name");
   const [sortDirection, setSortDirection] = useState<BrowserSortDirection>("asc");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const requestGeneration = useRef(0);
   const directoryPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entryRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -154,9 +156,14 @@ export default function ComputerFileBrowser({
     [scoped, mode, entries],
   );
 
+  const visibleEntries = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return viewEntries;
+    return viewEntries.filter((entry) => entry.name.toLocaleLowerCase().includes(normalizedQuery));
+  }, [searchQuery, viewEntries]);
   const sortedEntries = useMemo(
-    () => sortBrowserEntries(viewEntries, sortKey, sortDirection),
-    [viewEntries, sortKey, sortDirection],
+    () => sortBrowserEntries(visibleEntries, sortKey, sortDirection),
+    [visibleEntries, sortKey, sortDirection],
   );
 
   const load = useCallback(async (path: string) => {
@@ -210,6 +217,8 @@ export default function ComputerFileBrowser({
     resetHistory();
     setCandidatePath("");
     setSelectedPath(null);
+    setSearchOpen(false);
+    setSearchQuery("");
     void load("");
     return () => {
       cancelPendingDirectoryPreview();
@@ -222,6 +231,8 @@ export default function ComputerFileBrowser({
     markFocusForRestore();
     setCandidatePath(path);
     setSelectedPath(null);
+    setSearchOpen(false);
+    setSearchQuery("");
     onSelectionChange?.({
       path,
       entry: entry ?? {
@@ -285,7 +296,7 @@ export default function ComputerFileBrowser({
     if (viewStatus !== "ready" || !restoreFocusRef.current) return;
     restoreFocusRef.current = false;
     entryRefs.current[0]?.focus();
-  }, [viewStatus, sortedEntries, view]);
+  }, [viewStatus, sortedEntries, view, searchOpen]);
 
   const focusEntry = useCallback((index: number) => {
     const clamped = Math.max(0, Math.min(index, sortedEntries.length - 1));
@@ -361,7 +372,7 @@ export default function ComputerFileBrowser({
   // Name flexes (minmax(0,1fr) + truncate); Size/Modified are fixed-width
   // right-aligned columns sized to the format.ts outputs, so long names only
   // truncate once the pane is genuinely out of room.
-  const listColumns = compact ? "minmax(0,1fr) 56px 80px" : "minmax(0,1fr) 72px 104px";
+  const listColumns = compact ? "minmax(0,1fr) 56px 80px" : "minmax(0,1fr) 110px 110px";
 
   let content: ReactNode;
   if (viewStatus === "loading") {
@@ -379,7 +390,7 @@ export default function ComputerFileBrowser({
     content = (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-sm" style={{ color: "var(--text-tertiary)" }}>
         <FolderOpen size={22} aria-hidden />
-        <span>{mode === "folder-picker" ? "No subfolders here." : "This folder is empty."}</span>
+        <span>{searchQuery.trim() ? "No files match this search." : mode === "folder-picker" ? "No subfolders here." : "This folder is empty."}</span>
       </div>
     );
   } else {
@@ -418,7 +429,8 @@ export default function ComputerFileBrowser({
       ) : (
         <div>
           <div
-            className={`sticky top-0 z-10 grid items-center ${compact ? "gap-1" : "gap-2"} border-b px-2 pb-1 text-[11px] font-medium`}
+            data-files-list-header
+            className={`sticky top-0 z-10 grid items-center border-b px-2 font-medium ${compact ? "gap-1 pb-1 text-[11px]" : "h-9 gap-4 text-sm"}`}
             style={{
               gridTemplateColumns: listColumns,
               borderColor: "var(--border-subtle)",
@@ -441,7 +453,7 @@ export default function ComputerFileBrowser({
               onClick={() => toggleSort("size")}
             />
             <SortHeader
-              label="Modified"
+              label={compact ? "Modified" : "Date modified"}
               sortLabel="Sort by modified"
               active={sortKey === "modified"}
               direction={sortDirection}
@@ -449,7 +461,7 @@ export default function ComputerFileBrowser({
               onClick={() => toggleSort("modified")}
             />
           </div>
-          <div className="grid grid-cols-1 gap-0.5 pt-0.5">{buttons}</div>
+          <div className={`grid grid-cols-1 ${compact ? "gap-0.5 pt-0.5" : "gap-0"}`}>{buttons}</div>
         </div>
       );
   }
@@ -477,6 +489,15 @@ export default function ComputerFileBrowser({
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
         onUpload={mode === "browse" && !viewReadOnly ? () => fileInputRef.current?.click() : undefined}
+        searchOpen={searchOpen}
+        searchQuery={searchQuery}
+        onSearchOpen={() => setSearchOpen(true)}
+        onSearchClose={() => {
+          restoreFocusRef.current = viewEntries.length > 0;
+          setSearchOpen(false);
+          setSearchQuery("");
+        }}
+        onSearchQueryChange={setSearchQuery}
       />
 
       {mode === "browse" ? (
@@ -495,7 +516,7 @@ export default function ComputerFileBrowser({
       <div
         data-files-listing
         className={`${compact ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto ${
-          compact && view === "list" ? "px-1.5 pb-1.5" : "p-1.5"
+          compact && view === "list" ? "px-1.5 pb-1.5" : compact || view === "grid" ? "p-1.5" : "pb-4"
         }`}
         onDragEnter={mode === "browse" && !viewReadOnly ? (event) => {
           if (!hasRegularDroppedFiles(event.dataTransfer)) return;

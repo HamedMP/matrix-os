@@ -42,6 +42,7 @@ describe("IPC contract", () => {
       "state:set",
       "embed:open",
       "embed:set-bounds",
+      "embed:suspend-all",
       "embed:reload",
       "embed:close",
       "embed:retry-auth",

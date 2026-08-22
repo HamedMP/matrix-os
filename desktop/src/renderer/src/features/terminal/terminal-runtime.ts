@@ -16,6 +16,7 @@ export function getAttachManager(): AttachManager {
           baseUrl: platformHost,
           sessionName,
           runtimeSlot,
+          clientClass: "hard",
           events,
         });
       },

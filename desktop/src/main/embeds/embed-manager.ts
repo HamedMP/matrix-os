@@ -165,6 +165,15 @@ export class EmbedManager {
     return true;
   }
 
+  suspendAll(): boolean {
+    for (const record of this.records.values()) {
+      if (!record.live) continue;
+      record.view.detach();
+      record.live = false;
+    }
+    return true;
+  }
+
   focus(embedId: string): boolean {
     const record = this.records.get(embedId);
     if (!record) return false;

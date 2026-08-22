@@ -35,6 +35,7 @@ const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoist
     selection: string;
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     selectAll: ReturnType<typeof vi.fn>;
+    reset: ReturnType<typeof vi.fn>;
   }>,
   resizeObserverCallbacks: [] as ResizeObserverCallback[],
 }));
@@ -67,6 +68,7 @@ vi.mock("@xterm/xterm", () => ({
     selection = "";
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     selectAll = vi.fn();
+    reset = vi.fn();
 
     constructor(options: FakeTerminal["initialOptions"]) {
       this.initialOptions = options;
@@ -223,7 +225,7 @@ describe("TerminalView session switching", () => {
     expect(scrollable.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
   });
 
-  it("refits the existing viewport and forwards its dimensions after a host resize", () => {
+  it("proposes a new grid to the authority without locally refitting after a host resize", () => {
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -238,12 +240,12 @@ describe("TerminalView session switching", () => {
       resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver);
     });
 
-    expect(fit.fitCalls).toBe(fitCallsBeforeResize + 1);
+    expect(fit.fitCalls).toBe(fitCallsBeforeResize);
     expect(attachmentResize).toHaveBeenCalledOnce();
     expect(attachmentResize).toHaveBeenCalledWith(80, 24);
   });
 
-  it("keeps xterm mounted and refits it when the terminal becomes active again", () => {
+  it("keeps xterm mounted and asks the authority for its grid when it becomes active again", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" active />);
     const terminal = createdTerminals.at(-1)!;
     const fit = createdFitAddons.at(-1)!;
@@ -253,7 +255,7 @@ describe("TerminalView session switching", () => {
     rerender(<TerminalView sessionName="alpha" active />);
 
     expect(createdTerminals).toHaveLength(1);
-    expect(fit.fitCalls).toBe(fitCallsBeforeNavigation + 1);
+    expect(fit.fitCalls).toBe(fitCallsBeforeNavigation);
     expect(terminal.focus).toHaveBeenCalledTimes(2);
     expect(attachMock).toHaveBeenCalledTimes(2);
     expect(attachmentResize).toHaveBeenCalledTimes(2);
@@ -340,6 +342,27 @@ describe("TerminalView session switching", () => {
 
     act(() => events.onState("fatal"));
     expect(screen.getByRole("status").textContent).toContain("This session has ended on your computer.");
+  });
+
+  it("freezes after a lease takeover and explicitly reacquires on Resume here", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
+
+    act(() => events.onLeaseRevoked?.());
+    expect(screen.getByRole("status").textContent).toContain("Live on another device.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume here" }));
+    expect(attachMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets xterm before rendering a replacement Zellij presentation", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
+
+    act(() => events.onPresentationReset?.());
+
+    expect(terminal.reset).toHaveBeenCalledOnce();
   });
 
   it("defaults to dark independently of Desktop appearance and re-themes from its local prop", () => {
