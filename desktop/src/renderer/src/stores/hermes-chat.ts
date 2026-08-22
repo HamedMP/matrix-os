@@ -417,7 +417,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       }
       const previousRequestId = get().activeRequestId;
       if (previousRequestId) abortKernelRequest(previousRequestId);
-      set({
+      set((state) => ({
         view: "conversation",
         sessionId: parsedId.data,
         messages: snapshot.messages.slice(-TRANSCRIPT_CAP),
@@ -429,8 +429,9 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
         conversationContext: snapshot.context,
         contextStatus: "ready",
         contextError: null,
+        contextSequence: state.contextSequence + 1,
         seenReplayEventIds: [],
-      });
+      }));
       switchKernelSession(parsedId.data);
       return true;
     } catch (error: unknown) {
