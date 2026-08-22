@@ -11,7 +11,7 @@ const SCOPE = "operator|https://platform.test|primary";
 const OTHER_SCOPE = "other|https://platform.test|primary";
 
 function resetStore(): void {
-  useProjectView.setState({ entries: {}, runtimeScope: null });
+  clearProjectViewRuntime();
 }
 
 function mockOperator(stateValue: unknown = null) {
@@ -161,6 +161,50 @@ describe("project view store", () => {
     expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_clicked");
     expect(useProjectView.getState().viewFor("website")).toBe("chats");
+  });
+
+  it("keeps a persisted Board view when chat auto-selection lands during hydration", async () => {
+    let resolveStored: (value: {
+      value: {
+        runtimeScope: string;
+        views: Record<string, { view: "board"; selectedThreadId: null; touchedAt: number }>;
+      };
+    }) => void = () => undefined;
+    const stored = new Promise<{
+      value: {
+        runtimeScope: string;
+        views: Record<string, { view: "board"; selectedThreadId: null; touchedAt: number }>;
+      };
+    }>((resolve) => {
+      resolveStored = resolve;
+    });
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return await stored;
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    const hydration = useProjectView.getState().hydrate(SCOPE);
+    // The default Chats surface can resolve its first thread while the
+    // persisted project view is still loading. This is a selection update,
+    // not an explicit request to replace the user's Board choice.
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_plan");
+    resolveStored({
+      value: {
+        runtimeScope: SCOPE,
+        views: {
+          "matrix-os": { view: "board", selectedThreadId: null, touchedAt: 10 },
+        },
+      },
+    });
+    await hydration;
+
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_plan");
   });
 
   it("evicts the least recently touched projects beyond the cap", () => {

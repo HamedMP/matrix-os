@@ -173,11 +173,9 @@ describe("project workspaces store", () => {
 
     expect(invoke).toHaveBeenNthCalledWith(2, "runtime:get-project-workspace", {
       projectId: "matrix-os",
-      taskCursor: "task_auth",
       taskLimit: 1,
       projectThreadCursor: "thread_page_1",
       projectThreadLimit: 1,
-      taskThreadCursor: "thread_task",
       taskThreadLimit: 1,
     });
     expect(
@@ -188,6 +186,100 @@ describe("project workspaces store", () => {
       .toHaveLength(1);
     expect(useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.taskThreads.items)
       .toHaveLength(1);
+  });
+
+  it("retains every successful page when two load-more requests overlap", async () => {
+    const first = workspace("matrix-os", "task_auth", "thread_task");
+    first.projectThreads = {
+      items: [{
+        id: "thread_page_1",
+        providerId: "codex",
+        title: "Newest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: true,
+      nextCursor: "thread_page_1",
+      limit: 1,
+    };
+    const second = workspace("matrix-os", "task_auth", "thread_task");
+    second.tasks = { items: [], hasMore: false, limit: 1 };
+    second.projectThreads = {
+      items: [{
+        id: "thread_page_2",
+        providerId: "codex",
+        title: "Middle project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: true,
+      nextCursor: "thread_page_2",
+      limit: 1,
+    };
+    second.taskThreads = { items: [], hasMore: false, limit: 1 };
+    const third = workspace("matrix-os", "task_auth", "thread_task");
+    third.tasks = { items: [], hasMore: false, limit: 1 };
+    third.projectThreads = {
+      items: [{
+        id: "thread_page_3",
+        providerId: "codex",
+        title: "Oldest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: false,
+      limit: 1,
+    };
+    third.taskThreads = { items: [], hasMore: false, limit: 1 };
+
+    let call = 0;
+    let resolveSecond: (value: ProjectAgentWorkspace) => void = () => undefined;
+    let resolveThird: (value: ProjectAgentWorkspace) => void = () => undefined;
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      if (channel !== "runtime:get-project-workspace") {
+        return Promise.reject(new Error(`unexpected channel ${channel}`));
+      }
+      call += 1;
+      if (call === 1) return Promise.resolve(first);
+      if (call === 2) {
+        return new Promise<ProjectAgentWorkspace>((resolve) => {
+          resolveSecond = resolve;
+        });
+      }
+      return new Promise<ProjectAgentWorkspace>((resolve) => {
+        resolveThird = resolve;
+      });
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useProjectWorkspaces.getState().ensure("matrix-os");
+    const firstAppend = useProjectWorkspaces.getState().loadMore("matrix-os");
+    const secondAppend = useProjectWorkspaces.getState().loadMore("matrix-os");
+
+    await vi.waitFor(() => expect(call).toBeGreaterThanOrEqual(2));
+    resolveSecond(second);
+    await firstAppend;
+    await vi.waitFor(() => expect(call).toBe(3));
+    resolveThird(third);
+    await secondAppend;
+
+    expect(
+      useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.projectThreads.items
+        .map((thread) => thread.id),
+    ).toEqual(["thread_page_1", "thread_page_2", "thread_page_3"]);
   });
 
   it("keeps project workspaces isolated per project", async () => {

@@ -203,6 +203,36 @@ describe("ProjectThreadList status rail", () => {
     expect(screen.queryByRole("button", { name: "Chat Archived chat" })).toBeNull();
   });
 
+  it("limits filtered empty copy to the loaded window while more chats remain", () => {
+    const workspace = workspaceFixture();
+    workspace.projectThreads.hasMore = true;
+    workspace.projectThreads.nextCursor = "thread_arch";
+    render(
+      <ProjectThreadList
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryFixture()}
+        workspace={workspace}
+        status="ready"
+        error={null}
+        selectedThreadId={null}
+        canCreate
+        onSelectThread={() => {}}
+        onNewChat={() => {}}
+        onRetry={() => {}}
+        onLoadMore={() => {}}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), {
+      target: { value: "not loaded yet" },
+    });
+
+    expect(screen.getByText("No loaded chats match these filters. Load more to search older chats."))
+      .toBeTruthy();
+    expect(screen.getByRole("button", { name: "Load more chats" })).toBeTruthy();
+  });
+
   it("offers cursor-based load more when the workspace projection is truncated", () => {
     const workspace = workspaceFixture();
     workspace.projectThreads.hasMore = true;

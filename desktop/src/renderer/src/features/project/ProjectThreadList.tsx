@@ -122,6 +122,7 @@ export function ProjectThreadList({
     [baseModel, query, statusFilter],
   );
   const canLoadMore = canLoadMoreProjectThreads(workspace);
+  const canContinueFilteredSearch = canLoadMore && Boolean(onLoadMore);
   const providerLabel = (thread: AgentThreadSummary) =>
     summary.providers.find((provider) => provider.id === thread.providerId)?.displayName ?? "Agent";
   const isEmpty = model.projectThreads.length === 0
@@ -287,7 +288,11 @@ export function ProjectThreadList({
         {isEmpty && status !== "loading" ? (
           <p className="px-2 py-2 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
             {query.trim() || statusFilter !== "all"
-              ? "No chats match these filters."
+              ? canContinueFilteredSearch
+                ? "No loaded chats match these filters. Load more to search older chats."
+                : model.truncated
+                  ? "No chats in the current conversation window match these filters."
+                  : "No chats match these filters."
               : "No chats yet. Start one with the + button above."}
           </p>
         ) : null}

@@ -47,10 +47,12 @@ interface ProjectWorkspacesState {
 // Per-project load generations: a load that settles after a newer load for the
 // same project started is stale and must be dropped.
 const loadGenerations: Record<string, number> = {};
-// Tracks only currently running loads and deletes each entry on settlement.
-// ensure() joins the authoritative in-flight request instead of treating a
-// transient `loading` projection as either success or failure.
+// Per-project queue tails. Refresh and pagination both mutate the same bounded
+// projection, so they must settle in request order instead of invalidating an
+// earlier successful page merely because another request started. The token
+// lets clearProjectWorkspace(s) invalidate work that was queued beforehand.
 const activeLoadPromises: Record<string, Promise<void> | undefined> = {};
+const loadQueueTokens: Record<string, symbol | undefined> = {};
 const MAX_WORKSPACE_PAGE_ITEMS = 100;
 
 interface WorkspacePage<T extends { id: string }> {
@@ -70,12 +72,14 @@ function nextGeneration(projectId: string): number {
 export function clearProjectWorkspaces(): void {
   for (const key of Object.keys(loadGenerations)) delete loadGenerations[key];
   for (const key of Object.keys(activeLoadPromises)) delete activeLoadPromises[key];
+  for (const key of Object.keys(loadQueueTokens)) delete loadQueueTokens[key];
   useProjectWorkspaces.setState({ entries: {}, runtimeScope: null });
 }
 
 export function clearProjectWorkspace(projectId: string): void {
   nextGeneration(projectId);
   delete activeLoadPromises[projectId];
+  delete loadQueueTokens[projectId];
   useProjectWorkspaces.setState((state) => {
     if (!(projectId in state.entries)) return state;
     const entries = { ...state.entries };
@@ -127,6 +131,7 @@ function canLoadMoreWorkspace(workspace: ProjectAgentWorkspace): boolean {
 }
 
 function pageCursor<T extends { id: string }>(page: WorkspacePage<T>): string | undefined {
+  if (!page.hasMore) return undefined;
   return page.nextCursor ?? page.items.at(-1)?.id;
 }
 
@@ -246,9 +251,22 @@ async function performWorkspaceLoad(projectId: string, append = false): Promise<
 }
 
 function loadWorkspace(projectId: string, append = false): Promise<void> {
-  const pending = performWorkspaceLoad(projectId, append).finally(() => {
+  const token = loadQueueTokens[projectId] ?? Symbol(projectId);
+  loadQueueTokens[projectId] = token;
+  const previous = activeLoadPromises[projectId];
+  // Start an idle queue immediately. Besides avoiding an unnecessary tick,
+  // this preserves the public contract that invoking refresh has dispatched
+  // its request before the caller can switch runtime/account scope.
+  const work = previous
+    ? previous.then(async () => {
+        if (loadQueueTokens[projectId] !== token) return;
+        await performWorkspaceLoad(projectId, append);
+      })
+    : performWorkspaceLoad(projectId, append);
+  const pending = work.finally(() => {
     if (activeLoadPromises[projectId] === pending) {
       delete activeLoadPromises[projectId];
+      delete loadQueueTokens[projectId];
     }
   });
   activeLoadPromises[projectId] = pending;
@@ -265,6 +283,7 @@ export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) 
     // reset the per-project sequences so the new scope starts clean.
     for (const key of Object.keys(loadGenerations)) delete loadGenerations[key];
     for (const key of Object.keys(activeLoadPromises)) delete activeLoadPromises[key];
+    for (const key of Object.keys(loadQueueTokens)) delete loadQueueTokens[key];
     set({ runtimeScope: scope, entries: {} });
   },
 
