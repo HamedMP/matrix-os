@@ -196,7 +196,7 @@ describe("kernel conversation history route", () => {
             timestamp: 3,
             tool: "Bash",
             toolInput: {
-              command: "curl -H 'Authorization: Bearer super-secret' -H 'X-Api-Key: header-secret' https://example.com && git status --short",
+              command: "curl -H 'Authorization: Bearer super-secret' -H 'X-Api-Key: \"header-secret\"' https://example.com && git status --short",
             },
           },
           {

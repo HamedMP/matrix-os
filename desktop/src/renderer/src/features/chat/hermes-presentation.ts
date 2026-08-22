@@ -16,7 +16,7 @@ const MAX_PREVIEW_CHARS = 140;
 const MAX_DETAIL_CHARS = 2_000;
 const SECRET_ASSIGNMENT = /(\b(?:[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|PASSWORD|PASSWD|SECRET|CREDENTIAL)[A-Z0-9_]*)\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s]+)/gi;
 const AUTHORIZATION_VALUE = /(\b(?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic)\s+)[^\s]+/gi;
-const CREDENTIAL_HEADER_VALUE = /(\b(?:x[-_])?(?:api[-_]?key|access[-_]?key|auth[-_]?token|access[-_]?token|client[-_]?secret|credential|token|password|passwd|secret)\s*:\s*)[^'"\s]+/gi;
+const CREDENTIAL_HEADER_VALUE = /(\b(?:x[-_])?(?:api[-_]?key|access[-_]?key|auth[-_]?token|access[-_]?token|client[-_]?secret|credential|token|password|passwd|secret)\s*:\s*)(?:'[^']*'|"[^"]*"|[^'"\s]+)/gi;
 const CREDENTIAL_URL = /(https?:\/\/[^\s:@/]+:)[^\s@/]+@/gi;
 
 function boundedText(value: unknown, maxChars = MAX_PREVIEW_CHARS): string | undefined {

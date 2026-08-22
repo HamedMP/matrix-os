@@ -306,7 +306,7 @@ describe("ChatTab", () => {
           tool: "Bash",
           requestId: "request-command-copy",
           toolInput: {
-            command: "curl -H 'X-Api-Key: header-secret' API_KEY=supersecret https://example.com",
+            command: "curl -H 'X-Api-Key: \"header-secret\"' API_KEY=supersecret https://example.com",
             unrelated: "do-not-render",
           },
           timestamp: 2_000,
