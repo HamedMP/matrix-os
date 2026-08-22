@@ -222,7 +222,7 @@ describe("Desktop navigation header", () => {
       activeTabId: projectsTabId,
       historyIndex: 1,
     });
-    expect(useTabs.getState().viewHistory).toHaveLength(4);
+    expect(useTabs.getState().viewHistory).toEqual([homeTabId, projectsTabId]);
 
     fireEvent.click(screen.getByRole("button", { name: "Go back" }));
 
@@ -278,7 +278,7 @@ describe("Desktop navigation header", () => {
     fireEvent.click(screen.getByRole("button", { name: "Go back" }));
 
     expect(useTabs.getState().activeTabId).toBe(projectsTabId);
-    expect(useTabs.getState().viewHistory).toHaveLength(2);
+    expect(useTabs.getState().viewHistory).toEqual([projectsTabId]);
     expect(useTabs.getState().historyIndex).toBe(0);
   });
 
