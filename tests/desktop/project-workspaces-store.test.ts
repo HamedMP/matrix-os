@@ -315,6 +315,91 @@ describe("project workspaces store", () => {
     });
   });
 
+  it("restarts a full exhausted collection so displaced items remain pageable", async () => {
+    const first = workspace("matrix-os", "task_0", "thread_task");
+    const taskTemplate = first.tasks.items[0];
+    first.tasks = {
+      items: Array.from({ length: 100 }, (_, index) => ({
+        ...taskTemplate,
+        id: `task_${index}`,
+        order: index,
+      })),
+      hasMore: false,
+      limit: 100,
+    };
+    first.projectThreads = {
+      items: [{
+        id: "thread_page_1",
+        providerId: "codex",
+        title: "Newest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: true,
+      nextCursor: "thread_page_1",
+      limit: 1,
+    };
+    const changedTasks = workspace("matrix-os", "task_new", "thread_task");
+    changedTasks.tasks = {
+      ...changedTasks.tasks,
+      hasMore: true,
+      nextCursor: "task_new",
+      limit: 1,
+    };
+    changedTasks.projectThreads = {
+      items: [{
+        id: "thread_page_2",
+        providerId: "codex",
+        title: "Oldest project chat",
+        status: "completed",
+        attention: "none",
+        projectId: "matrix-os",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      hasMore: false,
+      limit: 1,
+    };
+    changedTasks.taskThreads = { items: [], hasMore: false, limit: 1 };
+    const continuedTasks = workspace("matrix-os", "task_0", "thread_task");
+    continuedTasks.tasks = {
+      ...continuedTasks.tasks,
+      hasMore: true,
+      nextCursor: "task_0",
+      limit: 1,
+    };
+    continuedTasks.projectThreads = { items: [], hasMore: false, limit: 1 };
+    continuedTasks.taskThreads = { items: [], hasMore: false, limit: 1 };
+    const responses = [first, changedTasks, continuedTasks];
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:set") return { ok: true };
+      if (channel !== "runtime:get-project-workspace") {
+        throw new Error(`unexpected channel ${channel}`);
+      }
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected workspace load");
+      return response;
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useProjectWorkspaces.getState().ensure("matrix-os");
+    await useProjectWorkspaces.getState().loadMore("matrix-os");
+    await useProjectWorkspaces.getState().loadMore("matrix-os");
+
+    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.workspace?.tasks).toMatchObject({
+      items: [{ id: "task_new" }, { id: "task_0" }],
+      hasMore: true,
+      nextCursor: "task_0",
+    });
+    expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-project-workspace")).toHaveLength(3);
+  });
+
   it("retains every successful page when two load-more requests overlap", async () => {
     const first = workspace("matrix-os", "task_auth", "thread_task");
     first.projectThreads = {
