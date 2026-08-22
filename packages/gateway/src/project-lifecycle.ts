@@ -10,6 +10,7 @@ export const ProjectLifecycleActionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("delete"),
     confirmation: z.string().min(1).max(128),
+    confirmTerminate: z.boolean().optional(),
   }).strict(),
 ]);
 

@@ -459,16 +459,13 @@ export const useTabs = create<TabsState>()((set, get) => ({
     set((state) => ({
       tabs: state.tabs.map((tab) =>
         tab.kind === "terminal" && tab.sessionName === fromName
-          ? { ...tab, sessionName: toName, title: toName }
+          ? { ...tab, title: toName }
           : tab,
       ),
       recentViews: state.recentViews.map((recent) =>
         recent.kind === "terminal" && recent.id === fromName
-          ? { ...recent, id: toName, label: toName }
+          ? { ...recent, label: toName }
           : recent,
       ),
-      terminalSessionRequest: state.terminalSessionRequest?.sessionName === fromName
-        ? { ...state.terminalSessionRequest, sessionName: toName }
-        : state.terminalSessionRequest,
     })),
 }));

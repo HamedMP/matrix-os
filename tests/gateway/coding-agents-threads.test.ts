@@ -21,6 +21,10 @@ import { MissingRequestPrincipalError } from "../../packages/gateway/src/request
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };
 const baseNow = new Date("2026-07-06T12:00:00.000Z");
+const TEST_TERMINAL_REF = {
+  workspaceId: "tws_00000000000000000000000000000001",
+  tabId: "tt_00000000000000000000000000000001",
+} as const;
 
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
@@ -69,7 +73,7 @@ const createBody = {
   providerId: "codex",
   prompt: "Inspect the failing tests and propose a small fix.",
   projectId: "repo-main",
-  terminalSessionId: "main",
+  terminalRef: TEST_TERMINAL_REF,
   mode: "default",
   approvalPolicy: "on_request",
   sandboxMode: "workspace_write",
@@ -130,7 +134,7 @@ describe("coding agent thread lifecycle", () => {
     expect(firstSnapshot.thread).toMatchObject({
       providerId: "codex",
       projectId: "repo-main",
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       status: "running",
       attention: "none",
     });
@@ -372,14 +376,14 @@ describe("coding agent thread lifecycle", () => {
     });
     const created = await threads.createThread(ownerPrincipal, createBody);
 
-    const reconciled = await threads.reconcileTerminalSessionStopped({
+    const reconciled = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "exited",
     });
-    const duplicate = await threads.reconcileTerminalSessionStopped({
+    const duplicate = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "exited",
     });
 
@@ -421,10 +425,10 @@ describe("coding agent thread lifecycle", () => {
       clientRequestId: "req_create_other_owner",
     });
 
-    const reconciled = await threads.reconcileTerminalSessionStopped({
+    const reconciled = await threads.reconcileTerminalTabStopped({
       ownerId: otherPrincipal.userId,
       workspaceSessionId: workspaceSessionIdForThread(otherThread.snapshot.thread.id),
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "exited",
     });
 
@@ -449,17 +453,17 @@ describe("coding agent thread lifecycle", () => {
       providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
     });
     const created = await threads.createThread(ownerPrincipal, createBody);
-    await threads.reconcileTerminalSessionStopped({
+    await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
       workspaceSessionId: workspaceSessionIdForThread(created.snapshot.thread.id),
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "exited",
     });
 
-    const reused = await threads.reconcileTerminalSessionStopped({
+    const reused = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
       workspaceSessionId: "sess_reused_terminal",
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "failed",
     });
     const raw = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf-8"));
@@ -469,7 +473,7 @@ describe("coding agent thread lifecycle", () => {
       expect.objectContaining({
         ownerId: ownerPrincipal.userId,
         workspaceSessionId: "sess_reused_terminal",
-        terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
         runtimeStatus: "failed",
       }),
     ]);
@@ -483,15 +487,15 @@ describe("coding agent thread lifecycle", () => {
       providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
     });
 
-    const early = await threads.reconcileTerminalSessionStopped({
+    const early = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "failed",
     });
     const created = await threads.createThread(ownerPrincipal, createBody);
-    const duplicate = await threads.reconcileTerminalSessionStopped({
+    const duplicate = await threads.reconcileTerminalTabStopped({
       ownerId: ownerPrincipal.userId,
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
       runtimeStatus: "failed",
     });
     const later = await threads.createThread(ownerPrincipal, {
@@ -504,7 +508,7 @@ describe("coding agent thread lifecycle", () => {
     expect(created.snapshot.thread).toMatchObject({
       status: "failed",
       attention: "failed",
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
     });
     expect(created.snapshot.events.items.at(-2)).toMatchObject({
       type: "thread.status",
@@ -518,7 +522,7 @@ describe("coding agent thread lifecycle", () => {
     expect(later.snapshot.thread).toMatchObject({
       status: "running",
       attention: "none",
-      terminalSessionId: "main",
+      terminalRef: TEST_TERMINAL_REF,
     });
     expect(attention.items).toEqual([
       expect.objectContaining({

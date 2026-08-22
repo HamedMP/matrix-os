@@ -24,7 +24,7 @@ function runtimeSummary() {
     projects: { items: [], hasMore: false, limit: 20 },
     activeThreads: { items: [], hasMore: false, limit: 20 },
     attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
     recentActivity: { items: [], hasMore: false, limit: 20 },
     limits: { maxPromptBytes: 16384, maxAttachmentCount: 8, maxTerminalInputBytes: 8192, maxListItems: 20 },
     serverTime: "2026-07-12T00:00:00.000Z",

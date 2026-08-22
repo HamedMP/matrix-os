@@ -126,7 +126,7 @@ The biggest brand-coherence gap after color: **the website's display face is Ins
 **`app/agents/[threadId].tsx`** — the "unfinished" concentration.
 - **Status is bare `forest` text, not color-coded** (`:1086`) — running/failed/done look identical.
 - **Inline error renders in `moss` green** (`:1153`) — an error styled as the calm brand green. Wrong; use `destructive`.
-- Leaks raw machine data: ISO `updatedAt` (`:257`), raw `thread.id`, `terminalSessionId`, provider shown as **mono id** not display name, and timeline strings expose `event.outcome/requestId/status/decision` enums.
+- Leaks raw machine data: ISO `updatedAt` (`:257`), raw `thread.id`, terminal reference IDs, provider shown as **mono id** not display name, and timeline strings expose `event.outcome/requestId/status/decision` enums.
 - No haptic on approve/decline/send (highest-stakes actions). **Fixes:** StatusPill on the header; `destructive` for errors; `formatRelativeAge` for timestamps (the cockpit already has it); friendly provider names; haptics on approve/decline.
 
 **`app/agents/new.tsx` / `AgentComposerScreen.tsx`** — the composer is solid: proper segmented mode control (`:745`), 48px bottom-anchored Start CTA (the one primary that clears 44pt), real disabled states, good keyboard handling. **Add** a haptic on Start-run. Provider availability shows as capitalized subtitle text — convert to StatusPill.

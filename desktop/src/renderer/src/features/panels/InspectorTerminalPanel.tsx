@@ -1,7 +1,8 @@
 import { ChevronLeft, Play, SquareTerminal } from "lucide-react";
 import { useState } from "react";
-import type { RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import type { RuntimeSummary } from "@matrix-os/contracts";
 import TerminalView from "../terminal/TerminalView";
+import { runtimeTerminalTabs, type RuntimeTerminalTab } from "../../lib/terminal-workspaces";
 
 const STATUS_COLOR: Record<string, string> = {
   running: "var(--success)",
@@ -29,7 +30,7 @@ export function InspectorTerminalPanel({
   emptyMessage?: string;
 }) {
   const [embeddedId, setEmbeddedId] = useState<string | null>(null);
-  const sessions = summary.terminalSessions.items;
+  const sessions = runtimeTerminalTabs(summary);
   // The embedded session must still exist and stay attachable; a refresh that
   // ends or detaches it drops the embed back to the list in the same render.
   const embedded = embeddedId
@@ -65,7 +66,7 @@ export function InspectorTerminalPanel({
           className="flex min-h-[240px] min-w-0 flex-1 flex-col overflow-hidden rounded-md border"
           style={{ borderColor: "var(--border-subtle)" }}
         >
-          <TerminalView key={embedded.name} sessionName={embedded.name} active={active} />
+          <TerminalView key={embedded.refKey} sessionName={embedded.refKey} active={active} />
         </div>
       </div>
     );
@@ -92,7 +93,7 @@ function SessionRow({
   session,
   onOpen,
 }: {
-  session: TerminalSessionSummary;
+  session: RuntimeTerminalTab;
   onOpen: () => void;
 }) {
   return (

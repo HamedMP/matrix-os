@@ -12,6 +12,9 @@ import {
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
+const WORKSPACE_ID = `tws_${"1".repeat(32)}`;
+const TAB_ID = `tt_${"2".repeat(32)}`;
+
 function makeApi(get: (path: string) => Promise<unknown>, post?: (path: string, body?: unknown) => Promise<unknown>) {
   return {
     baseUrl: "https://gateway.test",
@@ -55,17 +58,21 @@ describe("plugins hub across runtime switches", () => {
   });
 
   it("does not open a terminal tab for a session created on the previous computer", async () => {
-    let releaseSession!: (value: { name: string }) => void;
+    let releaseTab!: (value: { tab: { id: string } }) => void;
     const api = makeApi(
       async () => [],
-      () => new Promise<{ name: string }>((resolve) => { releaseSession = resolve; }),
+      async (path) => {
+        if (path.endsWith("/ensure")) return { workspace: { id: WORKSPACE_ID } };
+        return new Promise<{ tab: { id: string } }>((resolve) => { releaseTab = resolve; });
+      },
     );
     const openTab = vi.fn();
 
     const opening = openPluginsTerminal(api, openTab, { sessionName: "plugins-mcp", title: "MCP servers" });
+    await vi.waitFor(() => expect(releaseTab).toBeTypeOf("function"));
     // The user switches computers while the session POST is in flight.
     useConnection.setState({ runtimeSlot: "secondary", authGeneration: 2 });
-    releaseSession({ name: "plugins-mcp" });
+    releaseTab({ tab: { id: TAB_ID } });
 
     await expect(opening).resolves.toBe("runtime-changed");
     expect(openTab).not.toHaveBeenCalled();
@@ -95,12 +102,18 @@ describe("plugins hub across runtime switches", () => {
   });
 
   it("still opens the tab when the runtime is unchanged", async () => {
-    const api = makeApi(async () => [], async () => ({ name: "plugins-mcp" }));
+    const api = makeApi(async () => [], async (path) => path.endsWith("/ensure")
+      ? { workspace: { id: WORKSPACE_ID } }
+      : { tab: { id: TAB_ID } });
     const openTab = vi.fn();
 
     await expect(
       openPluginsTerminal(api, openTab, { sessionName: "plugins-mcp", title: "MCP servers" }),
     ).resolves.toBe("opened");
-    expect(openTab).toHaveBeenCalledWith({ kind: "terminal", sessionName: "plugins-mcp", title: "MCP servers" });
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "terminal",
+      sessionName: `${WORKSPACE_ID}:${TAB_ID}`,
+      title: "MCP servers",
+    });
   });
 });

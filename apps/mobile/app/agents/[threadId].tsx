@@ -8,7 +8,7 @@ import { useGateway } from "@/app/_layout";
 import { AgentThreadTurnComposer } from "@/components/agents/agent-thread-turn-composer";
 import { useAgentThreadActions, type AgentThreadRouteState, type ThreadActionError } from "@/lib/agent-thread-actions";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
-import { isSafeShellSessionName } from "@/lib/terminal-state";
+import { isSafeSessionId } from "@/lib/terminal-state";
 
 type TerminalOpenError = "Terminal session unavailable. Try again.";
 type AssistantTimelineEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
@@ -166,11 +166,13 @@ export default function AgentThreadRoute() {
     streamSubscriptionRef.current = null;
   }, []);
 
-  const boundTerminalSessionId = state.status === "ready" ? state.snapshot.thread.terminalSessionId ?? null : null;
+  const boundTerminalSessionId = state.status === "ready" && state.snapshot.thread.terminalRef
+    ? `${state.snapshot.thread.terminalRef.workspaceId}:${state.snapshot.thread.terminalRef.tabId}`
+    : null;
   const openBoundTerminal = useCallback(async () => {
     if (!boundTerminalSessionId) return;
     setTerminalOpenError(null);
-    if (!isSafeShellSessionName(boundTerminalSessionId)) {
+    if (!isSafeSessionId(boundTerminalSessionId)) {
       setTerminalOpenError("Terminal session unavailable. Try again.");
       return;
     }
@@ -179,8 +181,8 @@ export default function AgentThreadRoute() {
       await saveMobileShellState({
         ...savedState,
         mode: "terminal",
-        lastActiveTerminalSessionId: boundTerminalSessionId,
-        terminalHandoffSessionId: boundTerminalSessionId,
+        lastActiveTerminalRef: boundTerminalSessionId,
+        terminalHandoffRef: boundTerminalSessionId,
         updatedAt: new Date().toISOString(),
       });
     } catch {
@@ -243,7 +245,7 @@ export default function AgentThreadRoute() {
 
   const { thread, events } = state.snapshot;
   const timelineItems = createTimelineItems(events.items);
-  const terminalSessionId = thread.terminalSessionId ?? "No terminal bound";
+  const terminalRefLabel = thread.terminalRef ? `${thread.terminalRef.workspaceId}/${thread.terminalRef.tabId}` : "No terminal bound";
   const attention = threadAttentionCopy(thread.attention);
   const resolvedApprovalIds = new Set(events.items
     .filter((event): event is Extract<AgentThreadEvent, { type: "approval.resolved" }> => event.type === "approval.resolved")
@@ -278,7 +280,7 @@ export default function AgentThreadRoute() {
         </View>
         <View style={styles.metaGrid}>
           <MetaItem label="Thread" value={thread.id} />
-          <MetaItem label="Terminal" value={terminalSessionId} />
+          <MetaItem label="Terminal" value={terminalRefLabel} />
           <MetaItem label="Updated" value={thread.updatedAt} />
           <MetaItem label="Activity" value={`${events.items.length} ${events.items.length === 1 ? "event" : "events"}`} />
         </View>
@@ -330,7 +332,7 @@ export default function AgentThreadRoute() {
             <Ionicons name="folder-open-outline" size={16} color={theme.colors.forest} />
             <Text style={styles.secondaryText}>Workspace tools</Text>
           </Pressable>
-          {thread.terminalSessionId ? (
+          {thread.terminalRef ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Open bound terminal"
@@ -624,7 +626,7 @@ function deriveLiveThreadSummary(
         attention: attentionForThreadStatus(event.status),
       };
     case "terminal.bound":
-      return { ...thread, terminalSessionId: event.terminalSessionId };
+      return { ...thread, terminalRef: event.terminalRef };
     case "approval.requested":
       if (isTerminalThreadStatus(thread.status) || hasResolvedApproval(events, event)) return thread;
       return { ...thread, status: "waiting_for_approval", attention: "approval_required" };
@@ -1000,7 +1002,7 @@ function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ioni
       };
     }
     case "terminal.bound":
-      return { icon: "terminal-outline", title: "Terminal bound", detail: event.terminalSessionId };
+      return { icon: "terminal-outline", title: "Terminal bound", detail: `${event.terminalRef.workspaceId}/${event.terminalRef.tabId}` };
     case "thread.error":
       return {
         icon: "warning-outline",

@@ -4,7 +4,7 @@
 // route lists MCP servers today (kernel wires mcpServers internally in
 // packages/kernel/src/options.ts), so the section is an HONEST empty state:
 // it explains that MCP servers are configured on the Matrix computer and
-// offers the canonical terminal path (POST /api/terminal/sessions + terminal
+// offers the canonical terminal path (workspace ensure + tab create + terminal
 // tab, the same flow as provider setup terminals).
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -15,6 +15,9 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
+const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
+const TAB_ID = `tt_${"b".repeat(32)}`;
+
 function makeApi(opts: { postError?: Error } = {}) {
   return {
     baseUrl: "https://app.matrix-os.com",
@@ -23,7 +26,8 @@ function makeApi(opts: { postError?: Error } = {}) {
     }),
     post: vi.fn(async (path: string) => {
       if (opts.postError) throw opts.postError;
-      if (path === "/api/terminal/sessions") return { name: "plugins-mcp" };
+      if (path === "/api/terminal/workspaces/ensure") return { workspace: { id: WORKSPACE_ID } };
+      if (path === `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) return { tab: { id: TAB_ID } };
       throw new AppError("notFound");
     }),
     delete: vi.fn(),
@@ -69,14 +73,13 @@ describe("desktop plugins MCP servers section", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Open terminal/i }));
 
-    await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith("/api/terminal/sessions", {
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/terminal/workspaces/ensure", {}));
+    expect(api.post).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`, {
         name: "plugins-mcp",
         cwd: "projects",
-      }),
-    );
+      });
     const tabs = useTabs.getState().tabs;
-    expect(tabs.some((tab) => tab.kind === "terminal" && tab.sessionName === "plugins-mcp")).toBe(true);
+    expect(tabs.some((tab) => tab.kind === "terminal" && tab.sessionName === `${WORKSPACE_ID}:${TAB_ID}`)).toBe(true);
   });
 
   it("shows generic copy and does not open a tab when the session cannot be created", async () => {

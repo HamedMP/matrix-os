@@ -1,18 +1,17 @@
 ---
 name: matrix-github-project
-description: Clone, verify, reuse, and change GitHub repositories in observable sessions on a Matrix OS cloud computer. Use when a user supplies a GitHub repository, asks to continue work in an existing checkout, wants a Matrix app checkout, or requests code changes and validation on Matrix.
+description: Clone, verify, reuse, and change GitHub repositories in observable project-scoped terminal tabs on a Matrix OS cloud computer. Use when a user supplies a GitHub repository, asks to continue work in an existing checkout, wants a Matrix app checkout, or requests code changes and validation on Matrix.
 ---
 
 # Work on GitHub Projects in Matrix OS
 
 Authenticate and inspect everything on the Matrix VPS, preserve existing work, and push or open a PR only when explicitly requested.
 
-## Session policy
+## Terminal policy
 
-- Always run remote work with `matrix run -it --session <session-name> ... -- <argv...>`.
-- Never create or use shell tabs. Create a separate uniquely named session for every additional command, terminal, or concurrent task.
-- Use collision-resistant names such as `readiness-github-<suffix>`, `inspect-<repo>-<suffix>`, `clone-<repo>-<suffix>`, and `task-<slug>-<suffix>`.
-- Report every session name and its `matrix shell connect <session-name>` command.
+- Always run remote work with `matrix run -it --project <project> ... -- <argv...>`; use `main` before a project exists.
+- Create a separate tab in the project workspace for every additional command, terminal, or concurrent task.
+- Report every returned tab ID and its `matrix shell connect --project <project> --tab <tab-id>` command.
 - Pass arguments after `--`; never interpolate user input into a shell string.
 
 ## Minimal readiness gate
@@ -32,13 +31,13 @@ If `matrix instance info` reports `ready: true` with `source: execution_probe`, 
 
 If needed, run `matrix login --profile cloud` and let the user complete browser/device authentication. Wait for provisioning at `https://app.matrix-os.com` when no ready computer exists.
 
-Check only the selected coding agent on Matrix, using a separate session for each check:
+Check only the selected coding agent on Matrix, using a separate tab for each check:
 
 ```bash
-matrix run -it --session readiness-codex-<suffix> -- codex --version
-matrix run -it --session readiness-codex-auth-<suffix> -- codex login status
-matrix run -it --session readiness-claude-<suffix> -- claude --version
-matrix run -it --session readiness-claude-auth-<suffix> -- claude auth status
+matrix run -it --project main -- codex --version
+matrix run -it --project main -- codex login status
+matrix run -it --project main -- claude --version
+matrix run -it --project main -- claude auth status
 ```
 
 Run only the Codex pair or Claude pair. Authenticate a disconnected agent in `auth-codex-<suffix>` or `auth-claude-<suffix>`. Never scan, read, or upload local credential files. If an agent is missing, ask before installing a global tool and prefer Matrix's visible developer-tool installation path.
@@ -46,10 +45,10 @@ Run only the Codex pair or Claude pair. Authenticate a disconnected agent in `au
 GitHub authentication must also live on Matrix:
 
 ```bash
-matrix run -it --session readiness-github-<suffix> -- gh --version
-matrix run -it --session readiness-github-auth-<suffix> -- gh auth status
-matrix run -it --session auth-github-<suffix> -- gh auth login --hostname github.com --git-protocol ssh --web
-matrix shell connect auth-github-<suffix>
+matrix run -it --project main -- gh --version
+matrix run -it --project main -- gh auth status
+matrix run -it --project main -- gh auth login --hostname github.com --git-protocol ssh --web
+matrix shell connect --project main --tab <tab-id>
 ```
 
 Use the login session only when needed, then re-run remote `gh auth status` in a new session. If `gh` is missing, ask before installing it globally and prefer Matrix's visible developer-tool installation path. Do not rely on the local computer's GitHub login.
@@ -61,19 +60,19 @@ Use the login session only when needed, then re-run remote `gh auth status` in a
 3. Validate a safe relative destination under the Matrix home. Reject absolute paths, backslashes, control characters, and `.` or `..` segments.
 4. Inspect the destination before using `-C`.
 
-Probe the destination in separate sessions:
+Probe the destination in separate tabs:
 
 ```bash
-matrix run -it --session inspect-exists-<repo>-<suffix> -- test -e projects/<repo>
-matrix run -it --session inspect-type-<repo>-<suffix> -- test -d projects/<repo>
-matrix run -it --session inspect-list-<repo>-<suffix> -- ls -la projects/<repo>
+matrix run -it --project main -- test -e projects/<repo>
+matrix run -it --project main -- test -d projects/<repo>
+matrix run -it --project main -- ls -la projects/<repo>
 ```
 
 If the destination is absent, clone it with remote GitHub CLI:
 
 ```bash
-matrix run -it --session clone-<repo>-<suffix> -- gh repo clone <owner>/<repo> projects/<repo>
-matrix shell connect clone-<repo>-<suffix>
+matrix run -it --project main -- gh repo clone <owner>/<repo> projects/<repo>
+matrix shell connect --project main --tab <tab-id>
 ```
 
 If the destination exists:
@@ -85,12 +84,12 @@ If the destination exists:
 
 ## Preserve the checkout
 
-Before fetching, switching, installing, launching an agent, or editing, inspect the branch and dirty state in separate sessions:
+Before fetching, switching, installing, launching an agent, or editing, inspect the branch and dirty state in separate project tabs:
 
 ```bash
-matrix run -it --session inspect-status-<repo>-<suffix> -C <dir> -- git status --porcelain=v1 --branch
-matrix run -it --session inspect-branch-<repo>-<suffix> -C <dir> -- git branch --show-current
-matrix run -it --session inspect-origin-<repo>-<suffix> -C <dir> -- git remote get-url origin
+matrix run -it --project <repo> -C <dir> -- git status --porcelain=v1 --branch
+matrix run -it --project <repo> -C <dir> -- git branch --show-current
+matrix run -it --project <repo> -C <dir> -- git remote get-url origin
 ```
 
 Treat staged, unstaged, untracked, rebasing, merging, and detached states as meaningful user work. Never reset, clean, stash, or overwrite user changes automatically. If the checkout is dirty or mid-operation, stop and ask whether to continue on the current state, finish the operation, or choose a separate clean checkout.
@@ -107,11 +106,11 @@ Read repository instructions before choosing commands:
 - Environment examples such as `.env.example`; never read secret environment files unless the user explicitly authorizes a specific read.
 - Build, test, and development documentation.
 
-Use a separate session for the coding task. For unattended Codex changes:
+Use a separate tab for the coding task. For unattended Codex changes:
 
 ```bash
-matrix run -it --session task-codex-<suffix> -C <dir> -- codex --ask-for-approval never --sandbox workspace-write exec -- <prompt>
-matrix shell connect task-codex-<suffix>
+matrix run -it --project <repo> -C <dir> -- codex --ask-for-approval never --sandbox workspace-write exec -- <prompt>
+matrix shell connect --project <repo> --tab <tab-id>
 ```
 
 Use `--sandbox read-only` for inspection. Never use `danger-full-access` without explicit direction.
@@ -119,14 +118,14 @@ Use `--sandbox read-only` for inspection. Never use `danger-full-access` without
 Run Claude without repetitive permission questions using its verified auto mode:
 
 ```bash
-matrix run -it --session task-claude-<suffix> -C <dir> -- claude --permission-mode auto -p <prompt>
-matrix shell connect task-claude-<suffix>
+matrix run -it --project <repo> -C <dir> -- claude --permission-mode auto -p <prompt>
+matrix shell connect --project <repo> --tab <tab-id>
 ```
 
 If Claude auto mode is unavailable, report that limitation and stop; do not fall back to a permission bypass.
 
-Run relevant validation in new purpose-specific sessions. Do not install dependencies until the package manager, lockfile, and dirty state are understood. Push or open a PR only when explicitly requested.
+Run relevant validation in new tabs. Do not install dependencies until the package manager, lockfile, and dirty state are understood. Push or open a PR only when explicitly requested.
 
 ## Handoff
 
-Report the normalized repository, checkout path, branch, starting dirty state, changed files, validation commands and results, every running session, and every `matrix shell connect <session-name>` reattach instruction. State clearly whether anything was pushed or published.
+Report the normalized repository, checkout path, branch, starting dirty state, changed files, validation commands and results, every running terminal reference, and every `matrix shell connect --project <project> --tab <tab-id>` reattach instruction. State clearly whether anything was pushed or published.

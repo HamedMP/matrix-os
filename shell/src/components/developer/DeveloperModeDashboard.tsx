@@ -5,7 +5,7 @@ import { CheckCircle2Icon, ClipboardIcon, GitBranchIcon, TerminalIcon } from "lu
 
 export const DEVELOPER_SETUP_PROMPT = `Set up Matrix OS as my remote developer computer.
 
-Install or verify the Matrix CLI, run matrix login, and wait for the browser/device approval to finish. When my Matrix computer is ready, open a persistent setup terminal with matrix run -it --session setup -- gh auth login. Authenticate GitHub in the browser, create or use a Matrix-managed SSH key inside Matrix, clone my repository, and start my preferred coding agent inside Matrix.
+Install or verify the Matrix CLI, run matrix login, and wait for the browser/device approval to finish. When my Matrix computer is ready, open a persistent setup tab with matrix run -it --project main -- gh auth login. Authenticate GitHub in the browser, create or use a Matrix-managed SSH key inside Matrix, clone my repository, and start my preferred coding agent inside Matrix. Use matrix shell list and matrix shell connect --project main --tab <tab-id> to reconnect.
 
 Do not upload local private keys, scan my laptop for secrets, or paste credentials into Matrix. Ask me before checkout, browser approvals, SSH key unlocks, or coding-agent authorization.`;
 

@@ -22,7 +22,7 @@ import RetainedPane from "../../design/RetainedPane";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { categoryMessage } from "../../../../shared/app-error";
 import {
-  isValidShellSessionName,
+  isValidShellDisplayName,
   type ShellSessionPlacement,
   type ShellSessionSummary,
   useShellSessions,
@@ -43,7 +43,7 @@ import {
   type TerminalAppearanceTokens,
 } from "./terminal-appearance";
 
-const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
+const RENAME_HELP = "Use 1 to 120 printable characters.";
 const SESSION_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
@@ -53,8 +53,12 @@ const SESSION_START_FORMATTER = new Intl.DateTimeFormat(undefined, {
 });
 const MAX_PRESERVED_TERMINALS = 8;
 
+function displayName(shell: ShellSessionSummary): string {
+  return shell.subtitle?.trim() || shell.tabId || shell.name;
+}
+
 function attachCommand(shell: ShellSessionSummary): string {
-  return shell.attachCommand ?? `matrix shell connect ${shell.name}`;
+  return shell.attachCommand ?? `matrix shell connect --project ${shell.projectId ?? "main"} --tab ${shell.tabId}`;
 }
 
 function shellStatusLabel(shell: ShellSessionSummary): string {
@@ -209,6 +213,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     return shells.filter((shell) =>
       [
         shell.name,
+        shell.subtitle,
         shell.status,
         shell.visualStatus,
         shell.subtitle,
@@ -308,7 +313,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   ]);
 
   const openShellInTab = (shell: ShellSessionSummary) => {
-    openTab({ kind: "terminal", sessionName: shell.name, title: shell.name });
+    openTab({ kind: "terminal", sessionName: shell.name, title: displayName(shell) });
     if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
       void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
     }
@@ -343,7 +348,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
 
   const startRename = (shell: ShellSessionSummary) => {
     setRenamingName(shell.name);
-    setRenameDraft(shell.name);
+    setRenameDraft(displayName(shell));
     setRenameError(null);
   };
 
@@ -351,7 +356,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     if (!api || !renamingName) return;
     const originalName = renamingName;
     const nextName = renameDraft.trim();
-    if (!isValidShellSessionName(nextName)) {
+    if (!isValidShellDisplayName(nextName)) {
       setRenameError(RENAME_HELP);
       return;
     }
@@ -364,9 +369,6 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
       return;
     }
     renameTerminalSession(originalName, nextName);
-    setOpenedSessionNames((current) => current.map((name) => name === originalName ? nextName : name));
-    setLiveSessionName((current) => current === originalName ? nextName : current);
-    if (selectedRef.current === originalName) setSelectedName(nextName);
     if (renamingNameRef.current === originalName) {
       setRenameError(null);
       setRenamingName((current) => (current === originalName ? null : current));
@@ -552,7 +554,8 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
       </RetainedPane>
 
       {openedSessionNames.map((sessionName) => {
-        const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
+        const shell = shells.find((candidate) => candidate.name === sessionName);
+        if (!shell) return null;
         const visible = active && selectedName === sessionName;
         return (
           <RetainedPane
@@ -615,10 +618,10 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
         <div className="flex flex-col gap-3 p-4">
           <div>
             <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              Delete {deleteTarget?.name}?
+              Delete {deleteTarget ? displayName(deleteTarget) : "shell"}?
             </h2>
             <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-              This closes the shell session and detaches any clients.
+              This terminates the tab process and detaches every viewer. Closing a Matrix view alone never terminates it.
             </p>
           </div>
           <div className="flex justify-end gap-2">
@@ -738,7 +741,7 @@ function ShellCard({
         <div className="flex min-h-9 w-full items-center">
         <button
           type="button"
-          aria-label={`Drag ${shell.name}`}
+          aria-label={`Drag ${displayName(shell)}`}
           draggable
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}

@@ -8,7 +8,7 @@ import { NewSessionSplitButton } from "./NewSessionSplitButton";
 import { ShellCloseConfirmation } from "./ShellCloseConfirmation";
 import { useTerminalAppContext } from "./TerminalAppContext";
 import { ThemePickerButton } from "./TerminalThemePicker";
-import { isCanonicalShellSessionId } from "./terminal-session-id";
+import { isCanonicalShellSessionId, parseTerminalRefKey } from "./terminal-session-id";
 import {
   DEFAULT_CWD,
   formatCwd,
@@ -46,6 +46,8 @@ import {
   type WorkspaceSessionSummary,
 } from "./TerminalSidebarItems";
 import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
+import type { TerminalWorkspace } from "@matrix-os/contracts";
+import { terminalRefKey } from "./terminal-session-id";
 
 const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
   height: 28,
@@ -362,7 +364,7 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
     if (!silent) setShellsError(null);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async load is correct as written
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces`, {
         signal: options.signal ?? AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -380,9 +382,26 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
       if (options.preserveOrderDuringReorder === true && reorderSaveCountRef.current > 0) {
         return;
       }
-      const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
-      const hasSessionList = Array.isArray(data.sessions);
-      const nextShells = hasSessionList ? data.sessions! : [];
+      const data = (await res.json()) as { workspaces?: TerminalWorkspace[] };
+      const hasSessionList = Array.isArray(data.workspaces);
+      const nextShells: ShellSessionSummary[] = hasSessionList
+        ? data.workspaces!.flatMap((workspace) => workspace.tabs.map((terminalTab) => ({
+            name: terminalRefKey({ workspaceId: workspace.id, tabId: terminalTab.id }),
+            workspaceId: workspace.id,
+            tabId: terminalTab.id,
+            revision: terminalTab.revision,
+            workspaceRevision: workspace.revision,
+            projectId: workspace.scope === "project" ? workspace.projectId : undefined,
+            project: workspace.scope === "project" ? workspace.projectId : "main",
+            cwd: terminalTab.cwd,
+            status: terminalTab.status === "exited" ? "exited" as const : "active" as const,
+            placement: terminalTab.uiState?.placement ?? "active",
+            lastSeenSeq: terminalTab.uiState?.lastSeenSeq,
+            agent: terminalTab.agent?.providerId as ShellSessionSummary["agent"],
+            subtitle: terminalTab.name,
+            updatedAt: terminalTab.updatedAt,
+          })))
+        : [];
       commitShellRefreshState(applyShellRefreshSuccess(
         shellRefreshStateRef.current,
         nextShells,
@@ -536,8 +555,11 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
     setShells((prev) => prev.filter((shell) => shell.name !== name));
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async delete flow is correct as written
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}?force=1`, {
+      if (!deletedShell?.workspaceId || !deletedShell.tabId) throw new Error("Terminal tab reference missing");
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${deletedShell.workspaceId}/tabs/${deletedShell.tabId}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -559,33 +581,30 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
 
   const renameManagedShell = async (shell: ShellSessionSummary, nextNameRaw: string): Promise<boolean> => {
     const nextName = nextNameRaw.trim();
-    if (nextName === shell.name) return true;
-    if (!SHELL_SESSION_NAME_PATTERN.test(nextName)) {
-      setShellsError("Use lowercase letters, numbers, and hyphens");
+    if (nextName === (shell.subtitle ?? shell.name)) return true;
+    if (!nextName || nextName.length > 120) {
+      setShellsError("Use a name between 1 and 120 characters");
       return false;
     }
     setShellsError(null);
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(shell.name)}/rename`, {
-        method: "PUT",
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${shell.workspaceId}/tabs/${shell.tabId}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nextName }),
+        body: JSON.stringify({ name: nextName, baseRevision: shell.revision }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         setShellsError("Failed to rename session");
         return false;
       }
-      const data = (await res.json()) as { session?: ShellSessionSummary };
-      const renamedShell: ShellSessionSummary = data.session?.name
-        ? data.session
-        : {
-            ...shell,
-            name: nextName,
-            attachCommand: `mos shell attach ${nextName}`,
-          };
+      const data = (await res.json()) as { tab?: { name?: string; revision?: number } };
+      const renamedShell: ShellSessionSummary = {
+        ...shell,
+        subtitle: data.tab?.name ?? nextName,
+        revision: data.tab?.revision ?? shell.revision + 1,
+      };
       setShells((prev) => prev.map((item) => item.name === shell.name ? renamedShell : item));
-      ctx.renameShellSession(shell.name, renamedShell.name);
       return true;
     } catch (err: unknown) {
       console.warn("Failed to rename shell session:", err instanceof Error ? err.message : err);
@@ -615,10 +634,12 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
       )));
     };
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}/ui-state`, {
+      const target = shells.find((shell) => shell.name === name);
+      if (!target) throw new Error("Terminal tab reference missing");
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${target.workspaceId}/tabs/${target.tabId}/ui-state`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
+        body: JSON.stringify({ ...patch, baseRevision: target.revision }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -628,10 +649,11 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
         }
         return null;
       }
-      const data = (await res.json()) as { session?: ShellSessionSummary };
-      if (data.session?.name) {
-        setShells((prev) => prev.map((shell) => shell.name === data.session!.name ? data.session! : shell));
-        return data.session;
+      const data = (await res.json()) as { tab?: { revision?: number } };
+      if (data.tab) {
+        const updated = { ...target, ...patch, revision: data.tab.revision ?? target.revision + 1 };
+        setShells((prev) => prev.map((shell) => shell.name === name ? updated : shell));
+        return updated;
       }
       return null;
     } catch (err: unknown) {
@@ -660,9 +682,9 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
         setSessionsError("Failed to attach session");
         return;
       }
-      const data = (await res.json()) as { terminalSessionId?: string };
-      if (data.terminalSessionId) {
-        ctx.addSessionTab(`${session.id} · ${mode}`, data.terminalSessionId);
+      const data = (await res.json()) as { terminalRef?: { workspaceId: string; tabId: string } };
+      if (data.terminalRef) {
+        ctx.addSessionTab(`${session.id} · ${mode}`, `${data.terminalRef.workspaceId}:${data.terminalRef.tabId}`);
       }
     } catch (err: unknown) {
       console.warn("Failed to attach workspace session:", err instanceof Error ? err.message : err);
@@ -722,8 +744,14 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
       if (!sessionId || openSessionIds.has(sessionId)) continue;
       openSessionIds.add(sessionId);
       if (!isCanonicalShellSessionId(sessionId)) continue;
+      const terminalRef = parseTerminalRefKey(sessionId);
+      if (!terminalRef) continue;
       syntheticShells.push({
         name: sessionId,
+        workspaceId: terminalRef.workspaceId,
+        tabId: terminalRef.tabId,
+        revision: 0,
+        workspaceRevision: 0,
         status: "active",
         placement: "active",
         attachedClients: 1,
@@ -826,7 +854,7 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
     if (existingTab) {
       ctx.setActiveTab(existingTab.id);
     } else {
-      ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name);
+      ctx.addSessionTab(shell.subtitle ?? formatShellDisplayName(shell.name), shell.name, shell.cwd ?? DEFAULT_CWD);
     }
     if (markSeen && shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq) {
       void patchShellUiState(shell.name, { lastSeenSeq: shell.latestSeq });
@@ -858,6 +886,9 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
     const fromIndex = shells.findIndex((shell) => shell.name === fromName);
     const toIndex = shells.findIndex((shell) => shell.name === toName);
     if (fromIndex < 0 || toIndex < 0) return;
+    const source = shells[fromIndex]!;
+    const target = shells[toIndex]!;
+    if (source.workspaceId !== target.workspaceId) return;
     const nextShells = [...shells];
     const [moved] = nextShells.splice(fromIndex, 1);
     if (!moved) return;
@@ -869,10 +900,14 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
       reorderSaveCountRef.current = Math.max(0, reorderSaveCountRef.current - 1);
     };
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/order`, {
+      const workspaceTabs = nextShells.filter((shell) => shell.workspaceId === source.workspaceId);
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${source.workspaceId}/tabs/order`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order: nextShells.map((shell) => shell.name) }),
+        body: JSON.stringify({
+          tabIds: workspaceTabs.map((shell) => shell.tabId),
+          baseRevision: source.workspaceRevision,
+        }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -881,16 +916,7 @@ export function LocalTerminalSidebar({ canvasZoom = 1 }: { canvasZoom?: number }
         finishReorderSave();
         return;
       }
-      const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
-      if (Array.isArray(data.sessions)) {
-        commitShellRefreshState(applyShellRefreshSuccess(
-          shellRefreshStateRef.current,
-          data.sessions,
-          true,
-        ));
-      } else {
-        await fetchShells({ silent: true });
-      }
+      await fetchShells({ silent: true });
       finishReorderSave();
     } catch (err: unknown) {
       console.warn("Failed to save shell order:", err instanceof Error ? err.message : err);

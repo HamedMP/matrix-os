@@ -315,21 +315,22 @@ describe("T133: Auth token middleware", () => {
     expect(result?.status).toBe(401);
   });
 
-  it("allows /ws/terminal with query token", async () => {
+  it("rejects query-token auth on the retired /ws/terminal route", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;
-    await mw(
+    const result = await mw(
       mockContext("/ws/terminal", undefined, "secret-token", "10.0.0.1"),
       async () => { nextCalled = true; },
     );
-    expect(nextCalled).toBe(true);
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
   });
 
-  it("allows /ws/terminal/session with query token", async () => {
+  it("allows /ws/terminal/tab with query token", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;
     await mw(
-      mockContext("/ws/terminal/session", undefined, "secret-token", "10.0.0.1"),
+      mockContext("/ws/terminal/tab", undefined, "secret-token", "10.0.0.1"),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(true);

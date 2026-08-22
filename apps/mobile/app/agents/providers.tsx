@@ -341,8 +341,8 @@ function ProviderSetupSection({
       await saveMobileShellState({
         ...saved,
         mode: "terminal",
-        lastActiveTerminalSessionId: sessionName,
-        terminalHandoffSessionId: sessionName,
+        lastActiveTerminalRef: sessionName,
+        terminalHandoffRef: sessionName,
         updatedAt: new Date().toISOString(),
       });
     } catch {

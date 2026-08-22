@@ -83,7 +83,8 @@ export const EventIdSchema = prefixedId("evt_");
 export const ApprovalIdSchema = prefixedId("appr_");
 export const RequestIdSchema = prefixedId("req_");
 export const CorrelationIdSchema = prefixedId("corr_");
-export const TerminalSessionIdSchema = referenceId(128);
+export const TerminalWorkspaceIdSchema = z.string().regex(/^tws_[0-9a-f]{32}$/, "Invalid terminal workspace id");
+export const TerminalTabIdSchema = z.string().regex(/^tt_[0-9a-f]{32}$/, "Invalid terminal tab id");
 export const ReviewIdSchema = referenceId(128);
 export const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/, "Invalid worktree id");
 export const CursorSchema = referenceId(160);
@@ -112,6 +113,97 @@ export function createShellSessionName(): string {
   return `${pickShellSessionWord(SHELL_SESSION_ADJECTIVES)}-${pickShellSessionWord(SHELL_SESSION_NOUNS)}`;
 }
 export const SafeDisplayStringSchema = boundedDisplayText(120, 512);
+
+export const TerminalRefSchema = z.object({
+  workspaceId: TerminalWorkspaceIdSchema,
+  tabId: TerminalTabIdSchema,
+}).strict();
+
+export type TerminalRef = z.infer<typeof TerminalRefSchema>;
+
+export const TerminalGridSizeSchema = z.object({
+  cols: z.number().int().min(20).max(500),
+  rows: z.number().int().min(5).max(200),
+}).strict();
+
+export const TerminalTabStatusSchema = z.enum([
+  "starting",
+  "running",
+  "idle",
+  "exited",
+  "failed",
+  "unavailable",
+]);
+
+export const TerminalTabSchema = z.object({
+  id: TerminalTabIdSchema,
+  workspaceId: TerminalWorkspaceIdSchema,
+  name: SafeDisplayStringSchema,
+  cwd: z.string()
+    .max(4096)
+    .refine((value) => !value.startsWith("/") && !value.includes("\0") && !value.includes("\\"), {
+      message: "Terminal cwd must be owner-home relative",
+    })
+    .refine((value) => value === "" || value.split("/").every((part) => part !== "" && part !== "." && part !== ".."), {
+      message: "Terminal cwd cannot contain traversal",
+    }),
+  status: TerminalTabStatusSchema,
+  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  order: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  agent: z.object({
+    providerId: ProviderIdSchema,
+    threadId: ThreadIdSchema.optional(),
+  }).strict().optional(),
+  git: z.object({
+    branch: z.string().min(1).max(255),
+    dirty: z.boolean(),
+  }).strict().optional(),
+  uiState: z.object({
+    placement: z.enum(["active", "background"]).default("active"),
+    lastSeenSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().default(null),
+    layoutName: SafeDisplayStringSchema.optional(),
+    legacyTabs: z.array(z.object({
+      name: SafeDisplayStringSchema.optional(),
+      focused: z.boolean().optional(),
+      createdAt: IsoTimestampSchema.optional(),
+    }).strict()).max(1_000).optional(),
+  }).strict().optional(),
+  exitCode: z.number().int().nullable().optional(),
+  createdAt: IsoTimestampSchema,
+  updatedAt: IsoTimestampSchema,
+}).strict();
+
+export type TerminalTab = z.infer<typeof TerminalTabSchema>;
+
+const TerminalWorkspaceBaseSchema = z.object({
+  id: TerminalWorkspaceIdSchema,
+  canonicalSize: TerminalGridSizeSchema,
+  status: z.enum(["maintenance", "starting", "running", "degraded", "stopped"]),
+  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  createdAt: IsoTimestampSchema,
+  updatedAt: IsoTimestampSchema,
+  tabs: z.array(TerminalTabSchema).max(10_000),
+});
+
+export const TerminalWorkspaceSchema = z.discriminatedUnion("scope", [
+  TerminalWorkspaceBaseSchema.extend({ scope: z.literal("main") }).strict(),
+  TerminalWorkspaceBaseSchema.extend({
+    scope: z.literal("project"),
+    projectId: ProjectIdSchema,
+  }).strict(),
+]).superRefine((workspace, context) => {
+  workspace.tabs.forEach((tab, index) => {
+    if (tab.workspaceId !== workspace.id) {
+      context.addIssue({
+        code: "custom",
+        path: ["tabs", index, "workspaceId"],
+        message: "Terminal tab must belong to its containing workspace",
+      });
+    }
+  });
+});
+
+export type TerminalWorkspace = z.infer<typeof TerminalWorkspaceSchema>;
 export const SafeAssistantPreviewSourceTextSchema = boundedText(16_000, 64 * 1024)
   .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });
 export const SafeAssistantPreviewTextSchema = boundedText(243, 1024)
@@ -524,7 +616,7 @@ export const CreateAgentThreadRequestSchema = z.object({
   prompt: boundedText(24_000, 96 * 1024),
   projectId: ProjectIdSchema.optional(),
   taskId: TaskIdSchema.optional(),
-  terminalSessionId: TerminalSessionIdSchema.optional(),
+  terminalRef: TerminalRefSchema.optional(),
   worktreeId: WorktreeIdSchema.optional(),
   mode: AgentModeSchema.optional(),
   approvalPolicy: ApprovalPolicySchema.optional(),
@@ -581,7 +673,7 @@ export const AgentThreadComposerDraftSchema = z.object({
     .default(""),
   projectId: ProjectIdSchema.optional(),
   taskId: TaskIdSchema.optional(),
-  terminalSessionId: TerminalSessionIdSchema.optional(),
+  terminalRef: TerminalRefSchema.optional(),
   worktreeId: WorktreeIdSchema.optional(),
   mode: AgentModeSchema.optional(),
   approvalPolicy: ApprovalPolicySchema.optional(),
@@ -619,7 +711,7 @@ export const AgentThreadSummarySchema = z.object({
   attention: AgentAttentionSchema.default("none"),
   projectId: ProjectIdSchema.optional(),
   taskId: TaskIdSchema.optional(),
-  terminalSessionId: TerminalSessionIdSchema.optional(),
+  terminalRef: TerminalRefSchema.optional(),
   eventCursor: CursorSchema.optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
@@ -847,7 +939,7 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("terminal.bound"),
-    terminalSessionId: TerminalSessionIdSchema,
+    terminalRef: TerminalRefSchema,
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("thread.error"),
@@ -873,92 +965,93 @@ export const AgentThreadSnapshotSchema = z.object({
 
 export type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 
-export const TerminalStatusSchema = z.enum(["starting", "running", "idle", "exited", "stale", "unavailable"]);
-
-export const TerminalSessionSummarySchema = z.object({
-  id: TerminalSessionIdSchema,
-  name: SafeDisplayStringSchema,
-  status: TerminalStatusSchema,
-  attachable: z.boolean(),
-  cwdLabel: SafeDisplayStringSchema.optional(),
-  createdAt: IsoTimestampSchema,
-  updatedAt: IsoTimestampSchema,
-}).strict();
-
-export type TerminalSessionSummary = z.infer<typeof TerminalSessionSummarySchema>;
-
 export const TerminalClientFrameSchema = z.discriminatedUnion("type", [
   z.object({
-    type: z.literal("attach"),
-    sessionId: TerminalSessionIdSchema,
-    fromSeq: z.number().int().min(0).optional(),
-    cols: z.number().int().min(20).max(500).optional(),
-    rows: z.number().int().min(5).max(200).optional(),
-  }).strict(),
-  z.object({
     type: z.literal("input"),
+    terminalRef: TerminalRefSchema,
     data: z.string().min(1).max(64 * 1024),
   }).strict(),
   z.object({
     type: z.literal("resize"),
-    cols: z.number().int().min(20).max(500),
-    rows: z.number().int().min(5).max(200),
+    terminalRef: TerminalRefSchema,
+    size: TerminalGridSizeSchema,
+    mode: z.enum(["hard", "soft"]),
   }).strict(),
   z.object({
     type: z.literal("detach"),
+    terminalRef: TerminalRefSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("ping"),
+    terminalRef: TerminalRefSchema,
   }).strict(),
 ]);
 
+const TerminalServerEventBaseSchema = z.object({
+  terminalRef: TerminalRefSchema,
+  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+});
+
 export const TerminalServerFrameSchema = z.discriminatedUnion("type", [
-  z.object({
+  TerminalServerEventBaseSchema.extend({
     type: z.literal("attached"),
-    sessionId: TerminalSessionIdSchema.optional(),
-    session: TerminalSessionIdSchema.optional(),
-    state: z.enum(["running", "exited"]).optional(),
-    exitCode: z.number().int().nullable().optional(),
-    fromSeq: z.number().int().min(0).optional(),
-    nextSeq: z.number().int().min(0).optional(),
-  }).strict().superRefine((value, ctx) => {
-    if (!value.sessionId && !value.session) {
-      ctx.addIssue({ code: "custom", message: "Attached frame requires a session identifier", path: ["sessionId"] });
-    }
-  }),
-  z.object({
+    canonicalSize: TerminalGridSizeSchema,
+    nextSeq: z.number().int().min(0),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("snapshot"),
+    canonicalSize: TerminalGridSizeSchema,
+    seq: z.number().int().min(0),
+    ansi: z.string().max(5 * 1024 * 1024),
+    viewport: z.object({
+      top: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      rows: z.number().int().min(1).max(200),
+    }).strict(),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({
     type: z.literal("output"),
-    seq: z.number().int().min(0).optional(),
+    seq: z.number().int().min(0),
     data: z.string().min(1).max(64 * 1024),
   }).strict(),
-  z.object({
+  TerminalServerEventBaseSchema.extend({
     type: z.literal("replay-start"),
-    fromSeq: z.number().int().min(0).optional(),
+    fromSeq: z.number().int().min(0),
   }).strict(),
-  z.object({
+  TerminalServerEventBaseSchema.extend({
     type: z.literal("replay-evicted"),
-    fromSeq: z.number().int().min(0).optional(),
+    fromSeq: z.number().int().min(0),
     nextSeq: z.number().int().min(0),
   }).strict(),
-  z.object({
+  TerminalServerEventBaseSchema.extend({
     type: z.literal("replay-gap"),
-    fromSeq: z.number().int().min(0).optional(),
+    fromSeq: z.number().int().min(0),
     nextSeq: z.number().int().min(0),
   }).strict(),
-  z.object({
+  TerminalServerEventBaseSchema.extend({
     type: z.literal("replay-end"),
-    nextSeq: z.number().int().min(0).optional(),
+    nextSeq: z.number().int().min(0),
     toSeq: z.number().int().min(0).nullable().optional(),
   }).strict(),
-  z.object({
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("canonical-size"),
+    canonicalSize: TerminalGridSizeSchema,
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({
+    type: z.literal("pong"),
+  }).strict(),
+  TerminalServerEventBaseSchema.extend({
     type: z.literal("exit"),
-    exitCode: z.number().int().nullable().optional(),
-    code: z.number().int().nullable().optional(),
+    exitCode: z.number().int().nullable(),
   }).strict(),
   z.object({
     type: z.literal("error"),
+    terminalRef: TerminalRefSchema.optional(),
     code: z.string().min(1).max(80).regex(SAFE_SLUG),
     message: boundedSafeErrorText(180, 720),
   }).strict(),
   z.object({
     type: z.literal("safe-error"),
+    terminalRef: TerminalRefSchema.optional(),
     error: SafeClientErrorSchema,
   }).strict(),
 ]);
@@ -1102,7 +1195,7 @@ export const RuntimeSummarySchema = z.object({
     hasMore: false,
     limit: 20,
   }),
-  terminalSessions: boundedListSchema(TerminalSessionSummarySchema, 50),
+  terminalWorkspaces: boundedListSchema(TerminalWorkspaceSchema, 100),
   previewSessions: boundedListSchema(PreviewSessionSummarySchema, 50).default({
     items: [],
     hasMore: false,
@@ -1197,7 +1290,7 @@ export function buildCreateAgentThreadRequestFromComposer(input: {
     prompt: draft.prompt,
     projectId: draft.projectId,
     taskId: draft.taskId,
-    terminalSessionId: draft.terminalSessionId,
+    terminalRef: draft.terminalRef,
     worktreeId: draft.worktreeId,
     mode,
     approvalPolicy: draft.approvalPolicy ?? "on_request",

@@ -17,7 +17,13 @@ function record() {
     scopeRef: null,
     revision: 1,
     schemaVersion: 1,
-    nodes: [{ id: "node_terminal", type: "terminal", sourceRef: { kind: "terminal_session", id: "550e8400-e29b-41d4-a716-446655440000" }, displayState: "normal", metadata: {} }],
+    nodes: [{ id: "node_terminal", type: "terminal", sourceRef: {
+      kind: "terminal_tab",
+      terminalRef: {
+        workspaceId: "tws_00000000000000000000000000000001",
+        tabId: "tt_00000000000000000000000000000001",
+      },
+    }, displayState: "normal", metadata: {} }],
     edges: [],
     viewStates: [],
     displayOptions: {},
@@ -40,7 +46,7 @@ describe("canvas recovery", () => {
   });
 
   it("marks missing linked references recoverable without deleting nodes", () => {
-    const reconciled = reconcileCanvasRecord(record(), { terminalSessionIds: new Set() });
+    const reconciled = reconcileCanvasRecord(record(), { terminalRefs: new Set() });
     expect(reconciled.nodes).toHaveLength(1);
     expect((reconciled.nodes[0] as any).displayState).toBe("recoverable");
   });

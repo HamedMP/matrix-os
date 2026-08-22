@@ -32,7 +32,7 @@ import {
   SafeClientErrorSchema,
   TerminalClientFrameSchema,
   TerminalServerFrameSchema,
-  TerminalSessionSummarySchema,
+  TerminalWorkspaceSchema,
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
   UserInputRequestSchema,
@@ -41,6 +41,30 @@ import {
 } from "../../packages/contracts/src/index.js";
 
 const now = "2026-07-06T12:00:00.000Z";
+const terminalRef = {
+  workspaceId: "tws_00000000000000000000000000000001",
+  tabId: "tt_00000000000000000000000000000001",
+} as const;
+const terminalWorkspace = {
+  id: terminalRef.workspaceId,
+  scope: "main" as const,
+  canonicalSize: { cols: 120, rows: 40 },
+  status: "running" as const,
+  revision: 1,
+  createdAt: now,
+  updatedAt: now,
+  tabs: [{
+    id: terminalRef.tabId,
+    workspaceId: terminalRef.workspaceId,
+    name: "main",
+    cwd: "",
+    status: "running" as const,
+    revision: 1,
+    order: 0,
+    createdAt: now,
+    updatedAt: now,
+  }],
+};
 
 describe("coding agent contracts", () => {
   it("rejects unsafe identifiers and unsafe client error text", () => {
@@ -128,17 +152,8 @@ describe("coding agent contracts", () => {
         hasMore: false,
         limit: 20,
       },
-      terminalSessions: {
-        items: [
-          {
-            id: "term_main",
-            name: "main",
-            status: "running",
-            attachable: true,
-            createdAt: now,
-            updatedAt: now,
-          },
-        ],
+      terminalWorkspaces: {
+        items: [terminalWorkspace],
         hasMore: false,
         limit: 20,
       },
@@ -156,7 +171,7 @@ describe("coding agent contracts", () => {
       id: "thread_attention",
       attention: "approval_required",
     });
-    expect(summary.terminalSessions.items[0]?.attachable).toBe(true);
+    expect(summary.terminalWorkspaces.items[0]?.tabs[0]?.id).toBe(terminalRef.tabId);
     expect(() =>
       RuntimeSummarySchema.parse({
         ...summary,
@@ -294,21 +309,15 @@ describe("coding agent contracts", () => {
       }),
     ).toThrow();
 
-    expect(TerminalClientFrameSchema.parse({ type: "resize", cols: 120, rows: 40 })).toEqual({
+    expect(TerminalClientFrameSchema.parse({ type: "resize", terminalRef, mode: "hard", size: { cols: 120, rows: 40 } })).toEqual({
       type: "resize",
-      cols: 120,
-      rows: 40,
+      terminalRef,
+      mode: "hard",
+      size: { cols: 120, rows: 40 },
     });
-    expect(() => TerminalClientFrameSchema.parse({ type: "resize", cols: 2000, rows: 40 })).toThrow();
+    expect(() => TerminalClientFrameSchema.parse({ type: "resize", terminalRef, mode: "hard", size: { cols: 2000, rows: 40 } })).toThrow();
 
-    expect(TerminalSessionSummarySchema.parse({
-      id: "term_main",
-      name: "main",
-      status: "running",
-      attachable: true,
-      createdAt: now,
-      updatedAt: now,
-    }).status).toBe("running");
+    expect(TerminalWorkspaceSchema.parse(terminalWorkspace).status).toBe("running");
   });
 
   it("validates coding-agent notification preferences without accepting extra payload data", () => {
@@ -876,18 +885,14 @@ describe("coding agent contracts", () => {
 
     expect(TerminalServerFrameSchema.parse({
       type: "attached",
-      session: "main",
-      state: "running",
-      fromSeq: 0,
+      terminalRef,
+      revision: 1,
+      canonicalSize: { cols: 120, rows: 40 },
+      nextSeq: 0,
     }).type).toBe("attached");
-    expect(TerminalServerFrameSchema.parse({
-      type: "attached",
-      sessionId: "550e8400-e29b-41d4-a716-446655440000",
-      state: "running",
-    }).type).toBe("attached");
-    expect(TerminalServerFrameSchema.parse({ type: "replay-start", fromSeq: 0 }).type).toBe("replay-start");
-    expect(TerminalServerFrameSchema.parse({ type: "replay-end", toSeq: null }).type).toBe("replay-end");
-    expect(TerminalServerFrameSchema.parse({ type: "replay-evicted", fromSeq: 0, nextSeq: 10 }).type).toBe("replay-evicted");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-start", terminalRef, revision: 1, fromSeq: 0 }).type).toBe("replay-start");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-end", terminalRef, revision: 1, nextSeq: 10, toSeq: null }).type).toBe("replay-end");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-evicted", terminalRef, revision: 1, fromSeq: 0, nextSeq: 10 }).type).toBe("replay-evicted");
     expect(TerminalServerFrameSchema.parse({
       type: "error",
       code: "invalid_message",
@@ -931,7 +936,7 @@ describe("coding agent contracts", () => {
       ],
       projects: { items: [], hasMore: false, limit: 20 },
       activeThreads: { items: [], hasMore: false, limit: 20 },
-      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       recentActivity: { items: [], hasMore: false, limit: 30 },
       limits: {
         maxPromptBytes: 24000,
@@ -944,7 +949,7 @@ describe("coding agent contracts", () => {
     const draft = AgentThreadComposerDraftSchema.parse({
       prompt: "  keep exact prompt whitespace\n",
       projectId: "repo-main",
-      terminalSessionId: "main",
+      terminalRef,
       approvalPolicy: "on_request",
       sandboxMode: "workspace_write",
     });
@@ -967,7 +972,7 @@ describe("coding agent contracts", () => {
         providerId: "codex",
         prompt: "  keep exact prompt whitespace\n",
         projectId: "repo-main",
-        terminalSessionId: "main",
+        terminalRef,
         mode: "review",
         approvalPolicy: "on_request",
         sandboxMode: "workspace_write",
@@ -997,7 +1002,7 @@ describe("coding agent contracts", () => {
       }],
       projects: { items: [], hasMore: false, limit: 20 },
       activeThreads: { items: [], hasMore: false, limit: 20 },
-      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       recentActivity: { items: [], hasMore: false, limit: 30 },
       limits: {
         maxPromptBytes: 24000,
@@ -1054,7 +1059,7 @@ describe("coding agent contracts", () => {
       ],
       projects: { items: [], hasMore: false, limit: 20 },
       activeThreads: { items: [], hasMore: false, limit: 20 },
-      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
       recentActivity: { items: [], hasMore: false, limit: 30 },
       limits: {
         maxPromptBytes: 24000,

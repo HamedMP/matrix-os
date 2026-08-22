@@ -556,7 +556,7 @@ describe("AgentConversationView transcript", () => {
             eventId: "evt_terminal_1",
             threadId: "thread_alpha",
             occurredAt: "2026-07-15T00:00:10.000Z",
-            terminalSessionId: "term_1",
+            terminalRef: { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" },
           } as AgentThreadEvent,
           {
             type: "thread.completed",

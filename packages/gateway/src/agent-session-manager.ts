@@ -5,7 +5,9 @@ import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   AgentAttachmentSchema,
+  TerminalRefSchema,
   type AgentAttachment,
+  type TerminalRef,
 } from "@matrix-os/contracts";
 import {
   SupportedAgentSchema,
@@ -18,7 +20,7 @@ import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import { createProjectRegistry } from "./project-registry.js";
 import type { createAgentLauncher } from "./agent-launcher.js";
 import type { createWorktreeManager, WorktreeRecord } from "./worktree-manager.js";
-import type { createZellijRuntime } from "./zellij-runtime.js";
+import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { codexProviderEventPath } from "./coding-agents/codex-event-bridge.js";
 
 export type SessionKind = "shell" | "agent";
@@ -41,7 +43,7 @@ export interface WorkspaceSession {
     tmuxSession?: string;
     fallbackReason?: string;
   };
-  terminalSessionId: string;
+  terminalRef: TerminalRef;
   transcriptPath: string;
   attachedClients: number;
   writeMode: "owner" | "takeover" | "closed";
@@ -62,10 +64,10 @@ type WorktreeManager = Pick<
   "listWorktrees" | "acquireLease" | "releaseLease"
 >;
 type AgentLauncher = Pick<ReturnType<typeof createAgentLauncher>, "buildLaunch">;
-type ZellijRuntime = Pick<
-  ReturnType<typeof createZellijRuntime>,
-  "start" | "attachCommand" | "observeCommand" | "kill" | "health"
-> & { isAlive?: (sessionId: string) => Promise<boolean> };
+type TerminalRuntimeClient = Pick<
+  TerminalRuntimeSocketClient,
+  "ensureWorkspace" | "createTab" | "terminateTab" | "writeInput" | "listWorkspaces"
+>;
 
 type Failure = {
   ok: false;
@@ -198,13 +200,8 @@ function isActive(session: WorkspaceSession): boolean {
   return ["starting", "running", "idle", "waiting"].includes(session.runtime.status);
 }
 
-function decorateSession(session: WorkspaceSession, runtime: ZellijRuntime): WorkspaceSessionView {
-  if (session.runtime.type !== "zellij") return session;
-  return {
-    ...session,
-    nativeAttachCommand: runtime.attachCommand(session.id),
-    observeCommand: runtime.observeCommand(session.id),
-  };
+function decorateSession(session: WorkspaceSession): WorkspaceSessionView {
+  return session;
 }
 
 function sanitizeStartupInput(input: unknown):
@@ -275,8 +272,7 @@ export function createAgentSessionManager(options: {
   homePath: string;
   worktreeManager: WorktreeManager;
   agentLauncher: AgentLauncher;
-  zellijRuntime: ZellijRuntime;
-  inputWriter?: (sessionId: string, input: string, signal?: AbortSignal) => Promise<void>;
+  terminalRuntime: TerminalRuntimeClient;
   now?: () => string;
   idGenerator?: () => string;
 }) {
@@ -296,12 +292,14 @@ export function createAgentSessionManager(options: {
       }
 
       let cwd = homePath;
+      let projectId: string | undefined;
       let worktree: WorktreeRecord | null = null;
       let leaseAcquired = false;
       if (request.projectSlug) {
         const project = await readProject(homePath, request.projectSlug);
         if (!project) return failure(404, "not_found", "Project was not found");
         cwd = project.localPath;
+        projectId = project.id;
       }
       if (request.projectSlug && request.worktreeId) {
         worktree = await resolveWorktree(options.worktreeManager, request.projectSlug, request.worktreeId);
@@ -348,9 +346,22 @@ export function createAgentSessionManager(options: {
         return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
       }
 
-      let runtimeStart;
+      let terminalRef: TerminalRef | undefined;
       try {
-        runtimeStart = await options.zellijRuntime.start({ sessionId, launch });
+        const workspace = await options.terminalRuntime.ensureWorkspace(projectId ? { projectId } : {});
+        const command = [
+          "env",
+          ...Object.entries(launch.env).map(([key, value]) => `${key}=${value}`),
+          launch.command,
+          ...launch.args,
+        ];
+        const tab = await options.terminalRuntime.createTab(workspace.id, {
+          name: request.agent ?? "shell",
+          cwd: launch.cwd,
+          command,
+          ...(request.agent ? { agent: { providerId: request.agent } } : {}),
+        });
+        terminalRef = TerminalRefSchema.parse({ workspaceId: workspace.id, tabId: tab.id });
       } catch (err: unknown) {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Runtime start failed:", err.message);
@@ -371,11 +382,9 @@ export function createAgentSessionManager(options: {
         agent: request.agent,
         runtime: {
           type: "zellij",
-          status: runtimeStart.status,
-          zellijSession: runtimeStart.sessionName,
-          zellijLayoutPath: runtimeStart.layoutPath,
+          status: "running",
         },
-        terminalSessionId: `term_${sessionId}`,
+        terminalRef: terminalRef!,
         transcriptPath: join(homePath, "system", "session-output", `${sessionId}.jsonl`),
         attachedClients: 0,
         writeMode: "owner",
@@ -387,7 +396,7 @@ export function createAgentSessionManager(options: {
         await writeSession(homePath, session);
       } catch (err: unknown) {
         console.warn("[agent-session-manager] Session write failed after runtime start:", err instanceof Error ? err.message : String(err));
-        await options.zellijRuntime.kill(sessionId).catch((killErr: unknown) => {
+        await options.terminalRuntime.terminateTab(terminalRef!).catch((killErr: unknown) => {
           console.warn("[agent-session-manager] Runtime cleanup after session write failure failed:", killErr instanceof Error ? killErr.message : String(killErr));
         });
         if (leaseAcquired) {
@@ -395,7 +404,7 @@ export function createAgentSessionManager(options: {
         }
         return failure(500, "session_persist_failed", "Session could not be created");
       }
-      return { ok: true, status: 201, session: decorateSession(session, options.zellijRuntime) };
+      return { ok: true, status: 201, session: decorateSession(session) };
     },
 
     async getSession(sessionId: string): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
@@ -404,7 +413,7 @@ export function createAgentSessionManager(options: {
       }
       const session = await readSession(homePath, sessionId);
       if (!session) return failure(404, "not_found", "Session was not found");
-      return { ok: true, session: decorateSession(session, options.zellijRuntime) };
+      return { ok: true, session: decorateSession(session) };
     },
 
     async listSessions(input: unknown = {}): Promise<
@@ -423,7 +432,7 @@ export function createAgentSessionManager(options: {
         .filter((session) => !query.status || session.runtime.status === query.status)
         .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))
         .slice(0, limit)
-        .map((session) => decorateSession(session, options.zellijRuntime));
+        .map((session) => decorateSession(session));
       return { ok: true, sessions, nextCursor: null };
     },
 
@@ -477,11 +486,9 @@ export function createAgentSessionManager(options: {
       if (session.writeMode === "closed" || session.runtime.status === "exited" || session.runtime.status === "failed") {
         return failure(409, "session_closed", "Session is closed");
       }
-      if (!options.inputWriter) {
-        return failure(503, "runtime_unavailable", "Session runtime is unavailable");
-      }
       try {
-        await options.inputWriter(sessionId, input, signal);
+        signal?.throwIfAborted();
+        await options.terminalRuntime.writeInput(session.terminalRef, input);
       } catch (err: unknown) {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Failed to send session input:", err.message);
@@ -490,7 +497,7 @@ export function createAgentSessionManager(options: {
       }
       const updated = { ...session, lastActivityAt: nowIso(options.now) };
       await writeSession(homePath, updated);
-      return { ok: true, session: decorateSession(updated, options.zellijRuntime) };
+      return { ok: true, session: decorateSession(updated) };
     },
 
     async killSession(sessionId: string): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
@@ -501,7 +508,7 @@ export function createAgentSessionManager(options: {
       if (!session) return failure(404, "not_found", "Session was not found");
       let killFailed = false;
       try {
-        await options.zellijRuntime.kill(sessionId);
+        await options.terminalRuntime.terminateTab(session.terminalRef);
       } catch (err: unknown) {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Runtime kill failed:", err.message);
@@ -526,7 +533,7 @@ export function createAgentSessionManager(options: {
       await writeSession(homePath, updated);
       if (!releaseOk) return failure(500, "lease_release_failed", "Session stopped but the worktree lease could not be released");
       if (killFailed) return failure(503, "runtime_unavailable", "Session runtime is unavailable");
-      return { ok: true, session: decorateSession(updated, options.zellijRuntime) };
+      return { ok: true, session: decorateSession(updated) };
     },
 
     async reconcileStartup(): Promise<AgentSessionStartupReconciliation> {
@@ -534,33 +541,18 @@ export function createAgentSessionManager(options: {
       let degraded = 0;
       let releasedLeases = 0;
       const stoppedSessions: WorkspaceSessionView[] = [];
+      let liveWorkspaces;
+      try {
+        liveWorkspaces = await options.terminalRuntime.listWorkspaces();
+      } catch (error) {
+        console.warn("[agent-session-manager] Terminal runtime reconciliation failed:", error instanceof Error ? error.message : String(error));
+        liveWorkspaces = null;
+      }
       for (const session of sessions) {
         if (!isActive(session) || session.runtime.type !== "zellij") continue;
-        let health = await options.zellijRuntime.health();
-        if (health.status !== "degraded" && options.zellijRuntime.isAlive) {
-          try {
-            if (!await options.zellijRuntime.isAlive(session.id)) {
-              health = {
-                available: false,
-                status: "degraded",
-                fallbackReason: "runtime_not_running",
-                version: health.version,
-              };
-            }
-          } catch (err: unknown) {
-            console.warn(
-              "[agent-session-manager] Runtime liveness check failed:",
-              err instanceof Error ? err.message : String(err),
-            );
-            health = {
-              available: false,
-              status: "degraded",
-              fallbackReason: "runtime_liveness_unavailable",
-              version: health.version,
-            };
-          }
-        }
-        if (health.status !== "degraded") continue;
+        const liveTab = liveWorkspaces?.find((workspace) => workspace.id === session.terminalRef.workspaceId)
+          ?.tabs.find((tab) => tab.id === session.terminalRef.tabId);
+        if (liveTab && liveTab.status !== "exited" && liveTab.status !== "failed") continue;
         degraded += 1;
         if (session.projectSlug && session.worktreeId && await releaseSessionLease(options.worktreeManager, session)) releasedLeases += 1;
         const stoppedSession: WorkspaceSession = {
@@ -568,13 +560,13 @@ export function createAgentSessionManager(options: {
           runtime: {
             ...session.runtime,
             status: "degraded",
-            fallbackReason: health.fallbackReason ?? "runtime_degraded",
+            fallbackReason: "runtime_degraded",
           },
           writeMode: "closed",
           lastActivityAt: nowIso(options.now),
         };
         await writeSession(homePath, stoppedSession);
-        stoppedSessions.push(decorateSession(stoppedSession, options.zellijRuntime));
+        stoppedSessions.push(decorateSession(stoppedSession));
       }
       return { checked: sessions.length, degraded, releasedLeases, stoppedSessions };
     },
