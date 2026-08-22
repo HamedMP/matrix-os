@@ -54,6 +54,7 @@ describe("ProviderReadinessNotice", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -210,6 +211,64 @@ describe("ProviderReadinessNotice", () => {
     ]);
   });
 
+  it("rechecks provider readiness after opening a login terminal until the provider is ready", async () => {
+    vi.useFakeTimers();
+    const connectClaudeAction = {
+      id: "claude_connect",
+      kind: "foreground_terminal" as const,
+      label: "Connect Claude",
+      command: "claude",
+    };
+    const claudeProvider: AgentProviderSummary = {
+      ...provider,
+      id: "claude",
+      kind: "claude",
+      displayName: "Claude",
+      availability: "auth_required",
+      installStatus: "installed",
+      authStatus: "missing",
+      setupActions: [connectClaudeAction],
+    };
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const blockedReadiness = readiness({
+      state: "auth_required",
+      title: "Connect Claude to continue",
+      description: "Sign in to Claude before sending a message.",
+      action: { kind: "setup", action: connectClaudeAction },
+    });
+    const { rerender } = render(
+      <ProviderReadinessNotice
+        readiness={blockedReadiness}
+        providers={[claudeProvider]}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ProviderReadinessNotice
+        readiness={readiness({
+          state: "ready",
+          blocked: false,
+          title: "",
+          description: "",
+          action: null,
+        })}
+        providers={[{ ...claudeProvider, availability: "available", authStatus: "authenticated" }]}
+        onRefresh={onRefresh}
+      />,
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
   it("executes the current command in a fresh setup session on deliberate retry", async () => {
     render(
       <ProviderReadinessNotice
@@ -221,7 +280,9 @@ describe("ProviderReadinessNotice", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Install Codex" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: "Install Codex" }));
+    const retryButton = screen.getByRole("button", { name: "Install Codex" });
+    await waitFor(() => expect((retryButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(retryButton);
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
 
     const firstRequest = api.post.mock.calls[0]?.[1];

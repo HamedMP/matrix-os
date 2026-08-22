@@ -1,6 +1,6 @@
 import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
@@ -13,6 +13,8 @@ import {
 
 const SETUP_ERROR = "Could not open provider setup. Open Providers settings to continue.";
 const REFRESH_ERROR = "Provider status is unavailable right now.";
+const PROVIDER_RECHECK_INTERVAL_MS = 6_000;
+const MAX_PROVIDER_RECHECK_ATTEMPTS = 50;
 
 export function ProviderReadinessNotice(props: {
   readiness: ProviderReadinessPresentation;
@@ -24,6 +26,46 @@ export function ProviderReadinessNotice(props: {
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
   const [pendingAction, setPendingAction] = useState<"primary" | "refresh" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoRecheck, setAutoRecheck] = useState(false);
+  const recheckAttemptsRef = useRef(0);
+  const refreshRef = useRef(props.onRefresh);
+
+  useEffect(() => {
+    refreshRef.current = props.onRefresh;
+  }, [props.onRefresh]);
+
+  useEffect(() => {
+    if (!props.readiness.blocked || props.readiness.state === "ready") {
+      recheckAttemptsRef.current = 0;
+      if (autoRecheck) setAutoRecheck(false);
+      return;
+    }
+    if (!autoRecheck) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+    const schedule = () => {
+      if (cancelled || recheckAttemptsRef.current >= MAX_PROVIDER_RECHECK_ATTEMPTS) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        if (cancelled) return;
+        recheckAttemptsRef.current += 1;
+        void refreshRef.current()
+          .catch((err: unknown) => {
+            console.warn(
+              "[provider-readiness] Automatic status refresh failed:",
+              err instanceof Error ? err.name : typeof err,
+            );
+          })
+          .finally(() => schedule());
+      }, PROVIDER_RECHECK_INTERVAL_MS);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [autoRecheck, props.readiness.blocked, props.readiness.state]);
 
   if (!props.readiness.blocked || props.readiness.state === "ready") return null;
 
@@ -53,7 +95,12 @@ export function ProviderReadinessNotice(props: {
             requestSettingsSection,
           })
         : false;
-      if (!opened) setError(SETUP_ERROR);
+      if (!opened) {
+        setError(SETUP_ERROR);
+      } else {
+        recheckAttemptsRef.current = 0;
+        setAutoRecheck(true);
+      }
     } catch (err: unknown) {
       console.error(
         "[provider-readiness] Recovery action failed:",
