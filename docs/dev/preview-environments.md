@@ -163,6 +163,11 @@ The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
    its signing secret as `stripe-webhook-secret-test`.
 4. Grant `matrix-platform-preview-runner` `secretAccessor` on the new secrets.
 
+The GitHub `Preview` environment may set `MATRIX_CARD_TRIALS_ENABLED` to
+`true` or `false`; it defaults to `false`. Keep it disabled for the immediate-
+payment regression pass, enable it only for trial scenarios, then return it to
+`false` after validation. Each change requires redeploying the preview revision.
+
 ## Centralized logs
 
 Everything funnels into the ops-VPS Loki and is queryable one way:
