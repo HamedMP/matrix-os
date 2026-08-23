@@ -109,7 +109,10 @@ secrets, the Clerk keys, the R2 bundles credentials (required by
 `CUSTOMER_VPS_ENABLED=true` boot validation), and **Stripe TEST-mode** secrets.
 Production `CLOUD_RUN_SERVICE`, its runtime SA, its database, and live Stripe
 keys are never referenced. No Hetzner token is mounted, so a preview platform
-cannot provision real VPSes. On PR close the workflow removes the `pr-<N>` tag
+cannot provision real VPSes. Provider-disabled revisions marked
+`PLATFORM_PREVIEW=true` therefore skip the production primary-sync-storage
+startup invariant; mounting a Hetzner token immediately restores that fail-closed
+canonical EU R2 check. On PR close the workflow removes the `pr-<N>` tag
 and deletes its revisions, mirroring the VPS teardown model.
 
 **Browser-reachable onboarding/billing.** The service runs with public ingress
