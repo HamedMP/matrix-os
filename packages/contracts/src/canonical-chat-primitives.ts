@@ -4,7 +4,7 @@ const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 const UNSAFE_CLIENT_LABEL =
   /postgres(?:ql)?:\/\/|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+|sk-[A-Za-z0-9_-]+|password\s*[=:]|token\s*[=:]/i;
 const UNSAFE_CLIENT_ERROR =
-  /postgres|sqlite|mysql|openai|anthropic|twilio|pipedream|constraint|stack trace|zod|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+|sk-[A-Za-z0-9_-]+|password\s*[=:]|token\s*[=:]/i;
+  /postgres|sqlite|mysql|openai|anthropic|twilio|pipedream|constraint|stack trace|zod|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+|authorization\s*[=:]\s*(?:basic|bearer)|\bbasic\s+[A-Za-z0-9+/=]{8,}|(?:aws_)?secret(?:_access_key)?\s*[=:]|api[_-]?key\s*[=:]|client[_-]?secret\s*[=:]|access[_-]?token\s*[=:]|password\s*[=:]|token\s*[=:]|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]+/i;
 const textEncoder = new TextEncoder();
 
 export function canonicalReferenceId(max = 160) {

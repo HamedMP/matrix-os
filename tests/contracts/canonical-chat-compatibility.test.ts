@@ -297,6 +297,26 @@ describe("canonical Chat compatibility mappers", () => {
       text: "Tool output is unavailable.",
       truncated: true,
     });
+    for (const unsafeText of [
+      "AWS_SECRET_ACCESS_KEY=supersecret",
+      "api_key=supersecret",
+      "Authorization: Basic dXNlcjpwYXNz",
+      "ghp_123456789012345678901234567890123456",
+    ]) {
+      const unsafeCredential = JSON.parse(JSON.stringify(thread));
+      unsafeCredential.events.items[5].text = unsafeText;
+      const credentialProjection = mapAgentThreadToCanonicalChatProjection({
+        chatId: "chat_two_turns",
+        ownerScope: { type: "personal", ownerId: "user_demo" },
+        instanceId: "codex_primary",
+        model: "gpt-5.6-sol",
+        driverKind: "codex",
+        turnId: "cturn_fallback",
+        runId: "run_fallback",
+        snapshot: unsafeCredential,
+      });
+      expect(JSON.stringify(credentialProjection)).not.toContain(unsafeText);
+    }
   });
 
   it("keeps an empty queued coding thread as an unbound draft", () => {

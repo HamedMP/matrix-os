@@ -162,6 +162,28 @@ describe("canonical Chat contracts", () => {
       ...activity,
       providerPayload: { stderr: "secret" },
     }).success).toBe(false);
+    for (const unsafeText of [
+      "AWS_SECRET_ACCESS_KEY=supersecret",
+      "api_key=supersecret",
+      "Authorization: Basic dXNlcjpwYXNz",
+      "ghp_123456789012345678901234567890123456",
+    ]) {
+      expect(CanonicalChatRunActivitySchema.safeParse({
+        id: "activity_unsafe_credential",
+        chatId: "chat_demo",
+        runId: "run_demo",
+        occurredAt: now,
+        type: "tool.output",
+        toolCallId: "tool_1",
+        text: unsafeText,
+        truncated: false,
+      }).success).toBe(false);
+      expect(CanonicalChatSafeErrorSchema.safeParse({
+        code: "run_failed",
+        safeMessage: unsafeText,
+        retryable: false,
+      }).success).toBe(false);
+    }
     expect(CanonicalChatRunActivitySchema.safeParse({
       id: "activity_unsafe_output",
       chatId: "chat_demo",
@@ -186,6 +208,13 @@ describe("canonical Chat contracts", () => {
         text: "Postgres failed at /home/matrix/private",
         truncated: false,
       }],
+    }).success).toBe(false);
+    expect(CanonicalChatMessageSchema.safeParse({
+      ...message,
+      id: "msg_pending_user",
+      role: "user",
+      state: "pending",
+      runId: undefined,
     }).success).toBe(false);
     expect(CanonicalChatSafeErrorSchema.safeParse({
       code: "run_failed",

@@ -198,6 +198,21 @@ export const CanonicalChatSnapshotSchema = z.object({
     }
   }
   const binding = snapshot.chat.providerBinding;
+  if (binding !== undefined) {
+    const bindingTurn = snapshot.turns.find((turn) => turn.id === binding.lockedAtTurnId);
+    if (bindingTurn === undefined) {
+      ctx.addIssue({ code: "custom", path: ["chat", "providerBinding", "lockedAtTurnId"], message: "Provider binding Turn is not in the snapshot" });
+    } else {
+      const firstTurn = [...snapshot.turns].sort((left, right) => (
+        left.baseMessageSeq - right.baseMessageSeq
+        || left.createdAt.localeCompare(right.createdAt)
+        || left.id.localeCompare(right.id)
+      ))[0];
+      if (firstTurn?.id !== bindingTurn.id) {
+        ctx.addIssue({ code: "custom", path: ["chat", "providerBinding", "lockedAtTurnId"], message: "Provider binding must reference the first Turn" });
+      }
+    }
+  }
   snapshot.runs.forEach((run, index) => {
     if (binding === undefined
       || run.driverKind !== binding.driverKind

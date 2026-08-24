@@ -305,6 +305,9 @@ export const CanonicalChatMessageSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["parts"], message: "Message exceeds encoded byte limit" });
   }
   if (message.role === "user") {
+    if (message.state !== "committed") {
+      ctx.addIssue({ code: "custom", path: ["state"], message: "Canonical user messages must be committed" });
+    }
     const textParts = message.parts.filter(
       (part): part is Extract<CanonicalChatMessagePart, { type: "text" }> => part.type === "text",
     );

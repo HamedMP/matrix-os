@@ -125,6 +125,13 @@ describe("canonical Chat fixtures", () => {
     }).success).toBe(false);
     expect(CanonicalChatSnapshotSchema.safeParse({
       ...fixture.snapshot,
+      chat: {
+        ...fixture.snapshot.chat,
+        providerBinding: { ...fixture.snapshot.chat.providerBinding!, lockedAtTurnId: "cturn_missing" },
+      },
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
       runs: [],
       activities: [],
       chat: { ...fixture.snapshot.chat, activeRun: undefined },
