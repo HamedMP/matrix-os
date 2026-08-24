@@ -66,6 +66,12 @@
   --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.12);
 
+  /* Matrix-owned window chrome. These intentionally differ from macOS's
+     native traffic lights so the app boundary remains visually obvious. */
+  --matrix-window-close: #d06e53;
+  --matrix-window-minimize: #f1c379;
+  --matrix-window-maximize: #bed77b;
+
   /* ── Status (tasks / threads / sessions) ────────────────────── */
   --status-todo: #8a8576;
   --status-running: #4a7c92;

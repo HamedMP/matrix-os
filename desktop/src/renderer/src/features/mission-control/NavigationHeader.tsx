@@ -11,6 +11,8 @@ import { useTabs, type Tab } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
+import DesktopHeaderTabs from "../desktop-shell/DesktopHeaderTabs";
 import {
   openChatIndex,
   openTerminalIndex,
@@ -134,6 +136,10 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
   const requestHomeRefresh = useUi((state) => state.requestHomeRefresh);
   const requestTerminalOverview = useTabs((state) => state.requestTerminalOverview);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
+  const activeSurfaceMode = useDesktopSurfaces((state) =>
+    activeTabId ? state.surfaces[activeTabId]?.mode : undefined,
+  );
+  const desktopTabsVisible = nativeDesktop && activeSurfaceMode === "tab";
   const activeThreadId = useThreads((state) => state.activeThreadId);
   const activeThreadTitle = useThreads((state) =>
     state.threads.find((thread) => thread.id === activeThreadId)?.title,
@@ -234,86 +240,92 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
       </div>
 
       <div className="flex min-w-0 items-center gap-1 px-2">
-        <nav aria-label="Breadcrumb" className="no-drag flex min-w-0 items-center gap-1 text-[13px]">
-          {breadcrumbs.map((breadcrumb, index) => (
-            <Fragment key={breadcrumb.key}>
-              {index > 0 ? (
-                <ChevronRight size={12} className="shrink-0" style={{ color: "var(--text-disabled)" }} />
+        {desktopTabsVisible ? (
+          <DesktopHeaderTabs />
+        ) : (
+          <>
+            <nav aria-label="Breadcrumb" className="no-drag flex min-w-0 items-center gap-1 text-[13px]">
+              {breadcrumbs.map((breadcrumb, index) => (
+                <Fragment key={breadcrumb.key}>
+                  {index > 0 ? (
+                    <ChevronRight size={12} className="shrink-0" style={{ color: "var(--text-disabled)" }} />
+                  ) : null}
+                  {["chat", "terminal", "projects"].includes(breadcrumb.key)
+                    && index < breadcrumbs.length - 1 ? (
+                    <button
+                      type="button"
+                      className="max-w-[220px] truncate rounded-sm outline-none hover:text-[var(--text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+                      style={{ color: "var(--text-tertiary)", fontWeight: 400 }}
+                      onClick={() => navigateBreadcrumb(breadcrumb.key)}
+                    >
+                      {breadcrumb.label}
+                    </button>
+                  ) : (
+                    <span
+                      className="max-w-[220px] truncate"
+                      style={{
+                        color: index === breadcrumbs.length - 1
+                          ? "var(--text-primary)"
+                          : "var(--text-tertiary)",
+                        fontWeight: index === breadcrumbs.length - 1 ? 500 : 400,
+                      }}
+                    >
+                      {breadcrumb.label}
+                    </span>
+                  )}
+                </Fragment>
+              ))}
+              {breadcrumbs.length > 0 && hasContextActions ? (
+                <ChevronRight
+                  size={12}
+                  className="shrink-0"
+                  style={{ color: "var(--text-disabled)" }}
+                  aria-hidden="true"
+                />
               ) : null}
-              {["chat", "terminal", "projects"].includes(breadcrumb.key)
-                && index < breadcrumbs.length - 1 ? (
-                <button
-                  type="button"
-                  className="max-w-[220px] truncate rounded-sm outline-none hover:text-[var(--text-primary)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-                  style={{ color: "var(--text-tertiary)", fontWeight: 400 }}
-                  onClick={() => navigateBreadcrumb(breadcrumb.key)}
-                >
-                  {breadcrumb.label}
-                </button>
-              ) : (
-                <span
-                  className="max-w-[220px] truncate"
-                  style={{
-                    color: index === breadcrumbs.length - 1
-                      ? "var(--text-primary)"
-                      : "var(--text-tertiary)",
-                    fontWeight: index === breadcrumbs.length - 1 ? 500 : 400,
-                  }}
-                >
-                  {breadcrumb.label}
-                </span>
-              )}
-            </Fragment>
-          ))}
-          {breadcrumbs.length > 0 && hasContextActions ? (
-            <ChevronRight
-              size={12}
-              className="shrink-0"
-              style={{ color: "var(--text-disabled)" }}
-              aria-hidden="true"
-            />
-          ) : null}
-        </nav>
+            </nav>
 
-        {activeTab && hasContextActions ? (
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger
-              aria-label={`Actions for ${activeTab.title}`}
-              title={`Actions for ${activeTab.title}`}
-              disabled={activeTab.kind !== "home" && !activeTab.closable}
-              className="no-drag -mx-[5px] inline-flex h-7 w-6 items-center justify-center rounded-sm text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-35"
-            >
-              <MoreHorizontal size={14} />
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="end"
-                sideOffset={4}
-                className="z-[100] min-w-[160px] rounded-lg border p-1 shadow-lg"
-                style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}
-              >
-                {activeTab.kind === "home" ? (
-                  <DropdownMenu.Item
-                    className="cursor-default rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
-                    style={{ color: "var(--text-primary)" }}
-                    onSelect={requestHomeRefresh}
+            {activeTab && hasContextActions ? (
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger
+                  aria-label={`Actions for ${activeTab.title}`}
+                  title={`Actions for ${activeTab.title}`}
+                  disabled={activeTab.kind !== "home" && !activeTab.closable}
+                  className="no-drag -mx-[5px] inline-flex h-7 w-6 items-center justify-center rounded-sm text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-35"
+                >
+                  <MoreHorizontal size={14} />
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    align="end"
+                    sideOffset={4}
+                    className="z-[100] min-w-[160px] rounded-lg border p-1 shadow-lg"
+                    style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}
                   >
-                    Refresh {activeTab.title}
-                  </DropdownMenu.Item>
-                ) : null}
-                {activeTab.closable ? (
-                  <DropdownMenu.Item
-                    className="cursor-default rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
-                    style={{ color: "var(--text-primary)" }}
-                    onSelect={() => closeTab(activeTab.id)}
-                  >
-                    Close view
-                  </DropdownMenu.Item>
-                ) : null}
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-        ) : null}
+                    {activeTab.kind === "home" ? (
+                      <DropdownMenu.Item
+                        className="cursor-default rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+                        style={{ color: "var(--text-primary)" }}
+                        onSelect={requestHomeRefresh}
+                      >
+                        Refresh {activeTab.title}
+                      </DropdownMenu.Item>
+                    ) : null}
+                    {activeTab.closable ? (
+                      <DropdownMenu.Item
+                        className="cursor-default rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+                        style={{ color: "var(--text-primary)" }}
+                        onSelect={() => closeTab(activeTab.id)}
+                      >
+                        Close view
+                      </DropdownMenu.Item>
+                    ) : null}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            ) : null}
+          </>
+        )}
       </div>
     </header>
   );

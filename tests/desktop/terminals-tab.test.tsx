@@ -214,13 +214,16 @@ describe("TerminalsTab", () => {
 
     expect(screen.queryByRole("navigation", { name: "Terminal breadcrumb" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Back to terminal sessions" })).toBeNull();
+    expect(screen.getByRole("tablist", { name: "Terminal app tabs" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Terminal sessions" }).getAttribute("aria-selected")).toBe("false");
+    expect(screen.getByRole("tab", { name: "matrix-main" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy();
     expect(screen.getByText(/Started at .*main computer/)).toBeTruthy();
     expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true");
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
-  it("returns from a selected Terminal session to the Terminal list before older history", async () => {
+  it("returns from a selected Terminal session through the internal Sessions tab", async () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
     const workspaceTabId = useTabs.getState().openTab({
@@ -241,13 +244,13 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy());
 
-    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Terminal sessions" }));
 
     expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
     expect(useTabs.getState().activeTabId).toBe(workspaceTabId);
   });
 
-  it("uses the Terminal breadcrumb root to return to the Terminal list", async () => {
+  it("keeps the shared breadcrumb at the Terminal app while internal tabs change", async () => {
     useTabs.setState(useTabs.getInitialState(), true);
     const workspaceTabId = useTabs.getState().openTab({
       kind: "terminals",
@@ -267,13 +270,14 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "matrix-main" })).toBeTruthy());
 
-    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).textContent).toBe("Terminal");
+    fireEvent.click(screen.getByRole("tab", { name: "Terminal sessions" }));
 
     expect(screen.getByRole("heading", { name: "Terminal" })).toBeTruthy();
     expect(useTabs.getState().activeTabId).toBe(workspaceTabId);
   });
 
-  it("publishes the selected session name to the shared Terminal breadcrumb", async () => {
+  it("keeps the Terminal app identity while selecting an internal session tab", async () => {
     useTabs.setState(useTabs.getInitialState(), true);
     const workspaceTabId = useTabs.getState().openTab({
       kind: "terminals",
@@ -289,8 +293,10 @@ describe("TerminalsTab", () => {
 
     await waitFor(() => {
       expect(useTabs.getState().tabs.find((tab) => tab.id === workspaceTabId)?.title)
-        .toBe("clever-comet");
+        .toBe("Terminal");
     });
+    expect(screen.getByRole("tab", { name: "clever-comet" }).getAttribute("aria-selected"))
+      .toBe("true");
 
     act(() => useTabs.getState().requestTerminalOverview());
     await waitFor(() => {
@@ -900,7 +906,7 @@ describe("TerminalsTab", () => {
     expect(screen.getByText("No shell sessions yet")).toBeTruthy();
   });
 
-  it("keeps opening a canonical shell session in a native terminal tab available from overflow", async () => {
+  it("opens a canonical shell session in an internal Terminal app tab from overflow", async () => {
     const openTab = vi.fn();
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
@@ -910,13 +916,11 @@ describe("TerminalsTab", () => {
     renderTab();
 
     openShellActions("matrix-main");
-    fireEvent.click(screen.getByRole("menuitem", { name: "Open in tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open in Terminal tab" }));
 
-    expect(openTab).toHaveBeenCalledWith({
-      kind: "terminal",
-      sessionName: "matrix-main",
-      title: "matrix-main",
-    });
+    expect(openTab).not.toHaveBeenCalled();
+    expect(screen.getByRole("tab", { name: "matrix-main" }).getAttribute("aria-selected"))
+      .toBe("true");
   });
 
   it("moves shells between active and background via ui-state patches", async () => {

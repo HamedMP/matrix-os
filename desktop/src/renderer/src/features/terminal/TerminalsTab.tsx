@@ -142,6 +142,81 @@ function normalizeBusyNames(names: string[]): string[] {
   return names.filter((name, index) => name.length > 0 && names.indexOf(name) === index);
 }
 
+function TerminalAppTabs({
+  openedSessionNames,
+  selectedName,
+  onSelectOverview,
+  onSelectSession,
+  onCloseSession,
+}: {
+  openedSessionNames: string[];
+  selectedName: string | null;
+  onSelectOverview: () => void;
+  onSelectSession: (name: string) => void;
+  onCloseSession: (name: string) => void;
+}) {
+  if (openedSessionNames.length === 0) return null;
+  return (
+    <div
+      role="tablist"
+      aria-label="Terminal app tabs"
+      className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b px-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-label="Terminal sessions"
+        aria-selected={selectedName === null}
+        className="flex h-7 shrink-0 items-center gap-1.5 rounded-t-md border px-2.5 text-xs"
+        style={{
+          borderColor: selectedName === null ? "var(--border-subtle)" : "transparent",
+          borderBottomColor: selectedName === null ? "var(--bg-surface)" : "transparent",
+          background: selectedName === null ? "var(--bg-surface)" : "transparent",
+          color: selectedName === null ? "var(--text-primary)" : "var(--text-secondary)",
+        }}
+        onClick={onSelectOverview}
+      >
+        <SquareTerminal size={12} aria-hidden="true" /> Sessions
+      </button>
+      {openedSessionNames.map((name) => {
+        const selected = selectedName === name;
+        return (
+          <div
+            key={name}
+            className="group flex h-7 min-w-[116px] max-w-[190px] items-center rounded-t-md border pl-2.5 pr-1"
+            style={{
+              borderColor: selected ? "var(--border-subtle)" : "transparent",
+              borderBottomColor: selected ? "var(--bg-surface)" : "transparent",
+              background: selected ? "var(--bg-surface)" : "transparent",
+              color: selected ? "var(--text-primary)" : "var(--text-secondary)",
+            }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-label={name}
+              aria-selected={selected}
+              className="min-w-0 flex-1 truncate text-left font-mono text-[11px]"
+              onClick={() => onSelectSession(name)}
+            >
+              {name}
+            </button>
+            <button
+              type="button"
+              aria-label={`Close ${name} terminal tab`}
+              className="flex size-5 shrink-0 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
+              onClick={() => onCloseSession(name)}
+            >
+              <X size={11} aria-hidden="true" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- TerminalsTab is the cohesive shell-session workspace: network load/create, selection, rename, delete confirmation, search, and drag refs are independent UI concerns. A reducer would couple unrelated state transitions without reducing render risk; extracting subcomponents below keeps the row/empty states isolated.
 export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const api = useConnection((s) => s.api);
@@ -158,7 +233,6 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const reorder = useShellSessions((s) => s.reorder);
   const patchUiState = useShellSessions((s) => s.patchUiState);
   const tabs = useTabs((s) => s.tabs);
-  const openTab = useTabs((s) => s.openTab);
   const recordRecentTerminal = useTabs((s) => s.recordRecentTerminal);
   const reconcileRecentTerminals = useTabs((s) => s.reconcileRecentTerminals);
   const terminalSessionRequest = useTabs((s) => s.terminalSessionRequest);
@@ -224,8 +298,8 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
 
   useEffect(() => {
     if (!terminalsTabId) return;
-    renameTab(terminalsTabId, selectedName ?? "Terminal");
-  }, [renameTab, selectedName, terminalsTabId]);
+    renameTab(terminalsTabId, "Terminal");
+  }, [renameTab, terminalsTabId]);
 
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
@@ -307,11 +381,15 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     terminalSessionRequest,
   ]);
 
-  const openShellInTab = (shell: ShellSessionSummary) => {
-    openTab({ kind: "terminal", sessionName: shell.name, title: shell.name });
-    if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq && api) {
-      void patchUiState(api, shell.name, { lastSeenSeq: shell.latestSeq });
-    }
+  const openShellInTab = (shell: ShellSessionSummary) => showShellDetail(shell);
+
+  const closeShellTab = (name: string) => {
+    const remaining = openedSessionNames.filter((openedName) => openedName !== name);
+    setOpenedSessionNames(remaining);
+    if (selectedRef.current !== name) return;
+    const nextName = remaining.at(-1) ?? null;
+    setSelectedName(nextName);
+    setLiveSessionName(nextName);
   };
 
   const moveShell = async (shell: ShellSessionSummary, placement: ShellSessionPlacement) => {
@@ -418,14 +496,28 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
   const overviewVisible = active && selectedName === null;
 
   return (
-    <div className="relative flex min-h-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <RetainedPane
-        as="section"
-        active={overviewVisible}
-        className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
-        background="var(--bg-surface)"
-        style={{ borderRadius: 8 }}
-      >
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-surface)" }}>
+      <TerminalAppTabs
+        openedSessionNames={openedSessionNames}
+        selectedName={selectedName}
+        onSelectOverview={() => {
+          setSelectedName(null);
+          setLiveSessionName(null);
+        }}
+        onSelectSession={(name) => {
+          setSelectedName(name);
+          setLiveSessionName(name);
+        }}
+        onCloseSession={closeShellTab}
+      />
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        <RetainedPane
+          as="section"
+          active={overviewVisible}
+          className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
+          background="var(--bg-surface)"
+          style={{ borderRadius: 8 }}
+        >
         <div className="flex min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
           <div data-terminal-overview className="mx-auto flex min-h-0 w-full max-w-[1022px] flex-1 flex-col">
             <div className="mb-6 flex min-h-10 shrink-0 items-center gap-2">
@@ -549,20 +641,20 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
             </div>
           </div>
         </div>
-      </RetainedPane>
+        </RetainedPane>
 
-      {openedSessionNames.map((sessionName) => {
-        const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
-        const visible = active && selectedName === sessionName;
-        return (
-          <RetainedPane
-            as="section"
-            key={sessionName}
-            active={visible}
-            className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
-            background={terminalAppearance.surface}
-            style={{ borderRadius: 8 }}
-          >
+        {openedSessionNames.map((sessionName) => {
+          const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
+          const visible = active && selectedName === sessionName;
+          return (
+            <RetainedPane
+              as="section"
+              key={sessionName}
+              active={visible}
+              className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
+              background={terminalAppearance.surface}
+              style={{ borderRadius: 8 }}
+            >
             <header
               className="flex h-[70px] shrink-0 items-center gap-3 border-b px-4 py-4"
               style={{ borderColor: terminalAppearance.border, background: terminalAppearance.surface }}
@@ -602,9 +694,10 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
                 />
               </div>
             </div>
-          </RetainedPane>
-        );
-      })}
+            </RetainedPane>
+          );
+        })}
+      </div>
 
       <Dialog
         open={deleteTarget !== null}
@@ -793,7 +886,7 @@ function ShellCard({
                 boxShadow: "var(--shadow-2)",
               }}
             >
-              <ShellMenuItem icon={<ExternalLink size={13} />} label="Open in tab" onSelect={onOpenInTab} />
+              <ShellMenuItem icon={<ExternalLink size={13} />} label="Open in Terminal tab" onSelect={onOpenInTab} />
               <ShellMenuItem
                 icon={placement === "active" ? <Layers size={13} /> : <SquareTerminal size={13} />}
                 label={placement === "active" ? "Move to background" : "Make active"}

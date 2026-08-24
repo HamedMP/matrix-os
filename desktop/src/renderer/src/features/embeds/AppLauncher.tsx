@@ -40,7 +40,7 @@ export default function AppLauncher({
 }: {
   presentation?: "surface" | "launchpad";
   launcherActive?: boolean;
-  onLaunch?: () => void;
+  onLaunch?: (tabId: string) => void;
 } = {}) {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
@@ -73,8 +73,8 @@ export default function AppLauncher({
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
   const open = (slug: string, name: string) => {
-    openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug, runtimeSlot) ? { icon: appIconUrl(platformHost, slug, runtimeSlot)! } : {}) });
-    onLaunch?.();
+    const tabId = openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug, runtimeSlot) ? { icon: appIconUrl(platformHost, slug, runtimeSlot)! } : {}) });
+    onLaunch?.(tabId);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {

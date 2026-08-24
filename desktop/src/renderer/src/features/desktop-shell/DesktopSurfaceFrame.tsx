@@ -15,8 +15,8 @@ import type { Tab } from "../../stores/tabs";
 import { TabErrorBoundary, TabPane } from "../mission-control/TabContent";
 import SurfaceIcon from "./SurfaceIcon";
 
-function windowControlClass(color: string): string {
-  return `no-drag flex size-3 items-center justify-center rounded-full border-0 ${color} text-transparent transition-colors hover:text-black/55 focus-visible:outline-2 focus-visible:outline-[var(--accent)]`;
+function windowControlClass(): string {
+  return "no-drag flex size-3 items-center justify-center rounded-full border-0 text-transparent transition-colors hover:text-black/55 focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
 }
 
 export default function DesktopSurfaceFrame({
@@ -119,7 +119,7 @@ export default function DesktopSurfaceFrame({
     border: `1px solid ${active ? "var(--border-default)" : "var(--border-subtle)"}`,
     boxShadow: active ? "var(--shadow-3)" : "var(--shadow-2)",
   } : {
-    inset: `${NATIVE_DESKTOP_LAYOUT.tabStripHeight}px 0 ${NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight}px`,
+    inset: `0 0 ${NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight}px`,
     zIndex: DESKTOP_Z_INDEX.nativeDesktopTabSurface,
     display: visible ? "flex" : "none",
     borderRadius: 0,
@@ -152,9 +152,9 @@ export default function DesktopSurfaceFrame({
           }}
         >
           <div className="no-drag flex w-[78px] items-center gap-2">
-            <button type="button" aria-label={`Close ${tab.title}`} className={windowControlClass("bg-[#ed6a5f]")} onClick={onClose}><X size={8} /></button>
-            <button type="button" aria-label={`Minimize ${tab.title}`} className={windowControlClass("bg-[#f4bf4f]")} onClick={onMinimize}><Minus size={8} /></button>
-            <button type="button" aria-label={`Maximize ${tab.title} into tabs`} className={windowControlClass("bg-[#61c654]")} onClick={onMaximize}><Maximize2 size={7} /></button>
+            <button type="button" aria-label={`Close ${tab.title}`} className={windowControlClass()} style={{ background: "var(--matrix-window-close)" }} onClick={onClose}><X size={8} /></button>
+            <button type="button" aria-label={`Minimize ${tab.title}`} className={windowControlClass()} style={{ background: "var(--matrix-window-minimize)" }} onClick={onMinimize}><Minus size={8} /></button>
+            <button type="button" aria-label={`Maximize ${tab.title} into tabs`} className={windowControlClass()} style={{ background: "var(--matrix-window-maximize)" }} onClick={onMaximize}><Maximize2 size={7} /></button>
           </div>
           <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
             <SurfaceIcon tab={tab} size={14} />

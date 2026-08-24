@@ -5,9 +5,11 @@ import AppLauncher from "../embeds/AppLauncher";
 export default function DesktopLaunchpad({
   open,
   onClose,
+  onLaunchTab,
 }: {
   open: boolean;
   onClose: () => void;
+  onLaunchTab?: (tabId: string) => void;
 }) {
   const closeLauncher = useEffectEvent(onClose);
 
@@ -38,7 +40,14 @@ export default function DesktopLaunchpad({
         onClose();
       }}
     >
-      <AppLauncher presentation="launchpad" launcherActive={open} onLaunch={onClose} />
+      <AppLauncher
+        presentation="launchpad"
+        launcherActive={open}
+        onLaunch={(tabId) => {
+          onLaunchTab?.(tabId);
+          onClose();
+        }}
+      />
     </section>
   );
 }

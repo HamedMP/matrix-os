@@ -7,7 +7,6 @@ import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
 import { openChatIndex, openProjectsIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
 import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
-import DesktopTabStrip from "./DesktopTabStrip";
 import DesktopTaskbar from "./DesktopTaskbar";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 import { NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
@@ -102,6 +101,16 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
 
   const toggleApps = useCallback(() => setLauncherOpen(!useUi.getState().appLauncherOpen), [setLauncherOpen]);
   const closeApps = useCallback(() => setLauncherOpen(false), [setLauncherOpen]);
+  const launchApp = useCallback((tabId: string) => {
+    const tabbedWorkspaceOpen = Object.values(useDesktopSurfaces.getState().surfaces)
+      .some((surface) => surface.mode === "tab");
+    if (tabbedWorkspaceOpen) {
+      reconcileTabs(useTabs.getState().tabs.map((tab) => tab.id), viewport);
+      maximizeToTab(tabId);
+      focusTab(tabId);
+    }
+    setLauncherOpen(false);
+  }, [focusTab, maximizeToTab, reconcileTabs, setLauncherOpen, viewport]);
 
   useEffect(() => {
     for (const tab of tabs) {
@@ -116,7 +125,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       open: () => openRoot(() => openTab(HOSTED_SHELL_TAB_SPEC)),
     },
     { kind: "chat", label: "Chat", open: () => openRoot(openChatIndex) },
-    { kind: "terminals", label: "Terminal", open: () => openRootAsTab(openTerminalIndex) },
+    { kind: "terminals", label: "Terminal", open: () => openRoot(openTerminalIndex) },
     {
       kind: "files",
       label: "Files",
@@ -172,20 +181,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     >
       <DesktopBackground />
       {!tabWorkspaceActive ? <DesktopIconGrid destinations={destinations} /> : null}
-      {tabWorkspaceActive ? (
-        <DesktopTabStrip
-          tabs={tabs}
-          surfaces={surfaces}
-          activeTabId={activeTabId}
-          onActivate={activate}
-          onRestore={(tabId) => {
-            restoreAsWindow(tabId);
-            focusTab(tabId);
-          }}
-          onClose={close}
-          onOpenApps={toggleApps}
-        />
-      ) : null}
       {tabs.map((tab) => {
         const surface = surfaces[tab.id];
         if (!surface) return null;
@@ -209,7 +204,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         );
       })}
       {launcherMounted ? (
-        <DesktopLaunchpad open={launcherOpen} onClose={closeApps} />
+        <DesktopLaunchpad open={launcherOpen} onClose={closeApps} onLaunchTab={launchApp} />
       ) : null}
       <DesktopTaskbar
         tabs={tabs}

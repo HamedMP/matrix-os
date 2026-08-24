@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NativeDesktopShell from "@desktop/renderer/src/features/desktop-shell/NativeDesktopShell";
+import NavigationHeader from "@desktop/renderer/src/features/mission-control/NavigationHeader";
 import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "@desktop/renderer/src/design/layering";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
@@ -51,7 +52,7 @@ afterEach(() => {
 
 describe("native desktop shell", () => {
   it("uses a dedicated shell-background layer and presents the hosted shell as Browser", () => {
-    render(<NativeDesktopShell overlayOpen={false} />);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     const browserIcon = screen.getByRole("button", { name: "Browser" });
     expect(browserIcon).toBeTruthy();
@@ -75,7 +76,7 @@ describe("native desktop shell", () => {
       getBlob: vi.fn(async () => new Blob(["wallpaper"], { type: "image/jpeg" })),
     };
     useConnection.setState({ api: firstApi as never });
-    render(<NativeDesktopShell overlayOpen={false} />);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundImage)
@@ -135,11 +136,33 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
+  it("opens Terminal as its own window and only adds it to the main tab strip when maximized", () => {
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+
+    const terminalTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "terminals");
+    expect(terminalTab).toBeTruthy();
+    expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("window");
+    expect(screen.getByRole("dialog", { name: "Terminal window" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
+
+    expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("tab");
+    expect(screen.getByRole("tab", { name: "Terminal" }).getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close Terminal workspace" }));
+
+    expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("closed");
+    expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull();
+    expect(document.querySelector("[data-native-desktop-shell]")).toBeTruthy();
+  });
+
   it.each([
-    ["Terminal", "terminals"],
     ["Projects", "projects"],
   ] as const)("opens %s directly as a tab workspace", (label, kind) => {
-    render(<NativeDesktopShell overlayOpen={false} />);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: label }));
 
@@ -191,6 +214,29 @@ describe("native desktop shell", () => {
     expect(reopenedIcon).toBe(firstIcon);
   });
 
+  it("opens launcher apps beside the current maximized workspace as header tabs", () => {
+    useConnection.setState({ platformHost: "https://runtime.example.com" });
+    useApps.setState({
+      apps: [{ slug: "notes", name: "Notes" }],
+      loaded: true,
+      loading: false,
+      error: null,
+    });
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+
+    const terminalTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "terminals")!;
+    const notesTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "app")!;
+    expect(useDesktopSurfaces.getState().surfaces[terminalTab.id]?.mode).toBe("tab");
+    expect(useDesktopSurfaces.getState().surfaces[notesTab.id]?.mode).toBe("tab");
+    expect(screen.getByRole("tab", { name: "Terminal" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Notes" }).getAttribute("aria-selected")).toBe("true");
+  });
+
   it("dismisses the transient launcher when its empty backdrop is clicked", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
     fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
@@ -224,7 +270,7 @@ describe("native desktop shell", () => {
   });
 
   it("maximizes a window into the tab strip and restores it as a window", () => {
-    render(<NativeDesktopShell overlayOpen={false} />);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
     const tabId = useTabs.getState().activeTabId!;
 
@@ -232,7 +278,7 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Files" }).getAttribute("aria-selected")).toBe("true");
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("tab");
     const surface = document.querySelector<HTMLElement>(`[data-desktop-surface="${tabId}"]`)!;
-    expect(surface.style.inset).toBe(`${NATIVE_DESKTOP_LAYOUT.tabStripHeight}px 0 ${NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight}px`);
+    expect(surface.style.inset).toBe(`0 0 ${NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight}px`);
 
     fireEvent.doubleClick(screen.getByRole("tab", { name: "Files" }));
     expect(screen.getByRole("dialog", { name: "Files window" })).toBeTruthy();
@@ -295,6 +341,12 @@ describe("native desktop shell", () => {
     const dragHandle = screen.getByTestId("desktop-window-drag-handle");
     expect(dragHandle.classList.contains("titlebar-drag")).toBe(false);
     expect(dragHandle.classList.contains("no-drag")).toBe(true);
+    expect(screen.getByRole("button", { name: "Close Files" }).style.background)
+      .toBe("var(--matrix-window-close)");
+    expect(screen.getByRole("button", { name: "Minimize Files" }).style.background)
+      .toBe("var(--matrix-window-minimize)");
+    expect(screen.getByRole("button", { name: "Maximize Files into tabs" }).style.background)
+      .toBe("var(--matrix-window-maximize)");
 
     fireEvent.pointerDown(dragHandle, { button: 0, clientX: 400, clientY: 180 });
     fireEvent.pointerMove(window, { clientX: 480, clientY: 225 });

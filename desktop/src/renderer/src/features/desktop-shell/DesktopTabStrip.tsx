@@ -2,7 +2,6 @@ import { LayoutGrid, RotateCcw, X } from "lucide-react";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import SurfaceIcon from "./SurfaceIcon";
-import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
 
 export default function DesktopTabStrip({
   tabs,
@@ -23,17 +22,12 @@ export default function DesktopTabStrip({
 }) {
   const tabbed = tabs.filter((tab) => surfaces[tab.id]?.mode === "tab");
   if (tabbed.length === 0) return null;
+  const activeTab = tabbed.find((tab) => tab.id === activeTabId);
   return (
     <div
       role="tablist"
       aria-label="Workspace tabs"
-      className="absolute inset-x-0 top-0 flex items-end gap-1 overflow-x-auto border-b px-2 pt-1.5"
-      style={{
-        zIndex: DESKTOP_Z_INDEX.nativeDesktopTabStrip,
-        height: `${NATIVE_DESKTOP_LAYOUT.tabStripHeight}px`,
-        borderColor: "var(--border-subtle)",
-        background: "var(--bg-sunken)",
-      }}
+      className="no-drag flex h-full min-w-0 flex-1 items-end gap-1 overflow-x-auto px-1 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {tabbed.map((tab) => {
         const active = tab.id === activeTabId;
@@ -63,13 +57,14 @@ export default function DesktopTabStrip({
             <button
               type="button"
               aria-label={`Close ${tab.title}`}
-              className="flex size-4 items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-hover)]"
+              title={`Close ${tab.title}`}
+              className="flex size-5 items-center justify-center rounded opacity-60 hover:bg-[var(--bg-hover)] hover:opacity-100"
               onClick={(event) => {
                 event.stopPropagation();
                 onClose(tab);
               }}
             >
-              <X size={10} />
+              <X size={12} />
             </button>
           </div>
         );
@@ -82,16 +77,35 @@ export default function DesktopTabStrip({
       >
         <LayoutGrid size={14} />
       </button>
-      {activeTabId && surfaces[activeTabId]?.mode === "tab" ? (
-        <button
-          type="button"
-          aria-label={`Restore ${tabs.find((tab) => tab.id === activeTabId)?.title ?? "tab"} as window`}
-          className="no-drag sticky right-2 mb-0.5 ml-auto flex h-7 shrink-0 items-center gap-1.5 rounded-md border bg-[var(--bg-surface)] px-2 text-[11px] text-[var(--text-secondary)] shadow-[var(--shadow-1)] hover:text-[var(--text-primary)]"
-          style={{ borderColor: "var(--border-subtle)" }}
-          onClick={() => onRestore(activeTabId)}
-        >
-          <RotateCcw size={12} /> Restore window
-        </button>
+      {activeTab ? (
+        <div className="no-drag sticky right-1 mb-0.5 ml-auto flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            aria-label={`Close ${activeTab.title} workspace`}
+            className="flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px] text-[var(--text-primary)] shadow-[var(--shadow-1)]"
+            style={{
+              borderColor: "color-mix(in srgb, var(--matrix-window-close) 65%, var(--border-subtle))",
+              background: "color-mix(in srgb, var(--matrix-window-close) 18%, var(--bg-surface))",
+            }}
+            onClick={() => onClose(activeTab)}
+          >
+            <span className="size-2 rounded-full" style={{ background: "var(--matrix-window-close)" }} />
+            <X size={11} /> Close
+          </button>
+          <button
+            type="button"
+            aria-label={`Restore ${activeTab.title} as window`}
+            className="flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px] text-[var(--text-secondary)] shadow-[var(--shadow-1)] hover:text-[var(--text-primary)]"
+            style={{
+              borderColor: "color-mix(in srgb, var(--matrix-window-maximize) 65%, var(--border-subtle))",
+              background: "var(--bg-surface)",
+            }}
+            onClick={() => onRestore(activeTab.id)}
+          >
+            <span className="size-2 rounded-full" style={{ background: "var(--matrix-window-maximize)" }} />
+            <RotateCcw size={12} /> Restore window
+          </button>
+        </div>
       ) : null}
     </div>
   );
