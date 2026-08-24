@@ -232,6 +232,7 @@ import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+import { ChatRepository } from "./chat/repository.js";
 import { MessagingKyselyRepository } from "./messages/repository.js";
 import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
@@ -846,6 +847,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  let chatRepository: ChatRepository | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
 
   if (databaseUrl) {
@@ -859,6 +861,8 @@ export async function createGateway(config: GatewayConfig) {
       appRegistry = createAppRegistry(appDb, kysely);
       canvasRepository = new CanvasRepository(kysely as Kysely<any>);
       await canvasRepository.bootstrap();
+      chatRepository = new ChatRepository(kysely as Kysely<any>);
+      await chatRepository.bootstrap();
       canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
       messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       await messagingRepository.bootstrap();
@@ -4439,6 +4443,8 @@ export async function createGateway(config: GatewayConfig) {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
       });
       syncR2?.destroy();
+      await chatRepository?.release();
+      chatRepository = null;
       await canvasRepository?.destroy();
       await socialRoutes?.shutdownPostHog();
       await appDb?.destroy();
