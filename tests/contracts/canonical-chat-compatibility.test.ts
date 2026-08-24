@@ -203,6 +203,7 @@ describe("canonical Chat compatibility mappers", () => {
       sizeBytes: 512,
     });
     expect(projection.messages.every((message) => message.turnId === "cturn_legacy_1")).toBe(true);
+    expect(projection.messages[1]?.state).toBe("pending");
     expect(projection.chat.providerBinding?.lockedAtTurnId).toBe("cturn_legacy_1");
     expect(projection.activities.map((activity) => activity.type)).toEqual([
       "turn.status",
@@ -303,6 +304,7 @@ describe("canonical Chat compatibility mappers", () => {
       "Authorization: Basic dXNlcjpwYXNz",
       "ghp_123456789012345678901234567890123456",
       "-----BEGIN OPENSSH PRIVATE KEY-----",
+      "-----BEGIN ENCRYPTED PRIVATE KEY-----",
       "Cookie: session=abc123",
       "credential=supersecret",
     ]) {
@@ -365,6 +367,7 @@ describe("canonical Chat compatibility mappers", () => {
           { eventId: "evt_failed_accept", threadId: "thread_failed_partial", occurredAt: now, type: "turn.accepted", turnId: "turn_failed", clientRequestId: "req_failed", acceptedAt: now },
           { eventId: "evt_failed_user", threadId: "thread_failed_partial", occurredAt: now, type: "user.message", messageId: "user_failed", text: "Try the task", clientRequestId: "req_failed", turnId: "turn_failed" },
           { eventId: "evt_failed_delta", threadId: "thread_failed_partial", occurredAt: now, type: "assistant.text.delta", messageId: "assistant_failed", delta: "Partial result" },
+          { eventId: "evt_failed_completed", threadId: "thread_failed_partial", occurredAt: now, type: "assistant.text.completed", messageId: "assistant_failed" },
           { eventId: "evt_failed_error", threadId: "thread_failed_partial", occurredAt: now, type: "thread.error", error: { code: "run_failed", safeMessage: "The Run stopped safely.", retryable: true } },
         ],
         hasMore: false,

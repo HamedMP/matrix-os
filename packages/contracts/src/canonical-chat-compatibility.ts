@@ -300,7 +300,6 @@ export function mapAgentThreadFromLegacyContracts(input: {
   const ordered: OrderedLegacyMessage[] = [];
   const assistant = new Map<string, {
     chunks: string[];
-    completed: boolean;
     occurredAt: string;
     context: LegacyTurnContext;
   }>();
@@ -333,7 +332,6 @@ export function mapAgentThreadFromLegacyContracts(input: {
       if (existing === undefined) {
         assistant.set(event.messageId, {
           chunks: [event.delta],
-          completed: false,
           occurredAt: event.occurredAt,
           context: currentContext,
         });
@@ -342,11 +340,15 @@ export function mapAgentThreadFromLegacyContracts(input: {
         existing.chunks.push(event.delta);
       }
     }
-    if (event.type === "assistant.text.completed") {
-      const existing = assistant.get(event.messageId);
-      if (existing !== undefined) existing.completed = true;
-    }
   });
+
+  const assistantMessageState: CanonicalChatMessage["state"] = snapshot.thread.status === "failed"
+    || snapshot.thread.status === "aborted"
+    || snapshot.thread.status === "stale"
+    ? "failed"
+    : snapshot.thread.status === "completed" || snapshot.thread.status === "archived"
+      ? "committed"
+      : "pending";
 
   const messages = ordered.map((entry, index): CanonicalChatMessage => {
     if (entry.kind === "user") {
@@ -370,15 +372,12 @@ export function mapAgentThreadFromLegacyContracts(input: {
       };
     }
     const value = assistant.get(entry.legacyId)!;
-    const incompleteState = snapshot.thread.status === "failed"
-      || snapshot.thread.status === "aborted"
-      || snapshot.thread.status === "stale";
     return {
       id: legacyMessageId("thread", index),
       chatId,
       seq: index + 1,
       role: "assistant",
-      state: value.completed ? "committed" : incompleteState ? "failed" : "pending",
+      state: assistantMessageState,
       turnId: entry.context.turnId,
       runId: entry.context.runId,
       parts: [{ type: "text", text: value.chunks.join("") }],

@@ -168,6 +168,7 @@ describe("canonical Chat contracts", () => {
       "Authorization: Basic dXNlcjpwYXNz",
       "ghp_123456789012345678901234567890123456",
       "-----BEGIN OPENSSH PRIVATE KEY-----",
+      "-----BEGIN ENCRYPTED PRIVATE KEY-----",
       "Cookie: session=abc123",
       "credential=supersecret",
     ]) {
