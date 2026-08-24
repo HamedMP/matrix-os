@@ -88,6 +88,15 @@ describe("canonical Chat compatibility mappers", () => {
       events: {
         items: [
           {
+            eventId: "evt_turn_accepted",
+            threadId: "thread_legacy",
+            occurredAt: now,
+            type: "turn.accepted",
+            turnId: "turn_legacy",
+            clientRequestId: "req_legacy",
+            acceptedAt: now,
+          },
+          {
             eventId: "evt_user",
             threadId: "thread_legacy",
             occurredAt: now,
@@ -121,6 +130,38 @@ describe("canonical Chat compatibility mappers", () => {
             displayName: "Read",
             kind: "file",
           },
+          {
+            eventId: "evt_tool_output",
+            threadId: "thread_legacy",
+            occurredAt: now,
+            type: "tool.output",
+            toolCallId: "tool_legacy",
+            text: "Read the contracts.",
+            truncated: false,
+          },
+          {
+            eventId: "evt_review",
+            threadId: "thread_legacy",
+            occurredAt: now,
+            type: "review.ready",
+            reviewId: "review_legacy",
+            summary: { changedFileCount: 1, additions: 2, deletions: 0, partial: false },
+          },
+          {
+            eventId: "evt_terminal",
+            threadId: "thread_legacy",
+            occurredAt: now,
+            type: "terminal.bound",
+            terminalSessionId: "terminal_legacy",
+          },
+          {
+            eventId: "evt_turn_status",
+            threadId: "thread_legacy",
+            occurredAt: now,
+            type: "turn.status",
+            turnId: "turn_legacy",
+            status: "running",
+          },
         ],
         hasMore: false,
         limit: 200,
@@ -145,11 +186,20 @@ describe("canonical Chat compatibility mappers", () => {
       { type: "text", text: "Implement the shared contracts." },
       { type: "text", text: "Starting with tests." },
     ]);
-    expect(projection.activities).toHaveLength(1);
+    expect(projection.messages.every((message) => message.turnId === "cturn_legacy_1")).toBe(true);
+    expect(projection.chat.providerBinding?.lockedAtTurnId).toBe("cturn_legacy_1");
+    expect(projection.activities.map((activity) => activity.type)).toEqual([
+      "turn.status",
+      "tool.progress",
+      "tool.output",
+      "review.ready",
+      "terminal.bound",
+      "turn.status",
+    ]);
     expect(JSON.stringify(projection)).not.toContain("providerState");
 
     const unsafeSnapshot = JSON.parse(JSON.stringify(thread));
-    unsafeSnapshot.events.items[3].displayName = "/home/matrix/private";
+    unsafeSnapshot.events.items[4].displayName = "/home/matrix/private";
     expect(() => mapAgentThreadToCanonicalChatProjection({
       chatId: "chat_imported_thread",
       ownerScope: { type: "personal", ownerId: "user_demo" },
@@ -160,5 +210,58 @@ describe("canonical Chat compatibility mappers", () => {
       runId: "run_imported",
       snapshot: unsafeSnapshot,
     })).toThrow();
+  });
+
+  it("preserves multiple legacy Turns and maps every non-message activity class", () => {
+    const base = { threadId: "thread_two_turns", occurredAt: now };
+    const thread = AgentThreadSnapshotSchema.parse({
+      thread: {
+        id: base.threadId,
+        providerId: "codex",
+        title: "Two turns",
+        status: "failed",
+        attention: "failed",
+        createdAt: now,
+        updatedAt: now,
+      },
+      events: {
+        items: [
+          { ...base, eventId: "evt_accept_1", type: "turn.accepted", turnId: "turn_one", clientRequestId: "req_one", acceptedAt: now },
+          { ...base, eventId: "evt_user_1", type: "user.message", messageId: "user_one", text: "First", clientRequestId: "req_one", turnId: "turn_one" },
+          { ...base, eventId: "evt_status_1", type: "turn.status", turnId: "turn_one", status: "completed" },
+          { ...base, eventId: "evt_accept_2", type: "turn.accepted", turnId: "turn_two", clientRequestId: "req_two", acceptedAt: now },
+          { ...base, eventId: "evt_user_2", type: "user.message", messageId: "user_two", text: "Second", clientRequestId: "req_two", turnId: "turn_two" },
+          { ...base, eventId: "evt_output_2", type: "tool.output", toolCallId: "tool_two", text: "Bounded output", truncated: true },
+          { ...base, eventId: "evt_review_2", type: "review.ready", reviewId: "review_two", summary: { changedFileCount: 1, additions: 3, deletions: 1, partial: false } },
+          { ...base, eventId: "evt_terminal_2", type: "terminal.bound", terminalSessionId: "terminal_two" },
+          { ...base, eventId: "evt_error_2", type: "thread.error", error: { code: "run_failed", safeMessage: "The Run stopped safely.", retryable: true, recoveryActions: ["retry"] } },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    });
+
+    const projection = mapAgentThreadToCanonicalChatProjection({
+      chatId: "chat_two_turns",
+      ownerScope: { type: "personal", ownerId: "user_demo" },
+      instanceId: "codex_primary",
+      model: "gpt-5.6-sol",
+      driverKind: "codex",
+      turnId: "cturn_fallback",
+      runId: "run_fallback",
+      snapshot: thread,
+    });
+
+    expect(projection.messages.map((message) => message.turnId)).toEqual([
+      "cturn_legacy_1",
+      "cturn_legacy_2",
+    ]);
+    expect(projection.chat.providerBinding?.lockedAtTurnId).toBe("cturn_legacy_1");
+    expect(projection.activities.slice(-4).map((activity) => [activity.type, activity.runId])).toEqual([
+      ["tool.output", "run_legacy_2"],
+      ["review.ready", "run_legacy_2"],
+      ["terminal.bound", "run_legacy_2"],
+      ["run.error", "run_legacy_2"],
+    ]);
   });
 });

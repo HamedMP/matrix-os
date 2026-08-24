@@ -28,6 +28,10 @@ describe("canonical Chat contracts", () => {
       attention: "none",
       revision: 1,
       messageCount: 1,
+      collaboration: { mode: "shared", membership: { role: "editor", memberCount: 3 } },
+      userState: { readThroughSeq: 1, pinned: true, muted: false },
+      shellState: { lastSurface: "project", inspectorOpen: true },
+      forkProvenance: { parentChatId: "chat_parent", throughMessageId: "msg_parent" },
       lastMessagePreview: "Freeze the shared contracts.",
       createdAt: now,
       updatedAt: now,
@@ -92,6 +96,8 @@ describe("canonical Chat contracts", () => {
       run: "run_demo",
       message: "msg_demo",
     });
+    expect(chat.collaboration?.membership?.role).toBe("editor");
+    expect(chat.forkProvenance?.parentChatId).toBe("chat_parent");
     expect(CanonicalChatRunSchema.safeParse({
       ...run,
       primaryWorkspaceRoot: "/Users/yuhan/matrix-os",
@@ -283,6 +289,38 @@ describe("canonical Chat contracts", () => {
       ...instance,
       credentials: { token: "secret" },
     }).success).toBe(false);
+
+    const slashDescriptor = (index: number) => ({
+      id: `slash-${index}`,
+      displayName: `Slash ${index}`,
+      description: `Slash command ${index}`,
+      invocation: `/slash-${index}`,
+    });
+    expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
+      id: "codex_slash_bounds",
+      driverKind: "codex",
+      displayName: "Codex slash bounds",
+      availability: "available",
+      workspaceRequirement: "none",
+      catalogRevision: "catalog_bounds",
+      models: [],
+      options: [],
+      skills: Array.from({ length: 33 }, (_, index) => slashDescriptor(index)),
+      commands: Array.from({ length: 32 }, (_, index) => slashDescriptor(index + 33)),
+      supports: {
+        rootChat: true,
+        resume: true,
+        cancellation: true,
+        attachments: [],
+        tools: [],
+        approvals: true,
+        userInput: true,
+        worktrees: "none",
+        resources: [],
+        interactionModes: [],
+        permissionModes: [],
+      },
+    }).success).toBe(false);
   });
 
   it("projects typed slash invocations, @ resources, and inspector state without paths", () => {
@@ -382,6 +420,16 @@ describe("canonical Chat contracts", () => {
     expect(CanonicalChatMessageSchema.safeParse({
       ...baseMessage,
       parts: Array.from({ length: 65 }, () => ({ type: "text", text: "part" })),
+    }).success).toBe(false);
+    expect(CanonicalChatMessageSchema.safeParse({
+      ...baseMessage,
+      parts: [{
+        type: "attachment_reference",
+        attachmentId: "attachment_too_large",
+        kind: "file",
+        label: "large.bin",
+        sizeBytes: 5 * 1024 * 1024 + 1,
+      }],
     }).success).toBe(false);
 
     const model = {

@@ -86,6 +86,34 @@ export const CanonicalChatResourceReferenceSchema = z.object({
   revision: canonicalReferenceId(160).optional(),
 }).strict();
 
+export const CanonicalChatCollaborationSchema = z.object({
+  mode: z.enum(["private", "shared"]),
+  membership: z.object({
+    role: z.enum(["owner", "editor", "viewer"]),
+    memberCount: z.number().int().min(1).max(10_000),
+  }).strict().optional(),
+}).strict().superRefine((collaboration, ctx) => {
+  if (collaboration.mode === "shared" && collaboration.membership === undefined) {
+    ctx.addIssue({ code: "custom", path: ["membership"], message: "Shared Chat requires membership" });
+  }
+});
+
+export const CanonicalChatUserStateSchema = z.object({
+  readThroughSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  pinned: z.boolean(),
+  muted: z.boolean(),
+}).strict();
+
+export const CanonicalChatShellStateSchema = z.object({
+  lastSurface: z.enum(["global", "project"]),
+  inspectorOpen: z.boolean(),
+}).strict();
+
+export const CanonicalChatForkProvenanceSchema = z.object({
+  parentChatId: CanonicalChatIdSchema,
+  throughMessageId: CanonicalChatMessageIdSchema,
+}).strict();
+
 export const CanonicalChatSchema = z.object({
   id: CanonicalChatIdSchema,
   ownerScope: CanonicalOwnerScopeSchema,
@@ -94,6 +122,10 @@ export const CanonicalChatSchema = z.object({
   attention: CanonicalChatAttentionSchema,
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   messageCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  collaboration: CanonicalChatCollaborationSchema.optional(),
+  userState: CanonicalChatUserStateSchema.optional(),
+  shellState: CanonicalChatShellStateSchema.optional(),
+  forkProvenance: CanonicalChatForkProvenanceSchema.optional(),
   lastMessagePreview: canonicalBoundedText(280, 1_120).optional(),
   currentSelection: CanonicalChatModelSelectionSchema.optional(),
   createdAt: IsoTimestampSchema,
@@ -220,7 +252,7 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     kind: CanonicalChatAttachmentKindSchema,
     label: canonicalSafeLabel(240, 960),
     mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
-    sizeBytes: z.number().int().min(0).max(100 * 1024 * 1024).optional(),
+    sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
   }).strict(),
   z.object({
     type: z.literal("approval_request"),
@@ -306,63 +338,6 @@ const CanonicalChatRunActivityBaseSchema = z.object({
   occurredAt: IsoTimestampSchema,
 });
 
-export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("run.status"),
-    status: z.enum([
-      "accepted",
-      "running",
-      "waiting_for_approval",
-      "waiting_for_input",
-      "completed",
-      "failed",
-      "aborted",
-    ]),
-  }).strict(),
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("assistant.delta"),
-    messageId: CanonicalChatMessageIdSchema,
-    delta: canonicalBoundedText(4_000, 16 * 1024),
-  }).strict(),
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("tool.progress"),
-    toolCallId: canonicalReferenceId(128),
-    label: canonicalSafeLabel(240, 960),
-    status: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
-  }).strict(),
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("approval.requested"),
-    approvalId: canonicalReferenceId(128),
-    title: canonicalSafeLabel(160, 640),
-    risk: z.enum(["low", "medium", "high"]),
-  }).strict(),
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("approval.resolved"),
-    approvalId: canonicalReferenceId(128),
-    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
-  }).strict(),
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("input.requested"),
-    requestId: canonicalReferenceId(128),
-    title: canonicalSafeLabel(160, 640),
-  }).strict(),
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("input.resolved"),
-    requestId: canonicalReferenceId(128),
-  }).strict(),
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("resource.changed"),
-    resourceId: canonicalReferenceId(160),
-    resourceKind: z.enum(["file", "folder", "project", "task", "app", "terminal_session"]),
-    changeKind: z.enum(["created", "updated", "deleted", "renamed"]),
-  }).strict(),
-  CanonicalChatRunActivityBaseSchema.extend({
-    type: z.literal("message.committed"),
-    messageId: CanonicalChatMessageIdSchema,
-    seq: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  }).strict(),
-]);
-
 export const CanonicalChatSafeErrorSchema = z.object({
   code: z.enum([
     "chat_not_found",
@@ -408,10 +383,100 @@ export const CanonicalChatSafeErrorSchema = z.object({
   }
 });
 
+export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("run.status"),
+    status: z.enum([
+      "accepted",
+      "running",
+      "waiting_for_approval",
+      "waiting_for_input",
+      "completed",
+      "failed",
+      "aborted",
+    ]),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("turn.status"),
+    turnId: CanonicalChatTurnIdSchema,
+    status: z.enum(["accepted", "running", "completed", "failed", "aborted"]),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("assistant.delta"),
+    messageId: CanonicalChatMessageIdSchema,
+    delta: canonicalBoundedText(4_000, 16 * 1024),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("tool.output"),
+    toolCallId: canonicalReferenceId(128),
+    text: canonicalBoundedText(4_000, 16 * 1024),
+    truncated: z.boolean(),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("tool.progress"),
+    toolCallId: canonicalReferenceId(128),
+    label: canonicalSafeLabel(240, 960),
+    status: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("review.ready"),
+    reviewId: canonicalReferenceId(128),
+    summary: z.object({
+      changedFileCount: z.number().int().min(0).max(10_000),
+      additions: z.number().int().min(0).max(1_000_000),
+      deletions: z.number().int().min(0).max(1_000_000),
+      partial: z.boolean(),
+    }).strict(),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("terminal.bound"),
+    terminalSessionId: canonicalReferenceId(128),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("run.error"),
+    error: CanonicalChatSafeErrorSchema,
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("approval.requested"),
+    approvalId: canonicalReferenceId(128),
+    title: canonicalSafeLabel(160, 640),
+    risk: z.enum(["low", "medium", "high"]),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("approval.resolved"),
+    approvalId: canonicalReferenceId(128),
+    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("input.requested"),
+    requestId: canonicalReferenceId(128),
+    title: canonicalSafeLabel(160, 640),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("input.resolved"),
+    requestId: canonicalReferenceId(128),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("resource.changed"),
+    resourceId: canonicalReferenceId(160),
+    resourceKind: z.enum(["file", "folder", "project", "task", "app", "terminal_session"]),
+    changeKind: z.enum(["created", "updated", "deleted", "renamed"]),
+  }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({
+    type: z.literal("message.committed"),
+    messageId: CanonicalChatMessageIdSchema,
+    seq: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  }).strict(),
+]);
+
 export type CanonicalOwnerScope = z.infer<typeof CanonicalOwnerScopeSchema>;
 export type CanonicalChatModelSelection = z.infer<typeof CanonicalChatModelSelectionSchema>;
 export type CanonicalChatInvocation = z.infer<typeof CanonicalChatInvocationSchema>;
 export type CanonicalChatResourceReference = z.infer<typeof CanonicalChatResourceReferenceSchema>;
+export type CanonicalChatCollaboration = z.infer<typeof CanonicalChatCollaborationSchema>;
+export type CanonicalChatUserState = z.infer<typeof CanonicalChatUserStateSchema>;
+export type CanonicalChatShellState = z.infer<typeof CanonicalChatShellStateSchema>;
+export type CanonicalChatForkProvenance = z.infer<typeof CanonicalChatForkProvenanceSchema>;
 export type CanonicalChat = z.infer<typeof CanonicalChatSchema>;
 export type CanonicalChatTurn = z.infer<typeof CanonicalChatTurnSchema>;
 export type CanonicalChatRun = z.infer<typeof CanonicalChatRunSchema>;

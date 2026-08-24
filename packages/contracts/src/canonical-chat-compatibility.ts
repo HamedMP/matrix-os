@@ -10,99 +10,16 @@ import {
   type CanonicalProviderDriverKind,
 } from "#canonical-chat-provider";
 import { CanonicalChatSummarySchema } from "#canonical-chat-surface";
+import type { AgentThreadEvent, AgentThreadSnapshot } from "#agent-thread-contracts";
+import type {
+  KernelConversationHistoryResponse,
+  KernelConversationSummary,
+} from "#kernel-conversations";
 
 const LEGACY_SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/;
 
-type LegacyThreadStatus =
-  | "queued"
-  | "starting"
-  | "running"
-  | "waiting_for_approval"
-  | "waiting_for_input"
-  | "completed"
-  | "failed"
-  | "aborted"
-  | "stale"
-  | "archived";
-type LegacyThreadAttention = "none" | "approval_required" | "input_required" | "failed" | "completed";
-
-interface LegacyProjectContext {
-  projectId: string;
-  projectName: string;
-  projectKind: "scratch" | "github" | "folder";
-  repositoryLabel?: string;
-  status: "ready" | "unavailable";
-}
-
-interface LegacyKernelConversationSummary {
-  id: string;
-  preview: string;
-  messageCount: number;
-  createdAt: number;
-  updatedAt: number;
-  context?: LegacyProjectContext;
-}
-
-interface LegacyKernelConversationHistory {
-  id: string;
-  messages: Array<{
-    index: number;
-    role: "user" | "assistant" | "system";
-    content: string;
-    contentTruncated: boolean;
-    timestamp: number;
-    tool?: string;
-    toolDisplay?: { preview: string };
-  }>;
-  context?: LegacyProjectContext;
-}
-
-export type LegacyAgentThreadEvent =
-  | { type: "thread.status"; occurredAt: string; status: LegacyThreadStatus }
-  | { type: "user.message"; occurredAt: string; text: string }
-  | { type: "assistant.text.delta"; occurredAt: string; messageId: string; delta: string }
-  | { type: "assistant.text.completed"; occurredAt: string; messageId: string }
-  | { type: "tool.started"; occurredAt: string; toolCallId: string; displayName: string }
-  | { type: "tool.completed"; occurredAt: string; toolCallId: string; outcome: "success" | "failed" | "cancelled" }
-  | { type: "approval.requested"; occurredAt: string; approval: { approvalId: string; title: string; risk: "low" | "medium" | "high" } }
-  | { type: "approval.resolved"; occurredAt: string; approvalId: string; decision: "approve" | "approve_for_session" | "decline" | "cancel" }
-  | { type: "user_input.requested"; occurredAt: string; request: { requestId: string; title: string } }
-  | { type: "user_input.answered"; occurredAt: string; requestId: string }
-  | { type: "file.changed"; occurredAt: string; changeKind: "created" | "updated" | "deleted" | "renamed" }
-  | { type: "thread.completed"; occurredAt: string; outcome: "completed" | "failed" | "aborted" };
-
-const LEGACY_SUPPORTED_EVENT_TYPES: ReadonlySet<string> = new Set([
-  "thread.status",
-  "user.message",
-  "assistant.text.delta",
-  "assistant.text.completed",
-  "tool.started",
-  "tool.completed",
-  "approval.requested",
-  "approval.resolved",
-  "user_input.requested",
-  "user_input.answered",
-  "file.changed",
-  "thread.completed",
-]);
-
-export function isSupportedLegacyAgentThreadEvent<T extends { type: string }>(
-  event: T,
-): event is T & LegacyAgentThreadEvent {
-  return LEGACY_SUPPORTED_EVENT_TYPES.has(event.type);
-}
-
-interface LegacyAgentThreadSnapshot {
-  thread: {
-    id: string;
-    title: string;
-    status: LegacyThreadStatus;
-    attention: LegacyThreadAttention;
-    createdAt: string;
-    updatedAt: string;
-  };
-  events: { items: LegacyAgentThreadEvent[] };
-}
+type LegacyThreadStatus = AgentThreadSnapshot["thread"]["status"];
+type LegacyThreadAttention = AgentThreadSnapshot["thread"]["attention"];
 
 export const CanonicalChatCompatibilityProjectionSchema = z.object({
   source: z.discriminatedUnion("kind", [
@@ -155,8 +72,8 @@ export function mapKernelConversationFromLegacyContracts(input: {
   instanceId: string;
   model: string;
   turnId?: string;
-  summary: LegacyKernelConversationSummary;
-  history: LegacyKernelConversationHistory;
+  summary: KernelConversationSummary;
+  history: KernelConversationHistoryResponse;
 }): CanonicalChatCompatibilityProjection {
   const { chatId, ownerScope, instanceId, summary, history } = input;
   if (summary.id !== history.id) throw new TypeError("Legacy conversation identity mismatch");
@@ -256,14 +173,20 @@ function isActiveStatus(status: ReturnType<typeof canonicalRunStatus>): status i
 }
 
 type OrderedLegacyMessage =
-  | { kind: "user"; event: Extract<LegacyAgentThreadEvent, { type: "user.message" }> }
-  | { kind: "assistant"; legacyId: string };
+  | { kind: "user"; event: Extract<AgentThreadEvent, { type: "user.message" }>; context: LegacyTurnContext }
+  | { kind: "assistant"; legacyId: string; context: LegacyTurnContext };
+
+interface LegacyTurnContext {
+  turnId: string;
+  runId: string;
+}
 
 function activityFromEvent(input: {
-  event: LegacyAgentThreadEvent;
+  event: AgentThreadEvent;
   index: number;
   chatId: string;
   runId: string;
+  turnId: string;
 }): CanonicalChatRunActivity | null {
   const base = {
     id: `legacy_activity_${input.index + 1}`,
@@ -272,6 +195,12 @@ function activityFromEvent(input: {
     occurredAt: input.event.occurredAt,
   };
   const event = input.event;
+  if (event.type === "turn.accepted") {
+    return { ...base, type: "turn.status", turnId: input.turnId, status: "accepted" };
+  }
+  if (event.type === "turn.status") {
+    return { ...base, type: "turn.status", turnId: input.turnId, status: event.status };
+  }
   if (event.type === "thread.status") {
     return { ...base, type: "run.status", status: canonicalRunStatus(event.status) };
   }
@@ -285,6 +214,15 @@ function activityFromEvent(input: {
       toolCallId: event.toolCallId,
       label: "Tool completed",
       status: event.outcome === "success" ? "completed" : event.outcome,
+    };
+  }
+  if (event.type === "tool.output") {
+    return {
+      ...base,
+      type: "tool.output",
+      toolCallId: event.toolCallId,
+      text: event.text,
+      truncated: event.truncated ?? false,
     };
   }
   if (event.type === "approval.requested") {
@@ -314,6 +252,30 @@ function activityFromEvent(input: {
       changeKind: event.changeKind,
     };
   }
+  if (event.type === "review.ready") {
+    return { ...base, type: "review.ready", reviewId: event.reviewId, summary: event.summary };
+  }
+  if (event.type === "terminal.bound") {
+    return { ...base, type: "terminal.bound", terminalSessionId: event.terminalSessionId };
+  }
+  if (event.type === "thread.error") {
+    const recoveryActions = event.error.recoveryActions?.flatMap((action) => {
+      if (action === "retry" || action === "open_setup_terminal") return [action];
+      if (action === "select_runtime") return ["select_provider" as const];
+      if (action === "start_new_session") return ["start_new_chat" as const];
+      return [];
+    });
+    return {
+      ...base,
+      type: "run.error",
+      error: {
+        code: "run_failed",
+        safeMessage: event.error.safeMessage,
+        retryable: event.error.retryable,
+        ...(recoveryActions?.length ? { recoveryActions } : {}),
+      },
+    };
+  }
   if (event.type === "thread.completed") {
     return { ...base, type: "run.status", status: event.outcome };
   }
@@ -328,20 +290,51 @@ export function mapAgentThreadFromLegacyContracts(input: {
   driverKind: CanonicalProviderDriverKind;
   turnId: string;
   runId: string;
-  snapshot: LegacyAgentThreadSnapshot;
+  snapshot: AgentThreadSnapshot;
 }): CanonicalChatCompatibilityProjection {
   const { chatId, ownerScope, instanceId, driverKind, snapshot } = input;
   const events = snapshot.events.items;
   const ordered: OrderedLegacyMessage[] = [];
-  const assistant = new Map<string, { chunks: string[]; completed: boolean; occurredAt: string }>();
+  const assistant = new Map<string, {
+    chunks: string[];
+    completed: boolean;
+    occurredAt: string;
+    context: LegacyTurnContext;
+  }>();
+  const legacyTurns = new Map<string, LegacyTurnContext>();
+  const fallbackContext = { turnId: input.turnId, runId: input.runId };
+  let currentContext = fallbackContext;
+  let firstLegacyContext: LegacyTurnContext | undefined;
+  const eventContexts: LegacyTurnContext[] = [];
+
+  const contextForLegacyTurn = (legacyTurnId: string): LegacyTurnContext => {
+    const existing = legacyTurns.get(legacyTurnId);
+    if (existing !== undefined) return existing;
+    const ordinal = legacyTurns.size + 1;
+    const context = { turnId: `cturn_legacy_${ordinal}`, runId: `run_legacy_${ordinal}` };
+    legacyTurns.set(legacyTurnId, context);
+    firstLegacyContext ??= context;
+    return context;
+  };
 
   events.forEach((event) => {
-    if (event.type === "user.message") ordered.push({ kind: "user", event });
+    if (event.type === "turn.accepted" || event.type === "turn.status") {
+      currentContext = contextForLegacyTurn(event.turnId);
+    } else if (event.type === "user.message" && event.turnId !== undefined) {
+      currentContext = contextForLegacyTurn(event.turnId);
+    }
+    eventContexts.push(currentContext);
+    if (event.type === "user.message") ordered.push({ kind: "user", event, context: currentContext });
     if (event.type === "assistant.text.delta") {
       const existing = assistant.get(event.messageId);
       if (existing === undefined) {
-        assistant.set(event.messageId, { chunks: [event.delta], completed: false, occurredAt: event.occurredAt });
-        ordered.push({ kind: "assistant", legacyId: event.messageId });
+        assistant.set(event.messageId, {
+          chunks: [event.delta],
+          completed: false,
+          occurredAt: event.occurredAt,
+          context: currentContext,
+        });
+        ordered.push({ kind: "assistant", legacyId: event.messageId, context: currentContext });
       } else {
         existing.chunks.push(event.delta);
       }
@@ -360,7 +353,7 @@ export function mapAgentThreadFromLegacyContracts(input: {
         seq: index + 1,
         role: "user",
         state: "committed",
-        turnId: input.turnId,
+        turnId: entry.context.turnId,
         parts: [{ type: "text", text: entry.event.text }],
         createdAt: entry.event.occurredAt,
       };
@@ -372,16 +365,23 @@ export function mapAgentThreadFromLegacyContracts(input: {
       seq: index + 1,
       role: "assistant",
       state: value.completed ? "committed" : "pending",
-      turnId: input.turnId,
-      runId: input.runId,
+      turnId: entry.context.turnId,
+      runId: entry.context.runId,
       parts: [{ type: "text", text: value.chunks.join("") }],
       createdAt: value.occurredAt,
     };
   });
   const activities = events
-    .map((event, index) => activityFromEvent({ event, index, chatId, runId: input.runId }))
+    .map((event, index) => activityFromEvent({
+      event,
+      index,
+      chatId,
+      runId: eventContexts[index]!.runId,
+      turnId: eventContexts[index]!.turnId,
+    }))
     .filter((activity): activity is CanonicalChatRunActivity => activity !== null);
   const status = canonicalRunStatus(snapshot.thread.status);
+  const bindingContext = firstLegacyContext ?? fallbackContext;
 
   return CanonicalChatCompatibilityProjectionSchema.parse({
     source: { kind: "coding_agent_thread", id: snapshot.thread.id },
@@ -395,8 +395,10 @@ export function mapAgentThreadFromLegacyContracts(input: {
       messageCount: messages.length,
       ...(messages.length === 0 ? {} : { lastMessagePreview: snapshot.thread.title }),
       currentSelection: { instanceId, model: input.model },
-      providerBinding: { driverKind, instanceId, lockedAtTurnId: input.turnId },
-      ...(isActiveStatus(status) ? { activeRun: { runId: input.runId, turnId: input.turnId, status } } : {}),
+      providerBinding: { driverKind, instanceId, lockedAtTurnId: bindingContext.turnId },
+      ...(isActiveStatus(status) ? {
+        activeRun: { runId: currentContext.runId, turnId: currentContext.turnId, status },
+      } : {}),
       createdAt: snapshot.thread.createdAt,
       updatedAt: snapshot.thread.updatedAt,
     },

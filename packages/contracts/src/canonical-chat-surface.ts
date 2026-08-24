@@ -164,7 +164,29 @@ export const CanonicalChatSnapshotSchema = z.object({
     || sequences.some((sequence, index) => index > 0 && sequence <= sequences[index - 1]!)) {
     ctx.addIssue({ code: "custom", path: ["messages"], message: "Message sequence must be unique and ordered" });
   }
+  for (const [key, ids] of [
+    ["messages", snapshot.messages.map((value) => value.id)],
+    ["turns", snapshot.turns.map((value) => value.id)],
+    ["runs", snapshot.runs.map((value) => value.id)],
+    ["activities", snapshot.activities.map((value) => value.id)],
+  ] as const) {
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({ code: "custom", path: [key], message: "Snapshot identifiers must be unique" });
+    }
+  }
+  const activeRuns = snapshot.runs.filter((run) => (
+    run.status === "accepted"
+    || run.status === "running"
+    || run.status === "waiting_for_approval"
+    || run.status === "waiting_for_input"
+  ));
+  if (activeRuns.length > 1) {
+    ctx.addIssue({ code: "custom", path: ["runs"], message: "Chat can have only one active Run" });
+  }
   const activeRun = snapshot.chat.activeRun;
+  if (activeRuns.length === 1 && activeRun === undefined) {
+    ctx.addIssue({ code: "custom", path: ["chat", "activeRun"], message: "Active Run projection is required" });
+  }
   if (activeRun !== undefined) {
     const referencedRun = snapshot.runs.find(
       (run) => run.id === activeRun.runId && run.turnId === activeRun.turnId,
@@ -209,6 +231,20 @@ export const CanonicalChatSnapshotSchema = z.object({
       ctx.addIssue({ code: "custom", path: ["activities", index, "runId"], message: "Activity Run is not in the snapshot" });
     }
   });
+  const inspectorRun = snapshot.inspector.run;
+  if (inspectorRun !== undefined) {
+    const run = snapshot.runs.find((candidate) => candidate.id === inspectorRun.runId);
+    if (run === undefined) {
+      ctx.addIssue({ code: "custom", path: ["inspector", "run", "runId"], message: "Inspector Run is not in the snapshot" });
+    } else if (run.status !== inspectorRun.status) {
+      ctx.addIssue({ code: "custom", path: ["inspector", "run", "status"], message: "Inspector Run status mismatch" });
+    }
+  }
+  const inspectorChanges = snapshot.inspector.changes;
+  if (inspectorChanges.availability === "available"
+    && !snapshot.turns.some((turn) => turn.id === inspectorChanges.turnId)) {
+    ctx.addIssue({ code: "custom", path: ["inspector", "changes", "turnId"], message: "Changes Turn is not in the snapshot" });
+  }
 });
 
 export type CanonicalChatProjectProjection = z.infer<typeof CanonicalChatProjectProjectionSchema>;

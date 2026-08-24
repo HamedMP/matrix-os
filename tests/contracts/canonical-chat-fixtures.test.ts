@@ -98,5 +98,57 @@ describe("canonical Chat fixtures", () => {
       ...fixture.snapshot,
       runs: fixture.snapshot.runs.map((run) => ({ ...run, turnId: "cturn_missing" })),
     }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      messages: [...fixture.snapshot.messages, { ...fixture.snapshot.messages[0]!, seq: 2 }],
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      turns: [...fixture.snapshot.turns, { ...fixture.snapshot.turns[0]!, clientRequestId: "req_duplicate_turn" }],
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      activities: [...fixture.snapshot.activities, { ...fixture.snapshot.activities[0]! }],
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      runs: [
+        ...fixture.snapshot.runs,
+        { ...fixture.snapshot.runs[0]!, id: "run_second_active", attempt: 2 },
+      ],
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      chat: { ...fixture.snapshot.chat, activeRun: undefined },
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      inspector: {
+        ...fixture.snapshot.inspector,
+        run: { ...fixture.snapshot.inspector.run!, runId: "run_missing" },
+      },
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      inspector: {
+        ...fixture.snapshot.inspector,
+        run: { ...fixture.snapshot.inspector.run!, status: "waiting_for_input" },
+      },
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      inspector: {
+        ...fixture.snapshot.inspector,
+        changes: {
+          availability: "available",
+          turnId: "cturn_missing",
+          changedFileCount: 0,
+          additions: 0,
+          deletions: 0,
+          partial: false,
+          files: [],
+        },
+      },
+    }).success).toBe(false);
   });
 });

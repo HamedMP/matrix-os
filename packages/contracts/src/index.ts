@@ -1,16 +1,30 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
 import {
-  isSupportedLegacyAgentThreadEvent,
-  mapAgentThreadFromLegacyContracts,
-  mapKernelConversationFromLegacyContracts,
-} from "#canonical-chat-compatibility";
-import type { CanonicalOwnerScope } from "#canonical-chat";
-import type { CanonicalProviderDriverKind } from "#canonical-chat-provider";
+  AgentAttachmentSchema,
+  AgentAttentionSchema,
+  AgentThreadStatusSchema,
+  AgentThreadSummarySchema,
+  AgentTurnStatusSchema,
+  ApprovalDecisionSchema,
+  UserInputRequestSchema,
+} from "#agent-thread-contracts";
+import { SafeClientErrorSchema } from "#safe-client-error";
+import {
+  SAFE_REFERENCE,
+  boundedDisplayText,
+  boundedText,
+  byteLength,
+  prefixedId,
+  referenceId,
+  safeRelativePath,
+  textEncoder,
+} from "#legacy-contract-primitives";
 
 export const CODEX_VERIFIED_VERSION = "0.149.1";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#agent-runtime-config";
+export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
 export {
   CanonicalChatCompatibilityProjectionSchema,
@@ -18,26 +32,20 @@ export {
 export type {
   CanonicalChatCompatibilityProjection,
 } from "#canonical-chat-compatibility";
+export * from "#canonical-chat-compatibility-public";
 export * from "#canonical-chat-provider";
 export * from "#canonical-chat-surface";
 export * from "#hermes-configuration";
 export * from "#kernel-result";
+export * from "#kernel-conversations";
+export * from "#safe-client-error";
 export * from "#terminal-links";
 export { IsoTimestampSchema } from "#contract-primitives";
 
-const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
-const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
 const UNSAFE_ASSISTANT_PREVIEW_TEXT =
   /(postgres(?:ql)?:\/\/|mysql:\/\/|sqlite:|pipedream|twilio|openai|anthropic|constraint|stack trace|zod|issues|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+|password\s*[=:]|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16}|token|secret|private key|db\.internal|localhost|127\.0\.0\.1)/i;
 const UNSAFE_ERROR_TEXT =
   /(postgres|sqlite|mysql|pipedream|twilio|openai|anthropic|constraint|stack trace|zod|issues|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
-
-const textEncoder = new TextEncoder();
-
-function byteLength(value: string): number {
-  return textEncoder.encode(value).byteLength;
-}
 
 function hasIpv4AddressInVersionSuffix(value: string): boolean {
   const suffixStart = value.indexOf("-");
@@ -45,48 +53,9 @@ function hasIpv4AddressInVersionSuffix(value: string): boolean {
   return /(?:^|[^0-9])(?:\d{1,3}\.){3}\d{1,3}(?:$|[^0-9])/.test(value.slice(suffixStart + 1));
 }
 
-function boundedText(maxChars: number, maxBytes = maxChars * 4) {
-  return z.string()
-    .min(1)
-    .max(maxChars)
-    .refine((value) => value.trim().length > 0, { message: "Text cannot be blank" })
-    .refine((value) => byteLength(value) <= maxBytes, { message: "Text exceeds byte limit" });
-}
-
-function boundedDisplayText(maxChars: number, maxBytes = maxChars * 4) {
-  return boundedText(maxChars, maxBytes)
-    .refine((value) => !UNSAFE_DISPLAY_TEXT.test(value), { message: "Text is not safe for display" });
-}
-
 function boundedSafeErrorText(maxChars: number, maxBytes = maxChars * 4) {
   return boundedText(maxChars, maxBytes)
     .refine((value) => !UNSAFE_ERROR_TEXT.test(value), { message: "Text is not safe for clients" });
-}
-
-function prefixedId(prefix: string, maxBody = 128) {
-  return z.string()
-    .min(prefix.length + 1)
-    .max(prefix.length + maxBody)
-    .startsWith(prefix)
-    .refine((value) => SAFE_ID_BODY.test(value.slice(prefix.length)), { message: "Invalid identifier" });
-}
-
-function referenceId(max = 128) {
-  return z.string()
-    .min(1)
-    .max(max)
-    .regex(SAFE_REFERENCE, "Invalid reference identifier")
-    .refine((value) => !value.includes(".."), { message: "Reference cannot contain traversal" });
-}
-
-function safeRelativePath(max = 512) {
-  return z.string()
-    .min(1)
-    .max(max)
-    .refine((value) => !value.startsWith("/") && !value.includes("\0"), { message: "Invalid path" })
-    .refine((value) => !value.split(/[\\/]+/).some((part) => part === "" || part === "." || part === ".."), {
-      message: "Path traversal is not allowed",
-    });
 }
 
 export const RuntimeIdSchema = prefixedId("rt_");
@@ -258,106 +227,6 @@ export type MatrixComputerCapabilityId = z.infer<typeof MatrixComputerCapability
 export type MatrixComputer = z.infer<typeof MatrixComputerSchema>;
 export type MatrixComputerList = z.infer<typeof MatrixComputerListSchema>;
 
-export const KernelConversationIdSchema = z.string()
-  .min(1)
-  .max(256)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/, "Invalid conversation id")
-  .refine((value) => !value.includes(".."), { message: "Invalid conversation id" });
-
-const KernelConversationContextLabelSchema = (maxChars: number) => boundedDisplayText(maxChars)
-  .refine(
-    (value) => !value.startsWith("/") && !value.startsWith("\\") && !/^[A-Za-z]:[\\/]/.test(value),
-    { message: "Context labels cannot be absolute paths" },
-  );
-
-export const KernelConversationContextUpdateSchema = z.object({
-  projectId: ProjectIdSchema.nullable(),
-}).strict();
-
-export const KernelConversationContextProjectionSchema = z.object({
-  projectId: ProjectIdSchema,
-  projectName: KernelConversationContextLabelSchema(160),
-  projectKind: z.enum(["scratch", "github", "folder"]),
-  repositoryLabel: KernelConversationContextLabelSchema(200).optional(),
-  status: z.enum(["ready", "unavailable"]),
-}).strict();
-
-export const KernelConversationSummarySchema = z.object({
-  id: KernelConversationIdSchema,
-  preview: z.string().max(32_000),
-  messageCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  context: KernelConversationContextProjectionSchema.optional(),
-}).strict();
-
-export const KernelConversationHistoryQuerySchema = z.object({
-  cursor: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
-  limit: z.coerce.number().int().min(1).max(50).default(50),
-}).strict();
-
-export const KernelConversationToolDisplaySchema = z.object({
-  kind: z.enum(["command", "file", "search", "text"]),
-  preview: boundedDisplayText(160),
-}).strict();
-
-export const KernelConversationHistoryMessageSchema = z.object({
-  index: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  role: z.enum(["user", "assistant", "system"]),
-  content: z.string().max(32_000),
-  contentTruncated: z.boolean(),
-  timestamp: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  tool: z.string().min(1).max(128).optional(),
-  toolDisplay: KernelConversationToolDisplaySchema.optional(),
-}).strict();
-
-export const KernelConversationHistoryResponseSchema = z.object({
-  id: KernelConversationIdSchema,
-  createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  context: KernelConversationContextProjectionSchema.optional(),
-  totalCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  messages: z.array(KernelConversationHistoryMessageSchema).max(50),
-  hasMore: z.boolean(),
-  nextCursor: z.string()
-    .min(1)
-    .max(16)
-    .regex(/^[1-9][0-9]*$/)
-    .refine((value) => Number.isSafeInteger(Number(value)), { message: "Invalid history cursor" })
-    .optional(),
-  limit: z.number().int().min(1).max(50),
-}).strict();
-
-export const KernelConversationDeleteResponseSchema = z.object({
-  ok: z.literal(true),
-}).strict();
-
-export const KernelConversationMutationErrorCodeSchema = z.enum([
-  "invalid_conversation_id",
-  "invalid_conversation_context",
-  "conversation_not_found",
-  "conversation_busy",
-  "conversation_delete_unavailable",
-  "project_unavailable",
-  "project_context_conflict",
-  "conversation_context_unavailable",
-]);
-
-export type KernelConversationId = z.infer<typeof KernelConversationIdSchema>;
-export type KernelConversationContextUpdate = z.infer<typeof KernelConversationContextUpdateSchema>;
-export type KernelConversationContextProjection = z.infer<
-  typeof KernelConversationContextProjectionSchema
->;
-export type KernelConversationSummary = z.infer<typeof KernelConversationSummarySchema>;
-export type KernelConversationHistoryQuery = z.infer<typeof KernelConversationHistoryQuerySchema>;
-export type KernelConversationHistoryMessage = z.infer<typeof KernelConversationHistoryMessageSchema>;
-export type KernelConversationHistoryResponse = z.infer<typeof KernelConversationHistoryResponseSchema>;
-export type KernelConversationToolDisplay = z.infer<typeof KernelConversationToolDisplaySchema>;
-export type KernelConversationDeleteResponse = z.infer<typeof KernelConversationDeleteResponseSchema>;
-export type KernelConversationMutationErrorCode = z.infer<
-  typeof KernelConversationMutationErrorCodeSchema
->;
-
 export const RuntimeSelectionRequestSchema = z.object({
   slot: MatrixComputerRuntimeSlotSchema,
 }).strict();
@@ -370,25 +239,6 @@ export const RuntimeSelectionResponseSchema = z.object({
 
 export type RuntimeSelectionRequest = z.infer<typeof RuntimeSelectionRequestSchema>;
 export type RuntimeSelectionResponse = z.infer<typeof RuntimeSelectionResponseSchema>;
-
-export const RecoveryActionSchema = z.enum([
-  "retry",
-  "sign_in",
-  "select_runtime",
-  "open_setup_terminal",
-  "resume",
-  "start_new_session",
-  "return_home",
-]);
-
-export const SafeClientErrorSchema = z.object({
-  code: z.string().min(1).max(80).regex(SAFE_SLUG),
-  safeMessage: boundedSafeErrorText(180, 720),
-  retryable: z.boolean(),
-  recoveryActions: z.array(RecoveryActionSchema).max(6).optional(),
-}).strict();
-
-export type SafeClientError = z.infer<typeof SafeClientErrorSchema>;
 
 export function boundedListSchema<T extends z.ZodType>(itemSchema: T, maxItems: number) {
   return z.object({
@@ -509,32 +359,6 @@ export const AgentProviderSummarySchema = z.object({
 
 export type AgentProviderSummary = z.infer<typeof AgentProviderSummarySchema>;
 
-export const AgentThreadStatusSchema = z.enum([
-  "queued",
-  "starting",
-  "running",
-  "waiting_for_approval",
-  "waiting_for_input",
-  "completed",
-  "failed",
-  "aborted",
-  "stale",
-  "archived",
-]);
-
-export const AgentAttentionSchema = z.enum(["none", "approval_required", "input_required", "failed", "completed"]);
-
-export const AgentAttachmentSchema = z.object({
-  id: referenceId(128),
-  kind: z.enum(["file", "diff", "image", "log_excerpt", "structured_ref"]),
-  label: SafeDisplayStringSchema,
-  path: safeRelativePath().optional(),
-  mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
-  sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
-}).strict();
-
-export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
-
 export const CreateAgentThreadRequestSchema = z.object({
   providerId: ProviderIdSchema,
   prompt: boundedText(24_000, 96 * 1024),
@@ -566,8 +390,6 @@ export const CreateAgentTurnRequestSchema = z.object({
 }).strict();
 
 export type CreateAgentTurnRequest = z.infer<typeof CreateAgentTurnRequestSchema>;
-
-export const AgentTurnStatusSchema = z.enum(["accepted", "running", "completed", "failed", "aborted"]);
 
 export const CreateAgentTurnResponseSchema = z.object({
   threadId: ThreadIdSchema,
@@ -627,51 +449,12 @@ export type AgentThreadComposerBuildResult =
   | { ok: true; request: CreateAgentThreadRequest }
   | { ok: false; issues: AgentThreadComposerIssue[] };
 
-export const AgentThreadSummarySchema = z.object({
-  id: ThreadIdSchema,
-  providerId: ProviderIdSchema,
-  title: SafeDisplayStringSchema,
-  status: AgentThreadStatusSchema,
-  attention: AgentAttentionSchema.default("none"),
-  projectId: ProjectIdSchema.optional(),
-  taskId: TaskIdSchema.optional(),
-  terminalSessionId: TerminalSessionIdSchema.optional(),
-  eventCursor: CursorSchema.optional(),
-  createdAt: IsoTimestampSchema,
-  updatedAt: IsoTimestampSchema,
-}).strict();
-
-export type AgentThreadSummary = z.infer<typeof AgentThreadSummarySchema>;
-
 export const AdoptAgentThreadResponseSchema = z.object({
   thread: AgentThreadSummarySchema,
   status: z.enum(["adopted", "already_adopted"]),
 }).strict();
 
 export type AdoptAgentThreadResponse = z.infer<typeof AdoptAgentThreadResponseSchema>;
-
-export const ApprovalDecisionSchema = z.enum(["approve", "approve_for_session", "decline", "cancel"]);
-export const ApprovalRiskSchema = z.enum(["low", "medium", "high"]);
-export const ApprovalActionKindSchema = z.enum(["command", "file_change", "network", "provider", "other"]);
-
-export const ApprovalPreviewSchema = z.object({
-  title: SafeDisplayStringSchema.optional(),
-  body: boundedDisplayText(2000, 8 * 1024).optional(),
-  truncated: z.boolean().default(false),
-}).strict();
-
-export const AgentApprovalRequestSchema = z.object({
-  approvalId: ApprovalIdSchema,
-  threadId: ThreadIdSchema,
-  title: SafeDisplayStringSchema,
-  safeDescription: boundedDisplayText(600, 2400),
-  risk: ApprovalRiskSchema,
-  actionKind: ApprovalActionKindSchema,
-  preview: ApprovalPreviewSchema.optional(),
-  allowedDecisions: z.array(ApprovalDecisionSchema).min(1).max(4),
-  expiresAt: IsoTimestampSchema.optional(),
-  correlationId: CorrelationIdSchema,
-}).strict();
 
 export const ApprovalDecisionRequestSchema = z.object({
   decision: ApprovalDecisionSchema,
@@ -680,67 +463,6 @@ export const ApprovalDecisionRequestSchema = z.object({
 }).strict();
 
 export type ApprovalDecisionRequest = z.infer<typeof ApprovalDecisionRequestSchema>;
-
-export const UserInputOptionSchema = z.object({
-  label: SafeDisplayStringSchema,
-  description: boundedDisplayText(300, 1200),
-}).strict();
-
-const UserInputOptionListSchema = z.array(UserInputOptionSchema)
-  .min(1)
-  .max(10)
-  .superRefine((options, context) => {
-    const seenLabels = new Set<string>();
-    options.forEach((option, index) => {
-      if (seenLabels.has(option.label)) {
-        context.addIssue({
-          code: "custom",
-          message: "Option labels must be unique",
-          path: [index, "label"],
-        });
-      }
-      seenLabels.add(option.label);
-    });
-  });
-
-export const UserInputQuestionSchema = z.object({
-  questionId: referenceId(128),
-  header: SafeDisplayStringSchema,
-  question: boundedDisplayText(600, 2400),
-  options: UserInputOptionListSchema.optional(),
-  allowOther: z.boolean().default(false),
-  secret: z.boolean().default(false),
-}).strict();
-
-const UserInputQuestionListSchema = z.array(UserInputQuestionSchema)
-  .min(1)
-  .max(8)
-  .superRefine((questions, context) => {
-    const seen = new Set<string>();
-    questions.forEach((question, index) => {
-      if (seen.has(question.questionId)) {
-        context.addIssue({
-          code: "custom",
-          message: "Question ids must be unique",
-          path: [index, "questionId"],
-        });
-      }
-      seen.add(question.questionId);
-    });
-  });
-
-export const UserInputRequestSchema = z.object({
-  requestId: RequestIdSchema,
-  threadId: ThreadIdSchema,
-  title: SafeDisplayStringSchema,
-  safeDescription: boundedDisplayText(600, 2400),
-  placeholder: SafeDisplayStringSchema.optional(),
-  required: z.boolean().default(true),
-  questions: UserInputQuestionListSchema.optional(),
-  autoResolutionMs: z.number().int().min(60_000).max(240_000).optional(),
-  expiresAt: IsoTimestampSchema.optional(),
-  correlationId: CorrelationIdSchema,
-}).strict();
 
 const StructuredUserInputAnswersSchema = z.record(
   referenceId(128),
@@ -762,168 +484,6 @@ export const UserInputAnswerRequestSchema = z.object({
 );
 
 export type UserInputAnswerRequest = z.infer<typeof UserInputAnswerRequestSchema>;
-
-const BaseThreadEventSchema = z.object({
-  eventId: EventIdSchema,
-  threadId: ThreadIdSchema,
-  occurredAt: IsoTimestampSchema,
-});
-
-export const AgentTurnLifecycleEventSchema = z.discriminatedUnion("type", [
-  BaseThreadEventSchema.extend({
-    type: z.literal("turn.accepted"),
-    turnId: AgentTurnIdSchema,
-    clientRequestId: RequestIdSchema,
-    acceptedAt: IsoTimestampSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("turn.status"),
-    turnId: AgentTurnIdSchema,
-    status: AgentTurnStatusSchema,
-  }).strict(),
-]);
-
-export type AgentTurnLifecycleEvent = z.infer<typeof AgentTurnLifecycleEventSchema>;
-
-const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
-  BaseThreadEventSchema.extend({
-    type: z.literal("thread.created"),
-    thread: AgentThreadSummarySchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("thread.status"),
-    status: AgentThreadStatusSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("user.message"),
-    messageId: referenceId(128),
-    text: boundedText(24_000, 96 * 1024),
-    clientRequestId: RequestIdSchema,
-    turnId: AgentTurnIdSchema.optional(),
-    attachments: z.array(AgentAttachmentSchema).max(8).optional(),
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("assistant.text.delta"),
-    messageId: referenceId(128),
-    delta: boundedText(4000, 16 * 1024),
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("assistant.text.completed"),
-    messageId: referenceId(128),
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("tool.started"),
-    toolCallId: referenceId(128),
-    displayName: SafeDisplayStringSchema,
-    kind: SafeDisplayStringSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("tool.output"),
-    toolCallId: referenceId(128),
-    text: boundedText(4000, 16 * 1024),
-    truncated: z.boolean().optional(),
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("tool.completed"),
-    toolCallId: referenceId(128),
-    outcome: z.enum(["success", "failed", "cancelled"]),
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("approval.requested"),
-    approval: AgentApprovalRequestSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("approval.resolved"),
-    approvalId: ApprovalIdSchema,
-    decision: ApprovalDecisionSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("user_input.requested"),
-    request: UserInputRequestSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("user_input.answered"),
-    requestId: RequestIdSchema,
-    correlationId: CorrelationIdSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("file.changed"),
-    path: safeRelativePath(),
-    changeKind: z.enum(["created", "updated", "deleted", "renamed"]),
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("review.ready"),
-    reviewId: ReviewIdSchema,
-    summary: z.object({
-      changedFileCount: z.number().int().min(0).max(10_000),
-      additions: z.number().int().min(0).max(1_000_000),
-      deletions: z.number().int().min(0).max(1_000_000),
-      partial: z.boolean(),
-    }).strict(),
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("terminal.bound"),
-    terminalSessionId: TerminalSessionIdSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("thread.error"),
-    error: SafeClientErrorSchema,
-  }).strict(),
-  BaseThreadEventSchema.extend({
-    type: z.literal("thread.completed"),
-    outcome: z.enum(["completed", "failed", "aborted"]),
-  }).strict(),
-]);
-
-export const AgentThreadEventSchema = z.discriminatedUnion("type", [
-  ...AgentTurnLifecycleEventSchema.options,
-  ...CoreAgentThreadEventSchema.options,
-]);
-
-export type AgentThreadEvent = z.infer<typeof AgentThreadEventSchema>;
-
-export const AgentThreadSnapshotSchema = z.object({
-  thread: AgentThreadSummarySchema,
-  events: boundedListSchema(AgentThreadEventSchema, 200),
-}).strict();
-
-export type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
-
-export function mapKernelConversationToCanonicalChatProjection(input: {
-  chatId: string;
-  ownerScope: CanonicalOwnerScope;
-  instanceId: string;
-  model: string;
-  turnId?: string;
-  summary: KernelConversationSummary;
-  history: KernelConversationHistoryResponse;
-}) {
-  return mapKernelConversationFromLegacyContracts({
-    ...input,
-    summary: KernelConversationSummarySchema.parse(input.summary),
-    history: KernelConversationHistoryResponseSchema.parse(input.history),
-  });
-}
-
-export function mapAgentThreadToCanonicalChatProjection(input: {
-  chatId: string;
-  ownerScope: CanonicalOwnerScope;
-  instanceId: string;
-  model: string;
-  driverKind: CanonicalProviderDriverKind;
-  turnId: string;
-  runId: string;
-  snapshot: AgentThreadSnapshot;
-}) {
-  const snapshot = AgentThreadSnapshotSchema.parse(input.snapshot);
-  return mapAgentThreadFromLegacyContracts({
-    ...input,
-    snapshot: {
-      thread: snapshot.thread,
-      events: { items: snapshot.events.items.filter(isSupportedLegacyAgentThreadEvent) },
-    },
-  });
-}
 
 export const TerminalStatusSchema = z.enum(["starting", "running", "idle", "exited", "stale", "unavailable"]);
 

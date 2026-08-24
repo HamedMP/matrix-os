@@ -143,6 +143,9 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
       ctx.addIssue({ code: "custom", path: [key], message: `Duplicate ${key} id` });
     }
   }
+  if (instance.skills.length + instance.commands.length > 64) {
+    ctx.addIssue({ code: "custom", path: ["commands"], message: "Skills and commands exceed catalog limit" });
+  }
 
   const selection = instance.defaultSelection;
   if (selection === undefined) return;
