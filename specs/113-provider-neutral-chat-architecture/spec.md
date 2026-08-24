@@ -153,6 +153,9 @@ Instance descriptor. It never infers compatibility from names.
    strictly validated and bounded before persistence or renderer projection.
 10. Raw provider, filesystem, database, credential, or path errors never reach
     clients. Detailed diagnostics stay in owner-controlled logs.
+11. A verified request principal identifies the caller, not the storage owner.
+    Organization scope requires an authoritative membership and runtime
+    resolution; it never falls back to the caller's personal scope.
 
 ## Public contracts
 
@@ -219,6 +222,21 @@ type ChatExecutionRootRef =
   | { kind: "project"; projectId: string }
   | { kind: "worktree"; projectId: string; worktreeId: string };
 ```
+
+For personal scope, `ownerId` is the verified principal's user ID. For
+organization scope, `ownerId` is the stable organization ID, and Gateway must
+first use an authoritative platform-owned resolver to verify the caller's
+active membership and role, resolve that organization to exactly one owner
+database/runtime, and bind the Project and resource namespace to the same
+organization. The resolved owner context, rather than the caller identity, is
+then used for every Chat, Project, file, app, task, and Terminal lookup.
+
+The client cannot request or override this mapping. Missing membership fails
+with a generic authorization error; a missing, malformed, or ambiguous owner
+runtime mapping fails as service misconfiguration. Neither case may retry in
+the caller's personal scope. Until this resolver and its fail-closed contract
+tests exist, organization-owned Chats remain unavailable and the cutover is
+personal-scope only.
 
 The client never sends `OwnerScope`, a filesystem path, provider resume state,
 provider credentials, repository URL, or runtime identity. Gateway derives
@@ -436,7 +454,8 @@ Before opening the transaction, Gateway resolves any execution-root reference
 through ProjectManager/WorktreeManager and records a root fingerprint without
 holding a database lock across filesystem I/O. One transaction then:
 
-1. derive owner from the verified principal and lock the Chat row `FOR UPDATE`;
+1. resolve the authorized owner context from the verified principal and lock
+   the Chat row `FOR UPDATE` in that owner's database;
 2. validate membership, lifecycle, base revision, the same project/root
    reference, and no active Run;
 3. resolve the selected Provider Instance, model, options, and canonical history
