@@ -2,6 +2,18 @@
 
 This feature is developed test-first and remains disabled by default until every access and cleanup invariant passes. Commands run from the repository root of the feature worktree.
 
+Admission requires all of these server-owned settings; missing values keep it off:
+
+```text
+MATRIX_PREBILLING_PROVISIONING_ENABLED=true
+MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=<0..100>
+MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=<positive integer>
+MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS=<positive integer>
+MATRIX_PREBILLING_PROVISIONING_COSTS_JSON={"cpx22":...,"cpx32":...,"cpx52":...}
+```
+
+Setting `ENABLED=false` or rollout to `0` stops only new admission. Signed subscription activation and signed-expiry cleanup remain wired so existing intents can converge safely.
+
 ## 1. Red: Contract and State-Machine Tests
 
 Add failing tests before each implementation slice. Start with focused suites for:
@@ -81,6 +93,8 @@ No live resource is created from this planning artifact. After implementation ha
 7. Repeat the authorization-vs-cleanup race under instrumentation.
 8. Validate Canvas onboarding first, then Desktop and refresh/multi-tab resumption.
 9. Ask whether to delete any disposable test VPS after validation to avoid charges; cleanup of test resources must be confirmed.
+
+The implementation PR performs no live Stripe, provider, deployment, or billing mutation. Test-mode/disposable-VPS validation remains an operator-approved post-review step.
 
 ## 5. Production Rollout
 
