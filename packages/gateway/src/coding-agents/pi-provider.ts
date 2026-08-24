@@ -41,7 +41,7 @@ import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
-const PROBE_TIMEOUT_MS = 1_500;
+const PROBE_TIMEOUT_MS = 5_000;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS_PER_RUN = 480;
 const MAX_DELTA_CHARS = 3_500;
@@ -800,17 +800,40 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     return null;
   }
 
-  async function probeInstalled(): Promise<boolean> {
+  async function probeReadiness(): Promise<{ installed: boolean; authenticated: boolean }> {
     try {
-      await runCommand(command, ["--version"], {
+      const { stdout } = await runCommand(command, [
+        "--list-models",
+        "--offline",
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--no-approve",
+      ], {
         cwd: homePath,
         timeout: PROBE_TIMEOUT_MS,
         env: buildPiChildEnvironment(options.env),
       });
-      return true;
+      const lines = stdout.split("\n");
+      const headerIndex = lines.findIndex((line) => {
+        const columns = line.trim().split(/\s+/);
+        return columns.length >= 6 &&
+          columns[0] === "provider" &&
+          columns[1] === "model" &&
+          columns[2] === "context" &&
+          columns[3] === "max-out" &&
+          columns[4] === "thinking" &&
+          columns[5] === "images";
+      });
+      const authenticated = headerIndex >= 0 && lines.slice(headerIndex + 1).some((line) => {
+        return line.trim().split(/\s+/).length >= 6;
+      });
+      return { installed: true, authenticated };
     } catch (err: unknown) {
-      logCodingAgentWarning("pi provider binary probe failed", err);
-      return false;
+      logCodingAgentWarning("pi provider readiness probe failed", err);
+      return { installed: false, authenticated: false };
     }
   }
 
@@ -818,16 +841,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     providerId,
 
     async getSummary({ now }) {
-      const installed = await probeInstalled();
+      const { installed, authenticated } = await probeReadiness();
       return AgentProviderSummarySchema.parse({
         id: providerId,
         displayName: "Pi",
         kind: "pi",
-        availability: installed ? "available" : "unavailable",
+        availability: installed ? (authenticated ? "available" : "auth_required") : "unavailable",
         installStatus: installed ? "installed" : "missing",
-        // pi has no non-interactive auth probe (`pi auth status` is a prompt,
-        // not a subcommand); binary presence is the configured signal.
-        authStatus: installed ? "authenticated" : "unknown",
+        authStatus: installed ? (authenticated ? "authenticated" : "missing") : "unknown",
         supportedModes: ["default"],
         defaultMode: "default",
         setupActions: [],
@@ -836,7 +857,8 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     },
 
     async healthCheck() {
-      return { ok: await probeInstalled() };
+      const { installed, authenticated } = await probeReadiness();
+      return { ok: installed && authenticated };
     },
 
     buildSetupAction(): SafeSetupAction[] {

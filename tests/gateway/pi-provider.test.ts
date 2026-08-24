@@ -1042,7 +1042,10 @@ describe("pi provider adapter — availability and summary", () => {
       env: { MATRIX_NODE_PREFIX: "/opt/matrix/custom-node", PATH: "/usr/bin" },
       runCommand: async (command, _args, options) => {
         calls.push({ command, env: options.env });
-        return { stdout: "0.81.0\n", stderr: "" };
+        return {
+          stdout: "provider model context max-out thinking images\nanthropic claude-haiku 200K 64K yes yes\n",
+          stderr: "",
+        };
       },
     });
 
@@ -1061,11 +1064,14 @@ describe("pi provider adapter — availability and summary", () => {
     }]);
   });
 
-  it("reports installed and authenticated when the binary answers --version", async () => {
+  it("reports installed and authenticated when Pi lists a credential-backed model", async () => {
     const provider = createPiCodingAgentProvider({
       homePath,
       spawnFn: fakeSpawn({ lines: [] }).spawnFn,
-      runCommand: async () => ({ stdout: "0.81.0\n", stderr: "" }),
+      runCommand: async () => ({
+        stdout: "provider model context max-out thinking images\nanthropic claude-haiku 200K 64K yes yes\n",
+        stderr: "",
+      }),
     });
 
     const summary = AgentProviderSummarySchema.parse(await provider.getSummary!({
@@ -1089,6 +1095,69 @@ describe("pi provider adapter — availability and summary", () => {
       now: () => baseNow,
       signal: AbortSignal.timeout(1_000),
     })).toEqual({ ok: true });
+  });
+
+  it("requires at least one credential-backed model before reporting Pi authenticated", async () => {
+    const calls: string[][] = [];
+    const provider = createPiCodingAgentProvider({
+      homePath,
+      spawnFn: fakeSpawn({ lines: [] }).spawnFn,
+      runCommand: async (_command, args) => {
+        calls.push(args);
+        if (args.includes("--list-models")) {
+          return {
+            stdout: "No models available. Use /login to log into a provider via OAuth or API key.\n",
+            stderr: "",
+          };
+        }
+        return { stdout: "0.84.2\n", stderr: "" };
+      },
+    });
+
+    const summary = AgentProviderSummarySchema.parse(await provider.getSummary!({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    }));
+
+    expect(calls).toEqual([[
+      "--list-models",
+      "--offline",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-context-files",
+      "--no-approve",
+    ]]);
+    expect(summary).toMatchObject({
+      availability: "auth_required",
+      installStatus: "installed",
+      authStatus: "missing",
+    });
+  });
+
+  it("fails closed when Pi prints a model table without any model rows", async () => {
+    const provider = createPiCodingAgentProvider({
+      homePath,
+      spawnFn: fakeSpawn({ lines: [] }).spawnFn,
+      runCommand: async () => ({
+        stdout: "provider model context max-out thinking images\n",
+        stderr: "",
+      }),
+    });
+
+    const summary = AgentProviderSummarySchema.parse(await provider.getSummary!({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    }));
+
+    expect(summary).toMatchObject({
+      availability: "auth_required",
+      installStatus: "installed",
+      authStatus: "missing",
+    });
   });
 
   it("reports the provider missing when the binary probe fails", async () => {

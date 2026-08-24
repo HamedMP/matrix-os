@@ -68,7 +68,12 @@ describe("workspace provider set wiring with pi", () => {
       agents: ["claude", "codex", "pi"],
       runtime: fakeRuntime(),
       homePath,
-      pi: { runCommand: async () => ({ stdout: "0.81.0\n", stderr: "" }) },
+      pi: {
+        runCommand: async () => ({
+          stdout: "provider model context max-out thinking images\nanthropic claude-haiku 200K 64K yes yes\n",
+          stderr: "",
+        }),
+      },
     });
 
     expect(set.registryProviders.map((provider) => provider.providerId)).toEqual(["claude", "codex", "pi"]);
