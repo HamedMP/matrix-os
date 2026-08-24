@@ -1302,7 +1302,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     let adoptedExistingServer = false;
     const persistWhileProvisioningClaimIsActive = async (
       mutate: (trx: PlatformDB) => Promise<void>,
-    ): Promise<{ persisted: boolean; prebillingCleanupWon: boolean }> => runInPlatformTransaction(
+    ): Promise<{ persisted: boolean; prebillingCleanupWon: boolean; alreadyCompleted: boolean }> => runInPlatformTransaction(
       deps.db,
       async (trx) => {
         const lockedMachine = await trx.executor.selectFrom('user_machines')
@@ -1323,10 +1323,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             persisted: false,
             prebillingCleanupWon: lockedJob?.authorization_basis === 'prebilling_intent'
               && lockedMachine?.deleted_at !== null,
+            alreadyCompleted: lockedMachine?.deleted_at === null
+              && lockedMachine.status === 'running'
+              && lockedJob?.status === 'completed',
           };
         }
         await mutate(trx);
-        return { persisted: true, prebillingCleanupWon: false };
+        return { persisted: true, prebillingCleanupWon: false, alreadyCompleted: false };
       },
     );
     const reconcileServerAfterLostClaim = async (
@@ -1637,6 +1640,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             activation_step: 'creating', updated_at: observedAt,
           }).where('job_id', '=', job.jobId).where('status', '=', 'running').executeTakeFirstOrThrow();
         });
+        if (observation.alreadyCompleted) return 'completed';
         if (!observation.persisted) {
           return reconcileServerAfterLostClaim(server, observation.prebillingCleanupWon);
         }
@@ -1657,6 +1661,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
               updated_at: observedAt,
             }).where('job_id', '=', job.jobId).where('status', '=', 'running').executeTakeFirstOrThrow();
           });
+          if (observation.alreadyCompleted) return 'completed';
           if (!observation.persisted) {
             return reconcileServerAfterLostClaim(server, observation.prebillingCleanupWon);
           }
@@ -1728,6 +1733,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           }
         }
       });
+      if (completion.alreadyCompleted) return 'completed';
       if (!completion.persisted) {
         return reconcileServerAfterLostClaim(server, completion.prebillingCleanupWon);
       }
