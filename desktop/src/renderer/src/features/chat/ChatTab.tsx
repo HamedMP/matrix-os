@@ -1,9 +1,8 @@
-import { Code2, FolderOpen, Plus, Sparkles } from "lucide-react";
+import { FolderOpen, Plus } from "lucide-react";
 import type { GlobalChatProviderId } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { ConversationProviderSelector } from "../../components/conversation/provider-selector";
-import type { ConversationProviderIcon } from "../../components/conversation/provider-options";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -193,9 +192,6 @@ function HermesPane() {
     <ConversationProviderSelector
       value={providerRegistry.selectedId}
       options={providerRegistry.options}
-      renderIcon={(icon: ConversationProviderIcon) => icon === "codex"
-        ? <Code2 className="size-3.5" />
-        : <Sparkles className="size-3.5" />}
       onSelect={(providerId) => void providerRegistry.activate(providerId)}
     />
   );

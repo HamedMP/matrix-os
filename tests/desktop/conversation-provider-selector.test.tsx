@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationProviderSelector } from "../../desktop/src/renderer/src/components/conversation/provider-selector";
 import type { ConversationProviderOption } from "../../desktop/src/renderer/src/components/conversation/provider-options";
@@ -9,7 +9,7 @@ import type { ConversationProviderOption } from "../../desktop/src/renderer/src/
 describe("conversation provider selector", () => {
   afterEach(cleanup);
 
-  it("renders an injected semantic icon and explains disabled providers", () => {
+  it("renders the Figma-sized provider badge and explains disabled providers", () => {
     const options: ConversationProviderOption[] = [
       {
         id: "hermes",
@@ -36,9 +36,16 @@ describe("conversation provider selector", () => {
       />,
     );
 
+    const trigger = screen.getByRole("button", { name: "Chat harness" });
+    expect(trigger.className).toContain("h-5");
+    expect(trigger.className).toContain("rounded-full");
+    expect(trigger.className).not.toContain("w-full");
+    expect(trigger.getAttribute("title")).toBe("Hermes · Current conversation, Tools");
+
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+
     expect(screen.getByTestId("provider-icon-hermes")).toBeTruthy();
-    const codex = screen.getByRole("option", { name: "Codex — Create a project to use Codex." });
-    expect((codex as HTMLOptionElement).disabled).toBe(true);
-    expect(screen.getByLabelText("Chat harness").getAttribute("title")).toBe("Hermes · Current conversation, Tools");
+    const codex = screen.getByRole("menuitemradio", { name: "Codex Create a project to use Codex." });
+    expect(codex.getAttribute("data-disabled")).not.toBeNull();
   });
 });

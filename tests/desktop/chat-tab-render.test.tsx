@@ -421,7 +421,7 @@ describe("ChatTab", () => {
     expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Resources" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Use Codex for a project chat" })).toBeNull();
-    expect(screen.getByRole("combobox", { name: "Chat harness" })).toHaveProperty("value", "claude");
+    expect(screen.getByRole("button", { name: "Chat harness" }).textContent).toContain("Claude");
     expect(screen.getByTestId("chat-empty-logo").style.height).toBe("208px");
     expect(screen.getByTestId("chat-empty-content").className).toContain("justify-center");
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
@@ -619,9 +619,8 @@ describe("ChatTab", () => {
     useHermesChat.setState({ messages: [], status: "idle" });
     render(<ChatTab />);
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Chat harness" }), {
-      target: { value: "codex" },
-    });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Chat harness" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/api/conversations",
@@ -638,8 +637,8 @@ describe("ChatTab", () => {
 
     render(<ChatTab />);
 
-    const codex = screen.getByRole("option", { name: "Codex" });
-    expect((codex as HTMLOptionElement).disabled).toBe(false);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Chat harness" }), { button: 0, ctrlKey: false });
+    expect(screen.getByRole("menuitemradio", { name: "Codex" }).getAttribute("data-disabled")).toBeNull();
   });
 
   it("does not intercept a text-only drop in Chat", () => {
@@ -886,9 +885,8 @@ describe("ChatTab", () => {
     useHermesChat.setState({ providerId: "claude", messages: [], view: "conversation" });
 
     render(<ChatTab />);
-    fireEvent.change(screen.getByRole("combobox", { name: "Chat harness" }), {
-      target: { value: "codex" },
-    });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Chat harness" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/api/conversations",
@@ -910,9 +908,8 @@ describe("ChatTab", () => {
     useHermesChat.setState({ providerId: "claude", messages: [], view: "conversation" });
 
     render(<ChatTab />);
-    fireEvent.change(screen.getByRole("combobox", { name: "Chat harness" }), {
-      target: { value: "pi" },
-    });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Chat harness" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Pi" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       "/api/conversations",
