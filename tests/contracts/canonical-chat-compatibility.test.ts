@@ -443,6 +443,21 @@ describe("canonical Chat compatibility mappers", () => {
       runId: "run_fallback",
       snapshot: thread,
     })).toThrow("Complete legacy thread history is required");
+
+    const cursorWindow = AgentThreadSnapshotSchema.parse({
+      ...thread,
+      events: { ...thread.events, hasMore: false, nextCursor: "cursor_after_window" },
+    });
+    expect(() => mapAgentThreadToCanonicalChatProjection({
+      chatId: "chat_partial_window",
+      ownerScope: { type: "personal", ownerId: "user_demo" },
+      instanceId: "codex_primary",
+      model: "gpt-5.6-sol",
+      driverKind: "codex",
+      turnId: "cturn_fallback",
+      runId: "run_fallback",
+      snapshot: cursorWindow,
+    })).toThrow("Complete legacy thread history is required");
   });
 
   it("marks incomplete assistant output failed when the legacy thread terminates unsuccessfully", () => {

@@ -310,7 +310,9 @@ export function mapAgentThreadFromLegacyContracts(input: {
   snapshot: AgentThreadSnapshot;
 }): CanonicalChatCompatibilityProjection {
   const { chatId, ownerScope, instanceId, driverKind, snapshot } = input;
-  if (snapshot.events.hasMore) throw new TypeError("Complete legacy thread history is required");
+  if (snapshot.events.hasMore || snapshot.events.nextCursor !== undefined) {
+    throw new TypeError("Complete legacy thread history is required");
+  }
   const events = snapshot.events.items;
   const ordered: OrderedLegacyMessage[] = [];
   const assistant = new Map<string, {
