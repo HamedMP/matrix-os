@@ -128,22 +128,47 @@ export async function getPrebillingIntent(
 
 export async function listAuthorizedPrebillingFallbackIntents(
   db: PlatformDB,
+  now: string,
   limit = 20,
 ): Promise<PrebillingProvisioningIntent[]> {
   await db.ready;
   const rows = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
     .where('state', '=', 'authorized').where('machine_id', 'is', null)
+    .where((eb) => eb.or([eb('lease_expires_at', 'is', null), eb('lease_expires_at', '<=', now)]))
     .orderBy('authorized_at', 'asc').limit(Math.max(1, Math.min(100, Math.trunc(limit)))).execute();
   return rows.map(mapIntent);
 }
 
+export async function claimAuthorizedPrebillingFallbackIntent(
+  db: PlatformDB,
+  input: { intentId: string; now: string; leaseExpiresAt: string },
+): Promise<PrebillingProvisioningIntent | undefined> {
+  await db.ready;
+  const row = await db.executor.updateTable('prebilling_provisioning_intents').set({
+    lease_expires_at: input.leaseExpiresAt, updated_at: input.now,
+  }).where('id', '=', input.intentId).where('state', '=', 'authorized').where('machine_id', 'is', null)
+    .where((eb) => eb.or([eb('lease_expires_at', 'is', null), eb('lease_expires_at', '<=', input.now)]))
+    .returningAll().executeTakeFirst();
+  return row ? mapIntent(row) : undefined;
+}
+
+export async function releaseAuthorizedPrebillingFallbackClaim(
+  db: PlatformDB,
+  input: { intentId: string; leaseExpiresAt: string; now: string },
+): Promise<void> {
+  await db.ready;
+  await db.executor.updateTable('prebilling_provisioning_intents').set({ lease_expires_at: null, updated_at: input.now })
+    .where('id', '=', input.intentId).where('state', '=', 'authorized')
+    .where('machine_id', 'is', null).where('lease_expires_at', '=', input.leaseExpiresAt).execute();
+}
+
 export async function bindAuthorizedPrebillingFallbackMachine(
   db: PlatformDB,
-  input: { intentId: string; clerkUserId: string; runtimeSlot: string; machineId: string; now: string },
+  input: { intentId: string; clerkUserId: string; runtimeSlot: string; machineId: string; leaseExpiresAt: string; now: string },
 ): Promise<boolean> {
   await db.ready;
   const result = await sql<{ id: string }>`UPDATE prebilling_provisioning_intents SET machine_id = ${input.machineId}, revision = revision + 1, updated_at = ${input.now}
-    WHERE id = ${input.intentId} AND clerk_user_id = ${input.clerkUserId} AND runtime_slot = ${input.runtimeSlot} AND state = 'authorized'
+    WHERE id = ${input.intentId} AND clerk_user_id = ${input.clerkUserId} AND runtime_slot = ${input.runtimeSlot} AND state = 'authorized' AND lease_expires_at = ${input.leaseExpiresAt}
       AND (machine_id IS NULL OR machine_id = ${input.machineId}) AND EXISTS (SELECT 1 FROM user_machines WHERE machine_id = ${input.machineId}
         AND clerk_user_id = ${input.clerkUserId} AND runtime_slot = ${input.runtimeSlot} AND activation_state = 'authorized' AND deleted_at IS NULL)
     RETURNING id`.execute(db.executor);

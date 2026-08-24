@@ -46,10 +46,3 @@ No live resource is created from this planning artifact. After implementation ha
 9. Ask whether to delete any disposable test VPS after validation to avoid charges; cleanup of test resources must be confirmed.
 
 The implementation PR performs no live Stripe, provider, deployment, or billing mutation. Test-mode/disposable-VPS validation remains an operator-approved post-review step.
-
-## 3. Delivery and Documentation
-
-- Ship the implementation as one monitored PR with phase commits for flag-off persistence/workers, checkout/authorization, and shell/journey/observability, per the requester's explicit delivery direction.
-- Every PR uses a Conventional Commit title, includes the mandatory invariant section, and reaches trusted current-head Greptile `5/5` before merge.
-- Open a separate public-safe PR in `FinnaAI/matrix-os-site` under `content/docs/` explaining compute → agents → secure checkout/preparation → billing authorization → ready. Do not publish provider details, private hostnames, internal IDs, credentials, or operator commands.
-- This onboarding/platform change deploys through the platform/app-shell path. It is not a customer VPS Docker or host-bundle rollout unless a later implementation diff independently changes host-bundle contents.

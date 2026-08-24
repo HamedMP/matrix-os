@@ -15,6 +15,7 @@ import {
   admitPrebillingIntent,
   authorizePrebillingIntent,
   bindPrebillingIntentMachine,
+  claimAuthorizedPrebillingFallbackIntent,
   createPrebillingIntent,
   cleanupExpiredPrebillingCheckout,
   getPrebillingIntentByCheckoutAttempt,
@@ -350,6 +351,21 @@ describe('platform prebilling provisioning foundation', () => {
     expect(provision).toHaveBeenCalledWith(expect.objectContaining({
       clerkUserId: 'user_123', serverType: 'cpx32', developerTools: ['codex', 'claude-code'],
     }), { dispatch: 'detached' });
+  });
+
+  it('leases fallback provisioning to one platform process', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    await db.transaction((trx) => authorizePrebillingIntent(trx, {
+      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
+    }));
+    const claims = await Promise.all([1, 2].map(() => claimAuthorizedPrebillingFallbackIntent(db, {
+      intentId: 'intent-1', now: CREATED_AT, leaseExpiresAt: EXPIRES_AT,
+    })));
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    await expect(claimAuthorizedPrebillingFallbackIntent(db, {
+      intentId: 'intent-1', now: EXPIRES_AT, leaseExpiresAt: '2026-08-24T10:36:00.000Z',
+    })).resolves.toBeDefined();
   });
 
   it('atomically authorizes only the exact owner-bound prepared machine', async () => {
