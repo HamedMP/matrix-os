@@ -76,7 +76,7 @@ These are inputs, not work to repeat.
 | MAT-319 provider-neutral architecture | Done | [#1218](https://github.com/HamedMP/matrix-os/pull/1218) merged | Amend through this design PR; do not reopen the old implementation assumptions |
 | MAT-299 Hermes conversation lifecycle | Done | [#1213](https://github.com/HamedMP/matrix-os/pull/1213) merged | Legacy Hermes source and compatibility seam for canonical import |
 | MAT-318 persistent Project context | Done | [#1252](https://github.com/HamedMP/matrix-os/pull/1252) merged | Reuse stable Project ID and guarded context behavior; generalize to canonical Chat move |
-| MAT-321 canonical Chat persistence/adapters | Todo | No PR | Replace as an umbrella; split into `NEW-B1`, `NEW-B2`, `NEW-B4`, and `NEW-B5` below |
+| MAT-321 canonical Chat persistence/adapters | Todo | No PR | Replace as an umbrella; split into `MAT-472`, `MAT-473`, `MAT-477`, and `MAT-479` below |
 | MAT-322 Chat inbox/composer/resources | Done | [#1231](https://github.com/HamedMP/matrix-os/pull/1231) merged | Reuse visual/components; remove its stale “blocked by MAT-321” relation during Linear cleanup |
 | MAT-344 T3 Project Chat | In Progress | Umbrella | Keep as UI umbrella; children supply accepted components to final integration |
 | MAT-345 Project Chat navigation/search | Done | [#1248](https://github.com/HamedMP/matrix-os/pull/1248) merged | Reuse list/search behavior against canonical summaries |
@@ -87,22 +87,23 @@ These are inputs, not work to repeat.
 | MAT-364 Desktop Chat beta-ready | In Progress | Umbrella | Final authenticated acceptance/hardening gate, not a feature bucket |
 | MAT-453 Projects workflows | Done | [#1282](https://github.com/HamedMP/matrix-os/pull/1282) merged | Reuse Project identity, creation, and re-entry behavior |
 | MAT-455 Chat/Files home lists | Done | [#1292](https://github.com/HamedMP/matrix-os/pull/1292) merged | Reuse list presentation and navigation patterns |
-| MAT-458 typed activity timeline | In Progress | No attached PR | Keep Gateway normalization/persistence under Yuhan; split presentation polish into `NEW-D1` |
+| MAT-458 typed activity timeline | In Progress | No attached PR | Keep Gateway normalization/persistence under Yuhan; split presentation polish into `MAT-474` |
 | MAT-459 provider readiness | PR In Review in Linear | [#1294](https://github.com/HamedMP/matrix-os/pull/1294) merged | **Status drift:** reconcile Linear to merged truth before new dependency links |
-| MAT-460 turn changes/file preview | In Progress, blocked | No PR | Split backend truth (`NEW-E2`) from inspector UI (`NEW-E3`); preserve MAT-347 and MAT-458 blockers |
+| MAT-460 turn changes/file preview | In Progress, blocked | No PR | Split backend truth (`MAT-478`) from inspector UI (`MAT-481`); preserve MAT-347 and MAT-458 blockers |
 | MAT-468 real Global Chat provider switching | Human Review | [#1299](https://github.com/HamedMP/matrix-os/pull/1299) open draft | Compatibility slice only; see disposition below |
 | MAT-469 readiness refresh | Done | [#1300](https://github.com/HamedMP/matrix-os/pull/1300) merged | Reuse bounded refresh and draft-preservation behavior |
 | Supporting global/project presentation | Merged | [#1293](https://github.com/HamedMP/matrix-os/pull/1293) merged | Reuse presentation composition; it is not canonical domain/persistence unification |
 
-## Proposed Linear and PR stack
+## Created Linear and proposed PR stack
 
-`NEW-*` are planning identifiers only. Create real Linear issues after team
-review, then replace these identifiers in this document. Every PR has one owner
-and one coherent responsibility.
+The implementation issues below were created on 2026-08-24 in the Matrix OS
+team, September Public Launch project, and current cycle. All are temporarily
+assigned to Yuhan; teammates may select ownership later. Every PR retains one
+owner and one coherent responsibility.
 
-### NEW-A0 — Final architecture amendment
+### MAT-470 — Final architecture amendment
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `docs(chat): finalize canonical Chat and workspace architecture`
 **Depends on:** MAT-319/#1218 and the decisions in this document
 **Blocks:** every new implementation issue
@@ -112,11 +113,11 @@ and one coherent responsibility.
   hierarchy, shared UI boundaries, migration, and PR graph.
 - Gate: team architecture review. No runtime claim or product implementation.
 
-### NEW-A1 — Shared canonical Chat contracts and fixtures
+### MAT-471 — Shared canonical Chat contracts and fixtures
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `feat(contracts): add canonical Chat and Provider contracts`
-**Depends on:** NEW-A0
+**Depends on:** MAT-470
 **Blocks:** all backend/UI lanes
 
 - Primary files: `packages/contracts/src/**`, focused contract tests, and shared
@@ -128,12 +129,12 @@ and one coherent responsibility.
   coding-agent thread projections. Do not add storage or UI.
 - Gate: schema bounds, redaction, round-trip, and fixture compatibility tests.
 
-### NEW-B1 — Owner-local Chat repository and transactional outbox
+### MAT-472 — Owner-local Chat repository and transactional outbox
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `feat(gateway): add canonical Chat repository`
-**Depends on:** NEW-A1
-**Blocks:** NEW-B4, NEW-B5, NEW-F1
+**Depends on:** MAT-471
+**Blocks:** MAT-477, MAT-479, MAT-480
 
 - Primary files: new `packages/gateway/src/chat/**`, shared owner-database
   migrations, Gateway shutdown wiring, and `tests/gateway/chat-*.test.ts`.
@@ -145,12 +146,12 @@ and one coherent responsibility.
 - Gate: row-lock races, atomic outbox, delete/finalize races, owner isolation,
   and shutdown ownership tests.
 
-### NEW-B2 — Provider Driver/Instance catalog and Chat binding
+### MAT-473 — Provider Driver/Instance catalog and Chat binding
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `feat(gateway): add Provider Instance catalog and Chat binding`
-**Depends on:** NEW-A1
-**Blocks:** NEW-B4 and NEW-C1
+**Depends on:** MAT-471
+**Blocks:** MAT-477 and MAT-476
 
 - Primary files: new canonical Provider registry in
   `packages/gateway/src/chat/**`; adapt—not duplicate—existing
@@ -165,21 +166,21 @@ and one coherent responsibility.
 
 ### MAT-347 — Canonical execution-root provenance
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** retain MAT-347's focused conventional title
-**Depends on:** NEW-A1
-**Blocks:** NEW-B4 and NEW-E2
+**Depends on:** MAT-471
+**Blocks:** MAT-477 and MAT-478
 
 - Preserve the existing exact project/worktree provenance scope.
 - Change only enough to emit the canonical `ChatExecutionRootRef` contract.
 - Do not absorb file-diff, inspector, or worktree-management UI.
 
-### NEW-B4 — Canonical Turn/Run orchestration and first adapters
+### MAT-477 — Canonical Turn/Run orchestration and first adapters
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `feat(gateway): orchestrate canonical Chat runs`
-**Depends on:** NEW-B1, NEW-B2, and MAT-347
-**Blocks:** NEW-B5, NEW-E2, and NEW-F1
+**Depends on:** MAT-472, MAT-473, and MAT-347
+**Blocks:** MAT-479, MAT-478, and MAT-480
 
 - Primary files: canonical Chat routes/orchestrator under
   `packages/gateway/src/chat/**` plus adapters around current Hermes and coding
@@ -193,12 +194,12 @@ and one coherent responsibility.
 - Gate: real accepted turns per enabled adapter, retry/resume, cancellation,
   root change, late events, restart reconciliation, and cross-shell replay.
 
-### NEW-B5 — Legacy import and canonical cutover
+### MAT-479 — Legacy import and canonical cutover
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `feat(gateway): migrate legacy conversations to canonical Chat`
-**Depends on:** NEW-B1 and NEW-B4
-**Blocks:** NEW-F2
+**Depends on:** MAT-472 and MAT-477
+**Blocks:** MAT-483
 
 - Import `system/conversations/*.json` and the single existing bounded
   `system/coding-agents/threads.json` authority. Never import renderer memory.
@@ -210,22 +211,22 @@ and one coherent responsibility.
 
 ### MAT-458 — Typed Run activity contract and durable replay
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** use the existing MAT-458 issue and keep it draft until human review
-**Depends on:** MAT-349 and NEW-A1
-**Blocks:** NEW-D1 integration, NEW-E2, and NEW-F2
+**Depends on:** MAT-349 and MAT-471
+**Blocks:** MAT-474 integration, MAT-478, and MAT-483
 
 - Keep Gateway normalization, redaction, ordering, persistence/replay, and
   Desktop projection adapters here.
 - Do not own final timeline spacing/visual polish or exact changed-files truth.
-- Rebase its contract onto NEW-A1 rather than creating a second activity schema.
+- Rebase its contract onto MAT-471 rather than creating a second activity schema.
 
-### NEW-C1 — Shared Chat panel, composer, and controller
+### MAT-476 — Shared Chat panel, composer, and controller
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `feat(desktop): add shared Chat surface and composer`
-**Depends on:** NEW-A1 and NEW-B2; may use fixtures before NEW-B4
-**Blocks:** NEW-F1
+**Depends on:** MAT-471 and MAT-473; may use fixtures before MAT-477
+**Blocks:** MAT-480
 
 - Primary files: a new shared Chat feature boundary in
   `desktop/src/renderer/src/features/chat/**`; migrate useful behavior from
@@ -238,29 +239,31 @@ and one coherent responsibility.
 - Gate: identical Global/Project fixture rendering, capability controls,
   first-Turn lock UX, keyboard navigation, draft preservation, and runtime reset.
 
-### NEW-D1 — Conversation message and activity presentation
+### MAT-474 — Conversation message and activity presentation
 
-**Proposed owner:** Nima
+**Temporary assignee:** Yuhan
+**Suggested later owner:** Nima
 **PR:** `feat(desktop): polish canonical Chat messages`
-**Depends on:** NEW-A1; final integration also depends on MAT-458
-**Blocks:** NEW-F2
+**Depends on:** MAT-471; final integration also depends on MAT-458
+**Blocks:** MAT-483
 
 - Primary files: `features/chat/elements/**`, a new shared
   `ConversationTimeline`, and focused Desktop tests.
 - Own user/assistant messages, markdown/code, reasoning disclosure, streaming,
   tools, approvals, requested input, errors/retry, timestamps/actions,
   accessibility, and long-content performance.
-- Develop against NEW-A1 fixtures so backend work does not block presentation.
+- Develop against MAT-471 fixtures so backend work does not block presentation.
   Do not import `threads`, `hermes-chat`, or coding workspace stores directly.
 - Gate: every canonical part type, streaming/reload parity fixtures, keyboard/
   screen-reader behavior, virtualization or bounded rendering, and narrow width.
 
-### NEW-E1 — Provider-neutral Chat inspector shell
+### MAT-475 — Provider-neutral Chat inspector shell
 
-**Proposed owner:** Shubham
+**Temporary assignee:** Yuhan
+**Suggested later owner:** Shubham
 **PR:** `refactor(desktop): add shared Chat inspector shell`
-**Depends on:** NEW-A1; may use fixtures
-**Blocks:** NEW-E3 and NEW-F2
+**Depends on:** MAT-471; may use fixtures
+**Blocks:** MAT-481 and MAT-483
 
 - Primary files: refactor `AgentConversationInspector`,
   `AgentWorkspacePanels`, `AgentReviewPanel`, and inspector layout seams into a
@@ -270,12 +273,12 @@ and one coherent responsibility.
   surfaces.
 - Do not calculate exact diffs, read arbitrary paths, or own Chat routing.
 
-### NEW-E2 — Exact per-Turn changes and safe file-read backend
+### MAT-478 — Exact per-Turn changes and safe file-read backend
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `feat(gateway): persist exact Chat turn changes`
-**Depends on:** MAT-347, MAT-458, and NEW-B4
-**Blocks:** NEW-E3
+**Depends on:** MAT-347, MAT-458, and MAT-477
+**Blocks:** MAT-481
 
 - This is the backend half of MAT-460: capture/store bounded change truth,
   authorization, safe Git/file reads, concurrency labels, and canonical
@@ -285,12 +288,13 @@ and one coherent responsibility.
 - Gate: owner/root authorization, before/after isolation, reload, binary/rename/
   partial/concurrent cases, traversal/symlink denial, timeout, and output caps.
 
-### NEW-E3 — Changes/files inspector integration
+### MAT-481 — Changes/files inspector integration
 
-**Proposed owner:** Shubham
+**Temporary assignee:** Yuhan
+**Suggested later owner:** Shubham
 **PR:** `feat(desktop): integrate Chat changes and file preview`
-**Depends on:** NEW-E1 and NEW-E2
-**Blocks:** NEW-F2
+**Depends on:** MAT-475 and MAT-478
+**Blocks:** MAT-483
 
 - This is the UI half of MAT-460: changed-files card/tree, structured diff,
   current/checkpoint labels, file preview, stale response identity, and loading/
@@ -299,12 +303,12 @@ and one coherent responsibility.
 - Gate: all backend truth variants, reload parity, stale response cancellation,
   responsive inspector, and independent Git/hash comparison in final QA.
 
-### NEW-F1 — Merge Global and Project Chat domains
+### MAT-480 — Merge Global and Project Chat domains
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **PR:** `feat(desktop): unify Global and Project Chat`
-**Depends on:** NEW-B1, NEW-B4, and NEW-C1
-**Blocks:** NEW-F2
+**Depends on:** MAT-472, MAT-477, and MAT-476
+**Blocks:** MAT-483
 
 - Route Global and Project entry points into the same controller/surface and
   canonical Chat API.
@@ -315,11 +319,11 @@ and one coherent responsibility.
 - Gate: create root/project Chat, move both directions, reload/reconnect,
   conflict and stale Project recovery, same layout/actions in both routes.
 
-### NEW-F2 — Full composition, legacy-rail removal, and real QA
+### MAT-483 — Full composition, legacy-rail removal, and real QA
 
-**Proposed owner:** Yuhan for integration; Nima and Shubham verify their surfaces
+**Temporary assignee:** Yuhan; Nima and Shubham verify their accepted surfaces
 **PR:** `refactor(desktop): cut over to canonical Chat experience`
-**Depends on:** NEW-B5, MAT-458, NEW-D1, NEW-E3, and NEW-F1
+**Depends on:** MAT-479, MAT-458, MAT-474, MAT-481, and MAT-480
 **Blocks:** MAT-364 completion and public docs
 
 - Compose the accepted panel, timeline, and inspector; switch Desktop/browser
@@ -332,9 +336,9 @@ and one coherent responsibility.
 
 ### MAT-364 — Beta acceptance and hardening
 
-**Proposed owner:** Nima for product acceptance coordination; Yuhan fixes backend/
+**Current owner:** Nima for product acceptance coordination; Yuhan fixes backend/
 panel defects; Shubham fixes inspector defects
-**Depends on:** NEW-F2 and resolution of MAT-468/#1299
+**Depends on:** MAT-483 and resolution of MAT-468/#1299
 **PRs:** one narrow bug PR per discovered issue; do not reopen the integration PR
 
 - Run the launch matrix on a real authenticated disposable customer VPS and
@@ -342,9 +346,9 @@ panel defects; Shubham fixes inspector defects
 - File each unrelated bug separately with owner, evidence, expected behavior,
   and dependency. Human Review remains the user's gate.
 
-### NEW-G1 — Public Chat and Project Workspace documentation
+### MAT-482 — Public Chat and Project Workspace documentation
 
-**Proposed owner:** Yuhan
+**Temporary assignee:** Yuhan
 **Repository/PR:** `FinnaAI/matrix-os-site`,
 `docs(chat): document canonical Chat and Project workspaces`
 **Depends on:** MAT-364 acceptance
@@ -361,37 +365,37 @@ panel defects; Shubham fixes inspector defects
 ## Dependency graph
 
 ```text
-NEW-A0 architecture
-└── NEW-A1 contracts + fixtures
-    ├── NEW-B1 repository/outbox ───────────────┐
-    ├── NEW-B2 Driver/Instance catalog ───────┐ │
-    ├── MAT-347 execution-root provenance ────┼─┼── NEW-B4 orchestration
-    ├── MAT-458 typed activity (after MAT-349)│ │       ├── NEW-B5 migration
-    ├── NEW-C1 shared panel/composer ─────────┘ │       └── NEW-E2 change truth
-    ├── NEW-D1 messages UI ─────────────────────┼──────────────┐
-    └── NEW-E1 inspector shell ─────────────────┘              │
-                                        NEW-E2 + NEW-E1 ── NEW-E3 inspector UI
+MAT-470 architecture
+└── MAT-471 contracts + fixtures
+    ├── MAT-472 repository/outbox ───────────────┐
+    ├── MAT-473 Driver/Instance catalog ───────┐ │
+    ├── MAT-347 execution-root provenance ────┼─┼── MAT-477 orchestration
+    ├── MAT-458 typed activity (after MAT-349)│ │       ├── MAT-479 migration
+    ├── MAT-476 shared panel/composer ─────────┘ │       └── MAT-478 change truth
+    ├── MAT-474 messages UI ─────────────────────┼──────────────┐
+    └── MAT-475 inspector shell ─────────────────┘              │
+                                        MAT-478 + MAT-475 ── MAT-481 inspector UI
 
-NEW-B1 + NEW-B4 + NEW-C1 ── NEW-F1 Global/Project merge
-NEW-B5 + MAT-458 + NEW-D1 + NEW-E3 + NEW-F1 ── NEW-F2 cutover
-NEW-F2 + MAT-468 disposition ── MAT-364 real beta acceptance ── NEW-G1 docs
+MAT-472 + MAT-477 + MAT-476 ── MAT-480 Global/Project merge
+MAT-479 + MAT-458 + MAT-474 + MAT-481 + MAT-480 ── MAT-483 cutover
+MAT-483 + MAT-468 disposition ── MAT-364 real beta acceptance ── MAT-482 docs
 ```
 
 ## Parallel work lanes
 
-After NEW-A1 merges, four lanes can proceed without sharing implementation
+After MAT-471 merges, four lanes can proceed without sharing implementation
 files:
 
-| Lane | Owner | Work | Integration input |
+| Lane | Suggested later owner | Work | Integration input |
 |---|---|---|---|
-| Canonical backend + Chat panel | Yuhan | NEW-B1/B2, MAT-347, NEW-B4/B5, NEW-C1, NEW-E2, NEW-F1/F2 | Owns schemas after NEW-A1, Gateway, controller, and final composition |
-| Messages | Nima | NEW-D1 | Consumes frozen schemas/fixtures; hands over pure timeline components |
-| Inspector | Shubham | NEW-E1 then NEW-E3 | Consumes fixtures, then NEW-E2 API; hands over pure inspector components |
+| Canonical backend + Chat panel | Yuhan | MAT-472/MAT-473, MAT-347, MAT-477/MAT-479, MAT-476, MAT-478, MAT-480/MAT-483 | Owns schemas after MAT-471, Gateway, controller, and final composition |
+| Messages | Nima | MAT-474 | Consumes frozen schemas/fixtures; hands over pure timeline components |
+| Inspector | Shubham | MAT-475 then MAT-481 | Consumes fixtures, then MAT-478 API; hands over pure inspector components |
 | Activity contract | Yuhan, kept separate from UI | MAT-458 | Supplies normalized/reload-stable activity to messages and inspector |
 
 Efficiency rules:
 
-- Freeze NEW-A1 before parallel UI coding. Contract changes require one short
+- Freeze MAT-471 before parallel UI coding. Contract changes require one short
   review from all three owners before merge.
 - Each lane owns disjoint files. Cross-lane changes go through the owning PR,
   never by editing another person's branch.
@@ -399,7 +403,7 @@ Efficiency rules:
   or compensate with local persistence.
 - Keep PRs stacked only on reviewed exact heads. Record the base SHA in the
   issue and PR description.
-- Integrate once at NEW-F2. Do not continuously merge three active feature
+- Integrate once at MAT-483. Do not continuously merge three active feature
   branches into one shared branch.
 - Test at public seams: contract fixture -> Gateway projection -> Desktop
   controller -> pure surface. Add real authenticated evidence at integration,
@@ -411,33 +415,30 @@ Efficiency rules:
 
 Recommended answer: complete human review of #1299 as a short-term compatibility
 slice because it already fixes the truthful “selected Provider executes the
-turn” bug. If accepted, merge it before NEW-B2 and preserve its tests, then wrap
+turn” bug. If accepted, merge it before MAT-473 and preserve its tests, then wrap
 its `hermes/codex/pi` field behind the new Driver/Instance compatibility mapper.
 
-Do not make #1299 a dependency of NEW-A1/B1/B2. It lacks owner-PostgreSQL
+Do not make #1299 a dependency of MAT-471/MAT-472/MAT-473. It lacks owner-PostgreSQL
 persistence and the full Instance contract. If human review rejects it, reuse
-only its validated routing/readiness patterns in NEW-B2/B4 and close it without
-forcing an unnecessary merge. Either path converges at NEW-F2.
+only its validated routing/readiness patterns in MAT-473/MAT-477 and close it without
+forcing an unnecessary merge. Either path converges at MAT-483.
 
-## Linear cleanup after team approval
+## Remaining Linear cleanup after team review
 
-Perform these mutations only after the team approves this plan:
+The new issues, temporary Yuhan assignments, parents, and implementation
+blockers are in place. Keep these follow-ups separate from task creation:
 
-1. Create real issues for NEW-A0/A1/B1/B2/B4/B5/C1/D1/E1/E2/E3/F1/F2/G1 and
-   replace planning IDs.
-2. Make MAT-321 an umbrella and attach B1/B2/B4/B5 as children; remove its stale
-   blocker relation from completed MAT-322.
-3. Keep MAT-344 as the experience umbrella; attach C1/D1/E1/E3/F1/F2 as the
-   relevant children without duplicating backend scope.
-4. Reconcile MAT-459 from `PR In Review` to the state matching merged PR #1294.
-5. Keep MAT-458 blocked by MAT-349 only until the accepted #1250 head is recorded,
-   then link it to NEW-A1 instead of reimplementing contracts.
-6. Convert MAT-460 into an umbrella or replace its implementation scope with
-   E2 and E3 children while preserving MAT-347/MAT-458 dependencies.
-7. Link MAT-364 only to NEW-F2 and the MAT-468 disposition; use separate bug
-   issues for acceptance findings.
-8. Create NEW-G1 in the public-site delivery project and block it on accepted
-   runtime behavior rather than on an estimated implementation date.
+1. When Nima and Shubham choose work, change only the selected task assignees;
+   keep the contract and blocker graph unchanged.
+2. Remove MAT-321's stale blocker relation from completed MAT-322 after the team
+   confirms the new split.
+3. Reconcile MAT-459 from `PR In Review` to the state matching merged PR #1294.
+4. Record the accepted #1250 head for MAT-458 before implementation and consume
+   MAT-471 rather than introducing another activity contract.
+5. Treat MAT-460 as the umbrella for MAT-478 and MAT-481 while preserving
+   MAT-347/MAT-458 dependencies.
+6. Use separate narrow issues for MAT-364 acceptance findings; do not expand
+   MAT-483 or reopen its integration PR for unrelated bugs.
 
 ## Final acceptance checklist
 
