@@ -4,7 +4,7 @@
 
 **Decision**: Keep compute, region, billing interval, acquisition, and agent selection ahead of checkout. When `POST /billing/checkout` successfully creates and durably finalizes an open Stripe Checkout Session, atomically enqueue one owner-bound preparation intent and durable provisioning job, then return the existing checkout URL. Do not call the provider merely because a user highlighted a compute card or opened the billing UI.
 
-**Rationale**: At that point Matrix has every immutable provisioning input and a server-owned payable session, while checkout time can overlap the build. Stripe Checkout Sessions support an explicit expiration from 30 minutes to 24 hours; V1 uses the 30-minute minimum so the provider-cost lease and payment window share one authority ([Stripe Checkout Session create reference](https://docs.stripe.com/api/checkout/sessions/create)).
+**Rationale**: At that point Matrix has every immutable provisioning input and a server-owned payable session, while checkout time can overlap the build. Stripe Checkout Sessions support an explicit expiration from 30 minutes to 24 hours; V1 uses a 30-minute policy window plus one minute of API transport/clock-skew headroom so Stripe does not reject a request that arrives just under its minimum. The provider-cost lease and payment window share that authority ([Stripe Checkout Session create reference](https://docs.stripe.com/api/checkout/sessions/create)).
 
 **Alternatives considered**:
 
@@ -59,7 +59,7 @@
 
 ## Decision 6: Reclaim only after authoritative checkout expiry
 
-**Decision**: Set the Stripe session and local preparation lease to 30 minutes. The cleanup reconciler may claim cleanup only when the local lease is due, a bounded Stripe retrieval or processed webhook proves the session `expired`, no effective slot entitlement exists, the intent revision is unchanged, and no newer active intent exists. A completed session without a subscription remains `payment_settling`, triggers alerts, and is never auto-deleted as abandonment. Use a dedicated durable `prebilling_cleanup_actions` worker with claim leases and cancellation fencing, modeled on `billing_runtime_actions`; it expires/reconciles Checkout before handing the exact provider ID to deletion and does not mark cleanup complete until provider absence is confirmed.
+**Decision**: Set the Stripe session and local preparation lease to the 30-minute policy window plus one minute of safety headroom. The cleanup reconciler may claim cleanup only when the local lease is due, a bounded Stripe retrieval or processed webhook proves the session `expired`, no effective slot entitlement exists, the intent revision is unchanged, and no newer active intent exists. A completed session without a subscription remains `payment_settling`, triggers alerts, and is never auto-deleted as abandonment. Use a dedicated durable `prebilling_cleanup_actions` worker with claim leases and cancellation fencing, modeled on `billing_runtime_actions`; it expires/reconciles Checkout before handing the exact provider ID to deletion and does not mark cleanup complete until provider absence is confirmed.
 
 **Rationale**: A browser cancel is not authoritative, webhook delivery can lag, and a local timer alone can race a just-completed checkout. Stripe manages Checkout Session status and expiration; requiring `expired` distinguishes abandonment from delayed subscription projection.
 

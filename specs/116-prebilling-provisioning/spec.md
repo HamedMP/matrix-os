@@ -106,7 +106,7 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - **FR-011**: Initial runtime access MUST continue to come only from the established signed subscription projection for a recognized plan and exact runtime slot.
 - **FR-012**: Billing authorization MUST promote the existing prepared computer rather than create a replacement when its bound intent and selections remain valid.
 - **FR-013**: Preparation and authorization MUST use explicit lifecycle states that prevent unauthorized routing and distinguish preparation from normal entitled provisioning.
-- **FR-014**: An unauthorized preparation intent MUST expire 30 minutes after creation unless it has been authoritatively renewed by resuming the same payable checkout under a bounded policy.
+- **FR-014**: An unauthorized preparation intent MUST use a 30-minute expiration policy with no more than one minute of API transport and clock-skew safety headroom, unless it has been authoritatively renewed by resuming the same payable checkout under a bounded policy.
 - **FR-015**: Matrix MUST periodically reclaim expired unauthorized prepared computers and all associated platform-owned secrets, credentials, and transient records.
 - **FR-016**: Cleanup MUST re-resolve current billing authorization and the current intent revision immediately before every irreversible provider deletion; authorization or a newer intent MUST fence out stale cleanup.
 - **FR-017**: Provider creation and deletion outcomes that are ambiguous MUST be reconciled against provider state before retrying so Matrix does not leak or duplicate computers.

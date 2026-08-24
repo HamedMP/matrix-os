@@ -52,7 +52,11 @@ export function loadPrebillingProvisioningConfig(env: NodeJS.ProcessEnv): Prebil
     maxHourlyCostMicros: enabled
       ? boundedInteger(env.MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS, 0, 0, Number.MAX_SAFE_INTEGER)
       : 0,
-    leaseMs: 30 * 60 * 1_000,
+    // Stripe validates the 30-minute minimum when its server receives the
+    // request. Keep one minute of bounded transport/clock-skew headroom so an
+    // otherwise valid checkout is not rejected after spending a few seconds
+    // in transit.
+    leaseMs: 31 * 60 * 1_000,
     serverHourlyCostMicros: parseCosts(env.MATRIX_PREBILLING_PROVISIONING_COSTS_JSON),
   };
 }

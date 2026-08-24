@@ -1280,6 +1280,11 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     ON prebilling_provisioning_intents(clerk_user_id, runtime_slot)
     WHERE state IN ('awaiting_checkout', 'preparing', 'ready_waiting_for_billing', 'payment_settling', 'preparation_failed', 'preparation_deferred', 'cleanup_pending')
   `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prebilling_intents_stripe_session
+    ON prebilling_provisioning_intents(stripe_session_id)
+    WHERE stripe_session_id IS NOT NULL
+  `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_prebilling_intents_cleanup ON prebilling_provisioning_intents(state, lease_expires_at)`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS billing_trial_accounts (

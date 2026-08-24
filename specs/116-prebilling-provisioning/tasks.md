@@ -42,7 +42,7 @@
 **Independent Test**: Delay a fake subscription event after Checkout creation; prove provider work overlaps Checkout, preauthorization access is denied, and the signed event activates the same machine.
 
 - [x] T010 [US1] Write the failing checkout-to-preparation and signed-authorization tracer test in `tests/platform/prebilling-provisioning.test.ts`
-- [x] T011 [US1] Add exact intent metadata, explicit 30-minute `expires_at`, bounded Stripe operations, and subscription metadata propagation in `packages/platform/src/stripe-billing.ts`
+- [x] T011 [US1] Add exact intent metadata, explicit 30-minute policy `expires_at` with one minute of Stripe API safety headroom, bounded Stripe operations, and subscription metadata propagation in `packages/platform/src/stripe-billing.ts`
 - [x] T012 [US1] Extend strict checkout input/equality for server type and canonical developer tools, then finalize intent/machine/job atomically after an open session in `packages/platform/src/billing-routes.ts` and `packages/platform/src/db.ts`
 - [x] T013 [US1] Implement the registration-time prebilling orchestration interface and provider-job admission in `packages/platform/src/prebilling-provisioning.ts` and `packages/platform/src/customer-vps.ts`
 - [x] T014 [US1] Promote the exact prepared machine from verified subscription projection and preserve the existing entitled journey fallback when preparation is absent/failed in `packages/platform/src/billing-routes.ts` and `packages/platform/src/prebilling-provisioning.ts`
