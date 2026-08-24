@@ -44,6 +44,9 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const setSurfaceBounds = useDesktopSurfaces((state) => state.setSurfaceBounds);
   const launcherOpen = useUi((state) => state.appLauncherOpen);
   const setLauncherOpen = useUi((state) => state.setAppLauncherOpen);
+  // Mount on first use, then retain the image nodes so reopening can reuse the
+  // browser's decoded icon resources instead of issuing another request set.
+  const [launcherMounted, setLauncherMounted] = useState(launcherOpen);
   const [viewport, setViewport] = useState(currentViewport);
   const tabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
 
@@ -52,6 +55,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
+
+  useEffect(() => {
+    if (launcherOpen) setLauncherMounted(true);
+  }, [launcherOpen]);
 
   useEffect(() => {
     reconcileTabs(tabIds, viewport);
@@ -94,6 +101,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [focusTab, maximizeToTab, openRoot]);
 
   const toggleApps = useCallback(() => setLauncherOpen(!useUi.getState().appLauncherOpen), [setLauncherOpen]);
+  const closeApps = useCallback(() => setLauncherOpen(false), [setLauncherOpen]);
 
   useEffect(() => {
     for (const tab of tabs) {
@@ -200,7 +208,9 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
           />
         );
       })}
-      {launcherOpen ? <DesktopLaunchpad onClose={() => setLauncherOpen(false)} /> : null}
+      {launcherMounted ? (
+        <DesktopLaunchpad open={launcherOpen} onClose={closeApps} />
+      ) : null}
       <DesktopTaskbar
         tabs={tabs}
         surfaces={surfaces}

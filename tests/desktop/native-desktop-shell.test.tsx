@@ -7,6 +7,7 @@ import NativeDesktopShell from "@desktop/renderer/src/features/desktop-shell/Nat
 import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "@desktop/renderer/src/design/layering";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
+import { useApps } from "@desktop/renderer/src/stores/apps";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 
@@ -33,6 +34,7 @@ beforeEach(() => {
   useTabs.setState(useTabs.getInitialState(), true);
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
   useConnection.setState(useConnection.getInitialState(), true);
+  useApps.setState(useApps.getInitialState(), true);
   useUi.setState(useUi.getInitialState(), true);
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
@@ -166,6 +168,29 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
   });
 
+  it("retains launcher icon elements after closing so reopening does not download them again", () => {
+    useConnection.setState({ platformHost: "https://runtime.example.com" });
+    useApps.setState({
+      apps: [{ slug: "notes", name: "Notes" }],
+      loaded: true,
+      loading: false,
+      error: null,
+    });
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
+    const firstIcon = screen.getByRole("button", { name: "Notes" }).querySelector("img");
+    expect(firstIcon).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close App Launcher" }));
+    expect(screen.queryByRole("dialog", { name: "App launcher" })).toBeNull();
+    expect(firstIcon?.isConnected).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
+    const reopenedIcon = screen.getByRole("button", { name: "Notes" }).querySelector("img");
+    expect(reopenedIcon).toBe(firstIcon);
+  });
+
   it("dismisses the transient launcher when its empty backdrop is clicked", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
     fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
@@ -187,6 +212,15 @@ describe("native desktop shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restore Hermes" }));
     expect(screen.getByRole("dialog", { name: "Hermes window" })).toBeTruthy();
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("window");
+  });
+
+  it("keeps the running-apps scrollbar hidden inside the taskbar", () => {
+    render(<NativeDesktopShell overlayOpen={false} />);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
+
+    const runningApps = screen.getByTestId("desktop-taskbar-running-apps");
+    expect(runningApps.className).toContain("[scrollbar-width:none]");
+    expect(runningApps.className).toContain("[&::-webkit-scrollbar]:hidden");
   });
 
   it("maximizes a window into the tab strip and restores it as a window", () => {

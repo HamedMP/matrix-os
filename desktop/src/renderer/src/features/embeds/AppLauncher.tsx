@@ -35,9 +35,11 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
 
 export default function AppLauncher({
   presentation = "surface",
+  launcherActive = true,
   onLaunch,
 }: {
   presentation?: "surface" | "launchpad";
+  launcherActive?: boolean;
   onLaunch?: () => void;
 } = {}) {
   const api = useConnection((s) => s.api);
@@ -59,8 +61,8 @@ export default function AppLauncher({
 
   // Launcher behavior: focus the search immediately like a desktop launcher.
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    if (launcherActive) inputRef.current?.focus();
+  }, [launcherActive]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

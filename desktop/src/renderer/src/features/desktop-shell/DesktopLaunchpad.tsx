@@ -1,22 +1,33 @@
-import { useEffect } from "react";
+import { useEffect, useEffectEvent } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import AppLauncher from "../embeds/AppLauncher";
 
-export default function DesktopLaunchpad({ onClose }: { onClose: () => void }) {
+export default function DesktopLaunchpad({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const closeLauncher = useEffectEvent(onClose);
+
   useEffect(() => {
+    if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") closeLauncher();
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+  }, [open]);
 
   return (
     <section
       role="dialog"
       aria-label="App launcher"
+      aria-hidden={!open}
+      inert={!open}
       data-testid="app-launcher-backdrop"
-      className="absolute inset-0 flex min-h-0 flex-col backdrop-blur-xl"
+      className={`absolute inset-0 min-h-0 flex-col backdrop-blur-xl ${open ? "flex" : "hidden"}`}
       style={{
         zIndex: DESKTOP_Z_INDEX.nativeDesktopLaunchpad,
         background: "color-mix(in srgb, var(--bg-app) 34%, transparent)",
@@ -27,7 +38,7 @@ export default function DesktopLaunchpad({ onClose }: { onClose: () => void }) {
         onClose();
       }}
     >
-      <AppLauncher presentation="launchpad" onLaunch={onClose} />
+      <AppLauncher presentation="launchpad" launcherActive={open} onLaunch={onClose} />
     </section>
   );
 }

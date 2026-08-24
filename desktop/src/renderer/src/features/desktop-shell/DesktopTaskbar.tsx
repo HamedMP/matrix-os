@@ -53,7 +53,10 @@ export default function DesktopTaskbar({
       {runningTabs.length > 0 ? (
         <span className="mx-0.5 h-8 w-px shrink-0" style={{ background: "var(--border-default)" }} />
       ) : null}
-      <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto px-0.5 py-1">
+      <div
+        data-testid="desktop-taskbar-running-apps"
+        className="flex min-w-0 items-center gap-1.5 overflow-x-auto px-0.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         {runningTabs.map((tab) => {
           const surface = surfaces[tab.id]!;
           const active = activeTabId === tab.id && surface.mode !== "minimized";
