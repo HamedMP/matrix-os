@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../desktop/src/renderer/src/lib/feature-flags", () => ({
   CODING_AGENTS_DESKTOP_WORKSPACE: true,
+  NATIVE_DESKTOP_WINDOW_SHELL: true,
 }));
 
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";

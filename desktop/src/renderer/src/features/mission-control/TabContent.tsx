@@ -47,7 +47,7 @@ export class TabErrorBoundary extends Component<{
   }
 }
 
-function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
+export function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
   switch (tab.kind) {
     case "home":
       return <HomeTab active={active} />;

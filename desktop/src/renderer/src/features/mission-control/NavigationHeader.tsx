@@ -119,7 +119,7 @@ function HeaderButton({
   );
 }
 
-export default function NavigationHeader() {
+export default function NavigationHeader({ nativeDesktop = false }: { nativeDesktop?: boolean }) {
   const tabs = useTabs((state) => state.tabs);
   const activeTabId = useTabs((state) => state.activeTabId);
   const viewHistory = useTabs((state) => state.viewHistory);
@@ -197,7 +197,9 @@ export default function NavigationHeader() {
       style={{
         zIndex: DESKTOP_Z_INDEX.chrome,
         height: "var(--titlebar-height)",
-        gridTemplateColumns: "var(--sidebar-expanded-width) minmax(0, 1fr)",
+        gridTemplateColumns: nativeDesktop
+          ? "196px minmax(0, 1fr)"
+          : "var(--sidebar-expanded-width) minmax(0, 1fr)",
         background: "var(--bg-sunken)",
       }}
     >
@@ -221,12 +223,14 @@ export default function NavigationHeader() {
         <HeaderButton label="Go forward" disabled={!canGoForward} onClick={goForward}>
           <ChevronRight size={14} />
         </HeaderButton>
-        <HeaderButton
-          label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          onClick={toggleSidebar}
-        >
-          <PanelLeft size={14} />
-        </HeaderButton>
+        {!nativeDesktop ? (
+          <HeaderButton
+            label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={toggleSidebar}
+          >
+            <PanelLeft size={14} />
+          </HeaderButton>
+        ) : null}
       </div>
 
       <div className="flex min-w-0 items-center gap-1 px-2">

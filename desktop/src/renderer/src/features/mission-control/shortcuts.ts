@@ -6,6 +6,7 @@ import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
+import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 
 interface CloseTabShortcutState {
   activeTabId: string | null;
@@ -68,13 +69,13 @@ export function handleMenuNavigate(kind: string): void {
       });
       return;
     }
-    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);
     return;
   }
   if (kind !== "home") {
     console.warn(`[shortcuts] unsupported menu:navigate kind: ${kind}`);
   }
-  useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+  useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);
 }
 
 export function handleCloseTabShortcut(
@@ -180,7 +181,7 @@ export function useGlobalShortcuts(): void {
       // New tab → Home.
       if (meta && key === "t") {
         e.preventDefault();
-        tabs.openTab({ kind: "home", title: "Home", closable: false });
+        tabs.openTab(HOSTED_SHELL_TAB_SPEC);
         return;
       }
       // Close the active tab.

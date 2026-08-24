@@ -290,7 +290,7 @@ describe("handleMenuNavigate", () => {
 
     expect(useTabs.getState().tabs[0]).toMatchObject({
       kind: "home",
-      title: "Home",
+      title: "Browser",
       closable: false,
     });
     expect(warn).toHaveBeenCalledWith("[shortcuts] unsupported menu:navigate kind: agents");
@@ -312,7 +312,7 @@ describe("handleMenuNavigate", () => {
 
     expect(useTabs.getState().tabs[0]).toMatchObject({
       kind: "home",
-      title: "Home",
+      title: "Browser",
       closable: false,
     });
     expect(warn).toHaveBeenCalledWith("[shortcuts] unsupported menu:navigate kind: apps");
@@ -325,7 +325,7 @@ describe("handleMenuNavigate", () => {
 
     expect(useTabs.getState().tabs[0]).toMatchObject({
       kind: "home",
-      title: "Home",
+      title: "Browser",
       closable: false,
     });
     expect(warn).not.toHaveBeenCalled();

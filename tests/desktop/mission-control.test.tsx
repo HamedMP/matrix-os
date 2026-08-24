@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MissionControl from "../../desktop/src/renderer/src/features/mission-control/MissionControl";
 import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
@@ -11,9 +11,13 @@ import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/c
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 vi.mock("../../desktop/src/renderer/src/features/mission-control/Sidebar", () => ({
   default: () => <div data-testid="sidebar" />,
+}));
+vi.mock("../../desktop/src/renderer/src/features/desktop-shell/NativeDesktopShell", () => ({
+  default: () => <div data-testid="native-desktop-shell" />,
 }));
 vi.mock("../../desktop/src/renderer/src/features/mission-control/Titlebar", () => ({
   default: () => <div data-testid="titlebar" />,
@@ -56,10 +60,20 @@ describe("MissionControl", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     useApps.setState(useApps.getInitialState(), true);
+    useTabs.setState(useTabs.getInitialState(), true);
     useShellSessions.setState({
       ...useShellSessions.getInitialState(),
       load: vi.fn().mockResolvedValue([]),
     });
+  });
+
+  it("uses the native desktop shell instead of permanent sidebar chrome", () => {
+    render(<MissionControl />);
+
+    expect(screen.getByTestId("native-desktop-shell")).toBeTruthy();
+    expect(screen.queryByTestId("sidebar")).toBeNull();
+    expect(screen.queryByTestId("mission-control-content-surface")).toBeNull();
+    expect(useTabs.getState().tabs).toEqual([]);
   });
 
   afterEach(() => {

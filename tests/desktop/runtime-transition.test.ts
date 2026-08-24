@@ -115,7 +115,7 @@ describe("desktop runtime transition", () => {
     });
   });
 
-  it("reopens the Home tab so the desktop is never left blank after a switch", () => {
+  it("returns to the icon desktop without reopening the hosted web shell after a switch", () => {
     useTabs.getState().ensureNavigationScope("old-runtime");
     useTabs.getState().openTab({ kind: "terminal", sessionName: "old-shell", title: "old-shell" });
     useTabs.getState().recordRecentConversation("thread-old", "Old private thread");
@@ -126,11 +126,10 @@ describe("desktop runtime transition", () => {
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
 
     const { tabs, activeTabId, recentViews, viewHistory } = useTabs.getState();
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]).toMatchObject({ kind: "home", closable: false });
-    expect(activeTabId).toBe(tabs[0]?.id);
+    expect(tabs).toEqual([]);
+    expect(activeTabId).toBeNull();
     expect(recentViews).toEqual([]);
-    expect(viewHistory).toEqual([tabs[0]?.id]);
+    expect(viewHistory).toEqual([]);
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 

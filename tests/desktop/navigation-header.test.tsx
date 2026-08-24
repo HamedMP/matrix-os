@@ -332,6 +332,14 @@ describe("Desktop navigation header", () => {
     expect(useUi.getState().sidebarCollapsed).toBe(false);
   });
 
+  it("removes sidebar-only chrome for the native desktop shell", () => {
+    render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
+
+    expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
+    expect(screen.getByRole("banner").style.gridTemplateColumns)
+      .toBe("196px minmax(0, 1fr)");
+  });
+
   it("matches the Figma top-bar geometry and navigation-action order", () => {
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 

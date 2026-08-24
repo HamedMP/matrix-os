@@ -1,7 +1,7 @@
 import { Command } from "cmdk";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
-import { ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
+import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -13,6 +13,7 @@ import { useUi } from "../../stores/ui";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../lib/project-chat";
 import { openProjectOverview } from "../../lib/project-navigation";
+import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 import { handleNewAgentRunShortcut } from "../mission-control/shortcuts";
 import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../coding-agents/provider-setup-terminal";
 
@@ -258,7 +259,7 @@ export default function CommandPalette() {
                 }
               />
             ))}
-            <PaletteItem icon={<Home size={14} />} label="Go to Home" onSelect={() => run(() => openTab({ kind: "home", title: "Home", closable: false }))} />
+            <PaletteItem icon={<Globe2 size={14} />} label="Open Browser" onSelect={() => run(() => openTab(HOSTED_SHELL_TAB_SPEC))} />
             <PaletteItem icon={<SquareTerminal size={14} />} label="Open Terminal" onSelect={() => run(() => openTab({ kind: "terminals", title: "Terminal" }))} />
             <PaletteItem icon={<LayoutGrid size={14} />} label="Open Apps" onSelect={() => run(() => openTab({ kind: "apps", title: "Apps" }))} />
             <PaletteItem icon={<Settings size={14} />} label="Open settings" onSelect={() => run(() => openTab({ kind: "settings", title: "Settings" }))} />
