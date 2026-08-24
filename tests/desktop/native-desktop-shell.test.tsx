@@ -133,6 +133,21 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
+  it.each([
+    ["Terminal", "terminals"],
+    ["Projects", "projects"],
+  ] as const)("opens %s directly as a tab workspace", (label, kind) => {
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: label }));
+
+    expect(screen.getByRole("tab", { name: label }).getAttribute("aria-selected")).toBe("true");
+    const tab = useTabs.getState().tabs.find((candidate) => candidate.kind === kind);
+    expect(tab).toBeTruthy();
+    expect(useDesktopSurfaces.getState().surfaces[tab!.id]?.mode).toBe("tab");
+    expect(screen.queryByRole("dialog", { name: `${label} window` })).toBeNull();
+  });
+
   it("opens Apps as a transient launcher instead of a desktop app surface", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
 
@@ -162,15 +177,15 @@ describe("native desktop shell", () => {
 
   it("minimizes a window to the taskbar and restores it", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     const tabId = useTabs.getState().activeTabId!;
 
-    fireEvent.click(screen.getByRole("button", { name: "Minimize Terminal" }));
-    expect(screen.queryByRole("dialog", { name: "Terminal window" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Minimize Hermes" }));
+    expect(screen.queryByRole("dialog", { name: "Hermes window" })).toBeNull();
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("minimized");
 
-    fireEvent.click(screen.getByRole("button", { name: "Restore Terminal" }));
-    expect(screen.getByRole("dialog", { name: "Terminal window" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Restore Hermes" }));
+    expect(screen.getByRole("dialog", { name: "Hermes window" })).toBeTruthy();
     expect(useDesktopSurfaces.getState().surfaces[tabId]?.mode).toBe("window");
   });
 

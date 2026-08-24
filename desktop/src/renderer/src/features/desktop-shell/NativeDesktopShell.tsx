@@ -85,6 +85,14 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     reconcileAndActivateCurrent();
   }, [reconcileAndActivateCurrent]);
 
+  const openRootAsTab = useCallback((open: () => void) => {
+    openRoot(open);
+    const tabId = useTabs.getState().activeTabId;
+    if (!tabId) return;
+    maximizeToTab(tabId);
+    focusTab(tabId);
+  }, [focusTab, maximizeToTab, openRoot]);
+
   const toggleApps = useCallback(() => setLauncherOpen(!useUi.getState().appLauncherOpen), [setLauncherOpen]);
 
   useEffect(() => {
@@ -100,7 +108,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       open: () => openRoot(() => openTab(HOSTED_SHELL_TAB_SPEC)),
     },
     { kind: "chat", label: "Chat", open: () => openRoot(openChatIndex) },
-    { kind: "terminals", label: "Terminal", open: () => openRoot(openTerminalIndex) },
+    { kind: "terminals", label: "Terminal", open: () => openRootAsTab(openTerminalIndex) },
     {
       kind: "files",
       label: "Files",
@@ -111,8 +119,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       label: "Plugins",
       open: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
     },
-    { kind: "projects", label: "Projects", open: () => openRoot(openProjectsIndex) },
-  ], [openRoot, openTab]);
+    { kind: "projects", label: "Projects", open: () => openRootAsTab(openProjectsIndex) },
+  ], [openRoot, openRootAsTab, openTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
     const surfaceState = useDesktopSurfaces.getState().surfaces;
