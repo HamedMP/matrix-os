@@ -553,6 +553,9 @@ export function createApp(deps: {
         }),
       })
     : undefined;
+  deps.customerVpsService?.setPrebillingFallbackReconciler?.(
+    prebilling ? async () => { await prebilling.reconcileFallbacks?.(); } : undefined,
+  );
   app.route('/billing', createBillingRoutes({
     db,
     stripe: appEnv.STRIPE_SECRET_KEY

@@ -198,6 +198,7 @@ export interface CustomerVpsService {
   deploy(target?: DeployTarget): Promise<DeployResult>;
   listAllMachines(): Promise<StatusResponse[]>;
   dispatchProvisioningJobs(): Promise<{ checked: number; completed: number; failed: number }>;
+  setPrebillingFallbackReconciler?(reconcile: (() => Promise<unknown>) | undefined): void;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
 
@@ -582,6 +583,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
   const provisioningJobIdFactory = deps.provisioningJobIdFactory ?? randomUUID;
   const localProvisionLocks = new Map<string, { tail: Promise<void>; depth: number }>();
+  let prebillingFallbackReconciler: (() => Promise<unknown>) | undefined;
 
   async function withLocalProvisionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     let lock = localProvisionLocks.get(key);
@@ -3022,6 +3024,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     dispatchProvisioningJobs,
+    setPrebillingFallbackReconciler(reconcile) { prebillingFallbackReconciler = reconcile; },
 
     async deploy(target?: DeployTarget): Promise<DeployResult> {
       const runningMachines = await listRunningUserMachines(
@@ -3077,6 +3080,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
     async reconcileProvisioning() {
       await dispatchProvisioningJobs();
+      await prebillingFallbackReconciler?.();
       const staleBefore = new Date(now().getTime() - deps.config.reconciliationStaleAfterMs).toISOString();
       const rows = await listStaleUserMachines(
         deps.db,

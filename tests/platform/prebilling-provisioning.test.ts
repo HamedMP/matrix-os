@@ -219,6 +219,10 @@ describe('platform prebilling provisioning foundation', () => {
     await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
     });
+    const reconcileFallbacks = vi.fn().mockResolvedValue(undefined);
+    service.setPrebillingFallbackReconciler?.(reconcileFallbacks);
+    await service.reconcileProvisioning();
+    expect(reconcileFallbacks).toHaveBeenCalledOnce();
   });
 
   it('deletes a provider server when signed checkout cleanup wins during provider creation', async () => {
@@ -287,7 +291,15 @@ describe('platform prebilling provisioning foundation', () => {
       status: 'provisioning',
       etaSeconds: 90,
     });
-    const provision = vi.fn().mockResolvedValue({ machineId: 'fallback-machine', status: 'provisioning' });
+    const provision = vi.fn().mockImplementation(async () => {
+      await insertUserMachine(db, {
+        machineId: 'fallback-machine', clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+        provisioningClass: 'customer', accessClerkUserIds: [], status: 'provisioning', imageVersion: 'dev',
+        developerTools: ['codex', 'claude-code'], registrationTokenHash: null,
+        registrationTokenExpiresAt: null, provisionedAt: CREATED_AT,
+      });
+      return { machineId: 'fallback-machine', status: 'provisioning' };
+    });
     const coordinator = createPrebillingProvisioningCoordinator({
       db,
       config: loadPrebillingProvisioningConfig({
@@ -332,7 +344,9 @@ describe('platform prebilling provisioning foundation', () => {
     await db.transaction((trx) => coordinator.authorizeSubscription(trx, {
       intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
     }));
-    await coordinator.ensureFallback({ intentId: 'intent-1' });
+    await expect(coordinator.reconcileFallbacks()).resolves.toEqual({ checked: 1, completed: 1, failed: 0 });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({ machineId: 'fallback-machine' });
+    await expect(coordinator.reconcileFallbacks()).resolves.toEqual({ checked: 0, completed: 0, failed: 0 });
     expect(provision).toHaveBeenCalledWith(expect.objectContaining({
       clerkUserId: 'user_123', serverType: 'cpx32', developerTools: ['codex', 'claude-code'],
     }), { dispatch: 'detached' });

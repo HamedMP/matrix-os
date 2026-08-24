@@ -126,6 +126,30 @@ export async function getPrebillingIntent(
   return row ? mapIntent(row) : undefined;
 }
 
+export async function listAuthorizedPrebillingFallbackIntents(
+  db: PlatformDB,
+  limit = 20,
+): Promise<PrebillingProvisioningIntent[]> {
+  await db.ready;
+  const rows = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
+    .where('state', '=', 'authorized').where('machine_id', 'is', null)
+    .orderBy('authorized_at', 'asc').limit(Math.max(1, Math.min(100, Math.trunc(limit)))).execute();
+  return rows.map(mapIntent);
+}
+
+export async function bindAuthorizedPrebillingFallbackMachine(
+  db: PlatformDB,
+  input: { intentId: string; clerkUserId: string; runtimeSlot: string; machineId: string; now: string },
+): Promise<boolean> {
+  await db.ready;
+  const result = await sql<{ id: string }>`UPDATE prebilling_provisioning_intents SET machine_id = ${input.machineId}, revision = revision + 1, updated_at = ${input.now}
+    WHERE id = ${input.intentId} AND clerk_user_id = ${input.clerkUserId} AND runtime_slot = ${input.runtimeSlot} AND state = 'authorized'
+      AND (machine_id IS NULL OR machine_id = ${input.machineId}) AND EXISTS (SELECT 1 FROM user_machines WHERE machine_id = ${input.machineId}
+        AND clerk_user_id = ${input.clerkUserId} AND runtime_slot = ${input.runtimeSlot} AND activation_state = 'authorized' AND deleted_at IS NULL)
+    RETURNING id`.execute(db.executor);
+  return result.rows.length === 1;
+}
+
 export async function getActivePrebillingIntent(
   db: PlatformDB,
   clerkUserId: string,

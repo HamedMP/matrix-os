@@ -14,43 +14,7 @@ MATRIX_PREBILLING_PROVISIONING_COSTS_JSON={"cpx22":...,"cpx32":...,"cpx52":...}
 
 Setting `ENABLED=false` or rollout to `0` stops only new admission. Signed subscription activation and signed-expiry cleanup remain wired so existing intents can converge safely.
 
-## 1. Red: Contract and State-Machine Tests
-
-Add failing tests before each implementation slice. Start with focused suites for:
-
-- strict checkout schema, canonical selections, conflicting retries, and no-provider-call checkout failure
-- intent, capacity-reservation, activation, and cleanup migrations/queries
-- revision-checked transition helpers and event replay idempotency
-- provisioning-worker authorization-basis rechecks
-- signed subscription promotion and server-owned fallback provisioning
-- Stripe-expiry and billing-versus-cleanup races
-- journey response and onboarding component states
-
-Run the smallest affected Vitest target first, for example:
-
-```bash
-pnpm exec vitest run tests/platform/billing-routes.test.ts
-pnpm exec vitest run tests/platform/customer-vps-provisioning-durability.test.ts
-pnpm exec vitest run tests/shell/prebilling-onboarding.test.tsx
-```
-
-Use actual discovered filenames when implementation starts; do not create parallel test conventions solely to match these examples.
-
-## 2. Green: Fake Stripe and Provider Integration
-
-The hermetic full-path integration test must exercise:
-
-```text
-authenticated checkout request
-  -> durable checkout/intent claim
-  -> fake Stripe open session
-  -> durable provider job
-  -> fake provider create/reconcile
-  -> physical machine ready but inaccessible
-  -> signed subscription event
-  -> atomic activation
-  -> runtime HTTP and WebSocket access
-```
+## 1. Fake Stripe and Provider Integration
 
 Required negative/race cases:
 
@@ -67,20 +31,7 @@ Required negative/race cases:
 - preparation failure followed by authorization creates exactly one entitlement-backed fallback job
 - existing paid, additional-computer, recovery, resize, grace, suspension, and preview tests are unchanged
 
-## 3. Repository Verification
-
-Run focused tests during red/green/refactor, then the repository gates appropriate to the touched packages:
-
-```bash
-bun run test
-bun run test:coverage
-bun run build:shell:production
-pnpm dlx react-doctor@latest .
-```
-
-Also run the repository's platform typecheck/lint targets discovered at implementation time. New platform/gateway logic targets 99–100% branch coverage, especially authorization and cleanup predicates.
-
-## 4. Preproduction Validation
+## 2. Preproduction Validation
 
 No live resource is created from this planning artifact. After implementation has an exact reviewed head and explicit operator approval:
 
@@ -96,20 +47,7 @@ No live resource is created from this planning artifact. After implementation ha
 
 The implementation PR performs no live Stripe, provider, deployment, or billing mutation. Test-mode/disposable-VPS validation remains an operator-approved post-review step.
 
-## 5. Production Rollout
-
-Roll out only new-primary onboarding through deterministic cohorts:
-
-1. `0%`: migrations/workers deployed; admission off; synthetic/fake soak.
-2. Internal allowlist: explicit cost ceiling and on-call coverage.
-3. `1%`: hold through at least one full cleanup window and inspect every intent.
-4. `10%`: hold until latency, conversion, cleanup, duplicate, and entitlement-gap thresholds pass.
-5. `50%`: repeat the hold and compare against the postbilling control cohort.
-6. `100%`: retain flag, caps, dashboards, and continuation workers permanently.
-
-At any stop, set new admission to zero. Do not disable authorization reconciliation, fallback provisioning, or cleanup.
-
-## 6. Delivery and Documentation
+## 3. Delivery and Documentation
 
 - Ship the implementation as one monitored PR with phase commits for flag-off persistence/workers, checkout/authorization, and shell/journey/observability, per the requester's explicit delivery direction.
 - Every PR uses a Conventional Commit title, includes the mandatory invariant section, and reaches trusted current-head Greptile `5/5` before merge.

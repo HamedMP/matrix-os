@@ -190,6 +190,7 @@ export interface PrebillingCheckoutCoordinator {
     input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
   ): Promise<{ authorized: boolean; machineId: string | null; needsFallback: boolean }>;
   ensureFallback(input: { intentId: string }): Promise<void>;
+  reconcileFallbacks?(): Promise<{ checked: number; completed: number; failed: number }>;
   expireCheckout(
     db: PlatformDB,
     input: { stripeSessionId: string; intentId?: string; clerkUserId?: string; now: string },

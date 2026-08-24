@@ -11,9 +11,11 @@ import {
 import {
   admitPrebillingIntent,
   authorizePrebillingIntent,
+  bindAuthorizedPrebillingFallbackMachine,
   cleanupExpiredPrebillingCheckout,
   createPrebillingIntent,
   getPrebillingIntent,
+  listAuthorizedPrebillingFallbackIntents,
 } from './prebilling-provisioning-store.js';
 
 export function createPrebillingProvisioningCoordinator(options: {
@@ -37,6 +39,24 @@ export function createPrebillingProvisioningCoordinator(options: {
 }): PrebillingCheckoutCoordinator {
   const intentIdFactory = options.intentIdFactory ?? randomUUID;
   const now = options.now ?? (() => new Date());
+  const ensureFallback = async (intentId: string) => {
+    const current = await getPrebillingIntent(options.db, intentId);
+    if (!current || current.state !== 'authorized' || current.machineId !== null) return;
+    const identity = await options.resolveIdentity(current.clerkUserId);
+    if (!identity) throw new Error('prebilling_identity_unavailable');
+    const provisioned = await options.customerVpsService.provision({
+      clerkUserId: current.clerkUserId, handle: identity.handle, runtimeSlot: 'primary',
+      serverType: current.serverType,
+      location: z.enum(['fsn1', 'nbg1', 'ash', 'hil']).parse(current.regionSlug.replace(/^region_/, '')),
+      developerTools: current.developerTools,
+    }, { dispatch: 'detached' });
+    if (!await bindAuthorizedPrebillingFallbackMachine(options.db, {
+      intentId, clerkUserId: current.clerkUserId, runtimeSlot: current.runtimeSlot,
+      machineId: provisioned.machineId, now: now().toISOString(),
+    })) throw new Error('prebilling_fallback_binding_conflict');
+    await options.onProvisioned?.({ clerkUserId: current.clerkUserId, handle: identity.handle,
+      displayName: identity.displayName, email: identity.email, machineId: provisioned.machineId });
+  };
   return {
     async createIntent(input) {
       if (!prebillingRolloutIncludesUser(options.config, input.clerkUserId)) return undefined;
@@ -95,22 +115,20 @@ export function createPrebillingProvisioningCoordinator(options: {
     },
 
     async ensureFallback(input) {
-      const current = await getPrebillingIntent(options.db, input.intentId);
-      if (!current || current.state !== 'authorized' || current.machineId !== null) return;
-      const identity = await options.resolveIdentity(current.clerkUserId);
-      if (!identity) throw new Error('prebilling_identity_unavailable');
-      const provisioned = await options.customerVpsService.provision({
-        clerkUserId: current.clerkUserId,
-        handle: identity.handle,
-        runtimeSlot: 'primary',
-        serverType: current.serverType,
-        location: z.enum(['fsn1', 'nbg1', 'ash', 'hil']).parse(current.regionSlug.replace(/^region_/, '')),
-        developerTools: current.developerTools,
-      }, { dispatch: 'detached' });
-      await options.onProvisioned?.({
-        clerkUserId: current.clerkUserId, handle: identity.handle,
-        displayName: identity.displayName, email: identity.email, machineId: provisioned.machineId,
-      });
+      await ensureFallback(input.intentId);
+    },
+
+    async reconcileFallbacks() {
+      const intents = await listAuthorizedPrebillingFallbackIntents(options.db);
+      let completed = 0; let failed = 0;
+      for (const intent of intents) {
+        try { await ensureFallback(intent.id); completed += 1; }
+        catch (err: unknown) {
+          failed += 1;
+          console.error('[prebilling] fallback reconciliation failed:', err instanceof Error ? err.name : typeof err);
+        }
+      }
+      return { checked: intents.length, completed, failed };
     },
 
     expireCheckout(db, input) {
