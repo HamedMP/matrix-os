@@ -107,6 +107,68 @@ describe('platform billing routes', () => {
     );
   });
 
+  it('starts admitted preparation after Stripe opens and before checkout returns', async () => {
+    const order: string[] = [];
+    const prebilling = {
+      createIntent: vi.fn(async () => {
+        order.push('intent');
+        return { intentId: 'intent_123', expiresAt: '2026-05-30T00:30:00.000Z' };
+      }),
+      startPreparation: vi.fn(async () => {
+        order.push('preparation');
+      }),
+      authorizeSubscription: vi.fn(),
+      expireCheckout: vi.fn(),
+    };
+    vi.mocked(stripe.createCheckoutSession).mockImplementation(async () => {
+      order.push('stripe');
+      return {
+        url: 'https://checkout.stripe.test/session',
+        id: 'cs_test_session',
+        expiresAt: '2026-05-30T00:30:00.000Z',
+      };
+    });
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve('user_123'),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      prebilling,
+    }));
+
+    const response = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+        developerTools: ['codex', 'pi'],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(order).toEqual(['intent', 'stripe', 'preparation']);
+    expect(prebilling.createIntent).toHaveBeenCalledWith(expect.objectContaining({
+      checkoutAttemptId: expect.any(String),
+      clerkUserId: 'user_123',
+      serverType: 'cpx32',
+      developerTools: ['codex', 'pi'],
+    }));
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      prebillingIntentId: 'intent_123',
+      expiresAt: '2026-05-30T00:30:00.000Z',
+    }));
+    expect(prebilling.startPreparation).toHaveBeenCalledWith({
+      intentId: 'intent_123',
+      stripeSessionId: 'cs_test_session',
+      stripeSessionExpiresAt: '2026-05-30T00:30:00.000Z',
+    });
+  });
+
   it('captures checkout growth funnel events with low-cardinality properties', async () => {
     const captureEvent = vi.fn();
     const app = createApp('user_123', env, captureEvent);
@@ -1008,6 +1070,46 @@ describe('platform billing routes', () => {
       runtimeSlot: 'studio',
       planSlug: 'matrix_max',
       status: 'active',
+    });
+  });
+
+  it('authorizes the exact preparation only inside a signed active subscription projection', async () => {
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_prebilling', {
+      runtimeSlot: 'primary',
+      prebillingIntentId: 'intent_123',
+    }));
+    const authorizeSubscription = vi.fn().mockResolvedValue({
+      authorized: true,
+      machineId: 'machine_123',
+      needsFallback: false,
+    });
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve(null),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      prebilling: {
+        createIntent: vi.fn(),
+        startPreparation: vi.fn(),
+        authorizeSubscription,
+        expireCheckout: vi.fn(),
+      },
+    }));
+
+    const response = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(200);
+    expect(authorizeSubscription).toHaveBeenCalledWith(expect.objectContaining({ executor: expect.anything() }), {
+      intentId: 'intent_123',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      now: '2026-05-30T00:00:00.000Z',
     });
   });
 
@@ -1982,6 +2084,7 @@ function subscriptionEvent(id: string, overrides: {
   itemCurrentPeriodEnd?: number;
   trialStart?: number;
   trialEnd?: number;
+  prebillingIntentId?: string;
 } = {}): StripeWebhookEvent {
   return {
     id,
@@ -2001,6 +2104,9 @@ function subscriptionEvent(id: string, overrides: {
           clerk_user_id: 'user_123',
           matrix_region_slug: 'region_fsn1',
           matrix_runtime_slot: overrides.runtimeSlot ?? 'studio',
+          ...(overrides.prebillingIntentId
+            ? { matrix_prebilling_intent_id: overrides.prebillingIntentId }
+            : {}),
         },
         items: {
           data: [

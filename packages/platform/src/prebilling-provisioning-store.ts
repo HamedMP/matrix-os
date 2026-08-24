@@ -1,7 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod/v4';
 import type { MatrixBillingInterval, MatrixBillingPlanSlug } from './billing.js';
-import type { PlatformDB, PrebillingProvisioningIntentsTable } from './db.js';
+import { insertProviderDeletion, type PlatformDB, type PrebillingProvisioningIntentsTable } from './db.js';
 import {
   canonicalizeDeveloperTools,
   parseDeveloperToolsJson,
@@ -112,6 +113,16 @@ export async function getPrebillingIntentByCheckoutAttempt(
   await db.ready;
   const row = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
     .where('checkout_attempt_id', '=', checkoutAttemptId).executeTakeFirst();
+  return row ? mapIntent(row) : undefined;
+}
+
+export async function getPrebillingIntent(
+  db: PlatformDB,
+  intentId: string,
+): Promise<PrebillingProvisioningIntent | undefined> {
+  await db.ready;
+  const row = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
+    .where('id', '=', intentId).executeTakeFirst();
   return row ? mapIntent(row) : undefined;
 }
 
@@ -267,4 +278,108 @@ export async function bindPrebillingIntentMachine(
     .where('machine_id', 'is', null)
     .returning('id').executeTakeFirst();
   return Boolean(row);
+}
+
+/** Must be called inside the signed billing projection transaction. */
+export async function authorizePrebillingIntent(
+  db: PlatformDB,
+  input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
+): Promise<{ authorized: boolean; machineId: string | null; needsFallback: boolean }> {
+  await db.ready;
+  const current = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
+    .where('id', '=', input.intentId)
+    .where('clerk_user_id', '=', input.clerkUserId)
+    .where('runtime_slot', '=', input.runtimeSlot)
+    .forUpdate().executeTakeFirst();
+  if (!current) return { authorized: false, machineId: null, needsFallback: false };
+  const intent = mapIntent(current);
+  if (intent.state === 'authorized') {
+    return { authorized: true, machineId: intent.machineId, needsFallback: intent.machineId === null };
+  }
+  if (intent.machineId) {
+    const activated = await db.executor.updateTable('user_machines').set({
+      activation_state: 'authorized',
+      activation_authorized_at: input.now,
+    }).where('machine_id', '=', intent.machineId)
+      .where('prebilling_intent_id', '=', intent.id)
+      .where('clerk_user_id', '=', input.clerkUserId)
+      .where('runtime_slot', '=', input.runtimeSlot)
+      .where('activation_state', '=', 'awaiting_billing')
+      .returning('machine_id').executeTakeFirst();
+    if (!activated) throw new Error('prebilling_machine_activation_mismatch');
+  }
+  const authorized = await db.executor.updateTable('prebilling_provisioning_intents').set({
+    state: 'authorized',
+    authorized_at: input.now,
+    lease_expires_at: null,
+    reserved_hourly_cost_micros: 0,
+    revision: intent.revision + 1,
+    updated_at: input.now,
+  }).where('id', '=', intent.id).where('revision', '=', intent.revision)
+    .returning('id').executeTakeFirst();
+  if (!authorized) throw new Error('prebilling_authorization_conflict');
+  return { authorized: true, machineId: intent.machineId, needsFallback: intent.machineId === null };
+}
+
+/** Must be called inside the verified Stripe webhook transaction. */
+export async function cleanupExpiredPrebillingCheckout(
+  db: PlatformDB,
+  input: { stripeSessionId: string; now: string },
+): Promise<{ cleaned: boolean; intentId: string | null }> {
+  await db.ready;
+  const current = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
+    .where('stripe_session_id', '=', input.stripeSessionId).forUpdate().executeTakeFirst();
+  if (!current) return { cleaned: false, intentId: null };
+  const intent = mapIntent(current);
+  if (intent.state === 'authorized' || intent.state === 'cleaned') {
+    return { cleaned: false, intentId: intent.id };
+  }
+  if (intent.machineId) {
+    const machine = await db.executor.selectFrom('user_machines').selectAll()
+      .where('machine_id', '=', intent.machineId).forUpdate().executeTakeFirst();
+    if (machine && machine.activation_state !== 'authorized' && machine.deleted_at === null) {
+      await db.executor.updateTable('user_machines').set({
+        status: 'deleted',
+        deleted_at: input.now,
+        registration_token_hash: null,
+        registration_token_expires_at: null,
+        failure_code: 'checkout_expired',
+        failure_at: input.now,
+      }).where('machine_id', '=', machine.machine_id)
+        .where('activation_state', '=', 'awaiting_billing').execute();
+      await db.executor.updateTable('provisioning_jobs').set({
+        status: 'failed',
+        encrypted_payload: null,
+        last_error_code: 'checkout_expired',
+        updated_at: input.now,
+        completed_at: input.now,
+      }).where('machine_id', '=', machine.machine_id)
+        .where('status', 'in', ['queued', 'running']).execute();
+      if (machine.hetzner_server_id !== null) {
+        await insertProviderDeletion(db, {
+          id: randomUUID(),
+          providerServerId: machine.hetzner_server_id,
+          reason: 'prebilling_checkout_expired',
+          machineId: machine.machine_id,
+          handle: machine.handle,
+          nextAttemptAt: input.now,
+          createdAt: input.now,
+        });
+      }
+    } else if (machine?.activation_state === 'authorized') {
+      return { cleaned: false, intentId: intent.id };
+    }
+  }
+  const cleaned = await db.executor.updateTable('prebilling_provisioning_intents').set({
+    state: 'cleaned',
+    machine_id: null,
+    cleaned_at: input.now,
+    lease_expires_at: null,
+    reserved_hourly_cost_micros: 0,
+    revision: intent.revision + 1,
+    updated_at: input.now,
+  }).where('id', '=', intent.id).where('revision', '=', intent.revision)
+    .where('state', '!=', 'authorized').returning('id').executeTakeFirst();
+  if (!cleaned) throw new Error('prebilling_cleanup_conflict');
+  return { cleaned: true, intentId: intent.id };
 }

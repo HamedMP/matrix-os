@@ -3314,6 +3314,7 @@ export async function getAccessibleActiveUserMachineByClerkId(
     .selectFrom('user_machines')
     .selectAll()
     .where(accessibleUserMachinePredicate(clerkUserId))
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null);
   if (runtimeSlot) {
     query = query.where('runtime_slot', '=', runtimeSlot);
@@ -3359,6 +3360,7 @@ export async function getRunningUserMachineByHandle(
     .selectAll()
     .where('handle', '=', handle)
     .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null);
   if (runtimeSlot) {
     query = query.where('runtime_slot', '=', runtimeSlot);
@@ -3383,6 +3385,7 @@ export async function getRunningUserMachineByClerkId(
     .where('clerk_user_id', '=', clerkUserId)
     .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
@@ -3400,6 +3403,7 @@ export async function getAccessibleRunningUserMachineByClerkId(
     .where(accessibleUserMachinePredicate(clerkUserId))
     .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
@@ -3417,6 +3421,7 @@ export async function getRunningUserMachineByClerkIdForUpdate(
     .where('clerk_user_id', '=', clerkUserId)
     .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
     .where('deleted_at', 'is', null)
     .forUpdate()
     .executeTakeFirst();
@@ -4228,7 +4233,11 @@ export async function claimCheckoutAttempt(
   }
   const sameSelection = activeRow.plan_slug === record.planSlug
     && activeRow.billing_interval === record.billingInterval
-    && activeRow.region_slug === record.regionSlug;
+    && activeRow.region_slug === record.regionSlug
+    && activeRow.server_type === (record.serverType ?? null)
+    && activeRow.trial_period_days === (record.trialPeriodDays ?? null)
+    && activeRow.developer_tools
+      === serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS);
   const retryAgeMs = Date.parse(record.createdAt) - Date.parse(activeRow.created_at);
   const withinIdempotencyWindow = Number.isFinite(retryAgeMs)
     && retryAgeMs >= 0

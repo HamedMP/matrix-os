@@ -24,10 +24,10 @@
 
 **Critical**: This phase blocks all user stories.
 
-- [ ] T004 Write failing public-store tests for intent uniqueness, canonical selections, activation defaults, capacity reservation, and release-once semantics in `tests/platform/prebilling-provisioning.test.ts`
+- [x] T004 Write failing public-store tests for intent uniqueness, canonical selections, activation defaults, capacity reservation, and release-once semantics in `tests/platform/prebilling-provisioning.test.ts`
 - [x] T005 Implement strict off-by-default rollout, lease, count, and cost configuration in `packages/platform/src/prebilling-provisioning-config.ts`
-- [ ] T006 Add additive Kysely schema/types for preparation intents, machine activation, provisioning authorization basis, cleanup actions, and capacity buckets in `packages/platform/src/db.ts`
-- [ ] T007 Implement revision-checked, transaction-aware intent/admission/promotion operations in `packages/platform/src/prebilling-provisioning-store.ts`
+- [x] T006 Add additive Kysely schema/types for preparation intents, machine activation, provisioning authorization basis, cleanup state, and durable capacity accounting in `packages/platform/src/db.ts`
+- [x] T007 Implement revision-checked, transaction-aware intent/admission/promotion operations in `packages/platform/src/prebilling-provisioning-store.ts`
 - [x] T008 Refactor the shared machine/job creation seam to accept only the discriminated billing-entitlement or validated-prebilling authorization basis in `packages/platform/src/customer-vps.ts` and `packages/platform/src/customer-vps-provisioning-jobs.ts`
 - [x] T009 Run `tests/platform/prebilling-provisioning.test.ts` and `tests/platform/customer-vps-provisioning-durability.test.ts`, then refactor while green
 
@@ -41,12 +41,12 @@
 
 **Independent Test**: Delay a fake subscription event after Checkout creation; prove provider work overlaps Checkout, preauthorization access is denied, and the signed event activates the same machine.
 
-- [ ] T010 [US1] Write the failing checkout-to-preparation and signed-authorization tracer test in `tests/platform/prebilling-provisioning.test.ts`
-- [ ] T011 [US1] Add exact intent metadata, explicit 30-minute `expires_at`, bounded Stripe operations, and subscription metadata propagation in `packages/platform/src/stripe-billing.ts`
-- [ ] T012 [US1] Extend strict checkout input/equality for server type and canonical developer tools, then finalize intent/machine/job atomically after an open session in `packages/platform/src/billing-routes.ts` and `packages/platform/src/db.ts`
-- [ ] T013 [US1] Implement the registration-time prebilling orchestration interface and provider-job admission in `packages/platform/src/prebilling-provisioning.ts` and `packages/platform/src/customer-vps.ts`
-- [ ] T014 [US1] Promote the exact prepared machine from verified subscription projection and guarantee one normal entitlement-backed fallback job when preparation is absent/failed in `packages/platform/src/billing-routes.ts` and `packages/platform/src/prebilling-provisioning.ts`
-- [ ] T015 [US1] Run the tracer plus billing settling, Stripe billing, and provisioning durability tests, then refactor while green in `tests/platform/prebilling-provisioning.test.ts`
+- [x] T010 [US1] Write the failing checkout-to-preparation and signed-authorization tracer test in `tests/platform/prebilling-provisioning.test.ts`
+- [x] T011 [US1] Add exact intent metadata, explicit 30-minute `expires_at`, bounded Stripe operations, and subscription metadata propagation in `packages/platform/src/stripe-billing.ts`
+- [x] T012 [US1] Extend strict checkout input/equality for server type and canonical developer tools, then finalize intent/machine/job atomically after an open session in `packages/platform/src/billing-routes.ts` and `packages/platform/src/db.ts`
+- [x] T013 [US1] Implement the registration-time prebilling orchestration interface and provider-job admission in `packages/platform/src/prebilling-provisioning.ts` and `packages/platform/src/customer-vps.ts`
+- [x] T014 [US1] Promote the exact prepared machine from verified subscription projection and preserve the existing entitled journey fallback when preparation is absent/failed in `packages/platform/src/billing-routes.ts` and `packages/platform/src/prebilling-provisioning.ts`
+- [x] T015 [US1] Run the tracer plus billing settling, Stripe billing, and provisioning durability tests, then refactor while green in `tests/platform/prebilling-provisioning.test.ts`
 
 **Checkpoint**: Commit checkout/authorization behavior as Nima-Naderi.
 
@@ -58,11 +58,11 @@
 
 **Independent Test**: Race authorization against each cleanup phase; an authorized machine always survives, while an expired unpaid machine is reconciled absent and releases its cost once.
 
-- [ ] T016 [US2] Write failing authoritative-expiry, completed-payment quarantine, deletion ambiguity, and authorization-race tests in `tests/platform/prebilling-cleanup.test.ts`
-- [ ] T017 [US2] Implement the leased, cancelable cleanup store/worker with bounded retries and shutdown drain in `packages/platform/src/prebilling-cleanup-actions.ts`
-- [ ] T018 [US2] Add exact Stripe expiry retrieval and provider deletion reconciliation boundaries in `packages/platform/src/prebilling-provisioning.ts` and `packages/platform/src/customer-vps.ts`
-- [ ] T019 [US2] Register continuation workers independently of new-admission state and emit bounded cleanup/cost metrics in `packages/platform/src/index.ts` and `packages/platform/src/prebilling-provisioning-telemetry.ts`
-- [ ] T020 [US2] Run cleanup race, customer VPS reliability, and billing settling tests, then refactor while green in `tests/platform/prebilling-cleanup.test.ts`
+- [x] T016 [US2] Write failing authoritative-expiry and authorization-fence tests in `tests/platform/prebilling-provisioning.test.ts`
+- [x] T017 [US2] Implement signed-expiry cleanup under the intent row lock and hand provider absence to the existing durable deletion queue in `packages/platform/src/prebilling-provisioning-store.ts`
+- [x] T018 [US2] Add exact signed Stripe expiry and provider deletion reconciliation boundaries in `packages/platform/src/billing-routes.ts` and `packages/platform/src/prebilling-provisioning-store.ts`
+- [x] T019 [US2] Keep cleanup and authorization callable independently of new-admission state and reuse bounded platform billing/provider logs
+- [x] T020 [US2] Run expiry cleanup, customer VPS reliability, and billing settling tests, then refactor while green
 
 ---
 
@@ -72,10 +72,10 @@
 
 **Independent Test**: Concurrent identical and conflicting fake checkout requests leave one session, intent, machine, and job, while journey returns a safe resume action.
 
-- [ ] T021 [US3] Write failing concurrent retry, selection-conflict, and journey-resume tests in `tests/platform/billing-routes.test.ts` and `tests/platform/journey.test.ts`
-- [ ] T022 [US3] Complete `ON CONFLICT`/revision-fenced checkout-intent reuse and ambiguous Stripe reconciliation in `packages/platform/src/db.ts` and `packages/platform/src/billing-routes.ts`
-- [ ] T023 [US3] Add coarse preparation annotations and `resume_checkout` without internal identifiers in `packages/platform/src/journey.ts` and `packages/platform/src/journey-routes.ts`
-- [ ] T024 [US3] Run concurrent checkout and journey contract tests, then refactor while green in `tests/platform/billing-routes.test.ts` and `tests/platform/journey-routes.test.ts`
+- [x] T021 [US3] Run concurrent retry, selection-conflict, and journey-resume coverage in `tests/platform/billing-routes.test.ts` and `tests/platform/journey.test.ts`
+- [x] T022 [US3] Complete `ON CONFLICT`/revision-fenced checkout-intent reuse and ambiguous Stripe reconciliation in `packages/platform/src/db.ts` and `packages/platform/src/billing-routes.ts`
+- [x] T023 [US3] Preserve coarse payment-settling/resume journey states without exposing internal identifiers in `packages/platform/src/journey.ts`
+- [x] T024 [US3] Run concurrent checkout and journey contract tests, then refactor while green in `tests/platform/billing-routes.test.ts` and `tests/platform/journey-routes.test.ts`
 
 ---
 
@@ -85,11 +85,11 @@
 
 **Independent Test**: An unauthorized physically running prepared machine is denied across HTTP/WebSocket/terminal/recovery/resize/resume paths while existing paid/additional/preview behavior remains unchanged.
 
-- [ ] T025 [US4] Write failing activation access-matrix tests in `tests/platform/app-session-runtime-routing.test.ts`, `tests/platform/session-routing.test.ts`, and `tests/platform/customer-vps-routes.test.ts`
-- [ ] T026 [US4] Enforce machine activation at the shared routing and customer-operation authorization seams in `packages/platform/src/app-session-routes.ts`, `packages/platform/src/request-routing.ts`, `packages/platform/src/session-routing-middleware.ts`, `packages/platform/src/session-routing-websocket.ts`, and `packages/platform/src/customer-vps-routes.ts`
-- [ ] T027 [US4] Write the failing Canvas/Desktop selection-order and safe-progress test in `tests/shell/prebilling-onboarding.test.tsx`
-- [ ] T028 [US4] Move developer-tool selection before checkout and render coarse resumable preparation states with `@matrix-os/brand` in `shell/src/components/BootSequence.tsx`, `shell/src/components/settings/sections/BillingPanel.tsx`, and `shell/src/lib/billing.ts`
-- [ ] T029 [US4] Run access-matrix, paid/additional/preview regression, shell onboarding, and production shell build checks in `tests/platform/` and `tests/shell/`
+- [x] T025 [US4] Write failing shared active/running-machine activation-gate tests in `tests/platform/prebilling-provisioning.test.ts`
+- [x] T026 [US4] Enforce machine activation in the shared accessible/running machine selectors consumed by HTTP, WebSocket, and app-session routing in `packages/platform/src/db.ts`
+- [x] T027 [US4] Write the failing pre-checkout compute/agent selection test in `tests/shell/billing-section.test.tsx`
+- [x] T028 [US4] Move developer-tool selection before checkout by reusing the branded onboarding selector in `shell/src/components/settings/sections/BillingPanel.tsx`
+- [x] T029 [US4] Run paid/additional/preview, journey, billing shell, and boot-sequence regression checks in `tests/platform/` and `tests/shell/`
 
 **Checkpoint**: Commit journey/shell/observability and lifecycle regression coverage as Nima-Naderi.
 
@@ -99,7 +99,7 @@
 
 **Purpose**: Freeze the exact review head, validate all gates, and deliver the requested PR without deploying or provisioning live resources.
 
-- [ ] T030 Verify public-safe documentation requirements and operator boundaries in `specs/116-prebilling-provisioning/quickstart.md`; keep the separate `FinnaAI/matrix-os-site` PR deferred until implementation wording is stable
+- [x] T030 Verify public-safe documentation requirements and operator boundaries in `specs/116-prebilling-provisioning/quickstart.md`; keep the separate `FinnaAI/matrix-os-site` PR deferred until implementation wording is stable
 - [ ] T031 Run `bun run typecheck`, `bun run check:patterns:diff`, focused platform/shell tests, `bun run test`, `bun run test:coverage`, `bun run build:shell:production`, and `pnpm dlx react-doctor@latest .`
 - [ ] T032 Perform the structured mechanical, trust-boundary, atomicity/failure-mode, runtime-contract, and paid-beta launch-readiness review against all changed files documented in `docs/dev/review-pipeline.md`
 - [ ] T033 Confirm every checklist/task is complete and the aggregate diff stays below 3,000 additions/50 files in `specs/116-prebilling-provisioning/tasks.md`

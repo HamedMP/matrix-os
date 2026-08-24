@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   claimCheckoutAttempt,
   getActiveUserMachineByClerkId,
+  getAccessibleActiveUserMachineByClerkId,
+  getRunningUserMachineByClerkId,
   insertUserMachine,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
@@ -11,10 +13,14 @@ import {
 } from '../../packages/platform/src/prebilling-provisioning-config.js';
 import {
   admitPrebillingIntent,
+  authorizePrebillingIntent,
+  bindPrebillingIntentMachine,
   createPrebillingIntent,
+  cleanupExpiredPrebillingCheckout,
   getPrebillingIntentByCheckoutAttempt,
 } from '../../packages/platform/src/prebilling-provisioning-store.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
+import { createPrebillingProvisioningCoordinator } from '../../packages/platform/src/prebilling-provisioning.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { listProvisioningJobs } from '../../packages/platform/src/customer-vps-provisioning-jobs.js';
@@ -212,6 +218,136 @@ describe('platform prebilling provisioning foundation', () => {
     ]);
     await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+    });
+  });
+
+  it('coordinates rollout admission into detached primary provisioning', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    const provisionForCheckout = vi.fn().mockResolvedValue({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      status: 'provisioning',
+      etaSeconds: 90,
+    });
+    const coordinator = createPrebillingProvisioningCoordinator({
+      db,
+      config: loadPrebillingProvisioningConfig({
+        MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true',
+        MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100',
+        MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '1',
+        MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '50000',
+        MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
+      }),
+      customerVpsService: { provisionForCheckout } as never,
+      resolveIdentity: vi.fn().mockResolvedValue({ handle: 'alice' }),
+      intentIdFactory: () => 'intent-1',
+      now: () => new Date(CREATED_AT),
+    });
+
+    const preparation = await coordinator.createIntent({
+      checkoutAttemptId: 'checkout-1',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      serverType: 'cpx32',
+      regionSlug: 'region_fsn1',
+      developerTools: ['codex', 'claude-code'],
+      now: CREATED_AT,
+    });
+    expect(preparation).toEqual({ intentId: 'intent-1', expiresAt: EXPIRES_AT });
+    await coordinator.startPreparation({
+      intentId: 'intent-1',
+      stripeSessionId: 'cs_1',
+      stripeSessionExpiresAt: EXPIRES_AT,
+    });
+
+    expect(provisionForCheckout).toHaveBeenCalledWith({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      serverType: 'cpx32',
+      location: 'fsn1',
+      developerTools: ['codex', 'claude-code'],
+    }, 'intent-1', { dispatch: 'detached' });
+  });
+
+  it('atomically authorizes only the exact owner-bound prepared machine', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    const admitted = await admitPrebillingIntent(db, {
+      intentId: 'intent-1',
+      stripeSessionId: 'cs_1',
+      stripeSessionExpiresAt: EXPIRES_AT,
+      reservedHourlyCostMicros: 50_000,
+      maxActive: 1,
+      maxHourlyCostMicros: 50_000,
+      now: CREATED_AT,
+    });
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      provisioningClass: 'customer',
+      accessClerkUserIds: [],
+      status: 'running',
+      imageVersion: 'dev',
+      developerTools: ['codex', 'claude-code'],
+      registrationTokenHash: null,
+      registrationTokenExpiresAt: null,
+      provisionedAt: CREATED_AT,
+      activationState: 'awaiting_billing',
+      prebillingIntentId: 'intent-1',
+    });
+    expect(await bindPrebillingIntentMachine(db, {
+      intentId: 'intent-1',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      expectedRevision: admitted.intent.revision,
+      now: CREATED_AT,
+    })).toBe(true);
+    await expect(getAccessibleActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
+    await expect(getRunningUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
+
+    await expect(db.transaction((trx) => authorizePrebillingIntent(trx, {
+      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
+    }))).resolves.toEqual({
+      authorized: true,
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      needsFallback: false,
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toMatchObject({
+      activationState: 'authorized',
+      activationAuthorizedAt: CREATED_AT,
+    });
+    await expect(getRunningUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeDefined();
+    await expect(getAccessibleActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeDefined();
+  });
+
+  it('durably retires an unauthorized machine only from signed checkout expiry', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    const admitted = await admitPrebillingIntent(db, {
+      intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
+      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+    });
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112', clerkUserId: 'user_123',
+      handle: 'alice', runtimeSlot: 'primary', provisioningClass: 'customer', accessClerkUserIds: [],
+      status: 'running', imageVersion: 'dev', developerTools: ['codex'], hetznerServerId: 123456,
+      registrationTokenHash: null, registrationTokenExpiresAt: null, provisionedAt: CREATED_AT,
+      activationState: 'awaiting_billing', prebillingIntentId: 'intent-1',
+    });
+    await bindPrebillingIntentMachine(db, {
+      intentId: 'intent-1', machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      expectedRevision: admitted.intent.revision, now: CREATED_AT,
+    });
+
+    await expect(db.transaction((trx) => cleanupExpiredPrebillingCheckout(trx, {
+      stripeSessionId: 'cs_1', now: EXPIRES_AT,
+    }))).resolves.toEqual({ cleaned: true, intentId: 'intent-1' });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'cleaned', machineId: null, reservedHourlyCostMicros: 0,
     });
   });
 

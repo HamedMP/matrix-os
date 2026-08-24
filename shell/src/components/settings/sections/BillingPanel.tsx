@@ -34,6 +34,12 @@ import type {
 } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsStep";
+import {
+  defaultDeveloperTools,
+  nextDeveloperToolsSelection,
+  type DeveloperToolId,
+} from "@/components/onboarding/developer-tools";
 
 function preselectedFeatureSlug(selectedPlan: unknown): string | null {
   if (typeof selectedPlan !== "string") return null;
@@ -141,6 +147,7 @@ function CheckoutPanel({
   selectedProfile,
   selectedRegion,
   billingInterval,
+  developerTools,
   onBillingIntervalChange,
   trialDurationDays,
 }: {
@@ -154,6 +161,7 @@ function CheckoutPanel({
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
   billingInterval: BillingInterval;
+  developerTools: DeveloperToolId[];
   onBillingIntervalChange: (interval: BillingInterval) => void;
   trialDurationDays: number | null;
 }) {
@@ -217,6 +225,8 @@ function CheckoutPanel({
           planSlug,
           interval: billingInterval,
           regionSlug,
+          serverType: selection.serverType,
+          developerTools,
           ...(checkoutRuntimeSlot ? { runtimeSlot: checkoutRuntimeSlot } : {}),
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),
@@ -1165,6 +1175,7 @@ function BillingPanelInner({
   );
   const [selectedRegionSlug, setSelectedRegionSlug] = useState(getNearestRegionSlug);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
+  const [developerTools, setDeveloperTools] = useState<DeveloperToolId[]>(defaultDeveloperTools);
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
   const checkoutBypassed = mode === "add-computer" && entitlement?.source === "override";
   const trialDurationDays = trialOffer?.eligible === true
@@ -1333,6 +1344,12 @@ function BillingPanelInner({
             onSelectProfile={handleProfileSelect}
             onSelectRegion={handleRegionSelect}
           />
+          <div className="mt-4 border-t border-forest/8 pt-4">
+            <DeveloperToolsSelector
+              selectedTools={developerTools}
+              onToggle={(tool) => setDeveloperTools((current) => nextDeveloperToolsSelection(current, tool))}
+            />
+          </div>
           <ul className="mt-4 space-y-2 border-t border-forest/8 pt-4">
             {includedHighlights.map((item) => (
               <li
@@ -1356,6 +1373,7 @@ function BillingPanelInner({
           selectedProfile={selectedProfile}
           selectedRegion={selectedRegion}
           billingInterval={billingInterval}
+          developerTools={developerTools}
           onBillingIntervalChange={handleBillingIntervalChange}
           trialDurationDays={trialDurationDays}
         />

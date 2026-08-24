@@ -84,7 +84,7 @@ describe("BillingSection", () => {
     expect(screen.getByText("Mastercard")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByText("Developer tools")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
@@ -339,6 +339,8 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "annual",
             regionSlug: "region_nbg1",
+            serverType: "cpx32",
+            developerTools: ["codex", "claude-code", "opencode", "pi"],
           }),
         }),
       ),
@@ -400,6 +402,8 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
+            serverType: "cpx32",
+            developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
           }),
         }),
@@ -480,6 +484,8 @@ describe("BillingSection", () => {
     expect(screen.getByText("ash")).toBeTruthy();
     expect(screen.queryByText("sin")).toBeNull();
     expect(screen.getByText("Start checkout & provision")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Developer tools" })).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
