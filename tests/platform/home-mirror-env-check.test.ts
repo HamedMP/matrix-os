@@ -46,6 +46,20 @@ describe('checkCustomerVpsPrimaryStorageEnv', () => {
       R2_ACCOUNT_ID: 'local-account',
     }, vi.fn())).toEqual([]);
   });
+
+  it('exempts only provider-disabled preview revisions from production primary storage', () => {
+    const isolatedPreview = {
+      NODE_ENV: 'production',
+      PLATFORM_PREVIEW: 'true',
+      CUSTOMER_VPS_ENABLED: 'true',
+    };
+
+    expect(checkCustomerVpsPrimaryStorageEnv(isolatedPreview, vi.fn())).toEqual([]);
+    expect(checkCustomerVpsPrimaryStorageEnv({
+      ...isolatedPreview,
+      HETZNER_API_TOKEN: 'provider-token',
+    }, vi.fn())).toContain('R2_ENDPOINT');
+  });
 });
 
 describe("checkHomeMirrorS3Env (startup assertion for silent-failure #6)", () => {

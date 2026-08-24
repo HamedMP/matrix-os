@@ -158,6 +158,23 @@ describe('platform/journey deriveJourneyPhase', () => {
     expect(derive({ entitlement: entitlement('active'), liveMachine: machine('recovering', { hetznerServerId: 1 }) }).progress?.stage).toBe('finalizing');
   });
 
+  it.each(['suspending', 'suspended', 'resuming'])(
+    'keeps a billing-recovery machine in a waiting journey while its status is %s',
+    (status) => {
+      const state = derive({
+        entitlement: entitlement('active'),
+        liveMachine: machine(status, { hetznerServerId: 1, publicIPv4: '203.0.113.4' }),
+      });
+
+      expect(state).toMatchObject({
+        phase: 'provisioning',
+        nextAction: { kind: 'wait' },
+        progress: { stage: 'finalizing' },
+      });
+      expect(state.detail).toBe('Restarting your Matrix computer…');
+    },
+  );
+
   it('failed machine under cap → provisioning_failed retryable', () => {
     const s = derive({ entitlement: entitlement('active'), liveMachine: machine('failed', { attempt: 2 }) });
     expect(s.phase).toBe('provisioning_failed');

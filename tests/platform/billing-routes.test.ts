@@ -1,10 +1,15 @@
 import { Hono } from 'hono';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import {
+  claimBillingRuntimeAction,
+  completeBillingRuntimeAction,
+  enqueueBillingRuntimeAction,
   getBillingEntitlement,
   getBillingSubscription,
   getBillingCustomerByClerkUserId,
   getLatestCheckoutAttempt,
+  insertUserMachine,
+  listBillingRuntimeActions,
   insertCheckoutAttempt,
   insertBillingWebhookEvent,
   upsertBillingOverride,
@@ -54,6 +59,7 @@ describe('platform billing routes', () => {
     userId: string | null = 'user_123',
     routeEnv: NodeJS.ProcessEnv = env,
     captureEvent?: Parameters<typeof createBillingRoutes>[0]['captureEvent'],
+    now: () => Date = () => new Date('2026-05-30T00:00:00.000Z'),
   ) {
     const app = new Hono();
     app.route('/billing', createBillingRoutes({
@@ -61,7 +67,7 @@ describe('platform billing routes', () => {
       stripe,
       env: routeEnv,
       resolveClerkUserId: () => Promise.resolve(userId),
-      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      now,
       captureEvent,
     }));
     return app;
@@ -154,6 +160,82 @@ describe('platform billing routes', () => {
       priceId: 'price_builder_monthly',
       regionSlug: 'region_fsn1',
     }));
+  });
+
+  it('offers and persists a seven-day trial for the first primary computer', async () => {
+    const trialEnv = { ...env, MATRIX_CARD_TRIALS_ENABLED: 'true' };
+    const app = createApp('user_123', trialEnv);
+
+    const status = await app.request('/billing/status?runtimeSlot=primary');
+    await expect(status.json()).resolves.toMatchObject({
+      trialOffer: { eligible: true, durationDays: 7 },
+    });
+
+    const checkout = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+
+    expect(checkout.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      trialPeriodDays: 7,
+      paymentMethodMode: 'card_required',
+    }));
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+      runtimeSlot: 'primary',
+      trialPeriodDays: 7,
+    });
+  });
+
+  it('does not offer a trial for additional computers or accounts with subscription history', async () => {
+    const trialEnv = { ...env, MATRIX_CARD_TRIALS_ENABLED: 'true' };
+    const additionalApp = createApp('user_123', trialEnv);
+    const additional = await additionalApp.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+    expect(additional.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      trialPeriodDays: null,
+      paymentMethodMode: 'dynamic',
+    }));
+
+    await upsertBillingSubscription(db, {
+      stripeSubscriptionId: 'sub_history',
+      stripeCustomerId: 'cus_history',
+      clerkUserId: 'user_history',
+      runtimeSlot: 'archive',
+      planSlug: 'matrix_starter',
+      stripePriceId: 'price_starter_monthly',
+      billingInterval: 'monthly',
+      status: 'canceled',
+      currentPeriodEnd: '2026-05-01T00:00:00.000Z',
+      gracePeriodEndsAt: null,
+      trialStartedAt: '2026-04-24T00:00:00.000Z',
+      trialEndsAt: '2026-05-01T00:00:00.000Z',
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: null,
+      latestEventCreatedAt: '2026-05-01T00:00:00.000Z',
+      latestEventId: 'evt_history',
+      updatedAt: '2026-05-01T00:00:00.000Z',
+    });
+    const historyApp = createApp('user_history', trialEnv);
+    const historyStatus = await historyApp.request('/billing/status?runtimeSlot=primary');
+    await expect(historyStatus.json()).resolves.toMatchObject({
+      trialOffer: { eligible: false, durationDays: 7 },
+    });
   });
 
   it('returns a generic allowlisted code when checkout price config is missing', async () => {
@@ -1057,6 +1139,639 @@ describe('platform billing routes', () => {
     });
   });
 
+  it('projects Stripe trial dates and gates the first failed conversion while scheduling one suspension', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial',
+      clerkUserId: 'user_123',
+      handle: 'trial-user',
+      runtimeSlot: 'primary',
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      status: 'running',
+      imageVersion: 'v1',
+      provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial',
+        runtimeSlot: 'primary',
+        priceId: 'price_builder_monthly',
+        status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_failed', 'invoice.payment_failed', 'sub_trial'));
+    const app = createApp(null);
+
+    for (let index = 0; index < 2; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'stripe-signature': 'valid' },
+        body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({
+      status: 'trialing',
+      trialStartedAt: '2026-05-23T00:00:00.000Z',
+      trialEndsAt: '2026-05-30T00:00:00.000Z',
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: '2026-05-30T00:00:00.000Z',
+      gracePeriodEndsAt: null,
+    });
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({
+        machineId: 'machine_trial',
+        action: 'suspend',
+        status: 'queued',
+        executeAfter: '2026-05-31T00:00:00.000Z',
+      }),
+    ]);
+    const statusApp = createApp('user_123');
+    const status = await statusApp.request('/billing/status?runtimeSlot=primary');
+    await expect(status.json()).resolves.toMatchObject({
+      entitlement: {
+        billingInterval: 'monthly',
+        firstTrialPaymentFailedAt: '2026-05-30T00:00:00.000Z',
+      },
+      access: { runtimeProxyAllowed: false, reason: 'payment_required' },
+      trialOffer: { eligible: false, durationDays: 7 },
+    });
+  });
+
+  it('anchors delayed trial-failure suspension to the Stripe failure time', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started_delayed', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly',
+        status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_failed_delayed', 'invoice.payment_failed', 'sub_trial'));
+    const app = createApp(null, env, undefined, () => new Date('2026-06-02T00:00:00.000Z'));
+
+    for (let index = 0; index < 2; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ executeAfter: '2026-05-31T00:00:00.000Z' }),
+    ]);
+  });
+
+  it('schedules an early-canceled trial suspension 24 hours after trial_end', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_trial_canceled', {
+      subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'canceled',
+      trialStart: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      trialEnd: Date.parse('2026-06-06T00:00:00.000Z') / 1000,
+    }));
+    const app = createApp(null);
+
+    const response = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({
+        action: 'suspend', status: 'queued', executeAfter: '2026-06-07T00:00:00.000Z',
+      }),
+    ]);
+    const status = await createApp('user_123').request('/billing/status?runtimeSlot=primary');
+    await expect(status.json()).resolves.toMatchObject({
+      access: { runtimeProxyAllowed: true },
+    });
+  });
+
+  it('cancels an early-cancellation suspension when Stripe restores the trial', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    const trialStart = Date.parse('2026-05-30T00:00:00.000Z') / 1000;
+    const trialEnd = Date.parse('2026-06-06T00:00:00.000Z') / 1000;
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_canceled', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'canceled',
+        trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_restored', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        created: Date.parse('2026-05-30T00:01:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }));
+    const app = createApp(null);
+
+    for (let index = 0; index < 2; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'suspend', status: 'canceled' }),
+    ]);
+    const status = await createApp('user_123').request('/billing/status?runtimeSlot=primary');
+    await expect(status.json()).resolves.toMatchObject({
+      access: { runtimeProxyAllowed: true },
+    });
+  });
+
+  it('requests cancellation and queues recovery when Stripe restores a trial during suspension', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'suspending', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    const trialStart = Date.parse('2026-05-30T00:00:00.000Z') / 1000;
+    const trialEnd = Date.parse('2026-06-06T00:00:00.000Z') / 1000;
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_canceled_running', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'canceled',
+        created: Date.parse('2026-06-06T00:00:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_restored_running', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        created: Date.parse('2026-06-07T00:02:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }));
+    const app = createApp(null, env, undefined, () => new Date('2026-06-07T00:03:00.000Z'));
+    await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    const suspend = (await listBillingRuntimeActions(db, 'sub_trial'))
+      .find((action) => action.action === 'suspend');
+    expect(suspend).toBeDefined();
+    await claimBillingRuntimeAction(
+      db,
+      suspend!.id,
+      '2026-06-07T00:00:00.000Z',
+      '2026-06-07T00:05:00.000Z',
+      5,
+    );
+
+    const restored = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(restored.status).toBe(200);
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({
+        action: 'suspend', status: 'running', cancelRequestedAt: '2026-06-07T00:03:00.000Z',
+      }),
+      expect.objectContaining({ action: 'resume', status: 'queued', reason: 'billing_recovered' }),
+    ]);
+  });
+
+  it('does not schedule a suspension from an out-of-order canceled subscription event', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    const trialStart = Date.parse('2026-05-30T00:00:00.000Z') / 1000;
+    const trialEnd = Date.parse('2026-06-06T00:00:00.000Z') / 1000;
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_current', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        created: Date.parse('2026-05-30T00:02:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_stale_cancel', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'canceled',
+        created: Date.parse('2026-05-30T00:01:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }));
+    const app = createApp(null);
+
+    for (let index = 0; index < 2; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([]);
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:02:00.000Z')).resolves
+      .toMatchObject({ status: 'trialing', latestEventId: 'evt_trial_current' });
+  });
+
+  it('does not let an out-of-order paid invoice reverse a newer failed conversion', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_failed_current', 'invoice.payment_failed', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:02:00.000Z') / 1000,
+      })
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_paid_stale', 'invoice.paid', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:01:00.000Z') / 1000,
+      });
+    const app = createApp(null);
+
+    for (let index = 0; index < 3; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:03:00.000Z')).resolves
+      .toMatchObject({
+        trialConvertedAt: null,
+        firstTrialPaymentFailedAt: '2026-05-30T00:02:00.000Z',
+        latestEventId: 'evt_trial_started',
+      });
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'suspend', status: 'queued' }),
+    ]);
+  });
+
+  it('keeps three-day renewal grace when Stripe reports periods on subscription items', async () => {
+    const trialStart = Date.parse('2026-05-23T00:00:00.000Z') / 1000;
+    const trialEnd = Date.parse('2026-05-30T00:00:00.000Z') / 1000;
+    const renewalStart = Date.parse('2026-06-30T00:00:00.000Z') / 1000;
+    const renewalEnd = Date.parse('2026-07-30T00:00:00.000Z') / 1000;
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        created: trialStart, trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_converted', 'invoice.paid', 'sub_trial'))
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_active', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'active',
+        created: trialEnd + 60, trialStart, trialEnd,
+        omitTopLevelCurrentPeriodEnd: true,
+        itemCurrentPeriodStart: trialEnd,
+        itemCurrentPeriodEnd: renewalStart,
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_renewal_past_due', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'past_due',
+        created: renewalStart, trialStart, trialEnd,
+        omitTopLevelCurrentPeriodEnd: true,
+        itemCurrentPeriodStart: renewalStart,
+        itemCurrentPeriodEnd: renewalEnd,
+      }));
+    const app = createApp('user_123', env, undefined, () => new Date('2026-07-01T00:00:00.000Z'));
+
+    for (let index = 0; index < 4; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const status = await app.request('/billing/status?runtimeSlot=primary');
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({
+      entitlement: {
+        status: 'past_due',
+        gracePeriodEndsAt: '2026-07-03T00:00:00.000Z',
+      },
+      access: {
+        runtimeProxyAllowed: true,
+        reason: 'grace_period',
+      },
+    });
+  });
+
+  it('does not let an older paid invoice convert a trial after a newer terminal subscription event', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    const trialStart = Date.parse('2026-05-23T00:00:00.000Z') / 1000;
+    const trialEnd = Date.parse('2026-05-30T00:00:00.000Z') / 1000;
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        created: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_canceled_current', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'canceled',
+        created: Date.parse('2026-05-30T00:03:00.000Z') / 1000,
+        trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_paid_stale_terminal', 'invoice.paid', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:02:00.000Z') / 1000,
+      });
+    const app = createApp(null);
+
+    for (let index = 0; index < 3; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:04:00.000Z')).resolves
+      .toMatchObject({
+        status: 'canceled',
+        trialConvertedAt: null,
+        latestEventId: 'evt_trial_canceled_current',
+      });
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'suspend', status: 'queued' }),
+    ]);
+  });
+
+  it('cancels a pending suspension when the first post-trial invoice is paid', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial',
+      clerkUserId: 'user_123',
+      handle: 'trial-user',
+      runtimeSlot: 'primary',
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      status: 'running',
+      imageVersion: 'v1',
+      provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_failed', 'invoice.payment_failed', 'sub_trial'))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_paid', 'invoice.paid', 'sub_trial'));
+    const app = createApp(null);
+
+    for (let index = 0; index < 3; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({
+      trialConvertedAt: '2026-05-30T00:00:00.000Z',
+      firstTrialPaymentFailedAt: null,
+    });
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'suspend', status: 'canceled' }),
+    ]);
+  });
+
+  it('preserves the first failed-conversion timestamp across distinct retry events', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_failed_first', 'invoice.payment_failed', 'sub_trial'))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_failed_retry', 'invoice.payment_failed', 'sub_trial'),
+        created: Date.parse('2026-05-30T01:00:00.000Z') / 1000,
+      });
+    const app = createApp(null);
+
+    for (let index = 0; index < 3; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T01:00:00.000Z')).resolves.toMatchObject({
+      firstTrialPaymentFailedAt: '2026-05-30T00:00:00.000Z',
+    });
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toHaveLength(1);
+  });
+
+  it('requests cancellation and queues a resume when payment recovers after suspension has started', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial',
+      clerkUserId: 'user_123',
+      handle: 'trial-user',
+      runtimeSlot: 'primary',
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      status: 'suspending',
+      imageVersion: 'v1',
+      provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_failed', 'invoice.payment_failed', 'sub_trial'))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_paid', 'invoice.paid', 'sub_trial'));
+    const app = createApp(null);
+
+    for (let index = 0; index < 2; index += 1) {
+      await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+    }
+    const suspend = (await listBillingRuntimeActions(db, 'sub_trial'))
+      .find((action) => action.action === 'suspend');
+    expect(suspend).toBeDefined();
+    await claimBillingRuntimeAction(
+      db,
+      suspend!.id,
+      '2026-05-31T00:00:00.000Z',
+      '2026-05-31T00:05:00.000Z',
+      5,
+    );
+
+    const paid = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(paid.status).toBe(200);
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'resume', status: 'canceled', reason: 'billing_recovered' }),
+      expect.objectContaining({
+        action: 'suspend',
+        status: 'running',
+        cancelRequestedAt: '2026-05-30T00:00:00.000Z',
+      }),
+      expect.objectContaining({ action: 'resume', status: 'queued', reason: 'payment_recovered' }),
+    ]);
+  });
+
+  it('queues a resume when payment recovers after suspension completed', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'suspended', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started_completed', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_failed_completed', 'invoice.payment_failed', 'sub_trial'))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_paid_completed', 'invoice.paid', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:01:00.000Z') / 1000,
+      });
+    const app = createApp(null);
+    for (let index = 0; index < 2; index += 1) {
+      await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+    }
+    const suspend = (await listBillingRuntimeActions(db, 'sub_trial'))
+      .find((action) => action.action === 'suspend');
+    expect(suspend).toBeDefined();
+    await claimBillingRuntimeAction(
+      db,
+      suspend!.id,
+      '2026-05-31T00:00:00.000Z',
+      '2026-05-31T00:05:00.000Z',
+      5,
+    );
+    await completeBillingRuntimeAction(db, suspend!.id, '2026-05-31T00:01:00.000Z');
+
+    const paid = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(paid.status).toBe(200);
+    await expect(listBillingRuntimeActions(db, 'sub_trial')).resolves.toEqual([
+      expect.objectContaining({ action: 'resume', status: 'canceled', reason: 'billing_recovered' }),
+      expect.objectContaining({ action: 'suspend', status: 'completed' }),
+      expect.objectContaining({ action: 'resume', status: 'queued', reason: 'payment_recovered' }),
+    ]);
+  });
+
+  it('cancels a queued recovery resume when a newer failed conversion requires suspension', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'suspended', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_failed_newer', 'invoice.payment_failed', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:02:00.000Z') / 1000,
+      });
+    const app = createApp(null);
+    await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    await enqueueBillingRuntimeAction(db, {
+      clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
+      action: 'resume', reason: 'payment_recovered', executeAfter: '2026-05-30T00:01:00.000Z',
+      createdAt: '2026-05-30T00:01:00.000Z',
+    });
+
+    const failed = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(failed.status).toBe(200);
+    const actions = await listBillingRuntimeActions(db, 'sub_trial');
+    expect(actions).toHaveLength(2);
+    expect(actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'resume', status: 'canceled' }),
+      expect.objectContaining({ action: 'suspend', status: 'queued' }),
+    ]));
+  });
+
+  it('revokes an in-flight recovery resume and makes its compensating suspension immediately due', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
+      runtimeSlot: 'primary', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'resuming', imageVersion: 'v1', provisionedAt: '2026-05-20T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        trialStart: Date.parse('2026-05-23T00:00:00.000Z') / 1000,
+        trialEnd: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+      }))
+      .mockReturnValueOnce({
+        ...invoiceEvent('evt_trial_failed_newer', 'invoice.payment_failed', 'sub_trial'),
+        created: Date.parse('2026-05-30T00:02:00.000Z') / 1000,
+      });
+    const app = createApp(
+      null,
+      env,
+      undefined,
+      () => new Date('2026-05-30T00:03:00.000Z'),
+    );
+    await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    const resume = await enqueueBillingRuntimeAction(db, {
+      clerkUserId: 'user_123', runtimeSlot: 'primary', stripeSubscriptionId: 'sub_trial',
+      action: 'resume', reason: 'payment_recovered', executeAfter: '2026-05-30T00:01:00.000Z',
+      createdAt: '2026-05-30T00:01:00.000Z',
+    });
+    expect(resume).toBeDefined();
+    await claimBillingRuntimeAction(
+      db,
+      resume!.id,
+      '2026-05-30T00:01:00.000Z',
+      '2026-05-30T00:06:00.000Z',
+      5,
+    );
+
+    const failed = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+
+    expect(failed.status).toBe(200);
+    const actions = await listBillingRuntimeActions(db, 'sub_trial');
+    expect(actions).toHaveLength(2);
+    expect(actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: 'resume',
+        status: 'running',
+        cancelRequestedAt: '2026-05-30T00:03:00.000Z',
+      }),
+      expect.objectContaining({
+        action: 'suspend', status: 'queued', executeAfter: '2026-05-30T00:03:00.000Z',
+      }),
+    ]));
+  });
+
   it('updates stale customer links when a signed subscription webhook names a newer Stripe customer', async () => {
     await upsertBillingCustomer(db, {
       clerkUserId: 'user_123',
@@ -1262,6 +1977,11 @@ function subscriptionEvent(id: string, overrides: {
   status?: string;
   created?: number;
   currentPeriodEnd?: number;
+  omitTopLevelCurrentPeriodEnd?: boolean;
+  itemCurrentPeriodStart?: number;
+  itemCurrentPeriodEnd?: number;
+  trialStart?: number;
+  trialEnd?: number;
 } = {}): StripeWebhookEvent {
   return {
     id,
@@ -1272,7 +1992,11 @@ function subscriptionEvent(id: string, overrides: {
         id: overrides.subscriptionId ?? 'sub_123',
         customer: 'cus_123',
         status: overrides.status ?? 'active',
-        current_period_end: overrides.currentPeriodEnd ?? 1_782_432_000,
+        ...(!overrides.omitTopLevelCurrentPeriodEnd
+          ? { current_period_end: overrides.currentPeriodEnd ?? 1_782_432_000 }
+          : {}),
+        trial_start: overrides.trialStart,
+        trial_end: overrides.trialEnd,
         metadata: {
           clerk_user_id: 'user_123',
           matrix_region_slug: 'region_fsn1',
@@ -1280,10 +2004,35 @@ function subscriptionEvent(id: string, overrides: {
         },
         items: {
           data: [
-            { price: { id: overrides.priceId ?? 'price_max_monthly' }, quantity: 1 },
+            {
+              price: { id: overrides.priceId ?? 'price_max_monthly' },
+              quantity: 1,
+              current_period_start: overrides.itemCurrentPeriodStart,
+              current_period_end: overrides.itemCurrentPeriodEnd,
+            },
             { price: { id: 'price_extra_runtime_monthly' }, quantity: 1 },
           ],
         },
+      },
+    },
+  };
+}
+
+function invoiceEvent(
+  id: string,
+  type: 'invoice.paid' | 'invoice.payment_failed',
+  subscriptionId: string,
+): StripeWebhookEvent {
+  return {
+    id,
+    type,
+    created: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+    data: {
+      object: {
+        id: `in_${id}`,
+        created: Date.parse('2026-05-30T00:00:00.000Z') / 1000,
+        billing_reason: 'subscription_cycle',
+        parent: { subscription_details: { subscription: subscriptionId } },
       },
     },
   };

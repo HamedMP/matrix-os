@@ -14,6 +14,7 @@ import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-
 
 export type CardStatus = "todo" | "running" | "waiting" | "blocked" | "complete" | "archived";
 export type CardPriority = "low" | "normal" | "high" | "urgent";
+export type ProjectListStatus = "idle" | "loading" | "ready" | "error";
 
 export interface Card {
   id: string;
@@ -39,6 +40,11 @@ export interface Project {
   archivedAt?: string;
   localPath?: string;
   githubBacked?: boolean;
+  github?: { owner: string; repo: string };
+  repository?: string;
+  defaultBranch?: string;
+  description?: string;
+  updatedAt?: string;
 }
 
 export const BOARD_COLUMNS: readonly CardStatus[] = [
@@ -76,7 +82,10 @@ const WireProjectSchema = z.object({
   localPath: z.string().min(1).optional(),
   kind: z.enum(["scratch", "github", "folder"]).optional(),
   archivedAt: z.string().datetime().optional(),
-  github: z.object({ owner: z.string(), repo: z.string() }).passthrough().optional(),
+  description: z.string().max(1_000).optional(),
+  updatedAt: z.string().max(64).optional(),
+  defaultBranch: z.string().min(1).max(200).optional(),
+  github: z.object({ owner: z.string().min(1).max(200), repo: z.string().min(1).max(200) }).passthrough().optional(),
 });
 
 export function parseProject(raw: unknown): Project | null {
@@ -87,9 +96,14 @@ export function parseProject(raw: unknown): Project | null {
     name: parsed.data.name,
     kind: parsed.data.kind ?? (parsed.data.github ? "github" : "scratch"),
     ...(parsed.data.archivedAt ? { archivedAt: parsed.data.archivedAt } : {}),
+    ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    ...(parsed.data.updatedAt ? { updatedAt: parsed.data.updatedAt } : {}),
+    ...(parsed.data.github ? { repository: `${parsed.data.github.owner}/${parsed.data.github.repo}` } : {}),
+    ...(parsed.data.defaultBranch ? { defaultBranch: parsed.data.defaultBranch } : {}),
     ...(parsed.data.localPath
       ? { localPath: parsed.data.localPath, githubBacked: parsed.data.github !== undefined }
       : {}),
+    ...(parsed.data.github ? { github: parsed.data.github } : {}),
   };
 }
 
@@ -214,6 +228,8 @@ export type CardPatch = Partial<Pick<Card, "title" | "description" | "status" | 
 
 interface BoardState {
   projects: Project[];
+  projectsStatus: ProjectListStatus;
+  projectsError: AppErrorCategory | null;
   activeProjectSlug: string | null;
   cardsByProject: Record<string, Card[]>;
   firstLoadByProject: Record<string, boolean>;
@@ -222,6 +238,7 @@ interface BoardState {
   loadProjects(api: ApiClient): Promise<boolean>;
   createProject(api: ApiClient, input: {
     name: string;
+    description?: string;
     mode: "scratch" | "github" | "folder";
     url?: string;
     path?: string;
@@ -312,6 +329,8 @@ export const useBoard = create<BoardState>()((set, get) => {
 
   return {
     projects: [],
+    projectsStatus: "idle",
+    projectsError: null,
     activeProjectSlug: null,
     cardsByProject: {},
     firstLoadByProject: {},
@@ -320,6 +339,7 @@ export const useBoard = create<BoardState>()((set, get) => {
 
     loadProjects: async (api) => {
       const runtimeGeneration = captureRuntimeGeneration();
+      set({ projectsStatus: "loading", projectsError: null });
       try {
         const response = await api.get<{ projects: unknown[] }>("/api/workspace/projects");
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
@@ -328,12 +348,13 @@ export const useBoard = create<BoardState>()((set, get) => {
           const project = parseProject(raw);
           if (project) projects.push(project);
         }
-        set({ projects, error: null });
+        set({ projects, projectsStatus: "ready", projectsError: null, error: null });
         return true;
       } catch (err: unknown) {
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
         console.error("[board] Failed to load projects:", err);
-        set({ error: categoryOf(err) });
+        const error = categoryOf(err);
+        set({ projectsStatus: "error", projectsError: error, error });
         return false;
       }
     },
@@ -345,10 +366,10 @@ export const useBoard = create<BoardState>()((set, get) => {
       try {
         const clientRequestId = `req_desktop_project_${crypto.randomUUID()}`;
         const body = input.mode === "github"
-          ? { name: input.name, mode: "github" as const, url: input.url, clientRequestId }
+          ? { name: input.name, description: input.description, mode: "github" as const, url: input.url, clientRequestId }
           : input.mode === "folder"
-            ? { name: input.name, mode: "folder" as const, path: input.path, clientRequestId }
-            : { name: input.name, mode: "scratch" as const, clientRequestId };
+            ? { name: input.name, description: input.description, mode: "folder" as const, path: input.path, clientRequestId }
+            : { name: input.name, description: input.description, mode: "scratch" as const, clientRequestId };
         const sendCreate = (timeoutMs: number) => api.post<{ project: unknown }>(
           "/api/projects",
           body,

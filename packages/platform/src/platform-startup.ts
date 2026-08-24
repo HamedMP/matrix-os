@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import {
   createPostHogErrorTracker,
   installPostHogProcessErrorTracking,
+  type MatrixTelemetryEvent,
 } from '@matrix-os/observability';
 import type { Hono, Context } from 'hono';
 import type { Server } from 'node:http';
@@ -39,6 +40,7 @@ import { buildPlatformVerificationToken } from './platform-token.js';
 import { backfillFirstRunRecords } from './journey.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
+import { dispatchBillingRuntimeActions } from './billing-runtime-actions.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import {
   createR2CapabilityGate,
@@ -451,6 +453,10 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   let customerVpsReconciliationPromise: Promise<void> | undefined;
   let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
   let goldenSnapshotPromise: Promise<void> | undefined;
+  let billingRuntimeCaptureEvent: ((
+    event: 'matrix_vps_suspended' | 'matrix_vps_resumed',
+    options: { properties: Record<string, string | number | boolean | undefined> },
+  ) => void) | undefined;
   if (runtimeConfig.customerVpsEnabled) {
     const [
       { createCustomerVpsService },
@@ -649,6 +655,20 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
               logPlatformRouteError('customer VPS reconciliation', err);
             }
             try {
+              const result = await dispatchBillingRuntimeActions({
+                db,
+                customerVpsService: customerVpsService!,
+                captureEvent: billingRuntimeCaptureEvent,
+              });
+              if (result.checked > 0) {
+                console.log(
+                  `[platform] billing runtime actions checked=${result.checked} completed=${result.completed} retried=${result.retried} failed=${result.failed}`,
+                );
+              }
+            } catch (err: unknown) {
+              logPlatformRouteError('billing runtime action reconciliation', err);
+            }
+            try {
               const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
               await sweepStaleCheckoutAttempts(
                 db,
@@ -725,6 +745,9 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   const processPosthogErrorTracker = createPostHogErrorTracker({
     service: 'matrix-platform',
   });
+  billingRuntimeCaptureEvent = (event, options) => {
+    app.capturePlatformEvent(event as MatrixTelemetryEvent, options.properties);
+  };
   const posthogProcessErrors = installPostHogProcessErrorTracking({
     tracker: processPosthogErrorTracker,
     service: 'matrix-platform',

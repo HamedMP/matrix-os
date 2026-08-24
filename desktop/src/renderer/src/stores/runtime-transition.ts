@@ -35,6 +35,8 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
   resetKernel();
   useBoard.setState({
     projects: [],
+    projectsStatus: "idle",
+    projectsError: null,
     activeProjectSlug: null,
     cardsByProject: {},
     firstLoadByProject: {},

@@ -61,6 +61,10 @@ export interface StripeSubscriptionProjection {
   stripeSubscriptionId: string;
   status: BillingEntitlementStatus;
   currentPeriodEnd?: string | null;
+  trialStartedAt?: string | null;
+  trialEndsAt?: string | null;
+  trialConvertedAt?: string | null;
+  firstTrialPaymentFailedAt?: string | null;
   items: StripeSubscriptionItemProjection[];
 }
 
@@ -76,7 +80,12 @@ export interface BillingEntitlement {
   allowedServerTypes: string[];
   stripeSubscriptionId: string | null;
   stripePriceId: string | null;
+  billingInterval?: MatrixBillingInterval | null;
   gracePeriodEndsAt: string | null;
+  trialStartedAt?: string | null;
+  trialEndsAt?: string | null;
+  trialConvertedAt?: string | null;
+  firstTrialPaymentFailedAt?: string | null;
   effectiveFrom: string;
   effectiveUntil: string | null;
   updatedAt: string;
@@ -233,6 +242,7 @@ export function deriveStripeEntitlement(
 ): BillingEntitlement {
   let selectedPlan: BillingPlanDefinition | undefined;
   let selectedPriceId: string | null = null;
+  let selectedBillingInterval: MatrixBillingInterval | null = null;
 
   for (const item of subscription.items) {
     const entry = options.priceCatalog.priceToPlan.get(item.priceId);
@@ -241,6 +251,7 @@ export function deriveStripeEntitlement(
     if (!selectedPlan || plan.rank > selectedPlan.rank) {
       selectedPlan = plan;
       selectedPriceId = item.priceId;
+      selectedBillingInterval = entry.interval;
     }
   }
 
@@ -257,7 +268,12 @@ export function deriveStripeEntitlement(
       allowedServerTypes: [],
       stripeSubscriptionId: subscription.stripeSubscriptionId,
       stripePriceId: null,
+      billingInterval: null,
       gracePeriodEndsAt: null,
+      trialStartedAt: subscription.trialStartedAt ?? null,
+      trialEndsAt: subscription.trialEndsAt ?? null,
+      trialConvertedAt: subscription.trialConvertedAt ?? null,
+      firstTrialPaymentFailedAt: subscription.firstTrialPaymentFailedAt ?? null,
       effectiveFrom: options.now.toISOString(),
       effectiveUntil: null,
       updatedAt: options.now.toISOString(),
@@ -268,7 +284,20 @@ export function deriveStripeEntitlement(
   const allowedServerTypes = selectedPlan.allowedCatalogSkus
     .map((sku) => resolveServerType(options.runtimeCatalog, sku))
     .filter((serverType): serverType is string => Boolean(serverType));
-  const gracePeriodEndsAt = getGracePeriodEnd(subscription.status, subscription.currentPeriodEnd);
+  const gracePeriodEndsAt = getGracePeriodEnd(
+    subscription.status,
+    subscription.currentPeriodEnd,
+    Boolean(
+      !subscription.trialConvertedAt
+      && subscription.trialEndsAt
+      && (
+        subscription.firstTrialPaymentFailedAt
+        || subscription.status === 'canceled'
+        || subscription.status === 'unpaid'
+        || subscription.status === 'ended'
+      )
+    ),
+  );
 
   return {
     clerkUserId: subscription.clerkUserId,
@@ -282,7 +311,12 @@ export function deriveStripeEntitlement(
     allowedServerTypes,
     stripeSubscriptionId: subscription.stripeSubscriptionId,
     stripePriceId: selectedPriceId,
+    billingInterval: selectedBillingInterval,
     gracePeriodEndsAt,
+    trialStartedAt: subscription.trialStartedAt ?? null,
+    trialEndsAt: subscription.trialEndsAt ?? null,
+    trialConvertedAt: subscription.trialConvertedAt ?? null,
+    firstTrialPaymentFailedAt: subscription.firstTrialPaymentFailedAt ?? null,
     effectiveFrom: options.now.toISOString(),
     effectiveUntil: null,
     updatedAt: options.now.toISOString(),
@@ -301,8 +335,13 @@ function resolveServerType(catalog: RuntimeCatalog, sku: string): string | null 
   return catalog.profiles.find((profile) => profile.sku === sku && profile.active)?.serverType ?? null;
 }
 
-function getGracePeriodEnd(status: BillingEntitlementStatus, currentPeriodEnd: string | null | undefined): string | null {
-  if ((status === 'active' || status === 'trialing') && currentPeriodEnd) {
+function getGracePeriodEnd(
+  status: BillingEntitlementStatus,
+  currentPeriodEnd: string | null | undefined,
+  firstTrialChargeFailed: boolean,
+): string | null {
+  if (firstTrialChargeFailed || status === 'trialing') return null;
+  if (status === 'active' && currentPeriodEnd) {
     return new Date(Date.parse(currentPeriodEnd) + BILLING_GRACE_PERIOD_MS).toISOString();
   }
   if (!currentPeriodEnd) return null;
@@ -317,6 +356,36 @@ export function getRuntimeAccessDecision(
   now: Date,
 ): RuntimeAccessDecision {
   if (!entitlement) return { runtimeProxyAllowed: false, reason: 'no_entitlement' };
+  if (
+    entitlement.trialEndsAt
+    && !entitlement.trialConvertedAt
+    && !entitlement.firstTrialPaymentFailedAt
+    && Date.parse(entitlement.trialEndsAt) > now.getTime()
+  ) {
+    return {
+      runtimeProxyAllowed: true,
+      reason: 'active',
+      gracePeriodEndsAt: null,
+    };
+  }
+  if (entitlement.firstTrialPaymentFailedAt && !entitlement.trialConvertedAt) {
+    return {
+      runtimeProxyAllowed: false,
+      reason: 'payment_required',
+      gracePeriodEndsAt: null,
+    };
+  }
+  if (
+    entitlement.trialEndsAt
+    && !entitlement.trialConvertedAt
+    && Date.parse(entitlement.trialEndsAt) <= now.getTime()
+  ) {
+    return {
+      runtimeProxyAllowed: false,
+      reason: 'payment_required',
+      gracePeriodEndsAt: null,
+    };
+  }
   if (entitlement.status === 'active' || entitlement.status === 'trialing') {
     return {
       runtimeProxyAllowed: true,
@@ -350,7 +419,12 @@ export function parseBillingEntitlementRecord(record: {
   allowedServerTypes: string[];
   stripeSubscriptionId: string | null;
   stripePriceId: string | null;
+  billingInterval?: MatrixBillingInterval | null;
   gracePeriodEndsAt: string | null;
+  trialStartedAt?: string | null;
+  trialEndsAt?: string | null;
+  trialConvertedAt?: string | null;
+  firstTrialPaymentFailedAt?: string | null;
   effectiveFrom: string;
   effectiveUntil: string | null;
   updatedAt: string;
@@ -413,7 +487,12 @@ export function computeEffectiveEntitlement(input: {
       allowedServerTypes: override.allowedServerTypes,
       stripeSubscriptionId: null,
       stripePriceId: null,
+      billingInterval: null,
       gracePeriodEndsAt: override.expiresAt,
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: null,
       effectiveFrom: override.createdAt,
       effectiveUntil: override.expiresAt,
       updatedAt: override.createdAt,

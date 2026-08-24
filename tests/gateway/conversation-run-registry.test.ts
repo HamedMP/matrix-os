@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  conversationHistoryRefreshRequired,
   ConversationRunRegistry,
   type ConversationRunMessage,
 } from "../../packages/gateway/src/conversation-run-registry.js";
@@ -52,6 +53,23 @@ describe("ConversationRunRegistry", () => {
     expect(registry.isActive("sess-1")).toBe(false);
   });
 
+  it("moves an admitted run to the provider session id", () => {
+    const registry = new ConversationRunRegistry();
+    const received: ConversationRunMessage[] = [];
+    registry.begin("pending-session");
+    registry.attach("pending-session", (message) => received.push(message), {
+      replayBuffered: false,
+    });
+
+    expect(registry.rekey("pending-session", "provider-session")).toBe(true);
+    expect(registry.isActive("pending-session")).toBe(false);
+    expect(registry.isActive("provider-session")).toBe(true);
+
+    const message: ConversationRunMessage = { type: "kernel:text", text: "hello" };
+    registry.publish("provider-session", message);
+    expect(received).toEqual([message]);
+  });
+
   it("keeps only the tail of large runs", () => {
     const registry = new ConversationRunRegistry({
       maxRuns: 5,
@@ -96,6 +114,67 @@ describe("ConversationRunRegistry", () => {
       { type: "kernel:init", sessionId: "sess-1" },
       { type: "kernel:result", data: { ok: true } },
     ]);
+  });
+
+  it("omits a completed replay when canonical history was already hydrated", () => {
+    const registry = new ConversationRunRegistry({
+      maxRuns: 5,
+      maxEventsPerRun: 10,
+      completedRunRetentionMs: 30_000,
+    });
+
+    registry.begin("sess-1");
+    registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
+    registry.publish("sess-1", { type: "kernel:text", text: "Persisted reply" });
+    registry.publish("sess-1", { type: "kernel:result", data: { ok: true } });
+    registry.complete("sess-1");
+
+    const attachment = registry.attachWithBufferedSnapshot(
+      "sess-1",
+      () => undefined,
+      { replayCompleted: false },
+    );
+
+    expect(attachment).not.toBeNull();
+    expect(attachment?.runState).toBe("completed");
+    expect(attachment?.bufferedMessages).toEqual([]);
+  });
+
+  it("reports an active attachment while replaying its buffer with completed replay disabled", () => {
+    const registry = new ConversationRunRegistry();
+    registry.begin("sess-1");
+    registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
+
+    const attachment = registry.attachWithBufferedSnapshot(
+      "sess-1",
+      () => undefined,
+      { replayCompleted: false },
+    );
+
+    expect(attachment?.runState).toBe("active");
+    expect(attachment?.bufferedMessages).toEqual([
+      { type: "kernel:init", sessionId: "sess-1" },
+    ]);
+    attachment?.detach();
+  });
+
+  it("requires canonical refresh only when a completed or missing run was suppressed", () => {
+    const registry = new ConversationRunRegistry();
+    registry.begin("active");
+    const active = registry.attachWithBufferedSnapshot("active", () => undefined, {
+      replayCompleted: false,
+    });
+    registry.begin("completed");
+    registry.complete("completed");
+    const completed = registry.attachWithBufferedSnapshot("completed", () => undefined, {
+      replayCompleted: false,
+    });
+
+    expect(conversationHistoryRefreshRequired(active, false)).toBe(false);
+    expect(conversationHistoryRefreshRequired(completed, false)).toBe(true);
+    expect(conversationHistoryRefreshRequired(completed, true)).toBe(false);
+    expect(conversationHistoryRefreshRequired(null, false)).toBe(true);
+    active?.detach();
   });
 
   it("evicts completed runs after the replay retention window", () => {

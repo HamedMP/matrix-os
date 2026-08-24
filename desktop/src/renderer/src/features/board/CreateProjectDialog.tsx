@@ -1,4 +1,4 @@
-import { ArrowLeft, FolderOpen, FolderPlus, Github } from "lucide-react";
+import { ArrowLeft, FolderOpen, Github, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
@@ -43,21 +43,24 @@ function ModeCard({
   icon,
   label,
   description,
+  selected,
   onSelect,
 }: {
   icon: React.ReactNode;
   label: string;
   description: string;
+  selected: boolean;
   onSelect: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onSelect}
-      className="flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors duration-100 hover:bg-[var(--bg-hover)]"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      aria-pressed={selected}
+      className="flex min-h-[86px] flex-col items-center justify-center gap-1 rounded-lg border p-3 text-center outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      style={{ borderColor: selected ? "var(--text-primary)" : "var(--border-subtle)", background: selected ? "var(--bg-selected)" : "var(--bg-surface)" }}
     >
-      <span style={{ color: "var(--accent)" }}>{icon}</span>
+      <span style={{ color: "var(--text-primary)" }}>{icon}</span>
       <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{label}</span>
       <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>{description}</span>
     </button>
@@ -77,8 +80,10 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const authGeneration = useConnection((s) => s.authGeneration);
 
   const [step, setStep] = useState<Step>("pick");
+  const [selectedMode, setSelectedMode] = useState<"folder" | "github" | null>(null);
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
+  const [description, setDescription] = useState("");
   const [url, setUrl] = useState("");
   const [urlAttempted, setUrlAttempted] = useState(false);
   const [folderName, setFolderName] = useState("");
@@ -249,11 +254,13 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     }
     await runSubmission(async (ctx) => {
       if (step === "folder") {
-        await submitExistingFolder(ctx, { name: name.trim(), path: folderPath });
+        await submitExistingFolder(ctx, { name: name.trim(), description: description.trim() || undefined, path: folderPath });
       } else if (step === "github") {
         await submitClone(ctx, {
           url: url.trim(),
           name: effectiveFolderName,
+          displayName: name.trim(),
+          description: description.trim() || undefined,
           branch: trimmedBranch || undefined,
           clientRequestId: cloneRequestId,
         });
@@ -267,6 +274,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         }
         await submitNewFolder(ctx, {
           name: name.trim(),
+          description: description.trim() || undefined,
           parentPath,
           clientRequestId: folderRequestRef.current.id,
         });
@@ -282,30 +290,83 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       : "New folder";
 
   return step === "pick" ? (
-    <div className="flex flex-col gap-3 p-4">
-      <span className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>Add project</span>
-      <div className="grid grid-cols-3 gap-2">
+    <div className="flex flex-col">
+      <div className="flex h-12 items-center border-b px-4" style={{ borderColor: "var(--border-subtle)" }}>
+        <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Create a project</h2>
+        <button
+          type="button"
+          aria-label="Close create project"
+          className="ml-auto flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]"
+          style={{ color: "var(--text-tertiary)" }}
+          onClick={closeFromUser}
+        >
+          <X size={14} />
+        </button>
+      </div>
+      <div className="flex flex-col gap-4 p-4">
+        <label className="flex flex-col gap-1.5 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+          What are you working on?
+          <input
+            autoFocus
+            aria-label="What are you working on?"
+            value={name}
+            maxLength={128}
+            onChange={(event) => {
+              setName(event.target.value);
+              setNameTouched(true);
+            }}
+            placeholder="Name your project"
+            className="h-8 rounded-md border bg-transparent px-2.5 text-sm outline-none focus:border-[var(--accent)]"
+            style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+          What are you trying to achieve?
+          <textarea
+            aria-label="What are you trying to achieve?"
+            value={description}
+            maxLength={1_000}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="Describe your project, goals, subject, etc…"
+            className="min-h-[72px] resize-none rounded-md border bg-transparent px-2.5 py-2 text-sm font-normal outline-none focus:border-[var(--accent)]"
+            style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2">
         <ModeCard
           icon={<FolderOpen size={16} />}
-          label="Existing folder"
-          description="Connect a folder already on this computer"
-          onSelect={() => setStep("folder")}
+          label="Folders"
+          description="Connect an existing folder or create a new one"
+          selected={selectedMode === "folder"}
+          onSelect={() => {
+            setSelectedMode("folder");
+            setStep("folder");
+          }}
         />
         <ModeCard
           icon={<Github size={16} />}
           label="Clone from GitHub"
           description="Copy a repository to this computer"
-          onSelect={() => setStep("github")}
-        />
-        <ModeCard
-          icon={<FolderPlus size={16} />}
-          label="New folder"
-          description="Start empty in a fresh folder"
-          onSelect={() => setStep("scratch")}
+          selected={selectedMode === "github"}
+          onSelect={() => {
+            setSelectedMode("github");
+            setStep("github");
+          }}
         />
       </div>
-      <div className="flex justify-end pt-1">
+      </div>
+      <div className="flex justify-end gap-2 border-t px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
         <Button variant="subtle" onClick={closeFromUser}>Cancel</Button>
+        <Button
+          variant="primary"
+          disabled={!name.trim() || selectedMode === null}
+          onClick={() => {
+            if (!name.trim() || !selectedMode) return;
+            setStep(selectedMode);
+          }}
+        >
+          Create project
+        </Button>
       </div>
     </div>
   ) : (
@@ -354,19 +415,33 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       ) : null}
 
       {step === "folder" ? (
-        <ExistingFolderStepFields
-          name={name}
-          onNameChange={(value) => {
-            setName(value);
-            setNameTouched(true);
-          }}
-          folderPath={folderPath}
-          projects={projects}
-          onChooseFolder={chooseFolder}
-          onCreateFolder={startNewFolderAt}
-          onOpenProject={(slug) => void runSubmission((ctx) => openExistingProject(ctx, slug))}
-          submitting={submitting}
-        />
+        <>
+          <button
+            type="button"
+            className="flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm hover:bg-[var(--bg-hover)]"
+            style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
+            onClick={() => {
+              setParentSelection(null);
+              setStep("scratch");
+            }}
+          >
+            <span>New folder in Projects</span>
+            <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>Create a local project</span>
+          </button>
+          <ExistingFolderStepFields
+            name={name}
+            onNameChange={(value) => {
+              setName(value);
+              setNameTouched(true);
+            }}
+            folderPath={folderPath}
+            projects={projects}
+            onChooseFolder={chooseFolder}
+            onCreateFolder={startNewFolderAt}
+            onOpenProject={(slug) => void runSubmission((ctx) => openExistingProject(ctx, slug))}
+            submitting={submitting}
+          />
+        </>
       ) : null}
 
       {step === "scratch" ? (
@@ -399,7 +474,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
 
 export default function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Dialog open={open} onClose={onClose} width={620}>
+    <Dialog open={open} onClose={onClose} width={480} title="Create a project" placement="center">
       <CreateProjectForm onClose={onClose} />
     </Dialog>
   );

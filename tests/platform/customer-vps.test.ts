@@ -446,6 +446,43 @@ describe('platform/customer-vps', () => {
     });
   });
 
+  it('counts a billing-suspended computer against the retained runtime-slot limit', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? ids[1]!,
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        source: 'override',
+        maxRuntimeSlots: 1,
+      })),
+    });
+    const primary = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+    });
+    await updateUserMachine(db, primary.machineId, { status: 'suspended' });
+
+    await expect(service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice-tools',
+      runtimeSlot: 'tools',
+    })).rejects.toMatchObject({
+      status: 402,
+      publicMessage: 'Billing upgrade required',
+    });
+
+    expect(hetzner.createServer).toHaveBeenCalledTimes(1);
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toMatchObject({
+      machineId: primary.machineId,
+      status: 'suspended',
+      deletedAt: null,
+    });
+  });
+
   it('rechecks the exact slot subscription inside the machine-claim transaction', async () => {
     const resolveBillingEntitlement = vi.fn()
       .mockResolvedValueOnce(activeEntitlement({ maxRuntimeSlots: 1 }))
@@ -2168,6 +2205,195 @@ describe('platform/customer-vps', () => {
     });
 
     expect(candidates.map((machine) => machine.handle)).toEqual(['alice']);
+  });
+
+  it('suspends a running machine with graceful-shutdown fallback and retains its data', async () => {
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff130',
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      provisioningClass: 'customer',
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      status: 'running',
+      imageVersion: 'v1',
+      provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        shutdownServer: vi.fn().mockRejectedValue(new Error('graceful shutdown unavailable')),
+        getServer: vi.fn()
+          .mockResolvedValueOnce({
+            id: 123456,
+            status: 'running',
+            serverType: 'cpx22',
+            publicIPv4: '203.0.113.10',
+            publicIPv6: null,
+          })
+          .mockResolvedValue({
+            id: 123456,
+            status: 'off',
+            serverType: 'cpx22',
+            publicIPv4: '203.0.113.10',
+            publicIPv6: null,
+          }),
+      }),
+    });
+
+    await expect(service.suspendForBilling('9f05824c-8d0a-4d83-9cb4-b312d43ff130')).resolves.toBeUndefined();
+
+    expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
+    expect(hetzner.powerOffServer).toHaveBeenCalledWith(123456);
+    await expect(getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff130')).resolves.toMatchObject({
+      status: 'suspended',
+      deletedAt: null,
+      publicIPv4: '203.0.113.10',
+    });
+  });
+
+  it('does not start a billing suspension after its durable action is superseded', async () => {
+    const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff133';
+    await insertUserMachine(db, {
+      machineId, clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'running', imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const { service, hetzner } = createService();
+    const shouldContinue = vi.fn().mockResolvedValue(false);
+
+    await expect(service.suspendForBilling(machineId, shouldContinue)).resolves.toBeUndefined();
+
+    expect(shouldContinue).toHaveBeenCalledOnce();
+    expect(hetzner.shutdownServer).not.toHaveBeenCalled();
+    expect(hetzner.powerOffServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'running' });
+  });
+
+  it('suspends a delinquent machine left resuming by a superseded action', async () => {
+    const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff135';
+    await insertUserMachine(db, {
+      machineId, clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'resuming', imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        getServer: vi.fn()
+          .mockResolvedValueOnce({
+            id: 123456, status: 'running', serverType: 'cpx22',
+            publicIPv4: '203.0.113.10', publicIPv6: null,
+          })
+          .mockResolvedValue({
+            id: 123456, status: 'off', serverType: 'cpx22',
+            publicIPv4: '203.0.113.10', publicIPv6: null,
+          }),
+      }),
+    });
+
+    await expect(service.suspendForBilling(machineId)).resolves.toBeUndefined();
+
+    expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
+    await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'suspended' });
+  });
+
+  it('resumes a suspended machine only after provider and runtime health recover', async () => {
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff131',
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      provisioningClass: 'customer',
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      status: 'suspended',
+      imageVersion: 'v1',
+      provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        getServer: vi.fn()
+          .mockResolvedValueOnce({
+            id: 123456,
+            status: 'off',
+            serverType: 'cpx22',
+            publicIPv4: '203.0.113.10',
+            publicIPv6: null,
+          })
+          .mockResolvedValue({
+            id: 123456,
+            status: 'running',
+            serverType: 'cpx22',
+            publicIPv4: '203.0.113.10',
+            publicIPv6: null,
+          }),
+      }),
+    });
+
+    try {
+      await expect(service.resumeForBilling('9f05824c-8d0a-4d83-9cb4-b312d43ff131')).resolves.toBeUndefined();
+      expect(hetzner.powerOnServer).toHaveBeenCalledWith(123456);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://203.0.113.10:443/health',
+        expect.objectContaining({ redirect: 'error', signal: expect.any(AbortSignal) }),
+      );
+      await expect(getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff131')).resolves.toMatchObject({
+        status: 'running',
+        deletedAt: null,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not start a billing resume after its durable action is superseded', async () => {
+    const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff134';
+    await insertUserMachine(db, {
+      machineId, clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
+      status: 'suspended', imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    const { service, hetzner } = createService();
+    const shouldContinue = vi.fn().mockResolvedValue(false);
+
+    await expect(service.resumeForBilling(machineId, shouldContinue)).resolves.toBeUndefined();
+
+    expect(shouldContinue).toHaveBeenCalledOnce();
+    expect(hetzner.powerOnServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'suspended' });
+  });
+
+  it('recovers a paid machine left suspending after an interrupted shutdown', async () => {
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff132',
+      clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary', provisioningClass: 'customer',
+      hetznerServerId: 123456, publicIPv4: '203.0.113.10', status: 'suspending',
+      imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        getServer: vi.fn()
+          .mockResolvedValueOnce({
+            id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10', publicIPv6: null,
+          })
+          .mockResolvedValue({
+            id: 123456, status: 'running', serverType: 'cpx22', publicIPv4: '203.0.113.10', publicIPv6: null,
+          }),
+      }),
+    });
+
+    try {
+      await expect(service.resumeForBilling('9f05824c-8d0a-4d83-9cb4-b312d43ff132')).resolves.toBeUndefined();
+      expect(hetzner.powerOnServer).toHaveBeenCalledWith(123456);
+      await expect(getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff132')).resolves.toMatchObject({
+        status: 'running',
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('only deploys to the requested VPS handle when provided', async () => {

@@ -91,7 +91,12 @@ function isPreActivationEntitlement(entitlement: BillingEntitlement | null): boo
 }
 
 function deriveProvisioningStage(machine: UserMachineRecord): ProvisioningStage {
-  if (machine.status === 'recovering') return 'finalizing';
+  if (
+    machine.status === 'recovering'
+    || machine.status === 'suspending'
+    || machine.status === 'suspended'
+    || machine.status === 'resuming'
+  ) return 'finalizing';
   if (!machine.hetznerServerId) return 'creating_server';
   if (!machine.publicIPv4) return 'booting';
   return 'registering';
@@ -148,6 +153,15 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
       return {
         phase: 'provisioning',
         detail: 'Building your Matrix computer…',
+        nextAction: { kind: 'wait' },
+        progress: { stage: deriveProvisioningStage(liveMachine), startedAt: liveMachine.provisionedAt },
+      };
+    case 'suspending':
+    case 'suspended':
+    case 'resuming':
+      return {
+        phase: 'provisioning',
+        detail: 'Restarting your Matrix computer…',
         nextAction: { kind: 'wait' },
         progress: { stage: deriveProvisioningStage(liveMachine), startedAt: liveMachine.provisionedAt },
       };

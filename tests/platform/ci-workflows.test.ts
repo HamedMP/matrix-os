@@ -299,6 +299,25 @@ describe('CI workflows', () => {
     }
   });
 
+  it('deploys the card-trial rollout flag and verifies every trial lifecycle webhook', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const preview = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(production).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
+    expect(production).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
+    expect(preview).toContain("MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'false' }}");
+    expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}');
+    expect(preview).toContain('MATRIX_CARD_TRIALS_ENABLED must be true or false.');
+    for (const eventType of [
+      'customer.subscription.trial_will_end',
+      'invoice.paid',
+      'invoice.payment_failed',
+    ]) {
+      expect(production).toContain(eventType);
+    }
+  });
+
   it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {
     const root = process.cwd();
     const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

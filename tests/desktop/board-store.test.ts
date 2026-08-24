@@ -99,7 +99,7 @@ describe("createProject", () => {
       get: vi.fn().mockResolvedValue({
         projects: [
           { slug: "folder", name: "Folder", kind: "folder", localPath: "/home/matrix/home/workspaces/folder" },
-          { slug: "repo", name: "Repo", kind: "github", localPath: "/home/matrix/home/projects/repo/repo", github: { owner: "o", repo: "r" } },
+          { slug: "repo", name: "Repo", kind: "github", localPath: "/home/matrix/home/projects/repo/repo", defaultBranch: "main", github: { owner: "o", repo: "r" } },
         ],
       }),
     });
@@ -108,7 +108,16 @@ describe("createProject", () => {
 
     expect(useBoard.getState().projects).toEqual([
       { slug: "folder", name: "Folder", kind: "folder", localPath: "/home/matrix/home/workspaces/folder", githubBacked: false },
-      { slug: "repo", name: "Repo", kind: "github", localPath: "/home/matrix/home/projects/repo/repo", githubBacked: true },
+      {
+        slug: "repo",
+        name: "Repo",
+        kind: "github",
+        localPath: "/home/matrix/home/projects/repo/repo",
+        githubBacked: true,
+        github: { owner: "o", repo: "r" },
+        repository: "o/r",
+        defaultBranch: "main",
+      },
     ]);
   });
 
@@ -125,6 +134,26 @@ describe("createProject", () => {
     }, { timeoutMs: 30_000 });
     expect(project).toEqual({ slug: "my-app", name: "My App", kind: "scratch" });
     expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App", kind: "scratch" }]);
+  });
+
+  it("persists the optional project goal with project creation", async () => {
+    const post = vi.fn().mockResolvedValue({
+      project: { slug: "portfolio", name: "Portfolio", description: "Build my portfolio" },
+    });
+    const get = vi.fn().mockResolvedValue({ projects: [] });
+    const api = makeApi({ post, get });
+
+    await useBoard.getState().createProject(api, {
+      name: "Portfolio",
+      description: "Build my portfolio",
+      mode: "scratch",
+    });
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/projects",
+      expect.objectContaining({ description: "Build my portfolio" }),
+      { timeoutMs: 30_000 },
+    );
   });
 
   it("recovers a timed-out project create with one idempotent retry", async () => {

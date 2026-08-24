@@ -12,6 +12,7 @@ const CodexAppServerContractSchema = z.object({
     schemaSha256: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict()),
   requiredServerMethods: z.array(z.string().min(1).max(100)).min(1).max(16),
+  requiredServerNotifications: z.array(z.string().min(1).max(100)).min(1).max(16),
 }).strict().refine(
   (value) => Object.hasOwn(value.verifiedVersions, value.latestVerifiedVersion),
   { message: "Latest Codex app-server version must have a verified schema" },

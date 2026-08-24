@@ -82,9 +82,11 @@ suite("Desktop Add Project compact folder picker", () => {
 
   it("keeps the sticky list header flush with the toolbar while rows scroll beneath it", async () => {
     await page.getByRole("button", { name: "Projects", exact: true }).click();
-    await page.getByRole("button", { name: "Add project" }).click();
-    await page.getByText("Add project", { exact: true }).waitFor();
-    await page.getByRole("button", { name: /Existing folder/ }).click();
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Create a project" });
+    await dialog.waitFor();
+    await dialog.getByRole("button", { name: /Folders/ }).click();
+    await dialog.getByText("Connect an existing folder", { exact: true }).waitFor();
 
     const listHeader = page.getByRole("button", { name: "Sort by name" }).locator("..");
     const listing = page.locator("[data-files-listing]");

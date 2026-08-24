@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+  claimCardTrialCheckoutAttempt,
+  finalizeCheckoutAttempt,
   getBillingCustomerByClerkUserId,
   getBillingEntitlement,
   getBillingEntitlementState,
@@ -9,6 +11,8 @@ import {
   getBillingWebhookEvent,
   insertBillingCustomerIfAbsent,
   insertBillingWebhookEvent,
+  isCardTrialOfferEligible,
+  resolveCheckoutAttempt,
   revokeBillingOverride,
   upsertBillingCustomer,
   upsertBillingEntitlement,
@@ -69,6 +73,29 @@ describe('platform billing db', () => {
     await expect(getBillingCustomerByClerkUserId(db, 'user_123')).resolves.toMatchObject({
       stripeCustomerId: 'cus_first',
     });
+  });
+
+  it('consumes a reserved card trial when verified Checkout completion is projected', async () => {
+    const claimed = await claimCardTrialCheckoutAttempt(db, {
+      id: 'trial-attempt-1',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      createdAt: '2026-05-30T00:00:00.000Z',
+    }, 7);
+    expect(claimed.attempt.trialPeriodDays).toBe(7);
+    await finalizeCheckoutAttempt(db, claimed.attempt.id, 'cs_trial_1', 'https://checkout.stripe.test/trial');
+
+    await resolveCheckoutAttempt(
+      db,
+      'cs_trial_1',
+      'paid',
+      '2026-05-30T00:01:00.000Z',
+    );
+
+    await expect(isCardTrialOfferEligible(db, 'user_123')).resolves.toBe(false);
   });
 
   it('upserts the latest effective billing entitlement', async () => {
@@ -210,6 +237,68 @@ describe('platform billing db', () => {
       expect.objectContaining({ runtimeSlot: 'primary', stripeSubscriptionId: 'sub_primary' }),
       expect.objectContaining({ runtimeSlot: 'studio', stripeSubscriptionId: 'sub_studio' }),
     ]);
+  });
+
+  it('preserves invoice-projected trial lifecycle across racing subscription updates', async () => {
+    const base = {
+      stripeSubscriptionId: 'sub_trial',
+      stripeCustomerId: 'cus_123',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      planSlug: 'matrix_builder' as const,
+      stripePriceId: 'price_builder_monthly',
+      billingInterval: 'monthly' as const,
+      status: 'trialing' as const,
+      currentPeriodEnd: '2026-06-30T00:00:00.000Z',
+      gracePeriodEndsAt: null,
+      trialStartedAt: '2026-05-23T00:00:00.000Z',
+      trialEndsAt: '2026-05-30T00:00:00.000Z',
+    };
+    await upsertBillingSubscription(db, {
+      ...base,
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: '2026-05-30T00:00:00.000Z',
+      latestEventCreatedAt: '2026-05-30T00:00:01.000Z',
+      latestEventId: 'evt_failed_invoice',
+      updatedAt: '2026-05-30T00:00:01.000Z',
+    });
+    await upsertBillingSubscription(db, {
+      ...base,
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: null,
+      latestEventCreatedAt: '2026-05-30T00:00:02.000Z',
+      latestEventId: 'evt_racing_subscription',
+      updatedAt: '2026-05-30T00:00:02.000Z',
+    });
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:00:02.000Z')).resolves
+      .toMatchObject({
+        trialConvertedAt: null,
+        firstTrialPaymentFailedAt: '2026-05-30T00:00:00.000Z',
+      });
+
+    await upsertBillingSubscription(db, {
+      ...base,
+      status: 'active',
+      trialConvertedAt: '2026-05-30T00:03:00.000Z',
+      firstTrialPaymentFailedAt: null,
+      latestEventCreatedAt: '2026-05-30T00:00:03.000Z',
+      latestEventId: 'evt_paid_invoice',
+      updatedAt: '2026-05-30T00:03:00.000Z',
+    });
+    await upsertBillingSubscription(db, {
+      ...base,
+      status: 'active',
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: '2026-05-30T00:00:00.000Z',
+      latestEventCreatedAt: '2026-05-30T00:00:04.000Z',
+      latestEventId: 'evt_racing_subscription_after_payment',
+      updatedAt: '2026-05-30T00:04:00.000Z',
+    });
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:04:00.000Z')).resolves
+      .toMatchObject({
+        trialConvertedAt: '2026-05-30T00:03:00.000Z',
+        firstTrialPaymentFailedAt: null,
+      });
   });
 
   it('prefers an accessible replacement over a newer terminal subscription event for one slot', async () => {

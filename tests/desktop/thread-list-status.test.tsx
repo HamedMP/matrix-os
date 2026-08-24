@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import {
   formatRelativeTime,
@@ -167,5 +167,96 @@ describe("ProjectThreadList status rail", () => {
     expect(archivedRow.textContent).not.toContain("Failed");
     // The provider label stays.
     expect(archivedRow.textContent).toContain("Codex");
+  });
+
+  it("searches loaded chat titles and filters them by actionable status", () => {
+    render(
+      <ProjectThreadList
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryFixture()}
+        workspace={workspaceFixture()}
+        status="ready"
+        error={null}
+        selectedThreadId={null}
+        canCreate
+        onSelectThread={() => {}}
+        onNewChat={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), {
+      target: { value: "done" },
+    });
+    expect(screen.getByRole("button", { name: "Chat Done chat" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Chat Running chat" })).toBeNull();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Filter chats by status" }), {
+      target: { value: "failed" },
+    });
+    expect(screen.getByRole("button", { name: "Chat Failed chat" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Chat Done chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Chat Archived chat" })).toBeNull();
+  });
+
+  it("limits filtered empty copy to the loaded window while more chats remain", () => {
+    const workspace = workspaceFixture();
+    workspace.projectThreads.hasMore = true;
+    workspace.projectThreads.nextCursor = "thread_arch";
+    render(
+      <ProjectThreadList
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryFixture()}
+        workspace={workspace}
+        status="ready"
+        error={null}
+        selectedThreadId={null}
+        canCreate
+        onSelectThread={() => {}}
+        onNewChat={() => {}}
+        onRetry={() => {}}
+        onLoadMore={() => {}}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), {
+      target: { value: "not loaded yet" },
+    });
+
+    expect(screen.getByText("No loaded chats match these filters. Load more to search older chats."))
+      .toBeTruthy();
+    expect(screen.getByRole("button", { name: "Load more chats" })).toBeTruthy();
+  });
+
+  it("offers cursor-based load more when the workspace projection is truncated", () => {
+    const workspace = workspaceFixture();
+    workspace.projectThreads.hasMore = true;
+    workspace.projectThreads.nextCursor = "thread_arch";
+    const onLoadMore = vi.fn();
+    render(
+      <ProjectThreadList
+        projectId="matrix-os"
+        projectLabel="Matrix OS"
+        summary={summaryFixture()}
+        workspace={workspace}
+        status="ready"
+        error={null}
+        selectedThreadId={null}
+        canCreate
+        onSelectThread={() => {}}
+        onNewChat={() => {}}
+        onRetry={() => {}}
+        onLoadMore={onLoadMore}
+      />,
+    );
+
+    screen.getByRole("button", { name: "Load more chats" }).click();
+
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
 });

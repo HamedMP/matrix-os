@@ -28,7 +28,7 @@ const SETUP_AGENTS: Record<SetupAgent, { installPackage: string; connectCommand:
   },
   codex: {
     installPackage: CODEX_VERIFIED_NPM_PACKAGE,
-    connectCommand: "codex login",
+    connectCommand: "codex login --device-auth",
   },
 };
 

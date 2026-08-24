@@ -24,11 +24,17 @@ type BillingAccessState = {
   active: boolean | null;
   checking: boolean;
   entitlement: BillingEntitlementSummary | null;
+  trialOffer: BillingTrialOffer | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
 };
 
 export type BillingAccessIssue = "auth" | null;
+
+export type BillingTrialOffer = {
+  eligible: boolean;
+  durationDays: number;
+};
 
 export type BillingEntitlementSummary = {
   source: "stripe" | "override";
@@ -41,7 +47,12 @@ export type BillingEntitlementSummary = {
   allowedServerTypes: string[];
   stripeSubscriptionId: string | null;
   stripePriceId: string | null;
+  billingInterval?: "monthly" | "annual" | null;
   gracePeriodEndsAt: string | null;
+  trialStartedAt?: string | null;
+  trialEndsAt?: string | null;
+  trialConvertedAt?: string | null;
+  firstTrialPaymentFailedAt?: string | null;
   effectiveFrom: string;
   effectiveUntil: string | null;
   updatedAt: string;
@@ -50,6 +61,7 @@ export type BillingEntitlementSummary = {
 type BillingAccessRemoteState = {
   active: boolean | null;
   entitlement: BillingEntitlementSummary | null;
+  trialOffer: BillingTrialOffer | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
 };
@@ -61,6 +73,7 @@ export function useMatrixBillingAccess(): BillingAccessState {
     active: false,
     checking: false,
     entitlement: null,
+    trialOffer: null,
     accessReason: "e2e_test_bypass",
     accessIssue: null,
   };
@@ -86,7 +99,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       return;
     }
     if (isSignedIn && !userId) {
-      setRemoteState({ active: false, entitlement: null, accessReason: null, accessIssue: null });
+      setRemoteState({ active: false, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null });
       setRemoteChecked(true);
       return;
     }
@@ -133,12 +146,13 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
     };
   }, [isLoaded, isSignedIn, legacyActive, retryTick, userId]);
 
-  if (!isLoaded) return { active: null, checking: true, entitlement: null, accessReason: null, accessIssue: null };
+  if (!isLoaded) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null };
   if (legacyActive) {
     return {
       active: true,
       checking: false,
       entitlement: null,
+      trialOffer: null,
       accessReason: "legacy_clerk_plan",
       accessIssue: null,
     };
@@ -148,15 +162,17 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       active: null,
       checking: true,
       entitlement: null,
+      trialOffer: null,
       accessReason: remoteState.accessReason,
       accessIssue: "auth",
     };
   }
-  if (!remoteChecked) return { active: null, checking: true, entitlement: null, accessReason: null, accessIssue: null };
+  if (!remoteChecked) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null };
   return {
     active: remoteState?.active === true,
     checking: false,
     entitlement: remoteState?.entitlement ?? null,
+    trialOffer: remoteState?.trialOffer ?? null,
     accessReason: remoteState?.accessReason ?? null,
     accessIssue: null,
   };
@@ -199,25 +215,28 @@ function readRemoteBillingStatus(
       }
       if (response.status === 401 || response.status === 403) {
         if (response.headers.get("x-auth-failure") !== APP_SESSION_STALE_AUTH_FAILURE) {
-          return { active: false, entitlement: null, accessReason: null, accessIssue: null };
+          return { active: false, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null };
         }
         return {
           active: null,
           entitlement: null,
+          trialOffer: null,
           accessReason: "auth_session_refreshing",
           accessIssue: "auth",
         };
       }
       if (!response.ok) {
-        return { active: false, entitlement: null, accessReason: null, accessIssue: null };
+        return { active: false, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null };
       }
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
         entitlement?: BillingEntitlementSummary | null;
+        trialOffer?: { eligible?: unknown; durationDays?: unknown };
       };
       return {
         active: body.access?.runtimeProxyAllowed === true,
         entitlement: body.entitlement ?? null,
+        trialOffer: parseBillingTrialOffer(body.trialOffer),
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
         accessIssue: null,
       };
@@ -235,4 +254,20 @@ function readRemoteBillingStatus(
 
   billingStatusRequest = { cacheKey, promise };
   return promise;
+}
+
+function parseBillingTrialOffer(value: {
+  eligible?: unknown;
+  durationDays?: unknown;
+} | undefined): BillingTrialOffer | null {
+  if (
+    typeof value?.eligible !== "boolean"
+    || typeof value.durationDays !== "number"
+    || !Number.isInteger(value.durationDays)
+    || value.durationDays <= 0
+    || value.durationDays > 30
+  ) {
+    return null;
+  }
+  return { eligible: value.eligible, durationDays: value.durationDays };
 }

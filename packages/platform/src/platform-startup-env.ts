@@ -59,6 +59,7 @@ export function checkCustomerVpsPrimaryStorageEnv(
   log: (msg: string) => void = console.error,
 ): string[] {
   if (env.NODE_ENV !== 'production' || env.CUSTOMER_VPS_ENABLED !== 'true') return [];
+  if (env.PLATFORM_PREVIEW === 'true' && !env.HETZNER_API_TOKEN?.trim()) return [];
 
   const problems: string[] = [];
   const accountId = env.R2_ACCOUNT_ID?.trim();

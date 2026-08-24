@@ -169,6 +169,102 @@ describe('platform billing entitlements', () => {
     });
   });
 
+  it('gates the first failed post-trial charge without applying renewal grace', () => {
+    const entitlement = deriveStripeEntitlement({
+      clerkUserId: 'user_123',
+      stripeCustomerId: 'cus_123',
+      stripeSubscriptionId: 'sub_trial',
+      status: 'past_due',
+      currentPeriodEnd: '2026-06-06T00:00:00.000Z',
+      trialStartedAt: '2026-05-30T00:00:00.000Z',
+      trialEndsAt: '2026-06-06T00:00:00.000Z',
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: '2026-06-06T00:05:00.000Z',
+      items: [{ priceId: 'price_builder_monthly', quantity: 1 }],
+    }, {
+      priceCatalog: loadStripePriceCatalog(baseEnv),
+      runtimeCatalog: loadRuntimeCatalog({}),
+      now: new Date('2026-06-06T00:05:00.000Z'),
+    });
+
+    expect(entitlement).toMatchObject({
+      trialEndsAt: '2026-06-06T00:00:00.000Z',
+      trialConvertedAt: null,
+      firstTrialPaymentFailedAt: '2026-06-06T00:05:00.000Z',
+      gracePeriodEndsAt: null,
+    });
+    expect(getRuntimeAccessDecision(entitlement, new Date('2026-06-06T00:05:01.000Z'))).toEqual({
+      runtimeProxyAllowed: false,
+      reason: 'payment_required',
+      gracePeriodEndsAt: null,
+    });
+  });
+
+  it('keeps a canceled trial accessible until Stripe trial_end', () => {
+    const entitlement = deriveStripeEntitlement({
+      clerkUserId: 'user_123', stripeCustomerId: 'cus_123', stripeSubscriptionId: 'sub_trial',
+      status: 'canceled', currentPeriodEnd: '2026-06-06T00:00:00.000Z',
+      trialStartedAt: '2026-05-30T00:00:00.000Z', trialEndsAt: '2026-06-06T00:00:00.000Z',
+      trialConvertedAt: null, firstTrialPaymentFailedAt: null,
+      items: [{ priceId: 'price_builder_monthly', quantity: 1 }],
+    }, {
+      priceCatalog: loadStripePriceCatalog(baseEnv), runtimeCatalog: loadRuntimeCatalog({}),
+      now: new Date('2026-05-31T00:00:00.000Z'),
+    });
+
+    expect(getRuntimeAccessDecision(entitlement, new Date('2026-06-05T23:59:59.000Z'))).toMatchObject({
+      runtimeProxyAllowed: true,
+    });
+    expect(getRuntimeAccessDecision(entitlement, new Date('2026-06-06T00:00:00.000Z'))).toMatchObject({
+      runtimeProxyAllowed: false,
+      reason: 'payment_required',
+    });
+  });
+
+  it('gates a still-trialing projection at trial_end until conversion is verified', () => {
+    const entitlement = deriveStripeEntitlement({
+      clerkUserId: 'user_123', stripeCustomerId: 'cus_123', stripeSubscriptionId: 'sub_trial',
+      status: 'trialing', currentPeriodEnd: '2026-06-06T00:00:00.000Z',
+      trialStartedAt: '2026-05-30T00:00:00.000Z', trialEndsAt: '2026-06-06T00:00:00.000Z',
+      trialConvertedAt: null, firstTrialPaymentFailedAt: null,
+      items: [{ priceId: 'price_builder_monthly', quantity: 1 }],
+    }, {
+      priceCatalog: loadStripePriceCatalog(baseEnv), runtimeCatalog: loadRuntimeCatalog({}),
+      now: new Date('2026-06-06T00:00:00.000Z'),
+    });
+
+    expect(getRuntimeAccessDecision(entitlement, new Date('2026-06-05T23:59:59.000Z'))).toMatchObject({
+      runtimeProxyAllowed: true,
+    });
+    expect(getRuntimeAccessDecision(entitlement, new Date('2026-06-06T00:00:00.000Z'))).toEqual({
+      runtimeProxyAllowed: false,
+      reason: 'payment_required',
+      gracePeriodEndsAt: null,
+    });
+  });
+
+  it('keeps renewal grace after a trial has converted', () => {
+    const entitlement = deriveStripeEntitlement({
+      clerkUserId: 'user_123',
+      stripeCustomerId: 'cus_123',
+      stripeSubscriptionId: 'sub_trial',
+      status: 'past_due',
+      currentPeriodEnd: '2026-07-06T00:00:00.000Z',
+      trialStartedAt: '2026-05-30T00:00:00.000Z',
+      trialEndsAt: '2026-06-06T00:00:00.000Z',
+      trialConvertedAt: '2026-06-06T00:01:00.000Z',
+      firstTrialPaymentFailedAt: null,
+      items: [{ priceId: 'price_builder_monthly', quantity: 1 }],
+    }, {
+      priceCatalog: loadStripePriceCatalog(baseEnv),
+      runtimeCatalog: loadRuntimeCatalog({}),
+      now: new Date('2026-07-06T00:05:00.000Z'),
+    });
+
+    expect(entitlement.gracePeriodEndsAt).toBe('2026-07-09T00:00:00.000Z');
+    expect(getRuntimeAccessDecision(entitlement, new Date('2026-07-07T00:00:00.000Z')).runtimeProxyAllowed).toBe(true);
+  });
+
   it('prefers unexpired production internal overrides over Stripe state', () => {
     const stripeEntitlement: BillingEntitlement = {
       clerkUserId: 'user_123',

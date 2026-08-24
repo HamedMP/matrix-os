@@ -46,6 +46,7 @@ import { ChatPopover } from "./ChatPopover";
 import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
+import { BillingTrialNotification } from "./BillingTrialNotification";
 import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
@@ -1172,6 +1173,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       <ShellNotificationStack>
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
+        <BillingTrialNotification />
       </ShellNotificationStack>
       {isWindowsDesign ? (
         <WindowsTaskbar

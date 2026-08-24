@@ -192,6 +192,8 @@ export async function tryCreateBrowserServer(
 export interface KernelConfig {
   db: MatrixDB;
   homePath: string;
+  /** Internal, gateway-validated execution root for this kernel turn. */
+  workingDirectory?: string;
   sessionId?: string;
   model?: string;
   effort?: string;
@@ -239,7 +241,7 @@ export async function kernelOptions(config: KernelConfig) {
     model: config.model ?? fileKernel.model,
     effort: resolvedEffort,
     systemPrompt,
-    cwd: homePath,
+    cwd: config.workingDirectory ?? homePath,
     ...(config.env ? { env: config.env } : {}),
     settingSources: ["project"] as ("user" | "project" | "local")[],
     permissionMode: "bypassPermissions" as const,

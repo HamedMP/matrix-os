@@ -18,6 +18,9 @@ export interface StubGateway {
   port: number;
   sendTerminalOutput(data: string): void;
   setConversationBusy(id: string, busy: boolean): void;
+  setProjectLifecycle(lifecycle: "active" | "archived" | "deleted"): void;
+  setKernelResponseDelay(delayMs: number): void;
+  disconnectKernel(): void;
   close(): Promise<void>;
   state: {
     deviceCodeRequests: number;
@@ -28,6 +31,7 @@ export interface StubGateway {
     taskUpdates: Array<Record<string, unknown>>;
     runtimeSelections: string[];
     deletedConversationIds: string[];
+    kernelConnections: number;
   };
 }
 
@@ -283,6 +287,82 @@ export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): Agen
   });
 }
 
+function codingAgentToolHeavySnapshot(prompt: string): AgentThreadSnapshot {
+  const thread = codingAgentThread(prompt);
+  const toolEvents = Array.from({ length: 9 }, (_, index) => {
+    const toolCallId = `tool_mat_348_${index}`;
+    const displayNames = [
+      "Read conversation renderer",
+      "Search transcript tests",
+      "Inspect shared contracts",
+      "Run focused tests",
+      "Review composer states",
+      "Check accessibility labels",
+      "Build Desktop renderer",
+      "Verify narrow viewport",
+      "Summarize validation",
+    ];
+    return [
+      {
+        type: "tool.started" as const,
+        eventId: `evt_mat_348_tool_${index}_started`,
+        threadId: thread.id,
+        occurredAt: NOW,
+        toolCallId,
+        displayName: displayNames[index],
+        kind: index === 3 || index === 6 ? "shell" : "read",
+      },
+      {
+        type: "tool.completed" as const,
+        eventId: `evt_mat_348_tool_${index}_completed`,
+        threadId: thread.id,
+        occurredAt: NOW,
+        toolCallId,
+        outcome: "success" as const,
+      },
+    ];
+  }).flat();
+  return AgentThreadSnapshotSchema.parse({
+    thread,
+    events: {
+      items: [
+        { type: "thread.created", eventId: "evt_mat_348_created", threadId: thread.id, occurredAt: NOW, thread },
+        {
+          type: "user.message",
+          eventId: "evt_mat_348_user",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_mat_348_user",
+          text: prompt,
+          clientRequestId: "req_mat_348_user",
+        },
+        {
+          type: "assistant.text.delta",
+          eventId: "evt_mat_348_intro",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_mat_348_intro",
+          delta: "I’ll trace the current transcript hierarchy and composer behavior, then validate the result in the built Desktop app.",
+        },
+        { type: "assistant.text.completed", eventId: "evt_mat_348_intro_done", threadId: thread.id, occurredAt: NOW, messageId: "msg_mat_348_intro" },
+        ...toolEvents,
+        {
+          type: "assistant.text.delta",
+          eventId: "evt_mat_348_result",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_mat_348_result",
+          delta: "The focused tests and production Desktop build pass. Historical tool activity is grouped, while the final result remains visible and selectable.",
+        },
+        { type: "assistant.text.completed", eventId: "evt_mat_348_result_done", threadId: thread.id, occurredAt: NOW, messageId: "msg_mat_348_result" },
+        { type: "thread.completed", eventId: "evt_mat_348_completed", threadId: thread.id, occurredAt: NOW, outcome: "completed" },
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  });
+}
+
 function codingAgentTaskSnapshot(
   id: string,
   taskId: string,
@@ -484,12 +564,29 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     taskUpdates: [],
     runtimeSelections: [],
     deletedConversationIds: [],
+    kernelConnections: 0,
   };
   let currentToken = TOKEN;
   let activeTerminalOutput: ((data: string) => void) | null = null;
   let createdHermesConversation = false;
+  const hermesConversationContexts = new Map<string, Map<string, string>>([
+    [TOKEN, new Map()],
+    [REVIEW_TOKEN, new Map()],
+  ]);
   const busyHermesConversations = new Set<string>();
   const deletedHermesConversations = new Set<string>();
+  let kernelResponseDelayMs = 0;
+  const currentConversationContexts = () => hermesConversationContexts.get(currentToken)!;
+  const conversationContextProjection = (id: string) =>
+    currentConversationContexts().get(id) === "matrix-os"
+      ? {
+          projectId: "matrix-os",
+          projectName: "Matrix OS",
+          projectKind: "github",
+          repositoryLabel: "FinnaAI/matrix-os",
+          status: projectLifecycle === "active" ? "ready" : "unavailable",
+        }
+      : undefined;
 
   const server: Server = createServer((req, res) => {
     void handle(req, res);
@@ -586,9 +683,14 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
           createdAt: HERMES_NOW + 60_000,
           updatedAt: HERMES_NOW + 60_000,
         }] : []),
-        ...HERMES_CONVERSATIONS.filter(
-          (conversation) => !deletedHermesConversations.has(conversation.id),
-        ),
+        ...HERMES_CONVERSATIONS
+          .filter((conversation) => !deletedHermesConversations.has(conversation.id))
+          .map((conversation) => ({
+            ...conversation,
+            ...(conversationContextProjection(conversation.id)
+              ? { context: conversationContextProjection(conversation.id) }
+              : {}),
+          })),
       ]);
       return;
     }
@@ -614,6 +716,34 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       deletedHermesConversations.add(id);
       state.deletedConversationIds.push(id);
       json(res, 200, { ok: true });
+      return;
+    }
+    if (req.method === "PATCH" && path.endsWith("/context") && path.startsWith("/api/conversations/")) {
+      const id = decodeURIComponent(path.slice("/api/conversations/".length, -"/context".length));
+      const body = await readBody(req);
+      if (!HERMES_CONVERSATIONS.some((candidate) => candidate.id === id)) {
+        json(res, 404, { error: { code: "conversation_not_found" } });
+        return;
+      }
+      if (body.projectId === null) {
+        currentConversationContexts().delete(id);
+        json(res, 200, { context: null });
+        return;
+      }
+      if (body.projectId !== "matrix-os" || projectLifecycle !== "active") {
+        json(res, 409, { error: { code: "project_unavailable" } });
+        return;
+      }
+      currentConversationContexts().set(id, "matrix-os");
+      json(res, 200, {
+        context: {
+          projectId: "matrix-os",
+          projectName: "Matrix OS",
+          projectKind: "github",
+          repositoryLabel: "FinnaAI/matrix-os",
+          status: "ready",
+        },
+      });
       return;
     }
     if (req.method === "GET" && path.startsWith("/api/conversations/")) {
@@ -650,6 +780,9 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         ],
         hasMore: false,
         limit: 50,
+        ...(conversationContextProjection(id)
+          ? { context: conversationContextProjection(id) }
+          : {}),
       });
       return;
     }
@@ -696,6 +829,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
           slug: "matrix-os",
           name: "Matrix OS",
           kind: "github",
+          github: { owner: "FinnaAI", repo: "matrix-os" },
           ...(projectLifecycle === "archived" ? { archivedAt: NOW } : {}),
         }] : [],
       });
@@ -964,7 +1098,8 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     if (req.method === "POST" && path === "/api/coding-agents/threads") {
       const body = await readBody(req);
       state.codingAgentCreates.push(body);
-      json(res, 201, codingAgentSnapshot(typeof body.prompt === "string" ? body.prompt : undefined));
+      const prompt = typeof body.prompt === "string" ? body.prompt : undefined;
+      json(res, 201, prompt?.startsWith("MAT-348:") ? codingAgentToolHeavySnapshot(prompt) : codingAgentSnapshot(prompt));
       return;
     }
     if (req.method === "GET" && path === "/api/coding-agents/threads/thread_operator_1") {
@@ -1104,6 +1239,8 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
   }
 
   function runKernel(ws: WebSocket): void {
+    state.kernelConnections += 1;
+    let activeConversationId: string | null = null;
     ws.on("message", (raw) => {
       let msg: Record<string, unknown>;
       try {
@@ -1120,14 +1257,27 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         ws.send(JSON.stringify({ type: "pong" }));
         return;
       }
+      if (msg.type === "switch_session" && typeof msg.sessionId === "string") {
+        activeConversationId = msg.sessionId;
+        return;
+      }
       if (msg.type === "message") {
         const requestId = typeof msg.requestId === "string" ? msg.requestId : "r1";
         ws.send(JSON.stringify({ type: "kernel:init", sessionId: "kernel-sess-1", requestId }));
         ws.send(JSON.stringify({ type: "kernel:text", text: "On it. ", requestId }));
         ws.send(JSON.stringify({ type: "kernel:tool_start", tool: "Bash", requestId }));
         ws.send(JSON.stringify({ type: "kernel:tool_end", input: { command: "ls" }, requestId }));
-        ws.send(JSON.stringify({ type: "kernel:text", text: "Done — all tests pass.", requestId }));
-        ws.send(JSON.stringify({ type: "kernel:result", data: "ok", requestId }));
+        const finish = () => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const response = activeConversationId
+            && currentConversationContexts().get(activeConversationId) === "matrix-os"
+            ? "Repository context: FinnaAI/matrix-os"
+            : "Done — all tests pass.";
+          ws.send(JSON.stringify({ type: "kernel:text", text: response, requestId }));
+          ws.send(JSON.stringify({ type: "kernel:result", data: "ok", requestId }));
+        };
+        if (kernelResponseDelayMs > 0) setTimeout(finish, kernelResponseDelayMs);
+        else finish();
       }
     });
   }
@@ -1144,6 +1294,15 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     setConversationBusy: (id, busy) => {
       if (busy) busyHermesConversations.add(id);
       else busyHermesConversations.delete(id);
+    },
+    setProjectLifecycle: (lifecycle) => {
+      projectLifecycle = lifecycle;
+    },
+    setKernelResponseDelay: (delayMs) => {
+      kernelResponseDelayMs = delayMs;
+    },
+    disconnectKernel: () => {
+      for (const client of kernelWss.clients) client.terminate();
     },
     close: () =>
       new Promise<void>((resolve, reject) => {

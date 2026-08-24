@@ -10,30 +10,31 @@ export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
     requestId: z.string().min(1).max(256).optional(),
     model: KernelModelSchema.optional(),
     effort: KernelEffortSchema.optional(),
-  }),
+  }).strict(),
   z.object({
     type: z.literal("switch_session"),
     sessionId: z.string().min(1).max(256),
-  }),
+    replayCompleted: z.boolean().optional(),
+  }).strict(),
   z.object({
     type: z.literal("approval_response"),
     id: z.string().min(1).max(256),
     approved: z.boolean(),
-  }),
+  }).strict(),
   z.object({
     type: z.literal("ping"),
-  }),
+  }).strict(),
   z.object({
     type: z.literal("sync:subscribe"),
     peerId: z.string().min(1).max(128),
     hostname: z.string().max(256),
     platform: z.enum(["darwin", "linux", "win32"]),
     clientVersion: z.string().max(64),
-  }),
+  }).strict(),
   z.object({
     type: z.literal("abort"),
     requestId: z.string().min(1).max(256),
-  }),
+  }).strict(),
 ]);
 
 export type MainWsClientMessage = z.infer<typeof MainWsClientMessageSchema>;

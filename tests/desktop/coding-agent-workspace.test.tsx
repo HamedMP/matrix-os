@@ -3,6 +3,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { RuntimeSummary } from "@matrix-os/contracts";
 import ProjectChatsView, {
   clearComposerLaunchContext,
   mergeComposerSeed,
@@ -19,7 +20,15 @@ import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/st
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
 import { toast } from "sonner";
+import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
+
+const RUNTIME_SCOPE = codingAgentRuntimeScope({
+  handle: "operator",
+  platformHost: "https://platform.test",
+  runtimeSlot: "primary",
+});
 
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
@@ -37,7 +46,16 @@ function summaryFixture({
   sourceControl = false,
   threadTerminalSessionId,
   terminalSessionName = "matrix-abc1234",
-}: { threadCreate?: boolean; sameThreadTurns?: boolean; files?: boolean; sourceControl?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
+  providers,
+}: {
+  threadCreate?: boolean;
+  sameThreadTurns?: boolean;
+  files?: boolean;
+  sourceControl?: boolean;
+  threadTerminalSessionId?: string;
+  terminalSessionName?: string;
+  providers?: RuntimeSummary["providers"];
+} = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -76,7 +94,7 @@ function summaryFixture({
           }]
         : []),
     ],
-    providers: [
+    providers: providers ?? [
       {
         id: "codex",
         kind: "codex",
@@ -101,6 +119,7 @@ function summaryFixture({
           providerId: "codex",
           title: "Fix settings route",
           status: "running",
+          projectId: "matrix-os",
           ...(threadTerminalSessionId ? { terminalSessionId: threadTerminalSessionId } : {}),
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:01:00.000Z",
@@ -189,6 +208,7 @@ function previewSummaryFixture() {
       items: [
         {
           id: "prev_local",
+          projectId: "matrix-os",
           label: "Local web app",
           status: "running",
           origin: "http://localhost:3000",
@@ -196,12 +216,14 @@ function previewSummaryFixture() {
         },
         {
           id: "prev_internal",
+          projectId: "matrix-os",
           label: "Internal service",
           status: "running",
           updatedAt: "2026-07-06T00:03:00.000Z",
         },
         {
           id: "prev_secure",
+          projectId: "matrix-os",
           label: "Secure app",
           status: "running",
           origin: "https://preview.matrix-os.test",
@@ -341,6 +363,7 @@ function threadSnapshotFixture() {
       title: "Fix settings route",
       status: "waiting_for_approval",
       attention: "approval_required",
+      projectId: "matrix-os",
       terminalSessionId: "matrix-abc1234",
       createdAt: "2026-07-06T00:00:00.000Z",
       updatedAt: "2026-07-06T00:04:00.000Z",
@@ -693,6 +716,15 @@ describe("ProjectChatsView", () => {
     useBoard.setState(useBoard.getInitialState(), true);
     useProjectView.setState({ entries: {}, runtimeScope: null });
     useProjectWorkspaces.setState({ entries: {} });
+    // This suite exercises the inspector's panels, not its default-closed
+    // disclosure behavior (covered by project-chats-view-layout.test.tsx).
+    useInspectorLayout.setState({
+      entries: {
+        "matrix-os": { widthPct: 34, collapsed: false, maximized: false },
+      },
+      runtimeScope: RUNTIME_SCOPE,
+      hydratedScope: RUNTIME_SCOPE,
+    });
     useCodingAgentWorkspace.setState({
       status: "idle",
       summary: null,
@@ -770,15 +802,15 @@ describe("ProjectChatsView", () => {
     vi.useRealTimers();
   });
 
-  it("renders provider, thread, and terminal summaries from trusted IPC", async () => {
+  it("renders project thread activity without borrowing an unrelated terminal", async () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
 
     expect(screen.getByText("Loading workspace...")).toBeTruthy();
     await selectInspectorTab("Activity");
-    expect(screen.getByText("Codex")).toBeTruthy();
-    expect(screen.getByText("Fix settings route")).toBeTruthy();
+    expect(screen.getAllByText("Fix settings route").length).toBeGreaterThan(0);
     await selectInspectorTab("Terminal");
-    expect(screen.getByText("matrix-abc1234")).toBeTruthy();
+    expect(screen.getByText("This chat has no linked terminal session.")).toBeTruthy();
+    expect(screen.queryByText("matrix-abc1234")).toBeNull();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
   });
 
@@ -825,7 +857,7 @@ describe("ProjectChatsView", () => {
 
     render(<ProjectChatsView projectId="matrix-os" active />);
     await selectInspectorTab("Activity");
-    await screen.findByText("Fix settings route");
+    await screen.findAllByText("Fix settings route");
     act(() => {
       useCodingAgentWorkspace.setState({
         createdThreadHandles: [...firstSummary.activeThreads.items],
@@ -895,8 +927,9 @@ describe("ProjectChatsView", () => {
       resolveSecondSummary?.(secondSummary);
       await pendingSecondSummary;
     });
+    fireEvent.click(screen.getByRole("button", { name: "Show conversation tools" }));
     await selectInspectorTab("Activity");
-    await screen.findByText("Second account thread");
+    await screen.findAllByText("Second account thread");
     expect(useCodingAgentWorkspace.getState().reviews).toBeNull();
 
     await act(async () => {
@@ -1293,6 +1326,155 @@ describe("ProjectChatsView", () => {
     await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(""));
   });
 
+  it.each([
+    {
+      name: "missing",
+      provider: {
+        ...summaryFixture().providers[0],
+        availability: "setup_required" as const,
+        installStatus: "missing" as const,
+        authStatus: "missing" as const,
+        setupActions: [{
+          id: "codex_install",
+          kind: "foreground_terminal" as const,
+          label: "Install Codex",
+          command: "npm install -g @openai/codex",
+        }],
+      },
+      notice: "Codex is not installed",
+      action: "Install Codex",
+    },
+    {
+      name: "auth-required",
+      provider: {
+        ...summaryFixture().providers[0],
+        availability: "auth_required" as const,
+        authStatus: "missing" as const,
+        setupActions: [{
+          id: "codex_connect",
+          kind: "foreground_terminal" as const,
+          label: "Connect Codex",
+          command: "codex login",
+        }],
+      },
+      notice: "Connect Codex to continue",
+      action: "Connect Codex",
+    },
+  ])("preserves the stored-provider follow-up while $name, then sends after refresh", async ({
+    provider,
+    notice,
+    action,
+  }) => {
+    const settledSnapshot = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "completed" as const,
+        attention: "none" as const,
+      },
+    };
+    const blockedSummary = summaryFixture({ providers: [provider] });
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(blockedSummary);
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(settledSnapshot);
+      if (channel === "runtime:create-turn") {
+        return Promise.resolve({
+          ok: true,
+          response: {
+            threadId: "thread_alpha",
+            turnId: "turn_provider_recovered",
+            status: "accepted",
+            acceptedAt: "2026-07-06T00:06:00.000Z",
+          },
+        });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    const composer = await screen.findByLabelText("Message conversation") as HTMLTextAreaElement;
+    const draft = `Keep this ${provider.availability} follow-up`;
+    fireEvent.change(composer, { target: { value: draft } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    expect(screen.getByText(notice)).toBeTruthy();
+    expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    expect(composer.disabled).toBe(false);
+    expect(composer.value).toBe(draft);
+    expect(vi.mocked(window.operator.invoke).mock.calls.filter(([channel]) => channel === "runtime:create-turn")).toHaveLength(0);
+
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        status: "ready",
+        summary: summaryFixture(),
+        summaryRevision: useCodingAgentWorkspace.getState().summaryRevision + 1,
+      });
+    });
+
+    await waitFor(() => expect(screen.queryByText(notice)).toBeNull());
+    expect(composer.value).toBe(draft);
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith(
+      "runtime:create-turn",
+      expect.objectContaining({ threadId: "thread_alpha", message: draft }),
+    ));
+    await waitFor(() => expect(composer.value).toBe(""));
+  });
+
+  it("keeps a blocked follow-up draft isolated when switching threads", async () => {
+    const blockedProvider = {
+      ...summaryFixture().providers[0],
+      availability: "auth_required" as const,
+      authStatus: "missing" as const,
+      setupActions: [],
+    };
+    const settledAlpha = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "completed" as const,
+        attention: "none" as const,
+      },
+    };
+    const settledBeta = {
+      ...betaThreadSnapshotFixture(),
+      thread: { ...betaThreadSnapshotFixture().thread, status: "completed" as const },
+    };
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
+    window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "runtime:get-summary") {
+        return Promise.resolve(summaryFixture({ providers: [blockedProvider] }));
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") {
+        return Promise.resolve((payload as { threadId?: string })?.threadId === "thread_beta" ? settledBeta : settledAlpha);
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    const alphaComposer = await screen.findByLabelText("Message conversation") as HTMLTextAreaElement;
+    fireEvent.change(alphaComposer, { target: { value: "Alpha-only blocked draft" } });
+    expect(screen.getByText("Connect Codex to continue")).toBeTruthy();
+
+    act(() => useProjectView.getState().setSelectedThread("matrix-os", "thread_beta"));
+
+    expect(await screen.findByRole("region", { name: "Conversation Fix billing route" })).toBeTruthy();
+    const betaComposer = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
+    expect(betaComposer.value).toBe("");
+    expect(vi.mocked(window.operator.invoke).mock.calls.filter(([channel]) => channel === "runtime:create-turn")).toHaveLength(0);
+  });
+
   it("withholds the same-thread composer when the runtime does not support turns", async () => {
     useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
@@ -1438,7 +1620,7 @@ describe("ProjectChatsView", () => {
     expect(screen.queryByText(/Output was truncated for display/)).toBeNull();
   });
 
-  it("hydrates and updates notification preferences through trusted IPC", async () => {
+  it("keeps runtime-wide notification preferences out of project activity", async () => {
     let preferenceReads = 0;
     window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
@@ -1459,17 +1641,11 @@ describe("ProjectChatsView", () => {
 
     await selectInspectorTab("Activity");
 
-    const failedToggle = await screen.findByRole("checkbox", { name: "Failed run alerts" });
-    expect((failedToggle as HTMLInputElement).checked).toBe(false);
-
-    fireEvent.click(failedToggle);
-
-    await waitFor(() => {
-      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:update-notification-preferences", {
-        attentionPush: { approval: false, input: true, failed: true, completed: true },
-      });
-    });
-    expect((await screen.findByRole("checkbox", { name: "Failed run alerts" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByRole("checkbox", { name: "Failed run alerts" })).toBeNull();
+    expect(window.operator.invoke).not.toHaveBeenCalledWith(
+      "runtime:update-notification-preferences",
+      expect.anything(),
+    );
     expect(screen.queryByText(/token|bearer|secret|\/home\/matrix/i)).toBeNull();
   });
 
@@ -1496,10 +1672,12 @@ describe("ProjectChatsView", () => {
     await selectInspectorTab("Activity");
 
     expect(await screen.findByText("Needs Attention")).toBeTruthy();
-    expect(screen.getByText("Approve deployment")).toBeTruthy();
-    expect(screen.getByText("Repair failed run")).toBeTruthy();
+    expect(screen.getAllByText("Approve deployment").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Repair failed run").length).toBeGreaterThan(0);
     expect(screen.getByText("Approval needed")).toBeTruthy();
-    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Open details for Repair failed run, Failed" }).textContent,
+    ).toContain("Failed");
     expect(screen.getByText("No active threads.")).toBeTruthy();
   });
 
@@ -2247,33 +2425,26 @@ describe("ProjectChatsView", () => {
     expect(screen.getByText("No active threads.")).toBeTruthy();
   });
 
-  it("opens a bound thread terminal in the existing terminal tab model", async () => {
+  it("shows only the selected chat's bound terminal", async () => {
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
         return Promise.resolve(summaryFixture({ threadTerminalSessionId: "matrix-abc1234" }));
       }
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
       return Promise.reject(new Error("unexpected channel"));
     });
 
     render(<ProjectChatsView projectId="matrix-os" active />);
 
-    await selectInspectorTab("Activity");
-
-    await screen.findByText("Fix settings route");
-    fireEvent.click(screen.getByRole("button", { name: "Open terminal for Fix settings route" }));
-
-    const tabs = useTabs.getState().tabs;
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]).toMatchObject({
-      kind: "terminal",
-      sessionName: "matrix-abc1234",
-      title: "matrix-abc1234",
-    });
-    expect(useTabs.getState().activeTabId).toBe(tabs[0]?.id);
+    await selectInspectorTab("Terminal");
+    expect(await screen.findByText("matrix-abc1234")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open terminal matrix-abc1234" })).toBeTruthy();
   });
 
-  it("opens a bound thread terminal by canonical session id when the display name differs", async () => {
+  it("resolves the selected chat terminal by canonical session id when its display name differs", async () => {
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
         return Promise.resolve(summaryFixture({
@@ -2282,41 +2453,37 @@ describe("ProjectChatsView", () => {
         }));
       }
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
       return Promise.reject(new Error("unexpected channel"));
     });
 
     render(<ProjectChatsView projectId="matrix-os" active />);
 
-    await selectInspectorTab("Activity");
-
-    await screen.findByText("Fix settings route");
-    fireEvent.click(screen.getByRole("button", { name: "Open terminal for Fix settings route" }));
-
-    const tabs = useTabs.getState().tabs;
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]).toMatchObject({
-      kind: "terminal",
-      sessionName: "matrix-abc1234",
-      title: "friendly-shell",
-    });
+    await selectInspectorTab("Terminal");
+    expect(await screen.findByText("friendly-shell")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open terminal friendly-shell" })).toBeTruthy();
   });
 
-  it("does not open stale thread terminal bindings", async () => {
+  it("shows an unavailable state for a stale selected-chat terminal binding", async () => {
+    useProjectView.getState().setSelectedThread("matrix-os", "thread_alpha");
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
         return Promise.resolve(summaryFixture({ threadTerminalSessionId: "matrix-missing" }));
       }
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") {
+        return Promise.resolve({
+          ...threadSnapshotFixture(),
+          thread: { ...threadSnapshotFixture().thread, terminalSessionId: "matrix-missing" },
+        });
+      }
       return Promise.reject(new Error("unexpected channel"));
     });
 
     render(<ProjectChatsView projectId="matrix-os" active />);
 
-    await selectInspectorTab("Activity");
-
-    await screen.findByText("Fix settings route");
-    expect(screen.queryByRole("button", { name: "Open terminal for Fix settings route" })).toBeNull();
-    expect(useTabs.getState().tabs).toHaveLength(0);
+    await selectInspectorTab("Terminal");
+    expect(await screen.findByText("The linked terminal session is no longer available.")).toBeTruthy();
   });
 
   it("renders read-only review summaries through trusted IPC", async () => {
@@ -2328,6 +2495,32 @@ describe("ProjectChatsView", () => {
     expect(screen.getByText("1 high")).toBeTruthy();
     expect(screen.getByText(/Round 2 of 3/)).toBeTruthy();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-reviews", {});
+  });
+
+  it("does not render another project's review detail status", async () => {
+    render(<ProjectChatsView projectId="matrix-os" active />);
+
+    await screen.findByText("matrix-os");
+
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        selectedReviewId: "rev_other_project",
+        reviewSnapshotStatus: "loading",
+        reviewSnapshot: null,
+        reviewSnapshotError: null,
+      });
+    });
+
+    expect(screen.queryByText("Loading review details...")).toBeNull();
+
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        reviewSnapshotStatus: "error",
+        reviewSnapshotError: "Review details unavailable",
+      });
+    });
+
+    expect(screen.queryByText("Review details unavailable")).toBeNull();
   });
 
   it("loads a read-only review snapshot when a review is selected", async () => {
@@ -3452,6 +3645,7 @@ describe("ProjectChatsView", () => {
 
     render(<ProjectChatsView projectId="matrix-os" active />);
 
+    await selectInspectorTab("Changes");
     expect(await screen.findByText("Review state unavailable")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
@@ -3654,6 +3848,7 @@ describe("ProjectChatsView", () => {
             title: "Investigate retained workspace handle",
             status: "queued",
             attention: "none",
+            projectId: "matrix-os",
             createdAt: "2026-07-06T00:00:00.000Z",
             updatedAt: "2026-07-06T00:00:00.000Z",
           },
@@ -3708,6 +3903,7 @@ describe("ProjectChatsView", () => {
         title: "Investigate retained workspace handle",
         status: "queued",
         attention: "none",
+        projectId: "matrix-os",
         createdAt: "2026-07-06T00:00:00.000Z",
         updatedAt: "2026-07-06T00:00:00.000Z",
       },
@@ -4067,7 +4263,7 @@ describe("ProjectChatsView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await selectInspectorTab("Activity");
-    await screen.findByText("Fix settings route");
+    await screen.findAllByText("Fix settings route");
   });
 
   function projectWorkspaceReadySummary() {

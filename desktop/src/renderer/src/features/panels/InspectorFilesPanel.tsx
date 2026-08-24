@@ -9,7 +9,11 @@ import { FilePreview, resolveActivePath, type FileSelection } from "../files/Fil
  * rendered) below. Selection is scoped to the current computer/session so a
  * runtime switch can never preview another owner's path.
  */
-export function InspectorFilesPanel() {
+export function InspectorFilesPanel({
+  scopeLabel = "Matrix Home",
+}: {
+  scopeLabel?: string;
+}) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const [selection, setSelection] = useState<FileSelection | null>(null);
@@ -31,6 +35,15 @@ export function InspectorFilesPanel() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <div
+        className="rounded-md border px-3 py-2"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      >
+        <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{scopeLabel}</p>
+        <p className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+          Browse this computer&apos;s files. This view is not limited to the selected project.
+        </p>
+      </div>
       <div className="shrink-0">
         <ComputerFileBrowser compact onOpenFile={handleOpenFile} />
       </div>

@@ -28,6 +28,19 @@ describe("MainWsClientMessageSchema", () => {
     }
   });
 
+  it.each(["workingDirectory", "path", "localPath"])(
+    "rejects the client-controlled %s path field",
+    (field) => {
+      const result = MainWsClientMessageSchema.safeParse({
+        type: "message",
+        text: "hello",
+        [field]: "/private/project",
+      });
+
+      expect(result.success).toBe(false);
+    },
+  );
+
   it.each([
     ["model", "not-an-allowlisted-model"],
     ["effort", "extreme"],
@@ -45,6 +58,29 @@ describe("MainWsClientMessageSchema", () => {
     const result = MainWsClientMessageSchema.safeParse({
       type: "switch_session",
       sessionId: "",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an explicit completed-run replay policy when switching sessions", () => {
+    const result = MainWsClientMessageSchema.safeParse({
+      type: "switch_session",
+      sessionId: "conversation-one",
+      replayCompleted: false,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "switch_session") {
+      expect(result.data.replayCompleted).toBe(false);
+    }
+  });
+
+  it("rejects non-boolean completed-run replay policies", () => {
+    const result = MainWsClientMessageSchema.safeParse({
+      type: "switch_session",
+      sessionId: "conversation-one",
+      replayCompleted: "false",
     });
 
     expect(result.success).toBe(false);

@@ -11,7 +11,7 @@ const DESKTOP_ROOT = join(REPOSITORY_ROOT, "desktop");
 const DESKTOP_MAIN = join(DESKTOP_ROOT, "out/main/index.js");
 const desktopRequire = createRequire(join(DESKTOP_ROOT, "package.json"));
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
-const SCREENSHOT_DIR = join(REPOSITORY_ROOT, "docs/review-assets");
+const SCREENSHOT_DIR = join(REPOSITORY_ROOT, "output/playwright/mat-300");
 const DEBUG_PORT = 9232;
 
 interface TerminalViewportGeometry {
@@ -36,8 +36,8 @@ interface TerminalViewportGeometry {
 async function readTerminalViewportGeometry(viewport: Locator): Promise<TerminalViewportGeometry> {
   await viewport.locator(".xterm").waitFor();
   return viewport.evaluate((host) => {
-    const frame = host.parentElement;
-    const header = frame?.previousElementSibling;
+    const frame = host.closest("section");
+    const header = frame?.querySelector("header");
     const root = host.querySelector<HTMLElement>(".xterm");
     const xtermViewport = host.querySelector<HTMLElement>(".xterm-viewport");
     if (!(frame instanceof HTMLElement) || !(header instanceof HTMLElement) || !root || !xtermViewport) {
@@ -48,7 +48,7 @@ async function readTerminalViewportGeometry(viewport: Locator): Promise<Terminal
     const rootRect = root.getBoundingClientRect();
     const hostStyle = getComputedStyle(host);
     return {
-      frameBackground: getComputedStyle(frame).backgroundColor,
+      frameBackground: getComputedStyle(host).backgroundColor,
       headerBottom: headerRect.bottom,
       hostBottom: hostRect.bottom,
       hostHeight: hostRect.height,
@@ -71,13 +71,13 @@ async function readTerminalViewportGeometry(viewport: Locator): Promise<Terminal
 async function expectTerminalViewportToFill(viewport: Locator): Promise<TerminalViewportGeometry> {
   const geometry = await readTerminalViewportGeometry(viewport);
   expect(Math.abs(geometry.hostTop - geometry.headerBottom)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.rootTop - geometry.hostTop)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.rootLeft - geometry.hostLeft)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.rootBottom - geometry.hostBottom)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.rootWidth - geometry.hostWidth)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.rootHeight - geometry.hostHeight)).toBeLessThanOrEqual(1);
-  expect(geometry.hostPaddingLeft).toBe("0px");
-  expect(geometry.hostPaddingTop).toBe("0px");
+  expect(Math.abs(geometry.rootTop - geometry.hostTop - 16)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootLeft - geometry.hostLeft - 16)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootBottom - geometry.hostBottom + 16)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootWidth - geometry.hostWidth + 32)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.rootHeight - geometry.hostHeight + 32)).toBeLessThanOrEqual(1);
+  expect(geometry.hostPaddingLeft).toBe("16px");
+  expect(geometry.hostPaddingTop).toBe("16px");
   expect(geometry.rootBackground).toBe(geometry.frameBackground);
   expect(geometry.viewportBackground).toBe(geometry.frameBackground);
   return geometry;
@@ -106,7 +106,9 @@ suite("Desktop terminal session handoff", () => {
     });
     page = await app.firstWindow();
     await page.getByRole("button", { name: /continue in browser/i }).waitFor({ timeout: 10_000 });
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.evaluate(async () => {
+      await window.operator.invoke("auth:start-device-flow", {});
+    });
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
   }, 60_000);
 
@@ -142,9 +144,10 @@ suite("Desktop terminal session handoff", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-list.png") });
 
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
-    await page.getByRole("navigation", { name: "Terminal breadcrumb" }).getByText("matrix-task-1").waitFor();
+    await page.getByRole("heading", { name: "matrix-task-1" }).waitFor();
+    expect(await page.getByRole("navigation", { name: "Terminal breadcrumb" }).count()).toBe(0);
     await page.getByText(/Started at .*main computer/).waitFor();
-    const viewport = page.locator("[data-terminal-viewport]");
+    const viewport = page.locator("section[aria-hidden='false'] [data-terminal-surface]");
     await viewport.evaluate((element) => { element.setAttribute("data-mat-300-identity", "preserved"); });
     const initialGeometry = await expectTerminalViewportToFill(viewport);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mat-300-terminal-session-detail.png") });
@@ -167,16 +170,20 @@ suite("Desktop terminal session handoff", () => {
     }).toBeGreaterThan(20);
     await expectTerminalViewportToFill(viewport);
 
-    await page.getByRole("button", { name: "Back to terminal sessions" }).click();
+    await page.getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("button", { name: "Terminal" })
+      .click();
     await page.getByRole("heading", { name: "Terminal" }).waitFor();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await expect.poll(() => viewport.getAttribute("data-mat-300-identity")).toBe("preserved");
     await expectTerminalViewportToFill(viewport);
 
-    await page.getByRole("button", { name: "Back to terminal sessions" }).click();
+    await page.getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("button", { name: "Terminal" })
+      .click();
     await page.getByRole("button", { name: "New shell" }).click();
     const newSessionViewport = page.locator(
-      'section[aria-hidden="false"] [data-terminal-viewport]',
+      'section[aria-hidden="false"] [data-terminal-surface]',
     );
     await newSessionViewport.waitFor();
     await expectTerminalViewportToFill(newSessionViewport);

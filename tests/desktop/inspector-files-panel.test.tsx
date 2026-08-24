@@ -143,6 +143,8 @@ describe("InspectorFilesPanel", () => {
   it("opens with the browser and a preview placeholder", async () => {
     renderPanel();
 
+    expect(screen.getByText("Matrix Home")).toBeTruthy();
+    expect(screen.getByText("Browse this computer's files. This view is not limited to the selected project.")).toBeTruthy();
     expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
     expect(screen.getByText("Choose a file")).toBeTruthy();
   });
