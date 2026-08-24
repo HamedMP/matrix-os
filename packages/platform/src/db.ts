@@ -2277,7 +2277,7 @@ function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineRecord {
     resizeStartedAt: row.resize_started_at,
     resizeTargetServerType: row.resize_target_server_type,
     attempt: row.attempt,
-    activationState: z.enum(['awaiting_billing', 'authorized']).parse(row.activation_state),
+    activationState: z.enum(['awaiting_billing', 'authorized']).parse(row.activation_state ?? 'authorized'),
     prebillingIntentId: row.prebilling_intent_id,
     activationAuthorizedAt: row.activation_authorized_at,
   };
