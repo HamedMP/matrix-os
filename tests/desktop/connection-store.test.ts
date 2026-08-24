@@ -149,6 +149,57 @@ describe("connection event wiring", () => {
     expect(useConnection.getState().authGeneration).toBe(2);
   });
 
+  it("invalidates the previous API before publishing a switched runtime slot", async () => {
+    const previousApi = { get: vi.fn(), post: vi.fn(), baseUrl: "https://old.test" };
+    useConnection.setState({
+      status: "signed-in",
+      handle: "neo",
+      platformHost: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+      authGeneration: 1,
+      api: previousApi as never,
+    });
+    let resolveStatus!: (value: {
+      signedIn: boolean;
+      handle: string;
+      platformHost: string;
+      runtimeSlot: string;
+      authGeneration: number;
+    }) => void;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "runtime:select") return {};
+      if (channel === "auth:status") {
+        return new Promise((resolve) => {
+          resolveStatus = resolve;
+        });
+      }
+      return {};
+    });
+    window.operator = { invoke, on: vi.fn() };
+
+    const pending = useConnection.getState().selectRuntime("preview");
+    await vi.waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("auth:status", {});
+    });
+
+    expect(useConnection.getState()).toMatchObject({
+      runtimeSlot: "preview",
+      api: null,
+    });
+
+    resolveStatus({
+      signedIn: true,
+      handle: "neo",
+      platformHost: "https://app.matrix-os.com",
+      runtimeSlot: "preview",
+      authGeneration: 2,
+    });
+    await pending;
+
+    expect(useConnection.getState().api).not.toBeNull();
+    expect(useConnection.getState().api).not.toBe(previousApi);
+  });
+
   it("preserves desktop state and the selected slot when the runtime switch fails", async () => {
     useBoard.setState({ projects: [{ slug: "old", name: "Old" }], activeProjectSlug: "old" });
     const invoke = vi.fn(async (channel: string) => {

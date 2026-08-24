@@ -103,7 +103,11 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       // Clear previous-computer state only after the trusted core confirms the
       // switch, and before the new slot becomes observable to the UI.
       reconcileDesktopRuntimeChange();
-      set({ runtimeSlot: slot });
+      // Publish the slot only after invalidating the previous ApiClient. The
+      // trusted auth snapshot below may settle on a later turn; keeping the old
+      // client observable in that gap lets a newly opened action issue a write
+      // while the UI already identifies itself as the replacement computer.
+      set({ runtimeSlot: slot, api: null });
     } catch (err: unknown) {
       // The switch never happened: keep every surface on the still-selected
       // computer and refresh the auth snapshot so the API client stays valid.
