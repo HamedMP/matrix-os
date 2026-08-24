@@ -193,6 +193,150 @@ describe('platform billing routes', () => {
     });
   });
 
+  it('offers and persists the configured card-trial duration', async () => {
+    const trialEnv = {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'true',
+      MATRIX_CARD_TRIAL_DAYS: '1',
+    };
+    const app = createApp('user_123', trialEnv);
+
+    const status = await app.request('/billing/status?runtimeSlot=primary');
+    await expect(status.json()).resolves.toMatchObject({
+      trialOffer: { eligible: true, durationDays: 1 },
+    });
+
+    const checkout = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+
+    expect(checkout.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      trialPeriodDays: 1,
+      paymentMethodMode: 'card_required',
+    }));
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+      runtimeSlot: 'primary',
+      trialPeriodDays: 1,
+    });
+  });
+
+  it.each(['open', 'creating'] as const)(
+    'keeps status copy aligned with a reserved trial in %s state after the configured duration changes',
+    async (attemptStatus) => {
+      if (attemptStatus === 'creating') {
+        stripe.createCheckoutSession = vi.fn().mockRejectedValue(new Error('stripe response timeout'));
+      }
+      const sevenDayApp = createApp('user_123', {
+        ...env,
+        MATRIX_CARD_TRIALS_ENABLED: 'true',
+        MATRIX_CARD_TRIAL_DAYS: '7',
+      });
+      const checkout = await sevenDayApp.request('/billing/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          planSlug: 'matrix_builder',
+          interval: 'monthly',
+          regionSlug: 'region_fsn1',
+          runtimeSlot: 'primary',
+        }),
+      });
+      expect(checkout.status).toBe(attemptStatus === 'open' ? 200 : 503);
+      await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+        status: attemptStatus,
+        trialPeriodDays: 7,
+      });
+
+      const oneDayApp = createApp('user_123', {
+        ...env,
+        MATRIX_CARD_TRIALS_ENABLED: 'true',
+        MATRIX_CARD_TRIAL_DAYS: '1',
+      });
+      const status = await oneDayApp.request('/billing/status?runtimeSlot=primary');
+
+      await expect(status.json()).resolves.toMatchObject({
+        trialOffer: { eligible: true, durationDays: 7 },
+      });
+    },
+  );
+
+  it('keeps status copy aligned with a reserved trial after the rollout flag is disabled', async () => {
+    const trialApp = createApp('user_123', {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'true',
+      MATRIX_CARD_TRIAL_DAYS: '7',
+    });
+    const checkout = await trialApp.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+    expect(checkout.status).toBe(200);
+
+    const disabledApp = createApp('user_123', {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'false',
+      MATRIX_CARD_TRIAL_DAYS: '1',
+    });
+    const status = await disabledApp.request('/billing/status?runtimeSlot=primary');
+
+    await expect(status.json()).resolves.toMatchObject({
+      trialOffer: { eligible: true, durationDays: 7 },
+    });
+  });
+
+  it('keeps an active immediate-payment Checkout ineligible when trials are later enabled', async () => {
+    const immediateApp = createApp('user_123', {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'false',
+    });
+    const checkout = await immediateApp.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+    expect(checkout.status).toBe(200);
+
+    const trialApp = createApp('user_123', {
+      ...env,
+      MATRIX_CARD_TRIALS_ENABLED: 'true',
+      MATRIX_CARD_TRIAL_DAYS: '1',
+    });
+    const status = await trialApp.request('/billing/status?runtimeSlot=primary');
+
+    await expect(status.json()).resolves.toMatchObject({
+      trialOffer: { eligible: false, durationDays: 1 },
+    });
+  });
+
+  it.each(['0', '31', '1e1', '0x0a', ' 1 ', '18446744073709551623'])(
+    'rejects invalid card-trial duration %j during route startup',
+    (trialDays) => {
+      expect(() => createApp('user_123', {
+        ...env,
+        MATRIX_CARD_TRIAL_DAYS: trialDays,
+      })).toThrow('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30');
+    },
+  );
+
   it('does not offer a trial for additional computers or accounts with subscription history', async () => {
     const trialEnv = { ...env, MATRIX_CARD_TRIALS_ENABLED: 'true' };
     const additionalApp = createApp('user_123', trialEnv);

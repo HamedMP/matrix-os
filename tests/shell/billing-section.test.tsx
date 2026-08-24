@@ -88,8 +88,8 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it("explains the card-required seven-day trial before opening Checkout", async () => {
-    const trialEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  it.each([1, 7])("explains the card-required %i-day trial before opening Checkout", async (durationDays) => {
+    const trialEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
     const formattedTrialEnd = new Intl.DateTimeFormat(undefined, {
       month: "short",
       day: "numeric",
@@ -98,7 +98,7 @@ describe("BillingSection", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         access: { runtimeProxyAllowed: false },
-        trialOffer: { eligible: true, durationDays: 7 },
+        trialOffer: { eligible: true, durationDays },
       }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -108,13 +108,13 @@ describe("BillingSection", () => {
 
     render(<BillingSection mode="provisioning" />);
 
-    await waitFor(() => expect(screen.getByText("Start your 7-day free trial")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(`Start your ${durationDays}-day free trial`)).toBeTruthy());
     expect(screen.getByText("Card required")).toBeTruthy();
     expect(screen.getByText("$0 today").classList.contains("text-cream")).toBe(true);
     expect(screen.getByText(`First charge ${formattedTrialEnd}`)).toBeTruthy();
     expect(screen.getByText(`Cancel before ${formattedTrialEnd} to avoid being charged.`)).toBeTruthy();
     expect(screen.getByText("$19/month after your trial")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Start 7-day trial" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy();
   });
 
   it("keeps immediate-payment language for additional computers", async () => {

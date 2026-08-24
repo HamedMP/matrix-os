@@ -169,7 +169,11 @@ The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
 The GitHub `Preview` environment may set `MATRIX_CARD_TRIALS_ENABLED` to
 `true` or `false`; it defaults to `false`. Keep it disabled for the immediate-
 payment regression pass, enable it only for trial scenarios, then return it to
-`false` after validation. Each change requires redeploying the preview revision.
+`false` after validation. `MATRIX_CARD_TRIAL_DAYS` controls new trial offers,
+defaults to `7`, and must be an integer from `1` through `30`. Each change
+requires redeploying the preview revision. Existing Stripe trials and reserved
+Checkout attempts retain their original duration, and billing status continues
+to display that reserved duration until the attempt settles.
 
 ## Centralized logs
 

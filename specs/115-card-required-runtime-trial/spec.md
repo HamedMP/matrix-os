@@ -7,7 +7,7 @@
 
 ## Summary
 
-Matrix offers one Stripe-native seven-day subscription trial for an account's first primary hosted computer. Stripe Checkout collects a card before Matrix provisions the VPS, charges $0 at trial creation, and automatically attempts the selected Starter, Builder, or Max price when Stripe's authoritative `trial_end` arrives. Checkout redirects never grant access; signed Stripe subscription and invoice webhooks project the entitlement used by provisioning and routing.
+Matrix offers one Stripe-native subscription trial for an account's first primary hosted computer. The product default is seven days; operators may set `MATRIX_CARD_TRIAL_DAYS` to an integer from 1 through 30 for a controlled rollout. Stripe Checkout collects a card before Matrix provisions the VPS, charges $0 at trial creation, and automatically attempts the selected Starter, Builder, or Max price when Stripe's authoritative `trial_end` arrives. Checkout redirects never grant access; signed Stripe subscription and invoice webhooks project the entitlement used by provisioning and routing.
 
 This specification supersedes the "no trials" requirements in `specs/084-stripe-runtime-plans/spec.md`. It also narrows that specification's dynamic-payment-method rule: trial Checkout is card-only and always collects a payment method, while paid and additional-computer Checkout continues to use Stripe's configured dynamic methods.
 
@@ -38,6 +38,7 @@ This specification supersedes the "no trials" requirements in `specs/084-stripe-
 - Canceling during the trial retains access until Stripe ends the trial. An unpaid end gates access and schedules suspension.
 - Poweroff retains the machine row, provider server, disk, backups, home files, and owner Postgres data.
 - Promotion codes remain independent invoice discounts and never implement trial duration.
+- `MATRIX_CARD_TRIAL_DAYS` is the server-side offer source of truth, defaults to `7`, and fails startup/deployment validation outside `1..30`. Stripe's persisted `trial_end` remains authoritative after subscription creation.
 
 ## Eligibility And Checkout
 
@@ -48,7 +49,7 @@ Trial eligibility is serialized on a per-Clerk-account ledger row and evaluated 
 3. No historical Stripe subscription exists for the Clerk account.
 4. The account has no consumed-trial timestamp.
 
-The ledger reserves the trial against the active Checkout attempt. Duplicate or ambiguous Stripe requests reuse that attempt's persisted `trial_period_days=7`. An expired/abandoned attempt releases the reservation for a fresh Checkout because no Stripe subscription was created. A verified `checkout.session.completed` event consumes the reservation immediately, and a verified `customer.subscription.created` event with `status=trialing` idempotently confirms consumption. Disabling the rollout flag affects only new offers and does not alter existing subscriptions or actions.
+The ledger reserves the trial against the active Checkout attempt. Duplicate or ambiguous Stripe requests reuse that attempt's persisted `trial_period_days`, even if the configured duration later changes. An expired/abandoned attempt releases the reservation for a fresh Checkout because no Stripe subscription was created. A verified `checkout.session.completed` event consumes the reservation immediately, and a verified `customer.subscription.created` event with `status=trialing` idempotently confirms consumption. Disabling the rollout flag or changing the duration affects only new offers and does not alter existing subscriptions or actions.
 
 Eligible Checkout sessions use:
 
@@ -58,7 +59,7 @@ Eligible Checkout sessions use:
   payment_method_types: ['card'],
   payment_method_collection: 'always',
   subscription_data: {
-    trial_period_days: 7,
+    trial_period_days: configuredTrialDays,
     trial_settings: {
       end_behavior: { missing_payment_method: 'cancel' },
     },
@@ -123,7 +124,7 @@ Suspension requests graceful provider shutdown and falls back to forced poweroff
 
 ## Product Experience
 
-Before Checkout, eligible users see "Start your 7-day free trial", "Card required", "$0 today", the exact selected price/interval beginning after seven days, the exact first-charge date, and "Cancel before this date to avoid being charged". The CTA is "Start 7-day trial". Ineligible and additional-computer flows keep immediate-payment language.
+Before Checkout, eligible users see "Start your {duration}-day free trial", "Card required", "$0 today", the exact selected price/interval beginning after the configured duration, the exact first-charge date, and "Cancel before this date to avoid being charged". The CTA is "Start {duration}-day trial". While an open or creating Checkout attempt reserves a trial, billing status and copy use that attempt's persisted duration even if operator configuration changes. An active non-trial Checkout, ineligible account, or additional-computer flow keeps immediate-payment language.
 
 During a trial, the shared shell shows a persistent notice with days remaining, upcoming price/date, and a Customer Portal link. It becomes prominent during the final three days. Trial lifecycle telemetry is PII-free and covers started, reminder due, converted, payment failed, VPS suspended, and VPS resumed.
 
@@ -133,6 +134,6 @@ Stripe Dashboard production configuration must enable Stripe's trial-ending emai
 
 - Unit/integration tests cover eligibility serialization, Checkout parameters, retry persistence, trial projection, conversion recognition, zero-value invoice rejection, duplicate/out-of-order webhooks, immediate access gating, established grace, suspension cancellation, recovery resume, action leases/retries, provider-call idempotency, graceful-shutdown fallback, and payment/action races.
 - Shell tests cover eligible, ineligible, active, expiring, failed, recovered, and additional-computer states.
-- Stripe test mode and Test Clocks exercise successful and declined conversion through the full seven days.
+- Stripe test mode and Test Clocks exercise successful and declined conversion through the configured trial duration; the canonical product test remains seven days.
 - Run targeted billing/VPS/UI tests, full tests and coverage, production shell build, and Canvas-first browser validation.
 - Public pricing and billing documentation ships in a separate `matrix-os-site` PR (MAT-446).

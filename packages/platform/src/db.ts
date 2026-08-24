@@ -4289,6 +4289,23 @@ export async function getLatestCheckoutAttempt(
   return row ? mapCheckoutAttempt(row) : undefined;
 }
 
+export async function getActiveCheckoutAttempt(
+  db: PlatformDB,
+  clerkUserId: string,
+  runtimeSlot: string,
+): Promise<BillingCheckoutAttemptRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_checkout_attempts')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
+    .where('status', 'in', ['creating', 'open'])
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst();
+  return row ? mapCheckoutAttempt(row) : undefined;
+}
+
 /**
  * The attempt that governs payment settling: a confirmed `paid` attempt always
  * wins over a newer still-`open` one, so a paying user who opens a second

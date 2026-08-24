@@ -18,6 +18,7 @@ import {
   getBillingSubscription,
   getBillingSubscriptionByStripeId,
   getActiveUserMachineByClerkId,
+  getActiveCheckoutAttempt,
   getSettlingCheckoutAttempt,
   insertBillingWebhookEvent,
   isCardTrialOfferEligible,
@@ -53,6 +54,10 @@ const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
 const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
 export const MATRIX_CARD_TRIAL_DAYS = 7;
+const MatrixCardTrialDaysSchema = z.string()
+  .regex(/^[0-9]+$/)
+  .transform(Number)
+  .pipe(z.number().int().min(1).max(30));
 const CLERK_USER_ID_PATTERN = /^user_[A-Za-z0-9]{1,128}$/;
 const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
@@ -175,6 +180,7 @@ export function createBillingRoutes(options: {
 }): Hono {
   const app = new Hono();
   const env = options.env ?? process.env;
+  const cardTrialDays = resolveCardTrialDays(env);
   const now = options.now ?? (() => new Date());
   const persistEntitlement = options.upsertEntitlement ?? upsertBillingEntitlement;
 
@@ -301,7 +307,7 @@ export function createBillingRoutes(options: {
         ? claimCardTrialCheckoutAttempt(options.db, {
             id: randomUUID(),
             ...checkoutClaim,
-          }, MATRIX_CARD_TRIAL_DAYS)
+          }, cardTrialDays)
         : claimCheckoutAttempt(options.db, {
             id: randomUUID(),
             ...checkoutClaim,
@@ -472,6 +478,7 @@ export function createBillingRoutes(options: {
       const currentTime = now();
       const query = BillingStatusQuerySchema.safeParse(c.req.query());
       if (!query.success) return c.json({ error: 'Invalid request' }, 400);
+      const runtimeSlot = query.data.runtimeSlot ?? 'primary';
       const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
       let stripeEntitlement = parseBillingEntitlementRecord(state.entitlement);
       if (query.data.runtimeSlot) {
@@ -506,11 +513,18 @@ export function createBillingRoutes(options: {
         now: currentTime,
       });
       const access = getRuntimeAccessDecision(entitlement, currentTime);
+      const trialsEnabledForSlot = env.MATRIX_CARD_TRIALS_ENABLED === 'true'
+        && runtimeSlot === 'primary';
+      const activeAttempt = await getActiveCheckoutAttempt(options.db, clerkUserId, runtimeSlot);
+      const offerEligible = trialsEnabledForSlot
+        ? await isCardTrialOfferEligible(options.db, clerkUserId)
+        : false;
+      const reservedTrialDays = runtimeSlot === 'primary'
+        ? activeAttempt?.trialPeriodDays ?? null
+        : null;
       const trialOffer = {
-        eligible: env.MATRIX_CARD_TRIALS_ENABLED === 'true'
-          && (query.data.runtimeSlot ?? 'primary') === 'primary'
-          && await isCardTrialOfferEligible(options.db, clerkUserId),
-        durationDays: MATRIX_CARD_TRIAL_DAYS,
+        eligible: reservedTrialDays !== null || (offerEligible && !activeAttempt),
+        durationDays: reservedTrialDays ?? cardTrialDays,
       };
       return c.json({ entitlement, access, trialOffer }, 200);
     } catch (err: unknown) {
@@ -777,6 +791,16 @@ export function createBillingRoutes(options: {
   });
 
   return app;
+}
+
+function resolveCardTrialDays(env: NodeJS.ProcessEnv): number {
+  const configured = env.MATRIX_CARD_TRIAL_DAYS;
+  if (configured === undefined) return MATRIX_CARD_TRIAL_DAYS;
+  const parsed = MatrixCardTrialDaysSchema.safeParse(configured);
+  if (!parsed.success) {
+    throw new Error('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30');
+  }
+  return parsed.data;
 }
 
 function resolvePriceId(
