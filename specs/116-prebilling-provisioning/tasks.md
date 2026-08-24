@@ -102,8 +102,8 @@
 - [x] T030 Verify public-safe documentation requirements and operator boundaries in `specs/116-prebilling-provisioning/quickstart.md`; keep the separate `FinnaAI/matrix-os-site` PR deferred until implementation wording is stable
 - [x] T031 Run `bun run typecheck`, `bun run check:patterns:diff`, focused platform/shell tests, `bun run test`, `bun run test:coverage`, `bun run build:shell:production`, and `pnpm dlx react-doctor@latest .`
 - [x] T032 Perform the structured mechanical, trust-boundary, atomicity/failure-mode, runtime-contract, and paid-beta launch-readiness review against all changed files documented in `docs/dev/review-pipeline.md`
-- [ ] T033 Confirm every checklist/task is complete and the aggregate diff stays below 3,000 additions/50 files in `specs/116-prebilling-provisioning/tasks.md`
-- [ ] T034 Push the Nima-Naderi-authored branch, open one Conventional Commit PR with required invariants, monitor current-head feedback to trusted Greptile 5/5, add `ready-for-ci`, and wait for label-triggered CI
+- [x] T033 Confirm every checklist/task is complete and the aggregate diff stays below 3,000 additions/50 files in `specs/116-prebilling-provisioning/tasks.md`
+- [x] T034 Push the Nima-Naderi-authored branch, open one Conventional Commit PR with required invariants, monitor current-head feedback to trusted Greptile 5/5, add `ready-for-ci`, and wait for label-triggered CI
 
 ---
 
