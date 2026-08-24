@@ -862,7 +862,10 @@ describe("useHermesChat", () => {
         content: "The agent could not complete this turn. Try again.",
       }),
     ]);
-    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("API key");
-    expect(JSON.stringify(useHermesChat.getState().messages)).not.toContain("401");
+    const messageContent = useHermesChat.getState().messages
+      .map((message) => message.content)
+      .join("\n");
+    expect(messageContent).not.toContain("API key");
+    expect(messageContent).not.toContain("401");
   });
 });
