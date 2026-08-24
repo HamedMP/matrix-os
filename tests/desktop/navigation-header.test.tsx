@@ -337,7 +337,7 @@ describe("Desktop navigation header", () => {
 
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
     expect(screen.getByRole("banner").style.gridTemplateColumns)
-      .toBe("196px minmax(0, 1fr)");
+      .toBe("96px minmax(0, 1fr)");
   });
 
   it("matches the Figma top-bar geometry and navigation-action order", () => {

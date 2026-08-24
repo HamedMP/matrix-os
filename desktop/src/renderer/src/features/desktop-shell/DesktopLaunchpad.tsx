@@ -29,7 +29,7 @@ export default function DesktopLaunchpad({
       aria-hidden={!open}
       inert={!open}
       data-testid="app-launcher-backdrop"
-      className={`absolute inset-0 min-h-0 flex-col backdrop-blur-xl ${open ? "flex" : "hidden"}`}
+      className={`absolute inset-0 m-0 h-full min-h-0 w-full max-h-none max-w-none flex-col border-0 p-0 backdrop-blur-xl ${open ? "flex" : "hidden"}`}
       style={{
         zIndex: DESKTOP_Z_INDEX.nativeDesktopLaunchpad,
         background: "color-mix(in srgb, var(--bg-app) 34%, transparent)",

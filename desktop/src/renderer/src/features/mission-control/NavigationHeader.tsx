@@ -200,7 +200,7 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
         zIndex: DESKTOP_Z_INDEX.chrome,
         height: "var(--titlebar-height)",
         gridTemplateColumns: nativeDesktop
-          ? "196px minmax(0, 1fr)"
+          ? "96px minmax(0, 1fr)"
           : "var(--sidebar-expanded-width) minmax(0, 1fr)",
         background: "var(--bg-sunken)",
       }}

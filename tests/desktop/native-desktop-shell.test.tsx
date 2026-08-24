@@ -324,7 +324,14 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Apps" })).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
 
-    expect(screen.getByRole("dialog", { name: "App launcher" })).toBeTruthy();
+    const launcher = screen.getByRole("dialog", { name: "App launcher" });
+    expect(launcher.className).toContain("h-full");
+    expect(launcher.className).toContain("w-full");
+    expect(launcher.className).toContain("max-h-none");
+    expect(launcher.className).toContain("max-w-none");
+    expect(launcher.className).toContain("m-0");
+    expect(launcher.className).toContain("border-0");
+    expect(launcher.className).toContain("p-0");
     expect(useTabs.getState().tabs.some((tab) => tab.kind === "apps")).toBe(false);
     expect(screen.queryByRole("dialog", { name: "Apps window" })).toBeNull();
 
