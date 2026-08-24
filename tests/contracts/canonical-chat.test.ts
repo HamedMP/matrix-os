@@ -162,6 +162,16 @@ describe("canonical Chat contracts", () => {
       ...activity,
       providerPayload: { stderr: "secret" },
     }).success).toBe(false);
+    expect(CanonicalChatRunActivitySchema.safeParse({
+      id: "activity_unsafe_output",
+      chatId: "chat_demo",
+      runId: "run_demo",
+      occurredAt: now,
+      type: "tool.output",
+      toolCallId: "tool_1",
+      text: "Postgres failed at /home/matrix/private",
+      truncated: false,
+    }).success).toBe(false);
     expect(CanonicalChatSafeErrorSchema.safeParse({
       code: "run_failed",
       safeMessage: "Postgres failed at /home/matrix/private",

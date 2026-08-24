@@ -147,6 +147,26 @@ export function createCanonicalMessagePartsFixture(): CanonicalChatMessagePart[]
   ];
 }
 
+export function createCanonicalRunActivitiesFixture(): CanonicalChatRunActivity[] {
+  const base = { chatId: "chat_fixture_activity", runId: "run_fixture_activity", occurredAt: now };
+  return [
+    { ...base, id: "activity_run", type: "run.status", status: "running" },
+    { ...base, id: "activity_turn", type: "turn.status", turnId: "cturn_fixture_activity", status: "running" },
+    { ...base, id: "activity_delta", type: "assistant.delta", messageId: "msg_fixture_activity", delta: "Working." },
+    { ...base, id: "activity_output", type: "tool.output", toolCallId: "tool_fixture", text: "Tool output ready.", truncated: false },
+    { ...base, id: "activity_tool", type: "tool.progress", toolCallId: "tool_fixture", label: "Reading", status: "running" },
+    { ...base, id: "activity_review", type: "review.ready", reviewId: "review_fixture", summary: { changedFileCount: 1, additions: 2, deletions: 0, partial: false } },
+    { ...base, id: "activity_terminal", type: "terminal.bound", terminalSessionId: "terminal_fixture" },
+    { ...base, id: "activity_error", type: "run.error", error: { code: "run_failed", safeMessage: "The Run stopped safely.", retryable: true, recoveryActions: ["retry"] } },
+    { ...base, id: "activity_approval_request", type: "approval.requested", approvalId: "approval_fixture", title: "Apply changes", risk: "low" },
+    { ...base, id: "activity_approval_result", type: "approval.resolved", approvalId: "approval_fixture", decision: "approve" },
+    { ...base, id: "activity_input_request", type: "input.requested", requestId: "request_fixture", title: "Choose an option" },
+    { ...base, id: "activity_input_result", type: "input.resolved", requestId: "request_fixture" },
+    { ...base, id: "activity_resource", type: "resource.changed", resourceId: "resource_fixture", resourceKind: "file", changeKind: "updated" },
+    { ...base, id: "activity_message", type: "message.committed", messageId: "msg_fixture_activity", seq: 1 },
+  ];
+}
+
 export function createCanonicalInspectorFixture(
   state: typeof CANONICAL_INSPECTOR_FIXTURE_STATES[number],
 ): CanonicalChatInspectorProjection {

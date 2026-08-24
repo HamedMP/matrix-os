@@ -214,21 +214,36 @@ export const CanonicalChatSnapshotSchema = z.object({
   });
   snapshot.turns.forEach((turn, index) => {
     const inputMessage = snapshot.messages.find((message) => message.id === turn.inputMessageId);
-    if (inputMessage === undefined || (inputMessage.turnId !== undefined && inputMessage.turnId !== turn.id)) {
+    if (inputMessage === undefined || inputMessage.role !== "user" || inputMessage.turnId !== turn.id) {
       ctx.addIssue({ code: "custom", path: ["turns", index, "inputMessageId"], message: "Turn input message is not in the snapshot" });
+    }
+    if (!snapshot.runs.some((run) => run.turnId === turn.id)) {
+      ctx.addIssue({ code: "custom", path: ["turns", index], message: "Turn has no Run attempt in the snapshot" });
     }
   });
   snapshot.messages.forEach((message, index) => {
     if (message.turnId !== undefined && !snapshot.turns.some((turn) => turn.id === message.turnId)) {
       ctx.addIssue({ code: "custom", path: ["messages", index, "turnId"], message: "Message Turn is not in the snapshot" });
     }
-    if (message.runId !== undefined && !snapshot.runs.some((run) => run.id === message.runId)) {
-      ctx.addIssue({ code: "custom", path: ["messages", index, "runId"], message: "Message Run is not in the snapshot" });
+    if (message.runId !== undefined) {
+      const run = snapshot.runs.find((candidate) => candidate.id === message.runId);
+      if (run === undefined) {
+        ctx.addIssue({ code: "custom", path: ["messages", index, "runId"], message: "Message Run is not in the snapshot" });
+      } else if (message.turnId !== run.turnId) {
+        ctx.addIssue({ code: "custom", path: ["messages", index, "turnId"], message: "Message Run belongs to another Turn" });
+      }
     }
   });
   snapshot.activities.forEach((activity, index) => {
-    if (!snapshot.runs.some((run) => run.id === activity.runId)) {
+    const run = snapshot.runs.find((candidate) => candidate.id === activity.runId);
+    if (run === undefined) {
       ctx.addIssue({ code: "custom", path: ["activities", index, "runId"], message: "Activity Run is not in the snapshot" });
+    } else if (activity.type === "turn.status") {
+      if (!snapshot.turns.some((turn) => turn.id === activity.turnId)) {
+        ctx.addIssue({ code: "custom", path: ["activities", index, "turnId"], message: "Activity Turn is not in the snapshot" });
+      } else if (activity.turnId !== run.turnId) {
+        ctx.addIssue({ code: "custom", path: ["activities", index, "turnId"], message: "Activity Run belongs to another Turn" });
+      }
     }
   });
   const inspectorRun = snapshot.inspector.run;
@@ -238,6 +253,12 @@ export const CanonicalChatSnapshotSchema = z.object({
       ctx.addIssue({ code: "custom", path: ["inspector", "run", "runId"], message: "Inspector Run is not in the snapshot" });
     } else if (run.status !== inspectorRun.status) {
       ctx.addIssue({ code: "custom", path: ["inspector", "run", "status"], message: "Inspector Run status mismatch" });
+    } else if (run.driverKind !== inspectorRun.driverKind) {
+      ctx.addIssue({ code: "custom", path: ["inspector", "run", "driverKind"], message: "Inspector Driver mismatch" });
+    } else if (run.instanceId !== inspectorRun.instanceId) {
+      ctx.addIssue({ code: "custom", path: ["inspector", "run", "instanceId"], message: "Inspector Instance mismatch" });
+    } else if (run.selection.model !== inspectorRun.model) {
+      ctx.addIssue({ code: "custom", path: ["inspector", "run", "model"], message: "Inspector model mismatch" });
     }
   }
   const inspectorChanges = snapshot.inspector.changes;

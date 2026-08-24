@@ -409,7 +409,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("tool.output"),
     toolCallId: canonicalReferenceId(128),
-    text: canonicalBoundedText(4_000, 16 * 1024),
+    text: canonicalSafeErrorText(4_000, 16 * 1024),
     truncated: z.boolean(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({

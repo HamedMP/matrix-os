@@ -10,6 +10,7 @@ import {
   type CanonicalProviderDriverKind,
 } from "#canonical-chat-provider";
 import { CanonicalChatSummarySchema } from "#canonical-chat-surface";
+import { canonicalSafeErrorText } from "#canonical-chat-primitives";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "#agent-thread-contracts";
 import type {
   KernelConversationHistoryResponse,
@@ -17,6 +18,7 @@ import type {
 } from "#kernel-conversations";
 
 const LEGACY_SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/;
+const CanonicalToolOutputTextSchema = canonicalSafeErrorText(4_000, 16 * 1024);
 
 type LegacyThreadStatus = AgentThreadSnapshot["thread"]["status"];
 type LegacyThreadAttention = AgentThreadSnapshot["thread"]["attention"];
@@ -217,12 +219,13 @@ function activityFromEvent(input: {
     };
   }
   if (event.type === "tool.output") {
+    const safeText = CanonicalToolOutputTextSchema.safeParse(event.text);
     return {
       ...base,
       type: "tool.output",
       toolCallId: event.toolCallId,
-      text: event.text,
-      truncated: event.truncated ?? false,
+      text: safeText.success ? safeText.data : "Tool output is unavailable.",
+      truncated: safeText.success ? (event.truncated ?? false) : true,
     };
   }
   if (event.type === "approval.requested") {
@@ -347,6 +350,14 @@ export function mapAgentThreadFromLegacyContracts(input: {
 
   const messages = ordered.map((entry, index): CanonicalChatMessage => {
     if (entry.kind === "user") {
+      const attachments: CanonicalChatMessage["parts"] = (entry.event.attachments ?? []).map((attachment) => ({
+        type: "attachment_reference",
+        attachmentId: attachment.id,
+        kind: attachment.kind === "log_excerpt" ? "structured_ref" : attachment.kind,
+        label: attachment.label,
+        ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
+        ...(attachment.sizeBytes === undefined ? {} : { sizeBytes: attachment.sizeBytes }),
+      }));
       return {
         id: legacyMessageId("thread", index),
         chatId,
@@ -354,7 +365,7 @@ export function mapAgentThreadFromLegacyContracts(input: {
         role: "user",
         state: "committed",
         turnId: entry.context.turnId,
-        parts: [{ type: "text", text: entry.event.text }],
+        parts: [{ type: "text", text: entry.event.text }, ...attachments],
         createdAt: entry.event.occurredAt,
       };
     }
@@ -381,7 +392,8 @@ export function mapAgentThreadFromLegacyContracts(input: {
     }))
     .filter((activity): activity is CanonicalChatRunActivity => activity !== null);
   const status = canonicalRunStatus(snapshot.thread.status);
-  const bindingContext = firstLegacyContext ?? fallbackContext;
+  const bindingContext = firstLegacyContext
+    ?? (events.some((event) => event.type === "user.message") ? fallbackContext : undefined);
 
   return CanonicalChatCompatibilityProjectionSchema.parse({
     source: { kind: "coding_agent_thread", id: snapshot.thread.id },
@@ -395,8 +407,10 @@ export function mapAgentThreadFromLegacyContracts(input: {
       messageCount: messages.length,
       ...(messages.length === 0 ? {} : { lastMessagePreview: snapshot.thread.title }),
       currentSelection: { instanceId, model: input.model },
-      providerBinding: { driverKind, instanceId, lockedAtTurnId: bindingContext.turnId },
-      ...(isActiveStatus(status) ? {
+      ...(bindingContext === undefined ? {} : {
+        providerBinding: { driverKind, instanceId, lockedAtTurnId: bindingContext.turnId },
+      }),
+      ...(bindingContext !== undefined && isActiveStatus(status) ? {
         activeRun: { runId: currentContext.runId, turnId: currentContext.turnId, status },
       } : {}),
       createdAt: snapshot.thread.createdAt,

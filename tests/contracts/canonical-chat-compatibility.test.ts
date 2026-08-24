@@ -105,6 +105,14 @@ describe("canonical Chat compatibility mappers", () => {
             text: "Implement the shared contracts.",
             clientRequestId: "req_legacy",
             turnId: "turn_legacy",
+            attachments: [{
+              id: "attachment_legacy",
+              kind: "file",
+              label: "contract.ts",
+              path: "packages/contracts/src/index.ts",
+              mimeType: "text/plain",
+              sizeBytes: 512,
+            }],
           },
           {
             eventId: "evt_delta",
@@ -186,6 +194,14 @@ describe("canonical Chat compatibility mappers", () => {
       { type: "text", text: "Implement the shared contracts." },
       { type: "text", text: "Starting with tests." },
     ]);
+    expect(projection.messages[0]?.parts[1]).toEqual({
+      type: "attachment_reference",
+      attachmentId: "attachment_legacy",
+      kind: "file",
+      label: "contract.ts",
+      mimeType: "text/plain",
+      sizeBytes: 512,
+    });
     expect(projection.messages.every((message) => message.turnId === "cturn_legacy_1")).toBe(true);
     expect(projection.chat.providerBinding?.lockedAtTurnId).toBe("cturn_legacy_1");
     expect(projection.activities.map((activity) => activity.type)).toEqual([
@@ -263,5 +279,50 @@ describe("canonical Chat compatibility mappers", () => {
       ["terminal.bound", "run_legacy_2"],
       ["run.error", "run_legacy_2"],
     ]);
+
+    const unsafeOutput = JSON.parse(JSON.stringify(thread));
+    unsafeOutput.events.items[5].text = "Postgres failed at /home/matrix/private";
+    const safeProjection = mapAgentThreadToCanonicalChatProjection({
+      chatId: "chat_two_turns",
+      ownerScope: { type: "personal", ownerId: "user_demo" },
+      instanceId: "codex_primary",
+      model: "gpt-5.6-sol",
+      driverKind: "codex",
+      turnId: "cturn_fallback",
+      runId: "run_fallback",
+      snapshot: unsafeOutput,
+    });
+    expect(JSON.stringify(safeProjection)).not.toContain("/home/matrix/private");
+    expect(safeProjection.activities.find((activity) => activity.type === "tool.output")).toMatchObject({
+      text: "Tool output is unavailable.",
+      truncated: true,
+    });
+  });
+
+  it("keeps an empty queued coding thread as an unbound draft", () => {
+    const thread = AgentThreadSnapshotSchema.parse({
+      thread: {
+        id: "thread_empty",
+        providerId: "codex",
+        title: "Empty draft",
+        status: "queued",
+        createdAt: now,
+        updatedAt: now,
+      },
+      events: { items: [], hasMore: false, limit: 200 },
+    });
+    const projection = mapAgentThreadToCanonicalChatProjection({
+      chatId: "chat_empty",
+      ownerScope: { type: "personal", ownerId: "user_demo" },
+      instanceId: "codex_primary",
+      model: "gpt-5.6-sol",
+      driverKind: "codex",
+      turnId: "cturn_fallback",
+      runId: "run_fallback",
+      snapshot: thread,
+    });
+
+    expect(projection.chat.providerBinding).toBeUndefined();
+    expect(projection.chat.activeRun).toBeUndefined();
   });
 });
