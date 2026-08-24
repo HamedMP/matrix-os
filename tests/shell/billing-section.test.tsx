@@ -503,6 +503,8 @@ describe("BillingSection", () => {
     expect(layout.children).toHaveLength(2);
     expect(layout.children[0]).toBe(mainColumn);
     expect(layout.children[1]).toBe(summary);
+    expect(layout.className).toContain("lg:grid-cols-[minmax(0,1fr)_360px]");
+    expect(layout.className).toContain("lg:items-start");
     expect(mainColumn.contains(heading)).toBe(true);
   });
 
