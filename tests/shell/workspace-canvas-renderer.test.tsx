@@ -8,9 +8,6 @@ import { WorkspaceCanvasNode } from "../../shell/src/components/canvas/Workspace
 
 const terminalPaneSpy = vi.fn();
 
-vi.mock("@tldraw/tldraw", () => ({
-  Tldraw: () => <div data-testid="mock-tldraw" />,
-}));
 vi.mock("../../shell/src/components/terminal/TerminalPane.js", () => ({
   TerminalPane: (props: unknown) => {
     terminalPaneSpy(props);
