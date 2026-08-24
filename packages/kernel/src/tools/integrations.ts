@@ -1,3 +1,5 @@
+import { wrapExternalContent } from "../security/external-content.js";
+
 const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const API_TIMEOUT_MS = 10_000;
 const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
@@ -265,7 +267,12 @@ export async function callServiceHandler(
     }
 
     const data = await res.json();
-    return textResult(JSON.stringify(data, null, 2));
+    return textResult(
+      wrapExternalContent(JSON.stringify(data, null, 2), {
+        source: "api",
+        includeWarning: true,
+      }),
+    );
   } catch (err: unknown) {
     console.error("[integrations] call_service error:", err instanceof Error ? err.message : err);
     return textResult("Integration service is temporarily unavailable. Please try again later.");

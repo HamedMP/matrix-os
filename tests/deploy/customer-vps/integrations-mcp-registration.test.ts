@@ -40,7 +40,7 @@ describe("customer VPS integrations MCP wiring", () => {
     await expect(access(registrationPath, constants.X_OK)).resolves.toBeUndefined();
   });
 
-  it("runs registration after optional agents are installed and during gateway boot", async () => {
+  it("runs registration after optional agents are installed without blocking gateway boot", async () => {
     const developerTools = await readFile("distro/customer-vps/host-bin/matrix-install-developer-tools", "utf8");
     const hermes = await readFile("distro/customer-vps/host-bin/matrix-install-hermes", "utf8");
     const openclaw = await readFile("distro/customer-vps/host-bin/matrix-install-openclaw", "utf8");
@@ -49,7 +49,7 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(developerTools).toContain("matrix-register-integrations-mcp coding-agents");
     expect(hermes).toContain("matrix-register-integrations-mcp hermes");
     expect(openclaw).toContain("matrix-register-integrations-mcp openclaw");
-    expect(gateway).toContain("matrix-register-integrations-mcp all");
+    expect(gateway).not.toContain("matrix-register-integrations-mcp all");
   });
 
   it("reconciles Codex, Claude, and Hermes registrations on boot and bundle updates", async () => {

@@ -92,7 +92,10 @@ describe("Matrix integrations MCP server", () => {
         }),
       }),
     );
-    expect((result.content[0] as { type: "text"; text: string }).text).toContain('"m1"');
+    const text = (result.content[0] as { type: "text"; text: string }).text;
+    expect(text).toContain('"m1"');
+    expect(text).toContain("<<<EXTERNAL_UNTRUSTED_CONTENT>>>");
+    expect(text).toContain("CAUTION: The following content is from an untrusted external source.");
 
     await client.close();
     await server.close();
