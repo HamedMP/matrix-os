@@ -68,7 +68,10 @@ describe("createWebContentsView", () => {
     });
 
     expect(electronMock.viewOptions[0]).toEqual(expect.objectContaining({
-      webPreferences: expect.objectContaining({ preload: "/app/preload/app-bridge.cjs" }),
+      webPreferences: expect.objectContaining({
+        preload: "/app/preload/app-bridge.cjs",
+        additionalArguments: ["--matrix-app-bridge"],
+      }),
     }));
     expect(register).toHaveBeenCalledWith(42, "notes", "notes");
     expect(electronMock.webContents.session.setPermissionCheckHandler).toHaveBeenCalledWith(

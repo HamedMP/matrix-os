@@ -30,12 +30,15 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })],
     build: {
       rollupOptions: {
-        input: {
-          index: resolve(__dirname, "src/preload/index.ts"),
-          "app-bridge": resolve(__dirname, "src/preload/app-bridge.ts"),
+        // A sandboxed Electron preload cannot require sibling files. Keep the
+        // shell and app bridge behind one entry so Rollup emits no shared
+        // chunks that Chromium's restricted preload loader cannot resolve.
+        input: resolve(__dirname, "src/preload/index.ts"),
+        output: {
+          format: "cjs",
+          entryFileNames: "index.cjs",
+          inlineDynamicImports: true,
         },
-        // sandbox:true preloads must be CJS; ESM preloads require sandbox off.
-        output: { format: "cjs", entryFileNames: "[name].cjs" },
       },
     },
   },

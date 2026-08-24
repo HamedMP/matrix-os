@@ -26,7 +26,10 @@ export function createWebContentsView(options: {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      ...(options.appBridge ? { preload: options.appBridge.preloadPath } : {}),
+      ...(options.appBridge ? {
+        preload: options.appBridge.preloadPath,
+        additionalArguments: ["--matrix-app-bridge"],
+      } : {}),
     },
   });
 

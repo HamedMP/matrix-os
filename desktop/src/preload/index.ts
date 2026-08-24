@@ -8,6 +8,13 @@ import {
   type EventChannel,
   type InvokeChannel,
 } from "../shared/ipc-contract";
+import {
+  NATIVE_APP_QUERY_CHANNEL,
+  createNativeAppDatabase,
+  type NativeAppQuery,
+} from "../shared/native-app-bridge";
+
+const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge";
 
 const api = {
   invoke(channel: string, payload: unknown): Promise<unknown> {
@@ -34,4 +41,10 @@ const api = {
 
 export type OperatorBridge = typeof api;
 
-contextBridge.exposeInMainWorld("operator", api);
+if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
+  const database = createNativeAppDatabase((query: NativeAppQuery) =>
+    ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
+  contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({ db: database }));
+} else {
+  contextBridge.exposeInMainWorld("operator", api);
+}

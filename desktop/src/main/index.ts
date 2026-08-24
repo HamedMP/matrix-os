@@ -233,7 +233,7 @@ if (!gotLock) {
         getToken: () => auth.getToken(),
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
         appBridge: nativeAppBridge,
-        appPreloadPath: join(__dirname, "../preload/app-bridge.cjs"),
+        appPreloadPath: join(__dirname, "../preload/index.cjs"),
       });
       const updater = createUpdater({
         onAvailable: (version) => {
