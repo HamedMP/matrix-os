@@ -183,6 +183,20 @@ interface LegacyTurnContext {
   runId: string;
 }
 
+function messageStateFromLegacyStatus(
+  status: "accepted" | "running" | "completed" | "failed" | "aborted",
+): CanonicalChatMessage["state"] {
+  if (status === "completed") return "committed";
+  if (status === "failed" || status === "aborted") return "failed";
+  return "pending";
+}
+
+function messageStateFromThreadStatus(status: LegacyThreadStatus): CanonicalChatMessage["state"] {
+  if (status === "completed" || status === "archived") return "committed";
+  if (status === "failed" || status === "aborted" || status === "stale") return "failed";
+  return "pending";
+}
+
 function activityFromEvent(input: {
   event: AgentThreadEvent;
   index: number;
@@ -304,6 +318,7 @@ export function mapAgentThreadFromLegacyContracts(input: {
     context: LegacyTurnContext;
   }>();
   const legacyTurns = new Map<string, LegacyTurnContext>();
+  const messageStateByRun = new Map<string, CanonicalChatMessage["state"]>();
   const fallbackContext = { turnId: input.turnId, runId: input.runId };
   let currentContext = fallbackContext;
   let firstLegacyContext: LegacyTurnContext | undefined;
@@ -325,6 +340,17 @@ export function mapAgentThreadFromLegacyContracts(input: {
     } else if (event.type === "user.message" && event.turnId !== undefined) {
       currentContext = contextForLegacyTurn(event.turnId);
     }
+    if (event.type === "turn.accepted") {
+      messageStateByRun.set(currentContext.runId, "pending");
+    } else if (event.type === "turn.status") {
+      messageStateByRun.set(currentContext.runId, messageStateFromLegacyStatus(event.status));
+    } else if (event.type === "thread.status") {
+      messageStateByRun.set(currentContext.runId, messageStateFromThreadStatus(event.status));
+    } else if (event.type === "thread.completed") {
+      messageStateByRun.set(currentContext.runId, messageStateFromLegacyStatus(event.outcome));
+    } else if (event.type === "thread.error") {
+      messageStateByRun.set(currentContext.runId, "failed");
+    }
     eventContexts.push(currentContext);
     if (event.type === "user.message") ordered.push({ kind: "user", event, context: currentContext });
     if (event.type === "assistant.text.delta") {
@@ -341,14 +367,10 @@ export function mapAgentThreadFromLegacyContracts(input: {
       }
     }
   });
-
-  const assistantMessageState: CanonicalChatMessage["state"] = snapshot.thread.status === "failed"
-    || snapshot.thread.status === "aborted"
-    || snapshot.thread.status === "stale"
-    ? "failed"
-    : snapshot.thread.status === "completed" || snapshot.thread.status === "archived"
-      ? "committed"
-      : "pending";
+  const currentThreadMessageState = messageStateFromThreadStatus(snapshot.thread.status);
+  if (currentThreadMessageState !== "pending") {
+    messageStateByRun.set(currentContext.runId, currentThreadMessageState);
+  }
 
   const messages = ordered.map((entry, index): CanonicalChatMessage => {
     if (entry.kind === "user") {
@@ -377,7 +399,7 @@ export function mapAgentThreadFromLegacyContracts(input: {
       chatId,
       seq: index + 1,
       role: "assistant",
-      state: assistantMessageState,
+      state: messageStateByRun.get(entry.context.runId) ?? "pending",
       turnId: entry.context.turnId,
       runId: entry.context.runId,
       parts: [{ type: "text", text: value.chunks.join("") }],

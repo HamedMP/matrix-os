@@ -245,9 +245,13 @@ describe("canonical Chat compatibility mappers", () => {
         items: [
           { ...base, eventId: "evt_accept_1", type: "turn.accepted", turnId: "turn_one", clientRequestId: "req_one", acceptedAt: now },
           { ...base, eventId: "evt_user_1", type: "user.message", messageId: "user_one", text: "First", clientRequestId: "req_one", turnId: "turn_one" },
+          { ...base, eventId: "evt_delta_1", type: "assistant.text.delta", messageId: "assistant_one", delta: "First result" },
+          { ...base, eventId: "evt_completed_1", type: "assistant.text.completed", messageId: "assistant_one" },
           { ...base, eventId: "evt_status_1", type: "turn.status", turnId: "turn_one", status: "completed" },
           { ...base, eventId: "evt_accept_2", type: "turn.accepted", turnId: "turn_two", clientRequestId: "req_two", acceptedAt: now },
           { ...base, eventId: "evt_user_2", type: "user.message", messageId: "user_two", text: "Second", clientRequestId: "req_two", turnId: "turn_two" },
+          { ...base, eventId: "evt_delta_2", type: "assistant.text.delta", messageId: "assistant_two", delta: "Second partial" },
+          { ...base, eventId: "evt_completed_2", type: "assistant.text.completed", messageId: "assistant_two" },
           { ...base, eventId: "evt_output_2", type: "tool.output", toolCallId: "tool_two", text: "Bounded output", truncated: true },
           { ...base, eventId: "evt_review_2", type: "review.ready", reviewId: "review_two", summary: { changedFileCount: 1, additions: 3, deletions: 1, partial: false } },
           { ...base, eventId: "evt_terminal_2", type: "terminal.bound", terminalSessionId: "terminal_two" },
@@ -271,7 +275,13 @@ describe("canonical Chat compatibility mappers", () => {
 
     expect(projection.messages.map((message) => message.turnId)).toEqual([
       "cturn_legacy_1",
+      "cturn_legacy_1",
       "cturn_legacy_2",
+      "cturn_legacy_2",
+    ]);
+    expect(projection.messages.filter((message) => message.role === "assistant").map((message) => message.state)).toEqual([
+      "committed",
+      "failed",
     ]);
     expect(projection.chat.providerBinding?.lockedAtTurnId).toBe("cturn_legacy_1");
     expect(projection.activities.slice(-4).map((activity) => [activity.type, activity.runId])).toEqual([
@@ -282,7 +292,8 @@ describe("canonical Chat compatibility mappers", () => {
     ]);
 
     const unsafeOutput = JSON.parse(JSON.stringify(thread));
-    unsafeOutput.events.items[5].text = "Postgres failed at /home/matrix/private";
+    const unsafeOutputEvent = unsafeOutput.events.items.find((event: { type: string }) => event.type === "tool.output");
+    unsafeOutputEvent.text = "Postgres failed at /home/matrix/private";
     const safeProjection = mapAgentThreadToCanonicalChatProjection({
       chatId: "chat_two_turns",
       ownerScope: { type: "personal", ownerId: "user_demo" },
@@ -309,7 +320,8 @@ describe("canonical Chat compatibility mappers", () => {
       "credential=supersecret",
     ]) {
       const unsafeCredential = JSON.parse(JSON.stringify(thread));
-      unsafeCredential.events.items[5].text = unsafeText;
+      const unsafeCredentialEvent = unsafeCredential.events.items.find((event: { type: string }) => event.type === "tool.output");
+      unsafeCredentialEvent.text = unsafeText;
       const credentialProjection = mapAgentThreadToCanonicalChatProjection({
         chatId: "chat_two_turns",
         ownerScope: { type: "personal", ownerId: "user_demo" },
