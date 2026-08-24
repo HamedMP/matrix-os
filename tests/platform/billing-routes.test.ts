@@ -1413,6 +1413,54 @@ describe('platform billing routes', () => {
     ]);
   });
 
+  it('keeps three-day renewal grace when Stripe reports periods on subscription items', async () => {
+    const trialStart = Date.parse('2026-05-23T00:00:00.000Z') / 1000;
+    const trialEnd = Date.parse('2026-05-30T00:00:00.000Z') / 1000;
+    const renewalStart = Date.parse('2026-06-30T00:00:00.000Z') / 1000;
+    const renewalEnd = Date.parse('2026-07-30T00:00:00.000Z') / 1000;
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_started', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'trialing',
+        created: trialStart, trialStart, trialEnd,
+      }))
+      .mockReturnValueOnce(invoiceEvent('evt_trial_converted', 'invoice.paid', 'sub_trial'))
+      .mockReturnValueOnce(subscriptionEvent('evt_trial_active', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'active',
+        created: trialEnd + 60, trialStart, trialEnd,
+        omitTopLevelCurrentPeriodEnd: true,
+        itemCurrentPeriodStart: trialEnd,
+        itemCurrentPeriodEnd: renewalStart,
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_renewal_past_due', {
+        subscriptionId: 'sub_trial', runtimeSlot: 'primary', priceId: 'price_builder_monthly', status: 'past_due',
+        created: renewalStart, trialStart, trialEnd,
+        omitTopLevelCurrentPeriodEnd: true,
+        itemCurrentPeriodStart: renewalStart,
+        itemCurrentPeriodEnd: renewalEnd,
+      }));
+    const app = createApp('user_123', env, undefined, () => new Date('2026-07-01T00:00:00.000Z'));
+
+    for (let index = 0; index < 4; index += 1) {
+      const response = await app.request('/billing/webhooks/stripe', {
+        method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const status = await app.request('/billing/status?runtimeSlot=primary');
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({
+      entitlement: {
+        status: 'past_due',
+        gracePeriodEndsAt: '2026-07-03T00:00:00.000Z',
+      },
+      access: {
+        runtimeProxyAllowed: true,
+        reason: 'grace_period',
+      },
+    });
+  });
+
   it('does not let an older paid invoice convert a trial after a newer terminal subscription event', async () => {
     await insertUserMachine(db, {
       machineId: 'machine_trial', clerkUserId: 'user_123', handle: 'trial-user',
@@ -1929,6 +1977,9 @@ function subscriptionEvent(id: string, overrides: {
   status?: string;
   created?: number;
   currentPeriodEnd?: number;
+  omitTopLevelCurrentPeriodEnd?: boolean;
+  itemCurrentPeriodStart?: number;
+  itemCurrentPeriodEnd?: number;
   trialStart?: number;
   trialEnd?: number;
 } = {}): StripeWebhookEvent {
@@ -1941,7 +1992,9 @@ function subscriptionEvent(id: string, overrides: {
         id: overrides.subscriptionId ?? 'sub_123',
         customer: 'cus_123',
         status: overrides.status ?? 'active',
-        current_period_end: overrides.currentPeriodEnd ?? 1_782_432_000,
+        ...(!overrides.omitTopLevelCurrentPeriodEnd
+          ? { current_period_end: overrides.currentPeriodEnd ?? 1_782_432_000 }
+          : {}),
         trial_start: overrides.trialStart,
         trial_end: overrides.trialEnd,
         metadata: {
@@ -1951,7 +2004,12 @@ function subscriptionEvent(id: string, overrides: {
         },
         items: {
           data: [
-            { price: { id: overrides.priceId ?? 'price_max_monthly' }, quantity: 1 },
+            {
+              price: { id: overrides.priceId ?? 'price_max_monthly' },
+              quantity: 1,
+              current_period_start: overrides.itemCurrentPeriodStart,
+              current_period_end: overrides.itemCurrentPeriodEnd,
+            },
             { price: { id: 'price_extra_runtime_monthly' }, quantity: 1 },
           ],
         },
