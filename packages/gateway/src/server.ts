@@ -190,6 +190,7 @@ import {
   IntegrationActionNotImplementedError,
 } from "./integrations/routes.js";
 import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
+import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
 import {
   createPluginRegistry,
@@ -1184,10 +1185,7 @@ export async function createGateway(config: GatewayConfig) {
       body: ["GET", "HEAD"].includes(c.req.method) ? undefined : await c.req.blob(),
     });
 
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: upstream.headers,
-    });
+    return createIntegrationProxyResponse(upstream);
   }
 
   // Platform DB + Integrations (Pipedream Connect)
