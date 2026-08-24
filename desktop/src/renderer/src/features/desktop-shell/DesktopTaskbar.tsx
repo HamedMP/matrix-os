@@ -4,12 +4,14 @@ import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import SurfaceIcon from "./SurfaceIcon";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export default function DesktopTaskbar({
   tabs,
   surfaces,
   activeTabId,
   onOpenApps,
+  launcherOpen,
   onActivate,
   onMinimize,
 }: {
@@ -17,6 +19,7 @@ export default function DesktopTaskbar({
   surfaces: Record<string, DesktopSurface>;
   activeTabId: string | null;
   onOpenApps: () => void;
+  launcherOpen: boolean;
   onActivate: (tabId: string) => void;
   onMinimize: (tabId: string) => void;
 }) {
@@ -29,7 +32,7 @@ export default function DesktopTaskbar({
       aria-label="Running apps"
       className="absolute bottom-3 left-1/2 flex h-[62px] -translate-x-1/2 items-center gap-1.5 rounded-[19px] border px-2.5 backdrop-blur-2xl"
       style={{
-        zIndex: 95,
+        zIndex: DESKTOP_Z_INDEX.nativeDesktopTaskbar,
         minWidth: "76px",
         maxWidth: "calc(100% - 24px)",
         borderColor: "color-mix(in srgb, var(--border-default) 76%, transparent)",
@@ -39,8 +42,9 @@ export default function DesktopTaskbar({
     >
       <button
         type="button"
-        aria-label="Open Apps"
-        title="Apps"
+        aria-label={launcherOpen ? "Close App Launcher" : "Open App Launcher"}
+        aria-pressed={launcherOpen}
+        title="App Launcher"
         className="flex size-11 shrink-0 items-center justify-center rounded-[13px] bg-[var(--accent)] text-[var(--text-on-accent)] shadow-[var(--shadow-1)] transition-transform hover:-translate-y-0.5"
         onClick={onOpenApps}
       >

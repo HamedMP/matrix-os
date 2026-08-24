@@ -6,7 +6,7 @@ import {
   LogOut,
   Settings,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
@@ -76,8 +76,16 @@ export default function AccountMenu({
   const signOut = useConnection((state) => state.signOut);
   const openTab = useTabs((state) => state.openTab);
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
+  const acquireRendererOverlay = useUi((state) => state.acquireRendererOverlay);
+  const releaseRendererOverlay = useUi((state) => state.releaseRendererOverlay);
   const primaryLabel = displayName ?? (handle ? `@${handle}` : "Signed in");
   const secondaryLabel = displayName && handle ? `@${handle}` : null;
+
+  useEffect(() => {
+    if (!open) return;
+    acquireRendererOverlay();
+    return releaseRendererOverlay;
+  }, [acquireRendererOverlay, open, releaseRendererOverlay]);
 
   const openSettings = (section: "account" | "billing") => {
     setOpen(false);

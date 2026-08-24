@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { DESKTOP_Z_INDEX } from "../design/layering";
 
 export type DesktopSurfaceMode = "window" | "tab" | "minimized" | "closed";
 export type DesktopSurfaceRestoreMode = "window" | "tab";
@@ -28,8 +29,6 @@ const MIN_WINDOW_WIDTH = 440;
 const MIN_WINDOW_HEIGHT = 300;
 const MAX_WINDOW_WIDTH = 1_080;
 const MAX_WINDOW_HEIGHT = 760;
-const WINDOW_Z_START = 10;
-const WINDOW_Z_MAX = 80;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
@@ -98,14 +97,24 @@ function nextFocusedState(
 
   let surfaces = state.surfaces;
   let nextZIndex = state.nextZIndex;
-  if (nextZIndex > WINDOW_Z_MAX) {
+  if (nextZIndex > DESKTOP_Z_INDEX.nativeDesktopWindowMax) {
     const ordered = Object.values(surfaces).toSorted((left, right) => left.zIndex - right.zIndex);
+    const availableRange = DESKTOP_Z_INDEX.nativeDesktopWindowMax
+      - DESKTOP_Z_INDEX.nativeDesktopWindowStart;
+    const overflow = Math.max(0, ordered.length - availableRange);
     const normalized = Object.fromEntries(ordered.map((candidate, index) => [
       candidate.tabId,
-      { ...candidate, zIndex: WINDOW_Z_START + index },
+      {
+        ...candidate,
+        // CSS z-index accepts integers. When more retained surfaces exist than
+        // available background layers, older inactive windows may share the
+        // bottom layer; the newly focused surface still receives the unique
+        // maximum below the taskbar/dialog boundary.
+        zIndex: DESKTOP_Z_INDEX.nativeDesktopWindowStart + Math.max(0, index - overflow),
+      },
     ]));
     surfaces = normalized;
-    nextZIndex = WINDOW_Z_START + ordered.length;
+    nextZIndex = DESKTOP_Z_INDEX.nativeDesktopWindowMax;
   }
 
   return {
@@ -123,7 +132,7 @@ function nextFocusedState(
 
 export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
   surfaces: {},
-  nextZIndex: WINDOW_Z_START,
+  nextZIndex: DESKTOP_Z_INDEX.nativeDesktopWindowStart,
 
   reconcileTabs: (tabIds, viewport) => set((state) => {
     const retained = new Set(tabIds);

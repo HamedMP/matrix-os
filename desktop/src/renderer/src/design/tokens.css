@@ -14,6 +14,12 @@
   --bg-active: rgba(67, 78, 63, 0.1);
   --bg-selected: rgba(67, 78, 63, 0.08);
 
+  /* ── Desktop wallpaper mesh (kept in sync with the web shell) ─ */
+  --gradient-deep: #323d2e;
+  --gradient-mid: #9aa48c;
+  --gradient-light: #b8c4a8;
+  --gradient-accent: #6a8a7a;
+
   /* ── Brand surfaces (the dark forest panel) ─────────────────── */
   --forest: #434e3f;
   --forest-deep: #32352e;

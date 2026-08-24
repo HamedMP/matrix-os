@@ -1,7 +1,8 @@
-import { Plus, RotateCcw, X } from "lucide-react";
+import { LayoutGrid, RotateCcw, X } from "lucide-react";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import SurfaceIcon from "./SurfaceIcon";
+import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
 
 export default function DesktopTabStrip({
   tabs,
@@ -26,8 +27,13 @@ export default function DesktopTabStrip({
     <div
       role="tablist"
       aria-label="Workspace tabs"
-      className="absolute inset-x-0 top-0 flex h-[38px] items-end gap-1 overflow-x-auto border-b px-2 pt-1.5"
-      style={{ zIndex: 4, borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
+      className="absolute inset-x-0 top-0 flex items-end gap-1 overflow-x-auto border-b px-2 pt-1.5"
+      style={{
+        zIndex: DESKTOP_Z_INDEX.nativeDesktopTabStrip,
+        height: `${NATIVE_DESKTOP_LAYOUT.tabStripHeight}px`,
+        borderColor: "var(--border-subtle)",
+        background: "var(--bg-sunken)",
+      }}
     >
       {tabbed.map((tab) => {
         const active = tab.id === activeTabId;
@@ -70,11 +76,11 @@ export default function DesktopTabStrip({
       })}
       <button
         type="button"
-        aria-label="Open Apps"
+        aria-label="Open App Launcher"
         className="mb-0.5 flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)]"
         onClick={onOpenApps}
       >
-        <Plus size={14} />
+        <LayoutGrid size={14} />
       </button>
       {activeTabId && surfaces[activeTabId]?.mode === "tab" ? (
         <button

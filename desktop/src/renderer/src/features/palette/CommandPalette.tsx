@@ -10,7 +10,7 @@ import { useShellSessions } from "../../stores/shell-sessions";
 import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
-import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+import { CODING_AGENTS_DESKTOP_WORKSPACE, NATIVE_DESKTOP_WINDOW_SHELL } from "../../lib/feature-flags";
 import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../lib/project-chat";
 import { openProjectOverview } from "../../lib/project-navigation";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
@@ -261,7 +261,14 @@ export default function CommandPalette() {
             ))}
             <PaletteItem icon={<Globe2 size={14} />} label="Open Browser" onSelect={() => run(() => openTab(HOSTED_SHELL_TAB_SPEC))} />
             <PaletteItem icon={<SquareTerminal size={14} />} label="Open Terminal" onSelect={() => run(() => openTab({ kind: "terminals", title: "Terminal" }))} />
-            <PaletteItem icon={<LayoutGrid size={14} />} label="Open Apps" onSelect={() => run(() => openTab({ kind: "apps", title: "Apps" }))} />
+            <PaletteItem
+              icon={<LayoutGrid size={14} />}
+              label="Open Apps"
+              onSelect={() => run(() => {
+                if (NATIVE_DESKTOP_WINDOW_SHELL) useUi.getState().setAppLauncherOpen(true);
+                else openTab({ kind: "apps", title: "Apps" });
+              })}
+            />
             <PaletteItem icon={<Settings size={14} />} label="Open settings" onSelect={() => run(() => openTab({ kind: "settings", title: "Settings" }))} />
           </Command.Group>
 

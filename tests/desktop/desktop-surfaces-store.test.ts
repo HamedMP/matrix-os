@@ -3,6 +3,7 @@ import {
   desktopSurfaceBounds,
   useDesktopSurfaces,
 } from "@desktop/renderer/src/stores/desktop-surfaces";
+import { DESKTOP_Z_INDEX } from "@desktop/renderer/src/design/layering";
 
 beforeEach(() => {
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
@@ -78,5 +79,29 @@ describe("desktop surfaces store", () => {
     expect(useDesktopSurfaces.getState().surfaces.files?.bounds).toEqual(
       desktopSurfaceBounds({ x: -500, y: -400, width: 2_000, height: 1_500 }, { width: 900, height: 620 }),
     );
+  });
+
+  it("keeps every ordinary window and the taskbar below renderer dialogs", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["home", "chat"], { width: 1200, height: 760 });
+    for (let index = 0; index < 80; index += 1) {
+      useDesktopSurfaces.getState().focusSurface(index % 2 === 0 ? "home" : "chat");
+    }
+
+    expect(Math.max(...Object.values(useDesktopSurfaces.getState().surfaces).map((surface) => surface.zIndex)))
+      .toBeLessThanOrEqual(DESKTOP_Z_INDEX.nativeDesktopWindowMax);
+    expect(DESKTOP_Z_INDEX.nativeDesktopWindowMax).toBeLessThan(DESKTOP_Z_INDEX.nativeDesktopTaskbar);
+    expect(DESKTOP_Z_INDEX.nativeDesktopTaskbar).toBeLessThan(DESKTOP_Z_INDEX.dialog);
+    expect(DESKTOP_Z_INDEX.dialog).toBeLessThan(DESKTOP_Z_INDEX.popover);
+  });
+
+  it("keeps normalized window layers as valid integer z-index values", () => {
+    const tabIds = Array.from({ length: 40 }, (_, index) => `tab-${index}`);
+    useDesktopSurfaces.getState().reconcileTabs(tabIds, { width: 1200, height: 760 });
+    useDesktopSurfaces.getState().focusSurface(tabIds[0]!);
+
+    for (const surface of Object.values(useDesktopSurfaces.getState().surfaces)) {
+      expect(Number.isInteger(surface.zIndex)).toBe(true);
+      expect(surface.zIndex).toBeLessThanOrEqual(DESKTOP_Z_INDEX.nativeDesktopWindowMax);
+    }
   });
 });

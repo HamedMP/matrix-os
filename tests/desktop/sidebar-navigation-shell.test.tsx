@@ -347,6 +347,18 @@ describe("Desktop sidebar navigation shell", () => {
     expect(screen.getByRole("menuitem", { name: "Settings" })).toBeTruthy();
   });
 
+  it("balances the renderer overlay lease while the account menu is open", async () => {
+    renderSidebar();
+    const accountTrigger = screen.getByRole("button", { name: "Open account menu" });
+
+    fireEvent.pointerDown(accountTrigger, { button: 0, ctrlKey: false });
+    await screen.findByRole("menu", { name: "Account" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+  });
+
   it("offers the approved account actions and routes them through current behavior", async () => {
     renderSidebar();
     const trigger = screen.getByRole("button", { name: "Open account menu" });

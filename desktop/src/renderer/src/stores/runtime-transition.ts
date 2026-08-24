@@ -122,6 +122,7 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     composerOpen: false,
     paletteOpen: false,
     quickOpenOpen: false,
+    appLauncherOpen: false,
     rendererOverlayCount: 0,
   });
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { TabKind } from "../../stores/tabs";
 import SurfaceIcon, { surfaceIconTab } from "./SurfaceIcon";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export interface DesktopDestination {
   kind: TabKind;
@@ -27,7 +28,7 @@ export default function DesktopIconGrid({ destinations }: { destinations: Deskto
       ref={layerRef}
       aria-label="Desktop apps"
       className="absolute left-5 top-5 grid grid-cols-2 gap-x-3 gap-y-4"
-      style={{ zIndex: 1 }}
+      style={{ zIndex: DESKTOP_Z_INDEX.nativeDesktopIcons }}
     >
       {destinations.map((destination) => {
         const selected = selectedKind === destination.kind;
@@ -56,8 +57,14 @@ export default function DesktopIconGrid({ destinations }: { destinations: Deskto
               <SurfaceIcon tab={surfaceIconTab(destination.kind, destination.label)} size={24} />
             </span>
             <span
-              className="max-w-full truncate rounded px-1 text-[12px] font-medium"
-              style={{ color: "var(--text-primary)", textShadow: "0 1px 0 var(--bg-sunken)" }}
+              data-desktop-icon-label
+              className="max-w-full truncate rounded-md px-1.5 py-0.5 text-[12px] font-medium"
+              style={{
+                color: "#fff",
+                background: "rgba(0, 0, 0, 0.46)",
+                textShadow: "0 1px 2px rgba(0, 0, 0, 0.95), 0 0 3px rgba(0, 0, 0, 0.8)",
+                boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.08)",
+              }}
             >
               {destination.label}
             </span>

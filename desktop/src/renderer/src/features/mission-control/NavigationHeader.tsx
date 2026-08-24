@@ -298,7 +298,7 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
                     style={{ color: "var(--text-primary)" }}
                     onSelect={requestHomeRefresh}
                   >
-                    Refresh Home
+                    Refresh {activeTab.title}
                   </DropdownMenu.Item>
                 ) : null}
                 {activeTab.closable ? (

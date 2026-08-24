@@ -79,6 +79,24 @@ describe("AppLauncher", () => {
     });
   });
 
+  it("notifies a transient launcher after an app opens", async () => {
+    const onLaunch = vi.fn();
+    render(<AppLauncher presentation="launchpad" onLaunch={onLaunch} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Alpha/i }));
+
+    await waitFor(() => expect(onLaunch).toHaveBeenCalledTimes(1));
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "app", slug: "alpha" });
+  });
+
+  it("keeps the focused launcher search field free of a nested focus ring", () => {
+    render(<AppLauncher presentation="launchpad" />);
+
+    const search = screen.getByLabelText("Search apps");
+    expect(search.style.boxShadow).toBe("none");
+    expect(search.style.borderRadius).toBe("0px");
+  });
+
   it("does not show a no-match state before the app catalog loads", () => {
     useApps.setState({
       apps: [],

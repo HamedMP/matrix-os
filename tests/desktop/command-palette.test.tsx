@@ -186,6 +186,15 @@ describe("CommandPalette", () => {
     expect(screen.queryByText("Open Agents")).toBeNull();
   });
 
+  it("opens the native App Launcher without creating an Apps tab", () => {
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Open Apps"));
+
+    expect(useUi.getState().appLauncherOpen).toBe(true);
+    expect(useTabs.getState().openTab).not.toHaveBeenCalledWith({ kind: "apps", title: "Apps" });
+  });
+
   it("opens project results on the sessions overview instead of restoring a stale subview", () => {
     const openTab = vi.fn();
     useTabs.setState({ openTab });

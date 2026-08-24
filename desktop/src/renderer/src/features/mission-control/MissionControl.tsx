@@ -71,6 +71,7 @@ export default function MissionControl() {
       s.paletteOpen ||
       s.composerOpen ||
       s.quickOpenOpen ||
+      s.appLauncherOpen ||
       s.createTaskOpen ||
       s.createProjectOpen ||
       s.rendererOverlayCount > 0,

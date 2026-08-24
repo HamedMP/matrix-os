@@ -77,6 +77,24 @@ describe("EmbedHost", () => {
     });
   });
 
+  it("reports position-only changes when its desktop layout revision changes", async () => {
+    const view = render(<EmbedHost kind="hosted-shell" layoutRevision="window:10:20:300:200" />);
+    await act(async () => {
+      openResolve?.({ embedId: "embed-1", state: "loading" });
+    });
+    vi.mocked(invoke).mockClear();
+    rect = { left: 90, top: 120, width: 300, height: 200 };
+
+    view.rerender(<EmbedHost kind="hosted-shell" layoutRevision="window:90:120:300:200" />);
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:set-bounds", {
+        embedId: "embed-1",
+        bounds: { x: 90, y: 120, width: 300, height: 200 },
+      });
+    });
+  });
+
   it("restores the auth retry prompt when retryAuth returns ok false", async () => {
     vi.mocked(invoke).mockImplementation((channel: string) => {
       if (channel === "embed:open") {

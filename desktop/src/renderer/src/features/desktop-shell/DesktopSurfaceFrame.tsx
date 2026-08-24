@@ -1,5 +1,12 @@
 import { Maximize2, Minus, X } from "lucide-react";
-import { useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
 import type {
   DesktopSurface,
   DesktopSurfaceBounds,
@@ -41,6 +48,9 @@ export default function DesktopSurfaceFrame({
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app";
   const paneActive = interactive && !(isNativeEmbed && overlayOpen);
+  const interactionCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => interactionCleanupRef.current?.(), []);
 
   const startPointerInteraction = useCallback((
     event: ReactPointerEvent,
@@ -50,6 +60,7 @@ export default function DesktopSurfaceFrame({
     const target = event.target;
     if (target instanceof Element && target.closest("button,[role='button'],input,a")) return;
     event.preventDefault();
+    interactionCleanupRef.current?.();
     onFocus();
     const startX = event.clientX;
     const startY = event.clientY;
@@ -61,15 +72,41 @@ export default function DesktopSurfaceFrame({
         ? { ...initial, x: initial.x + deltaX, y: initial.y + deltaY }
         : { ...initial, width: initial.width + deltaX, height: initial.height + deltaY });
     };
+    const captureTarget = event.currentTarget as HTMLElement;
+    const pointerId = event.pointerId;
+    let finished = false;
     const finish = () => {
+      if (finished) return;
+      finished = true;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("blur", finish);
+      captureTarget.removeEventListener("lostpointercapture", finish);
+      if (interactionCleanupRef.current === finish) interactionCleanupRef.current = null;
+      if (typeof captureTarget.hasPointerCapture === "function"
+        && captureTarget.hasPointerCapture(pointerId)) {
+        captureTarget.releasePointerCapture(pointerId);
+      }
     };
+    interactionCleanupRef.current = finish;
+    captureTarget.setPointerCapture?.(pointerId);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", finish);
+    captureTarget.addEventListener("lostpointercapture", finish);
   }, [isWindow, onBoundsChange, onFocus, surface.bounds]);
+
+  if (surface.mode === "closed") return null;
+
+  const layoutRevision = [
+    surface.mode,
+    surface.bounds.x,
+    surface.bounds.y,
+    surface.bounds.width,
+    surface.bounds.height,
+  ].join(":");
 
   const frameStyle: CSSProperties = isWindow ? {
     left: `${surface.bounds.x}px`,
@@ -82,8 +119,8 @@ export default function DesktopSurfaceFrame({
     border: `1px solid ${active ? "var(--border-default)" : "var(--border-subtle)"}`,
     boxShadow: active ? "var(--shadow-3)" : "var(--shadow-2)",
   } : {
-    inset: "38px 0 0",
-    zIndex: 2,
+    inset: `${NATIVE_DESKTOP_LAYOUT.tabStripHeight}px 0 ${NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight}px`,
+    zIndex: DESKTOP_Z_INDEX.nativeDesktopTabSurface,
     display: visible ? "flex" : "none",
     borderRadius: 0,
     border: 0,
@@ -131,16 +168,24 @@ export default function DesktopSurfaceFrame({
         data-testid={`desktop-surface-content-${tab.kind}`}
         className="relative flex min-h-0 flex-1 flex-col"
         inert={!interactive ? true : undefined}
+        style={isNativeEmbed && isWindow ? {
+          paddingRight: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
+          paddingBottom: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
+        } : undefined}
       >
         <TabErrorBoundary tabTitle={tab.title} onClose={onClose}>
-          <TabPane tab={tab} active={paneActive} />
+          <TabPane tab={tab} active={paneActive} layoutRevision={layoutRevision} />
         </TabErrorBoundary>
       </div>
       {isWindow ? (
         <div
           role="separator"
           aria-label={`Resize ${tab.title}`}
-          className="no-drag absolute bottom-0 right-0 size-4 cursor-nwse-resize"
+          className="no-drag absolute bottom-0 right-0 cursor-nwse-resize"
+          style={{
+            width: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
+            height: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`,
+          }}
           onPointerDown={(event) => startPointerInteraction(event, "resize")}
         >
           <span className="absolute bottom-1 right-1 block size-2 border-b border-r" style={{ borderColor: "var(--border-strong)" }} />

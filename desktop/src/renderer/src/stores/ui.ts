@@ -11,6 +11,7 @@ interface UiState {
   composerOpen: boolean;
   paletteOpen: boolean;
   quickOpenOpen: boolean;
+  appLauncherOpen: boolean;
   // Native WebContentsViews always paint above the renderer. Any renderer
   // surface that crosses into an embed must hold one overlay lease so the
   // active embed can detach until that surface closes.
@@ -27,6 +28,7 @@ interface UiState {
   setComposerOpen: (open: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   setQuickOpenOpen: (open: boolean) => void;
+  setAppLauncherOpen: (open: boolean) => void;
   acquireRendererOverlay: () => void;
   releaseRendererOverlay: () => void;
   toggleSidebar: () => void;
@@ -43,6 +45,7 @@ export const useUi = create<UiState>()((set) => ({
   composerOpen: false,
   paletteOpen: false,
   quickOpenOpen: false,
+  appLauncherOpen: false,
   rendererOverlayCount: 0,
   sidebarCollapsed: false,
   homeRefreshRequest: 0,
@@ -54,6 +57,7 @@ export const useUi = create<UiState>()((set) => ({
   setComposerOpen: (open) => set({ composerOpen: open }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setQuickOpenOpen: (open) => set({ quickOpenOpen: open }),
+  setAppLauncherOpen: (open) => set({ appLauncherOpen: open }),
   acquireRendererOverlay: () => set((state) => ({
     rendererOverlayCount: state.rendererOverlayCount + 1,
   })),

@@ -5,7 +5,7 @@ import { appIconUrl, useApps } from "../../stores/apps";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 
-function AppIcon({ url, name }: { url: string | null; name: string }) {
+function AppIcon({ url, name, large = false }: { url: string | null; name: string; large?: boolean }) {
   const [failed, setFailed] = useState(false);
   const prev = useRef<string | null>(null);
   if (prev.current !== url) {
@@ -17,7 +17,7 @@ function AppIcon({ url, name }: { url: string | null; name: string }) {
       <img
         src={url}
         alt=""
-        className="h-11 w-11 rounded-xl object-cover"
+        className={`${large ? "h-16 w-16 rounded-[18px]" : "h-11 w-11 rounded-xl"} object-cover shadow-[var(--shadow-1)]`}
         referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
       />
@@ -25,7 +25,7 @@ function AppIcon({ url, name }: { url: string | null; name: string }) {
   }
   return (
     <div
-      className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-semibold"
+      className={`flex items-center justify-center font-semibold shadow-[var(--shadow-1)] ${large ? "h-16 w-16 rounded-[18px] text-xl" : "h-11 w-11 rounded-xl text-lg"}`}
       style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
     >
       {name.charAt(0).toUpperCase()}
@@ -33,7 +33,13 @@ function AppIcon({ url, name }: { url: string | null; name: string }) {
   );
 }
 
-export default function AppLauncher() {
+export default function AppLauncher({
+  presentation = "surface",
+  onLaunch,
+}: {
+  presentation?: "surface" | "launchpad";
+  onLaunch?: () => void;
+} = {}) {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
@@ -64,8 +70,10 @@ export default function AppLauncher() {
 
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
-  const open = (slug: string, name: string) =>
+  const open = (slug: string, name: string) => {
     openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug, runtimeSlot) ? { icon: appIconUrl(platformHost, slug, runtimeSlot)! } : {}) });
+    onLaunch?.();
+  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (filtered.length === 0) return;
@@ -120,11 +128,19 @@ export default function AppLauncher() {
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 px-6 pt-6 pb-3">
+    <div
+      data-app-launcher-presentation={presentation}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
+      <div className={`shrink-0 px-6 pb-3 ${presentation === "launchpad" ? "mx-auto w-full max-w-2xl pt-10" : "pt-6"}`}>
         <div
-          className="prompt-card flex items-center gap-2 rounded-xl border px-3"
-          style={{ background: "var(--bg-surface)" }}
+          data-launchpad-interactive={presentation === "launchpad" || undefined}
+          className="prompt-card flex items-center gap-2 rounded-xl border px-3 backdrop-blur-2xl"
+          style={{
+            background: presentation === "launchpad"
+              ? "color-mix(in srgb, var(--bg-surface) 72%, transparent)"
+              : "var(--bg-surface)",
+          }}
         >
           <Search size={15} style={{ color: "var(--text-tertiary)" }} />
           <input
@@ -138,31 +154,37 @@ export default function AppLauncher() {
             placeholder="Search apps…"
             aria-label="Search apps"
             className="h-11 w-full bg-transparent text-md outline-none"
-            style={{ color: "var(--text-primary)" }}
+            style={{ color: "var(--text-primary)", boxShadow: "none", borderRadius: 0 }}
           />
         </div>
       </div>
-      <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
+      <div className={`flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-24 ${presentation === "launchpad" ? "mx-auto w-full max-w-6xl" : ""}`}>
         {filtered.length === 0 ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3">
+          <div className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>
             {filtered.map((app, i) => {
               const highlighted = i === activeIndex;
               return (
                 <button
                   key={app.slug}
                   type="button"
-                  className="flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors duration-100"
+                  data-launchpad-interactive={presentation === "launchpad" || undefined}
+                  className={`flex flex-col items-center gap-2 rounded-xl transition-colors duration-100 ${presentation === "launchpad" ? "border border-transparent p-3" : "border p-4"}`}
                   style={{
-                    background: highlighted ? "var(--bg-selected)" : "var(--bg-surface)",
-                    borderColor: highlighted ? "var(--accent)" : "var(--border-subtle)",
+                    background: highlighted
+                      ? "color-mix(in srgb, var(--bg-selected) 78%, transparent)"
+                      : presentation === "launchpad" ? "transparent" : "var(--bg-surface)",
+                    borderColor: highlighted ? "var(--accent)" : presentation === "launchpad" ? "transparent" : "var(--border-subtle)",
                   }}
                   onMouseEnter={() => setActive(i)}
                   onClick={() => open(app.slug, app.name)}
                 >
-                  <AppIcon url={appIconUrl(platformHost, app.slug, runtimeSlot)} name={app.name} />
-                  <span className="w-full truncate text-center text-sm" style={{ color: "var(--text-primary)" }}>
+                  <AppIcon url={appIconUrl(platformHost, app.slug, runtimeSlot)} name={app.name} large={presentation === "launchpad"} />
+                  <span
+                    className="w-full truncate text-center text-sm font-medium"
+                    style={{ color: "var(--text-primary)", textShadow: presentation === "launchpad" ? "0 1px 2px var(--bg-app)" : undefined }}
+                  >
                     {app.name}
                   </span>
                 </button>

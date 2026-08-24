@@ -10,14 +10,21 @@ import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
 import DesktopTabStrip from "./DesktopTabStrip";
 import DesktopTaskbar from "./DesktopTaskbar";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
-
-const TASKBAR_RESERVED_HEIGHT = 86;
+import { NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
+import DesktopBackground from "./DesktopBackground";
+import DesktopLaunchpad from "./DesktopLaunchpad";
+import { useUi } from "../../stores/ui";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
   return {
     width: Math.max(1, window.innerWidth),
-    height: Math.max(1, window.innerHeight - TASKBAR_RESERVED_HEIGHT - 38),
+    height: Math.max(
+      1,
+      window.innerHeight
+        - NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight
+        - NATIVE_DESKTOP_LAYOUT.tabStripHeight,
+    ),
   };
 }
 
@@ -35,6 +42,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const restoreAsWindow = useDesktopSurfaces((state) => state.restoreAsWindow);
   const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const setSurfaceBounds = useDesktopSurfaces((state) => state.setSurfaceBounds);
+  const launcherOpen = useUi((state) => state.appLauncherOpen);
+  const setLauncherOpen = useUi((state) => state.setAppLauncherOpen);
   const [viewport, setViewport] = useState(currentViewport);
   const tabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
 
@@ -76,10 +85,13 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     reconcileAndActivateCurrent();
   }, [reconcileAndActivateCurrent]);
 
-  const openApps = useCallback(() => {
-    openTab({ kind: "apps", title: "Apps" });
-    reconcileAndActivateCurrent();
-  }, [openTab, reconcileAndActivateCurrent]);
+  const toggleApps = useCallback(() => setLauncherOpen(!useUi.getState().appLauncherOpen), [setLauncherOpen]);
+
+  useEffect(() => {
+    for (const tab of tabs) {
+      if (tab.kind === "apps") closeTab(tab.id);
+    }
+  }, [closeTab, tabs]);
 
   const destinations = useMemo<DesktopDestination[]>(() => [
     {
@@ -94,14 +106,13 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       label: "Files",
       open: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
     },
-    { kind: "apps", label: "Apps", open: openApps },
     {
       kind: "plugins",
       label: "Plugins",
       open: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
     },
     { kind: "projects", label: "Projects", open: () => openRoot(openProjectsIndex) },
-  ], [openApps, openRoot, openTab]);
+  ], [openRoot, openTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
     const surfaceState = useDesktopSurfaces.getState().surfaces;
@@ -129,9 +140,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [focusFallback, minimizeSurface]);
 
   const close = useCallback((tab: Tab) => {
+    const wasActive = useTabs.getState().activeTabId === tab.id;
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
-    if (useTabs.getState().activeTabId === tab.id) focusFallback(tab.id);
+    if (wasActive) focusFallback(tab.id);
   }, [closeSurface, closeTab, focusFallback]);
 
   const tabWorkspaceActive = activeSurface?.mode === "tab";
@@ -142,6 +154,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       className="absolute inset-x-0 bottom-0 overflow-hidden"
       style={{ top: "var(--titlebar-height)", background: "inherit" }}
     >
+      <DesktopBackground />
       {!tabWorkspaceActive ? <DesktopIconGrid destinations={destinations} /> : null}
       {tabWorkspaceActive ? (
         <DesktopTabStrip
@@ -154,7 +167,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
             focusTab(tabId);
           }}
           onClose={close}
-          onOpenApps={openApps}
+          onOpenApps={toggleApps}
         />
       ) : null}
       {tabs.map((tab) => {
@@ -179,11 +192,13 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
           />
         );
       })}
+      {launcherOpen ? <DesktopLaunchpad onClose={() => setLauncherOpen(false)} /> : null}
       <DesktopTaskbar
         tabs={tabs}
         surfaces={surfaces}
         activeTabId={activeTabId}
-        onOpenApps={openApps}
+        onOpenApps={toggleApps}
+        launcherOpen={launcherOpen}
         onActivate={activate}
         onMinimize={minimize}
       />

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
@@ -13,11 +13,13 @@ export default function EmbedHost({
   slug,
   active = true,
   refreshRequest,
+  layoutRevision,
 }: {
   kind: "hosted-shell" | "app";
   slug?: string;
   active?: boolean;
   refreshRequest?: number;
+  layoutRevision?: string;
 }) {
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -28,7 +30,7 @@ export default function EmbedHost({
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
 
-  function reportBounds(): void {
+  const reportBounds = useCallback((): void => {
     const id = embedIdRef.current;
     const host = hostRef.current;
     if (!id || !host || !activeRef.current) return;
@@ -42,7 +44,7 @@ export default function EmbedHost({
         height: Math.round(r.height),
       },
     });
-  }
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -115,6 +117,14 @@ export default function EmbedHost({
     if (active) reportBounds();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
+
+  // ResizeObserver sees size changes but not a pure move of the renderer host.
+  // Native desktop surfaces pass their layout identity so position-only drags
+  // also synchronize the main-process WebContentsView bounds.
+  useEffect(() => {
+    if (layoutRevision === undefined) return;
+    reportBounds();
+  }, [layoutRevision, reportBounds]);
 
   useEffect(() => {
     if (refreshRequest === undefined || refreshRequest === lastRefreshRequestRef.current) return;
