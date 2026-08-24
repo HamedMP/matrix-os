@@ -93,6 +93,10 @@ import {
   type ProvisioningPayload,
 } from './customer-vps-provisioning-jobs.js';
 import {
+  bindPrebillingIntentMachine,
+  validatePrebillingProvisioningIntent,
+} from './prebilling-provisioning-store.js';
+import {
   chooseProvisioningImage,
   chooseRecoveryImage,
   fallbackProvisioningImage,
@@ -180,6 +184,11 @@ export interface DeployTarget {
 
 export interface CustomerVpsService {
   provision(input: ProvisionRequest, options?: ProvisionOptions): Promise<ProvisionResponse>;
+  provisionForCheckout(
+    input: ProvisionRequest,
+    prebillingIntentId: string,
+    options?: ProvisionOptions,
+  ): Promise<ProvisionResponse>;
   provisionPreview(input: PreviewProvisionInput): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
@@ -550,13 +559,20 @@ async function assertBillingResizeAllowed(
 
 async function assertMachineProviderMutationAllowed(
   deps: CustomerVpsServiceDeps,
-  machine: Pick<UserMachineRecord, 'clerkUserId' | 'runtimeSlot' | 'provisioningClass'>,
+  machine: Pick<UserMachineRecord,
+    'clerkUserId' | 'runtimeSlot' | 'provisioningClass' | 'activationState' | 'prebillingIntentId'>,
   serverType: string,
   now: Date,
+  authorizationBasis: 'billing_entitlement' | 'prebilling_intent' = 'billing_entitlement',
 ): Promise<void> {
   // Preview authorization is platform/operator scoped and deliberately does
   // not consume or depend on the owner's customer billing entitlement.
   if (machine.provisioningClass === 'preview') return;
+  // The provisioning worker validates the exact intent, selection, machine
+  // binding, and unexpired lease before reaching either provider-create path.
+  if (authorizationBasis === 'prebilling_intent'
+    && machine.activationState === 'awaiting_billing'
+    && machine.prebillingIntentId !== null) return;
   await assertBillingResizeAllowed(deps, machine.clerkUserId, machine.runtimeSlot, serverType, now);
 }
 
@@ -1254,6 +1270,34 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return 'failed';
     }
 
+    if (job.authorizationBasis === 'prebilling_intent') {
+      const intent = job.prebillingIntentId
+        ? await validatePrebillingProvisioningIntent(deps.db, {
+            intentId: job.prebillingIntentId,
+            clerkUserId: row.clerkUserId,
+            runtimeSlot: row.runtimeSlot,
+            serverType: row.serverType ?? deps.config.serverType,
+            regionSlug: `region_${row.location ?? deps.config.location}`,
+            developerTools: row.developerTools,
+            machineId: row.machineId,
+            now: now().toISOString(),
+          })
+        : undefined;
+      if (!intent) {
+        const failedAt = now().toISOString();
+        await failProvisioningJob(deps.db, job.jobId, failedAt, 'authorization_expired');
+        await updateUserMachine(deps.db, row.machineId, {
+          status: 'failed',
+          failureCode: 'authorization_expired',
+          failureAt: failedAt,
+        });
+        if (propagateFailure) {
+          throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+        }
+        return 'failed';
+      }
+    }
+
     let serverIdForCompensation: number | null = null;
     let adoptedExistingServer = false;
     try {
@@ -1385,7 +1429,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         };
       let server = existingServer;
       if (!server) {
-        await assertMachineProviderMutationAllowed(deps, row, createInput.serverType, now());
+        await assertMachineProviderMutationAllowed(
+          deps,
+          row,
+          createInput.serverType,
+          now(),
+          job.authorizationBasis,
+        );
         try {
           if (imageDecision.imageSource === 'snapshot') {
             const selectableSnapshot = await getGoldenSnapshot(deps.db, imageDecision.snapshotId);
@@ -1460,7 +1510,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             targetBundleVersion: imageDecision.targetBundleVersion,
             targetBundleSha256: imageDecision.targetBundleSha256,
           };
-          await assertMachineProviderMutationAllowed(deps, row, createInput.serverType, now());
+          await assertMachineProviderMutationAllowed(
+            deps,
+            row,
+            createInput.serverType,
+            now(),
+            job.authorizationBasis,
+          );
           try {
             server = await deps.hetzner.createServer({
               name: createInput.name,
@@ -1708,6 +1764,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     input: ProvisionRequest | PreviewProvisionRequest,
     provisioningClass: UserMachineProvisioningClass,
     dispatch: NonNullable<ProvisionOptions['dispatch']>,
+    prebillingIntentId?: string,
   ): Promise<ProvisionResponse> {
     const testSnapshotId = provisioningClass === 'preview' && 'testSnapshotId' in input
       ? input.testSnapshotId
@@ -1720,6 +1777,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         ? input.accessClerkUserIds
         : [],
     };
+    const requestServerType = 'serverType' in request ? request.serverType : undefined;
+    const requestLocation = 'location' in request ? request.location : undefined;
     const reconcilePreviewAccess = async (
       db: PlatformDB,
       machine: UserMachineRecord,
@@ -1747,7 +1806,21 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       registrationToken: registration.token,
       postgresPassword,
     }, deps.config.platformSecret);
-    const billingContext = provisioningClass === 'preview'
+    const prebillingIntent = provisioningClass === 'customer' && prebillingIntentId
+      ? await validatePrebillingProvisioningIntent(deps.db, {
+          intentId: prebillingIntentId,
+          clerkUserId: request.clerkUserId,
+          runtimeSlot: request.runtimeSlot,
+          serverType: requestServerType ?? '',
+          regionSlug: `region_${requestLocation ?? deps.config.location}`,
+          developerTools: request.developerTools,
+          now: currentTime.toISOString(),
+        })
+      : undefined;
+    if (prebillingIntentId && !prebillingIntent) {
+      throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+    }
+    const billingContext = provisioningClass === 'preview' || prebillingIntent
       ? null
       : await resolveBillingProvisionContext(deps, deps.db, request, currentTime);
 
@@ -1765,6 +1838,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       && !(provisioningClass === 'preview' && existingBeforeBundleResolve.runtimeSlot !== request.runtimeSlot)
       && (provisioningClass === 'customer' || existingBeforeBundleResolve.provisioningClass === 'preview')
     ) {
+      if (prebillingIntentId && existingBeforeBundleResolve.prebillingIntentId !== prebillingIntentId) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+      }
       const reconciled = await reconcilePreviewAccess(deps.db, existingBeforeBundleResolve);
       const existingJob = await getProvisioningJobByMachineId(deps.db, existingBeforeBundleResolve.machineId);
       if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
@@ -1780,10 +1856,24 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
       // Preview capacity and customer entitlement checks share the owner lock
       // with insertion so concurrent platform instances cannot over-allocate.
-      if (billingContext || provisioningClass === 'preview') {
+      if (billingContext || prebillingIntent || provisioningClass === 'preview') {
         await lockUserMachineProvisioning(trx, request.clerkUserId);
       }
-      const transactionBillingContext = provisioningClass === 'preview'
+      const transactionPrebillingIntent = prebillingIntentId
+        ? await validatePrebillingProvisioningIntent(trx, {
+            intentId: prebillingIntentId,
+            clerkUserId: request.clerkUserId,
+            runtimeSlot: request.runtimeSlot,
+            serverType: requestServerType ?? '',
+            regionSlug: `region_${requestLocation ?? deps.config.location}`,
+            developerTools: request.developerTools,
+            now: currentTime.toISOString(),
+          })
+        : undefined;
+      if (prebillingIntentId && !transactionPrebillingIntent) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+      }
+      const transactionBillingContext = provisioningClass === 'preview' || transactionPrebillingIntent
         ? null
         : await resolveBillingProvisionContext(deps, trx, request, currentTime);
       const existing = await findExistingProvisioningMachine(trx, request, provisioningClass);
@@ -1802,6 +1892,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       let attempt = 1;
       if (existing) {
         if (existing.status !== 'failed') {
+          if (prebillingIntentId && existing.prebillingIntentId !== prebillingIntentId) {
+            throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+          }
           if (testSnapshotId) {
             await reconcilePreviewAccess(trx, existing);
           }
@@ -1867,7 +1960,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           throw billingUpgradeRequired();
         }
       }
-      const serverType = transactionBillingContext?.serverType ?? deps.config.serverType;
+      const serverType = transactionPrebillingIntent?.serverType
+        ?? transactionBillingContext?.serverType
+        ?? deps.config.serverType;
       await insertUserMachine(trx, {
         machineId,
         clerkUserId: request.clerkUserId,
@@ -1884,6 +1979,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         registrationTokenExpiresAt: registration.expiresAt,
         provisionedAt: currentTime.toISOString(),
         attempt,
+        activationState: transactionPrebillingIntent ? 'awaiting_billing' : 'authorized',
+        prebillingIntentId: transactionPrebillingIntent?.id ?? null,
       });
       await enqueueProvisioningJob(trx, {
         jobId,
@@ -1891,7 +1988,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         encryptedPayload,
         availableAt: currentTime.toISOString(),
         createdAt: currentTime.toISOString(),
+        authorizationBasis: transactionPrebillingIntent ? 'prebilling_intent' : 'billing_entitlement',
+        prebillingIntentId: transactionPrebillingIntent?.id ?? null,
       });
+      if (transactionPrebillingIntent && !await bindPrebillingIntentMachine(trx, {
+        intentId: transactionPrebillingIntent.id,
+        machineId,
+        expectedRevision: transactionPrebillingIntent.revision,
+        now: currentTime.toISOString(),
+      })) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+      }
       if (testSnapshotId) {
         const bound = await bindTestSnapshotToPreviewProvisionInTransaction(trx, {
           snapshotId: testSnapshotId,
@@ -1967,6 +2074,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return withLocalProvisionLock(
         `${input.clerkUserId}:${input.runtimeSlot ?? 'primary'}`,
         () => provision(input, 'customer', options?.dispatch ?? 'wait'),
+      );
+    },
+
+    async provisionForCheckout(input, intentId, options) {
+      return withLocalProvisionLock(
+        `${input.clerkUserId}:${input.runtimeSlot ?? 'primary'}`,
+        () => provision(input, 'customer', options?.dispatch ?? 'wait', intentId),
       );
     },
 

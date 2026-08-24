@@ -59,6 +59,8 @@ const ProvisioningJobRowSchema = z.object({
   activation_step: z.enum(['selecting', 'creating', 'created', 'activating', 'registered', 'cleanup_pending', 'fallback_pending']),
   provider_create_action_id: z.coerce.number().int().positive().nullable(),
   fallback_reason: z.string().min(1).max(64).nullable(),
+  authorization_basis: z.enum(['billing_entitlement', 'prebilling_intent']),
+  prebilling_intent_id: z.string().min(1).max(128).nullable(),
 });
 
 export interface ProvisioningJobRecord {
@@ -83,6 +85,8 @@ export interface ProvisioningJobRecord {
   activationStep: 'selecting' | 'creating' | 'created' | 'activating' | 'registered' | 'cleanup_pending' | 'fallback_pending';
   providerCreateActionId: number | null;
   fallbackReason: string | null;
+  authorizationBasis: 'billing_entitlement' | 'prebilling_intent';
+  prebillingIntentId: string | null;
 }
 
 export interface NewProvisioningJob {
@@ -91,6 +95,8 @@ export interface NewProvisioningJob {
   encryptedPayload: string;
   availableAt: string;
   createdAt: string;
+  authorizationBasis?: 'billing_entitlement' | 'prebilling_intent';
+  prebillingIntentId?: string | null;
 }
 
 export interface ProvisioningPayload {
@@ -145,6 +151,8 @@ function mapProvisioningJob(value: unknown): ProvisioningJobRecord {
     activationStep: row.activation_step,
     providerCreateActionId: row.provider_create_action_id,
     fallbackReason: row.fallback_reason,
+    authorizationBasis: row.authorization_basis,
+    prebillingIntentId: row.prebilling_intent_id,
   };
 }
 
@@ -223,6 +231,8 @@ export async function insertProvisioningJob(db: PlatformDB, job: NewProvisioning
     activation_step: 'selecting',
     provider_create_action_id: null,
     fallback_reason: null,
+    authorization_basis: job.authorizationBasis ?? 'billing_entitlement',
+    prebilling_intent_id: job.prebillingIntentId ?? null,
   }).execute();
 }
 

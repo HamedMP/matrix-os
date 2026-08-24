@@ -25,11 +25,11 @@
 **Critical**: This phase blocks all user stories.
 
 - [ ] T004 Write failing public-store tests for intent uniqueness, canonical selections, activation defaults, capacity reservation, and release-once semantics in `tests/platform/prebilling-provisioning.test.ts`
-- [ ] T005 Implement strict off-by-default rollout, lease, count, and cost configuration in `packages/platform/src/prebilling-provisioning-config.ts`
+- [x] T005 Implement strict off-by-default rollout, lease, count, and cost configuration in `packages/platform/src/prebilling-provisioning-config.ts`
 - [ ] T006 Add additive Kysely schema/types for preparation intents, machine activation, provisioning authorization basis, cleanup actions, and capacity buckets in `packages/platform/src/db.ts`
 - [ ] T007 Implement revision-checked, transaction-aware intent/admission/promotion operations in `packages/platform/src/prebilling-provisioning-store.ts`
-- [ ] T008 Refactor the shared machine/job creation seam to accept only the discriminated billing-entitlement or validated-prebilling authorization basis in `packages/platform/src/customer-vps.ts` and `packages/platform/src/customer-vps-provisioning-jobs.ts`
-- [ ] T009 Run `tests/platform/prebilling-provisioning.test.ts` and `tests/platform/customer-vps-provisioning-durability.test.ts`, then refactor while green
+- [x] T008 Refactor the shared machine/job creation seam to accept only the discriminated billing-entitlement or validated-prebilling authorization basis in `packages/platform/src/customer-vps.ts` and `packages/platform/src/customer-vps-provisioning-jobs.ts`
+- [x] T009 Run `tests/platform/prebilling-provisioning.test.ts` and `tests/platform/customer-vps-provisioning-durability.test.ts`, then refactor while green
 
 **Checkpoint**: Commit the flag-off foundation as Nima-Naderi.
 
