@@ -168,7 +168,7 @@ describe("ProviderReadinessNotice", () => {
     ]);
   });
 
-  it("opens the trusted Claude fallback when an older Gateway omits setup actions", async () => {
+  it("refuses a renderer-supplied Claude action when the Gateway omits setup actions", async () => {
     const connectClaudeAction = {
       id: "claude_connect",
       kind: "foreground_terminal" as const,
@@ -201,14 +201,11 @@ describe("ProviderReadinessNotice", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
 
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
-      expect.objectContaining({ cmd: "claude", cwd: "projects" }),
-    ));
-    expect(screen.queryByText("Could not open provider setup. Open Providers settings to continue.")).toBeNull();
-    expect(useTabs.getState().tabs).toEqual([
-      expect.objectContaining({ kind: "terminal", title: "Connect Claude" }),
-    ]);
+    await waitFor(() => expect(screen.getByText(
+      "Could not open provider setup. Open Providers settings to continue.",
+    )).toBeTruthy());
+    expect(api.post).not.toHaveBeenCalled();
+    expect(useTabs.getState().tabs).toEqual([]);
   });
 
   it("rechecks provider readiness after opening a login terminal until the provider is ready", async () => {
@@ -267,6 +264,51 @@ describe("ProviderReadinessNotice", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(onRefresh).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it("starts a fresh bounded recheck cycle after a later successful login launch", async () => {
+    vi.useFakeTimers();
+    const connectClaudeAction = {
+      id: "claude_connect",
+      kind: "foreground_terminal" as const,
+      label: "Connect Claude",
+      command: "claude",
+    };
+    const claudeProvider: AgentProviderSummary = {
+      ...provider,
+      id: "claude",
+      kind: "claude",
+      displayName: "Claude",
+      availability: "auth_required",
+      installStatus: "installed",
+      authStatus: "missing",
+      setupActions: [connectClaudeAction],
+    };
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ProviderReadinessNotice
+        readiness={readiness({
+          state: "auth_required",
+          title: "Connect Claude to continue",
+          description: "Sign in to Claude before sending a message.",
+          action: { kind: "setup", action: connectClaudeAction },
+        })}
+        providers={[claudeProvider]}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    const connectButton = screen.getByRole("button", { name: "Connect Claude" });
+    fireEvent.click(connectButton);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50 * 6_000); });
+    expect(onRefresh).toHaveBeenCalledTimes(50);
+
+    fireEvent.click(connectButton);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+    expect(onRefresh).toHaveBeenCalledTimes(51);
   });
 
   it("executes the current command in a fresh setup session on deliberate retry", async () => {

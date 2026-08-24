@@ -140,7 +140,7 @@ describe("deriveProviderReadiness", () => {
     });
   });
 
-  it("keeps Claude connection recovery available with an older Gateway summary", () => {
+  it("does not invent a Claude connection action when the Gateway omits setup actions", () => {
     expect(deriveProviderReadiness({
       summary: summary([provider({
         id: "claude",
@@ -157,8 +157,8 @@ describe("deriveProviderReadiness", () => {
       state: "unverified",
       blocked: true,
       title: "Matrix could not verify Claude",
-      description: "Refresh provider status or connect Claude before sending.",
-      action: { kind: "setup", action: connectClaudeAction },
+      description: "Refresh provider status before sending.",
+      action: { kind: "refresh" },
     });
   });
 

@@ -26,7 +26,7 @@ export function ProviderReadinessNotice(props: {
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
   const [pendingAction, setPendingAction] = useState<"primary" | "refresh" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [autoRecheck, setAutoRecheck] = useState(false);
+  const [autoRecheckCycle, setAutoRecheckCycle] = useState(0);
   const recheckAttemptsRef = useRef(0);
   const refreshRef = useRef(props.onRefresh);
 
@@ -37,10 +37,10 @@ export function ProviderReadinessNotice(props: {
   useEffect(() => {
     if (!props.readiness.blocked || props.readiness.state === "ready") {
       recheckAttemptsRef.current = 0;
-      if (autoRecheck) setAutoRecheck(false);
+      if (autoRecheckCycle !== 0) setAutoRecheckCycle(0);
       return;
     }
-    if (!autoRecheck) return;
+    if (autoRecheckCycle === 0) return;
 
     let cancelled = false;
     let timer: number | null = null;
@@ -65,7 +65,7 @@ export function ProviderReadinessNotice(props: {
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [autoRecheck, props.readiness.blocked, props.readiness.state]);
+  }, [autoRecheckCycle, props.readiness.blocked, props.readiness.state]);
 
   if (!props.readiness.blocked || props.readiness.state === "ready") return null;
 
@@ -99,7 +99,7 @@ export function ProviderReadinessNotice(props: {
         setError(SETUP_ERROR);
       } else {
         recheckAttemptsRef.current = 0;
-        setAutoRecheck(true);
+        setAutoRecheckCycle((cycle) => cycle + 1);
       }
     } catch (err: unknown) {
       console.error(

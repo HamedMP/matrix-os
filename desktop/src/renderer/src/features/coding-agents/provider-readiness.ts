@@ -28,13 +28,6 @@ const OPEN_PROVIDER_SETTINGS_ACTION: SafeSetupAction = {
   label: "Open provider settings",
 };
 
-const CLAUDE_CONNECT_ACTION: SafeSetupAction = {
-  id: "claude_connect",
-  kind: "foreground_terminal",
-  label: "Connect Claude",
-  command: "claude",
-};
-
 function sameSetupAction(left: SafeSetupAction, right: SafeSetupAction): boolean {
   if (left.kind !== right.kind || left.id !== right.id || left.label !== right.label) return false;
   return left.kind === "open_settings" ||
@@ -45,8 +38,7 @@ export function providerSupportsSetupAction(
   provider: AgentProviderSummary,
   action: SafeSetupAction,
 ): boolean {
-  return provider.setupActions.some((candidate) => sameSetupAction(candidate, action)) ||
-    (provider.id === "claude" && sameSetupAction(CLAUDE_CONNECT_ACTION, action));
+  return provider.setupActions.some((candidate) => sameSetupAction(candidate, action));
 }
 
 export function findProviderForSetupAction(
@@ -92,8 +84,7 @@ function findAuthenticationAction(
     `${providerId}_connect`,
     `${providerId}_reconnect`,
   ]);
-  return setupActions.find((action) => trustedActionIds.has(action.id))
-    ?? (providerId === "claude" ? CLAUDE_CONNECT_ACTION : undefined);
+  return setupActions.find((action) => trustedActionIds.has(action.id));
 }
 
 function authenticationAction(

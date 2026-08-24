@@ -338,14 +338,7 @@ export function createCodingAgentProviderRegistry(
   ): Promise<AgentProviderSummary> {
     const checkedAt = now();
     if (credentials.state === "failed") {
-      const fallback = fallbackSummary(provider.providerId, checkedAt.toISOString());
-      const setupActions = await readSetupActions(
-        provider,
-        principal,
-        checkedAt,
-        fallback.setupActions,
-      );
-      return AgentProviderSummarySchema.parse({ ...fallback, setupActions });
+      return fallbackSummary(provider.providerId, checkedAt.toISOString());
     }
     const base = await readBaseSummary(provider, principal, checkedAt);
     if (!base.valid) return base.summary;

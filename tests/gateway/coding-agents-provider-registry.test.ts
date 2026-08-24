@@ -130,7 +130,7 @@ describe("coding-agent provider registry", () => {
     },
   );
 
-  it("fails closed while preserving Claude connection recovery when credential status cannot be read", async () => {
+  it("fails closed without reading provider setup or health when credentials cannot be read", async () => {
     const healthCheck = vi.fn(() => ({ ok: true }));
     const buildSetupAction = vi.fn(() => [{
       id: "claude_connect",
@@ -171,16 +171,11 @@ describe("coding-agent provider registry", () => {
       availability: "unavailable",
       installStatus: "unknown",
       authStatus: "unknown",
-      setupActions: [{
-        id: "claude_connect",
-        kind: "foreground_terminal",
-        label: "Connect Claude",
-        command: "claude",
-      }],
+      setupActions: [],
       lastCheckedAt: baseNow.toISOString(),
     });
     expect(healthCheck).not.toHaveBeenCalled();
-    expect(buildSetupAction).toHaveBeenCalledOnce();
+    expect(buildSetupAction).not.toHaveBeenCalled();
   });
 
   it("keeps credential-known providers without execution adapters in the summary", async () => {
