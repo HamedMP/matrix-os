@@ -127,6 +127,7 @@ describe("Global Chat coding-agent dispatcher", () => {
     await vi.waitFor(() => expect(runtime.createThread).toHaveBeenCalledWith(principal, expect.objectContaining({
       providerId: "pi",
       prompt: "inspect this computer",
+      sandboxMode: "read_only",
     })));
     runtime.publish(
       [{ ...eventBase("thread.completed", "event_pi_done", "thread_pi"), outcome: "completed" }],

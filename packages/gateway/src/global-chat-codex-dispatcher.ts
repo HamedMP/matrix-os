@@ -12,6 +12,10 @@ const MAX_TRACKED_TOOLS_PER_RUN = 128;
 
 type GlobalChatCodingAgentProviderId = Exclude<GlobalChatProviderId, "claude">;
 
+function globalChatSandboxMode(providerId: GlobalChatCodingAgentProviderId): "read_only" | "workspace_write" {
+  return providerId === "pi" ? "read_only" : "workspace_write";
+}
+
 export type GlobalChatCodingAgentFrame =
   | { type: "kernel:init"; sessionId: string; providerId: GlobalChatCodingAgentProviderId; requestId: string }
   | { type: "kernel:text"; text: string; requestId: string }
@@ -230,6 +234,7 @@ export function createGlobalChatCodingAgentDispatcher(options: {
               providerId: input.providerId,
               prompt: input.text,
               clientRequestId: run.agentRequestId,
+              sandboxMode: globalChatSandboxMode(input.providerId),
             }).then((result) => {
               emitInit(run, result.snapshot.thread.id);
               processEvents(run, result.snapshot.events.items);
