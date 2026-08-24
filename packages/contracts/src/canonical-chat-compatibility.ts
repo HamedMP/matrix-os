@@ -85,7 +85,7 @@ export function mapKernelConversationFromLegacyContracts(input: {
 
   const messages = [...history.messages]
     .sort((left, right) => left.index - right.index)
-    .map((message, index): CanonicalChatMessage => {
+    .map((message): CanonicalChatMessage => {
       const parts: CanonicalChatMessage["parts"] = message.content.trim().length > 0
         ? [{ type: "text", text: message.content }]
         : [{ type: "status", tone: "info", label: "Legacy message has no text" }];
@@ -101,7 +101,7 @@ export function mapKernelConversationFromLegacyContracts(input: {
         parts.push({ type: "status", tone: "warning", label: "Legacy content is truncated" });
       }
       return {
-        id: legacyMessageId("hermes", index),
+        id: legacyMessageId("hermes", message.index),
         chatId,
         seq: message.index + 1,
         role: message.role,
@@ -310,6 +310,7 @@ export function mapAgentThreadFromLegacyContracts(input: {
   snapshot: AgentThreadSnapshot;
 }): CanonicalChatCompatibilityProjection {
   const { chatId, ownerScope, instanceId, driverKind, snapshot } = input;
+  if (snapshot.events.hasMore) throw new TypeError("Complete legacy thread history is required");
   const events = snapshot.events.items;
   const ordered: OrderedLegacyMessage[] = [];
   const assistant = new Map<string, {

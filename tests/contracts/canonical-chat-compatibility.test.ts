@@ -73,6 +73,50 @@ describe("canonical Chat compatibility mappers", () => {
     expect(draft.chat.providerBinding).toBeUndefined();
   });
 
+  it("keeps Hermes message identities stable across history pages", () => {
+    const summary = KernelConversationSummarySchema.parse({
+      id: "legacy:hermes:paged",
+      preview: "Paged conversation",
+      messageCount: 4,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+    });
+    const projectPage = (indexes: number[]) => mapKernelConversationToCanonicalChatProjection({
+      chatId: "chat_imported_hermes_paged",
+      ownerScope: { type: "personal" as const, ownerId: "user_demo" },
+      instanceId: "hermes_primary",
+      model: "claude-opus-4-6",
+      turnId: "cturn_imported_hermes_paged",
+      summary,
+      history: KernelConversationHistoryResponseSchema.parse({
+        id: summary.id,
+        createdAt: nowMs,
+        updatedAt: nowMs,
+        totalCount: 4,
+        messages: indexes.map((index) => ({
+          index,
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `Message ${index}`,
+          contentTruncated: false,
+          timestamp: nowMs,
+        })),
+        hasMore: indexes.at(-1) !== 3,
+        ...(indexes.at(-1) === 1 ? { nextCursor: "2" } : {}),
+        limit: 2,
+      }),
+    });
+
+    const ids = [...projectPage([0, 1]).messages, ...projectPage([2, 3]).messages]
+      .map((message) => message.id);
+    expect(ids).toEqual([
+      "msg_legacy_hermes_1",
+      "msg_legacy_hermes_2",
+      "msg_legacy_hermes_3",
+      "msg_legacy_hermes_4",
+    ]);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it("maps a coding-agent thread into canonical messages and bounded activity", () => {
     const thread = AgentThreadSnapshotSchema.parse({
       thread: {
@@ -361,6 +405,44 @@ describe("canonical Chat compatibility mappers", () => {
 
     expect(projection.chat.providerBinding).toBeUndefined();
     expect(projection.chat.activeRun).toBeUndefined();
+  });
+
+  it("rejects a partial coding-agent event window", () => {
+    const thread = AgentThreadSnapshotSchema.parse({
+      thread: {
+        id: "thread_partial_window",
+        providerId: "codex",
+        title: "Partial history",
+        status: "running",
+        attention: "none",
+        createdAt: now,
+        updatedAt: now,
+      },
+      events: {
+        items: [{
+          eventId: "evt_partial_delta",
+          threadId: "thread_partial_window",
+          occurredAt: now,
+          type: "assistant.text.delta",
+          messageId: "assistant_partial",
+          delta: "Visible tail only",
+        }],
+        hasMore: true,
+        nextCursor: "cursor_previous",
+        limit: 200,
+      },
+    });
+
+    expect(() => mapAgentThreadToCanonicalChatProjection({
+      chatId: "chat_partial_window",
+      ownerScope: { type: "personal", ownerId: "user_demo" },
+      instanceId: "codex_primary",
+      model: "gpt-5.6-sol",
+      driverKind: "codex",
+      turnId: "cturn_fallback",
+      runId: "run_fallback",
+      snapshot: thread,
+    })).toThrow("Complete legacy thread history is required");
   });
 
   it("marks incomplete assistant output failed when the legacy thread terminates unsuccessfully", () => {
