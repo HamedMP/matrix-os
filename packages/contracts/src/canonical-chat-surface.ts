@@ -165,9 +165,15 @@ export const CanonicalChatSnapshotSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["messages"], message: "Message sequence must be unique and ordered" });
   }
   const activeRun = snapshot.chat.activeRun;
-  if (activeRun !== undefined
-    && !snapshot.runs.some((run) => run.id === activeRun.runId && run.turnId === activeRun.turnId)) {
-    ctx.addIssue({ code: "custom", path: ["chat", "activeRun"], message: "Active Run is not in the snapshot" });
+  if (activeRun !== undefined) {
+    const referencedRun = snapshot.runs.find(
+      (run) => run.id === activeRun.runId && run.turnId === activeRun.turnId,
+    );
+    if (referencedRun === undefined) {
+      ctx.addIssue({ code: "custom", path: ["chat", "activeRun"], message: "Active Run is not in the snapshot" });
+    } else if (referencedRun.status !== activeRun.status) {
+      ctx.addIssue({ code: "custom", path: ["chat", "activeRun", "status"], message: "Active Run status mismatch" });
+    }
   }
   const binding = snapshot.chat.providerBinding;
   snapshot.runs.forEach((run, index) => {
@@ -179,6 +185,28 @@ export const CanonicalChatSnapshotSchema = z.object({
         path: ["runs", index, "instanceId"],
         message: "Run must use the Chat's immutable Provider binding",
       });
+    }
+    if (!snapshot.turns.some((turn) => turn.id === run.turnId)) {
+      ctx.addIssue({ code: "custom", path: ["runs", index, "turnId"], message: "Run Turn is not in the snapshot" });
+    }
+  });
+  snapshot.turns.forEach((turn, index) => {
+    const inputMessage = snapshot.messages.find((message) => message.id === turn.inputMessageId);
+    if (inputMessage === undefined || (inputMessage.turnId !== undefined && inputMessage.turnId !== turn.id)) {
+      ctx.addIssue({ code: "custom", path: ["turns", index, "inputMessageId"], message: "Turn input message is not in the snapshot" });
+    }
+  });
+  snapshot.messages.forEach((message, index) => {
+    if (message.turnId !== undefined && !snapshot.turns.some((turn) => turn.id === message.turnId)) {
+      ctx.addIssue({ code: "custom", path: ["messages", index, "turnId"], message: "Message Turn is not in the snapshot" });
+    }
+    if (message.runId !== undefined && !snapshot.runs.some((run) => run.id === message.runId)) {
+      ctx.addIssue({ code: "custom", path: ["messages", index, "runId"], message: "Message Run is not in the snapshot" });
+    }
+  });
+  snapshot.activities.forEach((activity, index) => {
+    if (!snapshot.runs.some((run) => run.id === activity.runId)) {
+      ctx.addIssue({ code: "custom", path: ["activities", index, "runId"], message: "Activity Run is not in the snapshot" });
     }
   });
 });

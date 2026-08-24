@@ -11,6 +11,7 @@ import {
 } from "#canonical-chat-primitives";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
+const textEncoder = new TextEncoder();
 
 function prefixedId(prefix: string) {
   return z.string()
@@ -131,16 +132,22 @@ export const CanonicalChatRunSchema = z.object({
     "aborted",
   ]),
   outcome: z.enum(["completed", "failed", "aborted"]).optional(),
+  startedAt: IsoTimestampSchema.optional(),
+  completedAt: IsoTimestampSchema.optional(),
   historyBoundarySeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   capabilitySnapshot: z.object({
     revision: canonicalReferenceId(160),
+    rootChat: z.boolean(),
     attachments: z.array(CanonicalChatAttachmentKindSchema).max(8),
+    resources: z.array(CanonicalChatResourceKindSchema).max(6),
     tools: z.array(canonicalReferenceId(80)).max(128),
     approvals: z.boolean(),
     userInput: z.boolean(),
     resume: z.boolean(),
     cancellation: z.boolean(),
     worktrees: z.enum(["none", "optional", "required"]),
+    interactionModes: z.array(canonicalReferenceId(80)).max(16),
+    permissionModes: z.array(canonicalReferenceId(80)).max(16),
   }).strict(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
@@ -153,6 +160,17 @@ export const CanonicalChatRunSchema = z.object({
   }
   if (new Set(run.capabilitySnapshot.tools).size !== run.capabilitySnapshot.tools.length) {
     ctx.addIssue({ code: "custom", path: ["capabilitySnapshot", "tools"], message: "Duplicate tool capability" });
+  }
+  for (const key of ["resources", "interactionModes", "permissionModes"] as const) {
+    if (new Set(run.capabilitySnapshot[key]).size !== run.capabilitySnapshot[key].length) {
+      ctx.addIssue({ code: "custom", path: ["capabilitySnapshot", key], message: "Duplicate capability" });
+    }
+  }
+  if (!run.capabilitySnapshot.interactionModes.includes(run.interactionMode)) {
+    ctx.addIssue({ code: "custom", path: ["interactionMode"], message: "Interaction mode is not in the Run snapshot" });
+  }
+  if (!run.capabilitySnapshot.permissionModes.includes(run.permissionMode)) {
+    ctx.addIssue({ code: "custom", path: ["permissionMode"], message: "Permission mode is not in the Run snapshot" });
   }
   const terminal = run.status === "completed" || run.status === "failed" || run.status === "aborted";
   if (terminal !== (run.outcome !== undefined)) {
@@ -168,6 +186,12 @@ export const CanonicalChatRunSchema = z.object({
       path: ["outcome"],
       message: "Run outcome must match terminal status",
     });
+  }
+  if (run.status !== "accepted" && run.startedAt === undefined) {
+    ctx.addIssue({ code: "custom", path: ["startedAt"], message: "Started Run requires startedAt" });
+  }
+  if (terminal !== (run.completedAt !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["completedAt"], message: "Terminal Run requires completedAt" });
   }
 });
 
@@ -249,12 +273,23 @@ export const CanonicalChatMessageSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["parts"], message: "Message exceeds encoded byte limit" });
   }
   if (message.role === "user") {
+    const textParts = message.parts.filter(
+      (part): part is Extract<CanonicalChatMessagePart, { type: "text" }> => part.type === "text",
+    );
+    const totalCharacters = textParts.reduce((total, part) => total + part.text.length, 0);
+    const totalBytes = textParts.reduce((total, part) => total + textEncoder.encode(part.text).byteLength, 0);
+    if (totalCharacters > 24_000 || totalBytes > 96 * 1024) {
+      ctx.addIssue({ code: "custom", path: ["parts"], message: "User message exceeds aggregate limit" });
+    }
     message.parts.forEach((part, index) => {
       if (part.type === "text"
-        && (part.text.length > 24_000 || new TextEncoder().encode(part.text).byteLength > 96 * 1024)) {
+        && (part.text.length > 24_000 || textEncoder.encode(part.text).byteLength > 96 * 1024)) {
         ctx.addIssue({ code: "custom", path: ["parts", index, "text"], message: "User message exceeds limit" });
       }
     });
+  }
+  if (message.parts.filter((part) => part.type === "attachment_reference").length > 8) {
+    ctx.addIssue({ code: "custom", path: ["parts"], message: "Message exceeds attachment limit" });
   }
   message.parts.forEach((part, index) => {
     if (part.type === "tool_result" && part.outcome === "failed" && part.text !== undefined

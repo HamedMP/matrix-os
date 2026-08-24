@@ -55,16 +55,22 @@ describe("canonical Chat contracts", () => {
       executionRoot: { kind: "project", projectId: "matrix-os" },
       status: "completed",
       outcome: "completed",
+      startedAt: now,
+      completedAt: now,
       historyBoundarySeq: 0,
       capabilitySnapshot: {
         revision: "catalog_1",
+        rootChat: true,
         attachments: ["file", "image"],
+        resources: ["file", "folder", "project"],
         tools: ["read", "write"],
         approvals: true,
         userInput: true,
         resume: true,
         cancellation: true,
         worktrees: "optional",
+        interactionModes: ["default", "plan"],
+        permissionModes: ["supervised", "full_access"],
       },
       createdAt: now,
       updatedAt: now,
@@ -90,6 +96,10 @@ describe("canonical Chat contracts", () => {
       ...run,
       primaryWorkspaceRoot: "/Users/yuhan/matrix-os",
       providerState: { sessionId: "secret" },
+    }).success).toBe(false);
+    expect(CanonicalChatRunSchema.safeParse({
+      ...run,
+      completedAt: undefined,
     }).success).toBe(false);
   });
 
@@ -218,6 +228,7 @@ describe("canonical Chat contracts", () => {
         approvals: true,
         userInput: true,
         worktrees: "optional",
+        resources: ["file", "folder", "project", "task", "app", "terminal_session"],
         interactionModes: ["default", "plan"],
         permissionModes: ["supervised", "full_access"],
       },
@@ -354,6 +365,22 @@ describe("canonical Chat contracts", () => {
     }).success).toBe(false);
     expect(CanonicalChatMessageSchema.safeParse({
       ...baseMessage,
+      parts: [
+        { type: "text", text: "a".repeat(20_000) },
+        { type: "text", text: "b".repeat(20_000) },
+      ],
+    }).success).toBe(false);
+    expect(CanonicalChatMessageSchema.safeParse({
+      ...baseMessage,
+      parts: Array.from({ length: 9 }, (_, index) => ({
+        type: "attachment_reference",
+        attachmentId: `attachment_${index}`,
+        kind: "file",
+        label: `file-${index}.ts`,
+      })),
+    }).success).toBe(false);
+    expect(CanonicalChatMessageSchema.safeParse({
+      ...baseMessage,
       parts: Array.from({ length: 65 }, () => ({ type: "text", text: "part" })),
     }).success).toBe(false);
 
@@ -385,6 +412,7 @@ describe("canonical Chat contracts", () => {
         approvals: true,
         userInput: true,
         worktrees: "none",
+        resources: [],
         interactionModes: [],
         permissionModes: [],
       },
@@ -410,6 +438,7 @@ describe("canonical Chat contracts", () => {
         approvals: true,
         userInput: true,
         worktrees: "none",
+        resources: [],
         interactionModes: [],
         permissionModes: [],
       },

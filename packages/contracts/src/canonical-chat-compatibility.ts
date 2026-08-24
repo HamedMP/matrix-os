@@ -1,167 +1,107 @@
 import { z } from "zod/v4";
 import {
-  CanonicalChatIdSchema,
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
-  CanonicalOwnerScopeSchema,
-  CanonicalProviderInstanceIdSchema,
   type CanonicalChatMessage,
   type CanonicalChatRunActivity,
   type CanonicalOwnerScope,
 } from "#canonical-chat";
 import {
-  CanonicalProviderDriverKindSchema,
   type CanonicalProviderDriverKind,
 } from "#canonical-chat-provider";
 import { CanonicalChatSummarySchema } from "#canonical-chat-surface";
-import { IsoTimestampSchema } from "#contract-primitives";
-import {
-  canonicalBoundedText,
-  canonicalReferenceId,
-  canonicalSafeLabel,
-} from "#canonical-chat-primitives";
 
 const LEGACY_SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/;
 
-const LegacyProjectContextSchema = z.object({
-  projectId: canonicalReferenceId(160),
-  projectName: canonicalSafeLabel(160, 640),
-  projectKind: z.enum(["scratch", "github", "folder"]),
-  repositoryLabel: canonicalSafeLabel(240, 960).optional(),
-  status: z.enum(["ready", "unavailable"]),
-});
+type LegacyThreadStatus =
+  | "queued"
+  | "starting"
+  | "running"
+  | "waiting_for_approval"
+  | "waiting_for_input"
+  | "completed"
+  | "failed"
+  | "aborted"
+  | "stale"
+  | "archived";
+type LegacyThreadAttention = "none" | "approval_required" | "input_required" | "failed" | "completed";
 
-const LegacyKernelConversationSummarySchema = z.object({
-  id: z.string().min(1).max(256).regex(LEGACY_SOURCE_ID),
-  preview: z.string().max(32_000),
-  messageCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  context: LegacyProjectContextSchema.optional(),
-});
+interface LegacyProjectContext {
+  projectId: string;
+  projectName: string;
+  projectKind: "scratch" | "github" | "folder";
+  repositoryLabel?: string;
+  status: "ready" | "unavailable";
+}
 
-const LegacyKernelConversationHistorySchema = z.object({
-  id: z.string().min(1).max(256).regex(LEGACY_SOURCE_ID),
-  messages: z.array(z.object({
-    index: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-    role: z.enum(["user", "assistant", "system"]),
-    content: z.string().max(32_000),
-    contentTruncated: z.boolean(),
-    timestamp: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-    tool: canonicalSafeLabel(128, 512).optional(),
-    toolDisplay: z.object({ preview: canonicalSafeLabel(160, 640) }).optional(),
-  })).max(50),
-  context: LegacyProjectContextSchema.optional(),
-});
+interface LegacyKernelConversationSummary {
+  id: string;
+  preview: string;
+  messageCount: number;
+  createdAt: number;
+  updatedAt: number;
+  context?: LegacyProjectContext;
+}
 
-const LegacyThreadStatusSchema = z.enum([
-  "queued",
-  "starting",
-  "running",
-  "waiting_for_approval",
-  "waiting_for_input",
-  "completed",
-  "failed",
-  "aborted",
-  "stale",
-  "archived",
-]);
-const LegacyThreadAttentionSchema = z.enum([
-  "none",
-  "approval_required",
-  "input_required",
-  "failed",
-  "completed",
-]);
-const LegacyAgentThreadSnapshotSchema = z.object({
-  thread: z.object({
-    id: z.string().min(1).max(256).regex(LEGACY_SOURCE_ID),
-    title: canonicalSafeLabel(200, 1_024),
-    status: LegacyThreadStatusSchema,
-    attention: LegacyThreadAttentionSchema,
-    createdAt: IsoTimestampSchema,
-    updatedAt: IsoTimestampSchema,
-  }),
-  events: z.object({
-    items: z.array(z.unknown()).max(200),
-  }),
-});
+interface LegacyKernelConversationHistory {
+  id: string;
+  messages: Array<{
+    index: number;
+    role: "user" | "assistant" | "system";
+    content: string;
+    contentTruncated: boolean;
+    timestamp: number;
+    tool?: string;
+    toolDisplay?: { preview: string };
+  }>;
+  context?: LegacyProjectContext;
+}
 
-const LegacyEventBaseSchema = z.object({ occurredAt: IsoTimestampSchema });
-const LegacyAgentThreadEventSchema = z.discriminatedUnion("type", [
-  LegacyEventBaseSchema.extend({ type: z.literal("thread.status"), status: LegacyThreadStatusSchema }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("user.message"),
-    text: canonicalBoundedText(24_000, 96 * 1024),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("assistant.text.delta"),
-    messageId: canonicalReferenceId(128),
-    delta: canonicalBoundedText(4_000, 16 * 1024),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("assistant.text.completed"),
-    messageId: canonicalReferenceId(128),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("tool.started"),
-    toolCallId: canonicalReferenceId(128),
-    displayName: canonicalSafeLabel(120, 480),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("tool.completed"),
-    toolCallId: canonicalReferenceId(128),
-    outcome: z.enum(["success", "failed", "cancelled"]),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("approval.requested"),
-    approval: z.object({
-      approvalId: canonicalReferenceId(128),
-      title: canonicalSafeLabel(160, 640),
-      risk: z.enum(["low", "medium", "high"]),
-    }),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("approval.resolved"),
-    approvalId: canonicalReferenceId(128),
-    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("user_input.requested"),
-    request: z.object({
-      requestId: canonicalReferenceId(128),
-      title: canonicalSafeLabel(160, 640),
-    }),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("user_input.answered"),
-    requestId: canonicalReferenceId(128),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("file.changed"),
-    changeKind: z.enum(["created", "updated", "deleted", "renamed"]),
-  }),
-  LegacyEventBaseSchema.extend({
-    type: z.literal("thread.completed"),
-    outcome: z.enum(["completed", "failed", "aborted"]),
-  }),
+export type LegacyAgentThreadEvent =
+  | { type: "thread.status"; occurredAt: string; status: LegacyThreadStatus }
+  | { type: "user.message"; occurredAt: string; text: string }
+  | { type: "assistant.text.delta"; occurredAt: string; messageId: string; delta: string }
+  | { type: "assistant.text.completed"; occurredAt: string; messageId: string }
+  | { type: "tool.started"; occurredAt: string; toolCallId: string; displayName: string }
+  | { type: "tool.completed"; occurredAt: string; toolCallId: string; outcome: "success" | "failed" | "cancelled" }
+  | { type: "approval.requested"; occurredAt: string; approval: { approvalId: string; title: string; risk: "low" | "medium" | "high" } }
+  | { type: "approval.resolved"; occurredAt: string; approvalId: string; decision: "approve" | "approve_for_session" | "decline" | "cancel" }
+  | { type: "user_input.requested"; occurredAt: string; request: { requestId: string; title: string } }
+  | { type: "user_input.answered"; occurredAt: string; requestId: string }
+  | { type: "file.changed"; occurredAt: string; changeKind: "created" | "updated" | "deleted" | "renamed" }
+  | { type: "thread.completed"; occurredAt: string; outcome: "completed" | "failed" | "aborted" };
+
+const LEGACY_SUPPORTED_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "thread.status",
+  "user.message",
+  "assistant.text.delta",
+  "assistant.text.completed",
+  "tool.started",
+  "tool.completed",
+  "approval.requested",
+  "approval.resolved",
+  "user_input.requested",
+  "user_input.answered",
+  "file.changed",
+  "thread.completed",
 ]);
 
-type LegacyAgentThreadEvent = z.infer<typeof LegacyAgentThreadEventSchema>;
-type LegacyThreadStatus = z.infer<typeof LegacyThreadStatusSchema>;
-type LegacyThreadAttention = z.infer<typeof LegacyThreadAttentionSchema>;
-const LEGACY_SUPPORTED_EVENT_TYPES: ReadonlySet<string> = new Set(
-  LegacyAgentThreadEventSchema.options.map((option) => option.shape.type.value),
-);
+export function isSupportedLegacyAgentThreadEvent<T extends { type: string }>(
+  event: T,
+): event is T & LegacyAgentThreadEvent {
+  return LEGACY_SUPPORTED_EVENT_TYPES.has(event.type);
+}
 
-function parseSupportedLegacyEvents(items: readonly unknown[]): LegacyAgentThreadEvent[] {
-  return items.flatMap((item) => {
-    if (typeof item !== "object" || item === null || !("type" in item)
-      || typeof item.type !== "string" || !LEGACY_SUPPORTED_EVENT_TYPES.has(item.type)) {
-      return [];
-    }
-    return [LegacyAgentThreadEventSchema.parse(item)];
-  });
+interface LegacyAgentThreadSnapshot {
+  thread: {
+    id: string;
+    title: string;
+    status: LegacyThreadStatus;
+    attention: LegacyThreadAttention;
+    createdAt: string;
+    updatedAt: string;
+  };
+  events: { items: LegacyAgentThreadEvent[] };
 }
 
 export const CanonicalChatCompatibilityProjectionSchema = z.object({
@@ -209,21 +149,20 @@ function legacyMessageId(source: "hermes" | "thread", index: number): string {
   return `msg_legacy_${source}_${index + 1}`;
 }
 
-export function mapKernelConversationToCanonicalChatProjection(input: {
+export function mapKernelConversationFromLegacyContracts(input: {
   chatId: string;
   ownerScope: CanonicalOwnerScope;
   instanceId: string;
   model: string;
-  turnId: string;
-  summary: unknown;
-  history: unknown;
+  turnId?: string;
+  summary: LegacyKernelConversationSummary;
+  history: LegacyKernelConversationHistory;
 }): CanonicalChatCompatibilityProjection {
-  const chatId = CanonicalChatIdSchema.parse(input.chatId);
-  const ownerScope = CanonicalOwnerScopeSchema.parse(input.ownerScope);
-  const instanceId = CanonicalProviderInstanceIdSchema.parse(input.instanceId);
-  const summary = LegacyKernelConversationSummarySchema.parse(input.summary);
-  const history = LegacyKernelConversationHistorySchema.parse(input.history);
+  const { chatId, ownerScope, instanceId, summary, history } = input;
   if (summary.id !== history.id) throw new TypeError("Legacy conversation identity mismatch");
+  if (summary.messageCount > 0 && input.turnId === undefined) {
+    throw new TypeError("Imported conversation binding requires its first accepted Turn");
+  }
 
   const messages = [...history.messages]
     .sort((left, right) => left.index - right.index)
@@ -268,7 +207,9 @@ export function mapKernelConversationToCanonicalChatProjection(input: {
         ? { lastMessagePreview: summary.preview.slice(0, 280) }
         : {}),
       currentSelection: { instanceId, model: input.model },
-      providerBinding: { driverKind: "hermes", instanceId, lockedAtTurnId: input.turnId },
+      ...(summary.messageCount === 0 ? {} : {
+        providerBinding: { driverKind: "hermes", instanceId, lockedAtTurnId: input.turnId },
+      }),
       ...(context === undefined ? {} : {
         project: {
           projectId: context.projectId,
@@ -379,7 +320,7 @@ function activityFromEvent(input: {
   return null;
 }
 
-export function mapAgentThreadToCanonicalChatProjection(input: {
+export function mapAgentThreadFromLegacyContracts(input: {
   chatId: string;
   ownerScope: CanonicalOwnerScope;
   instanceId: string;
@@ -387,14 +328,10 @@ export function mapAgentThreadToCanonicalChatProjection(input: {
   driverKind: CanonicalProviderDriverKind;
   turnId: string;
   runId: string;
-  snapshot: unknown;
+  snapshot: LegacyAgentThreadSnapshot;
 }): CanonicalChatCompatibilityProjection {
-  const chatId = CanonicalChatIdSchema.parse(input.chatId);
-  const ownerScope = CanonicalOwnerScopeSchema.parse(input.ownerScope);
-  const instanceId = CanonicalProviderInstanceIdSchema.parse(input.instanceId);
-  const driverKind = CanonicalProviderDriverKindSchema.parse(input.driverKind);
-  const snapshot = LegacyAgentThreadSnapshotSchema.parse(input.snapshot);
-  const events = parseSupportedLegacyEvents(snapshot.events.items);
+  const { chatId, ownerScope, instanceId, driverKind, snapshot } = input;
+  const events = snapshot.events.items;
   const ordered: OrderedLegacyMessage[] = [];
   const assistant = new Map<string, { chunks: string[]; completed: boolean; occurredAt: string }>();
 

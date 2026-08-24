@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import {
   CanonicalChatAttachmentKindSchema,
   CanonicalChatModelSelectionSchema,
+  CanonicalChatResourceKindSchema,
   CanonicalProviderInstanceIdSchema,
 } from "#canonical-chat";
 import {
@@ -107,10 +108,11 @@ export const CanonicalProviderSupportSchema = z.object({
   approvals: z.boolean(),
   userInput: z.boolean(),
   worktrees: z.enum(["none", "optional", "required"]),
+  resources: z.array(CanonicalChatResourceKindSchema).max(6),
   interactionModes: z.array(canonicalReferenceId(80)).max(16),
   permissionModes: z.array(canonicalReferenceId(80)).max(16),
 }).strict().superRefine((supports, ctx) => {
-  for (const key of ["attachments", "tools", "interactionModes", "permissionModes"] as const) {
+  for (const key of ["attachments", "tools", "resources", "interactionModes", "permissionModes"] as const) {
     if (!unique(supports[key])) {
       ctx.addIssue({ code: "custom", path: [key], message: "Duplicate capability value" });
     }

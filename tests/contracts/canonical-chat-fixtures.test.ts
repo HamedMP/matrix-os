@@ -73,4 +73,23 @@ describe("canonical Chat fixtures", () => {
       text: "Build the canonical Chat contract.",
     });
   });
+
+  it("rejects dangling and contradictory Snapshot references", () => {
+    const fixture = createCanonicalChatFixture("running");
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      activities: fixture.snapshot.activities.map((activity) => ({ ...activity, runId: "run_missing" })),
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      chat: {
+        ...fixture.snapshot.chat,
+        activeRun: { ...fixture.snapshot.chat.activeRun!, status: "waiting_for_input" },
+      },
+    }).success).toBe(false);
+    expect(CanonicalChatSnapshotSchema.safeParse({
+      ...fixture.snapshot,
+      runs: fixture.snapshot.runs.map((run) => ({ ...run, turnId: "cturn_missing" })),
+    }).success).toBe(false);
+  });
 });

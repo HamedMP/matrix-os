@@ -61,6 +61,16 @@ describe("canonical Chat compatibility mappers", () => {
       lockedAtTurnId: "cturn_imported_hermes",
     });
     expect(projection.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+
+    const draft = mapKernelConversationToCanonicalChatProjection({
+      chatId: "chat_imported_hermes_draft",
+      ownerScope: { type: "personal", ownerId: "user_demo" },
+      instanceId: "hermes_primary",
+      model: "claude-opus-4-6",
+      summary: { ...summary, id: "legacy:hermes:draft", messageCount: 0, preview: "" },
+      history: { ...history, id: "legacy:hermes:draft", totalCount: 0, messages: [] },
+    });
+    expect(draft.chat.providerBinding).toBeUndefined();
   });
 
   it("maps a coding-agent thread into canonical messages and bounded activity", () => {

@@ -1,11 +1,23 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
+import {
+  isSupportedLegacyAgentThreadEvent,
+  mapAgentThreadFromLegacyContracts,
+  mapKernelConversationFromLegacyContracts,
+} from "#canonical-chat-compatibility";
+import type { CanonicalOwnerScope } from "#canonical-chat";
+import type { CanonicalProviderDriverKind } from "#canonical-chat-provider";
 
 export const CODEX_VERIFIED_VERSION = "0.149.1";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#agent-runtime-config";
 export * from "#canonical-chat";
-export * from "#canonical-chat-compatibility";
+export {
+  CanonicalChatCompatibilityProjectionSchema,
+} from "#canonical-chat-compatibility";
+export type {
+  CanonicalChatCompatibilityProjection,
+} from "#canonical-chat-compatibility";
 export * from "#canonical-chat-provider";
 export * from "#canonical-chat-surface";
 export * from "#hermes-configuration";
@@ -876,6 +888,42 @@ export const AgentThreadSnapshotSchema = z.object({
 }).strict();
 
 export type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
+
+export function mapKernelConversationToCanonicalChatProjection(input: {
+  chatId: string;
+  ownerScope: CanonicalOwnerScope;
+  instanceId: string;
+  model: string;
+  turnId?: string;
+  summary: KernelConversationSummary;
+  history: KernelConversationHistoryResponse;
+}) {
+  return mapKernelConversationFromLegacyContracts({
+    ...input,
+    summary: KernelConversationSummarySchema.parse(input.summary),
+    history: KernelConversationHistoryResponseSchema.parse(input.history),
+  });
+}
+
+export function mapAgentThreadToCanonicalChatProjection(input: {
+  chatId: string;
+  ownerScope: CanonicalOwnerScope;
+  instanceId: string;
+  model: string;
+  driverKind: CanonicalProviderDriverKind;
+  turnId: string;
+  runId: string;
+  snapshot: AgentThreadSnapshot;
+}) {
+  const snapshot = AgentThreadSnapshotSchema.parse(input.snapshot);
+  return mapAgentThreadFromLegacyContracts({
+    ...input,
+    snapshot: {
+      thread: snapshot.thread,
+      events: { items: snapshot.events.items.filter(isSupportedLegacyAgentThreadEvent) },
+    },
+  });
+}
 
 export const TerminalStatusSchema = z.enum(["starting", "running", "idle", "exited", "stale", "unavailable"]);
 
