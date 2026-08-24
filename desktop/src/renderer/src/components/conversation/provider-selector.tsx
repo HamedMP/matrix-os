@@ -49,7 +49,7 @@ export function ConversationProviderSelector({
           className="inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-full border px-2 text-xs font-medium outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           style={{
             borderColor: "var(--border-default)",
-            background: "var(--bg-elevated)",
+            background: "var(--bg-surface)",
             color: "var(--text-secondary)",
           }}
         >
