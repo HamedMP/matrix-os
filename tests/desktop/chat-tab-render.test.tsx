@@ -612,9 +612,8 @@ describe("ChatTab", () => {
   });
 
   it("keeps the Codex harness in Global Chat instead of opening a project tab", async () => {
-    const post = vi.fn().mockResolvedValue({ id: "global-codex" });
-    const get = vi.fn().mockResolvedValue([]);
-    useConnection.setState({ api: { post, get } as never });
+    const post = vi.fn();
+    useConnection.setState({ api: { post } as never });
     useCodingAgentWorkspace.setState({ summary: readyGlobalChatSummary() });
     useHermesChat.setState({ messages: [], status: "idle" });
     render(<ChatTab />);
@@ -622,10 +621,8 @@ describe("ChatTab", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "Chat harness" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
 
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      "/api/conversations",
-      { providerId: "codex" },
-    ));
+    await waitFor(() => expect(useHermesChat.getState().providerId).toBe("codex"));
+    expect(post).not.toHaveBeenCalled();
     expect(useTabs.getState().tabs).toEqual([]);
   });
 
@@ -851,18 +848,9 @@ describe("ChatTab", () => {
     expect(screen.getByRole("button", { name: "Newer but idle conversation" }).textContent).not.toContain("Running");
   });
 
-  it("creates and opens a server-backed empty conversation", async () => {
-    const post = vi.fn().mockResolvedValue({ id: "conversation-created" });
-    const get = vi.fn().mockResolvedValue([
-      {
-        id: "conversation-created",
-        preview: "",
-        messageCount: 0,
-        createdAt: 100,
-        updatedAt: 100,
-      },
-    ]);
-    useConnection.setState({ api: { post, get } as never });
+  it("opens an ephemeral draft without persisting an empty conversation", async () => {
+    const post = vi.fn();
+    useConnection.setState({ api: { post } as never });
     useHermesChat.setState({ view: "index", indexStatus: "ready", conversations: [] });
 
     render(<ChatTab />);
@@ -871,56 +859,45 @@ describe("ChatTab", () => {
     expect(await screen.findByRole("region", { name: "Global Chat conversation" })).toBeTruthy();
     expect(useHermesChat.getState()).toMatchObject({
       view: "conversation",
-      sessionId: "conversation-created",
+      sessionId: null,
       messages: [],
     });
+    expect(post).not.toHaveBeenCalled();
     expect(useTabs.getState().recentViews).toEqual([]);
   });
 
-  it("creates an isolated Codex conversation when the Global Chat provider changes", async () => {
-    const post = vi.fn().mockResolvedValue({ id: "conversation-codex" });
-    const get = vi.fn().mockResolvedValue([]);
-    useConnection.setState({ api: { post, get } as never });
+  it("switches an empty draft to Codex without persisting a conversation", async () => {
+    const post = vi.fn();
+    useConnection.setState({ api: { post } as never });
     useCodingAgentWorkspace.setState({ summary: readyGlobalChatSummary() });
-    useHermesChat.setState({ providerId: "claude", messages: [], view: "conversation" });
+    useHermesChat.setState({ sessionId: null, providerId: "claude", messages: [], view: "conversation" });
 
     render(<ChatTab />);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Chat harness" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
 
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      "/api/conversations",
-      { providerId: "codex" },
-    ));
-    expect(useHermesChat.getState()).toMatchObject({
-      sessionId: "conversation-codex",
-      providerId: "codex",
-      messages: [],
-    });
+    await waitFor(() => expect(useHermesChat.getState().providerId).toBe("codex"));
+    expect(useHermesChat.getState().sessionId).toBeNull();
+    expect(post).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Ask Codex anything…" })).toBeTruthy();
   });
 
-  it("creates an isolated Pi conversation when the Global Chat provider changes", async () => {
-    const post = vi.fn().mockResolvedValue({ id: "conversation-pi" });
-    const get = vi.fn().mockResolvedValue([]);
-    useConnection.setState({ api: { post, get } as never });
+  it("switches an empty draft repeatedly without adding conversations", async () => {
+    const post = vi.fn();
+    useConnection.setState({ api: { post } as never });
     useCodingAgentWorkspace.setState({ summary: readyGlobalChatSummary() });
-    useHermesChat.setState({ providerId: "claude", messages: [], view: "conversation" });
+    useHermesChat.setState({ sessionId: null, providerId: "claude", messages: [], view: "conversation", conversations: [] });
 
     render(<ChatTab />);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Chat harness" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "Pi" }));
+    await waitFor(() => expect(useHermesChat.getState().providerId).toBe("pi"));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Chat harness" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Claude" }));
 
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      "/api/conversations",
-      { providerId: "pi" },
-    ));
-    expect(useHermesChat.getState()).toMatchObject({
-      sessionId: "conversation-pi",
-      providerId: "pi",
-      messages: [],
-    });
-    expect(screen.getByRole("textbox", { name: "Ask Pi anything…" })).toBeTruthy();
+    await waitFor(() => expect(useHermesChat.getState().providerId).toBe("claude"));
+    expect(useHermesChat.getState()).toMatchObject({ sessionId: null, conversations: [] });
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("opens the selected canonical conversation without duplicating global navigation", async () => {

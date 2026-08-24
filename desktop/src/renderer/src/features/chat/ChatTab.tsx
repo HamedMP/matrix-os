@@ -52,7 +52,7 @@ function HermesPane() {
   const abort = useHermesChat((state) => state.abort);
   const updateConversationContext = useHermesChat((state) => state.updateConversationContext);
   const providerId = useHermesChat((state) => state.providerId);
-  const createConversation = useHermesChat((state) => state.createConversation);
+  const startProviderDraft = useHermesChat((state) => state.startProviderDraft);
   const recordRecentHermesConversation = useTabs((state) => state.recordRecentHermesConversation);
   const [draft, setDraft] = useState("");
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -117,17 +117,13 @@ function HermesPane() {
     }
   };
 
-  const selectProvider = useCallback(async (nextProviderId: GlobalChatProviderId) => {
+  const selectProvider = useCallback((nextProviderId: GlobalChatProviderId) => {
     if (nextProviderId === providerId) return;
-    if (!api) {
-      setHarnessError("Connect a computer before switching providers.");
-      return;
-    }
     setHarnessError(null);
-    if (!await createConversation(api, nextProviderId)) {
-      setHarnessError("A new provider conversation could not be created. Try again.");
+    if (!startProviderDraft(nextProviderId)) {
+      setHarnessError("Wait for the current response to finish before switching providers.");
     }
-  }, [api, createConversation, providerId]);
+  }, [providerId, startProviderDraft]);
   const providerRegistry = createGlobalChatProviderRegistry({
     selectedId: providerId,
     connected: Boolean(api),

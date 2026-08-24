@@ -95,6 +95,42 @@ describe("useHermesChat", () => {
     });
   });
 
+  it("starts an unpersisted provider draft and sends the first turn to that provider", () => {
+    useHermesChat.setState({
+      sessionId: "conversation-claude",
+      providerId: "claude",
+      messages: [{ id: "old", role: "assistant", content: "Old answer", timestamp: 1 }],
+      status: "idle",
+    });
+
+    expect(useHermesChat.getState().startProviderDraft("codex")).toBe(true);
+    expect(useHermesChat.getState()).toMatchObject({
+      sessionId: null,
+      providerId: "codex",
+      messages: [],
+      view: "conversation",
+    });
+
+    useHermesChat.getState().send("Inspect the repository");
+
+    expect(kernel.sendKernelMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Inspect the repository",
+      providerId: "codex",
+    }));
+    expect(kernel.sendKernelMessage.mock.calls[0]?.[0]).not.toHaveProperty("sessionId");
+  });
+
+  it("refreshes the canonical list after returning from a provider draft", () => {
+    useHermesChat.setState({ view: "conversation", indexStatus: "ready" });
+
+    useHermesChat.getState().showIndex();
+
+    expect(useHermesChat.getState()).toMatchObject({
+      view: "index",
+      indexStatus: "idle",
+    });
+  });
+
   it("discovers bounded persistent conversations in newest-first order", async () => {
     const get = vi.fn().mockResolvedValue([
       {

@@ -188,6 +188,7 @@ interface HermesChatState {
   send: (text: string) => void;
   abort: () => void;
   newChat: () => void;
+  startProviderDraft: (providerId: GlobalChatProviderId) => boolean;
   showIndex: () => void;
   refreshConversations: (api: ApiClient) => Promise<void>;
   createConversation: (api: ApiClient, providerId?: GlobalChatProviderId) => Promise<string | null>;
@@ -319,10 +320,37 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
     }));
   },
 
+  startProviderDraft: (providerId) => {
+    if (get().status !== "idle") return false;
+    set((state) => ({
+      providerId,
+      messages: [],
+      sessionId: null,
+      status: "idle",
+      activeRequestId: null,
+      view: "conversation",
+      loadStatus: "idle",
+      loadError: null,
+      loadingConversationId: null,
+      conversationContext: null,
+      contextStatus: "idle",
+      contextError: null,
+      seenReplayEventIds: [],
+      transcriptRevision: state.transcriptRevision + 1,
+    }));
+    return true;
+  },
+
   showIndex: () => {
     // Keep sessionId while showing the index so reconnects remain attached to
     // the selected canonical conversation.
-    set({ view: "index", loadStatus: "idle", loadError: null, loadingConversationId: null });
+    set({
+      view: "index",
+      indexStatus: "idle",
+      loadStatus: "idle",
+      loadError: null,
+      loadingConversationId: null,
+    });
   },
 
   refreshConversations: async (api) => {

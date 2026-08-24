@@ -121,7 +121,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
   const deletingConversationId = useHermesChat((state) => state.deletingConversationId);
   const deleteError = useHermesChat((state) => state.deleteError);
   const refreshConversations = useHermesChat((state) => state.refreshConversations);
-  const createConversation = useHermesChat((state) => state.createConversation);
+  const newChat = useHermesChat((state) => state.newChat);
   const deleteConversation = useHermesChat((state) => state.deleteConversation);
   const clearDeleteError = useHermesChat((state) => state.clearDeleteError);
   const removeRecentView = useTabs((state) => state.removeRecentView);
@@ -152,9 +152,9 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
       setDeleteTarget(null);
     }
   };
-  const startConversation = async () => {
+  const startConversation = () => {
     if (!api) return;
-    await createConversation(api);
+    newChat();
   };
 
   return (
@@ -210,7 +210,7 @@ function HermesConversationIndexContent({ api }: { api: ApiClient | null }) {
               variant="primary"
               className="h-8"
               disabled={!api}
-              onClick={() => void startConversation()}
+              onClick={startConversation}
             >
               <MessageSquarePlus size={14} aria-hidden />
               New chat
