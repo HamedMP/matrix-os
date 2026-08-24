@@ -81,6 +81,72 @@ describe("desktop surfaces store", () => {
     );
   });
 
+  it("allows unbounded coordinates while arranging the infinite Canvas", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["files"], { width: 900, height: 620 });
+    useDesktopSurfaces.getState().setSurfaceBounds(
+      "files",
+      { x: -4_000, y: 8_000, width: 700, height: 500 },
+      { width: 900, height: 620 },
+      false,
+    );
+
+    expect(useDesktopSurfaces.getState().surfaces.files?.bounds).toEqual({
+      x: -4_000,
+      y: 8_000,
+      width: 700,
+      height: 500,
+    });
+  });
+
+  it("preserves unbounded Canvas coordinates while reconciling retained tabs", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["files"], { width: 900, height: 620 });
+    useDesktopSurfaces.getState().setSurfaceBounds(
+      "files",
+      { x: -4_000, y: 8_000, width: 700, height: 500 },
+      { width: 900, height: 620 },
+      false,
+    );
+
+    useDesktopSurfaces.getState().reconcileTabs(
+      ["files", "chat"],
+      { width: 1_000, height: 700 },
+      false,
+    );
+
+    expect(useDesktopSurfaces.getState().surfaces.files?.bounds).toEqual({
+      x: -4_000,
+      y: 8_000,
+      width: 700,
+      height: 500,
+    });
+    expect(useDesktopSurfaces.getState().surfaces.chat?.bounds.x).toBeGreaterThanOrEqual(12);
+  });
+
+  it("shows the Desktop workspace independently of retained maximized tabs", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["terminal"], { width: 1200, height: 760 });
+    useDesktopSurfaces.getState().maximizeToTab("terminal");
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("tabs");
+
+    useDesktopSurfaces.getState().showDesktop();
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
+    expect(useDesktopSurfaces.getState().surfaces.terminal?.mode).toBe("tab");
+
+    useDesktopSurfaces.getState().activateSurface("terminal");
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("tabs");
+  });
+
+  it("returns to the desktop when a window is activated or the last tab surface disappears", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["terminal", "files"], { width: 1200, height: 760 });
+    useDesktopSurfaces.getState().maximizeToTab("terminal");
+
+    useDesktopSurfaces.getState().activateSurface("files");
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
+
+    useDesktopSurfaces.getState().maximizeToTab("terminal");
+    useDesktopSurfaces.getState().reconcileTabs(["files"], { width: 1200, height: 760 });
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
+  });
+
   it("keeps every ordinary window and the taskbar below renderer dialogs", () => {
     useDesktopSurfaces.getState().reconcileTabs(["home", "chat"], { width: 1200, height: 760 });
     for (let index = 0; index < 80; index += 1) {

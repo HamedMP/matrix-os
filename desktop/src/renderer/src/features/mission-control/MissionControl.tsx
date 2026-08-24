@@ -24,6 +24,7 @@ import { useShellSessionSync } from "../../lib/shell-session-sync";
 import { preloadAppIcons, useApps } from "../../stores/apps";
 import NativeDesktopShell from "../desktop-shell/NativeDesktopShell";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
+import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
 
 export function MissionControlContentSurface({
   collapsed,
@@ -61,6 +62,7 @@ export default function MissionControl() {
   const authGeneration = useConnection((s) => s.authGeneration);
   const loadProjects = useBoard((s) => s.loadProjects);
   const loadApps = useApps((s) => s.load);
+  const loadNativeDesktopMode = useNativeDesktopMode((s) => s.load);
   const openTab = useTabs((s) => s.openTab);
   const tabCount = useTabs((s) => s.tabs.length);
   const createProjectOpen = useUi((s) => s.createProjectOpen);
@@ -79,6 +81,10 @@ export default function MissionControl() {
 
   useGlobalShortcuts();
   useShellSessionSync(api, `${runtimeScope}|${authGeneration}|${runtimeSlot}`);
+
+  useEffect(() => {
+    if (NATIVE_DESKTOP_WINDOW_SHELL) void loadNativeDesktopMode();
+  }, [loadNativeDesktopMode]);
 
   useEffect(() => {
     const { configure, hydrate } = useWorkspace.getState();

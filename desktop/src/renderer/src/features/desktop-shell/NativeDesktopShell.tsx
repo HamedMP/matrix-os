@@ -13,6 +13,9 @@ import { NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
 import DesktopBackground from "./DesktopBackground";
 import DesktopLaunchpad from "./DesktopLaunchpad";
 import { useUi } from "../../stores/ui";
+import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
+import DesktopWorkspacePlane from "./DesktopWorkspacePlane";
+import DesktopBackgroundMenu from "./DesktopBackgroundMenu";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
@@ -41,8 +44,16 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const restoreAsWindow = useDesktopSurfaces((state) => state.restoreAsWindow);
   const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const setSurfaceBounds = useDesktopSurfaces((state) => state.setSurfaceBounds);
+  const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
   const launcherOpen = useUi((state) => state.appLauncherOpen);
   const setLauncherOpen = useUi((state) => state.setAppLauncherOpen);
+  const requestBackgroundRefresh = useUi((state) => state.requestDesktopBackgroundRefresh);
+  const desktopMode = useNativeDesktopMode((state) => state.mode);
+  const desktopModeHydrated = useNativeDesktopMode((state) => state.hydrated);
+  const canvasZoom = useNativeDesktopMode((state) => state.zoom);
+  const canvasPanX = useNativeDesktopMode((state) => state.panX);
+  const canvasPanY = useNativeDesktopMode((state) => state.panY);
+  const setDesktopMode = useNativeDesktopMode((state) => state.setMode);
   // Mount on first use, then retain the image nodes so reopening can reuse the
   // browser's decoded icon resources instead of issuing another request set.
   const [launcherMounted, setLauncherMounted] = useState(launcherOpen);
@@ -60,8 +71,9 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [launcherOpen]);
 
   useEffect(() => {
-    reconcileTabs(tabIds, viewport);
-  }, [reconcileTabs, tabIds, viewport]);
+    if (!desktopModeHydrated) return;
+    reconcileTabs(tabIds, viewport, desktopMode !== "canvas");
+  }, [desktopMode, desktopModeHydrated, reconcileTabs, tabIds, viewport]);
 
   const activeSurface = activeTabId ? surfaces[activeTabId] : undefined;
   const activeSurfaceAvailable = activeSurface !== undefined;
@@ -79,12 +91,12 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
 
   const reconcileAndActivateCurrent = useCallback(() => {
     const state = useTabs.getState();
-    reconcileTabs(state.tabs.map((tab) => tab.id), viewport);
+    reconcileTabs(state.tabs.map((tab) => tab.id), viewport, desktopMode !== "canvas");
     if (state.activeTabId) {
       focusTab(state.activeTabId);
       activateSurface(state.activeTabId);
     }
-  }, [activateSurface, focusTab, reconcileTabs, viewport]);
+  }, [activateSurface, desktopMode, focusTab, reconcileTabs, viewport]);
 
   const openRoot = useCallback((open: () => void) => {
     open();
@@ -99,18 +111,27 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     focusTab(tabId);
   }, [focusTab, maximizeToTab, openRoot]);
 
-  const toggleApps = useCallback(() => setLauncherOpen(!useUi.getState().appLauncherOpen), [setLauncherOpen]);
   const closeApps = useCallback(() => setLauncherOpen(false), [setLauncherOpen]);
+  const toggleApps = useCallback(
+    () => setLauncherOpen(!useUi.getState().appLauncherOpen),
+    [setLauncherOpen],
+  );
   const launchApp = useCallback((tabId: string) => {
-    const tabbedWorkspaceOpen = Object.values(useDesktopSurfaces.getState().surfaces)
+    const tabbedWorkspaceOpen = desktopMode === "desktop"
+      && workspaceView === "tabs"
+      && Object.values(useDesktopSurfaces.getState().surfaces)
       .some((surface) => surface.mode === "tab");
     if (tabbedWorkspaceOpen) {
-      reconcileTabs(useTabs.getState().tabs.map((tab) => tab.id), viewport);
+      reconcileTabs(
+        useTabs.getState().tabs.map((tab) => tab.id),
+        viewport,
+        true,
+      );
       maximizeToTab(tabId);
       focusTab(tabId);
     }
     setLauncherOpen(false);
-  }, [focusTab, maximizeToTab, reconcileTabs, setLauncherOpen, viewport]);
+  }, [desktopMode, focusTab, maximizeToTab, reconcileTabs, setLauncherOpen, viewport, workspaceView]);
 
   useEffect(() => {
     for (const tab of tabs) {
@@ -136,8 +157,14 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       label: "Plugins",
       open: () => openRoot(() => openTab({ kind: "plugins", title: "Plugins" })),
     },
-    { kind: "projects", label: "Projects", open: () => openRootAsTab(openProjectsIndex) },
-  ], [openRoot, openRootAsTab, openTab]);
+    {
+      kind: "projects",
+      label: "Projects",
+      open: () => desktopMode === "canvas"
+        ? openRoot(openProjectsIndex)
+        : openRootAsTab(openProjectsIndex),
+    },
+  ], [desktopMode, openRoot, openRootAsTab, openTab]);
 
   const focusFallback = useCallback((excludedTabId: string) => {
     const surfaceState = useDesktopSurfaces.getState().surfaces;
@@ -160,18 +187,23 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [activate]);
 
   const minimize = useCallback((tabId: string) => {
+    const minimizedTab = useTabs.getState().tabs.find((tab) => tab.id === tabId);
     minimizeSurface(tabId);
     if (useTabs.getState().activeTabId === tabId) focusFallback(tabId);
-  }, [focusFallback, minimizeSurface]);
+    if (minimizedTab?.kind === "home") requestBackgroundRefresh();
+  }, [focusFallback, minimizeSurface, requestBackgroundRefresh]);
 
   const close = useCallback((tab: Tab) => {
     const wasActive = useTabs.getState().activeTabId === tab.id;
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
     if (wasActive) focusFallback(tab.id);
-  }, [closeSurface, closeTab, focusFallback]);
+    if (tab.kind === "home") requestBackgroundRefresh();
+  }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
 
-  const tabWorkspaceActive = activeSurface?.mode === "tab";
+  const tabWorkspaceActive = desktopMode === "desktop"
+    && workspaceView === "tabs"
+    && activeSurface?.mode === "tab";
 
   return (
     <div
@@ -180,41 +212,58 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       style={{ top: "var(--titlebar-height)", background: "inherit" }}
     >
       <DesktopBackground />
-      {!tabWorkspaceActive ? <DesktopIconGrid destinations={destinations} /> : null}
-      {tabs.map((tab) => {
-        const surface = surfaces[tab.id];
-        if (!surface) return null;
-        return (
-          <DesktopSurfaceFrame
-            key={tab.id}
-            tab={tab}
-            surface={surface}
-            active={tab.id === activeTabId}
-            tabWorkspaceActive={tabWorkspaceActive}
-            overlayOpen={overlayOpen}
-            onFocus={() => activate(tab.id)}
-            onClose={() => close(tab)}
-            onMinimize={() => minimize(tab.id)}
-            onMaximize={() => {
-              maximizeToTab(tab.id);
-              focusTab(tab.id);
-            }}
-            onBoundsChange={(bounds) => setSurfaceBounds(tab.id, bounds, viewport)}
-          />
-        );
-      })}
+      {desktopModeHydrated ? (
+        <>
+      {desktopMode === "desktop" && !tabWorkspaceActive ? (
+        <DesktopIconGrid destinations={destinations} />
+      ) : null}
+      <DesktopBackgroundMenu>
+        <DesktopWorkspacePlane mode={desktopMode}>
+          {desktopMode === "canvas" ? <DesktopIconGrid destinations={destinations} /> : null}
+          {tabs.map((tab) => {
+          const surface = surfaces[tab.id];
+          if (!surface) return null;
+          return (
+            <DesktopSurfaceFrame
+              key={tab.id}
+              tab={tab}
+              surface={surface}
+              active={tab.id === activeTabId}
+              tabWorkspaceActive={tabWorkspaceActive}
+              overlayOpen={overlayOpen}
+              presentation={desktopMode}
+              interactionScale={desktopMode === "canvas" ? canvasZoom : 1}
+              workspaceRevision={desktopMode === "canvas" ? `${canvasPanX}:${canvasPanY}:${canvasZoom}` : "desktop"}
+              onFocus={() => activate(tab.id)}
+              onClose={() => close(tab)}
+              onMinimize={() => minimize(tab.id)}
+              onMaximize={() => {
+                maximizeToTab(tab.id);
+                focusTab(tab.id);
+                if (desktopMode === "canvas") setDesktopMode("desktop");
+              }}
+              onBoundsChange={(bounds) => setSurfaceBounds(tab.id, bounds, viewport, desktopMode !== "canvas")}
+            />
+          );
+          })}
+        </DesktopWorkspacePlane>
+      </DesktopBackgroundMenu>
       {launcherMounted ? (
         <DesktopLaunchpad open={launcherOpen} onClose={closeApps} onLaunchTab={launchApp} />
       ) : null}
-      <DesktopTaskbar
-        tabs={tabs}
-        surfaces={surfaces}
-        activeTabId={activeTabId}
-        onOpenApps={toggleApps}
-        launcherOpen={launcherOpen}
-        onActivate={activate}
-        onMinimize={minimize}
-      />
+      {!tabWorkspaceActive ? (
+        <DesktopTaskbar
+          tabs={tabs}
+          surfaces={surfaces}
+          activeTabId={activeTabId}
+          onOpenApps={toggleApps}
+          launcherOpen={launcherOpen}
+          onActivate={activate}
+          onMinimize={minimize}
+        />
+      ) : null}
+        </>
+      ) : null}
     </div>
   );
 }

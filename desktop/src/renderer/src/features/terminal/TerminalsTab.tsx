@@ -218,7 +218,13 @@ function TerminalAppTabs({
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- TerminalsTab is the cohesive shell-session workspace: network load/create, selection, rename, delete confirmation, search, and drag refs are independent UI concerns. A reducer would couple unrelated state transitions without reducing render risk; extracting subcomponents below keeps the row/empty states isolated.
-export default function TerminalsTab({ active = true }: { active?: boolean }) {
+export default function TerminalsTab({
+  active = true,
+  visible = active,
+}: {
+  active?: boolean;
+  visible?: boolean;
+}) {
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const shells = useShellSessions((s) => s.sessions);
@@ -493,7 +499,7 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
     finishDrag();
   };
 
-  const overviewVisible = active && selectedName === null;
+  const overviewSelected = selectedName === null;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-surface)" }}>
@@ -513,7 +519,8 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <RetainedPane
           as="section"
-          active={overviewVisible}
+          active={active && overviewSelected}
+          visible={visible && overviewSelected}
           className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
           background="var(--bg-surface)"
           style={{ borderRadius: 8 }}
@@ -645,12 +652,13 @@ export default function TerminalsTab({ active = true }: { active?: boolean }) {
 
         {openedSessionNames.map((sessionName) => {
           const shell = shells.find((candidate) => candidate.name === sessionName) ?? { name: sessionName, status: "active" as const };
-          const visible = active && selectedName === sessionName;
+          const selected = selectedName === sessionName;
           return (
             <RetainedPane
               as="section"
               key={sessionName}
-              active={visible}
+              active={active && selected}
+              visible={visible && selected}
               className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
               background={terminalAppearance.surface}
               style={{ borderRadius: 8 }}

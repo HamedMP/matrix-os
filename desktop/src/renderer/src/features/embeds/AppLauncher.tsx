@@ -1,7 +1,7 @@
 import { LayoutGrid, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
-import { appIconUrl, useApps } from "../../stores/apps";
+import { appIconUrl, useApps, type MatrixApp } from "../../stores/apps";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 
@@ -72,8 +72,14 @@ export default function AppLauncher({
 
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
-  const open = (slug: string, name: string) => {
-    const tabId = openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug, runtimeSlot) ? { icon: appIconUrl(platformHost, slug, runtimeSlot)! } : {}) });
+  const open = (app: MatrixApp) => {
+    const tabId = openTab({
+      kind: "app",
+      slug: app.slug,
+      title: app.name,
+      ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}),
+      ...(appIconUrl(platformHost, app.slug, runtimeSlot) ? { icon: appIconUrl(platformHost, app.slug, runtimeSlot)! } : {}),
+    });
     onLaunch?.(tabId);
   };
 
@@ -88,7 +94,7 @@ export default function AppLauncher({
     } else if (e.key === "Enter") {
       e.preventDefault();
       const app = filtered[activeIndex];
-      if (app) open(app.slug, app.name);
+      if (app) open(app);
     }
   };
 
@@ -180,7 +186,7 @@ export default function AppLauncher({
                     borderColor: highlighted ? "var(--accent)" : presentation === "launchpad" ? "transparent" : "var(--border-subtle)",
                   }}
                   onMouseEnter={() => setActive(i)}
-                  onClick={() => open(app.slug, app.name)}
+                onClick={() => open(app)}
                 >
                   <AppIcon url={appIconUrl(platformHost, app.slug, runtimeSlot)} name={app.name} large={presentation === "launchpad"} />
                   <span

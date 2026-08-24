@@ -7,9 +7,11 @@ import EmbedHost from "../embeds/EmbedHost";
 export default function HomeTab({
   active = true,
   layoutRevision,
+  visualScale = 1,
 }: {
   active?: boolean;
   layoutRevision?: string;
+  visualScale?: number;
 }) {
   const signedIn = useConnection((s) => s.status === "signed-in");
   const refreshRequest = useUi((state) => state.homeRefreshRequest);
@@ -22,6 +24,7 @@ export default function HomeTab({
           active={active}
           refreshRequest={refreshRequest}
           layoutRevision={layoutRevision}
+          visualScale={visualScale}
         />
       ) : null}
     </div>

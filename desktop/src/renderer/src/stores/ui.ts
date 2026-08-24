@@ -18,6 +18,7 @@ interface UiState {
   rendererOverlayCount: number;
   sidebarCollapsed: boolean;
   homeRefreshRequest: number;
+  desktopBackgroundRefreshRequest: number;
   // One-shot request for which Settings section the next Settings render
   // should select (consumed and cleared by SettingsView).
   requestedSettingsSection: string | null;
@@ -34,6 +35,7 @@ interface UiState {
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   requestHomeRefresh: () => void;
+  requestDesktopBackgroundRefresh: () => void;
   requestSettingsSection: (section: string) => void;
   clearRequestedSettingsSection: () => void;
 }
@@ -49,6 +51,7 @@ export const useUi = create<UiState>()((set) => ({
   rendererOverlayCount: 0,
   sidebarCollapsed: false,
   homeRefreshRequest: 0,
+  desktopBackgroundRefreshRequest: 0,
   requestedSettingsSection: null,
   setCreateProjectOpen: (open) => set({ createProjectOpen: open }),
   openCreateProject: () => set({ createProjectOpen: true }),
@@ -68,6 +71,9 @@ export const useUi = create<UiState>()((set) => ({
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   requestHomeRefresh: () => set((state) => ({
     homeRefreshRequest: (state.homeRefreshRequest + 1) % 1_000_000,
+  })),
+  requestDesktopBackgroundRefresh: () => set((state) => ({
+    desktopBackgroundRefreshRequest: (state.desktopBackgroundRefreshRequest + 1) % 1_000_000,
   })),
   requestSettingsSection: (section) => set({ requestedSettingsSection: section }),
   clearRequestedSettingsSection: () => set({ requestedSettingsSection: null }),

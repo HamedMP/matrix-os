@@ -2,6 +2,7 @@ import type { CSSProperties, HTMLAttributes } from "react";
 
 interface RetainedPaneProps extends Omit<HTMLAttributes<HTMLElement>, "aria-hidden" | "inert"> {
   active: boolean;
+  visible?: boolean;
   as?: "div" | "section";
   background?: CSSProperties["background"];
 }
@@ -12,6 +13,7 @@ interface RetainedPaneProps extends Omit<HTMLAttributes<HTMLElement>, "aria-hidd
  */
 export default function RetainedPane({
   active,
+  visible = active,
   as: Element = "div",
   background,
   style,
@@ -22,12 +24,12 @@ export default function RetainedPane({
       {...props}
       data-retained-pane
       data-active={String(active)}
-      aria-hidden={!active}
+      aria-hidden={!visible}
       inert={!active}
       style={{
         ...style,
-        display: active ? "flex" : "none",
-        visibility: active ? "visible" : "hidden",
+        display: visible ? "flex" : "none",
+        visibility: visible ? "visible" : "hidden",
         pointerEvents: active ? "auto" : "none",
         zIndex: active ? 1 : 0,
         ...(background ? { background } : {}),

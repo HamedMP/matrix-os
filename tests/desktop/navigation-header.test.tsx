@@ -389,16 +389,13 @@ describe("Desktop navigation header", () => {
     expect(screen.queryByRole("menuitem", { name: "Refresh Home" })).toBeNull();
   });
 
-  it("uses the active Browser title in native desktop refresh actions", async () => {
+  it("uses permanent workspace tabs instead of Browser breadcrumbs or actions in native desktop", () => {
     useTabs.getState().openTab({ kind: "home", title: "Browser", closable: false });
     render(<Tooltip.Provider><NavigationHeader nativeDesktop /></Tooltip.Provider>);
 
-    const actions = screen.getByRole("button", { name: "Actions for Browser" });
-    fireEvent.pointerDown(actions, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Refresh Browser" }));
-
-    expect(useUi.getState().homeRefreshRequest).toBe(1);
-    expect(screen.queryByRole("menuitem", { name: "Refresh Home" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Desktop" })).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions for Browser" })).toBeNull();
   });
 
   it("shows the current Terminal session in the breadcrumb and returns through the shared root", () => {

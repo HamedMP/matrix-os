@@ -377,6 +377,30 @@ describe("TerminalsTab", () => {
     expect(terminalMounts.get("matrix-main")).toBe(1);
   });
 
+  it("keeps a background Terminal window painted while releasing interaction and its live attachment", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+
+    const { rerender } = renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+    const terminal = screen.getByTestId("terminal-view-matrix-main");
+    const sessionPane = terminal.closest("section");
+
+    rerender(
+      <Tooltip.Provider>
+        <TerminalsTab active={false} visible />
+      </Tooltip.Provider>,
+    );
+
+    expect(sessionPane?.style.display).toBe("flex");
+    expect(sessionPane?.style.visibility).toBe("visible");
+    expect(sessionPane?.style.pointerEvents).toBe("none");
+    expect(sessionPane?.hasAttribute("inert")).toBe(true);
+    expect(terminal.getAttribute("data-active")).toBe("false");
+    expect(terminalMounts.get("matrix-main")).toBe(1);
+  });
+
   it("does not promote canonical sessions that are only opened", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().ensureNavigationScope("primary|operator|1");

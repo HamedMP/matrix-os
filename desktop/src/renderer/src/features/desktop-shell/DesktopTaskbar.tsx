@@ -1,5 +1,4 @@
 import { LayoutGrid } from "lucide-react";
-import AccountMenu from "../mission-control/AccountMenu";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
@@ -33,7 +32,6 @@ export default function DesktopTaskbar({
       className="absolute bottom-3 left-1/2 flex h-[62px] -translate-x-1/2 items-center gap-1.5 rounded-[19px] border px-2.5 backdrop-blur-2xl"
       style={{
         zIndex: DESKTOP_Z_INDEX.nativeDesktopTaskbar,
-        minWidth: "76px",
         maxWidth: "calc(100% - 24px)",
         borderColor: "color-mix(in srgb, var(--border-default) 76%, transparent)",
         background: "color-mix(in srgb, var(--bg-surface) 76%, transparent)",
@@ -50,14 +48,13 @@ export default function DesktopTaskbar({
       >
         <LayoutGrid size={21} aria-hidden="true" />
       </button>
-      {runningTabs.length > 0 ? (
+      {runningTabs.length > 0 ? <>
         <span className="mx-0.5 h-8 w-px shrink-0" style={{ background: "var(--border-default)" }} />
-      ) : null}
-      <div
-        data-testid="desktop-taskbar-running-apps"
-        className="flex min-w-0 items-center gap-1.5 overflow-x-auto px-0.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {runningTabs.map((tab) => {
+        <div
+          data-testid="desktop-taskbar-running-apps"
+          className="flex min-w-0 items-center gap-1.5 overflow-x-auto px-0.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {runningTabs.map((tab) => {
           const surface = surfaces[tab.id]!;
           const active = activeTabId === tab.id && surface.mode !== "minimized";
           const label = surface.mode === "minimized"
@@ -86,11 +83,10 @@ export default function DesktopTaskbar({
               />
             </button>
           );
-        })}
-      </div>
-      <span className="mx-0.5 h-8 w-px shrink-0" style={{ background: "var(--border-default)" }} />
+          })}
+        </div>
+      </> : null}
       <DesktopUpdateButton collapsed />
-      <AccountMenu collapsed />
     </nav>
   );
 }

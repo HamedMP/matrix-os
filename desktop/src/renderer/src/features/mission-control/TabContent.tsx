@@ -50,19 +50,23 @@ export class TabErrorBoundary extends Component<{
 export function TabPane({
   tab,
   active,
+  visible = active,
   layoutRevision,
+  visualScale = 1,
 }: {
   tab: Tab;
   active: boolean;
+  visible?: boolean;
   layoutRevision?: string;
+  visualScale?: number;
 }) {
   switch (tab.kind) {
     case "home":
-      return <HomeTab active={active} layoutRevision={layoutRevision} />;
+      return <HomeTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "chat":
       return <ChatTab />;
     case "terminals":
-      return <TerminalsTab active={active} />;
+      return <TerminalsTab active={active} visible={visible} />;
     case "files":
       return <FilesWorkspace />;
     case "apps":
@@ -71,7 +75,7 @@ export function TabPane({
       return <ProjectsIndex />;
     case "app":
       return tab.slug
-        ? <EmbedHost kind="app" slug={tab.slug} active={active} layoutRevision={layoutRevision} />
+        ? <EmbedHost kind="app" slug={tab.slug} appIdentity={tab.appIdentity} active={active} layoutRevision={layoutRevision} visualScale={visualScale} />
         : null;
     case "project":
       return tab.projectSlug ? <ProjectTab projectSlug={tab.projectSlug} active={active} /> : null;

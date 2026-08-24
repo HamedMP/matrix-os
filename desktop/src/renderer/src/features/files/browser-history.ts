@@ -5,13 +5,12 @@ interface BrowserHistoryState {
   index: number;
 }
 
-const INITIAL_HISTORY: BrowserHistoryState = { paths: [""], index: 0 };
-
-export function useBrowserHistory() {
-  const [history, setHistory] = useState<BrowserHistoryState>(INITIAL_HISTORY);
+export function useBrowserHistory(initialPath = "") {
+  const initialHistory = useMemo<BrowserHistoryState>(() => ({ paths: [initialPath], index: 0 }), [initialPath]);
+  const [history, setHistory] = useState<BrowserHistoryState>(initialHistory);
   const currentPath = history.paths[history.index] ?? "";
 
-  const resetHistory = useCallback(() => setHistory(INITIAL_HISTORY), []);
+  const resetHistory = useCallback(() => setHistory(initialHistory), [initialHistory]);
   const pushPath = useCallback((path: string) => {
     setHistory((current) => ({
       paths: [...current.paths.slice(0, current.index + 1), path],

@@ -249,13 +249,13 @@ describe("EmbedService", () => {
     });
     const internals = service as unknown as {
       pendingHostedShells: Map<string, Bounds>;
-      pendingApps: Map<string, { slug: string; bounds: Bounds }>;
+      pendingApps: Map<string, { slug: string; appIdentity: string; bounds: Bounds }>;
       pendingActive: Map<string, boolean>;
       manager: { suspendAll: () => boolean };
     };
     const suspendAll = vi.spyOn(internals.manager, "suspendAll").mockReturnValue(true);
     internals.pendingHostedShells.set("embed-shell", BOUNDS);
-    internals.pendingApps.set("embed-app", { slug: "notes", bounds: BOUNDS });
+    internals.pendingApps.set("embed-app", { slug: "notes", appIdentity: "notes", bounds: BOUNDS });
     internals.pendingActive.set("embed-shell", true);
     internals.pendingActive.set("embed-app", true);
 
@@ -399,7 +399,7 @@ describe("EmbedService", () => {
       emitState,
     });
     const internals = service as unknown as {
-      pendingApps: Map<string, { slug: string; bounds: Bounds }>;
+      pendingApps: Map<string, { slug: string; appIdentity: string; bounds: Bounds }>;
       fetchLaunchToken: (gatewayOrigin: string, slug: string) => Promise<{ launchUrl: string; expiresAt: number } | null>;
       manager: { open: (kind: string, slug: string | null, bounds: Bounds, url: string, options: unknown) => string };
     };
@@ -412,11 +412,15 @@ describe("EmbedService", () => {
         expiresAt: Date.now() + 60_000,
       })
       .mockResolvedValueOnce({
-        launchUrl: "/apps/notes/",
+        launchUrl: "/apps/2048/",
         expiresAt: Date.now() + 60_000,
       });
 
-    internals.pendingApps.set("embed-app", { slug: "notes", bounds: BOUNDS });
+    internals.pendingApps.set("embed-app", {
+      slug: "2048",
+      appIdentity: "games/2048",
+      bounds: BOUNDS,
+    });
 
     await expect(service.retryAuth("embed-app")).resolves.toBe(false);
     expect(open).not.toHaveBeenCalled();
@@ -426,10 +430,10 @@ describe("EmbedService", () => {
     expect(fetchLaunchToken).toHaveBeenCalledTimes(2);
     expect(open).toHaveBeenCalledWith(
       "app",
-      "notes",
+      "games/2048",
       BOUNDS,
-      "https://gateway.test/apps/notes/",
-      expect.objectContaining({ id: "embed-app" }),
+      "https://gateway.test/apps/2048/",
+      expect.objectContaining({ id: "embed-app", routeSlug: "2048" }),
     );
   });
 
@@ -442,7 +446,7 @@ describe("EmbedService", () => {
       emitState,
     });
     const internals = service as unknown as {
-      pendingApps: Map<string, { slug: string; bounds: Bounds }>;
+      pendingApps: Map<string, { slug: string; appIdentity: string; bounds: Bounds }>;
       fetchLaunchToken: (gatewayOrigin: string, slug: string) => Promise<{ launchUrl: string; expiresAt: number } | null>;
       manager: { open: (kind: string, slug: string | null, bounds: Bounds, url: string, options: unknown) => string };
     };
@@ -452,7 +456,7 @@ describe("EmbedService", () => {
       () => new Promise((resolve) => { resolveToken = resolve; }),
     );
 
-    internals.pendingApps.set("embed-app", { slug: "notes", bounds: BOUNDS });
+    internals.pendingApps.set("embed-app", { slug: "notes", appIdentity: "notes", bounds: BOUNDS });
     const retry = service.retryAuth("embed-app");
     expect(service.close("embed-app")).toBe(true);
     resolveToken({ launchUrl: "/apps/notes/", expiresAt: Date.now() + 60_000 });

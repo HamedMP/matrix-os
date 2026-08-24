@@ -23,8 +23,8 @@ export default function DesktopLaunchpad({
   }, [open]);
 
   return (
-    <section
-      role="dialog"
+    <dialog
+      open={open}
       aria-label="App launcher"
       aria-hidden={!open}
       inert={!open}
@@ -48,6 +48,6 @@ export default function DesktopLaunchpad({
           onClose();
         }}
       />
-    </section>
+    </dialog>
   );
 }

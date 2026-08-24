@@ -1,7 +1,7 @@
 // Electron WebContentsView adapter implementing EmbedViewLike. Each embed runs
-// in its own isolated partition with no preload/IPC exposure — remote content
-// can never reach the trusted core (FR-064). Navigation is gated by an origin
-// allowlist; external links open in the system browser.
+// in its own isolated partition. Hosted-shell views have no preload/IPC
+// exposure; app views may receive the narrow database-only preload. Navigation
+// is gated by an origin allowlist; external links open in the system browser.
 import { WebContentsView, shell, type BaseWindow } from "electron";
 import { isNavigationAllowed } from "./origin-policy";
 import type { Bounds, EmbedViewLike } from "./embed-manager";
@@ -12,6 +12,13 @@ export function createWebContentsView(options: {
   partition: string;
   allowedOrigins: string[];
   onState: (state: "loading" | "ready" | "failed") => void;
+  appBridge?: {
+    appIdentity: string;
+    routeSlug: string;
+    preloadPath: string;
+    register: (senderId: number, appIdentity: string, routeSlug: string) => void;
+    unregister: (senderId: number) => void;
+  };
 }): EmbedViewLike {
   const view = new WebContentsView({
     webPreferences: {
@@ -19,10 +26,26 @@ export function createWebContentsView(options: {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      ...(options.appBridge ? { preload: options.appBridge.preloadPath } : {}),
     },
   });
 
   const contents = view.webContents;
+  if (options.appBridge) {
+    // App views receive only the explicit typed bridge. Browser capabilities
+    // that could escape that permission model are denied by default.
+    contents.session.setPermissionCheckHandler(() => false);
+    contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+      callback(false);
+    });
+  }
+  if (options.appBridge) {
+    options.appBridge.register(
+      contents.id,
+      options.appBridge.appIdentity,
+      options.appBridge.routeSlug,
+    );
+  }
 
   // Block any navigation outside the allowlist; route external links to the
   // system browser.
@@ -60,6 +83,9 @@ export function createWebContentsView(options: {
     setBounds(bounds: Bounds) {
       view.setBounds(bounds);
     },
+    setScale(factor: number) {
+      contents.setZoomFactor(factor);
+    },
     async loadUrl(url: string) {
       await contents.loadURL(url);
     },
@@ -74,6 +100,7 @@ export function createWebContentsView(options: {
       attached = false;
     },
     destroy() {
+      options.appBridge?.unregister(contents.id);
       if (attached) {
         options.window.contentView.removeChildView(view);
         attached = false;

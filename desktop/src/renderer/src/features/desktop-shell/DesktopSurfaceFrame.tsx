@@ -14,6 +14,7 @@ import type {
 import type { Tab } from "../../stores/tabs";
 import { TabErrorBoundary, TabPane } from "../mission-control/TabContent";
 import SurfaceIcon from "./SurfaceIcon";
+import type { NativeDesktopMode } from "../../stores/native-desktop-mode";
 
 function windowControlClass(): string {
   return "no-drag flex size-3 items-center justify-center rounded-full border-0 text-transparent transition-colors hover:text-black/55 focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
@@ -25,6 +26,9 @@ export default function DesktopSurfaceFrame({
   active,
   tabWorkspaceActive,
   overlayOpen,
+  presentation,
+  interactionScale = 1,
+  workspaceRevision = "",
   onFocus,
   onClose,
   onMinimize,
@@ -36,15 +40,23 @@ export default function DesktopSurfaceFrame({
   active: boolean;
   tabWorkspaceActive: boolean;
   overlayOpen: boolean;
+  presentation: NativeDesktopMode;
+  interactionScale?: number;
+  workspaceRevision?: string;
   onFocus: () => void;
   onClose: () => void;
   onMinimize: () => void;
   onMaximize: () => void;
   onBoundsChange: (bounds: DesktopSurfaceBounds) => void;
 }) {
-  const isWindow = surface.mode === "window";
-  const isTabbed = surface.mode === "tab";
-  const visible = (isWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
+  const isCanvas = presentation === "canvas";
+  const isDesktopWindow = surface.mode === "window";
+  const isTabbed = !isCanvas && surface.mode === "tab";
+  const isWindow = isDesktopWindow
+    || (isCanvas && surface.mode !== "closed" && surface.mode !== "minimized");
+  const visible = isCanvas
+    ? isWindow
+    : (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app";
   const paneActive = interactive && !(isNativeEmbed && overlayOpen);
@@ -66,8 +78,9 @@ export default function DesktopSurfaceFrame({
     const startY = event.clientY;
     const initial = surface.bounds;
     const move = (pointerEvent: PointerEvent) => {
-      const deltaX = pointerEvent.clientX - startX;
-      const deltaY = pointerEvent.clientY - startY;
+      const scale = Math.max(0.01, interactionScale);
+      const deltaX = (pointerEvent.clientX - startX) / scale;
+      const deltaY = (pointerEvent.clientY - startY) / scale;
       onBoundsChange(kind === "move"
         ? { ...initial, x: initial.x + deltaX, y: initial.y + deltaY }
         : { ...initial, width: initial.width + deltaX, height: initial.height + deltaY });
@@ -96,7 +109,7 @@ export default function DesktopSurfaceFrame({
     window.addEventListener("pointercancel", finish);
     window.addEventListener("blur", finish);
     captureTarget.addEventListener("lostpointercapture", finish);
-  }, [isWindow, onBoundsChange, onFocus, surface.bounds]);
+  }, [interactionScale, isWindow, onBoundsChange, onFocus, surface.bounds]);
 
   if (surface.mode === "closed") return null;
 
@@ -106,6 +119,8 @@ export default function DesktopSurfaceFrame({
     surface.bounds.y,
     surface.bounds.width,
     surface.bounds.height,
+    presentation,
+    workspaceRevision,
   ].join(":");
 
   const frameStyle: CSSProperties = isWindow ? {
@@ -119,7 +134,7 @@ export default function DesktopSurfaceFrame({
     border: `1px solid ${active ? "var(--border-default)" : "var(--border-subtle)"}`,
     boxShadow: active ? "var(--shadow-3)" : "var(--shadow-2)",
   } : {
-    inset: `0 0 ${NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight}px`,
+    inset: 0,
     zIndex: DESKTOP_Z_INDEX.nativeDesktopTabSurface,
     display: visible ? "flex" : "none",
     borderRadius: 0,
@@ -133,9 +148,10 @@ export default function DesktopSurfaceFrame({
       aria-label={isWindow && visible ? `${tab.title} window` : undefined}
       aria-hidden={!visible}
       data-desktop-surface={tab.id}
+      onContextMenu={(event) => event.stopPropagation()}
       data-surface-mode={surface.mode}
       data-active={active || undefined}
-      className="absolute min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--bg-app)] transition-[box-shadow,border-color] duration-150"
+      className="pointer-events-auto absolute min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--bg-app)] transition-[box-shadow,border-color] duration-150"
       style={frameStyle}
       onPointerDown={isWindow ? onFocus : undefined}
     >
@@ -174,7 +190,13 @@ export default function DesktopSurfaceFrame({
         } : undefined}
       >
         <TabErrorBoundary tabTitle={tab.title} onClose={onClose}>
-          <TabPane tab={tab} active={paneActive} layoutRevision={layoutRevision} />
+          <TabPane
+            tab={tab}
+            active={paneActive}
+            visible={visible}
+            layoutRevision={layoutRevision}
+            visualScale={presentation === "canvas" ? interactionScale : 1}
+          />
         </TabErrorBoundary>
       </div>
       {isWindow ? (

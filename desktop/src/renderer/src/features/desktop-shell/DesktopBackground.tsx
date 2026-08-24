@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
+import { useUi } from "../../stores/ui";
 
 type DesktopBackgroundConfig =
   | { type: "pattern" }
@@ -86,6 +87,7 @@ function directBackgroundStyle(config: Exclude<DesktopBackgroundConfig, { type: 
 
 export default function DesktopBackground() {
   const api = useConnection((state) => state.api);
+  const requestedRefresh = useUi((state) => state.desktopBackgroundRefreshRequest);
   const [loaded, setLoaded] = useState<{ api: ApiClient; style: CSSProperties } | null>(null);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const style = api && loaded?.api === api ? loaded.style : FALLBACK_STYLE;
@@ -140,7 +142,7 @@ export default function DesktopBackground() {
       cancelled = true;
       if (ownedObjectUrl) URL.revokeObjectURL(ownedObjectUrl);
     };
-  }, [api, refreshRevision]);
+  }, [api, refreshRevision, requestedRefresh]);
 
   return (
     <div

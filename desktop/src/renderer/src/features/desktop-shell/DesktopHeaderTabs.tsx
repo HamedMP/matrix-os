@@ -12,8 +12,17 @@ export default function DesktopHeaderTabs() {
   const surfaces = useDesktopSurfaces((state) => state.surfaces);
   const activateSurface = useDesktopSurfaces((state) => state.activateSurface);
   const restoreAsWindow = useDesktopSurfaces((state) => state.restoreAsWindow);
+  const minimizeSurface = useDesktopSurfaces((state) => state.minimizeSurface);
   const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
+  const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
+  const showDesktop = useDesktopSurfaces((state) => state.showDesktop);
   const setLauncherOpen = useUi((state) => state.setAppLauncherOpen);
+  const requestBackgroundRefresh = useUi((state) => state.requestDesktopBackgroundRefresh);
+
+  const showDesktopWithRefresh = useCallback(() => {
+    showDesktop();
+    requestBackgroundRefresh();
+  }, [requestBackgroundRefresh, showDesktop]);
 
   const activate = useCallback((tabId: string) => {
     focusTab(tabId);
@@ -43,8 +52,16 @@ export default function DesktopHeaderTabs() {
     const wasActive = useTabs.getState().activeTabId === tab.id;
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
+    if (tab.kind === "home") requestBackgroundRefresh();
     if (wasActive) focusFallback(tab.id);
-  }, [closeSurface, closeTab, focusFallback]);
+  }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
+
+  const restore = useCallback((tabId: string) => {
+    const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
+    restoreAsWindow(tabId);
+    focusTab(tabId);
+    if (tab?.kind === "home") requestBackgroundRefresh();
+  }, [focusTab, requestBackgroundRefresh, restoreAsWindow]);
 
   return (
     <DesktopTabStrip
@@ -52,11 +69,14 @@ export default function DesktopHeaderTabs() {
       surfaces={surfaces}
       activeTabId={activeTabId}
       onActivate={activate}
-      onRestore={(tabId) => {
-        restoreAsWindow(tabId);
-        focusTab(tabId);
+      onRestore={restore}
+      onMinimize={(tabId) => {
+        minimizeSurface(tabId);
+        showDesktopWithRefresh();
       }}
       onClose={close}
+      workspaceView={workspaceView}
+      onShowDesktop={showDesktopWithRefresh}
       onOpenApps={() => setLauncherOpen(true)}
     />
   );

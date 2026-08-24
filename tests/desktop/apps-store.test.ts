@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from "vitest";
-import { appIconUrl, preloadAppIcons, resetAppsRuntime, useApps } from "../../desktop/src/renderer/src/stores/apps";
+import { appIconUrl, parseApps, preloadAppIcons, resetAppsRuntime, useApps } from "../../desktop/src/renderer/src/stores/apps";
 
 describe("desktop app icon warmup", () => {
   afterEach(() => {
@@ -48,5 +48,17 @@ describe("desktop app icon warmup", () => {
 
   it("preserves the primary-runtime icon URL", () => {
     expect(appIconUrl("https://platform.test/", "notes")).toBe("https://platform.test/icons/notes.png");
+  });
+
+  it("retains the canonical nested app identity used by Postgres schemas", () => {
+    expect(parseApps({ apps: [{
+      slug: "2048",
+      name: "2048",
+      file: "games/2048/index.html",
+    }] })).toEqual([{
+      slug: "2048",
+      name: "2048",
+      appIdentity: "games/2048",
+    }]);
   });
 });

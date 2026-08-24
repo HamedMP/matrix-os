@@ -4,6 +4,7 @@ import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
 import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
+import { NativeAppBridge, createNativeAppQueryRequester } from "./embeds/native-app-bridge";
 import {
   abortCodingAgentThread,
   createCodingAgentSourcePullRequest,
@@ -217,11 +218,22 @@ if (!gotLock) {
         : "null";
       installGatewayCors(session.defaultSession, () => auth.getGatewayOrigin(), rendererOrigin);
 
+      const nativeAppBridge = new NativeAppBridge({
+        gatewayOrigin: () => auth.getGatewayOrigin(),
+        request: createNativeAppQueryRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
+      });
+      nativeAppBridge.registerIpc(ipcMain);
+
       const embeds = new EmbedService({
         getWindow: () => mainWindow,
         getGatewayOrigin: () => auth.getGatewayOrigin(),
         getToken: () => auth.getToken(),
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
+        appBridge: nativeAppBridge,
+        appPreloadPath: join(__dirname, "../preload/app-bridge.cjs"),
       });
       const updater = createUpdater({
         onAvailable: (version) => {
@@ -371,6 +383,7 @@ if (!gotLock) {
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
+          embeds.closeAll();
           codingAgentThreadEvents.closeAll();
           mainWindow = null;
         });

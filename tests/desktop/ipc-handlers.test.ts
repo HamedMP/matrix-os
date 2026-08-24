@@ -171,6 +171,7 @@ describe("registerIpcHandlers", () => {
     expect(harness.ctx.embeds.open).toHaveBeenCalledWith({
       kind: "hosted-shell",
       slug: undefined,
+      appIdentity: undefined,
       bounds: { x: 360, y: 57, width: 920, height: 764 },
       active: true,
     });

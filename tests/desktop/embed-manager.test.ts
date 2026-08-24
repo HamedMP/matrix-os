@@ -29,6 +29,10 @@ class FakeView implements EmbedViewLike {
     this.events.push("setBounds");
   }
 
+  setScale(factor: number): void {
+    this.events.push(`setScale:${factor}`);
+  }
+
   async loadUrl(url: string): Promise<void> {
     this.events.push(`load:${url}`);
     this.loadedUrls.push(url);
@@ -115,6 +119,27 @@ describe("EmbedManager", () => {
     manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
     manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/");
     expect(views.map((v) => v.partition)).toEqual(["persist:hosted-shell", "persist:app-notes"]);
+  });
+
+  it("uses the route slug for the partition while retaining a nested app identity", () => {
+    const created: Array<{ partition: string; slug: string | null; routeSlug: string | null }> = [];
+    const manager = new EmbedManager({
+      createView: ({ partition, slug, routeSlug, onState }) => {
+        created.push({ partition, slug, routeSlug });
+        return new FakeView(null, onState);
+      },
+      allowedOrigins: ["https://gw.test"],
+    });
+
+    manager.open("app", "games/2048", BOUNDS, "https://gw.test/apps/2048/", {
+      routeSlug: "2048",
+    });
+
+    expect(created).toEqual([{
+      partition: "persist:app-2048",
+      slug: "games/2048",
+      routeSlug: "2048",
+    }]);
   });
 
   it("rejects app embeds without a safe slug", () => {

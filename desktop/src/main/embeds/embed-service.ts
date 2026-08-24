@@ -18,6 +18,7 @@ import {
 } from "./app-session";
 import { resolveLaunchUrl } from "./origin-policy";
 import { createWebContentsView } from "./web-contents-view";
+import type { NativeAppBridge } from "./native-app-bridge";
 
 export type EmbedState = "loading" | "ready" | "auth-required" | "failed";
 
@@ -26,11 +27,14 @@ interface EmbedServiceDeps {
   getGatewayOrigin: () => string;
   getToken: () => string | null;
   emitState: (embedId: string, state: EmbedState) => void;
+  appBridge?: NativeAppBridge;
+  appPreloadPath?: string;
 }
 
 interface OpenRequest {
   kind: "hosted-shell" | "app";
   slug?: string;
+  appIdentity?: string;
   bounds: Bounds;
   active?: boolean;
 }
@@ -46,6 +50,7 @@ const HOSTED_SHELL_PARTITION = "persist:hosted-shell";
 
 interface PendingAppEmbed {
   slug: string;
+  appIdentity: string;
   bounds: Bounds;
 }
 
@@ -68,14 +73,25 @@ export class EmbedService {
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
-      createView: ({ partition, onState }) => {
+      createView: ({ partition, kind, slug, routeSlug, onState }) => {
         const window = this.deps.getWindow();
         if (!window) throw new Error("no window for embed");
+        const bridge = kind === "app" && slug && this.deps.appBridge && this.deps.appPreloadPath
+          ? {
+              appIdentity: slug,
+              routeSlug: routeSlug ?? slug,
+              preloadPath: this.deps.appPreloadPath,
+              register: (senderId: number, appIdentity: string, appRouteSlug: string) =>
+                this.deps.appBridge!.register(senderId, appIdentity, appRouteSlug),
+              unregister: (senderId: number) => this.deps.appBridge!.unregister(senderId),
+            }
+          : undefined;
         return createWebContentsView({
           window,
           partition,
           allowedOrigins: [this.deps.getGatewayOrigin()],
           onState,
+          ...(bridge ? { appBridge: bridge } : {}),
         });
       },
     });
@@ -86,11 +102,21 @@ export class EmbedService {
     if (request.kind === "hosted-shell") {
       return this.openHostedShell(gatewayOrigin, request.bounds, request.active ?? true);
     }
-    return this.openApp(gatewayOrigin, request.slug ?? "", request.bounds, request.active ?? true);
+    return this.openApp(
+      gatewayOrigin,
+      request.slug ?? "",
+      request.appIdentity ?? request.slug ?? "",
+      request.bounds,
+      request.active ?? true,
+    );
   }
 
   setBounds(embedId: string, bounds: Bounds): boolean {
     return this.manager.setBounds(embedId, bounds);
+  }
+
+  setScale(embedId: string, factor: number): boolean {
+    return this.manager.setScale(embedId, factor);
   }
 
   setActive(embedId: string, active: boolean): boolean {
@@ -147,6 +173,7 @@ export class EmbedService {
     this.clearHostedShellRefreshTimer();
     this.tokenCache.clear();
     this.manager.closeAll();
+    this.deps.appBridge?.clear();
   }
 
   async retryAuth(embedId: string): Promise<boolean> {
@@ -177,6 +204,7 @@ export class EmbedService {
       const opened = await this.createAppEmbed(
         this.deps.getGatewayOrigin(),
         pending.slug,
+        pending.appIdentity,
         pending.bounds,
         embedId,
         this.pendingActive.get(embedId) ?? true,
@@ -433,11 +461,17 @@ export class EmbedService {
     return result;
   }
 
-  private async openApp(gatewayOrigin: string, slug: string, bounds: Bounds, active: boolean): Promise<OpenResult> {
+  private async openApp(
+    gatewayOrigin: string,
+    slug: string,
+    appIdentity: string,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
     const embedId = randomUUID();
-    const opened = await this.createAppEmbed(gatewayOrigin, slug, bounds, embedId, active);
+    const opened = await this.createAppEmbed(gatewayOrigin, slug, appIdentity, bounds, embedId, active);
     if (!opened) {
-      this.rememberPendingApp(embedId, { slug, bounds }, active);
+      this.rememberPendingApp(embedId, { slug, appIdentity, bounds }, active);
       return { embedId, state: "auth-required" };
     }
     return { embedId, state: "loading" };
@@ -457,6 +491,7 @@ export class EmbedService {
   private async createAppEmbed(
     gatewayOrigin: string,
     slug: string,
+    appIdentity: string,
     bounds: Bounds,
     embedId: string,
     active = true,
@@ -478,9 +513,10 @@ export class EmbedService {
       this.tokenCache.delete(slug);
       return false;
     }
-    this.manager.open("app", slug, bounds, resolved, {
+    this.manager.open("app", appIdentity, bounds, resolved, {
       id: embedId,
       active,
+      routeSlug: slug,
       onState: (state) => this.deps.emitState(embedId, state),
     });
     return true;

@@ -30,7 +30,10 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })],
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, "src/preload/index.ts") },
+        input: {
+          index: resolve(__dirname, "src/preload/index.ts"),
+          "app-bridge": resolve(__dirname, "src/preload/app-bridge.ts"),
+        },
         // sandbox:true preloads must be CJS; ESM preloads require sandbox off.
         output: { format: "cjs", entryFileNames: "[name].cjs" },
       },

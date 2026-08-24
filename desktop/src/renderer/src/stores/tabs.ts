@@ -28,6 +28,7 @@ export interface Tab {
   taskId?: string;
   sessionName?: string;
   slug?: string;
+  appIdentity?: string;
   closable: boolean;
 }
 

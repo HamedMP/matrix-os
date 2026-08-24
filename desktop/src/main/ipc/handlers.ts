@@ -269,11 +269,12 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
-  handle("embed:open", async ({ kind, slug, bounds, active }, event) => {
+  handle("embed:open", async ({ kind, slug, appIdentity, bounds, active }, event) => {
     try {
       return await ctx.embeds.open({
         kind,
         slug,
+        appIdentity,
         bounds: toWebContentsViewBounds(bounds, event),
         active,
       });
@@ -287,6 +288,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("embed:set-bounds", ({ embedId, bounds }, event) => ({
     ok: ctx.embeds.setBounds(embedId, toWebContentsViewBounds(bounds, event)),
+  }));
+  handle("embed:set-scale", ({ embedId, factor }) => ({
+    ok: ctx.embeds.setScale(embedId, factor),
   }));
   handle("embed:set-active", ({ embedId, active }) => ({
     ok: ctx.embeds.setActive(embedId, active),

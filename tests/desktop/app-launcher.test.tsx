@@ -19,7 +19,7 @@ describe("AppLauncher", () => {
     });
     useApps.setState({
       apps: [
-        { slug: "alpha", name: "Alpha" },
+        { slug: "alpha", name: "Alpha", appIdentity: "utilities/alpha" },
         { slug: "beta", name: "Beta" },
         { slug: "bravo", name: "Bravo" },
       ],
@@ -86,7 +86,11 @@ describe("AppLauncher", () => {
     fireEvent.click(screen.getByRole("button", { name: /Alpha/i }));
 
     await waitFor(() => expect(onLaunch).toHaveBeenCalledTimes(1));
-    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "app", slug: "alpha" });
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "app",
+      slug: "alpha",
+      appIdentity: "utilities/alpha",
+    });
   });
 
   it("keeps the focused launcher search field free of a nested focus ring", () => {

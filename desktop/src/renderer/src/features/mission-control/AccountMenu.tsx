@@ -64,9 +64,11 @@ function MenuRow({
 
 export default function AccountMenu({
   collapsed,
+  compact = false,
   trailingAction = null,
 }: {
   collapsed: boolean;
+  compact?: boolean;
   trailingAction?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -94,17 +96,17 @@ export default function AccountMenu({
   };
 
   return (
-    <div className={collapsed ? "p-2 pt-1" : "flex items-center gap-1 px-4 py-4"}>
+    <div className={compact ? "flex items-center" : collapsed ? "p-2 pt-1" : "flex items-center gap-1 px-4 py-4"}>
       <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <DropdownMenu.Trigger asChild>
           <button
             type="button"
             aria-label="Open account menu"
             title={collapsed ? primaryLabel : undefined}
-            className={`flex min-w-0 items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${collapsed ? "h-10 w-full justify-center" : "flex-1 gap-2"}`}
+            className={`flex min-w-0 items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${compact ? "size-7 justify-center" : collapsed ? "h-10 w-full justify-center" : "flex-1 gap-2"}`}
           >
             <span
-              className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold"
+              className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ${compact ? "size-6" : "h-7 w-7"}`}
               style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
             >
               <AccountAvatar key={imageUrl} imageUrl={imageUrl} label={primaryLabel} />

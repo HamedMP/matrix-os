@@ -11,8 +11,8 @@ import { useTabs, type Tab } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
-import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 import DesktopHeaderTabs from "../desktop-shell/DesktopHeaderTabs";
+import DesktopModeControls from "../desktop-shell/DesktopModeControls";
 import {
   openChatIndex,
   openTerminalIndex,
@@ -136,10 +136,6 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
   const requestHomeRefresh = useUi((state) => state.requestHomeRefresh);
   const requestTerminalOverview = useTabs((state) => state.requestTerminalOverview);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
-  const activeSurfaceMode = useDesktopSurfaces((state) =>
-    activeTabId ? state.surfaces[activeTabId]?.mode : undefined,
-  );
-  const desktopTabsVisible = nativeDesktop && activeSurfaceMode === "tab";
   const activeThreadId = useThreads((state) => state.activeThreadId);
   const activeThreadTitle = useThreads((state) =>
     state.threads.find((thread) => thread.id === activeThreadId)?.title,
@@ -214,21 +210,25 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
         data-testid="sidebar-navigation-actions"
         style={{ gap: "8px" }}
       >
-        <HeaderButton
-          label="Go back"
-          disabled={
-            !canGoBack
-            && !canReturnToChatIndex
-            && !canReturnToTerminalIndex
-            && !canReturnToProjectsIndex
-          }
-          onClick={handleBack}
-        >
-          <ChevronLeft size={14} />
-        </HeaderButton>
-        <HeaderButton label="Go forward" disabled={!canGoForward} onClick={goForward}>
-          <ChevronRight size={14} />
-        </HeaderButton>
+        {!nativeDesktop ? (
+          <>
+            <HeaderButton
+              label="Go back"
+              disabled={
+                !canGoBack
+                && !canReturnToChatIndex
+                && !canReturnToTerminalIndex
+                && !canReturnToProjectsIndex
+              }
+              onClick={handleBack}
+            >
+              <ChevronLeft size={14} />
+            </HeaderButton>
+            <HeaderButton label="Go forward" disabled={!canGoForward} onClick={goForward}>
+              <ChevronRight size={14} />
+            </HeaderButton>
+          </>
+        ) : null}
         {!nativeDesktop ? (
           <HeaderButton
             label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -240,7 +240,7 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
       </div>
 
       <div className="flex min-w-0 items-center gap-1 px-2">
-        {desktopTabsVisible ? (
+        {nativeDesktop ? (
           <DesktopHeaderTabs />
         ) : (
           <>
@@ -326,6 +326,7 @@ export default function NavigationHeader({ nativeDesktop = false }: { nativeDesk
             ) : null}
           </>
         )}
+        {nativeDesktop ? <DesktopModeControls /> : null}
       </div>
     </header>
   );

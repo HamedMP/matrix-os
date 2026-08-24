@@ -76,7 +76,9 @@ export function defaultDesktopSurfaceBounds(
 interface DesktopSurfacesState {
   surfaces: Record<string, DesktopSurface>;
   nextZIndex: number;
-  reconcileTabs(tabIds: readonly string[], viewport: DesktopViewport): void;
+  workspaceView: "desktop" | "tabs";
+  reconcileTabs(tabIds: readonly string[], viewport: DesktopViewport, constrainToViewport?: boolean): void;
+  showDesktop(): void;
   activateSurface(tabId: string): void;
   focusSurface(tabId: string): void;
   minimizeSurface(tabId: string): void;
@@ -84,7 +86,7 @@ interface DesktopSurfacesState {
   restoreSurface(tabId: string): void;
   restoreAsWindow(tabId: string): void;
   closeSurface(tabId: string): void;
-  setSurfaceBounds(tabId: string, bounds: DesktopSurfaceBounds, viewport: DesktopViewport): void;
+  setSurfaceBounds(tabId: string, bounds: DesktopSurfaceBounds, viewport: DesktopViewport, constrainToViewport?: boolean): void;
 }
 
 function nextFocusedState(
@@ -133,8 +135,9 @@ function nextFocusedState(
 export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
   surfaces: {},
   nextZIndex: DESKTOP_Z_INDEX.nativeDesktopWindowStart,
+  workspaceView: "desktop",
 
-  reconcileTabs: (tabIds, viewport) => set((state) => {
+  reconcileTabs: (tabIds, viewport, constrainToViewport = true) => set((state) => {
     const retained = new Set(tabIds);
     const surfaces: Record<string, DesktopSurface> = {};
     let nextZIndex = state.nextZIndex;
@@ -143,7 +146,9 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
       if (existing) {
         surfaces[tabId] = {
           ...existing,
-          bounds: desktopSurfaceBounds(existing.bounds, viewport),
+          bounds: constrainToViewport
+            ? desktopSurfaceBounds(existing.bounds, viewport)
+            : existing.bounds,
         };
         return;
       }
@@ -170,8 +175,16 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
           && previous.bounds.width === surface.bounds.width
           && previous.bounds.height === surface.bounds.height;
       });
-    return unchanged ? state : { surfaces, nextZIndex };
+    const workspaceView = state.workspaceView === "tabs"
+      && Object.values(surfaces).some((surface) => surface.mode === "tab")
+      ? "tabs"
+      : "desktop";
+    return unchanged && workspaceView === state.workspaceView
+      ? state
+      : { surfaces, nextZIndex, workspaceView };
   }),
+
+  showDesktop: () => set({ workspaceView: "desktop" }),
 
   activateSurface: (tabId) => set((state) => {
     const surface = state.surfaces[tabId];
@@ -181,10 +194,11 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
       : surface.mode === "closed"
         ? "window"
         : surface.mode;
-    return nextFocusedState(state, tabId, {
+    const focused = nextFocusedState(state, tabId, {
       mode,
       restoreMode: mode === "tab" ? "tab" : "window",
     });
+    return { ...focused, workspaceView: mode === "tab" ? "tabs" : "desktop" };
   }),
 
   focusSurface: (tabId) => set((state) => nextFocusedState(state, tabId)),
@@ -204,9 +218,12 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     };
   }),
 
-  maximizeToTab: (tabId) => set((state) => nextFocusedState(state, tabId, {
-    mode: "tab",
-    restoreMode: "tab",
+  maximizeToTab: (tabId) => set((state) => ({
+    ...nextFocusedState(state, tabId, {
+      mode: "tab",
+      restoreMode: "tab",
+    }),
+    workspaceView: "tabs",
   })),
 
   restoreSurface: (tabId) => set((state) => {
@@ -218,27 +235,34 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     });
   }),
 
-  restoreAsWindow: (tabId) => set((state) => nextFocusedState(state, tabId, {
-    mode: "window",
-    restoreMode: "window",
+  restoreAsWindow: (tabId) => set((state) => ({
+    ...nextFocusedState(state, tabId, {
+      mode: "window",
+      restoreMode: "window",
+    }),
+    workspaceView: "desktop",
   })),
 
   closeSurface: (tabId) => set((state) => {
     const surface = state.surfaces[tabId];
     if (!surface || surface.mode === "closed") return state;
-    return {
-      surfaces: {
-        ...state.surfaces,
-        [tabId]: {
-          ...surface,
-          mode: "closed",
-          restoreMode: surface.mode === "tab" ? "tab" : surface.restoreMode,
-        },
+    const surfaces: Record<string, DesktopSurface> = {
+      ...state.surfaces,
+      [tabId]: {
+        ...surface,
+        mode: "closed",
+        restoreMode: surface.mode === "tab" ? "tab" : surface.restoreMode,
       },
+    };
+    return {
+      surfaces,
+      workspaceView: Object.values(surfaces).some((candidate) => candidate.mode === "tab")
+        ? state.workspaceView
+        : "desktop",
     };
   }),
 
-  setSurfaceBounds: (tabId, bounds, viewport) => set((state) => {
+  setSurfaceBounds: (tabId, bounds, viewport, constrainToViewport = true) => set((state) => {
     const surface = state.surfaces[tabId];
     if (!surface) return state;
     return {
@@ -246,7 +270,12 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
         ...state.surfaces,
         [tabId]: {
           ...surface,
-          bounds: desktopSurfaceBounds(bounds, viewport),
+          bounds: constrainToViewport ? desktopSurfaceBounds(bounds, viewport) : {
+            x: finiteOr(bounds.x, surface.bounds.x),
+            y: finiteOr(bounds.y, surface.bounds.y),
+            width: clamp(finiteOr(bounds.width, surface.bounds.width), MIN_WINDOW_WIDTH, 16_384),
+            height: clamp(finiteOr(bounds.height, surface.bounds.height), MIN_WINDOW_HEIGHT, 16_384),
+          },
         },
       },
     };

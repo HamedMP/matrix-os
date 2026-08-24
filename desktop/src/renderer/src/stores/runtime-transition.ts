@@ -22,6 +22,7 @@ import { advanceRuntimeGeneration } from "./runtime-generation";
 import { resetAppsRuntime } from "./apps";
 import { NATIVE_DESKTOP_WINDOW_SHELL } from "../lib/feature-flags";
 import { HOSTED_SHELL_TAB_SPEC } from "../lib/hosted-shell";
+import { useDesktopSurfaces } from "./desktop-surfaces";
 
 interface RuntimeChangeOptions {
   disposeRuntimeAttachments?: () => void;
@@ -64,6 +65,7 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     terminalSessionRequest: null,
     terminalSessionRequestSequence: 0,
   });
+  useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
   // The native window shell intentionally returns to its icon desktop. The
   // legacy renderer still needs a hosted-shell root because it has no desktop.
   if (!NATIVE_DESKTOP_WINDOW_SHELL) useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);

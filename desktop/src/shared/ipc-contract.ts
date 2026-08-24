@@ -101,6 +101,7 @@ const STATE_KEYS = [
   "lastProjectSlug",
   "panelLayouts",
   "appearance",
+  "desktopShell",
   "terminalAppearance",
   "recents",
   "projectViews",
@@ -302,20 +303,25 @@ export const INVOKE_CHANNELS = {
     response: Ok,
   },
   "embed:open": {
-    request: z
-      .object({
-        kind: z.enum(["hosted-shell", "app"]),
-        slug: z.string().min(1).max(128).optional(),
-        bounds: BoundsSchema,
-        active: z.boolean().optional(),
-      })
-      .strict(),
+    request: z.strictObject({
+      kind: z.enum(["hosted-shell", "app"]),
+      slug: z.string().min(1).max(128).optional(),
+      appIdentity: z.string().min(1).max(256)
+        .regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/)
+        .optional(),
+      bounds: BoundsSchema,
+      active: z.boolean().optional(),
+    }),
     response: z.object({ embedId: z.string().min(1).max(64), state: EmbedStateSchema }).strict(),
   },
   "embed:set-bounds": {
     request: z
       .object({ embedId: z.string().min(1).max(64), bounds: BoundsSchema })
       .strict(),
+    response: Ok,
+  },
+  "embed:set-scale": {
+    request: z.strictObject({ embedId: z.string().min(1).max(64), factor: ZoomFactorSchema }),
     response: Ok,
   },
   "embed:set-active": {

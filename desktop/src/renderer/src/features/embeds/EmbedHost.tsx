@@ -11,15 +11,19 @@ import { useConnection } from "../../stores/connection";
 export default function EmbedHost({
   kind,
   slug,
+  appIdentity,
   active = true,
   refreshRequest,
   layoutRevision,
+  visualScale = 1,
 }: {
   kind: "hosted-shell" | "app";
   slug?: string;
+  appIdentity?: string;
   active?: boolean;
   refreshRequest?: number;
   layoutRevision?: string;
+  visualScale?: number;
 }) {
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -71,7 +75,13 @@ export default function EmbedHost({
       height: Math.round(r.height),
     };
 
-    void invoke("embed:open", { kind, ...(slug ? { slug } : {}), bounds, active: activeRef.current })
+    void invoke("embed:open", {
+      kind,
+      ...(slug ? { slug } : {}),
+      ...(appIdentity ? { appIdentity } : {}),
+      bounds,
+      active: activeRef.current,
+    })
       .then(({ embedId, state: initialState }) => {
         if (disposed) {
           void invoke("embed:close", { embedId });
@@ -105,7 +115,7 @@ export default function EmbedHost({
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, slug, runtimeSlot]);
+  }, [appIdentity, kind, slug, runtimeSlot]);
 
   // Attach/detach the native view as the hosting tab activates/deactivates.
   useEffect(() => {
@@ -123,8 +133,10 @@ export default function EmbedHost({
   // also synchronize the main-process WebContentsView bounds.
   useEffect(() => {
     if (layoutRevision === undefined) return;
+    const id = embedIdRef.current;
+    if (id) void invoke("embed:set-scale", { embedId: id, factor: visualScale });
     reportBounds();
-  }, [layoutRevision, reportBounds]);
+  }, [layoutRevision, openedEmbedRevision, reportBounds, visualScale]);
 
   useEffect(() => {
     if (refreshRequest === undefined || refreshRequest === lastRefreshRequestRef.current) return;
