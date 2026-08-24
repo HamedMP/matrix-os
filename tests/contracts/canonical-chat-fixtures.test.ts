@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   CanonicalChatSnapshotSchema,
+  CanonicalChatInspectorProjectionSchema,
+  CanonicalChatMessagePartSchema,
   CanonicalProviderCatalogSchema,
 } from "../../packages/contracts/src/index.js";
 import {
@@ -40,7 +42,9 @@ describe("canonical Chat fixtures", () => {
       expect(catalog.instances[0]?.availability).toBe(availability);
     }
     for (const state of CANONICAL_INSPECTOR_FIXTURE_STATES) {
-      const inspector = createCanonicalInspectorFixture(state);
+      const inspector = CanonicalChatInspectorProjectionSchema.parse(
+        JSON.parse(JSON.stringify(createCanonicalInspectorFixture(state))),
+      );
       expect(inspector.changes.availability).toBe(state === "unavailable" ? "unavailable" : "available");
       if (inspector.changes.availability === "available") {
         expect(inspector.changes.partial).toBe(state === "partial");
@@ -49,7 +53,10 @@ describe("canonical Chat fixtures", () => {
   });
 
   it("covers every canonical message part used by the shared timeline", () => {
-    expect(createCanonicalMessagePartsFixture().map((part) => part.type)).toEqual([
+    const parts = createCanonicalMessagePartsFixture().map((part) => (
+      CanonicalChatMessagePartSchema.parse(JSON.parse(JSON.stringify(part)))
+    ));
+    expect(parts.map((part) => part.type)).toEqual([
       "text",
       "tool_request",
       "tool_result",
