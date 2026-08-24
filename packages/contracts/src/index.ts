@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.149.0";
+export const CODEX_VERIFIED_VERSION = "0.149.1";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "#agent-runtime-config";
 export * from "#hermes-configuration";
