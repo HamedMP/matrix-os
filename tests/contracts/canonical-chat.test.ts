@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CanonicalChatMessageSchema,
+  CanonicalChatModelSelectionSchema,
   CanonicalChatInspectorProjectionSchema,
   CanonicalChatInvocationSchema,
   CanonicalChatResourceReferenceSchema,
@@ -8,8 +9,10 @@ import {
   CanonicalChatSafeErrorSchema,
   CanonicalChatRunSchema,
   CanonicalChatSchema,
+  CanonicalChatSummarySchema,
   CanonicalChatTurnSchema,
   CanonicalProviderDriverDescriptorSchema,
+  CanonicalProviderCatalogSchema,
   CanonicalProviderInstanceDescriptorSchema,
 } from "../../packages/contracts/src/index.js";
 
@@ -44,11 +47,25 @@ describe("canonical Chat contracts", () => {
       chatId: chat.id,
       turnId: turn.id,
       attempt: 1,
+      driverKind: "codex",
+      instanceId: "codex_primary",
       selection: { instanceId: "codex_primary", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "project", projectId: "matrix-os" },
       status: "completed",
       outcome: "completed",
       historyBoundarySeq: 0,
-      capabilitySnapshotRevision: "catalog_1",
+      capabilitySnapshot: {
+        revision: "catalog_1",
+        attachments: ["file", "image"],
+        tools: ["read", "write"],
+        approvals: true,
+        userInput: true,
+        resume: true,
+        cancellation: true,
+        worktrees: "optional",
+      },
       createdAt: now,
       updatedAt: now,
     });
@@ -101,6 +118,14 @@ describe("canonical Chat contracts", () => {
         { type: "approval_result", approvalId: "approval_1", decision: "approve" },
         { type: "status", tone: "success", label: "Contract updated" },
         { type: "summary", text: "Canonical schemas are ready.", source: "assistant" },
+        {
+          type: "invocation_reference",
+          invocation: { kind: "skill", descriptorId: "review", invocation: "/review" },
+        },
+        {
+          type: "resource_reference",
+          resource: { kind: "file", id: "src.gateway.routes", label: "packages/gateway/src/routes.ts" },
+        },
       ],
       createdAt: now,
     });
@@ -115,7 +140,7 @@ describe("canonical Chat contracts", () => {
       status: "running",
     });
 
-    expect(message.parts).toHaveLength(8);
+    expect(message.parts).toHaveLength(10);
     expect(activity.type).toBe("tool.progress");
     expect(CanonicalChatRunActivitySchema.safeParse({
       ...activity,
@@ -125,6 +150,16 @@ describe("canonical Chat contracts", () => {
       code: "run_failed",
       safeMessage: "Postgres failed at /home/matrix/private",
       retryable: false,
+    }).success).toBe(false);
+    expect(CanonicalChatMessageSchema.safeParse({
+      ...message,
+      parts: [{
+        type: "tool_result",
+        toolCallId: "tool_1",
+        outcome: "failed",
+        text: "Postgres failed at /home/matrix/private",
+        truncated: false,
+      }],
     }).success).toBe(false);
     expect(CanonicalChatSafeErrorSchema.safeParse({
       code: "run_failed",
@@ -151,7 +186,7 @@ describe("canonical Chat contracts", () => {
         id: "gpt-5.6-sol",
         displayName: "GPT-5.6-Sol",
         availability: "available",
-        capabilities: ["reasoning", "tools"],
+        capabilities: ["reasoning", "tools", "vision"],
         contextWindow: 200_000,
         supportsVision: true,
         supportsToolUse: true,
@@ -197,6 +232,41 @@ describe("canonical Chat contracts", () => {
     expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
       ...instance,
       defaultSelection: { ...instance.defaultSelection, instanceId: "claude_primary" },
+    }).success).toBe(false);
+    expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
+      ...instance,
+      models: [{ ...instance.models[0], supportsVision: false }],
+    }).success).toBe(false);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "codex_primary",
+      model: "gpt-5.6-sol",
+      options: [{ id: "effort", value: "low" }, { id: "effort", value: "high" }],
+    }).success).toBe(false);
+    expect(CanonicalProviderCatalogSchema.safeParse({
+      revision: "catalog_2",
+      drivers: [driver],
+      instances: [instance],
+    }).success).toBe(false);
+    expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
+      ...instance,
+      availability: "auth_required",
+    }).success).toBe(false);
+    expect(CanonicalChatSummarySchema.safeParse({
+      id: "chat_bound",
+      ownerScope: { type: "personal", ownerId: "user_demo" },
+      title: "Bound Chat",
+      lifecycle: "active",
+      attention: "none",
+      revision: 1,
+      messageCount: 1,
+      currentSelection: { instanceId: "codex_secondary", model: "gpt-5.6-sol" },
+      providerBinding: {
+        driverKind: "codex",
+        instanceId: "codex_primary",
+        lockedAtTurnId: "cturn_demo",
+      },
+      createdAt: now,
+      updatedAt: now,
     }).success).toBe(false);
     expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
       ...instance,
@@ -273,11 +343,14 @@ describe("canonical Chat contracts", () => {
       parts: [{ type: "text" as const, text: "bounded" }],
       createdAt: now,
     };
-    const cjkWithinCharacterLimitButOverByteLimit = "界".repeat(25_000);
+    const cjkWithinPartLimitsButOverAggregateLimit = "界".repeat(22_000);
 
     expect(CanonicalChatMessageSchema.safeParse({
       ...baseMessage,
-      parts: [{ type: "text", text: cjkWithinCharacterLimitButOverByteLimit }],
+      parts: [
+        { type: "text", text: cjkWithinPartLimitsButOverAggregateLimit },
+        { type: "text", text: cjkWithinPartLimitsButOverAggregateLimit },
+      ],
     }).success).toBe(false);
     expect(CanonicalChatMessageSchema.safeParse({
       ...baseMessage,
@@ -289,8 +362,8 @@ describe("canonical Chat contracts", () => {
       displayName: "GPT-5.6-Sol",
       availability: "available" as const,
       capabilities: ["reasoning" as const],
-      supportsVision: true,
-      supportsToolUse: true,
+      supportsVision: false,
+      supportsToolUse: false,
     };
     expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
       id: "codex_bounds",
@@ -299,7 +372,7 @@ describe("canonical Chat contracts", () => {
       availability: "available",
       workspaceRequirement: "none",
       catalogRevision: "catalog_bounds",
-      models: Array.from({ length: 129 }, (_, index) => ({ ...model, id: `model-${index}` })),
+      models: Array.from({ length: 65 }, (_, index) => ({ ...model, id: `model-${index}` })),
       options: [],
       skills: [],
       commands: [],
@@ -315,6 +388,47 @@ describe("canonical Chat contracts", () => {
         interactionModes: [],
         permissionModes: [],
       },
+    }).success).toBe(false);
+
+    expect(CanonicalProviderInstanceDescriptorSchema.safeParse({
+      id: "codex_tool_bounds",
+      driverKind: "codex",
+      displayName: "Codex tool bounds",
+      availability: "available",
+      workspaceRequirement: "none",
+      catalogRevision: "catalog_bounds",
+      models: [],
+      options: [],
+      skills: [],
+      commands: [],
+      supports: {
+        rootChat: true,
+        resume: true,
+        cancellation: true,
+        attachments: [],
+        tools: Array.from({ length: 129 }, (_, index) => `tool-${index}`),
+        approvals: true,
+        userInput: true,
+        worktrees: "none",
+        interactionModes: [],
+        permissionModes: [],
+      },
+    }).success).toBe(false);
+  });
+
+  it("represents the immutable Provider binding conflict with safe recovery actions", () => {
+    expect(CanonicalChatSafeErrorSchema.parse({
+      code: "provider_instance_locked",
+      safeMessage: "This Chat is already bound to another Provider instance.",
+      retryable: false,
+      recoveryActions: ["fork_chat", "start_new_chat"],
+    }).recoveryActions).toEqual(["fork_chat", "start_new_chat"]);
+
+    expect(CanonicalChatSafeErrorSchema.safeParse({
+      code: "provider_instance_locked",
+      safeMessage: "This Chat is already bound to another Provider instance.",
+      retryable: false,
+      recoveryActions: ["start_new_chat"],
     }).success).toBe(false);
   });
 });

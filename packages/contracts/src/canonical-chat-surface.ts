@@ -1,6 +1,9 @@
 import { z } from "zod/v4";
 import {
   CanonicalChatMessageSchema,
+  CanonicalChatInvocationSchema,
+  CanonicalChatResourceKindSchema,
+  CanonicalChatResourceReferenceSchema,
   CanonicalChatRunActivitySchema,
   CanonicalChatIdSchema,
   CanonicalChatRunSchema,
@@ -11,76 +14,27 @@ import {
   CanonicalProviderInstanceIdSchema,
 } from "#canonical-chat";
 import { CanonicalProviderDriverKindSchema } from "#canonical-chat-provider";
+import {
+  CanonicalChatExecutionRootRefSchema,
+  canonicalReferenceId,
+  canonicalSafeLabel,
+} from "#canonical-chat-primitives";
 import { IsoTimestampSchema } from "#contract-primitives";
 
-const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
-const UNSAFE_LABEL =
-  /(^|\s)(?:\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/])|\.ssh\/|bearer\s+|sk-[A-Za-z0-9_-]+|password\s*[=:]|token\s*[=:]/i;
-const textEncoder = new TextEncoder();
-
-function referenceId(max = 160) {
-  return z.string().min(1).max(max).regex(SAFE_REFERENCE)
-    .refine((value) => !value.includes(".."), { message: "Invalid reference" });
-}
-
-function boundedText(maxChars: number, maxBytes: number) {
-  return z.string().min(1).max(maxChars)
-    .refine((value) => value.trim().length > 0, { message: "Text cannot be blank" })
-    .refine((value) => textEncoder.encode(value).byteLength <= maxBytes, {
-      message: "Text exceeds byte limit",
-    });
-}
-
-function safeLabel(maxChars: number, maxBytes: number) {
-  return boundedText(maxChars, maxBytes).refine((value) => !UNSAFE_LABEL.test(value), {
-    message: "Label is not safe for clients",
-  });
-}
-
-const SlashInvocationSchema = z.string().min(2).max(81).regex(/^\/[a-z][a-z0-9_-]{0,79}$/);
-
-export const CanonicalChatInvocationSchema = z.object({
-  kind: z.enum(["skill", "command"]),
-  descriptorId: referenceId(80),
-  invocation: SlashInvocationSchema,
-  arguments: boundedText(4_000, 16 * 1024).optional(),
-}).strict();
-
-export const CanonicalChatResourceKindSchema = z.enum([
-  "file",
-  "folder",
-  "project",
-  "task",
-  "app",
-  "terminal_session",
-]);
-
-export const CanonicalChatResourceReferenceSchema = z.object({
-  kind: CanonicalChatResourceKindSchema,
-  id: referenceId(160),
-  label: safeLabel(280, 1_120),
-  revision: referenceId(160).optional(),
-}).strict();
+export {
+  CanonicalChatInvocationSchema,
+  CanonicalChatResourceKindSchema,
+  CanonicalChatResourceReferenceSchema,
+} from "#canonical-chat";
+export { CanonicalChatExecutionRootRefSchema } from "#canonical-chat-primitives";
 
 export const CanonicalChatProjectProjectionSchema = z.object({
-  projectId: referenceId(160),
-  name: safeLabel(160, 640),
+  projectId: canonicalReferenceId(160),
+  name: canonicalSafeLabel(160, 640),
   kind: z.enum(["scratch", "github", "folder"]),
-  repositoryLabel: safeLabel(240, 960).optional(),
+  repositoryLabel: canonicalSafeLabel(240, 960).optional(),
   status: z.enum(["ready", "unavailable"]),
 }).strict();
-
-export const CanonicalChatExecutionRootRefSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("project"),
-    projectId: referenceId(160),
-  }).strict(),
-  z.object({
-    kind: z.literal("worktree"),
-    projectId: referenceId(160),
-    worktreeId: referenceId(128),
-  }).strict(),
-]);
 
 const CanonicalChatInspectorRunSchema = z.object({
   runId: CanonicalChatRunIdSchema,
@@ -95,7 +49,7 @@ const CanonicalChatInspectorRunSchema = z.object({
   ]),
   driverKind: CanonicalProviderDriverKindSchema,
   instanceId: CanonicalProviderInstanceIdSchema,
-  model: referenceId(160),
+  model: canonicalReferenceId(160),
   startedAt: IsoTimestampSchema.optional(),
   completedAt: IsoTimestampSchema.optional(),
 }).strict();
@@ -116,7 +70,16 @@ export const CanonicalChatSummarySchema = CanonicalChatSchema.extend({
   project: CanonicalChatProjectProjectionSchema.optional(),
   providerBinding: CanonicalChatProviderBindingSchema.optional(),
   activeRun: CanonicalChatActiveRunProjectionSchema.optional(),
-}).strict();
+}).strict().superRefine((chat, ctx) => {
+  if (chat.providerBinding !== undefined
+    && chat.currentSelection?.instanceId !== chat.providerBinding.instanceId) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["currentSelection", "instanceId"],
+      message: "Bound Chat selection must use its immutable Provider Instance",
+    });
+  }
+});
 
 const CanonicalChatInspectorChangeFileSchema = z.object({
   resource: CanonicalChatResourceReferenceSchema.refine(
@@ -206,12 +169,23 @@ export const CanonicalChatSnapshotSchema = z.object({
     && !snapshot.runs.some((run) => run.id === activeRun.runId && run.turnId === activeRun.turnId)) {
     ctx.addIssue({ code: "custom", path: ["chat", "activeRun"], message: "Active Run is not in the snapshot" });
   }
+  const binding = snapshot.chat.providerBinding;
+  snapshot.runs.forEach((run, index) => {
+    if (binding === undefined
+      || run.driverKind !== binding.driverKind
+      || run.instanceId !== binding.instanceId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["runs", index, "instanceId"],
+        message: "Run must use the Chat's immutable Provider binding",
+      });
+    }
+  });
 });
 
-export type CanonicalChatInvocation = z.infer<typeof CanonicalChatInvocationSchema>;
-export type CanonicalChatResourceReference = z.infer<typeof CanonicalChatResourceReferenceSchema>;
 export type CanonicalChatProjectProjection = z.infer<typeof CanonicalChatProjectProjectionSchema>;
-export type CanonicalChatExecutionRootRef = z.infer<typeof CanonicalChatExecutionRootRefSchema>;
+export type { CanonicalChatInvocation, CanonicalChatResourceReference } from "#canonical-chat";
+export type { CanonicalChatExecutionRootRef } from "#canonical-chat-primitives";
 export type CanonicalChatInspectorProjection = z.infer<typeof CanonicalChatInspectorProjectionSchema>;
 export type CanonicalChatProviderBinding = z.infer<typeof CanonicalChatProviderBindingSchema>;
 export type CanonicalChatSummary = z.infer<typeof CanonicalChatSummarySchema>;

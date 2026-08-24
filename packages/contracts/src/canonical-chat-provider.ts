@@ -4,39 +4,21 @@ import {
   CanonicalChatModelSelectionSchema,
   CanonicalProviderInstanceIdSchema,
 } from "#canonical-chat";
+import {
+  CanonicalProviderDriverKindSchema,
+  canonicalReferenceId,
+  canonicalSafeLabel,
+} from "#canonical-chat-primitives";
 
-const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
-const SAFE_DISPLAY_TEXT =
-  /(postgres(?:ql)?:\/\/|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|bearer\s+|sk-[A-Za-z0-9_-]+|password\s*[=:]|token\s*[=:])/i;
-
-function safeReference(max = 160) {
-  return z.string().min(1).max(max).regex(SAFE_REFERENCE)
-    .refine((value) => !value.includes(".."), { message: "Invalid reference" });
-}
-
-function safeLabel(max = 160) {
-  return z.string().trim().min(1).max(max)
-    .refine((value) => !SAFE_DISPLAY_TEXT.test(value), {
-      message: "Text is not safe for display",
-    });
-}
+export { CanonicalProviderDriverKindSchema } from "#canonical-chat-primitives";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
 }
 
-export const CanonicalProviderDriverKindSchema = z.enum([
-  "hermes",
-  "openclaw",
-  "codex",
-  "claude_code",
-  "opencode",
-  "pi",
-]);
-
 export const CanonicalProviderDriverDescriptorSchema = z.object({
   kind: CanonicalProviderDriverKindSchema,
-  displayName: safeLabel(80),
+  displayName: canonicalSafeLabel(80, 320),
   adapterVersion: z.string().min(1).max(64).regex(/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/),
   capabilityClass: z.enum(["system_agent", "coding_agent"]),
 }).strict();
@@ -50,9 +32,9 @@ export const CanonicalModelCapabilitySchema = z.enum([
 ]);
 
 export const CanonicalModelDescriptorSchema = z.object({
-  id: safeReference(160),
-  displayName: safeLabel(120),
-  description: safeLabel(280).optional(),
+  id: canonicalReferenceId(160),
+  displayName: canonicalSafeLabel(120, 480),
+  description: canonicalSafeLabel(280, 1_120).optional(),
   availability: z.enum(["available", "auth_required", "unavailable"]),
   capabilities: z.array(CanonicalModelCapabilitySchema).max(16),
   contextWindow: z.number().int().min(1).max(10_000_000).optional(),
@@ -62,19 +44,25 @@ export const CanonicalModelDescriptorSchema = z.object({
   if (!unique(model.capabilities)) {
     ctx.addIssue({ code: "custom", path: ["capabilities"], message: "Duplicate capability" });
   }
+  if (model.supportsVision !== model.capabilities.includes("vision")) {
+    ctx.addIssue({ code: "custom", path: ["supportsVision"], message: "Vision capability mismatch" });
+  }
+  if (model.supportsToolUse !== model.capabilities.includes("tools")) {
+    ctx.addIssue({ code: "custom", path: ["supportsToolUse"], message: "Tool capability mismatch" });
+  }
 });
 
 const CanonicalProviderOptionValueSchema = z.object({
-  value: safeReference(160),
-  label: safeLabel(120),
+  value: canonicalReferenceId(160),
+  label: canonicalSafeLabel(120, 480),
 }).strict();
 
 export const CanonicalProviderOptionDescriptorSchema = z.object({
-  id: safeReference(80),
-  label: safeLabel(120),
+  id: canonicalReferenceId(80),
+  label: canonicalSafeLabel(120, 480),
   kind: z.enum(["enum", "boolean"]),
   values: z.array(CanonicalProviderOptionValueSchema).min(1).max(32).optional(),
-  defaultValue: z.union([safeReference(160), z.boolean()]).optional(),
+  defaultValue: z.union([canonicalReferenceId(160), z.boolean()]).optional(),
   placement: z.enum(["composer", "advanced"]),
 }).strict().superRefine((option, ctx) => {
   if (option.kind === "enum") {
@@ -102,9 +90,9 @@ export const CanonicalProviderOptionDescriptorSchema = z.object({
 });
 
 const CanonicalSlashDescriptorSchema = z.object({
-  id: safeReference(80),
-  displayName: safeLabel(120),
-  description: safeLabel(400),
+  id: canonicalReferenceId(80),
+  displayName: canonicalSafeLabel(120, 480),
+  description: canonicalSafeLabel(400, 1_600),
   invocation: z.string().min(2).max(81).regex(/^\/[a-z][a-z0-9_-]{0,79}$/),
 }).strict();
 
@@ -115,12 +103,12 @@ export const CanonicalProviderSupportSchema = z.object({
   resume: z.boolean(),
   cancellation: z.boolean(),
   attachments: z.array(CanonicalChatAttachmentKindSchema).max(8),
-  tools: z.array(safeReference(80)).max(64),
+  tools: z.array(canonicalReferenceId(80)).max(128),
   approvals: z.boolean(),
   userInput: z.boolean(),
   worktrees: z.enum(["none", "optional", "required"]),
-  interactionModes: z.array(safeReference(80)).max(16),
-  permissionModes: z.array(safeReference(80)).max(16),
+  interactionModes: z.array(canonicalReferenceId(80)).max(16),
+  permissionModes: z.array(canonicalReferenceId(80)).max(16),
 }).strict().superRefine((supports, ctx) => {
   for (const key of ["attachments", "tools", "interactionModes", "permissionModes"] as const) {
     if (!unique(supports[key])) {
@@ -132,14 +120,14 @@ export const CanonicalProviderSupportSchema = z.object({
 export const CanonicalProviderInstanceDescriptorSchema = z.object({
   id: CanonicalProviderInstanceIdSchema,
   driverKind: CanonicalProviderDriverKindSchema,
-  displayName: safeLabel(160),
+  displayName: canonicalSafeLabel(160, 640),
   availability: z.enum(["available", "setup_required", "auth_required", "unavailable"]),
   workspaceRequirement: z.enum(["none", "project_optional", "project_required"]),
-  catalogRevision: safeReference(160),
-  models: z.array(CanonicalModelDescriptorSchema).max(128),
+  catalogRevision: canonicalReferenceId(160),
+  models: z.array(CanonicalModelDescriptorSchema).max(64),
   options: z.array(CanonicalProviderOptionDescriptorSchema).max(32),
-  skills: z.array(CanonicalChatSkillDescriptorSchema).max(128),
-  commands: z.array(CanonicalChatCommandDescriptorSchema).max(128),
+  skills: z.array(CanonicalChatSkillDescriptorSchema).max(64),
+  commands: z.array(CanonicalChatCommandDescriptorSchema).max(64),
   supports: CanonicalProviderSupportSchema,
   defaultSelection: CanonicalChatModelSelectionSchema.optional(),
 }).strict().superRefine((instance, ctx) => {
@@ -156,6 +144,9 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
 
   const selection = instance.defaultSelection;
   if (selection === undefined) return;
+  if (instance.availability !== "available") {
+    ctx.addIssue({ code: "custom", path: ["defaultSelection"], message: "Unavailable Instance cannot have a default" });
+  }
   if (selection.instanceId !== instance.id) {
     ctx.addIssue({ code: "custom", path: ["defaultSelection", "instanceId"], message: "Instance mismatch" });
   }
@@ -182,8 +173,8 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
 });
 
 export const CanonicalProviderCatalogSchema = z.object({
-  revision: safeReference(160),
-  drivers: z.array(CanonicalProviderDriverDescriptorSchema).max(16),
+  revision: canonicalReferenceId(160),
+  drivers: z.array(CanonicalProviderDriverDescriptorSchema).max(20),
   instances: z.array(CanonicalProviderInstanceDescriptorSchema).max(64),
 }).strict().superRefine((catalog, ctx) => {
   if (!unique(catalog.drivers.map((driver) => driver.kind))) {
@@ -194,13 +185,16 @@ export const CanonicalProviderCatalogSchema = z.object({
   }
   const drivers = new Set(catalog.drivers.map((driver) => driver.kind));
   catalog.instances.forEach((instance, index) => {
+    if (instance.catalogRevision !== catalog.revision) {
+      ctx.addIssue({ code: "custom", path: ["instances", index, "catalogRevision"], message: "Catalog revision mismatch" });
+    }
     if (!drivers.has(instance.driverKind)) {
       ctx.addIssue({ code: "custom", path: ["instances", index, "driverKind"], message: "Driver is not cataloged" });
     }
   });
 });
 
-export type CanonicalProviderDriverKind = z.infer<typeof CanonicalProviderDriverKindSchema>;
+export type { CanonicalProviderDriverKind } from "#canonical-chat-primitives";
 export type CanonicalProviderDriverDescriptor = z.infer<typeof CanonicalProviderDriverDescriptorSchema>;
 export type CanonicalModelDescriptor = z.infer<typeof CanonicalModelDescriptorSchema>;
 export type CanonicalProviderOptionDescriptor = z.infer<typeof CanonicalProviderOptionDescriptorSchema>;

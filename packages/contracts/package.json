@@ -9,6 +9,7 @@
   "imports": {
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
+    "#canonical-chat-primitives": "./src/canonical-chat-primitives.ts",
     "#canonical-chat-compatibility": "./src/canonical-chat-compatibility.ts",
     "#canonical-chat-provider": "./src/canonical-chat-provider.ts",
     "#canonical-chat-surface": "./src/canonical-chat-surface.ts",

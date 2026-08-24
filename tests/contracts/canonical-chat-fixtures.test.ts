@@ -5,7 +5,12 @@ import {
 } from "../../packages/contracts/src/index.js";
 import {
   CANONICAL_CHAT_FIXTURE_STATES,
+  CANONICAL_INSPECTOR_FIXTURE_STATES,
+  CANONICAL_PROVIDER_FIXTURE_AVAILABILITIES,
   createCanonicalChatFixture,
+  createCanonicalInspectorFixture,
+  createCanonicalMessagePartsFixture,
+  createCanonicalProviderCatalogFixture,
 } from "./fixtures/canonical-chat.js";
 
 describe("canonical Chat fixtures", () => {
@@ -25,6 +30,37 @@ describe("canonical Chat fixtures", () => {
         expect(snapshot.chat.attention).toBe(state);
       }
     }
+  });
+
+  it("covers every Provider readiness and inspector-change presentation state", () => {
+    for (const availability of CANONICAL_PROVIDER_FIXTURE_AVAILABILITIES) {
+      const catalog = CanonicalProviderCatalogSchema.parse(
+        createCanonicalProviderCatalogFixture(availability),
+      );
+      expect(catalog.instances[0]?.availability).toBe(availability);
+    }
+    for (const state of CANONICAL_INSPECTOR_FIXTURE_STATES) {
+      const inspector = createCanonicalInspectorFixture(state);
+      expect(inspector.changes.availability).toBe(state === "unavailable" ? "unavailable" : "available");
+      if (inspector.changes.availability === "available") {
+        expect(inspector.changes.partial).toBe(state === "partial");
+      }
+    }
+  });
+
+  it("covers every canonical message part used by the shared timeline", () => {
+    expect(createCanonicalMessagePartsFixture().map((part) => part.type)).toEqual([
+      "text",
+      "tool_request",
+      "tool_result",
+      "attachment_reference",
+      "approval_request",
+      "approval_result",
+      "status",
+      "summary",
+      "invocation_reference",
+      "resource_reference",
+    ]);
   });
 
   it("returns fresh fixture values so parallel UI tests cannot mutate one another", () => {

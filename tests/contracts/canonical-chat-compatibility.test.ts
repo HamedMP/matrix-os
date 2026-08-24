@@ -47,6 +47,7 @@ describe("canonical Chat compatibility mappers", () => {
         ownerScope: { type: "personal", ownerId: "user_demo" },
         instanceId: "hermes_primary",
         model: "claude-opus-4-6",
+        turnId: "cturn_imported_hermes",
         summary,
         history,
       }),
@@ -54,6 +55,11 @@ describe("canonical Chat compatibility mappers", () => {
 
     expect(projection.source).toEqual({ kind: "hermes_conversation", id: summary.id });
     expect(projection.chat.id).toBe("chat_imported_hermes");
+    expect(projection.chat.providerBinding).toEqual({
+      driverKind: "hermes",
+      instanceId: "hermes_primary",
+      lockedAtTurnId: "cturn_imported_hermes",
+    });
     expect(projection.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
   });
 
@@ -131,5 +137,18 @@ describe("canonical Chat compatibility mappers", () => {
     ]);
     expect(projection.activities).toHaveLength(1);
     expect(JSON.stringify(projection)).not.toContain("providerState");
+
+    const unsafeSnapshot = JSON.parse(JSON.stringify(thread));
+    unsafeSnapshot.events.items[3].displayName = "/home/matrix/private";
+    expect(() => mapAgentThreadToCanonicalChatProjection({
+      chatId: "chat_imported_thread",
+      ownerScope: { type: "personal", ownerId: "user_demo" },
+      instanceId: "codex_primary",
+      model: "gpt-5.6-sol",
+      driverKind: "codex",
+      turnId: "cturn_imported",
+      runId: "run_imported",
+      snapshot: unsafeSnapshot,
+    })).toThrow();
   });
 });
