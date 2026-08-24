@@ -189,6 +189,7 @@ export interface PrebillingCheckoutCoordinator {
     db: PlatformDB,
     input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
   ): Promise<{ authorized: boolean; machineId: string | null; needsFallback: boolean }>;
+  ensureFallback(input: { intentId: string }): Promise<void>;
   expireCheckout(
     db: PlatformDB,
     input: { stripeSessionId: string; intentId?: string; clerkUserId?: string; now: string },
@@ -623,6 +624,7 @@ export function createBillingRoutes(options: {
 
     try {
       const webhookProcessedAt = now();
+      let fallbackIntentId: string | undefined;
       const result = await runBillingWebhookTransaction(options.db, async (trx) => {
         const inserted = await insertBillingWebhookEvent(trx, {
           stripeEventId: event.id,
@@ -827,12 +829,13 @@ export function createBillingRoutes(options: {
           && projection.prebillingIntentId
           && getRuntimeAccessDecision(summary, webhookProcessedAt).runtimeProxyAllowed
         ) {
-          await options.prebilling?.authorizeSubscription(trx, {
+          const authorization = await options.prebilling?.authorizeSubscription(trx, {
             intentId: projection.prebillingIntentId,
             clerkUserId: projection.clerkUserId,
             runtimeSlot: projection.runtimeSlot,
             now: webhookProcessedAt.toISOString(),
           });
+          if (authorization?.needsFallback) fallbackIntentId = projection.prebillingIntentId;
         }
         emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
           distinctId: entitlement.clerkUserId,
@@ -872,6 +875,15 @@ export function createBillingRoutes(options: {
         }
         return { received: true, processed: true };
       });
+      if (!fallbackIntentId && 'duplicate' in result && result.duplicate && isSubscriptionEvent(event.type)) {
+        const subscription = event.data.object && typeof event.data.object === 'object'
+          ? event.data.object as { status?: unknown; metadata?: unknown }
+          : undefined;
+        if (['active', 'trialing', 'past_due'].includes(String(subscription?.status))) {
+          fallbackIntentId = readPrebillingIntentIdFromStripeMetadata(subscription?.metadata) ?? undefined;
+        }
+      }
+      if (fallbackIntentId) await options.prebilling?.ensureFallback({ intentId: fallbackIntentId });
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));

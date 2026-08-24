@@ -118,6 +118,7 @@ describe('platform billing routes', () => {
         order.push('preparation');
       }),
       authorizeSubscription: vi.fn(),
+      ensureFallback: vi.fn(),
       expireCheckout: vi.fn(),
     };
     vi.mocked(stripe.createCheckoutSession).mockImplementation(async () => {
@@ -1217,16 +1218,19 @@ describe('platform billing routes', () => {
     });
   });
 
-  it('authorizes the exact preparation only inside a signed active subscription projection', async () => {
+  it('authorizes the exact preparation and retries durable fallback after a signed active projection', async () => {
     vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_prebilling', {
       runtimeSlot: 'primary',
       prebillingIntentId: 'intent_123',
     }));
     const authorizeSubscription = vi.fn().mockResolvedValue({
       authorized: true,
-      machineId: 'machine_123',
-      needsFallback: false,
+      machineId: null,
+      needsFallback: true,
     });
+    const ensureFallback = vi.fn()
+      .mockRejectedValueOnce(new Error('fallback enqueue unavailable'))
+      .mockResolvedValueOnce(undefined);
     const app = new Hono();
     app.route('/billing', createBillingRoutes({
       db,
@@ -1238,6 +1242,7 @@ describe('platform billing routes', () => {
         createIntent: vi.fn(),
         startPreparation: vi.fn(),
         authorizeSubscription,
+        ensureFallback,
         expireCheckout: vi.fn(),
       },
     }));
@@ -1248,13 +1253,20 @@ describe('platform billing routes', () => {
       body: '{}',
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(500);
     expect(authorizeSubscription).toHaveBeenCalledWith(expect.objectContaining({ executor: expect.anything() }), {
       intentId: 'intent_123',
       clerkUserId: 'user_123',
       runtimeSlot: 'primary',
       now: '2026-05-30T00:00:00.000Z',
     });
+    expect(ensureFallback).toHaveBeenCalledWith({ intentId: 'intent_123' });
+
+    const retry = await app.request('/billing/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': 'valid' }, body: '{}',
+    });
+    expect(retry.status).toBe(200);
+    expect(ensureFallback).toHaveBeenCalledTimes(2);
   });
 
   it('keeps subscriptions independent when one additional computer is canceled', async () => {
@@ -1377,6 +1389,7 @@ describe('platform billing routes', () => {
         createIntent: vi.fn(),
         startPreparation: vi.fn(),
         authorizeSubscription: vi.fn(),
+        ensureFallback: vi.fn(),
         expireCheckout,
       },
     }));

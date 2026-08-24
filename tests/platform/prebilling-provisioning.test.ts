@@ -287,6 +287,7 @@ describe('platform prebilling provisioning foundation', () => {
       status: 'provisioning',
       etaSeconds: 90,
     });
+    const provision = vi.fn().mockResolvedValue({ machineId: 'fallback-machine', status: 'provisioning' });
     const coordinator = createPrebillingProvisioningCoordinator({
       db,
       config: loadPrebillingProvisioningConfig({
@@ -296,7 +297,7 @@ describe('platform prebilling provisioning foundation', () => {
         MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS: '50000',
         MATRIX_PREBILLING_PROVISIONING_COSTS_JSON: '{"cpx32":50000}',
       }),
-      customerVpsService: { provisionForCheckout } as never,
+      customerVpsService: { provisionForCheckout, provision } as never,
       resolveIdentity: vi.fn().mockResolvedValue({ handle: 'alice' }),
       intentIdFactory: () => 'intent-1',
       now: () => new Date(CREATED_AT),
@@ -328,6 +329,13 @@ describe('platform prebilling provisioning foundation', () => {
       location: 'fsn1',
       developerTools: ['codex', 'claude-code'],
     }, 'intent-1', { dispatch: 'detached' });
+    await db.transaction((trx) => coordinator.authorizeSubscription(trx, {
+      intentId: 'intent-1', clerkUserId: 'user_123', runtimeSlot: 'primary', now: CREATED_AT,
+    }));
+    await coordinator.ensureFallback({ intentId: 'intent-1' });
+    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
+      clerkUserId: 'user_123', serverType: 'cpx32', developerTools: ['codex', 'claude-code'],
+    }), { dispatch: 'detached' });
   });
 
   it('atomically authorizes only the exact owner-bound prepared machine', async () => {

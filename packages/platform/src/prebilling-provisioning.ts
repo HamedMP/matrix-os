@@ -94,6 +94,25 @@ export function createPrebillingProvisioningCoordinator(options: {
       return authorizePrebillingIntent(db, input);
     },
 
+    async ensureFallback(input) {
+      const current = await getPrebillingIntent(options.db, input.intentId);
+      if (!current || current.state !== 'authorized' || current.machineId !== null) return;
+      const identity = await options.resolveIdentity(current.clerkUserId);
+      if (!identity) throw new Error('prebilling_identity_unavailable');
+      const provisioned = await options.customerVpsService.provision({
+        clerkUserId: current.clerkUserId,
+        handle: identity.handle,
+        runtimeSlot: 'primary',
+        serverType: current.serverType,
+        location: z.enum(['fsn1', 'nbg1', 'ash', 'hil']).parse(current.regionSlug.replace(/^region_/, '')),
+        developerTools: current.developerTools,
+      }, { dispatch: 'detached' });
+      await options.onProvisioned?.({
+        clerkUserId: current.clerkUserId, handle: identity.handle,
+        displayName: identity.displayName, email: identity.email, machineId: provisioned.machineId,
+      });
+    },
+
     expireCheckout(db, input) {
       return cleanupExpiredPrebillingCheckout(db, input);
     },

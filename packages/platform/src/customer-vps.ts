@@ -92,10 +92,8 @@ import {
   type NewProvisioningJob,
   type ProvisioningPayload,
 } from './customer-vps-provisioning-jobs.js';
-import {
-  bindPrebillingIntentMachine,
-  validatePrebillingProvisioningIntent,
-} from './prebilling-provisioning-store.js';
+import { bindPrebillingIntentMachine, validatePrebillingProvisioningIntent } from './prebilling-provisioning-store.js';
+import { isProvisioningJobAuthorized, persistProvisioningClaimMutation } from './customer-vps-prebilling.js';
 import {
   chooseProvisioningImage,
   chooseRecoveryImage,
@@ -1270,20 +1268,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return 'failed';
     }
 
-    if (job.authorizationBasis === 'prebilling_intent') {
-      const intent = job.prebillingIntentId
-        ? await validatePrebillingProvisioningIntent(deps.db, {
-            intentId: job.prebillingIntentId,
-            clerkUserId: row.clerkUserId,
-            runtimeSlot: row.runtimeSlot,
-            serverType: row.serverType ?? deps.config.serverType,
-            regionSlug: `region_${row.location ?? deps.config.location}`,
-            developerTools: row.developerTools,
-            machineId: row.machineId,
-            now: now().toISOString(),
-          })
-        : undefined;
-      if (!intent) {
+    if (!await isProvisioningJobAuthorized(deps.db, job, row, now().toISOString())) {
         const failedAt = now().toISOString();
         await failProvisioningJob(deps.db, job.jobId, failedAt, 'authorization_expired');
         await updateUserMachine(deps.db, row.machineId, {
@@ -1295,42 +1280,15 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
         }
         return 'failed';
-      }
     }
 
     let serverIdForCompensation: number | null = null;
     let adoptedExistingServer = false;
     const persistWhileProvisioningClaimIsActive = async (
       mutate: (trx: PlatformDB) => Promise<void>,
-    ): Promise<{ persisted: boolean; prebillingCleanupWon: boolean; alreadyCompleted: boolean }> => runInPlatformTransaction(
+    ) => persistProvisioningClaimMutation(
       deps.db,
-      async (trx) => {
-        const lockedMachine = await trx.executor.selectFrom('user_machines')
-          .select(['deleted_at', 'status'])
-          .where('machine_id', '=', row.machineId)
-          .forUpdate()
-          .executeTakeFirst();
-        const lockedJob = await trx.executor.selectFrom('provisioning_jobs')
-          .select(['status', 'authorization_basis'])
-          .where('job_id', '=', job.jobId)
-          .forUpdate()
-          .executeTakeFirst();
-        const active = lockedMachine?.deleted_at === null
-          && lockedMachine.status === 'provisioning'
-          && lockedJob?.status === 'running';
-        if (!active) {
-          return {
-            persisted: false,
-            prebillingCleanupWon: lockedJob?.authorization_basis === 'prebilling_intent'
-              && lockedMachine?.deleted_at !== null,
-            alreadyCompleted: lockedMachine?.deleted_at === null
-              && lockedMachine.status === 'running'
-              && lockedJob?.status === 'completed',
-          };
-        }
-        await mutate(trx);
-        return { persisted: true, prebillingCleanupWon: false, alreadyCompleted: false };
-      },
+      { machineId: row.machineId, jobId: job.jobId, mutate },
     );
     const reconcileServerAfterLostClaim = async (
       server: { id: number },
