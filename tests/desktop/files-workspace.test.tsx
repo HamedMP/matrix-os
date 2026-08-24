@@ -154,7 +154,7 @@ describe("Files workspace", () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     await screen.findByRole("button", { name: "Open workspaces" });
 
-    fireEvent.contextMenu(screen.getByTestId("files-listing"));
+    fireEvent.contextMenu(screen.getAllByTestId("files-listing").at(-1)!);
     fireEvent.click(await screen.findByText("New folder…"));
     const folderNameInput = screen.getByRole("textbox", { name: "Folder name" });
     expect(document.activeElement).toBe(folderNameInput);
@@ -163,6 +163,50 @@ describe("Files workspace", () => {
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/files/mkdir", { path: "Ideas" }));
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps folder creation scoped to the tab that opened the dialog", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+    fireEvent.contextMenu(workspaces);
+    fireEvent.click(await screen.findByText("Open in new tab"));
+    await screen.findByRole("button", { name: "Open app.ts" });
+
+    fireEvent.contextMenu(screen.getAllByTestId("files-listing").at(-1)!);
+    fireEvent.click(await screen.findByText("New folder…"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder name" }), {
+      target: { value: "Ideas" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Matrix home", hidden: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Create folder" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/files/mkdir",
+      { path: "workspaces/Ideas" },
+    ));
+    await waitFor(() => expect(api.get.mock.calls.filter(
+      ([path]) => path === "/api/files/list?path=workspaces",
+    )).toHaveLength(2));
+    expect(api.get.mock.calls.filter(
+      ([path]) => path === "/api/files/list?path=",
+    )).toHaveLength(1);
+  });
+
+  it("cancels folder creation when the selected computer changes", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open workspaces" });
+
+    fireEvent.contextMenu(screen.getByTestId("files-listing"));
+    fireEvent.click(await screen.findByText("New folder…"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder name" }), {
+      target: { value: "Ideas" },
+    });
+    act(() => {
+      useConnection.setState({ runtimeSlot: "pr-920" });
+    });
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New folder" })).toBeNull());
+    expect(api.post).not.toHaveBeenCalled();
   });
 
   it("closes the optional preview without changing the open folder", async () => {

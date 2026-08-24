@@ -14,6 +14,12 @@ const MAX_FILE_TABS = 12;
 const SAFE_FOLDER_NAME = /^[^/\\\u0000-\u001f]{1,128}$/;
 
 interface FileTab { id: string; path: string; title: string }
+interface NewFolderRequest {
+  parentPath: string;
+  tabId: string;
+  runtimeSlot: string;
+  authGeneration: number;
+}
 const HOME_TAB: FileTab = { id: "files-home", path: "", title: "Matrix home" };
 
 function pathTitle(path: string): string {
@@ -25,14 +31,13 @@ function joinPath(parent: string, name: string): string {
 }
 
 export default function FilesWorkspace() {
-  const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const [tabs, setTabs] = useState<FileTab[]>([HOME_TAB]);
   const [activeTabId, setActiveTabId] = useState(HOME_TAB.id);
   const [selections, setSelections] = useState<Record<string, FileSelection | null>>({});
   const [refreshes, setRefreshes] = useState<Record<string, number>>({});
-  const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
+  const [newFolderRequest, setNewFolderRequest] = useState<NewFolderRequest | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderError, setNewFolderError] = useState<string | null>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -49,11 +54,15 @@ export default function FilesWorkspace() {
     setSelections({});
     setTabs([HOME_TAB]);
     setActiveTabId(HOME_TAB.id);
+    setNewFolderRequest(null);
+    setNewFolderName("");
+    setNewFolderError(null);
+    setCreatingFolder(false);
   }, [runtimeSlot, authGeneration]);
 
   useEffect(() => {
-    if (newFolderParent !== null) newFolderInputRef.current?.focus();
-  }, [newFolderParent]);
+    if (newFolderRequest !== null) newFolderInputRef.current?.focus();
+  }, [newFolderRequest]);
 
   const updateTabPath = useCallback((tabId: string, path: string) => {
     setTabs((current) => current.map((tab) => tab.id === tabId
@@ -85,32 +94,52 @@ export default function FilesWorkspace() {
       delete next[tabId];
       return next;
     });
+    setNewFolderRequest((current) => current?.tabId === tabId ? null : current);
   }, [activeTabId, tabs]);
 
-  const requestNewFolder = useCallback((parentPath: string) => {
-    setNewFolderParent(parentPath);
+  const requestNewFolder = useCallback((tabId: string, parentPath: string) => {
+    setNewFolderRequest({ parentPath, tabId, runtimeSlot, authGeneration });
     setNewFolderName("");
     setNewFolderError(null);
-  }, []);
+  }, [authGeneration, runtimeSlot]);
 
   const createFolder = useCallback(async () => {
     const name = newFolderName.trim();
-    if (!api || newFolderParent === null || !SAFE_FOLDER_NAME.test(name) || name === "." || name === "..") {
+    if (!newFolderRequest || !SAFE_FOLDER_NAME.test(name) || name === "." || name === "..") {
       setNewFolderError("Enter a folder name without slashes.");
       return;
     }
+    const connection = useConnection.getState();
+    if (
+      !connection.api
+      || connection.runtimeSlot !== newFolderRequest.runtimeSlot
+      || connection.authGeneration !== newFolderRequest.authGeneration
+    ) {
+      setNewFolderError("This computer changed. Reopen New folder and try again.");
+      return;
+    }
+    const request = newFolderRequest;
+    const requestStillCurrent = () => {
+      const current = useConnection.getState();
+      return current.runtimeSlot === request.runtimeSlot
+        && current.authGeneration === request.authGeneration;
+    };
     setCreatingFolder(true);
     setNewFolderError(null);
     try {
-      await api.post("/api/files/mkdir", { path: joinPath(newFolderParent, name) });
-      setRefreshes((current) => ({ ...current, [activeTabId]: (current[activeTabId] ?? 0) + 1 }));
-      setNewFolderParent(null);
+      await connection.api.post("/api/files/mkdir", { path: joinPath(request.parentPath, name) });
+      if (!requestStillCurrent()) return;
+      setRefreshes((current) => ({
+        ...current,
+        [request.tabId]: (current[request.tabId] ?? 0) + 1,
+      }));
+      setNewFolderRequest(null);
     } catch (err: unknown) {
-      setNewFolderError(toUserMessage(err));
+      if (requestStillCurrent()) setNewFolderError(toUserMessage(err));
     } finally {
-      setCreatingFolder(false);
+      if (requestStillCurrent()) setCreatingFolder(false);
     }
-  }, [activeTabId, api, newFolderName, newFolderParent]);
+  }, [newFolderName, newFolderRequest]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" style={{ background: "var(--bg-surface)" }}>
@@ -140,7 +169,7 @@ export default function FilesWorkspace() {
                   onPathChange={(path) => updateTabPath(tab.id, path)}
                   onSelectionChange={(next: BrowserSelection | null) => setSelections((current) => ({ ...current, [tab.id]: next ? { slot: runtimeSlot, authGeneration, path: next.path, entry: next.entry } : null }))}
                   onOpenFolderInNewTab={openFolderTab}
-                  onRequestCreateFolder={requestNewFolder}
+                  onRequestCreateFolder={(parentPath) => requestNewFolder(tab.id, parentPath)}
                   refreshRevision={refreshes[tab.id] ?? 0}
                   framed={false}
                 />
@@ -154,13 +183,13 @@ export default function FilesWorkspace() {
           </Suspense>
         ) : null}
       </div>
-      <Dialog open={newFolderParent !== null} onClose={() => setNewFolderParent(null)} title="New folder" width={400} placement="center">
+      <Dialog open={newFolderRequest !== null} onClose={() => setNewFolderRequest(null)} title="New folder" width={400} placement="center">
         <form className="p-5" onSubmit={(event) => { event.preventDefault(); void createFolder(); }}>
           <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>New folder</h2>
-          <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>Create inside {newFolderParent || "Matrix home"}.</p>
+          <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>Create inside {newFolderRequest?.parentPath || "Matrix home"}.</p>
           <input ref={newFolderInputRef} aria-label="Folder name" value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} className="mt-4 h-10 w-full rounded-lg border px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]" style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)", color: "var(--text-primary)" }} />
           {newFolderError ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger)" }}>{newFolderError}</p> : null}
-          <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setNewFolderParent(null)}>Cancel</Button><Button type="submit" variant="primary" disabled={creatingFolder}>{creatingFolder ? "Creating…" : "Create folder"}</Button></div>
+          <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setNewFolderRequest(null)}>Cancel</Button><Button type="submit" variant="primary" disabled={creatingFolder}>{creatingFolder ? "Creating…" : "Create folder"}</Button></div>
         </form>
       </Dialog>
     </div>
