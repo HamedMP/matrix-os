@@ -1300,6 +1300,66 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
     let serverIdForCompensation: number | null = null;
     let adoptedExistingServer = false;
+    const persistWhileProvisioningClaimIsActive = async (
+      mutate: (trx: PlatformDB) => Promise<void>,
+    ): Promise<{ persisted: boolean; prebillingCleanupWon: boolean }> => runInPlatformTransaction(
+      deps.db,
+      async (trx) => {
+        const lockedMachine = await trx.executor.selectFrom('user_machines')
+          .select(['deleted_at', 'status'])
+          .where('machine_id', '=', row.machineId)
+          .forUpdate()
+          .executeTakeFirst();
+        const lockedJob = await trx.executor.selectFrom('provisioning_jobs')
+          .select(['status', 'authorization_basis'])
+          .where('job_id', '=', job.jobId)
+          .forUpdate()
+          .executeTakeFirst();
+        const active = lockedMachine?.deleted_at === null
+          && lockedMachine.status === 'provisioning'
+          && lockedJob?.status === 'running';
+        if (!active) {
+          return {
+            persisted: false,
+            prebillingCleanupWon: lockedJob?.authorization_basis === 'prebilling_intent'
+              && lockedMachine?.deleted_at !== null,
+          };
+        }
+        await mutate(trx);
+        return { persisted: true, prebillingCleanupWon: false };
+      },
+    );
+    const reconcileServerAfterLostClaim = async (
+      server: { id: number },
+      prebillingCleanupWon: boolean,
+    ): Promise<'failed'> => {
+      if (!prebillingCleanupWon) {
+        throw new Error('Provisioning job lost its active claim');
+      }
+      try {
+        await deps.hetzner.deleteServer(server.id);
+        if (await deps.hetzner.getServer(server.id)) {
+          await enqueueProviderDeletionTx(deps.db, {
+            providerServerId: server.id,
+            reason: 'prebilling_cleanup_race',
+            machineId: row.machineId,
+            handle: row.handle,
+            detail: 'provider server remained after signed checkout cleanup',
+          });
+        }
+      } catch (cleanupErr: unknown) {
+        logCustomerVpsError('prebilling cleanup race provider deletion failed', cleanupErr);
+        await queueProviderDeletion({
+          providerServerId: server.id,
+          reason: 'prebilling_cleanup_race',
+          machineId: row.machineId,
+          handle: row.handle,
+          err: cleanupErr,
+        });
+      }
+      serverIdForCompensation = null;
+      return 'failed';
+    };
     try {
       const payload = openProvisioningPayload(job.encryptedPayload, deps.config.platformSecret);
       const imageVersion = row.imageVersion ?? deps.config.imageVersion;
@@ -1567,7 +1627,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const createActionId = effectiveProviderCreateActionId ?? server.createActionId ?? null;
       if (adoptedExistingServer && createActionId === null && server.status !== 'running') {
         const observedAt = now().toISOString();
-        await runInPlatformTransaction(deps.db, async (trx) => {
+        const observation = await persistWhileProvisioningClaimIsActive(async (trx) => {
           await updateUserMachine(trx, row.machineId, {
             hetznerServerId: server!.id,
             publicIPv4: server!.publicIPv4,
@@ -1577,12 +1637,15 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             activation_step: 'creating', updated_at: observedAt,
           }).where('job_id', '=', job.jobId).where('status', '=', 'running').executeTakeFirstOrThrow();
         });
+        if (!observation.persisted) {
+          return reconcileServerAfterLostClaim(server, observation.prebillingCleanupWon);
+        }
         return 'pending';
       }
       if (createActionId !== null) {
         if (effectiveProviderCreateActionId === null) {
           const observedAt = now().toISOString();
-          await runInPlatformTransaction(deps.db, async (trx) => {
+          const observation = await persistWhileProvisioningClaimIsActive(async (trx) => {
             await updateUserMachine(trx, row.machineId, {
               hetznerServerId: server!.id,
               publicIPv4: server!.publicIPv4,
@@ -1594,6 +1657,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
               updated_at: observedAt,
             }).where('job_id', '=', job.jobId).where('status', '=', 'running').executeTakeFirstOrThrow();
           });
+          if (!observation.persisted) {
+            return reconcileServerAfterLostClaim(server, observation.prebillingCleanupWon);
+          }
         }
         const createResult = await waitForProvisioningCreateAction(createActionId);
         if (createResult === 'pending') return 'pending';
@@ -1644,7 +1710,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         }
       }
       const completedAt = now().toISOString();
-      await runInPlatformTransaction(deps.db, async (trx) => {
+      const completion = await persistWhileProvisioningClaimIsActive(async (trx) => {
         await updateUserMachine(trx, row.machineId, {
           hetznerServerId: server.id,
           publicIPv4: server.publicIPv4,
@@ -1662,6 +1728,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           }
         }
       });
+      if (!completion.persisted) {
+        return reconcileServerAfterLostClaim(server, completion.prebillingCleanupWon);
+      }
       return 'completed';
     } catch (err: unknown) {
       const mapped = genericProviderError(err);

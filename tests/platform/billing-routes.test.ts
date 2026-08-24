@@ -1361,6 +1361,41 @@ describe('platform billing routes', () => {
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_growth_test');
   });
 
+  it('passes server-written intent metadata to signed checkout-expiry cleanup', async () => {
+    const expireCheckout = vi.fn().mockResolvedValue({ cleaned: true, intentId: 'intent_123' });
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(
+      checkoutSessionEvent('evt_checkout_expired', 'checkout.session.expired', 'intent_123'),
+    );
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve(null),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      prebilling: {
+        createIntent: vi.fn(),
+        startPreparation: vi.fn(),
+        authorizeSubscription: vi.fn(),
+        expireCheckout,
+      },
+    }));
+
+    const response = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(200);
+    expect(expireCheckout).toHaveBeenCalledWith(expect.objectContaining({ executor: expect.anything() }), {
+      stripeSessionId: 'cs_growth_test',
+      intentId: 'intent_123',
+      clerkUserId: 'user_123',
+      now: '2026-05-30T00:00:00.000Z',
+    });
+  });
+
   it('links Stripe-created checkout customers from subscription metadata', async () => {
     const event = subscriptionEvent('evt_metadata_link');
     vi.mocked(stripe.constructWebhookEvent).mockReturnValue(event);
@@ -2291,6 +2326,7 @@ function invoiceEvent(
 function checkoutSessionEvent(
   id: string,
   type: 'checkout.session.completed' | 'checkout.session.expired',
+  prebillingIntentId?: string,
 ): StripeWebhookEvent {
   return {
     id,
@@ -2302,6 +2338,7 @@ function checkoutSessionEvent(
         client_reference_id: 'user_123',
         metadata: {
           clerk_user_id: 'user_123',
+          ...(prebillingIntentId ? { matrix_prebilling_intent_id: prebillingIntentId } : {}),
         },
       },
     },

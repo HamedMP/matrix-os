@@ -324,11 +324,21 @@ export async function authorizePrebillingIntent(
 /** Must be called inside the verified Stripe webhook transaction. */
 export async function cleanupExpiredPrebillingCheckout(
   db: PlatformDB,
-  input: { stripeSessionId: string; now: string },
+  input: { stripeSessionId: string; intentId?: string; clerkUserId?: string; now: string },
 ): Promise<{ cleaned: boolean; intentId: string | null }> {
   await db.ready;
   const current = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
-    .where('stripe_session_id', '=', input.stripeSessionId).forUpdate().executeTakeFirst();
+    .where((eb) => input.intentId
+      ? eb.or([
+          eb('stripe_session_id', '=', input.stripeSessionId),
+          eb.and([
+            eb('id', '=', input.intentId),
+            ...(input.clerkUserId ? [eb('clerk_user_id', '=', input.clerkUserId)] : []),
+            eb('stripe_session_id', 'is', null),
+          ]),
+        ])
+      : eb('stripe_session_id', '=', input.stripeSessionId))
+    .forUpdate().executeTakeFirst();
   if (!current) return { cleaned: false, intentId: null };
   const intent = mapIntent(current);
   if (intent.state === 'authorized' || intent.state === 'cleaned') {

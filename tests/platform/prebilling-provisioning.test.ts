@@ -28,7 +28,7 @@ import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './cus
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 const CREATED_AT = '2026-08-24T10:00:00.000Z';
-const EXPIRES_AT = '2026-08-24T10:30:00.000Z';
+const EXPIRES_AT = '2026-08-24T10:31:00.000Z';
 
 describe('platform prebilling provisioning foundation', () => {
   let db: PlatformDB;
@@ -48,7 +48,7 @@ describe('platform prebilling provisioning foundation', () => {
       rolloutPercent: 0,
       maxActive: 0,
       maxHourlyCostMicros: 0,
-      leaseMs: 30 * 60 * 1_000,
+      leaseMs: 31 * 60 * 1_000,
     });
     expect(prebillingRolloutIncludesUser(defaults, 'user_123')).toBe(false);
 
@@ -221,6 +221,65 @@ describe('platform prebilling provisioning foundation', () => {
     });
   });
 
+  it('deletes a provider server when signed checkout cleanup wins during provider creation', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+    await admitPrebillingIntent(db, {
+      intentId: 'intent-1', stripeSessionId: 'cs_1', stripeSessionExpiresAt: EXPIRES_AT,
+      reservedHourlyCostMicros: 50_000, maxActive: 1, maxHourlyCostMicros: 50_000, now: CREATED_AT,
+    });
+    const hetzner = createMockHetznerClient();
+    vi.mocked(hetzner.getServer).mockResolvedValue(null);
+    vi.mocked(hetzner.createServer).mockImplementation(async () => {
+      await db.transaction((trx) => cleanupExpiredPrebillingCheckout(trx, {
+        stripeSessionId: 'cs_1',
+        now: EXPIRES_AT,
+      }));
+      return {
+        id: 123456,
+        status: 'running',
+        serverType: 'cpx32',
+        publicIPv4: '203.0.113.10',
+        publicIPv6: '2001:db8::/64',
+      };
+    });
+    const service = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_SECRET: 'platform-secret',
+        HETZNER_API_TOKEN: 'provider-token',
+        S3_ACCESS_KEY_ID: 'r2-access-key',
+        S3_SECRET_ACCESS_KEY: 'r2-secret-key',
+        S3_ENDPOINT: 'https://r2.example',
+        R2_BUCKET: 'matrixos-sync',
+      }),
+      hetzner,
+      systemStore: createMockCustomerVpsSystemStore(),
+      machineIdFactory: () => '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      provisioningJobIdFactory: () => '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+      tokenFactory: () => ({
+        token: 'registration-token',
+        hash: hashRegistrationToken('registration-token'),
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+      postgresPasswordFactory: () => 'postgres-secret',
+      now: () => new Date(CREATED_AT),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(null),
+    });
+
+    await service.provisionForCheckout({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      serverType: 'cpx32',
+      location: 'fsn1',
+      developerTools: ['codex', 'claude-code'],
+    }, 'intent-1');
+
+    expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
+  });
+
   it('coordinates rollout admission into detached primary provisioning', async () => {
     await seedCheckout('checkout-1', 'user_123');
     const provisionForCheckout = vi.fn().mockResolvedValue({
@@ -348,6 +407,21 @@ describe('platform prebilling provisioning foundation', () => {
     await expect(getActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeUndefined();
     await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
       state: 'cleaned', machineId: null, reservedHourlyCostMicros: 0,
+    });
+  });
+
+  it('cleans an intent from signed metadata when a crash preceded session binding', async () => {
+    await seedCheckout('checkout-1', 'user_123');
+    await createIntent('intent-1', 'checkout-1', 'user_123');
+
+    await expect(db.transaction((trx) => cleanupExpiredPrebillingCheckout(trx, {
+      stripeSessionId: 'cs_1',
+      intentId: 'intent-1',
+      clerkUserId: 'user_123',
+      now: EXPIRES_AT,
+    }))).resolves.toEqual({ cleaned: true, intentId: 'intent-1' });
+    await expect(getPrebillingIntentByCheckoutAttempt(db, 'checkout-1')).resolves.toMatchObject({
+      state: 'cleaned',
     });
   });
 

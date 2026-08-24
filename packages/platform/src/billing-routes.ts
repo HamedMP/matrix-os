@@ -191,7 +191,7 @@ export interface PrebillingCheckoutCoordinator {
   ): Promise<{ authorized: boolean; machineId: string | null; needsFallback: boolean }>;
   expireCheckout(
     db: PlatformDB,
-    input: { stripeSessionId: string; now: string },
+    input: { stripeSessionId: string; intentId?: string; clerkUserId?: string; now: string },
   ): Promise<{ cleaned: boolean; intentId: string | null }>;
 }
 
@@ -650,8 +650,15 @@ export function createBillingRoutes(options: {
               true,
             );
             if (event.type === 'checkout.session.expired') {
+              const checkoutObject = event.data.object && typeof event.data.object === 'object'
+                ? event.data.object as { metadata?: unknown }
+                : undefined;
+              const intentId = readPrebillingIntentIdFromStripeMetadata(checkoutObject?.metadata);
+              const clerkUserId = readClerkUserIdFromCheckoutSession(event.data.object);
               await options.prebilling?.expireCheckout(trx, {
                 stripeSessionId: sessionId,
+                ...(intentId ? { intentId } : {}),
+                ...(clerkUserId ? { clerkUserId } : {}),
                 now: webhookProcessedAt.toISOString(),
               });
             }

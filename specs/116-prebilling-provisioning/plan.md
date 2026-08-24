@@ -17,7 +17,7 @@ Move new-primary VPS preparation into the payable-checkout window: after the sig
 - **Target Platform**: Cloud Run platform/app-shell control plane coordinating VPS-native per-user Linux runtimes
 - **Project Type**: Monorepo web application with platform backend, Next.js shell, and VPS lifecycle services
 - **Performance Goals**: Reduce median subscription-authorization-to-ready latency by at least 60%; 80% of users spending at least 60 seconds in checkout ready within 20 seconds of authorization
-- **Constraints**: Zero access before signed slot entitlement; zero duplicate active intents/machines; 30-minute Stripe/preparation lease; 99% cleanup by 35 minutes and 100% by 45 minutes outside provider outage; hard active-count and hourly-cost ceilings; generic client errors; all external calls bounded
+- **Constraints**: Zero access before signed slot entitlement; zero duplicate active intents/machines; 30-minute Stripe/preparation policy plus one-minute API safety headroom; 99% cleanup by 35 minutes and 100% by 45 minutes outside provider outage; hard active-count and hourly-cost ceilings; generic client errors; all external calls bounded
 - **Scale/Scope**: V1 new-user primary-computer onboarding only; horizontally scaled platform workers; existing paid, additional-computer, recovery, resize, preview, grace, suspension, and self-hosted flows unchanged
 
 ## Constitution Check
