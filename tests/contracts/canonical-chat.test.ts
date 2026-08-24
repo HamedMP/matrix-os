@@ -167,6 +167,9 @@ describe("canonical Chat contracts", () => {
       "api_key=supersecret",
       "Authorization: Basic dXNlcjpwYXNz",
       "ghp_123456789012345678901234567890123456",
+      "-----BEGIN OPENSSH PRIVATE KEY-----",
+      "Cookie: session=abc123",
+      "credential=supersecret",
     ]) {
       expect(CanonicalChatRunActivitySchema.safeParse({
         id: "activity_unsafe_credential",

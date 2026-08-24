@@ -370,12 +370,15 @@ export function mapAgentThreadFromLegacyContracts(input: {
       };
     }
     const value = assistant.get(entry.legacyId)!;
+    const incompleteState = snapshot.thread.status === "failed"
+      || snapshot.thread.status === "aborted"
+      || snapshot.thread.status === "stale";
     return {
       id: legacyMessageId("thread", index),
       chatId,
       seq: index + 1,
       role: "assistant",
-      state: value.completed ? "committed" : "pending",
+      state: value.completed ? "committed" : incompleteState ? "failed" : "pending",
       turnId: entry.context.turnId,
       runId: entry.context.runId,
       parts: [{ type: "text", text: value.chunks.join("") }],
