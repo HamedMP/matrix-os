@@ -1296,29 +1296,32 @@ function BillingPanelInner({
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-forest/55">
-          {mode === "provisioning"
-            ? "Provisioning"
-            : mode === "add-computer"
-            ? "New computer"
-            : "Billing"}
-        </p>
-        <h3 className="mt-1.5 text-xl font-semibold tracking-tight text-deep sm:text-2xl">
-          {mode === "device-setup"
-            ? "Finish billing to approve CLI login"
-            : mode === "provisioning" || mode === "add-computer"
-            ? "Pick the cloud computer Matrix boots on"
-            : "Manage your hosted Matrix computer"}
-        </h3>
-        <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
-          Choose the plan for your hosted runtime. Billing starts in Stripe before Matrix
-          attaches a dedicated VPS.
-        </p>
-      </div>
+    <div
+      className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start"
+      data-testid="billing-configurator-layout"
+    >
+      <div className="space-y-4" data-testid="billing-configurator-main">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-forest/55">
+            {mode === "provisioning"
+              ? "Provisioning"
+              : mode === "add-computer"
+              ? "New computer"
+              : "Billing"}
+          </p>
+          <h3 className="mt-1.5 text-xl font-semibold tracking-tight text-deep sm:text-2xl">
+            {mode === "device-setup"
+              ? "Finish billing to approve CLI login"
+              : mode === "provisioning" || mode === "add-computer"
+              ? "Pick the cloud computer Matrix boots on"
+              : "Manage your hosted Matrix computer"}
+          </h3>
+          <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
+            Choose the plan for your hosted runtime. Billing starts in Stripe before Matrix
+            attaches a dedicated VPS.
+          </p>
+        </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="rounded-3xl border border-forest/12 bg-white p-4 sm:p-5">
           <SelectionTriggerCards
             profiles={allowedProfiles}
@@ -1345,21 +1348,21 @@ function BillingPanelInner({
             ))}
           </ul>
         </div>
-        <CheckoutPanel
-          mode={mode}
-          onCheckoutIntent={onCheckoutIntent}
-          onCheckoutNavigate={onCheckoutNavigate}
-          checkoutReturnPath={checkoutReturnPath}
-          checkoutRuntimeSlot={checkoutRuntimeSlot}
-          checkoutBypassed={checkoutBypassed}
-          telemetryProperties={telemetryProperties}
-          selectedProfile={selectedProfile}
-          selectedRegion={selectedRegion}
-          billingInterval={billingInterval}
-          onBillingIntervalChange={handleBillingIntervalChange}
-          trialDurationDays={trialDurationDays}
-        />
       </div>
+      <CheckoutPanel
+        mode={mode}
+        onCheckoutIntent={onCheckoutIntent}
+        onCheckoutNavigate={onCheckoutNavigate}
+        checkoutReturnPath={checkoutReturnPath}
+        checkoutRuntimeSlot={checkoutRuntimeSlot}
+        checkoutBypassed={checkoutBypassed}
+        telemetryProperties={telemetryProperties}
+        selectedProfile={selectedProfile}
+        selectedRegion={selectedRegion}
+        billingInterval={billingInterval}
+        onBillingIntervalChange={handleBillingIntervalChange}
+        trialDurationDays={trialDurationDays}
+      />
     </div>
   );
 }

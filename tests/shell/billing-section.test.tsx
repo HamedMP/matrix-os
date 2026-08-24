@@ -484,6 +484,28 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
+  it("aligns the provisioning intro and checkout summary in the same layout row", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    const layout = screen.getByTestId("billing-configurator-layout");
+    const mainColumn = screen.getByTestId("billing-configurator-main");
+    const heading = screen.getByRole("heading", {
+      name: "Pick the cloud computer Matrix boots on",
+    });
+    const summary = screen.getByRole("complementary");
+
+    expect(layout.children).toHaveLength(2);
+    expect(layout.children[0]).toBe(mainColumn);
+    expect(layout.children[1]).toBe(summary);
+    expect(mainColumn.contains(heading)).toBe(true);
+  });
+
   it("uses device setup copy when billing is opened from CLI login", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
