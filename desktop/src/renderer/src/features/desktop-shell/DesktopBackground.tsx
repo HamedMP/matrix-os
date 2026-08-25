@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
@@ -85,11 +85,28 @@ function directBackgroundStyle(config: Exclude<DesktopBackgroundConfig, { type: 
   }
 }
 
+async function wallpaperObjectUrl(blob: Blob): Promise<string> {
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("wallpaper image could not be loaded"));
+      image.src = objectUrl;
+    });
+    return objectUrl;
+  } catch (err: unknown) {
+    URL.revokeObjectURL(objectUrl);
+    throw err;
+  }
+}
+
 export default function DesktopBackground() {
   const api = useConnection((state) => state.api);
   const requestedRefresh = useUi((state) => state.desktopBackgroundRefreshRequest);
   const [loaded, setLoaded] = useState<{ api: ApiClient; style: CSSProperties } | null>(null);
   const [refreshRevision, setRefreshRevision] = useState(0);
+  const activeObjectUrl = useRef<{ api: ApiClient; url: string } | null>(null);
   const style = api && loaded?.api === api ? loaded.style : FALLBACK_STYLE;
 
   useEffect(() => {
@@ -98,9 +115,29 @@ export default function DesktopBackground() {
     return () => window.removeEventListener("focus", refresh);
   }, []);
 
+  useEffect(() => () => {
+    const current = activeObjectUrl.current;
+    if (!current) return;
+    activeObjectUrl.current = null;
+    URL.revokeObjectURL(current.url);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    let ownedObjectUrl: string | null = null;
+    const previousRuntimeObjectUrl = activeObjectUrl.current;
+    if (previousRuntimeObjectUrl && previousRuntimeObjectUrl.api !== api) {
+      activeObjectUrl.current = null;
+      URL.revokeObjectURL(previousRuntimeObjectUrl.url);
+    }
+
+    const releaseAfterPaint = (url: string): void => {
+      const release = () => URL.revokeObjectURL(url);
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(release);
+      } else {
+        queueMicrotask(release);
+      }
+    };
 
     if (api) {
       void (async () => {
@@ -108,7 +145,12 @@ export default function DesktopBackground() {
         const background = backgroundConfig(config?.background);
         if (!background) return;
         if (background.type !== "wallpaper") {
-          if (!cancelled) setLoaded({ api, style: directBackgroundStyle(background) });
+          if (!cancelled) {
+            const previous = activeObjectUrl.current;
+            activeObjectUrl.current = null;
+            setLoaded({ api, style: directBackgroundStyle(background) });
+            if (previous) releaseAfterPaint(previous.url);
+          }
           return;
         }
 
@@ -117,12 +159,13 @@ export default function DesktopBackground() {
           `/api/files/blob?path=${encodeURIComponent(path)}`,
           { maxBytes: WALLPAPER_MAX_BYTES },
         );
-        const objectUrl = URL.createObjectURL(blob);
+        const objectUrl = await wallpaperObjectUrl(blob);
         if (cancelled) {
           URL.revokeObjectURL(objectUrl);
           return;
         }
-        ownedObjectUrl = objectUrl;
+        const previous = activeObjectUrl.current;
+        activeObjectUrl.current = { api, url: objectUrl };
         setLoaded({
           api,
           style: {
@@ -132,6 +175,7 @@ export default function DesktopBackground() {
             backgroundRepeat: "no-repeat",
           },
         });
+        if (previous) releaseAfterPaint(previous.url);
       })()
         .catch(() => {
           if (!cancelled) console.warn("[desktop-background] configured background unavailable");
@@ -140,7 +184,6 @@ export default function DesktopBackground() {
 
     return () => {
       cancelled = true;
-      if (ownedObjectUrl) URL.revokeObjectURL(ownedObjectUrl);
     };
   }, [api, refreshRevision, requestedRefresh]);
 
