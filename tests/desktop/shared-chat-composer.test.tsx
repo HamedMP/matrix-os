@@ -282,6 +282,23 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
   });
 
+  it.each([
+    { label: "paperclip", initialValue: "", open: () => fireEvent.click(screen.getByRole("button", { name: "Add files and more" })), menu: "Add" },
+    { label: "resource mention", initialValue: "@", open: () => undefined, menu: "Add" },
+    { label: "slash command", initialValue: "/", open: () => undefined, menu: "Skills and commands" },
+  ])("dismisses the $label menu when the user clicks outside the composer", async ({ initialValue, open, menu }) => {
+    const resourceSearch = vi.fn(async () => [
+      { kind: "file" as const, id: "readme", label: "README.md" },
+    ]);
+    render(<Harness resourceSearch={resourceSearch} initialValue={initialValue} />);
+
+    open();
+    expect(await screen.findByRole("listbox", { name: menu })).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => expect(screen.queryByRole("listbox", { name: menu })).toBeNull());
+  });
+
   it("changes effort and permission through in-app menus", () => {
     render(<Harness />);
 
@@ -553,6 +570,21 @@ describe("SharedChatComposer", () => {
     expect(promptFlow.className).toContain("ring-0");
     expect(promptFlow.className).toContain("pt-1");
     expect(promptFlow.className).not.toContain("pt-3");
+  });
+
+  it("renders distinct T3-style file type glyphs for TypeScript and JSON references", () => {
+    render(<Harness
+      initialValue="Compare [apps/weather/src/main.tsx](tsx-file) and [apps/weather/tsconfig.json](json-file)"
+      initialReferenceTokens={[
+        { type: "resource", resource: { kind: "file", id: "tsx-file", label: "apps/weather/src/main.tsx" } },
+        { type: "resource", resource: { kind: "file", id: "json-file", label: "apps/weather/tsconfig.json" } },
+      ]}
+    />);
+
+    const tsxToken = screen.getByTestId("composer-reference-token-file-tsx-file");
+    const jsonToken = screen.getByTestId("composer-reference-token-file-json-file");
+    expect(tsxToken.querySelector('[data-file-icon-token="typescript"]')).toBeTruthy();
+    expect(jsonToken.querySelector('[data-file-icon-token="json"]')).toBeTruthy();
   });
 
   it("submits selected invocations and resources as structured agent-readable context", () => {

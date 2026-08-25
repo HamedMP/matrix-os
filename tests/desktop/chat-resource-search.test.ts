@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   searchGlobalChatResources,
   searchHomeChatResources,
+  searchProjectChatResources,
 } from "../../desktop/src/renderer/src/features/chat/chat-resource-search";
 
 describe("Global Chat resource search", () => {
@@ -42,5 +43,23 @@ describe("Global Chat resource search", () => {
       "/api/coding-agents/files/search?projectId=matrix-os&query=main&limit=30",
     );
     expect(get).toHaveBeenNthCalledWith(2, "/api/files/search?q=main&limit=30");
+  });
+
+  it("keeps Project Chat file search scoped to the current Project root", async () => {
+    const get = vi.fn(async () => ({
+      matches: {
+        items: [{ path: "src/main.tsx", kind: "file", updatedAt: "2026-08-26T00:00:00.000Z" }],
+        hasMore: false,
+        limit: 30,
+      },
+    }));
+
+    await expect(searchProjectChatResources({ get }, "matrix-os", "main")).resolves.toEqual([
+      { kind: "file", id: "src/main.tsx", label: "src/main.tsx" },
+    ]);
+    expect(get).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledWith(
+      "/api/coding-agents/files/search?projectId=matrix-os&query=main&limit=30",
+    );
   });
 });

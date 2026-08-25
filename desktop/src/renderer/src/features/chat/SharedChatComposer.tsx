@@ -6,7 +6,7 @@ import type {
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
 import { Box, ChevronDown, Paperclip, SquareTerminal } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { ComposerResourceGlyph } from "./ComposerResourceGlyph";
@@ -140,14 +140,17 @@ function CompactSelect({
 function SuggestionMenu({
   label,
   menuSide,
+  menuRef,
   children,
 }: {
   label: string;
   menuSide: "top" | "bottom";
+  menuRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
   return (
     <div
+      ref={menuRef}
       role="listbox"
       aria-label={label}
       data-preferred-side={menuSide}
@@ -273,6 +276,9 @@ export function SharedChatComposer({
   menuSide?: "top" | "bottom";
 }) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
+  const suggestionMenuRef = useRef<HTMLDivElement>(null);
+  const attachmentTriggerRef = useRef<HTMLButtonElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
@@ -281,12 +287,23 @@ export function SharedChatComposer({
   const resourceMatch = valueBeforeCursor.match(/(?:^|\s)@([^\s]*)$/);
   const slashQuery = slashMatch?.[1]?.slice(1).toLocaleLowerCase() ?? null;
   const resourceQuery = resourceMatch?.[1]?.toLocaleLowerCase() ?? null;
+  const suggestionKey = slashQuery !== null
+    ? `slash:${slashMatch?.index ?? 0}:${slashMatch?.[1] ?? ""}`
+    : resourceQuery !== null
+      ? `resource:${resourceMatch?.index ?? 0}:${resourceMatch?.[0] ?? ""}`
+      : null;
+  const suggestionDismissed = suggestionKey !== null && suggestionKey === dismissedSuggestionKey;
+  const slashMenuOpen = slashQuery !== null && !suggestionDismissed;
+  const resourceMenuOpen = resourceQuery !== null && !suggestionDismissed;
+  useEffect(() => {
+    if (suggestionKey === null) setDismissedSuggestionKey(null);
+  }, [suggestionKey]);
   const slashEntries = useMemo(() => listCanonicalSlashEntries(instance), [instance]);
   const canAttach = Boolean(onAttach && (!instance || instance.supports.attachments.length));
   const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const query = resourceQuery ?? (attachmentMenuOpen ? "" : null);
+    const query = resourceMenuOpen ? resourceQuery : attachmentMenuOpen ? "" : null;
     if (query === null || !resourceSearch) {
       setRemoteResources([]);
       return () => { cancelled = true; };
@@ -297,7 +314,7 @@ export function SharedChatComposer({
       if (!cancelled) setRemoteResources([]);
     });
     return () => { cancelled = true; };
-  }, [attachmentMenuOpen, resourceQuery, resourceSearch]);
+  }, [attachmentMenuOpen, resourceMenuOpen, resourceQuery, resourceSearch]);
   const filteredSlashEntries = slashQuery === null ? [] : slashEntries.filter((entry) => (
     entry.invocation.slice(1).toLocaleLowerCase().includes(slashQuery)
     || entry.displayName.toLocaleLowerCase().includes(slashQuery)
@@ -308,9 +325,9 @@ export function SharedChatComposer({
     )) === index);
   const filteredResources = resourceQuery === null ? [] : availableResources
     .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
-  const suggestionCount = slashQuery !== null
+  const suggestionCount = slashMenuOpen
     ? filteredSlashEntries.length
-    : resourceQuery !== null
+    : resourceMenuOpen
       ? filteredResources.length + (canAttach ? 1 : 0)
       : 0;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
@@ -342,6 +359,12 @@ export function SharedChatComposer({
     }
   };
   const onSuggestionKeyDown = (event: KeyboardEvent<HTMLDivElement>): boolean => {
+    if (event.key === "Escape" && (slashMenuOpen || resourceMenuOpen || attachmentMenuOpen)) {
+      event.preventDefault();
+      setAttachmentMenuOpen(false);
+      setDismissedSuggestionKey(suggestionKey);
+      return true;
+    }
     if (suggestionCount === 0) {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -376,10 +399,24 @@ export function SharedChatComposer({
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
   const hasEffortOption = composerOptions.some((option) => option.id === "effort");
+  useEffect(() => {
+    if (!slashMenuOpen && !resourceMenuOpen && !attachmentMenuOpen) return;
+    const dismissOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && (
+        suggestionMenuRef.current?.contains(target)
+        || attachmentTriggerRef.current?.contains(target)
+      )) return;
+      setAttachmentMenuOpen(false);
+      setDismissedSuggestionKey(suggestionKey);
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    return () => document.removeEventListener("pointerdown", dismissOutside);
+  }, [attachmentMenuOpen, resourceMenuOpen, slashMenuOpen, suggestionKey]);
   return (
     <div className="relative" data-slot="shared-chat-composer">
-      {slashQuery !== null && filteredSlashEntries.length > 0 ? (
-        <SuggestionMenu label="Skills and commands" menuSide={menuSide}>
+      {slashMenuOpen && filteredSlashEntries.length > 0 ? (
+        <SuggestionMenu label="Skills and commands" menuSide={menuSide} menuRef={suggestionMenuRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>
             Skills &amp; commands
           </p>
@@ -400,8 +437,8 @@ export function SharedChatComposer({
             </button>
           ))}
         </SuggestionMenu>
-      ) : resourceQuery !== null && (canAttach || filteredResources.length > 0) ? (
-        <SuggestionMenu label="Add" menuSide={menuSide}>
+      ) : resourceMenuOpen && (canAttach || filteredResources.length > 0) ? (
+        <SuggestionMenu label="Add" menuSide={menuSide} menuRef={suggestionMenuRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
           <ResourceRows
             role="option"
@@ -413,7 +450,7 @@ export function SharedChatComposer({
           />
         </SuggestionMenu>
       ) : attachmentMenuOpen ? (
-        <SuggestionMenu label="Add" menuSide={menuSide}>
+        <SuggestionMenu label="Add" menuSide={menuSide} menuRef={suggestionMenuRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
           <ResourceRows
             role="option"
@@ -469,13 +506,21 @@ export function SharedChatComposer({
           <>
             {canAttach ? (
               <button
+                ref={attachmentTriggerRef}
                 type="button"
                 aria-label="Add files and more"
                 aria-haspopup="listbox"
                 aria-expanded={attachmentMenuOpen}
                 className="flex h-8 w-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 style={{ color: "var(--text-secondary)" }}
-                onClick={() => setAttachmentMenuOpen((open) => !open)}
+                onClick={() => {
+                  if (slashMenuOpen || resourceMenuOpen) {
+                    setDismissedSuggestionKey(suggestionKey);
+                    setAttachmentMenuOpen(true);
+                    return;
+                  }
+                  setAttachmentMenuOpen((open) => !open);
+                }}
               >
                 <Paperclip size={15} aria-hidden />
               </button>
