@@ -226,16 +226,33 @@ suite("operator desktop e2e", () => {
     const providerPicker = page.locator('[data-slot="provider-model-picker"]');
     await providerPicker.waitFor();
     const pickerBox = await providerPicker.boundingBox();
-    if (!pickerBox) throw new Error("Could not measure provider picker");
+    const providerTriggerBox = await providerTrigger.boundingBox();
+    if (!pickerBox || !providerTriggerBox) throw new Error("Could not measure provider picker");
     expect(pickerBox.x).toBeGreaterThanOrEqual(0);
     expect(pickerBox.y).toBeGreaterThanOrEqual(0);
     expect(pickerBox.x + pickerBox.width).toBeLessThanOrEqual(1280);
     expect(pickerBox.y + pickerBox.height).toBeLessThanOrEqual(720);
+    expect(pickerBox.y).toBeGreaterThanOrEqual(providerTriggerBox.y + providerTriggerBox.height);
     expect(await providerPicker.evaluate((element) => (
       element.closest('[data-slot="shared-chat-composer"]') === null
     ))).toBe(true);
     await page.screenshot({ path: join(MAT_476_SCREENSHOT_DIR, "01-project-chat-provider-picker.png") });
     await providerTrigger.click();
+    for (const [label, screenshot] of [
+      ["Reasoning", "02-project-chat-effort-menu.png"],
+      ["Permission mode", "03-project-chat-permission-menu.png"],
+    ] as const) {
+      const trigger = page.getByRole("button", { name: label });
+      await trigger.click();
+      const menu = page.getByRole("menu", { name: `${label} options` });
+      await menu.waitFor();
+      const [triggerBox, menuBox] = await Promise.all([trigger.boundingBox(), menu.boundingBox()]);
+      if (!triggerBox || !menuBox) throw new Error(`Could not measure ${label} menu`);
+      expect(menuBox.y).toBeGreaterThanOrEqual(triggerBox.y + triggerBox.height);
+      expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(720);
+      await page.screenshot({ path: join(MAT_476_SCREENSHOT_DIR, screenshot) });
+      await trigger.click();
+    }
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05a-draft-chat.png") });
     await page.getByLabel("Message new chat").fill("fix the failing auth tests");
     await page.getByRole("button", { name: "Send" }).focus();

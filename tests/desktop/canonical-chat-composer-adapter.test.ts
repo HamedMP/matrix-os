@@ -10,6 +10,7 @@ import {
   createLegacyProjectProviderCatalog,
   filterCatalogForLegacyProject,
   instanceIdForLegacyProvider,
+  permissionModeForAgentDraft,
 } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
 import { createCanonicalComposerSelection } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
 
@@ -119,6 +120,15 @@ describe("canonical composer legacy Project adapter", () => {
       approvalPolicy: "never",
       sandboxMode: "full_access",
     });
+  });
+
+  it("restores the canonical permission mode from an existing create-thread draft", () => {
+    expect(permissionModeForAgentDraft({ prompt: "", approvalPolicy: "never", sandboxMode: "full_access" }))
+      .toBe("full_access");
+    expect(permissionModeForAgentDraft({ prompt: "", approvalPolicy: "on_failure", sandboxMode: "workspace_write" }))
+      .toBe("auto");
+    expect(permissionModeForAgentDraft({ prompt: "", approvalPolicy: "on_request", sandboxMode: "workspace_write" }))
+      .toBe("supervised");
   });
 
   it("maps legacy provider ids back to stable canonical Instance ids", () => {

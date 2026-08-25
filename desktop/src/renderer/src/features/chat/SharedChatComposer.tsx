@@ -2,6 +2,7 @@ import type {
   CanonicalChatResourceReference,
   CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
+import * as Popover from "@radix-ui/react-popover";
 import { ChevronDown, FolderOpen, Paperclip } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { PromptInput } from "./elements/prompt-input";
@@ -25,72 +26,108 @@ function selectedOptionValue(
   return selection.options.find((option) => option.id === optionId)?.value;
 }
 
+function FixedCapability({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string;
+  description: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      disabled
+      title={description}
+      className="flex h-8 max-w-[9rem] items-center truncate rounded-lg px-2 text-sm capitalize disabled:cursor-default disabled:opacity-70"
+      style={{ color: "var(--text-secondary)" }}
+    >
+      <span className="truncate">{value}</span>
+    </button>
+  );
+}
 
 function CompactSelect({
   label,
   value,
   options,
+  menuSide,
   onChange,
 }: {
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;
+  menuSide: "top" | "bottom";
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  if (options.length <= 1) return null;
+  if (options.length === 0) return null;
+  if (options.length === 1) {
+    return (
+      <FixedCapability
+        label={label}
+        value={options[0]!.label}
+        description={`${label} is fixed for this harness.`}
+      />
+    );
+  }
   const selected = options.find((option) => option.value === value) ?? options[0]!;
   return (
-    <span
-      className="relative inline-flex min-w-0 items-center"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
-      }}
-    >
-      <button
-        type="button"
-        aria-label={label}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="flex h-8 max-w-[9rem] items-center gap-1.5 truncate rounded-lg px-2 text-sm capitalize outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-        style={{ color: "var(--text-secondary)" }}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setOpen(false);
-        }}
-      >
-        <span className="truncate">{selected.label}</span>
-        <ChevronDown size={12} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
-      </button>
-      {open ? (
-        <span
-          role="menu"
-          aria-label={`${label} options`}
-          className="absolute bottom-[calc(100%+8px)] right-0 z-50 min-w-48 rounded-xl border p-1.5 shadow-xl"
-          style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          className="flex h-8 max-w-[9rem] items-center gap-1.5 truncate rounded-lg px-2 text-sm capitalize outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          style={{ color: "var(--text-secondary)" }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(false);
+          }}
         >
-          <span className="block px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
-            {label}
-          </span>
-          {options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              role="menuitemradio"
-              aria-checked={option.value === selected.value}
-              className="flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] aria-checked:bg-[var(--bg-active)]"
-              style={{ color: "var(--text-primary)" }}
-              onClick={() => {
-                onChange(option.value);
-                setOpen(false);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </span>
+          <span className="truncate">{selected.label}</span>
+          <ChevronDown size={12} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
+        </button>
+      </Popover.Trigger>
+      {open ? (
+        <Popover.Portal>
+          <Popover.Content
+            role="menu"
+            aria-label={`${label} options`}
+            side={menuSide}
+            align="end"
+            sideOffset={8}
+            collisionPadding={16}
+            data-preferred-side={menuSide}
+            className="z-50 min-w-48 rounded-xl border p-1.5 shadow-xl"
+            style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
+          >
+            <span className="block px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
+              {label}
+            </span>
+            {options.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="menuitemradio"
+                aria-checked={option.value === selected.value}
+                className="flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] aria-checked:bg-[var(--bg-active)]"
+                style={{ color: "var(--text-primary)" }}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </Popover.Content>
+        </Popover.Portal>
       ) : null}
-    </span>
+    </Popover.Root>
   );
 }
 
@@ -137,6 +174,7 @@ export function SharedChatComposer({
   focusRequestId,
   maxLength,
   unavailableProviderLabel,
+  menuSide = "top",
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -161,6 +199,7 @@ export function SharedChatComposer({
   focusRequestId?: number;
   maxLength?: number;
   unavailableProviderLabel?: string;
+  menuSide?: "top" | "bottom";
 }) {
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
   const slashMatch = value.match(/(?:^|\s)(\/[a-z0-9_-]*)$/i);
@@ -228,6 +267,7 @@ export function SharedChatComposer({
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
+  const hasEffortOption = composerOptions.some((option) => option.id === "effort");
 
   return (
     <div className="relative" data-slot="shared-chat-composer">
@@ -308,14 +348,23 @@ export function SharedChatComposer({
               selection={selection}
               instanceLocked={instanceLocked}
               unavailableProviderLabel={unavailableProviderLabel}
+              menuSide={menuSide}
               onChange={onSelectionChange}
             />
+            {selection && !hasEffortOption ? (
+              <FixedCapability
+                label="Reasoning effort"
+                value="Default"
+                description={`${instance?.displayName ?? "This harness"} does not expose a reasoning-effort control.`}
+              />
+            ) : null}
             {selection ? composerOptions.map((option) => option.kind === "enum" ? (
               <CompactSelect
                 key={option.id}
                 label={option.label}
                 value={String(selectedOptionValue(selection, option.id) ?? option.values?.[0]?.value ?? "")}
                 options={(option.values ?? []).map((candidate) => ({ value: candidate.value, label: candidate.label }))}
+                menuSide={menuSide}
                 onChange={(next) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next))}
               />
             ) : null) : null}
@@ -325,6 +374,7 @@ export function SharedChatComposer({
                   label="Permission mode"
                   value={selection.permissionMode}
                   options={(instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: mode.replace(/_/g, " ") }))}
+                  menuSide={menuSide}
                   onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
                 />
               </>

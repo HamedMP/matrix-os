@@ -264,6 +264,18 @@ function permissionDraft(permissionMode: string): Pick<
   return { approvalPolicy: "on_request", sandboxMode: "workspace_write" };
 }
 
+export function permissionModeForAgentDraft(
+  draft: AgentThreadComposerDraft,
+): "supervised" | "auto" | "full_access" {
+  if (draft.sandboxMode === "full_access" && draft.approvalPolicy === "never") {
+    return "full_access";
+  }
+  if (draft.sandboxMode === "workspace_write" && draft.approvalPolicy === "on_failure") {
+    return "auto";
+  }
+  return "supervised";
+}
+
 export function applyCanonicalSelectionToAgentDraft(
   summary: RuntimeSummary,
   catalog: CanonicalProviderCatalog,

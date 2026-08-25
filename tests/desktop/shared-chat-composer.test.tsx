@@ -29,9 +29,12 @@ function catalogFixture(): CanonicalProviderCatalog {
   return {
     revision: "catalog_fixture",
     drivers: [
+      { kind: "hermes", displayName: "Hermes", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+      { kind: "openclaw", displayName: "OpenClaw", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
       { kind: "codex", displayName: "Codex", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
       { kind: "claude_code", displayName: "Claude Code", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
       { kind: "opencode", displayName: "OpenCode", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+      { kind: "pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
     ],
     instances: [
       {
@@ -85,14 +88,62 @@ function catalogFixture(): CanonicalProviderCatalog {
   };
 }
 
+function fixedHermesCatalogFixture(): CanonicalProviderCatalog {
+  return {
+    revision: "catalog_hermes_fixed",
+    drivers: [
+      { kind: "hermes", displayName: "Hermes", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+    ],
+    instances: [{
+      id: "hermes_default",
+      driverKind: "hermes",
+      displayName: "Hermes",
+      availability: "available",
+      workspaceRequirement: "none",
+      catalogRevision: "catalog_hermes_fixed",
+      models: [{
+        id: "openai-codex:gpt-5.3-codex-spark",
+        displayName: "gpt-5.3-codex-spark",
+        availability: "available",
+        capabilities: ["tools"],
+        supportsVision: false,
+        supportsToolUse: true,
+      }],
+      options: [],
+      skills: [],
+      commands: [],
+      setupActions: [],
+      supports: {
+        rootChat: true,
+        resume: true,
+        cancellation: true,
+        attachments: ["file"],
+        tools: [],
+        approvals: false,
+        userInput: false,
+        worktrees: "none",
+        resources: ["file", "folder", "project"],
+        interactionModes: ["default"],
+        permissionModes: ["supervised"],
+      },
+      defaultSelection: {
+        instanceId: "hermes_default",
+        model: "openai-codex:gpt-5.3-codex-spark",
+      },
+    }],
+  };
+}
+
 function Harness({
   locked = false,
   onSubmit = vi.fn(),
   resourceSearch,
+  menuSide,
 }: {
   locked?: boolean;
   onSubmit?: () => void;
   resourceSearch?: (query: string) => Promise<Array<{ kind: "file" | "folder"; id: string; label: string }>>;
+  menuSide?: "top" | "bottom";
 }) {
   const catalog = catalogFixture();
   const [value, setValue] = useState("");
@@ -115,6 +166,7 @@ function Harness({
       ]}
       resourceSearch={resourceSearch}
       onAttach={() => undefined}
+      menuSide={menuSide}
     />
   );
 }
@@ -156,6 +208,49 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("full access");
   });
 
+  it("opens all Project Chat composer menus below the top composer", () => {
+    render(<Harness menuSide="bottom" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    expect(screen.getByRole("listbox", { name: "Models and providers" })
+      .closest('[data-slot="provider-model-picker"]')?.getAttribute("data-preferred-side"))
+      .toBe("bottom");
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    expect(screen.getByRole("menu", { name: "Reasoning options" }).getAttribute("data-preferred-side"))
+      .toBe("bottom");
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    expect(screen.getByRole("menu", { name: "Permission mode options" }).getAttribute("data-preferred-side"))
+      .toBe("bottom");
+  });
+
+  it("shows fixed Hermes effort and permission capabilities instead of hiding them", () => {
+    const catalog = fixedHermesCatalogFixture();
+    const selection = createCanonicalComposerSelection(catalog)!;
+    render(
+      <SharedChatComposer
+        value=""
+        onChange={() => undefined}
+        onSubmit={() => undefined}
+        busy={false}
+        catalog={catalog}
+        selection={selection}
+        onSelectionChange={() => undefined}
+        instanceLocked={false}
+      />,
+    );
+
+    const effort = screen.getByRole("button", { name: "Reasoning effort" });
+    expect(effort.textContent).toContain("Default");
+    expect(effort.hasAttribute("disabled")).toBe(true);
+    const permission = screen.getByRole("button", { name: "Permission mode" });
+    expect(permission.textContent).toContain("supervised");
+    expect(permission.hasAttribute("disabled")).toBe(true);
+  });
+
   it("searches models and switches Provider Instance before the first Turn", () => {
     render(<Harness />);
 
@@ -181,6 +276,25 @@ describe("SharedChatComposer", () => {
     expect(opencode.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(opencode);
     expect(screen.queryByRole("option", { name: /Provider default.*OpenCode/ })).toBeNull();
+  });
+
+  it("uses a recognizable product glyph for every Harness rail item", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    const harnesses = [
+      ["Hermes harness, Unavailable", "hermes"],
+      ["OpenClaw harness, Unavailable", "openclaw"],
+      ["Codex harness, Available", "codex"],
+      ["Claude Code harness, Available", "claude_code"],
+      ["OpenCode harness, Authentication required", "opencode"],
+      ["Pi harness, Unavailable", "pi"],
+    ] as const;
+
+    for (const [name, kind] of harnesses) {
+      expect(screen.getByRole("button", { name }).querySelector(`[data-provider-glyph="${kind}"]`))
+        .toBeTruthy();
+    }
   });
 
   it("keeps model selection available but explains the locked Instance", () => {

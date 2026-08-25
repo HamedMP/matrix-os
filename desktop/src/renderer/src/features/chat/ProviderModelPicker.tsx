@@ -4,13 +4,14 @@ import type {
   CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
-import { Bot, ChevronDown, Code2, Cpu, Pi, Search, Sparkles, SquareTerminal } from "lucide-react";
+import { ChevronDown, Cpu, Search } from "lucide-react";
 import { useRef, useState } from "react";
 import {
   changeCanonicalComposerInstance,
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
+import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 
 const DRIVER_LABEL: Record<CanonicalProviderDriverKind, string> = {
   hermes: "Hermes",
@@ -20,21 +21,6 @@ const DRIVER_LABEL: Record<CanonicalProviderDriverKind, string> = {
   opencode: "OpenCode",
   pi: "Pi",
 };
-
-function DriverIcon({ kind, size = 15 }: { kind: CanonicalProviderDriverKind; size?: number }) {
-  const Icon = kind === "hermes" || kind === "claude_code"
-    ? Sparkles
-    : kind === "openclaw"
-      ? Bot
-      : kind === "codex"
-        ? SquareTerminal
-        : kind === "opencode"
-          ? Code2
-          : kind === "pi"
-            ? Pi
-            : Cpu;
-  return <Icon size={size} aria-hidden />;
-}
 
 function availabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
   if (instance.availability === "setup_required") return "Setup required";
@@ -48,12 +34,14 @@ export function ProviderModelPicker({
   selection,
   instanceLocked,
   unavailableProviderLabel,
+  menuSide = "top",
   onChange,
 }: {
   catalog: CanonicalProviderCatalog;
   selection: CanonicalComposerSelection | null;
   instanceLocked: boolean;
   unavailableProviderLabel?: string;
+  menuSide?: "top" | "bottom";
   onChange: (selection: CanonicalComposerSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -97,7 +85,7 @@ export function ProviderModelPicker({
         className="flex h-8 max-w-[12rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         style={{ color: "var(--text-secondary)" }}
       >
-        {selectedInstance ? <DriverIcon kind={selectedInstance.driverKind} /> : <Cpu size={15} />}
+        {selectedInstance ? <ProviderDriverGlyph kind={selectedInstance.driverKind} /> : <Cpu size={15} />}
         <span className="truncate">{selectedModel?.displayName ?? unavailableProviderLabel ?? "Choose model"}</span>
         <ChevronDown size={13} aria-hidden />
       </button>
@@ -105,13 +93,14 @@ export function ProviderModelPicker({
       {open ? (
         <Popover.Portal>
           <Popover.Content
-            side="top"
+            side={menuSide}
             align="end"
             sideOffset={10}
             collisionPadding={16}
             className="z-50 flex w-[352px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border shadow-xl"
             style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
             data-slot="provider-model-picker"
+            data-preferred-side={menuSide}
             onOpenAutoFocus={(event) => {
               event.preventDefault();
               searchRef.current?.focus();
@@ -144,7 +133,7 @@ export function ProviderModelPicker({
                   window.requestAnimationFrame(() => searchRef.current?.focus());
                 }}
               >
-                <DriverIcon kind={driver.kind} size={17} />
+                <ProviderDriverGlyph kind={driver.kind} size={17} />
               </button>
               );
             })}
@@ -228,7 +217,7 @@ export function ProviderModelPicker({
                         }}
                       >
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-md" style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)" }}>
-                          <DriverIcon kind={instance.driverKind} />
+                          <ProviderDriverGlyph kind={instance.driverKind} />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{model.displayName}</span>

@@ -23,6 +23,7 @@ import {
   createLegacyProjectProviderCatalog,
   filterCatalogForLegacyProject,
   instanceIdForLegacyProvider,
+  permissionModeForAgentDraft,
 } from "../chat/canonical-composer-adapter";
 import {
   createCanonicalComposerSelection,
@@ -171,6 +172,12 @@ export function ProjectChatDraft({
         ?.supports.interactionModes.includes(restoredDraft.mode)) {
         selection.interactionMode = restoredDraft.mode;
       }
+      const restoredPermissionMode = permissionModeForAgentDraft(restoredDraft ?? initialDraft);
+      if (selection && fallbackCatalog.instances
+        .find((instance) => instance.id === selection.instanceId)
+        ?.supports.permissionModes.includes(restoredPermissionMode)) {
+        selection.permissionMode = restoredPermissionMode;
+      }
       return selection;
     },
   );
@@ -190,10 +197,17 @@ export function ProjectChatDraft({
         ?.supports.interactionModes.includes(effectiveDraft.mode)) {
         next.interactionMode = effectiveDraft.mode;
       }
+      const restoredPermissionMode = permissionModeForAgentDraft(effectiveDraft);
+      if (projectCatalog.instances
+        .find((instance) => instance.id === next.instanceId)
+        ?.supports.permissionModes.includes(restoredPermissionMode)) {
+        next.permissionMode = restoredPermissionMode;
+      }
       return current
         && current.instanceId === next.instanceId
         && current.model === next.model
         && current.interactionMode === next.interactionMode
+        && current.permissionMode === next.permissionMode
         ? current
         : next;
     });
@@ -340,6 +354,7 @@ export function ProjectChatDraft({
                     setDraft(nextDraft);
                   }}
                   instanceLocked={false}
+                  menuSide="bottom"
                   resources={[{ kind: "project", id: projectId, label: projectLabel }]}
                   resourceSearch={(query) => api
                     ? searchProjectChatResources(api, projectId, query)
