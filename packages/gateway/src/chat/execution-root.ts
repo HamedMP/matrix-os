@@ -103,6 +103,12 @@ function sameWorktreeAuthority(
     && left.createdAt === right.createdAt;
 }
 
+function isInvalidDirectoryError(error: unknown): boolean {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR" || code === "EACCES";
+}
+
 async function canonicalDirectory(candidatePath: string): Promise<string> {
   try {
     const stats = await lstat(candidatePath);
@@ -112,11 +118,8 @@ async function canonicalDirectory(candidatePath: string): Promise<string> {
     return await realpath(candidatePath);
   } catch (error: unknown) {
     if (error instanceof ChatExecutionRootError) throw error;
-    if (error instanceof Error && "code" in error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") {
-        throw new ChatExecutionRootError("invalid_root");
-      }
+    if (isInvalidDirectoryError(error)) {
+      throw new ChatExecutionRootError("invalid_root");
     }
     throw new ChatExecutionRootError("validation_unavailable");
   }
@@ -168,11 +171,8 @@ async function canonicalManagedWorktreeDirectory(input: {
     return canonicalWorktree;
   } catch (error: unknown) {
     if (error instanceof ChatExecutionRootError) throw error;
-    if (error instanceof Error && "code" in error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") {
-        throw new ChatExecutionRootError("invalid_root");
-      }
+    if (isInvalidDirectoryError(error)) {
+      throw new ChatExecutionRootError("invalid_root");
     }
     throw new ChatExecutionRootError("validation_unavailable");
   }
@@ -308,6 +308,7 @@ export function createChatExecutionRootResolver<
     if (!sameProjectAuthority(project, currentProject)) {
       throw new ChatExecutionRootError("invalid_root");
     }
+    // Worktree lookup is slug-addressed, so bracket it with immutable Project authority reads.
     const currentWorktree = await loadWorktree(
       ownerScope,
       currentProject.slug,
@@ -316,13 +317,17 @@ export function createChatExecutionRootResolver<
     if (!sameWorktreeAuthority(worktree, currentWorktree)) {
       throw new ChatExecutionRootError("invalid_root");
     }
+    const finalProject = await loadProject(ownerScope, ref.projectId);
+    if (!sameProjectAuthority(currentProject, finalProject)) {
+      throw new ChatExecutionRootError("invalid_root");
+    }
     return {
       ref,
       primaryWorkspaceRoot: worktreeRoot,
       fingerprint: fingerprint({
         owner,
         ref,
-        project: currentProject,
+        project: finalProject,
         projectRoot,
         worktree: { ...currentWorktree, root: worktreeRoot },
       }),

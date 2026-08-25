@@ -271,6 +271,47 @@ describe("canonical Chat execution-root resolver", () => {
     );
   });
 
+  it("fails closed when project authority is revoked during the final worktree reload", async () => {
+    const homePath = await temporaryDirectory("matrix-execution-root-home-");
+    const projectPath = await temporaryDirectory("matrix-project-root-");
+    const projectRecord = project({ localPath: projectPath });
+    const worktreePath = join(homePath, "worktrees", projectRecord.slug, "wt_abc123def456");
+    await mkdir(worktreePath, { recursive: true });
+    const worktreeRecord = worktree({ path: worktreePath });
+    let projectActive = true;
+    let revokeDuringFinalWorktreeReload = false;
+    let worktreeReloads = 0;
+    const resolver = createChatExecutionRootResolver({
+      homePath,
+      projects: {
+        getProjectById: vi.fn(async () => projectActive
+          ? { ok: true as const, project: projectRecord }
+          : { ok: false as const, status: 404, error: { code: "not_found" } }),
+        resolveProjectWorkingDirectory: vi.fn(async () => projectPath),
+      },
+      worktrees: {
+        getWorktree: vi.fn(async () => {
+          worktreeReloads += 1;
+          if (revokeDuringFinalWorktreeReload && worktreeReloads === 2) {
+            projectActive = false;
+          }
+          return { ok: true as const, worktree: worktreeRecord };
+        }),
+      },
+    });
+    const first = await resolver.resolve(owner, {
+      kind: "worktree",
+      projectId: projectRecord.id,
+      worktreeId: worktreeRecord.id,
+    });
+
+    revokeDuringFinalWorktreeReload = true;
+    worktreeReloads = 0;
+    await expect(resolver.revalidate(owner, first)).rejects.toEqual(
+      new ChatExecutionRootError("invalid_root"),
+    );
+  });
+
   it("rejects mismatched metadata, direct or ancestor symlinks, and unavailable authority", async () => {
     const homePath = await temporaryDirectory("matrix-execution-root-home-");
     const projectPath = await temporaryDirectory("matrix-project-root-");
