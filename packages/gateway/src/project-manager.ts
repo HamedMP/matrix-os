@@ -99,6 +99,7 @@ const CLONE_TIMEOUT_MS = 5 * 60_000;
 
 const GitHubUrlSchema = z.string().trim().min(1).max(512);
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
+const ProjectIdSchema = z.string().regex(/^proj_[A-Za-z0-9_-]{1,128}$/);
 const ProjectNameSchema = z.string().trim().min(1).max(128);
 const ProjectDescriptionSchema = z.string().trim().max(1_000).optional();
 const CreateRequestIdSchema = z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/);
@@ -698,6 +699,40 @@ export function createProjectManager(options: {
       }
       projects.sort((a, b) => a.deletingAt!.localeCompare(b.deletingAt!));
       return { projects, nextCursor: null };
+    },
+
+    async getProjectById(
+      ownerScope: OwnerScope,
+      projectId: string,
+    ): Promise<Result<{ project: ProjectConfig }> | Failure> {
+      if (!ProjectIdSchema.safeParse(projectId).success) {
+        return genericError(400, "invalid_project_id", "Project reference is invalid");
+      }
+      // ponytail: reconcile the bounded file registry on each lookup; add a
+      // cache only if real project counts make this scan measurable.
+      const matches: ProjectConfig[] = [];
+      for (const slug of await registry.listSlugs()) {
+        const project = await readProjectConfig(homePath, slug);
+        if (
+          project?.id !== projectId
+          || !ownerScopeMatches(project.ownerScope, ownerScope)
+          || project.archivedAt
+          || project.deletingAt
+        ) {
+          continue;
+        }
+        matches.push(project);
+        if (matches.length > 1) {
+          return genericError(
+            409,
+            "project_identity_conflict",
+            "Project identity requires repair",
+          );
+        }
+      }
+      return matches[0]
+        ? { ok: true, project: matches[0] }
+        : genericError(404, "not_found", "Project was not found");
     },
 
     async getProject(

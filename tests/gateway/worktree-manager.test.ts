@@ -70,6 +70,24 @@ describe("worktree-manager", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("resolves an exact worktree only inside the owning project scope", async () => {
+    const manager = createWorktreeManager({ homePath, runCommand: successfulRunCommand() });
+    const created = await manager.createWorktree({ projectSlug: "repo", branch: "feature/root" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    await expect(manager.getWorktree(
+      "repo",
+      created.worktree.id,
+      { type: "user", id: "local" },
+    )).resolves.toMatchObject({ ok: true, worktree: { id: created.worktree.id } });
+    await expect(manager.getWorktree(
+      "repo",
+      created.worktree.id,
+      { type: "user", id: "another-owner" },
+    )).resolves.toMatchObject({ ok: false, status: 404 });
+  });
+
   it("fetches GitHub PR refs before creating a PR worktree", async () => {
     const runCommand = successfulRunCommand();
     const manager = createWorktreeManager({ homePath, runCommand });

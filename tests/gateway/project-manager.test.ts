@@ -97,6 +97,48 @@ describe("project-manager", () => {
     expect(config.localPath).toBe(join(homePath, "projects", "empty-workspace", "repo"));
   });
 
+  it("resolves active owner projects by immutable ID instead of mutable slug", async () => {
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const created = await manager.createProject({
+      mode: "scratch",
+      name: "Immutable workspace",
+      slug: "mutable-slug",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    await expect(manager.getProjectById(
+      { type: "user", id: "user_123" },
+      created.project.id,
+    )).resolves.toMatchObject({
+      ok: true,
+      project: { id: created.project.id, slug: "mutable-slug" },
+    });
+    await expect(manager.getProjectById(
+      { type: "user", id: "another_owner" },
+      created.project.id,
+    )).resolves.toMatchObject({ ok: false, status: 404, error: { code: "not_found" } });
+  });
+
+  it("fails closed when duplicate active ProjectConfig IDs require repair", async () => {
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const ownerScope = { type: "user" as const, id: "user_123" };
+    const first = await manager.createProject({ mode: "scratch", name: "First", slug: "first", ownerScope });
+    const second = await manager.createProject({ mode: "scratch", name: "Second", slug: "second", ownerScope });
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    const secondConfigPath = join(homePath, "system", "projects", "second", "config.json");
+    const secondConfig = JSON.parse(await readFile(secondConfigPath, "utf-8"));
+    await atomicWriteJson(secondConfigPath, { ...secondConfig, id: first.project.id });
+
+    await expect(manager.getProjectById(ownerScope, first.project.id)).resolves.toMatchObject({
+      ok: false,
+      status: 409,
+      error: { code: "project_identity_conflict" },
+    });
+  });
+
   it("rejects an oversized project description at the manager boundary", async () => {
     const manager = createProjectManager({ homePath, runCommand: vi.fn() });
 
