@@ -121,6 +121,11 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({
         driverKind: "hermes",
         availability: "available",
+        setupActions: [{
+          id: "hermes_settings",
+          kind: "open_settings",
+          label: "Configure Hermes",
+        }],
         defaultSelection: {
           instanceId: "hermes_default",
           model: "anthropic:claude-opus-4-6",
@@ -135,7 +140,15 @@ describe("canonical Chat Provider catalog", () => {
         skills: [{ id: "matrix-review", invocation: "/matrix-review" }],
       });
     expect(catalog.instances.find((instance) => instance.id === "openclaw_default"))
-      .toMatchObject({ availability: "unavailable", models: [] });
+      .toMatchObject({
+        availability: "unavailable",
+        models: [],
+        setupActions: [{
+          id: "openclaw_settings",
+          kind: "open_settings",
+          label: "Configure OpenClaw",
+        }],
+      });
     expect(catalog.instances.filter((instance) =>
       ["claude_code", "opencode", "pi"].includes(instance.driverKind)
     )).toEqual(expect.arrayContaining([

@@ -335,7 +335,11 @@ export function ProviderModelPicker({
                     type="button"
                     className="mt-1 flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm font-medium hover:bg-[var(--bg-hover)]"
                     style={{ color: "var(--text-primary)" }}
-                    onClick={() => onSetupAction(activeInstance, action)}
+                    onClick={() => {
+                      setOpen(false);
+                      setQuery("");
+                      onSetupAction(activeInstance, action);
+                    }}
                   >
                     {action.label}
                   </button>

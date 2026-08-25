@@ -12,6 +12,7 @@ import {
 } from "../../desktop/src/renderer/src/features/chat/ChatResourcesPanel";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads, type AgentThread } from "../../desktop/src/renderer/src/stores/threads";
@@ -60,6 +61,11 @@ describe("ChatTab", () => {
       abort: vi.fn(),
     });
     useThreads.setState({ threads: [], activeThreadId: null });
+    useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true);
+    useCodingAgentWorkspace.setState({
+      summary: { providers: [] } as never,
+      status: "ready",
+    });
     useTabs.setState(useTabs.getInitialState(), true);
     useProviderPreferences.setState({
       defaultProviderId: null,
@@ -587,6 +593,79 @@ describe("ChatTab", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("Provider default"));
     expect(useTabs.getState().tabs).not.toContainEqual(expect.objectContaining({ kind: "project" }));
+  });
+
+  it("opens authenticated provider setup from the Global Chat catalog", async () => {
+    const fallback = createLegacyGlobalProviderCatalog({ hasProject: true });
+    const connectAction = {
+      id: "claude_connect",
+      kind: "foreground_terminal" as const,
+      label: "Connect Claude",
+      command: "claude",
+    };
+    const catalog = {
+      ...fallback,
+      drivers: [
+        ...fallback.drivers,
+        { kind: "claude_code" as const, displayName: "Claude Code", adapterVersion: "1.0.0", capabilityClass: "coding_agent" as const },
+      ],
+      instances: [
+        ...fallback.instances,
+        {
+          ...fallback.instances[1]!,
+          id: "claude_code_default",
+          driverKind: "claude_code" as const,
+          displayName: "Claude Code",
+          availability: "auth_required" as const,
+          models: [{
+            ...fallback.instances[1]!.models[0]!,
+            availability: "auth_required" as const,
+          }],
+          setupActions: [connectAction],
+        },
+      ],
+    };
+    const provider = {
+      id: "claude",
+      kind: "claude" as const,
+      displayName: "Claude",
+      availability: "auth_required" as const,
+      installStatus: "installed" as const,
+      authStatus: "missing" as const,
+      supportedModes: ["default"],
+      defaultMode: "default",
+      setupActions: [connectAction],
+    };
+    useCodingAgentWorkspace.setState({
+      summary: { providers: [provider] } as never,
+      status: "ready",
+      refresh: vi.fn(async () => undefined),
+    });
+    const post = vi.fn(async () => ({ name: "matrix-setup-claude" }));
+    useConnection.setState({
+      api: {
+        get: vi.fn(async (path: string) => {
+          if (path === "/api/chat-providers") return catalog;
+          throw new Error(`unexpected GET ${path}`);
+        }),
+        post,
+      } as never,
+    });
+    useHermesChat.setState({ messages: [], status: "idle" });
+    render(<ChatTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Claude Code harness, Authentication required" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Claude" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({ cmd: "claude" }),
+    ));
+    expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
+      kind: "terminal",
+      title: "Connect Claude",
+    }));
   });
 
   it("persists Global Chat effort and permission selections", async () => {

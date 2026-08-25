@@ -1,7 +1,9 @@
+import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useTabs } from "../../stores/tabs";
 import { useProviderPreferences } from "../settings/provider-preferences";
@@ -28,6 +30,8 @@ import { ConversationContextFeedback } from "./ConversationContextComposer";
 import ConversationContextPicker from "./ConversationContextPicker";
 import { hermesConversationPresentation } from "./hermes-presentation";
 import { HermesConversationIndex } from "./HermesConversationIndex";
+
+const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
 export function canSubmitChatDraft(
   draft: string,
@@ -69,10 +73,21 @@ export function HermesPane() {
     [projects.length],
   );
   const providerCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const runtimeProviderSummary = useCodingAgentWorkspace((state) => state.summary);
+  const runtimeProviderStatus = useCodingAgentWorkspace((state) => state.status);
+  const refreshRuntimeProviderSummary = useCodingAgentWorkspace((state) => state.refresh);
   const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
     () => createCanonicalComposerSelection(fallbackCatalog, "hermes_default"),
   );
-  const handleProviderSetup = useProviderSetup([]);
+  const handleProviderSetup = useProviderSetup(
+    runtimeProviderSummary?.providers ?? EMPTY_PROVIDER_SUMMARIES,
+    refreshRuntimeProviderSummary,
+  );
+
+  useEffect(() => {
+    if (!api || runtimeProviderStatus !== "idle") return;
+    void refreshRuntimeProviderSummary();
+  }, [api, refreshRuntimeProviderSummary, runtimeProviderStatus]);
 
   useEffect(() => {
     setCanonicalSelection((current) => {

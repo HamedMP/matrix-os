@@ -40,6 +40,34 @@ function catalogFixture(): CanonicalProviderCatalog {
     ],
     instances: [
       {
+        id: "hermes_default",
+        driverKind: "hermes",
+        displayName: "Hermes",
+        availability: "unavailable",
+        workspaceRequirement: "none",
+        catalogRevision: "catalog_fixture",
+        models: [],
+        options: [],
+        skills: [],
+        commands: [],
+        setupActions: [{ id: "hermes_settings", kind: "open_settings", label: "Configure Hermes" }],
+        supports: support,
+      },
+      {
+        id: "openclaw_default",
+        driverKind: "openclaw",
+        displayName: "OpenClaw",
+        availability: "unavailable",
+        workspaceRequirement: "none",
+        catalogRevision: "catalog_fixture",
+        models: [],
+        options: [],
+        skills: [],
+        commands: [],
+        setupActions: [{ id: "openclaw_settings", kind: "open_settings", label: "Configure OpenClaw" }],
+        supports: support,
+      },
+      {
         id: "codex_work",
         driverKind: "codex",
         displayName: "Codex — Work",
@@ -361,6 +389,18 @@ describe("SharedChatComposer", () => {
       .toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
     expect(onProviderSetup).toHaveBeenCalledWith("opencode_default", "opencode_connect");
+  });
+
+  it("offers system harness configuration and closes the catalog before navigation", () => {
+    const onProviderSetup = vi.fn();
+    render(<Harness onProviderSetup={onProviderSetup} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hermes harness, Unavailable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Configure Hermes" }));
+
+    expect(onProviderSetup).toHaveBeenCalledWith("hermes_default", "hermes_settings");
+    expect(screen.queryByRole("listbox", { name: "Models and providers" })).toBeNull();
   });
 
   it("uses a recognizable product glyph for every Harness rail item", () => {

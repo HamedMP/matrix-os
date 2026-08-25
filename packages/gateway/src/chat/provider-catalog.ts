@@ -253,7 +253,6 @@ function systemOptions(
 }
 
 function systemSetupActions(runtime: AgentRuntimeDescriptor | undefined): CanonicalProviderSetupAction[] {
-  if (runtime?.selectionState === "active" && runtime.setupAction === undefined) return [];
   return [{
     id: `${runtime?.id ?? "runtime"}_settings`,
     kind: "open_settings",

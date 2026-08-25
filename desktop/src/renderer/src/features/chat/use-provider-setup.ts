@@ -11,7 +11,15 @@ import { useUi } from "../../stores/ui";
 import { executeProviderSetupAction } from "../coding-agents/provider-setup-terminal";
 import { findProviderForSetupAction } from "../coding-agents/provider-readiness";
 
-const SETUP_ERROR = "Could not open provider setup. Open Providers settings to continue.";
+const SETUP_ERROR = "Could not open setup. Open Settings to continue.";
+
+function settingsSectionForInstance(
+  instance: CanonicalProviderInstanceDescriptor,
+): "agent" | "providers" {
+  return instance.driverKind === "hermes" || instance.driverKind === "openclaw"
+    ? "agent"
+    : "providers";
+}
 
 export function useProviderSetup(
   providers: AgentProviderSummary[],
@@ -22,11 +30,11 @@ export function useProviderSetup(
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
 
   return useCallback(async (
-    _instance: CanonicalProviderInstanceDescriptor,
+    instance: CanonicalProviderInstanceDescriptor,
     action: CanonicalProviderSetupAction,
   ) => {
     if (action.kind === "open_settings") {
-      requestSettingsSection("providers");
+      requestSettingsSection(settingsSectionForInstance(instance));
       openTab({ kind: "settings", title: "Settings" });
       return;
     }

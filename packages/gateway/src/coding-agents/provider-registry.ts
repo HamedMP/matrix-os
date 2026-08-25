@@ -175,6 +175,11 @@ export function applyCredentialState(
   }
 }
 
+function setupActionsForInstallState(summary: AgentProviderSummary): SafeSetupAction[] {
+  if (summary.installStatus !== "installed") return summary.setupActions;
+  return summary.setupActions.filter((action) => !action.id.endsWith("_install"));
+}
+
 function shouldCheckHealth(summary: AgentProviderSummary): boolean {
   return summary.availability === "available" &&
     summary.installStatus === "installed" &&
@@ -350,7 +355,11 @@ export function createCodingAgentProviderRegistry(
       base.summary.setupActions,
     );
     const credential = credentials.agents.find((candidate) => candidate.agent === provider.providerId);
-    const normalized = applyCredentialState({ ...base.summary, setupActions }, credential);
+    const credentialNormalized = applyCredentialState({ ...base.summary, setupActions }, credential);
+    const normalized = {
+      ...credentialNormalized,
+      setupActions: setupActionsForInstallState(credentialNormalized),
+    };
     if (!shouldCheckHealth(normalized)) return AgentProviderSummarySchema.parse(normalized);
 
     const health = await readHealth(provider, principal, checkedAt);

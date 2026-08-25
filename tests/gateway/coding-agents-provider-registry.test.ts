@@ -130,6 +130,64 @@ describe("coding-agent provider registry", () => {
     },
   );
 
+  it("does not offer installation when an authentication-required provider is already installed", async () => {
+    const registry = createCodingAgentProviderRegistry({
+      providers: [adapter({
+        providerId: "claude",
+        getSummary: ({ now }) => ({
+          id: "claude",
+          displayName: "Claude",
+          kind: "claude",
+          availability: "available",
+          installStatus: "installed",
+          authStatus: "authenticated",
+          supportedModes: ["default", "review"],
+          defaultMode: "default",
+          setupActions: [],
+          lastCheckedAt: now().toISOString(),
+        }),
+        buildSetupAction: () => [{
+          id: "claude_install",
+          kind: "foreground_terminal",
+          label: "Install Claude",
+          command: "npm install -g @anthropic-ai/claude-code",
+        }, {
+          id: "claude_connect",
+          kind: "foreground_terminal",
+          label: "Connect Claude",
+          command: "claude",
+        }],
+      })],
+      agentCredentials: {
+        getStatus: vi.fn(async () => ({
+          systemAgent: "hermes" as const,
+          activeAgents: ["hermes"] as const,
+          routingExplanation: "Provider state is runtime-owned.",
+          agents: [{
+            agent: "claude" as const,
+            status: "auth_required" as const,
+            coordinationRole: "coding_specialist" as const,
+            workflows: ["coding" as const],
+            degradedWorkflows: ["coding" as const],
+            verifiedAt: null,
+            nextAction: null,
+          }],
+        })),
+      },
+      now: () => baseNow,
+    });
+
+    const [summary] = await registry.listProviders(owner);
+
+    expect(summary).toMatchObject({
+      id: "claude",
+      availability: "auth_required",
+      installStatus: "installed",
+      authStatus: "missing",
+    });
+    expect(summary?.setupActions.map((action) => action.id)).toEqual(["claude_connect"]);
+  });
+
   it("fails closed without reading provider setup or health when credentials cannot be read", async () => {
     const healthCheck = vi.fn(() => ({ ok: true }));
     const buildSetupAction = vi.fn(() => [{
