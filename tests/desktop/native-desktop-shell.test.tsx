@@ -491,6 +491,38 @@ describe("native desktop shell", () => {
     expect(filesButton?.isConnected).toBe(true);
   });
 
+  it("does not reopen a closed Files surface after closing a later app", () => {
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Files" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Plugins" }));
+
+    expect(screen.queryByRole("dialog", { name: "Files window" })).toBeNull();
+  });
+
+  it("focuses Dock apps instead of minimizing them, including tabbed apps from Desktop", () => {
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
+    const terminalTabId = useTabs.getState().activeTabId!;
+    const dock = screen.getByRole("navigation", { name: "Running apps" });
+    fireEvent.click(dock.querySelector<HTMLButtonElement>("[title='Terminal']")!);
+    expect(useDesktopSurfaces.getState().surfaces[terminalTabId]?.mode).toBe("window");
+    expect(useTabs.getState().activeTabId).toBe(terminalTabId);
+
+    fireEvent.click(screen.getByRole("button", { name: "Maximize Terminal into tabs" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    fireEvent.click(
+      screen.getByRole("navigation", { name: "Running apps" })
+        .querySelector<HTMLButtonElement>("[title='Terminal']")!,
+    );
+
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("tabs");
+    expect(screen.getByRole("tab", { name: "Terminal" }).getAttribute("aria-selected")).toBe("true");
+  });
+
   it("maximizes a window into the tab strip and restores it as a window", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));

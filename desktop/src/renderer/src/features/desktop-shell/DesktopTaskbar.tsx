@@ -13,7 +13,6 @@ export default function DesktopTaskbar({
   onOpenFiles,
   launcherOpen,
   onActivate,
-  onMinimize,
 }: {
   tabs: Tab[];
   surfaces: Record<string, DesktopSurface>;
@@ -22,7 +21,6 @@ export default function DesktopTaskbar({
   onOpenFiles: () => void;
   launcherOpen: boolean;
   onActivate: (tabId: string) => void;
-  onMinimize: (tabId: string) => void;
 }) {
   const runningTabs = tabs.filter((tab) => {
     const mode = surfaces[tab.id]?.mode;
@@ -36,9 +34,7 @@ export default function DesktopTaskbar({
     ? "Open Files"
     : filesSurface?.mode === "minimized"
       ? "Restore Files"
-      : filesActive
-        ? "Hide Files to taskbar"
-        : "Focus Files";
+      : "Focus Files";
   return (
     <nav
       aria-label="Running apps"
@@ -72,7 +68,6 @@ export default function DesktopTaskbar({
           className="group relative flex size-11 shrink-0 items-center justify-center rounded-[13px] border border-transparent bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-[var(--shadow-1)] transition-transform hover:-translate-y-0.5 data-[active]:border-[var(--border-default)] data-[active]:text-[var(--accent)] data-[minimized]:opacity-70"
           onClick={() => {
             if (!filesTab) onOpenFiles();
-            else if (filesActive) onMinimize(filesTab.id);
             else onActivate(filesTab.id);
           }}
         >
@@ -97,9 +92,7 @@ export default function DesktopTaskbar({
           const active = activeTabId === tab.id && surface.mode !== "minimized";
           const label = surface.mode === "minimized"
             ? `Restore ${tab.title}`
-            : active
-              ? `Hide ${tab.title} to taskbar`
-              : `Focus ${tab.title}`;
+            : `Focus ${tab.title}`;
           return (
             <button
               key={tab.id}
@@ -110,8 +103,7 @@ export default function DesktopTaskbar({
               data-minimized={surface.mode === "minimized" || undefined}
               className="group relative flex size-11 shrink-0 items-center justify-center rounded-[13px] border border-transparent bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-[var(--shadow-1)] transition-transform hover:-translate-y-0.5 data-[active]:border-[var(--border-default)] data-[active]:text-[var(--accent)] data-[minimized]:opacity-70"
               onClick={() => {
-                if (active) onMinimize(tab.id);
-                else onActivate(tab.id);
+                onActivate(tab.id);
               }}
             >
               <SurfaceIcon tab={tab} size={21} />

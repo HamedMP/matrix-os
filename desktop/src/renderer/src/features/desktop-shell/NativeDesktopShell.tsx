@@ -76,7 +76,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [desktopMode, desktopModeHydrated, reconcileTabs, tabIds, viewport]);
 
   const activeSurface = activeTabId ? surfaces[activeTabId] : undefined;
-  const activeSurfaceAvailable = activeSurface !== undefined;
+  const activeSurfaceAvailable = activeSurface !== undefined && activeSurface.mode !== "closed";
   useEffect(() => {
     if (!activeTabId || !activeSurfaceAvailable) return;
     activateSurface(activeTabId);
@@ -265,7 +265,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
           onOpenFiles={() => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC))}
           launcherOpen={launcherOpen}
           onActivate={activate}
-          onMinimize={minimize}
         />
       ) : null}
         </>
