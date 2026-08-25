@@ -10,6 +10,7 @@ import {
   DesktopReleaseNotesSchema,
   DesktopUpdateVersionSchema,
 } from "../../shared/desktop-update";
+import { CompanionPreferencesSchema } from "../../shared/companion";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -88,6 +89,7 @@ const KEY_SCHEMAS = {
   recents: RecentsSchema,
   projectViews: ProjectViewsStateSchema,
   providerPreferences: ProviderPreferencesSchema,
+  companionPreferences: CompanionPreferencesSchema,
   desktopUpdateRelease: DesktopUpdateReleaseSchema,
 } as const;
 

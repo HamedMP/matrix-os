@@ -19,6 +19,13 @@ describe("SettingsView", () => {
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "state:get") return Promise.resolve({ value: { theme: "light" } });
+        if (channel === "companion:get-preferences") {
+          return Promise.resolve({
+            preferences: { rabbitEnabled: true, notchEnabled: false },
+            supportsNotch: true,
+          });
+        }
+        if (channel === "companion:set-preferences") return Promise.resolve({ ok: true });
         return Promise.resolve({});
       }),
       on: vi.fn(() => () => undefined),
@@ -68,6 +75,22 @@ describe("SettingsView", () => {
     fireEvent.click(integrations);
     expect(integrations.className).toContain("bg-[var(--bg-selected)]");
     expect(providers.className).not.toContain("bg-[var(--bg-selected)]");
+  });
+
+  it("configures the floating rabbit and macOS notch hosts from Settings", async () => {
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Companion" }));
+
+    expect(await screen.findByRole("heading", { name: "Companion" })).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: "Floating rabbit" }) as HTMLInputElement).checked).toBe(true);
+    const notch = screen.getByRole("checkbox", { name: "MacBook notch" }) as HTMLInputElement;
+    expect(notch.checked).toBe(false);
+    fireEvent.click(notch);
+
+    await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith(
+      "companion:set-preferences",
+      { preferences: { rabbitEnabled: true, notchEnabled: true } },
+    ));
   });
 
   it("ignores unknown requested sections", async () => {

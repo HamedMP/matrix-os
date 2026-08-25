@@ -6,6 +6,7 @@ import {
   Cpu,
   MonitorCog,
   Palette,
+  Rabbit,
   FolderArchive,
   Server,
   Sparkles,
@@ -24,10 +25,12 @@ import ProvidersSection from "./sections/ProvidersSection";
 import SystemSection from "./sections/SystemSection";
 import ProjectsSection from "./sections/ProjectsSection";
 import { useUi } from "../../stores/ui";
+import CompanionSection from "./sections/CompanionSection";
 
 type SectionId =
   | "account"
   | "appearance"
+  | "companion"
   | "billing"
   | "runtime"
   | "projects"
@@ -42,6 +45,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: st
   { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
+  { id: "companion", label: "Companion", icon: <Rabbit size={15} />, group: "You" },
   { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
   { id: "providers", label: "Providers", icon: <Bot size={15} />, group: "Machine" },
   { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
@@ -112,6 +116,7 @@ export default function SettingsView() {
           {section === "account" ? <AccountSection /> : null}
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
+          {section === "companion" ? <CompanionSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "projects" ? <ProjectsSection /> : null}
           {section === "agent" ? <AgentSection /> : null}

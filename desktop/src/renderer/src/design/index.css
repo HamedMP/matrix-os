@@ -373,6 +373,89 @@ html[data-surface="companion"] body {
   to { opacity: 1; transform: none; }
 }
 
+.companion-stage-notch,
+.companion-stage-notch-expanded {
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0;
+}
+
+.companion-notch-bar {
+  display: flex;
+  width: 244px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0 0 16px 16px;
+  background: rgba(4, 5, 4, 0.98);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.34);
+}
+
+.companion-notch-trigger {
+  display: flex;
+  height: 34px;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #fafaf5;
+  cursor: pointer;
+}
+
+.companion-notch-wing {
+  display: flex;
+  width: 46px;
+  align-items: center;
+  justify-content: center;
+}
+
+.companion-notch-wing:first-child > span {
+  filter: drop-shadow(0 1px 4px rgba(250, 250, 245, 0.12));
+  animation: companion-breathe 3.2s ease-in-out infinite;
+}
+
+.companion-notch-camera-space {
+  width: 148px;
+  height: 30px;
+}
+
+.companion-notch-wing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #bed77b;
+  box-shadow: 0 0 0 3px rgba(190, 215, 123, 0.12);
+}
+
+.companion-notch-menu {
+  top: 39px;
+  right: 10px;
+  bottom: auto;
+}
+
+.companion-card-notch {
+  width: 360px;
+  height: 168px;
+  border-top: 0;
+  border-radius: 0 0 24px 24px;
+  background: rgba(252, 252, 249, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28), inset 0 1px rgba(255, 255, 255, 0.9);
+  transform-origin: top center;
+}
+
+.companion-card-notch .companion-header {
+  min-height: 55px;
+  padding-top: 9px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .companion-rabbit-mark,
+  .companion-notch-wing:first-child > span {
+    animation: none;
+  }
+}
+
 /* Inputs and content areas re-enable selection. */
 input,
 textarea,

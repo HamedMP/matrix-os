@@ -36,6 +36,11 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     openExternal: vi.fn(),
     setBadgeCount: vi.fn(),
     setCompanionExpanded: vi.fn(),
+    getCompanionPreferences: vi.fn(async () => ({
+      preferences: { rabbitEnabled: true, notchEnabled: false },
+      supportsNotch: true,
+    })),
+    setCompanionPreferences: vi.fn(),
     markCompanionMainReady: vi.fn(),
     focusCompanionMain: vi.fn(),
     hideCompanion: vi.fn(),
@@ -1160,28 +1165,44 @@ describe("registerIpcHandlers", () => {
 
   it("routes validated companion lifecycle and prompt actions through registered dependencies", async () => {
     const setCompanionExpanded = vi.fn();
+    const getCompanionPreferences = vi.fn(async () => ({
+      preferences: { rabbitEnabled: true, notchEnabled: false },
+      supportsNotch: true,
+    }));
+    const setCompanionPreferences = vi.fn();
     const markCompanionMainReady = vi.fn();
     const focusCompanionMain = vi.fn();
     const hideCompanion = vi.fn();
     const submitCompanionPrompt = vi.fn();
     const harness = makeHarness({
       setCompanionExpanded,
+      getCompanionPreferences,
+      setCompanionPreferences,
       markCompanionMainReady,
       focusCompanionMain,
       hideCompanion,
       submitCompanionPrompt,
     });
 
-    await expect(harness.invoke("companion:set-expanded", { expanded: true })).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("companion:set-expanded", { host: "notch", expanded: true })).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("companion:get-preferences", {})).resolves.toEqual({
+      preferences: { rabbitEnabled: true, notchEnabled: false },
+      supportsNotch: true,
+    });
+    await expect(harness.invoke("companion:set-preferences", {
+      preferences: { rabbitEnabled: true, notchEnabled: true },
+    })).resolves.toEqual({ ok: true });
     await expect(harness.invoke("companion:renderer-ready", {})).resolves.toEqual({ ok: true });
     await expect(harness.invoke("companion:focus-main", {})).resolves.toEqual({ ok: true });
-    await expect(harness.invoke("companion:hide", {})).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("companion:hide", { host: "rabbit" })).resolves.toEqual({ ok: true });
     await expect(harness.invoke("companion:submit-prompt", { prompt: "Plan my day" })).resolves.toEqual({ ok: true });
 
-    expect(setCompanionExpanded).toHaveBeenCalledWith(true);
+    expect(setCompanionExpanded).toHaveBeenCalledWith("notch", true);
+    expect(getCompanionPreferences).toHaveBeenCalledOnce();
+    expect(setCompanionPreferences).toHaveBeenCalledWith({ rabbitEnabled: true, notchEnabled: true });
     expect(markCompanionMainReady).toHaveBeenCalledOnce();
     expect(focusCompanionMain).toHaveBeenCalledOnce();
-    expect(hideCompanion).toHaveBeenCalledOnce();
+    expect(hideCompanion).toHaveBeenCalledWith("rabbit");
     expect(submitCompanionPrompt).toHaveBeenCalledWith("Plan my day");
     await expect(harness.invoke("companion:submit-prompt", { prompt: "x".repeat(4_001) }))
       .rejects.toThrow("invalid request");

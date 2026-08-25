@@ -11,6 +11,7 @@ import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-age
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 import { clampZoomFactor, DEFAULT_ZOOM_FACTOR } from "../platform/zoom";
+import type { CompanionHost, CompanionPreferences } from "../../shared/companion";
 
 interface IpcMainLike {
   handle(
@@ -25,10 +26,15 @@ export interface HandlerContext {
   embeds: EmbedService;
   openExternal: (url: string) => Promise<void>;
   setBadgeCount: (count: number) => void;
-  setCompanionExpanded: (expanded: boolean) => void;
+  setCompanionExpanded: (host: CompanionHost, expanded: boolean) => void;
+  getCompanionPreferences: () => Promise<{
+    preferences: CompanionPreferences;
+    supportsNotch: boolean;
+  }>;
+  setCompanionPreferences: (preferences: CompanionPreferences) => Promise<void>;
   markCompanionMainReady: () => void;
   focusCompanionMain: () => void;
-  hideCompanion: () => void;
+  hideCompanion: (host: CompanionHost) => void;
   submitCompanionPrompt: (prompt: string) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
@@ -231,8 +237,13 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { factor };
   });
 
-  handle("companion:set-expanded", ({ expanded }) => {
-    ctx.setCompanionExpanded(expanded);
+  handle("companion:set-expanded", ({ host, expanded }) => {
+    ctx.setCompanionExpanded(host, expanded);
+    return { ok: true };
+  });
+  handle("companion:get-preferences", () => ctx.getCompanionPreferences());
+  handle("companion:set-preferences", async ({ preferences }) => {
+    await ctx.setCompanionPreferences(preferences);
     return { ok: true };
   });
   handle("companion:renderer-ready", () => {
@@ -243,8 +254,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     ctx.focusCompanionMain();
     return { ok: true };
   });
-  handle("companion:hide", () => {
-    ctx.hideCompanion();
+  handle("companion:hide", ({ host }) => {
+    ctx.hideCompanion(host);
     return { ok: true };
   });
   handle("companion:submit-prompt", ({ prompt }) => {

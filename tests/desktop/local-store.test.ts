@@ -111,6 +111,18 @@ describe("local store", () => {
     await expect(store.setUnknown("desktopShell", { mode: "canvas", privateState: true })).rejects.toThrow();
   });
 
+  it("persists a bounded companion host preference with at least one visible host", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+
+    await store.set("companionPreferences", { rabbitEnabled: false, notchEnabled: true });
+
+    expect(await store.get("companionPreferences")).toEqual({ rabbitEnabled: false, notchEnabled: true });
+    await expect(store.setUnknown("companionPreferences", {
+      rabbitEnabled: false,
+      notchEnabled: false,
+    })).rejects.toThrow();
+  });
+
   it("persists only a bounded Terminal-local light or dark preference", async () => {
     const store = createLocalStore({ dir: await makeDir() });
 

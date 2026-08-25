@@ -2,28 +2,38 @@ import { ArrowUp, ExternalLink, EyeOff, Minus, X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { invoke } from "../../lib/operator";
+import type { CompanionHost } from "../../../../shared/companion";
 
 type SendState = "idle" | "sending" | "sent" | "error";
 
-export function CompanionSurface() {
+export function CompanionSurface({ host = "rabbit" }: { host?: CompanionHost }) {
   const [expanded, setExpandedState] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [sendState, setSendState] = useState<SendState>("idle");
   const collapseTimer = useRef<number | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     document.documentElement.dataset.surface = "companion";
+    document.documentElement.dataset.companionHost = host;
     return () => {
       delete document.documentElement.dataset.surface;
+      delete document.documentElement.dataset.companionHost;
       if (collapseTimer.current !== null) window.clearTimeout(collapseTimer.current);
     };
-  }, []);
+  }, [host]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const frame = window.requestAnimationFrame(() => promptRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [expanded]);
 
   const setExpanded = async (next: boolean) => {
     setMenuOpen(false);
     try {
-      await invoke("companion:set-expanded", { expanded: next });
+      await invoke("companion:set-expanded", { host, expanded: next });
       setExpandedState(next);
       if (!next) setSendState("idle");
     } catch {
@@ -54,10 +64,45 @@ export function CompanionSurface() {
 
   const hide = () => {
     setMenuOpen(false);
-    void invoke("companion:hide", {}).catch(() => setSendState("error"));
+    void invoke("companion:hide", { host }).catch(() => setSendState("error"));
   };
 
   if (!expanded) {
+    if (host === "notch") {
+      return (
+        <main className="companion-stage companion-stage-notch" aria-label="Matrix notch companion">
+          <div
+            className="companion-notch-bar titlebar-drag"
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setMenuOpen(true);
+            }}
+          >
+            <button
+              type="button"
+              aria-label="Ask Hermes from the notch"
+              className="companion-notch-trigger no-drag"
+              onClick={() => void setExpanded(true)}
+              onDoubleClick={focusMain}
+            >
+              <span className="companion-notch-wing" aria-hidden>
+                <BrandLogo size={24} color="#fafaf5" />
+              </span>
+              <span className="companion-notch-camera-space" aria-hidden />
+              <span className="companion-notch-wing" aria-hidden>
+                <i />
+              </span>
+            </button>
+          </div>
+          {menuOpen ? (
+            <div className="companion-context-menu companion-notch-menu no-drag" role="menu">
+              <button type="button" role="menuitem" onClick={focusMain}>Open Matrix OS</button>
+              <button type="button" role="menuitem" aria-label="Hide rabbit" onClick={hide}>Hide notch</button>
+            </div>
+          ) : null}
+        </main>
+      );
+    }
     return (
       <main className="companion-stage companion-stage-collapsed" aria-label="Matrix rabbit companion">
         <div
@@ -98,8 +143,8 @@ export function CompanionSurface() {
   }
 
   return (
-    <main className="companion-stage companion-stage-expanded" aria-label="Matrix rabbit companion">
-      <section className="companion-card">
+    <main className={`companion-stage companion-stage-expanded ${host === "notch" ? "companion-stage-notch-expanded" : ""}`} aria-label={`Matrix ${host} companion`}>
+      <section className={`companion-card ${host === "notch" ? "companion-card-notch" : ""}`}>
         <header className="companion-header titlebar-drag">
           <div className="companion-title">
             <span className="companion-mini-rabbit" aria-hidden>
@@ -125,7 +170,7 @@ export function CompanionSurface() {
 
         <form className="companion-composer" onSubmit={(event) => void submit(event)}>
           <textarea
-            autoFocus
+            ref={promptRef}
             aria-label="Message Hermes"
             maxLength={4_000}
             rows={2}
