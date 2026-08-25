@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import {
   SharedChatComposer,
+  type ComposerReferenceToken,
+  type SharedChatComposerSubmission,
 } from "../../desktop/src/renderer/src/features/chat/SharedChatComposer";
 import {
   createCanonicalComposerSelection,
@@ -143,7 +145,7 @@ function Harness({
   onProviderSetup = vi.fn(),
 }: {
   locked?: boolean;
-  onSubmit?: () => void;
+  onSubmit?: (submission: SharedChatComposerSubmission) => void;
   resourceSearch?: (query: string) => Promise<Array<{ kind: "file" | "folder"; id: string; label: string }>>;
   menuSide?: "top" | "bottom";
   onAttach?: () => void;
@@ -154,10 +156,13 @@ function Harness({
   const [selection, setSelection] = useState<CanonicalComposerSelection>(
     () => createCanonicalComposerSelection(catalog)!,
   );
+  const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   return (
     <SharedChatComposer
       value={value}
       onChange={setValue}
+      referenceTokens={referenceTokens}
+      onReferenceTokensChange={setReferenceTokens}
       onSubmit={onSubmit}
       busy={false}
       catalog={catalog}
@@ -400,7 +405,7 @@ describe("SharedChatComposer", () => {
       .toContain("GPT-5.6-Terra");
   });
 
-  it("opens one slash menu for skills and commands and inserts the invocation", () => {
+  it("turns a selected slash entry into a distinct removable invocation token", () => {
     render(<Harness />);
     const input = screen.getByLabelText("Message chat");
 
@@ -412,20 +417,35 @@ describe("SharedChatComposer", () => {
     expect(review.querySelector('[data-slot="skill-command-name"]')?.className)
       .toContain("whitespace-nowrap");
     fireEvent.click(review);
-    expect((input as HTMLTextAreaElement).value).toBe("/review ");
+    expect((input as HTMLTextAreaElement).value).toBe("");
+    const token = screen.getByTestId("composer-reference-token-skill-review");
+    expect(token.textContent).toContain("/review");
+    expect(token.querySelector('[data-slot="composer-reference-token-icon"]')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove skill /review" }));
+    expect(screen.queryByTestId("composer-reference-token-skill-review")).toBeNull();
   });
 
-  it("opens the resource menu for @ and submits with Enter", () => {
+  it("submits selected invocations and resources as structured agent-readable context", () => {
     const onSubmit = vi.fn();
     render(<Harness onSubmit={onSubmit} />);
     const input = screen.getByLabelText("Message chat");
 
+    fireEvent.change(input, { target: { value: "/rev" } });
+    fireEvent.click(screen.getByRole("option", { name: /Review/ }));
     fireEvent.change(input, { target: { value: "Inspect @ind" } });
     expect(screen.getByRole("listbox", { name: "Add" })).toBeTruthy();
     fireEvent.click(screen.getByRole("option", { name: /src\/index.ts/ }));
-    expect((input as HTMLTextAreaElement).value).toBe("Inspect @src/index.ts ");
+    expect((input as HTMLTextAreaElement).value).toBe("Inspect ");
+    expect(screen.getByTestId("composer-reference-token-file-src-index").textContent)
+      .toContain("src/index.ts");
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(onSubmit).toHaveBeenCalledWith({
+      text: "Inspect",
+      agentPrompt: "/review\n\nInspect\n\nContext references:\n- [file] src/index.ts (src-index)",
+      invocations: [{ kind: "skill", descriptorId: "review", invocation: "/review" }],
+      resources: [{ kind: "file", id: "src-index", label: "src/index.ts" }],
+    });
   });
 
   it("searches workspace files and folders for @ mentions", async () => {
@@ -439,7 +459,9 @@ describe("SharedChatComposer", () => {
 
     await waitFor(() => expect(resourceSearch).toHaveBeenCalledWith("read"));
     fireEvent.click(await screen.findByRole("option", { name: /README.md/ }));
-    expect((input as HTMLTextAreaElement).value).toBe("Inspect @README.md ");
+    expect((input as HTMLTextAreaElement).value).toBe("Inspect ");
+    expect(screen.getByTestId("composer-reference-token-file-readme").textContent)
+      .toContain("README.md");
   });
 
   it("browses workspace files and folders immediately when @ opens", async () => {
@@ -463,7 +485,9 @@ describe("SharedChatComposer", () => {
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect((input as HTMLTextAreaElement).value).toBe("/status ");
+    expect((input as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByTestId("composer-reference-token-command-status").textContent)
+      .toContain("/status");
   });
 
   it("navigates the model picker from its search field", () => {

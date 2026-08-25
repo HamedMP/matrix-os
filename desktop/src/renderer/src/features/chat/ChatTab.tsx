@@ -9,7 +9,11 @@ import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
 import { ChatStarterCards } from "./ChatStarterCards";
-import { SharedChatComposer } from "./SharedChatComposer";
+import {
+  SharedChatComposer,
+  type ComposerReferenceToken,
+  type SharedChatComposerSubmission,
+} from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
 import {
@@ -30,8 +34,9 @@ export function canSubmitChatDraft(
   status: HermesStatus,
   attachmentCount = 0,
   contextBlocksSend = false,
+  referenceCount = 0,
 ): boolean {
-  return (draft.trim().length > 0 || attachmentCount > 0)
+  return (draft.trim().length > 0 || attachmentCount > 0 || referenceCount > 0)
     && status === "idle"
     && !contextBlocksSend;
 }
@@ -54,6 +59,7 @@ export function HermesPane() {
   const composerSelections = useProviderPreferences((state) => state.composerSelections);
   const setComposerSelection = useProviderPreferences((state) => state.setComposerSelection);
   const [draft, setDraft] = useState("");
+  const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachments = useConversationAttachments(sessionId);
@@ -104,26 +110,35 @@ export function HermesPane() {
     || !api
     || !sessionId;
 
-  const submit = async () => {
+  const submit = async (submission: SharedChatComposerSubmission) => {
     if (
       uploadingAttachments
-      || !canSubmitChatDraft(draft, status, attachments.items.length, contextPreventsSend)
+      || !canSubmitChatDraft(
+        draft,
+        status,
+        attachments.items.length,
+        contextPreventsSend,
+        referenceTokens.length,
+      )
     ) return;
     setUploadingAttachments(true);
     try {
       const uploaded = await attachments.uploadAll();
       if (!uploaded.ok) return;
-      const submittedDraft = draft.trim();
-      send(appendHermesAttachmentPaths(draft, uploaded.paths));
+      const submittedDraft = submission.text;
+      send(appendHermesAttachmentPaths(submission.agentPrompt, uploaded.paths));
       if (sessionId) {
         const knownTitle = useHermesChat.getState().conversations
           .find((conversation) => conversation.id === sessionId)?.title;
         const label = submittedDraft.replace(/\s+/g, " ").slice(0, 80)
+          || submission.invocations[0]?.invocation
+          || submission.resources[0]?.label
           || knownTitle
           || "Shared files";
         recordRecentHermesConversation(sessionId, label);
       }
       setDraft("");
+      setReferenceTokens([]);
       attachments.clear();
     } finally {
       setUploadingAttachments(false);
@@ -147,6 +162,7 @@ export function HermesPane() {
     status,
     attachments.items.length,
     contextPreventsSend,
+    referenceTokens.length,
   );
   const resourceSearch = useCallback((query: string) => {
     if (!api) return Promise.resolve([]);
@@ -182,7 +198,9 @@ export function HermesPane() {
         <SharedChatComposer
           value={draft}
           onChange={setDraft}
-          onSubmit={() => void submit()}
+          referenceTokens={referenceTokens}
+          onReferenceTokensChange={setReferenceTokens}
+          onSubmit={(submission) => void submit(submission)}
           onAbort={status !== "idle" ? abort : undefined}
           busy={status !== "idle" || uploadingAttachments}
           disabled={uploadingAttachments}

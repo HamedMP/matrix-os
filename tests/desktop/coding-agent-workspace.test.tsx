@@ -1313,13 +1313,15 @@ describe("ProjectChatsView", () => {
     expect(await screen.findByText("Please inspect the failing desktop test.")).toBeTruthy();
     expect(screen.getByText("I found the failing assertion and prepared a focused fix.")).toBeTruthy();
     const composer = screen.getByLabelText("Message conversation");
-    fireEvent.change(composer, { target: { value: "Continue with the focused validation." } });
+    fireEvent.change(composer, { target: { value: "Continue with the focused validation @matrix" } });
+    fireEvent.click(screen.getByRole("option", { name: /matrix-os/ }));
+    expect(screen.getByTestId("composer-reference-token-project-matrix-os")).toBeTruthy();
     fireEvent.keyDown(composer, { key: "Enter" });
 
     await waitFor(() => {
       expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-turn", {
         threadId: "thread_alpha",
-        message: "Continue with the focused validation.",
+        message: "Continue with the focused validation\n\nContext references:\n- [project] matrix-os",
         clientRequestId: expect.stringMatching(/^req_desktop_/),
       });
     });

@@ -15,7 +15,11 @@ import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useProviderPreferences } from "../settings/provider-preferences";
 import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
-import { SharedChatComposer } from "../chat/SharedChatComposer";
+import {
+  SharedChatComposer,
+  type ComposerReferenceToken,
+  type SharedChatComposerSubmission,
+} from "../chat/SharedChatComposer";
 import { SharedChatSurface } from "../chat/SharedChatSurface";
 import { searchProjectChatResources } from "../chat/chat-resource-search";
 import {
@@ -127,6 +131,7 @@ export function ProjectChatDraft({
   const resolveNewChatTarget = useProjectWorkspaces((s) => s.resolveNewChatTarget);
   const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
   const submitting = createStatus === "submitting";
+  const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const [resolvingTarget, setResolvingTarget] = useState(false);
   const submitInFlightRef = useRef(false);
   const busy = submitting || resolvingTarget;
@@ -257,17 +262,17 @@ export function ProjectChatDraft({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [active, typeToStartEnabled, canCreate]);
 
-  async function submit() {
+  async function submit(submission: SharedChatComposerSubmission) {
     if (canonicalBlocked || submitting || submitInFlightRef.current) return;
     let effective = canonicalSelection
       ? applyCanonicalSelectionToAgentDraft(
           summary,
           projectCatalog,
-          effectiveDraft,
+          { ...effectiveDraft, prompt: submission.agentPrompt },
           canonicalSelection,
         )
-      : effectiveDraft;
-    if (!effective.prompt.trim() && attachments.items.length === 0) return;
+      : { ...effectiveDraft, prompt: submission.agentPrompt };
+    if (!effective.prompt.trim() && attachments.items.length === 0 && referenceTokens.length === 0) return;
     submitInFlightRef.current = true;
     setResolvingTarget(true);
     try {
@@ -282,7 +287,7 @@ export function ProjectChatDraft({
           return;
         }
         effective = { ...effective, ...relation };
-        setDraft(effective);
+        setDraft({ ...effective, prompt: effectiveDraft.prompt });
       }
       const uploaded = await attachments.uploadAll();
       if (!uploaded.ok) return;
@@ -301,6 +306,7 @@ export function ProjectChatDraft({
       providerSelectionTouchedRef.current = false;
       useDraftChat.getState().clearDraft(projectId);
       setDraft(initialDraft);
+      setReferenceTokens([]);
       attachments.clear();
       onCreated(threadId, prompt.replace(/\s+/g, " ").slice(0, 80) || "Agent conversation");
     } finally {
@@ -309,7 +315,9 @@ export function ProjectChatDraft({
     }
   }
 
-  const promptEmpty = effectiveDraft.prompt.trim().length === 0 && attachments.items.length === 0;
+  const promptEmpty = effectiveDraft.prompt.trim().length === 0
+    && attachments.items.length === 0
+    && referenceTokens.length === 0;
 
   return (
     <SharedChatSurface
@@ -352,10 +360,16 @@ export function ProjectChatDraft({
               <SharedChatComposer
                   value={effectiveDraft.prompt}
                   onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
-                  onSubmit={() => void submit()}
+                  referenceTokens={referenceTokens}
+                  onReferenceTokensChange={setReferenceTokens}
+                  onSubmit={(submission) => void submit(submission)}
                   busy={busy}
                   disabled={busy}
-                  canSubmit={!busy && !canonicalBlocked && (effectiveDraft.prompt.trim().length > 0 || attachments.items.length > 0)}
+                  canSubmit={!busy && !canonicalBlocked && (
+                    effectiveDraft.prompt.trim().length > 0
+                    || attachments.items.length > 0
+                    || referenceTokens.length > 0
+                  )}
                   catalog={projectCatalog}
                   selection={canonicalSelection}
                   onSelectionChange={(selection) => {

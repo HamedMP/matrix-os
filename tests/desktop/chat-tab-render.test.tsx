@@ -516,6 +516,48 @@ describe("ChatTab", () => {
     });
   });
 
+  it("sends Global Chat skill and project tokens as agent-readable prompt context", async () => {
+    const send = vi.fn();
+    const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
+    const availableCatalog = {
+      ...catalog,
+      instances: catalog.instances.map((instance) => ({
+        ...instance,
+        availability: "available" as const,
+        models: instance.models.map((model) => ({ ...model, availability: "available" as const })),
+        skills: instance.id === "hermes_default"
+          ? [{ id: "review", displayName: "Review", description: "Review the selected context", invocation: "/review" }]
+          : instance.skills,
+        defaultSelection: { instanceId: instance.id, model: instance.models[0]!.id, options: [] },
+      })),
+    };
+    useConnection.setState({
+      api: {
+        get: vi.fn(async (path: string) => {
+          if (path === "/api/chat-providers") return availableCatalog;
+          if (path.startsWith("/api/files/list")) return { entries: [] };
+          throw new Error(`unexpected GET ${path}`);
+        }),
+      } as never,
+    });
+    useHermesChat.setState({ messages: [], status: "idle", send, abort: vi.fn() });
+    render(<ChatTab />);
+
+    const input = screen.getByLabelText("How can I help you today?");
+    fireEvent.change(input, { target: { value: "/rev" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Review/ }));
+    fireEvent.change(input, { target: { value: "Inspect @Matrix" } });
+    fireEvent.click(screen.getByRole("option", { name: /Matrix OS/ }));
+
+    expect(screen.getByTestId("composer-reference-token-skill-review")).toBeTruthy();
+    expect(screen.getByTestId("composer-reference-token-project-matrix-os")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(send).toHaveBeenCalledWith(
+      "/review\n\nInspect\n\nContext references:\n- [project] Matrix OS (matrix-os)",
+    ));
+  });
+
   it("changes the draft harness without navigating away from Global Chat", async () => {
     const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
     const availableCatalog = {

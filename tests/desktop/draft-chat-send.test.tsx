@@ -253,6 +253,25 @@ describe("draft chat implicit thread creation", () => {
     });
   });
 
+  it("sends Project Chat resource tokens as explicit agent context", async () => {
+    const { invoke } = mockOperator();
+    const composer = await openDraft();
+
+    fireEvent.change(composer, { target: { value: "Inspect @Matrix" } });
+    fireEvent.click(screen.getByRole("option", { name: /Matrix OS/ }));
+
+    expect(screen.getByTestId("composer-reference-token-project-matrix-os")).toBeTruthy();
+    expect(composer.value).toBe("Inspect ");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "runtime:create-thread",
+      expect.objectContaining({
+        prompt: "Inspect\n\nContext references:\n- [project] Matrix OS (matrix-os)",
+      }),
+    ));
+  });
+
   it.each([
     {
       name: "no provider",

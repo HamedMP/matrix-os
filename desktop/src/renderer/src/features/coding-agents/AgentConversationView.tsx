@@ -50,7 +50,11 @@ import { Message, MessageContent, MessageFooter } from "../chat/elements/message
 import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
 import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
-import { SharedChatComposer } from "../chat/SharedChatComposer";
+import {
+  SharedChatComposer,
+  type ComposerReferenceToken,
+  type SharedChatComposerSubmission,
+} from "../chat/SharedChatComposer";
 import {
   createLegacyProjectProviderCatalog,
   filterCatalogForLegacyProject,
@@ -675,6 +679,7 @@ function ConversationComposer({
   summary?: RuntimeSummary;
 }) {
   const [message, setMessage] = useState("");
+  const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
   const api = useConnection((state) => state.api);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const turnStatus = useCodingAgentWorkspace((state) => state.turnStatus);
@@ -721,9 +726,9 @@ function ConversationComposer({
   // "runtime:abort-thread" channel (see abort-thread.ts).
   const abortSupported = agentThreadAbortSupported();
 
-  async function submit() {
+  async function submit(submission: SharedChatComposerSubmission) {
     if (
-      (!message.trim() && attachments.items.length === 0)
+      (!submission.agentPrompt && attachments.items.length === 0)
       || readiness?.blocked
       || waitingForAction
       || threadBusy
@@ -743,12 +748,13 @@ function ConversationComposer({
       if (!uploaded.ok) return;
       const sent = await send({
         threadId,
-        message: message.trim() || "Please inspect the attached files.",
+        message: submission.agentPrompt || "Please inspect the attached files.",
         ...(uploaded.attachments.length > 0 ? { attachments: uploaded.attachments } : {}),
       });
       if (sent) {
         useTabs.getState().recordRecentConversation(threadId, threadLabel);
         setMessage("");
+        setReferenceTokens([]);
         attachments.clear();
       }
     } finally {
@@ -778,7 +784,9 @@ function ConversationComposer({
         <SharedChatComposer
           value={message}
           onChange={setMessage}
-          onSubmit={() => void submit()}
+          referenceTokens={referenceTokens}
+          onReferenceTokensChange={setReferenceTokens}
+          onSubmit={(submission) => void submit(submission)}
           onAbort={abortSupported && (submitting || threadBusy) ? () => void abortAgentThread(threadId) : undefined}
           busy={submitting || threadBusy || uploadingAttachments}
           disabled={waitingForAction || uploadingAttachments}
@@ -788,7 +796,7 @@ function ConversationComposer({
             && !threadBusy
             && !submitting
             && !uploadingAttachments
-            && (message.trim().length > 0 || attachments.items.length > 0)
+            && (message.trim().length > 0 || attachments.items.length > 0 || referenceTokens.length > 0)
           }
           catalog={projectCatalog}
           selection={selection}

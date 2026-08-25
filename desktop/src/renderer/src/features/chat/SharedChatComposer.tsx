@@ -14,6 +14,15 @@ import {
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { ComposerReferenceTokenRow } from "./ComposerReferenceTokenRow";
+import {
+  addComposerReferenceToken,
+  buildSharedChatComposerSubmission,
+  type ComposerReferenceToken,
+  type SharedChatComposerSubmission,
+} from "./composer-reference-tokens";
+
+export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
 
 function replaceActiveToken(value: string, token: string, replacement: string): string {
   const index = value.lastIndexOf(token);
@@ -209,6 +218,8 @@ function ResourceRows({
 export function SharedChatComposer({
   value,
   onChange,
+  referenceTokens = [],
+  onReferenceTokensChange,
   onSubmit,
   onAbort,
   busy,
@@ -235,7 +246,9 @@ export function SharedChatComposer({
 }: {
   value: string;
   onChange: (value: string) => void;
-  onSubmit: () => void;
+  referenceTokens?: ComposerReferenceToken[];
+  onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
+  onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
   disabled?: boolean;
@@ -302,10 +315,24 @@ export function SharedChatComposer({
       : 0;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   useEffect(() => setSuggestionIndex(0), [resourceQuery, slashQuery]);
+  const addReferenceToken = (token: ComposerReferenceToken) => {
+    onReferenceTokensChange?.(addComposerReferenceToken(referenceTokens, token));
+  };
   const applySuggestion = (index: number) => {
     if (slashQuery !== null) {
       const entry = filteredSlashEntries[index];
-      if (entry) onChange(replaceActiveToken(value, slashMatch?.[1] ?? "", `${entry.invocation} `));
+      if (entry) {
+        addReferenceToken({
+          type: "invocation",
+          label: entry.displayName,
+          invocation: {
+            kind: entry.kind,
+            descriptorId: entry.id,
+            invocation: entry.invocation,
+          },
+        });
+        onChange(replaceActiveToken(value, slashMatch?.[1] ?? "", ""));
+      }
       return;
     }
     if (resourceQuery !== null && canAttach && index === 0) {
@@ -315,7 +342,8 @@ export function SharedChatComposer({
     }
     const resource = filteredResources[index - (canAttach ? 1 : 0)];
     if (resourceQuery !== null && resource) {
-      onChange(replaceActiveToken(value, `@${resourceMatch?.[1] ?? ""}`, `@${resource.label} `));
+      addReferenceToken({ type: "resource", resource });
+      onChange(replaceActiveToken(value, `@${resourceMatch?.[1] ?? ""}`, ""));
     }
   };
   const onSuggestionKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -334,11 +362,9 @@ export function SharedChatComposer({
     return false;
   };
   const insertResource = (resource: CanonicalChatResourceReference) => {
+    addReferenceToken({ type: "resource", resource });
     if (resourceQuery !== null) {
-      onChange(replaceActiveToken(value, `@${resourceMatch?.[1] ?? ""}`, `@${resource.label} `));
-    } else {
-      const separator = value.length === 0 || /\s$/.test(value) ? "" : " ";
-      onChange(`${value}${separator}@${resource.label} `);
+      onChange(replaceActiveToken(value, `@${resourceMatch?.[1] ?? ""}`, ""));
     }
     setAttachmentMenuOpen(false);
   };
@@ -387,18 +413,24 @@ export function SharedChatComposer({
       <PromptInput
         value={value}
         onChange={onChange}
-        onSubmit={onSubmit}
+        onSubmit={() => onSubmit(buildSharedChatComposerSubmission(value, referenceTokens))}
         onAbort={onAbort}
         busy={busy}
         disabled={disabled}
-        canSubmit={canSubmit ?? (!disabled && value.trim().length > 0)}
+        canSubmit={canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0))}
         autoFocus={autoFocus}
         focusRequestId={focusRequestId}
         maxLength={maxLength}
         placeholder={placeholder}
         ariaLabel={ariaLabel}
         onTextareaKeyDown={onSuggestionKeyDown}
-        attachments={attachments}
+        attachments={(
+          <ComposerReferenceTokenRow
+            tokens={referenceTokens}
+            attachments={attachments}
+            onChange={onReferenceTokensChange}
+          />
+        )}
         footer={footer}
         controls={(
           <>
