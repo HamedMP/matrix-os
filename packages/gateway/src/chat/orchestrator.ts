@@ -769,7 +769,14 @@ export class CanonicalChatOrchestrator {
         ["retry"],
       );
       try {
-        await this.persistActivities(owner, context.latestRun, [{ type: "run.error", error }], completedAt);
+        try {
+          await this.persistActivities(owner, context.latestRun, [{ type: "run.error", error }], completedAt);
+        } catch (activityError: unknown) {
+          console.warn(
+            "[chat/orchestrator] Reconciliation activity could not be persisted:",
+            activityError instanceof Error ? activityError.name : "UnknownError",
+          );
+        }
         const finished = await this.options.repository.finishRun(owner, {
           chatId: context.latestRun.chatId,
           runId: context.latestRun.id,

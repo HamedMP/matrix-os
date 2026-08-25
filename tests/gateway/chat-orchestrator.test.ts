@@ -483,6 +483,82 @@ describe("CanonicalChatOrchestrator", () => {
     ]);
   });
 
+  it("terminalizes an orphaned Run when its activity history is already full", async () => {
+    await repository.create(owner, {
+      id: "chat_reconcile_overflow",
+      clientRequestId: "req_create_reconcile_overflow",
+      title: "Reconcile overflow",
+    });
+    const inputMessage = {
+      id: "msg_reconcile_overflow",
+      chatId: "chat_reconcile_overflow",
+      seq: 1,
+      role: "user" as const,
+      state: "committed" as const,
+      turnId: "cturn_reconcile_overflow",
+      parts: [{ type: "text" as const, text: "continue after restart" }],
+      createdAt: "2026-08-26T00:00:00.000Z",
+    };
+    const inputTurn = {
+      id: "cturn_reconcile_overflow",
+      chatId: "chat_reconcile_overflow",
+      clientRequestId: "req_reconcile_overflow_turn",
+      baseMessageSeq: 0,
+      inputMessageId: inputMessage.id,
+      status: "accepted" as const,
+      createdAt: "2026-08-26T00:00:00.000Z",
+      updatedAt: "2026-08-26T00:00:00.000Z",
+    };
+    const admitted = await repository.admitTurn(owner, {
+      chatId: "chat_reconcile_overflow",
+      baseRevision: 0,
+      message: inputMessage,
+      turn: inputTurn,
+      run: {
+        id: "run_reconcile_overflow",
+        chatId: "chat_reconcile_overflow",
+        turnId: inputTurn.id,
+        attempt: 1,
+        driverKind: "codex",
+        instanceId: "codex_default",
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        status: "accepted",
+        historyBoundarySeq: 0,
+        capabilitySnapshot: catalog().instances[0]!.supports && {
+          revision: "catalog_orchestrator",
+          ...catalog().instances[0]!.supports,
+        },
+        createdAt: "2026-08-26T00:00:00.000Z",
+        updatedAt: "2026-08-26T00:00:00.000Z",
+      },
+    });
+    for (let offset = 0; offset < 500; offset += 100) {
+      await repository.appendRunActivities(owner, admitted.chat.chat.id, admitted.run.id,
+        Array.from({ length: 100 }, (_, index) => ({
+          id: `activity_reconcile_overflow_${offset + index}`,
+          chatId: admitted.chat.chat.id,
+          runId: admitted.run.id,
+          occurredAt: "2026-08-26T00:01:00.000Z",
+          type: "run.status" as const,
+          status: "running" as const,
+        })),
+      );
+    }
+    const restarted = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([]),
+      now: () => new Date("2026-08-26T00:02:00.000Z"),
+    });
+
+    expect(await restarted.reconcileActiveRuns(owner)).toBe(1);
+    const snapshot = await repository.exportChat(owner, "chat_reconcile_overflow");
+    expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+    expect(snapshot?.activities).toHaveLength(500);
+  });
+
   it("limits one owner to eight concurrent Runs without consuming the global registry", async () => {
     const provider = adapter(async function* (input) {
       await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
