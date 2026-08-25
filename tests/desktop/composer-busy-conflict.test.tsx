@@ -12,6 +12,7 @@ import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
   return {
@@ -62,9 +63,9 @@ class MockResizeObserver {
   disconnect() {}
 }
 
-function typeAndEnter(text: string) {
-  const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
-  fireEvent.change(input, { target: { value: text } });
+async function typeAndEnter(text: string) {
+  const input = screen.getByLabelText("Message conversation");
+  await setSharedComposerText(input, text);
   fireEvent.keyDown(input, { key: "Enter" });
   return input;
 }
@@ -89,14 +90,14 @@ describe("AgentConversationView composer busy conflict", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps a busy-thread draft without sending or queueing it", () => {
+  it("keeps a busy-thread draft without sending or queueing it", async () => {
     const { invoke } = mockOperator();
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
-    const input = typeAndEnter("Follow-up while busy");
+    const input = await typeAndEnter("Follow-up while busy");
 
     expect(invoke).not.toHaveBeenCalledWith("runtime:create-turn", expect.anything());
-    expect(input.value).toBe("Follow-up while busy");
+    expect(input.textContent).toBe("Follow-up while busy");
     expect(screen.queryByLabelText("Queued follow-ups")).toBeNull();
     expect(useTabs.getState().recentViews).toHaveLength(0);
     expect(screen.getByText("Agent is working — draft now, send when this turn finishes")).toBeTruthy();
@@ -106,8 +107,8 @@ describe("AgentConversationView composer busy conflict", () => {
     mockOperator();
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
-    typeAndEnter("First");
-    typeAndEnter("Second");
+    await typeAndEnter("First");
+    await typeAndEnter("Second");
 
     await waitFor(() => expect(screen.queryByLabelText("Queued follow-ups")).toBeNull());
   });
@@ -123,8 +124,8 @@ describe("AgentConversationView composer busy conflict", () => {
       />,
     );
 
-    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
-    expect(input.disabled).toBe(true);
+    const input = screen.getByLabelText("Message conversation");
+    expect(input.getAttribute("contenteditable")).toBe("false");
     fireEvent.keyDown(input, { key: "Enter" });
     expect(invoke).not.toHaveBeenCalledWith("runtime:create-turn", expect.anything());
   });
@@ -140,9 +141,9 @@ describe("AgentConversationView composer busy conflict", () => {
       />,
     );
 
-    const input = typeAndEnter("Idle follow-up");
+    const input = await typeAndEnter("Idle follow-up");
 
-    await waitFor(() => expect(input.value).toBe(""));
+    await waitFor(() => expect(input.textContent).toBe(""));
     expect(invoke).toHaveBeenCalledWith("runtime:create-turn", expect.objectContaining({ threadId: "thread_alpha" }));
   });
 });

@@ -102,9 +102,9 @@ describe("AgentConversationView composer card presentation", () => {
       // Transcript stays readable…
       expect(screen.getByText("The fix is in.")).toBeTruthy();
       // …and follow-ups remain possible from terminal states.
-      const composer = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
+      const composer = screen.getByLabelText("Message conversation");
       expect(composer).toBeTruthy();
-      expect(composer.disabled).toBe(false);
+      expect(composer.getAttribute("contenteditable")).toBe("true");
     },
   );
 });

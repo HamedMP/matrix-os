@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { mergeLiveThreadEvent } from "../../desktop/src/renderer/src/stores/coding-agent/thread-model";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -441,8 +442,8 @@ describe("AgentConversationView transcript", () => {
       <AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />,
     );
 
-    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
-    expect(input.maxLength).toBe(24_000);
+    const input = screen.getByLabelText("Message conversation");
+    expect(input.getAttribute("data-max-length")).toBe("24000");
   });
 
   it("uploads dropped files and sends a follow-up with existing structured refs", async () => {
@@ -468,7 +469,7 @@ describe("AgentConversationView transcript", () => {
       dataTransfer: { files: [new File(["context"], "context.txt", { type: "text/plain" })] },
     });
     const input = screen.getByLabelText("Message conversation");
-    fireEvent.change(input, { target: { value: "Continue with this context" } });
+    await setSharedComposerText(input, "Continue with this context");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(sendThreadMessage).toHaveBeenCalledWith({
@@ -484,13 +485,13 @@ describe("AgentConversationView transcript", () => {
     expect(screen.queryByRole("button", { name: "Remove context.txt" })).toBeNull();
   });
 
-  it("clears an unsent draft when switching threads", () => {
+  it("clears an unsent draft when switching threads", async () => {
     const view = render(
       <AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />,
     );
-    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
-    fireEvent.change(input, { target: { value: "draft for thread alpha" } });
-    expect(input.value).toBe("draft for thread alpha");
+    const input = screen.getByLabelText("Message conversation");
+    await setSharedComposerText(input, "draft for thread alpha");
+    expect(input.textContent).toBe("draft for thread alpha");
 
     view.rerender(
       <AgentConversationView
@@ -501,7 +502,7 @@ describe("AgentConversationView transcript", () => {
       />,
     );
 
-    expect((screen.getByLabelText("Message conversation") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByLabelText("Message conversation").textContent).toBe("");
   });
 
   it("resets the transcript scroller when switching threads", () => {

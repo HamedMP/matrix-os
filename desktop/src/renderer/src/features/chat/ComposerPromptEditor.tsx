@@ -15,6 +15,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   DecoratorNode,
+  SKIP_SCROLL_INTO_VIEW_TAG,
   type EditorState,
   type LexicalNode,
   type NodeKey,
@@ -196,9 +197,29 @@ function absoluteSelectionOffset(): number {
   return offset;
 }
 
+function $selectAbsoluteOffset(offset: number): void {
+  const root = $getRoot();
+  const paragraph = root.getFirstChild();
+  if (!$isElementNode(paragraph)) {
+    root.selectEnd();
+    return;
+  }
+  let consumed = 0;
+  for (const child of paragraph.getChildren()) {
+    const size = child.getTextContentSize();
+    if ($isTextNode(child) && offset <= consumed + size) {
+      const localOffset = Math.max(0, Math.min(offset - consumed, size));
+      child.select(localOffset, localOffset);
+      return;
+    }
+    consumed += size;
+  }
+  paragraph.selectEnd();
+}
+
 export interface ComposerPromptEditorHandle {
   focus: () => void;
-  insertToken: (token: ComposerReferenceToken, trigger?: string) => void;
+  insertToken: (token: ComposerReferenceToken, trigger?: string, cursor?: number) => void;
 }
 
 interface ComposerPromptEditorProps {
@@ -209,6 +230,7 @@ interface ComposerPromptEditorProps {
   placeholder: string;
   ariaLabel: string;
   disabled?: boolean;
+  maxLength?: number;
   autoFocus?: boolean;
   focusRequestId?: number;
 }
@@ -221,20 +243,29 @@ function ComposerPromptEditorInner({
   placeholder,
   ariaLabel,
   disabled,
+  maxLength,
   autoFocus,
   focusRequestId,
   editorRef,
 }: ComposerPromptEditorProps & { editorRef: React.Ref<ComposerPromptEditorHandle> }) {
   const [editor] = useLexicalComposerContext();
   const applyingRef = useRef(false);
+  const focusEditor = useCallback(() => {
+    // Focus the contenteditable synchronously so shell keyboard shortcuts can
+    // type immediately, without asking Lexical to scroll a hidden draft into view.
+    editor.getRootElement()?.focus({ preventScroll: true });
+    editor.update(() => {
+      if (!$getSelection()) $getRoot().selectEnd();
+    }, { tag: SKIP_SCROLL_INTO_VIEW_TAG });
+  }, [editor]);
 
   useEffect(() => editor.setEditable(!disabled), [disabled, editor]);
   useEffect(() => {
-    if (autoFocus) editor.focus();
-  }, [autoFocus, editor]);
+    if (autoFocus) focusEditor();
+  }, [autoFocus, focusEditor]);
   useEffect(() => {
-    if (focusRequestId && focusRequestId > 0) editor.focus();
-  }, [editor, focusRequestId]);
+    if (focusRequestId && focusRequestId > 0) focusEditor();
+  }, [focusEditor, focusRequestId]);
 
   useLayoutEffect(() => {
     const signature = tokenSignature(tokens);
@@ -244,15 +275,16 @@ function ComposerPromptEditorInner({
     }));
     if (current.value === value && current.signature === signature) return;
     applyingRef.current = true;
-    editor.update(() => $setPrompt(value, tokens));
+    editor.update(() => $setPrompt(value, tokens), { tag: SKIP_SCROLL_INTO_VIEW_TAG });
     queueMicrotask(() => { applyingRef.current = false; });
   }, [editor, tokens, value]);
 
   useImperativeHandle(editorRef, () => ({
-    focus: () => editor.focus(),
-    insertToken: (token, trigger = "") => {
-      editor.focus();
+    focus: focusEditor,
+    insertToken: (token, trigger = "", cursor) => {
+      focusEditor();
       editor.update(() => {
+        if (typeof cursor === "number") $selectAbsoluteOffset(cursor);
         let selection = $getSelection();
         if (!$isRangeSelection(selection)) {
           $getRoot().selectEnd();
@@ -268,9 +300,9 @@ function ComposerPromptEditorInner({
           }
         }
         selection.insertNodes([$createComposerTokenNode(token), $createTextNode(" ")]);
-      });
+      }, { tag: SKIP_SCROLL_INTO_VIEW_TAG });
     },
-  }), [editor]);
+  }), [editor, focusEditor]);
 
   const handleChange = useCallback((state: EditorState) => {
     if (applyingRef.current) return;
@@ -291,6 +323,7 @@ function ComposerPromptEditorInner({
             aria-placeholder={placeholder}
             placeholder={<span />}
             data-slot="prompt-input-content"
+            data-max-length={maxLength}
             className="block max-h-[220px] min-h-9 w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent px-4 pt-1 pb-1 text-md leading-relaxed shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 [&_p]:m-0 disabled:opacity-60"
             onKeyDown={(event) => { onKeyDown(event); }}
           />

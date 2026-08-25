@@ -12,6 +12,7 @@ import { useProjectView } from "../../desktop/src/renderer/src/stores/project-vi
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 
@@ -229,8 +230,8 @@ describe("ProjectChatsView hero empty state", () => {
     // Typing straight into the hero never calls openNewChat, so nothing seeds
     // the composer. The run must still land in the project the hero names,
     // rather than falling back to a draft with no projectId.
-    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
-    fireEvent.change(prompt, { target: { value: "Explain the auth flow" } });
+    const prompt = await screen.findByLabelText("Message new chat");
+    await setSharedComposerText(prompt, "Explain the auth flow");
     fireEvent.keyDown(prompt, { key: "Enter" });
 
     await waitFor(() =>
@@ -247,7 +248,7 @@ describe("ProjectChatsView hero empty state", () => {
     await screen.findByText("What should we work on?");
 
     const prompt = await screen.findByLabelText("Message new chat");
-    fireEvent.change(prompt, { target: { value: "Retry this in Matrix OS" } });
+    await setSharedComposerText(prompt, "Retry this in Matrix OS");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByText("Agent run could not be started. Try again.")).toBeTruthy();
 
@@ -267,16 +268,16 @@ describe("ProjectChatsView hero empty state", () => {
     await screen.findByRole("region", { name: "Conversation Plan the auth work" });
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
-    const prompt = await screen.findByLabelText("Message new chat") as HTMLTextAreaElement;
-    fireEvent.change(prompt, { target: { value: "Keep this draft" } });
-    expect(prompt.value).toBe("Keep this draft");
+    const prompt = await screen.findByLabelText("Message new chat");
+    await setSharedComposerText(prompt, "Keep this draft");
+    expect(prompt.textContent).toBe("Keep this draft");
 
     fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
     await screen.findByRole("region", { name: "Conversation Plan the auth work" });
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
 
     await waitFor(() => {
-      expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("Keep this draft");
+      expect(screen.getByLabelText("Message new chat").textContent).toBe("Keep this draft");
     });
   });
 
@@ -287,8 +288,8 @@ describe("ProjectChatsView hero empty state", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Review my recent changes" }));
 
-    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
-    await waitFor(() => expect(prompt.value).toBe("Review my recent changes"));
+    const prompt = await screen.findByLabelText("Message new chat");
+    await waitFor(() => expect(prompt.textContent).toBe("Review my recent changes"));
     // The chip seeds the draft in place — never a second inspector copy.
     expect(screen.getAllByLabelText("Message new chat")).toHaveLength(1);
   });
@@ -306,7 +307,7 @@ describe("ProjectChatsView hero empty state", () => {
     await waitFor(() => {
       expect(screen.getAllByLabelText("Message new chat")).toHaveLength(1);
     });
-    const prompt = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
-    await waitFor(() => expect(prompt.value).toBe("h"));
+    const prompt = screen.getByLabelText("Message new chat");
+    await waitFor(() => expect(prompt.textContent).toBe("h"));
   });
 });

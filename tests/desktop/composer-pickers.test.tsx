@@ -13,6 +13,7 @@ import { useProjectView } from "../../desktop/src/renderer/src/stores/project-vi
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 
@@ -363,8 +364,8 @@ describe("composer provider/mode pickers", () => {
 
     await screen.findByRole("button", { name: "Choose model and provider" });
     await waitFor(() => expect(selectedProviderInstance()).toBe("codex_default"));
-    const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
-    fireEvent.change(composer, { target: { value: "Use my preferred provider" } });
+    const composer = screen.getByLabelText("Message new chat");
+    await setSharedComposerText(composer, "Use my preferred provider");
     fireEvent.keyDown(composer, { key: "Enter" });
 
     await waitFor(() => {
@@ -404,8 +405,8 @@ describe("composer provider/mode pickers", () => {
     });
     await openDraftComposer();
 
-    const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
-    fireEvent.change(composer, { target: { value: "Keep the hydrated provider" } });
+    const composer = screen.getByLabelText("Message new chat");
+    await setSharedComposerText(composer, "Keep the hydrated provider");
     await act(async () => {
       resolvePreference("claude");
       await Promise.resolve();
@@ -422,7 +423,7 @@ describe("composer provider/mode pickers", () => {
     await screen.findByRole("region", { name: "Conversation Plan the auth work" });
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
 
-    const restored = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
+    const restored = await screen.findByLabelText("Message new chat");
     expect(selectedProviderInstance()).toBe("claude_code_default");
     expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     fireEvent.keyDown(restored, { key: "Enter" });
@@ -443,8 +444,8 @@ describe("composer provider/mode pickers", () => {
     });
     await openDraftComposer();
 
-    const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
-    fireEvent.change(composer, { target: { value: "Keep my prompt, not the transient provider" } });
+    const composer = screen.getByLabelText("Message new chat");
+    await setSharedComposerText(composer, "Keep my prompt, not the transient provider");
     await waitFor(() => expect(useDraftChat.getState().draftFor("matrix-os")?.prompt).toBe(
       "Keep my prompt, not the transient provider",
     ));
@@ -457,10 +458,10 @@ describe("composer provider/mode pickers", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
 
-    const restored = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
+    const restored = await screen.findByLabelText("Message new chat");
     await waitFor(() => expect(selectedProviderInstance()).toBe("claude_code_default"));
     expect(screen.queryByLabelText("Interaction mode")).toBeNull();
-    expect(restored.value).toBe("Keep my prompt, not the transient provider");
+    expect(restored.textContent).toBe("Keep my prompt, not the transient provider");
     fireEvent.keyDown(restored, { key: "Enter" });
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
@@ -495,8 +496,8 @@ describe("composer provider/mode pickers", () => {
     await screen.findByRole("button", { name: "Choose model and provider" });
     expect(selectedProviderInstance()).toBe("pi_default");
     await chooseProvider("Codex");
-    const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
-    fireEvent.change(composer, { target: { value: "Switch providers safely" } });
+    const composer = screen.getByLabelText("Message new chat");
+    await setSharedComposerText(composer, "Switch providers safely");
     fireEvent.keyDown(composer, { key: "Enter" });
 
     await waitFor(() => {
@@ -513,8 +514,8 @@ describe("composer provider/mode pickers", () => {
 
     await screen.findByRole("button", { name: "Choose model and provider" });
     await chooseProvider("Claude");
-    const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
-    fireEvent.change(composer, { target: { value: "Use the picked provider" } });
+    const composer = screen.getByLabelText("Message new chat");
+    await setSharedComposerText(composer, "Use the picked provider");
     fireEvent.keyDown(composer, { key: "Enter" });
 
     await waitFor(() => {
@@ -530,7 +531,7 @@ describe("composer provider/mode pickers", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("region", { name: "Conversation Plan the auth work" });
 
-    const composer = (await screen.findByLabelText("Message conversation")) as HTMLTextAreaElement;
+    const composer = await screen.findByLabelText("Message conversation");
     const provider = await screen.findByRole("button", { name: "Choose model and provider" });
     expect(provider.getAttribute("data-provider-instance")).toBe("codex_default");
     expect(provider.closest(".prompt-card")).not.toBeNull();

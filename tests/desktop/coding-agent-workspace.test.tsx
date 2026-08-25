@@ -23,6 +23,7 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
 import { toast } from "sonner";
 import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 const RUNTIME_SCOPE = codingAgentRuntimeScope({
   handle: "operator",
@@ -1313,19 +1314,19 @@ describe("ProjectChatsView", () => {
     expect(await screen.findByText("Please inspect the failing desktop test.")).toBeTruthy();
     expect(screen.getByText("I found the failing assertion and prepared a focused fix.")).toBeTruthy();
     const composer = screen.getByLabelText("Message conversation");
-    fireEvent.change(composer, { target: { value: "Continue with the focused validation @matrix" } });
+    await setSharedComposerText(composer, "Continue with the focused validation @matrix");
     fireEvent.click(screen.getByRole("option", { name: /matrix-os/ }));
-    expect(screen.getByTestId("composer-reference-token-project-matrix-os")).toBeTruthy();
+    expect(await screen.findByTestId("composer-reference-token-project-matrix-os")).toBeTruthy();
     fireEvent.keyDown(composer, { key: "Enter" });
 
     await waitFor(() => {
       expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-turn", {
         threadId: "thread_alpha",
-        message: "Continue with the focused validation\n\nContext references:\n- [project] matrix-os",
+        message: "Continue with the focused validation [matrix-os](matrix-os)",
         clientRequestId: expect.stringMatching(/^req_desktop_/),
       });
     });
-    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(""));
+    await waitFor(() => expect(composer.textContent).toBe(""));
   });
 
   it.each([
@@ -1399,16 +1400,16 @@ describe("ProjectChatsView", () => {
     });
 
     render(<ProjectChatsView projectId="matrix-os" active />);
-    const composer = await screen.findByLabelText("Message conversation") as HTMLTextAreaElement;
+    const composer = await screen.findByLabelText("Message conversation");
     const draft = `Keep this ${provider.availability} follow-up`;
-    fireEvent.change(composer, { target: { value: draft } });
+    await setSharedComposerText(composer, draft);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     fireEvent.keyDown(composer, { key: "Enter" });
 
     expect(screen.queryByText(notice)).toBeNull();
     expect(screen.queryByRole("button", { name: action })).toBeNull();
-    expect(composer.disabled).toBe(false);
-    expect(composer.value).toBe(draft);
+    expect(composer.getAttribute("contenteditable")).toBe("true");
+    expect(composer.textContent).toBe(draft);
     expect(vi.mocked(window.operator.invoke).mock.calls.filter(([channel]) => channel === "runtime:create-turn")).toHaveLength(0);
 
     act(() => {
@@ -1420,14 +1421,14 @@ describe("ProjectChatsView", () => {
     });
 
     await waitFor(() => expect(screen.queryByText(notice)).toBeNull());
-    expect(composer.value).toBe(draft);
+    expect(composer.textContent).toBe(draft);
     fireEvent.keyDown(composer, { key: "Enter" });
 
     await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith(
       "runtime:create-turn",
       expect.objectContaining({ threadId: "thread_alpha", message: draft }),
     ));
-    await waitFor(() => expect(composer.value).toBe(""));
+    await waitFor(() => expect(composer.textContent).toBe(""));
   });
 
   it("keeps a blocked follow-up draft isolated when switching threads", async () => {
@@ -1465,15 +1466,15 @@ describe("ProjectChatsView", () => {
     });
 
     render(<ProjectChatsView projectId="matrix-os" active />);
-    const alphaComposer = await screen.findByLabelText("Message conversation") as HTMLTextAreaElement;
-    fireEvent.change(alphaComposer, { target: { value: "Alpha-only blocked draft" } });
+    const alphaComposer = await screen.findByLabelText("Message conversation");
+    await setSharedComposerText(alphaComposer, "Alpha-only blocked draft");
     expect(screen.queryByText("Connect Codex to continue")).toBeNull();
 
     act(() => useProjectView.getState().setSelectedThread("matrix-os", "thread_beta"));
 
     expect(await screen.findByRole("region", { name: "Conversation Fix billing route" })).toBeTruthy();
-    const betaComposer = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
-    expect(betaComposer.value).toBe("");
+    const betaComposer = screen.getByLabelText("Message conversation");
+    expect(betaComposer.textContent).toBe("");
     expect(vi.mocked(window.operator.invoke).mock.calls.filter(([channel]) => channel === "runtime:create-turn")).toHaveLength(0);
   });
 
@@ -1531,11 +1532,11 @@ describe("ProjectChatsView", () => {
 
     render(<ProjectChatsView projectId="matrix-os" active />);
     const composer = await screen.findByLabelText("Message conversation");
-    fireEvent.change(composer, { target: { value: "Keep this draft for retry." } });
+    await setSharedComposerText(composer, "Keep this draft for retry.");
     fireEvent.keyDown(composer, { key: "Enter" });
 
     expect(await screen.findByText("This conversation is already running. Wait for it to finish and try again.")).toBeTruthy();
-    expect((composer as HTMLTextAreaElement).value).toBe("Keep this draft for retry.");
+    expect(composer.textContent).toBe("Keep this draft for retry.");
     expect(screen.queryByText(/provider copy/i)).toBeNull();
   });
 
@@ -4392,7 +4393,7 @@ describe("ProjectChatsView", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     // With no chat selected the draft composer is always rendered; a failed
     // resolve must not seed it.
-    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByLabelText("Message new chat").textContent).toBe("");
     expect(screen.getByRole("button", { name: "New chat in Matrix OS" })).toBeTruthy();
   });
 });

@@ -16,6 +16,7 @@ import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/c
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads, type AgentThread } from "../../desktop/src/renderer/src/stores/threads";
+import { appendSharedComposerText, setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 function thread(id: string, title: string): AgentThread {
   return {
@@ -392,14 +393,15 @@ describe("ChatTab", () => {
     expect(screen.queryByRole("button", { name: /voice|microphone/i })).toBeNull();
   });
 
-  it("seeds the shared composer from a Figma starter card", () => {
+  it("seeds the shared composer from a Figma starter card", async () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Review code and suggest changes" }));
 
-    expect((screen.getByRole("textbox", { name: "How can I help you today?" }) as HTMLTextAreaElement).value)
-      .toBe("Review code and suggest changes");
+    await waitFor(() => expect(
+      screen.getByRole("textbox", { name: "How can I help you today?" }).textContent,
+    ).toBe("Review code and suggest changes"));
   });
 
   it("removes the redundant internal Chat rail and leaves agent-run navigation to global Recents", () => {
@@ -488,7 +490,7 @@ describe("ChatTab", () => {
     const previewRow = screen.getByRole("group", { name: "Attachments" });
     expect(previewRow.className).toContain("overflow-x-auto");
     const input = screen.getByLabelText("How can I help you today?");
-    fireEvent.change(input, { target: { value: "Review this screenshot" } });
+    await setSharedComposerText(input, "Review this screenshot");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(putBytes).toHaveBeenCalledTimes(1));
@@ -509,9 +511,10 @@ describe("ChatTab", () => {
     });
     render(<ChatTab />);
 
-    fireEvent.change(screen.getByRole("textbox", { name: "How can I help you today?" }), {
-      target: { value: "Continue the release check" },
-    });
+    await setSharedComposerText(
+      screen.getByRole("textbox", { name: "How can I help you today?" }),
+      "Continue the release check",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(send).toHaveBeenCalledWith("Continue the release check"));
@@ -551,17 +554,17 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     const input = screen.getByLabelText("How can I help you today?");
-    fireEvent.change(input, { target: { value: "/rev" } });
+    await setSharedComposerText(input, "/rev");
     fireEvent.click(await screen.findByRole("option", { name: /Review/ }));
-    fireEvent.change(input, { target: { value: "Inspect @Matrix" } });
-    fireEvent.click(screen.getByRole("option", { name: /Matrix OS/ }));
+    await appendSharedComposerText(input, "Inspect @Matrix");
+    fireEvent.click(await screen.findByRole("option", { name: /Matrix OS/ }));
 
     expect(screen.getByTestId("composer-reference-token-skill-review")).toBeTruthy();
-    expect(screen.getByTestId("composer-reference-token-project-matrix-os")).toBeTruthy();
+    expect(await screen.findByTestId("composer-reference-token-project-matrix-os")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(send).toHaveBeenCalledWith(
-      "/review\n\nInspect\n\nContext references:\n- [project] Matrix OS (matrix-os)",
+      "/review Inspect [Matrix OS](matrix-os)",
     ));
   });
 

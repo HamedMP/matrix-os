@@ -4,7 +4,6 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  defaultAgentThreadComposerDraft,
   type ProjectAgentWorkspace,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
@@ -266,14 +265,10 @@ describe("draft chat implicit thread creation", () => {
 
   it("sends Project Chat resource tokens as explicit agent context", async () => {
     const { invoke } = mockOperator();
-    useDraftChat.getState().setDraft("matrix-os", {
-      ...defaultAgentThreadComposerDraft(summaryFixture()),
-      prompt: "Inspect @Matrix",
-      projectId: "matrix-os",
-    });
     const composer = await openDraft();
+    await setComposerText(composer, "Inspect @Matrix");
 
-    fireEvent.click(screen.getByRole("option", { name: /Matrix OS/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /Matrix OS/ }));
 
     expect(await screen.findByTestId("composer-reference-token-project-matrix-os")).toBeTruthy();
     await waitFor(() => expect(composer.textContent).toBe("Inspect Matrix OS "));

@@ -185,8 +185,8 @@ describe("ProjectChatsView type-to-start", () => {
 
     fireEvent.keyDown(window, { key: "h" });
 
-    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
-    await waitFor(() => expect(prompt.value).toBe("h"));
+    const prompt = await screen.findByLabelText("Message new chat");
+    await waitFor(() => expect(prompt.textContent).toBe("h"));
   });
 
   it("buffers normal typing while the new-chat target resolves", async () => {
@@ -205,8 +205,8 @@ describe("ProjectChatsView type-to-start", () => {
 
     expect(resolveNewChatTarget).toHaveBeenCalledTimes(1);
     act(() => resolveTarget({ projectId: "matrix-os" }));
-    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
-    await waitFor(() => expect(prompt.value).toBe("hello"));
+    const prompt = await screen.findByLabelText("Message new chat");
+    await waitFor(() => expect(prompt.textContent).toBe("hello"));
   });
 
   it("replaces the selected chat with a seeded draft when typing starts", async () => {
@@ -220,8 +220,8 @@ describe("ProjectChatsView type-to-start", () => {
 
     // Codex-style: typing swaps the conversation for the draft composer,
     // seeded with the first character, instead of ignoring the key.
-    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
-    await waitFor(() => expect(prompt.value).toBe("h"));
+    const prompt = await screen.findByLabelText("Message new chat");
+    await waitFor(() => expect(prompt.textContent).toBe("h"));
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
     expect(screen.queryByRole("region", { name: "Conversation Plan the auth work" })).toBeNull();
   });
@@ -242,7 +242,7 @@ describe("ProjectChatsView type-to-start", () => {
 
     // The draft composer is always rendered while no chat is selected; typing
     // into another editable element must not seed it.
-    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByLabelText("Message new chat").textContent).toBe("");
   });
 
   it("ignores printable keys from interactive controls and their children", async () => {
@@ -270,7 +270,7 @@ describe("ProjectChatsView type-to-start", () => {
     expect(resolveNewChatTarget).not.toHaveBeenCalled();
     // The draft composer is always present; interaction with a nested control
     // must leave its persistent prompt untouched.
-    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByLabelText("Message new chat").textContent).toBe("");
   });
 
   it("ignores modified and non-printable keys", async () => {
@@ -286,6 +286,6 @@ describe("ProjectChatsView type-to-start", () => {
 
     // The draft composer is always rendered while no chat is selected;
     // modified or non-printable keys must not seed it.
-    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByLabelText("Message new chat").textContent).toBe("");
   });
 });

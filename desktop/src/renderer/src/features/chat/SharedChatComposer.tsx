@@ -289,6 +289,13 @@ export function SharedChatComposer({
   const attachmentTriggerRef = useRef<HTMLButtonElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
+  const lastEditorValueRef = useRef(value);
+  const lastObservedValueRef = useRef(value);
+  useEffect(() => {
+    if (value === lastObservedValueRef.current) return;
+    if (value !== lastEditorValueRef.current) setCursor(value.length);
+    lastObservedValueRef.current = value;
+  }, [value]);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
   const valueBeforeCursor = value.slice(0, cursor);
   const slashMatch = valueBeforeCursor.match(/(?:^|\s)(\/[a-z0-9_-]*)$/i);
@@ -355,7 +362,7 @@ export function SharedChatComposer({
             descriptorId: entry.id,
             invocation: entry.invocation,
           },
-        }, slashMatch?.[1] ?? "");
+        }, slashMatch?.[1] ?? "", cursor);
       }
       return;
     }
@@ -366,7 +373,7 @@ export function SharedChatComposer({
     }
     const resource = filteredResources[index - (canAttach ? 1 : 0)];
     if (resourceQuery !== null && resource) {
-      editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`);
+      editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`, cursor);
     }
   };
   const onSuggestionKeyDown = (event: KeyboardEvent<HTMLDivElement>): boolean => {
@@ -403,6 +410,7 @@ export function SharedChatComposer({
     editorRef.current?.insertToken(
       { type: "resource", resource },
       resourceQuery !== null ? `@${resourceMatch?.[1] ?? ""}` : "",
+      cursor,
     );
     setAttachmentMenuOpen(false);
   };
@@ -494,6 +502,7 @@ export function SharedChatComposer({
             value={value}
             tokens={referenceTokens}
             onChange={(nextValue, nextTokens, nextCursor) => {
+              lastEditorValueRef.current = nextValue;
               setCursor(nextCursor);
               onChange(nextValue);
               onReferenceTokensChange?.(nextTokens);
@@ -502,6 +511,7 @@ export function SharedChatComposer({
             placeholder={placeholder}
             ariaLabel={ariaLabel}
             disabled={disabled}
+            maxLength={maxLength}
             autoFocus={autoFocus}
             focusRequestId={focusRequestId}
           />
