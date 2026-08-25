@@ -1,8 +1,5 @@
-import { Code2, FolderOpen, GitBranch, Plus, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { BrandLogo } from "../../design/BrandPanel";
-import { ConversationProviderSelector } from "../../components/conversation/provider-selector";
-import type { ConversationProviderIcon } from "../../components/conversation/provider-options";
+import { FolderOpen, GitBranch } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { useConnection } from "../../stores/connection";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
@@ -12,15 +9,22 @@ import { useProviderPreferences } from "../settings/provider-preferences";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
-import { PromptInput } from "./elements/prompt-input";
 import { ChatResourcesPanel } from "./ChatResourcesPanel";
+import { ChatStarterCards } from "./ChatStarterCards";
+import { SharedChatComposer } from "./SharedChatComposer";
+import { SharedChatSurface } from "./SharedChatSurface";
+import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
+import {
+  createCanonicalComposerSelection,
+  type CanonicalComposerSelection,
+} from "./canonical-composer-state";
+import { useChatProviderCatalog } from "./chat-provider-catalog";
 import {
   ConversationContextControls,
   ConversationContextFeedback,
 } from "./ConversationContextComposer";
 import { hermesConversationPresentation } from "./hermes-presentation";
 import { HermesConversationIndex } from "./HermesConversationIndex";
-import { createGlobalChatProviderRegistry } from "./global-chat-providers";
 
 export function canSubmitChatDraft(
   draft: string,
@@ -56,6 +60,24 @@ function HermesPane() {
   const resourcesTriggerRef = useRef<HTMLButtonElement>(null);
   const attachments = useConversationAttachments(sessionId);
   const codexProjectId = defaultProjectId();
+  const fallbackCatalog = useMemo(
+    () => createLegacyGlobalProviderCatalog({ hasProject: Boolean(codexProjectId) }),
+    [codexProjectId],
+  );
+  const providerCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
+    () => createCanonicalComposerSelection(fallbackCatalog, "hermes_default"),
+  );
+
+  useEffect(() => {
+    setCanonicalSelection((current) => {
+      if (current && providerCatalog.instances.some((instance) => (
+        instance.id === current.instanceId
+        && instance.models.some((model) => model.id === current.model && model.availability === "available")
+      ))) return current;
+      return createCanonicalComposerSelection(providerCatalog);
+    });
+  }, [providerCatalog]);
 
   const turns = hermesConversationPresentation(messages, status, activeRequestId);
   const copyText = useCallback(async (text: string) => {
@@ -105,24 +127,20 @@ function HermesPane() {
     }
   };
 
-  const startCodexChat = useCallback(async () => {
+  const startProjectChat = useCallback(async (providerId = "codex"): Promise<boolean> => {
     const projectId = defaultProjectId();
     if (!projectId) {
       setHarnessError("Create a project before starting a Codex chat.");
-      return;
+      return false;
     }
     setHarnessError(null);
-    setDefaultProvider("codex");
-    if (!await openProjectChat(projectId, { compose: true })) {
+    setDefaultProvider(providerId);
+    const opened = await openProjectChat(projectId, { compose: true });
+    if (!opened) {
       setHarnessError("Codex chat could not be opened. Try again from the project.");
     }
+    return opened;
   }, [setDefaultProvider]);
-  const providerRegistry = createGlobalChatProviderRegistry({
-    hermesReady: Boolean(api),
-    hasProject: Boolean(codexProjectId),
-    onUseCurrentConversation: () => setDefaultProvider("hermes"),
-    onOpenProjectConversation: startCodexChat,
-  });
 
   const attachmentPreviews = (
     <AttachmentPreviewRow
@@ -145,16 +163,6 @@ function HermesPane() {
   const composerControls = (
     <>
       <button
-        type="button"
-        aria-label="Attach files"
-        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-        style={{ color: "var(--text-secondary)" }}
-        disabled={uploadingAttachments}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        <Plus size={16} aria-hidden />
-      </button>
-      <button
         ref={resourcesTriggerRef}
         type="button"
         aria-label="Resources"
@@ -170,21 +178,11 @@ function HermesPane() {
         aria-label="Use Codex for a project chat"
         className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
         style={{ color: "var(--text-secondary)" }}
-        onClick={() => void startCodexChat()}
+        onClick={() => void startProjectChat()}
       >
         <GitBranch size={15} aria-hidden />
       </button>
     </>
-  );
-  const harnessBadge = (
-    <ConversationProviderSelector
-      value={providerRegistry.selectedId}
-      options={providerRegistry.options}
-      renderIcon={(icon: ConversationProviderIcon) => icon === "hermes"
-        ? <Sparkles className="size-3.5" />
-        : <Code2 className="size-3.5" />}
-      onSelect={(providerId) => void providerRegistry.activate(providerId)}
-    />
   );
   const contextStrip = (
     <div
@@ -218,7 +216,7 @@ function HermesPane() {
         }}
       />
       <div className="flex min-w-0 flex-col gap-2">
-        <PromptInput
+        <SharedChatComposer
           value={draft}
           onChange={setDraft}
           onSubmit={() => void submit()}
@@ -226,12 +224,28 @@ function HermesPane() {
           busy={status !== "idle" || uploadingAttachments}
           disabled={uploadingAttachments}
           canSubmit={composerReady}
+          catalog={providerCatalog}
+          selection={canonicalSelection}
+          onSelectionChange={(selection) => {
+            const instance = providerCatalog.instances.find((candidate) => candidate.id === selection.instanceId);
+            const driver = providerCatalog.drivers.find((candidate) => candidate.kind === instance?.driverKind);
+            if (driver?.capabilityClass === "coding_agent") {
+              void startProjectChat(driver.kind === "claude_code" ? "claude" : driver.kind);
+              return;
+            }
+            setDefaultProvider("hermes");
+            setCanonicalSelection(selection);
+          }}
+          instanceLocked={!empty}
+          resources={codexProjectId
+            ? [{ kind: "project", id: codexProjectId, label: "Current project" }]
+            : []}
+          onAttach={() => fileInputRef.current?.click()}
           attachments={attachmentPreviews}
           autoFocus={autoFocus}
           placeholder={placeholder}
           ariaLabel={placeholder}
-          controls={composerControls}
-          trailingControls={harnessBadge}
+          leadingControls={composerControls}
         />
         {contextStrip}
       </div>
@@ -245,9 +259,8 @@ function HermesPane() {
   ) : null;
 
   return (
-    <div
-      role="region"
-      aria-label="Hermes conversation"
+    <SharedChatSurface
+      ariaLabel="Hermes conversation"
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
       {...attachments.paneProps}
     >
@@ -260,14 +273,14 @@ function HermesPane() {
       {empty ? (
         <div data-testid="chat-empty-content" className="mx-auto flex min-h-0 w-full max-w-[868px] flex-1 flex-col justify-center gap-[26px] px-5 py-8">
           <div className="flex shrink-0 flex-col items-center gap-[26px] text-center">
-            <BrandLogo size={208} color="var(--text-primary)" testId="chat-empty-logo" />
             <h1
-              className="text-[32px] font-medium leading-tight tracking-[-0.02em] sm:text-[36px]"
-              style={{ color: "var(--text-primary)", fontFamily: '"Instrument Serif", Georgia, serif' }}
+              className="text-[32px] font-semibold leading-tight tracking-[-0.02em]"
+              style={{ color: "var(--text-primary)" }}
             >
-              How can I help you?
+              What should we build today?
             </h1>
           </div>
+          <ChatStarterCards onSelect={setDraft} />
           <div className="shrink-0">{renderComposer("How can I help you today?", true)}</div>
         </div>
       ) : (
@@ -289,7 +302,7 @@ function HermesPane() {
           }}
         />
       ) : null}
-    </div>
+    </SharedChatSurface>
   );
 }
 

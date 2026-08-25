@@ -1,3 +1,4 @@
+import { FolderOpen } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -11,10 +12,21 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useDraftChat } from "../../stores/draft-chat";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useProviderPreferences } from "../settings/provider-preferences";
-import { PromptInput } from "../chat/elements/prompt-input";
 import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
-import { AgentComposerPickers } from "../coding-agents/composer-pickers";
+import { SharedChatComposer } from "../chat/SharedChatComposer";
+import { SharedChatSurface } from "../chat/SharedChatSurface";
+import {
+  applyCanonicalSelectionToAgentDraft,
+  createLegacyProjectProviderCatalog,
+  filterCatalogForLegacyProject,
+  instanceIdForLegacyProvider,
+} from "../chat/canonical-composer-adapter";
+import {
+  createCanonicalComposerSelection,
+  type CanonicalComposerSelection,
+} from "../chat/canonical-composer-state";
+import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
 import { capabilityEnabled } from "../coding-agents/capabilities";
 import { ProviderReadinessNotice } from "../coding-agents/ProviderReadinessNotice";
 import { deriveProviderReadiness } from "../coding-agents/provider-readiness";
@@ -82,6 +94,7 @@ export function ProjectChatDraft({
   });
   const providerSelectionTouchedRef = useRef(restoredEntry?.pickerTouched ?? false);
   const attachments = useConversationAttachments();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const store = useDraftChat.getState();
@@ -129,6 +142,59 @@ export function ProjectChatDraft({
         mode: initialDraft.mode,
         sandboxMode: initialDraft.sandboxMode,
       };
+  const fallbackCatalog = useMemo(
+    () => createLegacyProjectProviderCatalog(summary),
+    [summary],
+  );
+  const loadedCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const projectCatalog = useMemo(
+    () => filterCatalogForLegacyProject(loadedCatalog, summary),
+    [loadedCatalog, summary],
+  );
+  const preferredInstanceId = instanceIdForLegacyProvider(
+    projectCatalog,
+    summary,
+    effectiveDraft.providerId,
+  );
+  const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
+    () => {
+      const selection = createCanonicalComposerSelection(fallbackCatalog, instanceIdForLegacyProvider(
+        fallbackCatalog,
+        summary,
+        restoredDraft?.providerId ?? initialDraft.providerId,
+      ));
+      if (selection && restoredDraft?.mode && fallbackCatalog.instances
+        .find((instance) => instance.id === selection.instanceId)
+        ?.supports.interactionModes.includes(restoredDraft.mode)) {
+        selection.interactionMode = restoredDraft.mode;
+      }
+      return selection;
+    },
+  );
+
+  useEffect(() => {
+    setCanonicalSelection((current) => {
+      const currentStillValid = current
+        && projectCatalog.instances.some((instance) => (
+          instance.id === current.instanceId
+          && instance.models.some((model) => model.id === current.model && model.availability === "available")
+        ));
+      if (providerSelectionTouchedRef.current && currentStillValid) return current;
+      const next = createCanonicalComposerSelection(projectCatalog, preferredInstanceId);
+      if (!next) return null;
+      if (effectiveDraft.mode && projectCatalog.instances
+        .find((instance) => instance.id === next.instanceId)
+        ?.supports.interactionModes.includes(effectiveDraft.mode)) {
+        next.interactionMode = effectiveDraft.mode;
+      }
+      return current
+        && current.instanceId === next.instanceId
+        && current.model === next.model
+        && current.interactionMode === next.interactionMode
+        ? current
+        : next;
+    });
+  }, [effectiveDraft.mode, preferredInstanceId, projectCatalog]);
   const selectedProvider = summary.providers.find((provider) => provider.id === effectiveDraft.providerId)
     ?? summary.providers[0];
   const readiness = deriveProviderReadiness({
@@ -206,8 +272,9 @@ export function ProjectChatDraft({
   const promptEmpty = effectiveDraft.prompt.trim().length === 0 && attachments.items.length === 0;
 
   return (
-    <section
-      aria-label={`New chat in ${projectLabel}`}
+    <SharedChatSurface
+      ariaLabel={`New chat in ${projectLabel}`}
+      project={{ projectId, label: projectLabel }}
       className={`ph-no-capture flex min-w-0 flex-col overflow-hidden ${presentation === "landing" ? "shrink-0" : "min-h-[460px] flex-1"}`}
       style={{ background: "var(--bg-app)" }}
       data-slot="project-chat-draft"
@@ -231,6 +298,17 @@ export function ProjectChatDraft({
           ) : null}
           {canCreate ? (
             <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                aria-label="Choose files"
+                className="sr-only"
+                onChange={(event) => {
+                  attachments.add(Array.from(event.currentTarget.files ?? []));
+                  event.currentTarget.value = "";
+                }}
+              />
               <div className="mb-2">
                 <ProviderReadinessNotice
                   readiness={readiness}
@@ -238,47 +316,48 @@ export function ProjectChatDraft({
                   onRefresh={refreshSummary}
                 />
               </div>
-              <PromptInput
-                value={effectiveDraft.prompt}
-                onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
-                onSubmit={() => void submit()}
-                busy={busy}
-                disabled={busy}
-                canSubmit={!busy && !readiness.blocked && (effectiveDraft.prompt.trim().length > 0 || attachments.items.length > 0)}
-                attachments={(
-                  <AttachmentPreviewRow
-                    items={attachments.items}
-                    disabled={busy}
-                    onRemove={attachments.remove}
-                    onRetry={(localId) => void attachments.retry(localId)}
-                  />
-                )}
-                autoFocus={active}
-                focusRequestId={active ? focusRequestId + localFocusBumps : 0}
-                maxLength={24_000}
-                ariaLabel="Message new chat"
-                placeholder={presentation === "landing" ? "How can I help you today?" : "Ask the agent to do anything…"}
-                controls={(
-                  <AgentComposerPickers
-                    summary={summary}
-                    providerId={selectedProvider?.id}
-                    mode={effectiveDraft.mode ?? selectedProvider?.defaultMode}
-                    onProviderChange={(providerId) => {
-                      providerSelectionTouchedRef.current = true;
-                      const provider = summary.providers.find((candidate) => candidate.id === providerId);
-                      setDraft((current) => ({
-                        ...current,
-                        providerId: provider?.id,
-                        mode: provider?.defaultMode ?? current.mode,
-                        sandboxMode: defaultSandboxModeForProvider(provider),
-                      }));
-                    }}
-                    onModeChange={(mode) => {
-                      providerSelectionTouchedRef.current = true;
-                      setDraft((current) => ({ ...current, mode }));
-                    }}
-                  />
-                )}
+              <SharedChatComposer
+                  value={effectiveDraft.prompt}
+                  onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
+                  onSubmit={() => void submit()}
+                  busy={busy}
+                  disabled={busy}
+                  canSubmit={!busy && !readiness.blocked && (effectiveDraft.prompt.trim().length > 0 || attachments.items.length > 0)}
+                  catalog={projectCatalog}
+                  selection={canonicalSelection}
+                  onSelectionChange={(selection) => {
+                    providerSelectionTouchedRef.current = true;
+                    setCanonicalSelection(selection);
+                    const nextDraft = applyCanonicalSelectionToAgentDraft(
+                      summary,
+                      projectCatalog,
+                      effectiveDraft,
+                      selection,
+                    );
+                    setDraft(nextDraft);
+                  }}
+                  instanceLocked={false}
+                  resources={[{ kind: "project", id: projectId, label: projectLabel }]}
+                  onAttach={() => fileInputRef.current?.click()}
+                  attachments={(
+                    <AttachmentPreviewRow
+                      items={attachments.items}
+                      disabled={busy}
+                      onRemove={attachments.remove}
+                      onRetry={(localId) => void attachments.retry(localId)}
+                    />
+                  )}
+                  autoFocus={active}
+                  focusRequestId={active ? focusRequestId + localFocusBumps : 0}
+                  maxLength={24_000}
+                  ariaLabel="Message new chat"
+                  placeholder={presentation === "landing" ? "How can I help you today?" : "Ask the agent to do anything…"}
+                  leadingControls={(
+                    <span className="flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-sm" style={{ color: "var(--text-secondary)" }}>
+                      <FolderOpen size={14} aria-hidden />
+                      <span className="max-w-40 truncate">{projectLabel}</span>
+                    </span>
+                  )}
               />
             </>
           ) : (
@@ -291,6 +370,6 @@ export function ProjectChatDraft({
           )}
         </div>
       </div>
-    </section>
+    </SharedChatSurface>
   );
 }

@@ -379,9 +379,10 @@ describe("draft chat replaces the selected thread", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
     await screen.findByLabelText("Message new chat");
 
-    const provider = (await screen.findByLabelText("Agent provider")) as HTMLSelectElement;
-    fireEvent.change(provider, { target: { value: "claude" } });
-    await waitFor(() => expect(provider.value).toBe("claude"));
+    const provider = await screen.findByRole("button", { name: "Choose model and provider" });
+    fireEvent.click(provider);
+    fireEvent.click(screen.getByRole("option", { name: /Claude Code · Available/ }));
+    await waitFor(() => expect(provider.getAttribute("data-provider-instance")).toBe("claude_code_default"));
     await waitFor(() => expect(useDraftChat.getState().draftFor("matrix-os")?.providerId).toBe("claude"));
     expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
 
@@ -390,7 +391,7 @@ describe("draft chat replaces the selected thread", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
     await screen.findByLabelText("Message new chat");
-    await waitFor(() => expect((screen.getByLabelText("Agent provider") as HTMLSelectElement).value).toBe("claude"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-provider-instance")).toBe("claude_code_default"));
     expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
   });
 
@@ -398,17 +399,19 @@ describe("draft chat replaces the selected thread", () => {
     mockOperator();
     await renderWithSelectedThread();
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
+    await screen.findByLabelText("Message new chat");
 
-    const mode = (await screen.findByLabelText("Agent mode")) as HTMLSelectElement;
+    const mode = (await screen.findByLabelText("Interaction mode")) as HTMLSelectElement;
     fireEvent.change(mode, { target: { value: "plan" } });
     await waitFor(() => expect(mode.value).toBe("plan"));
+    await waitFor(() => expect(useDraftChat.getState().draftFor("matrix-os")?.mode).toBe("plan"));
     expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
 
     fireEvent.click(screen.getByRole("button", { name: "Chat Plan the auth work" }));
     expect(await screen.findByRole("region", { name: "Conversation Plan the auth work" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
-    await waitFor(() => expect((screen.getByLabelText("Agent mode") as HTMLSelectElement).value).toBe("plan"));
+    await waitFor(() => expect((screen.getByLabelText("Interaction mode") as HTMLSelectElement).value).toBe("plan"));
     expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
   });
 

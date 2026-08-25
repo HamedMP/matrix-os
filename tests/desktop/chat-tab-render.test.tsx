@@ -366,17 +366,31 @@ describe("ChatTab", () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
     render(<ChatTab />);
 
-    expect(screen.getByRole("heading", { name: "How can I help you?" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Resources" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Use Codex for a project chat" })).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "Chat harness" })).toHaveProperty("value", "hermes");
-    expect(screen.getByTestId("chat-empty-logo").style.height).toBe("208px");
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Build a new feature, app, or tool" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-provider-instance")).toBe("hermes_default");
+    expect(screen.queryByTestId("chat-empty-logo")).toBeNull();
     expect(screen.getByTestId("chat-empty-content").className).toContain("justify-center");
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
     expect(screen.queryByText("Connect messaging")).toBeNull();
     expect(screen.queryByRole("button", { name: /voice|microphone/i })).toBeNull();
+  });
+
+  it("seeds the shared composer from a Figma starter card", () => {
+    useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(), abort: vi.fn() });
+    render(<ChatTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Review code and suggest changes" }));
+
+    expect((screen.getByRole("textbox", { name: "How can I help you today?" }) as HTMLTextAreaElement).value)
+      .toBe("Review code and suggest changes");
   });
 
   it("removes the redundant internal Chat rail and leaves agent-run navigation to global Recents", () => {
@@ -565,9 +579,8 @@ describe("ChatTab", () => {
     useHermesChat.setState({ messages: [], status: "idle" });
     render(<ChatTab />);
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Chat harness" }), {
-      target: { value: "codex" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("option", { name: /Codex · Available/ }));
 
     await waitFor(() => expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({
       kind: "project",
@@ -581,10 +594,9 @@ describe("ChatTab", () => {
 
     render(<ChatTab />);
 
-    const codex = screen.getByRole("option", {
-      name: "Codex — Create a project to use Codex.",
-    });
-    expect((codex as HTMLOptionElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    const codex = screen.getByRole("option", { name: /Codex · Unavailable/ });
+    expect(codex.getAttribute("aria-disabled")).toBe("true");
   });
 
   it("does not intercept a text-only drop in Chat", () => {

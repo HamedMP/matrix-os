@@ -1,5 +1,5 @@
 import { ArrowUp, CircleStop } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 
 // AI-Elements-style PromptInput: a card with a growing textarea and a
 // submit/stop control. Decorative action buttons were removed — every
@@ -21,6 +21,7 @@ export function PromptInput({
   attachments,
   canSubmit,
   focusRequestId,
+  onTextareaKeyDown,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -42,6 +43,7 @@ export function PromptInput({
   trailingControls?: ReactNode;
   // Bumping this id focuses the textarea (type-to-start, ⌘J, chip seeds).
   focusRequestId?: number;
+  onTextareaKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean | void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const submissionReady = canSubmit ?? value.trim().length > 0;
@@ -80,6 +82,7 @@ export function PromptInput({
         className="w-full resize-none bg-transparent px-4 pt-3.5 text-md outline-none disabled:opacity-60"
         style={{ color: "var(--text-primary)", maxHeight: 220 }}
         onKeyDown={(e) => {
+          if (onTextareaKeyDown?.(e)) return;
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             if (submitEnabled) onSubmit();
