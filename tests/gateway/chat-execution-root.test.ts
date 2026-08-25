@@ -129,6 +129,34 @@ describe("canonical Chat execution-root resolver", () => {
     expect(projectRoot.fingerprint).not.toBe(worktreeRoot.fingerprint);
   });
 
+  it("resolves a folder project connected directly under projects", async () => {
+    const homePath = await temporaryDirectory("matrix-execution-root-home-");
+    const checkout = join(homePath, "projects", "matrix-os");
+    await mkdir(checkout, { recursive: true });
+    const projectManager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const createdProject = await projectManager.createProject({
+      mode: "folder",
+      name: "Matrix OS",
+      slug: "matrix-os",
+      path: "projects/matrix-os",
+      ownerScope: { type: "user", id: owner.ownerId },
+    });
+    expect(createdProject.ok).toBe(true);
+    if (!createdProject.ok) return;
+    const resolver = createChatExecutionRootResolver({
+      homePath,
+      projects: projectManager,
+      worktrees: createWorktreeManager({ homePath, runCommand: vi.fn() }),
+    });
+
+    const resolved = await resolver.resolve(owner, {
+      kind: "project",
+      projectId: createdProject.project.id,
+    });
+
+    expect(resolved.primaryWorkspaceRoot).toBe(await realpath(checkout));
+  });
+
   it("binds worktree fingerprints to exact project and WorktreeRecord provenance", async () => {
     const homePath = await temporaryDirectory("matrix-execution-root-home-");
     const projectPath = await temporaryDirectory("matrix-project-root-");

@@ -318,24 +318,9 @@ async function resolveEligibleProjectWorkingDirectory(
         : null;
     }
 
-    const registryEntry = join(projectsRoot, project.slug);
-    if (
-      realLocalPath === registryEntry
-      || realLocalPath.startsWith(`${registryEntry}${sep}`)
-      || registryEntry.startsWith(`${realLocalPath}${sep}`)
-    ) {
-      return null;
-    }
-    const relativeToRegistry = relative(projectsRoot, realLocalPath);
-    if (
-      relativeToRegistry !== ""
-      && !relativeToRegistry.startsWith("..")
-      && !isAbsolute(relativeToRegistry)
-    ) {
-      const segments = relativeToRegistry.split(sep);
-      if (segments.length === 1 || segments[1] !== "repo") return null;
-    }
-    return realLocalPath;
+    return await isManagedProjectContainer(realHomePath, realLocalPath)
+      ? null
+      : realLocalPath;
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error) {
       const code = (error as NodeJS.ErrnoException).code;

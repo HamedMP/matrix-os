@@ -204,19 +204,19 @@ export function createChatExecutionRootResolver<
     ownerInput: CanonicalOwnerScope,
     refInput: CanonicalChatExecutionRootRef,
   ): Promise<ResolvedChatExecutionRoot> {
-    let owner: CanonicalOwnerScope;
-    let ref: CanonicalChatExecutionRootRef;
-    try {
-      owner = CanonicalOwnerScopeSchema.parse(ownerInput);
-      ref = CanonicalChatExecutionRootRefSchema.parse(refInput);
-    } catch {
+    const parsedOwner = CanonicalOwnerScopeSchema.safeParse(ownerInput);
+    const parsedRef = CanonicalChatExecutionRootRefSchema.safeParse(refInput);
+    if (!parsedOwner.success || !parsedRef.success) {
       throw new ChatExecutionRootError("invalid_root");
     }
+    const owner = parsedOwner.data;
+    const ref = parsedRef.data;
     const ownerScope = projectOwnerScope(owner);
     let projectResult: Awaited<ReturnType<typeof options.projects.getProjectById>>;
     try {
       projectResult = await options.projects.getProjectById(ownerScope, ref.projectId);
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof ChatExecutionRootError) throw error;
       throw new ChatExecutionRootError("validation_unavailable");
     }
     if (!projectResult.ok) throw dependencyError(projectResult.status);
@@ -226,7 +226,8 @@ export function createChatExecutionRootResolver<
     let resolvedProjectRoot: string | null;
     try {
       resolvedProjectRoot = await options.projects.resolveProjectWorkingDirectory(project);
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof ChatExecutionRootError) throw error;
       throw new ChatExecutionRootError("validation_unavailable");
     }
     if (!resolvedProjectRoot) throw new ChatExecutionRootError("invalid_root");
@@ -246,7 +247,8 @@ export function createChatExecutionRootResolver<
     let worktreeResult: Awaited<ReturnType<typeof worktrees.getWorktree>>;
     try {
       worktreeResult = await worktrees.getWorktree(project.slug, ref.worktreeId, ownerScope);
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof ChatExecutionRootError) throw error;
       throw new ChatExecutionRootError("validation_unavailable");
     }
     if (!worktreeResult.ok) throw dependencyError(worktreeResult.status);
