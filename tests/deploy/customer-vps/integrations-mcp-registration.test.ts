@@ -72,6 +72,23 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(updater).toContain("sudo systemctl restart --no-block matrix-integrations-agents.service");
   });
 
+  it("keeps certified snapshots from before integrations MCP bootable", async () => {
+    const cloudInit = await readFile("distro/customer-vps/cloud-init.yaml", "utf8");
+    const integrationBins = [
+      "matrix-integrations",
+      "matrix-integrations-mcp",
+      "matrix-register-integrations-mcp",
+    ];
+    const requiredBins = cloudInit.match(/for required_bin in ([^;]+); do/)?.[1]?.split(" ") ?? [];
+    const optionalBins = cloudInit.match(/for optional_bin in ([^;]+); do/)?.[1]?.split(" ") ?? [];
+
+    expect(requiredBins).not.toEqual(expect.arrayContaining(integrationBins));
+    expect(optionalBins).toEqual(expect.arrayContaining(integrationBins));
+    expect(cloudInit).toContain(
+      'if [ -f /etc/systemd/system/matrix-integrations-agents.service ] && [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then',
+    );
+  });
+
   it("applies one-time Matrix skill defaults after installing Hermes", async () => {
     const hermes = await readFile("distro/customer-vps/host-bin/matrix-install-hermes", "utf8");
     const build = await readFile("scripts/build-host-bundle.sh", "utf8");
