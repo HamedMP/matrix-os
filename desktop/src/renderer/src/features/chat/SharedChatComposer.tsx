@@ -412,6 +412,20 @@ export function SharedChatComposer({
             onResource={insertResource}
           />
         </SuggestionMenu>
+      ) : attachmentMenuOpen ? (
+        <SuggestionMenu label="Add" menuSide={menuSide}>
+          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
+          <ResourceRows
+            role="option"
+            canAttach={canAttach}
+            resources={availableResources}
+            onAttach={() => {
+              setAttachmentMenuOpen(false);
+              onAttach?.();
+            }}
+            onResource={insertResource}
+          />
+        </SuggestionMenu>
       ) : null}
       <PromptInput
         value={value}
@@ -454,44 +468,17 @@ export function SharedChatComposer({
         controls={(
           <>
             {canAttach ? (
-              <Popover.Root open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
-                <Popover.Trigger asChild>
-                  <button
-                    type="button"
-                    aria-label="Add files and more"
-                    className="flex h-8 w-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                    style={{ color: "var(--text-secondary)" }}
-                  >
-                    <Paperclip size={15} aria-hidden />
-                  </button>
-                </Popover.Trigger>
-                {attachmentMenuOpen ? (
-                  <Popover.Portal>
-                    <Popover.Content
-                      role="menu"
-                      aria-label="Add"
-                      side={menuSide}
-                      align="start"
-                      sideOffset={8}
-                      collisionPadding={16}
-                      className="z-50 min-w-64 rounded-xl border p-1.5 shadow-xl"
-                      style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
-                    >
-                      <span className="block px-2 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>Add</span>
-                      <ResourceRows
-                        role="menuitem"
-                        canAttach={canAttach}
-                        resources={availableResources}
-                        onAttach={() => {
-                          setAttachmentMenuOpen(false);
-                          onAttach?.();
-                        }}
-                        onResource={insertResource}
-                      />
-                    </Popover.Content>
-                  </Popover.Portal>
-                ) : null}
-              </Popover.Root>
+              <button
+                type="button"
+                aria-label="Add files and more"
+                aria-haspopup="listbox"
+                aria-expanded={attachmentMenuOpen}
+                className="flex h-8 w-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                style={{ color: "var(--text-secondary)" }}
+                onClick={() => setAttachmentMenuOpen((open) => !open)}
+              >
+                <Paperclip size={15} aria-hidden />
+              </button>
             ) : null}
             {leadingControls}
           </>

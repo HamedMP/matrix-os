@@ -24,7 +24,7 @@ import {
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
 import { useChatProviderCatalog } from "./chat-provider-catalog";
-import { searchHomeChatResources, searchProjectChatResources } from "./chat-resource-search";
+import { searchGlobalChatResources } from "./chat-resource-search";
 import { useProviderSetup } from "./use-provider-setup";
 import { ConversationContextFeedback } from "./ConversationContextComposer";
 import ConversationContextPicker from "./ConversationContextPicker";
@@ -182,9 +182,7 @@ export function HermesPane() {
   const resourceSearch = useCallback((query: string) => {
     if (!api) return Promise.resolve([]);
     const projectId = conversationContext?.status === "ready" ? conversationContext.projectId : null;
-    return projectId
-      ? searchProjectChatResources(api, projectId, query)
-      : searchHomeChatResources(api, query);
+    return searchGlobalChatResources(api, projectId, query);
   }, [api, conversationContext]);
   const projectContextControl = (
     <ConversationContextPicker

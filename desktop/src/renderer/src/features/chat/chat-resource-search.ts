@@ -63,3 +63,19 @@ export async function searchProjectChatResources(
     label: file.path,
   }));
 }
+
+export async function searchGlobalChatResources(
+  api: Pick<ApiClient, "get">,
+  projectId: string | null,
+  query: string,
+): Promise<CanonicalChatResourceReference[]> {
+  if (projectId) {
+    const [projectResult] = await Promise.allSettled([
+      searchProjectChatResources(api, projectId, query),
+    ]);
+    if (projectResult?.status === "fulfilled" && projectResult.value.length > 0) {
+      return projectResult.value;
+    }
+  }
+  return searchHomeChatResources(api, query);
+}

@@ -255,7 +255,7 @@ describe("SharedChatComposer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add files and more" }));
     expect(onAttach).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Files and folders" }));
+    fireEvent.click(screen.getByRole("option", { name: "Files and folders" }));
 
     expect(onAttach).toHaveBeenCalledOnce();
   });
@@ -267,13 +267,17 @@ describe("SharedChatComposer", () => {
     render(<Harness resourceSearch={resourceSearch} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files and more" }));
-    expect(await screen.findByRole("menu", { name: "Add" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: /README.md/ })).toBeTruthy();
+    const paperclipPalette = await screen.findByRole("listbox", { name: "Add" });
+    expect(paperclipPalette.className).toContain("left-0");
+    expect(paperclipPalette.className).toContain("right-0");
+    expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
 
     cleanup();
     render(<Harness resourceSearch={resourceSearch} initialValue="@" />);
 
-    expect(await screen.findByRole("listbox", { name: "Add" })).toBeTruthy();
+    const mentionPalette = await screen.findByRole("listbox", { name: "Add" });
+    expect(mentionPalette.className).toContain("left-0");
+    expect(mentionPalette.className).toContain("right-0");
     expect(screen.getByRole("option", { name: "Files and folders" })).toBeTruthy();
     expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
   });
