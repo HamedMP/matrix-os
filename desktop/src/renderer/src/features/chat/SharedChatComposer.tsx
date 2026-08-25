@@ -5,9 +5,11 @@ import type {
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
-import { Box, ChevronDown, FolderOpen, Paperclip, SquareTerminal } from "lucide-react";
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Box, ChevronDown, Paperclip, SquareTerminal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { PromptInput } from "./elements/prompt-input";
+import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import { ComposerResourceGlyph } from "./ComposerResourceGlyph";
 import {
   listCanonicalSlashEntries,
   updateCanonicalComposerOption,
@@ -16,19 +18,12 @@ import {
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { ComposerReferenceTokenRow } from "./ComposerReferenceTokenRow";
 import {
-  addComposerReferenceToken,
   buildSharedChatComposerSubmission,
   type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "./composer-reference-tokens";
 
 export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
-
-function replaceActiveToken(value: string, token: string, replacement: string): string {
-  const index = value.lastIndexOf(token);
-  if (index < 0) return value;
-  return `${value.slice(0, index)}${replacement}${value.slice(index + token.length)}`;
-}
 
 function selectedOptionValue(
   selection: CanonicalComposerSelection,
@@ -206,7 +201,9 @@ function ResourceRows({
           className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
           onClick={() => onResource(resource)}
         >
-          <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
+          <span className="inline-flex shrink-0" style={{ color: "var(--text-tertiary)" }}>
+            <ComposerResourceGlyph resource={resource} size={15} />
+          </span>
           <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>{resource.label}</span>
           <span className="ml-auto shrink-0 text-[11px] capitalize" style={{ color: "var(--text-tertiary)" }}>{resource.kind.replace("_", " ")}</span>
         </button>
@@ -276,9 +273,12 @@ export function SharedChatComposer({
   menuSide?: "top" | "bottom";
 }) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const editorRef = useRef<ComposerPromptEditorHandle>(null);
+  const [cursor, setCursor] = useState(value.length);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
-  const slashMatch = value.match(/(?:^|\s)(\/[a-z0-9_-]*)$/i);
-  const resourceMatch = value.match(/(?:^|\s)@([^\s]*)$/);
+  const valueBeforeCursor = value.slice(0, cursor);
+  const slashMatch = valueBeforeCursor.match(/(?:^|\s)(\/[a-z0-9_-]*)$/i);
+  const resourceMatch = valueBeforeCursor.match(/(?:^|\s)@([^\s]*)$/);
   const slashQuery = slashMatch?.[1]?.slice(1).toLocaleLowerCase() ?? null;
   const resourceQuery = resourceMatch?.[1]?.toLocaleLowerCase() ?? null;
   const slashEntries = useMemo(() => listCanonicalSlashEntries(instance), [instance]);
@@ -315,14 +315,11 @@ export function SharedChatComposer({
       : 0;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   useEffect(() => setSuggestionIndex(0), [resourceQuery, slashQuery]);
-  const addReferenceToken = (token: ComposerReferenceToken) => {
-    onReferenceTokensChange?.(addComposerReferenceToken(referenceTokens, token));
-  };
   const applySuggestion = (index: number) => {
     if (slashQuery !== null) {
       const entry = filteredSlashEntries[index];
       if (entry) {
-        addReferenceToken({
+        editorRef.current?.insertToken({
           type: "invocation",
           label: entry.displayName,
           invocation: {
@@ -330,8 +327,7 @@ export function SharedChatComposer({
             descriptorId: entry.id,
             invocation: entry.invocation,
           },
-        });
-        onChange(replaceActiveToken(value, slashMatch?.[1] ?? "", ""));
+        }, slashMatch?.[1] ?? "");
       }
       return;
     }
@@ -342,12 +338,20 @@ export function SharedChatComposer({
     }
     const resource = filteredResources[index - (canAttach ? 1 : 0)];
     if (resourceQuery !== null && resource) {
-      addReferenceToken({ type: "resource", resource });
-      onChange(replaceActiveToken(value, `@${resourceMatch?.[1] ?? ""}`, ""));
+      editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`);
     }
   };
-  const onSuggestionKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
-    if (suggestionCount === 0) return false;
+  const onSuggestionKeyDown = (event: KeyboardEvent<HTMLDivElement>): boolean => {
+    if (suggestionCount === 0) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        if (!disabled && (canSubmit ?? value.trim().length > 0)) {
+          onSubmit(buildSharedChatComposerSubmission(value, referenceTokens));
+        }
+        return true;
+      }
+      return false;
+    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const direction = event.key === "ArrowDown" ? 1 : -1;
@@ -362,19 +366,16 @@ export function SharedChatComposer({
     return false;
   };
   const insertResource = (resource: CanonicalChatResourceReference) => {
-    addReferenceToken({ type: "resource", resource });
-    if (resourceQuery !== null) {
-      onChange(replaceActiveToken(value, `@${resourceMatch?.[1] ?? ""}`, ""));
-    }
+    editorRef.current?.insertToken(
+      { type: "resource", resource },
+      resourceQuery !== null ? `@${resourceMatch?.[1] ?? ""}` : "",
+    );
     setAttachmentMenuOpen(false);
   };
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
   const hasEffortOption = composerOptions.some((option) => option.id === "effort");
-  const invocationTokens = referenceTokens.filter((token) => token.type === "invocation");
-  const resourceTokens = referenceTokens.filter((token) => token.type === "resource");
-
   return (
     <div className="relative" data-slot="shared-chat-composer">
       {slashQuery !== null && filteredSlashEntries.length > 0 ? (
@@ -425,25 +426,28 @@ export function SharedChatComposer({
         maxLength={maxLength}
         placeholder={placeholder}
         ariaLabel={ariaLabel}
-        onTextareaKeyDown={onSuggestionKeyDown}
+        editor={(
+          <ComposerPromptEditor
+            ref={editorRef}
+            value={value}
+            tokens={referenceTokens}
+            onChange={(nextValue, nextTokens, nextCursor) => {
+              setCursor(nextCursor);
+              onChange(nextValue);
+              onReferenceTokensChange?.(nextTokens);
+            }}
+            onKeyDown={onSuggestionKeyDown}
+            placeholder={placeholder}
+            ariaLabel={ariaLabel}
+            disabled={disabled}
+            autoFocus={autoFocus}
+            focusRequestId={focusRequestId}
+          />
+        )}
         attachments={attachments ? (
           <ComposerReferenceTokenRow
             tokens={[]}
             attachments={attachments}
-          />
-        ) : null}
-        inlineLeadingContext={invocationTokens.length > 0 ? (
-          <ComposerReferenceTokenRow
-            tokens={invocationTokens}
-            layout="inline"
-            onChange={(tokens) => onReferenceTokensChange?.([...tokens, ...resourceTokens])}
-          />
-        ) : null}
-        inlineTrailingContext={resourceTokens.length > 0 ? (
-          <ComposerReferenceTokenRow
-            tokens={resourceTokens}
-            layout="inline"
-            onChange={(tokens) => onReferenceTokensChange?.([...invocationTokens, ...tokens])}
           />
         ) : null}
         footer={footer}

@@ -171,6 +171,8 @@ function Harness({
   menuSide,
   onAttach = vi.fn(),
   onProviderSetup = vi.fn(),
+  initialValue = "",
+  initialReferenceTokens = [],
 }: {
   locked?: boolean;
   onSubmit?: (submission: SharedChatComposerSubmission) => void;
@@ -178,13 +180,15 @@ function Harness({
   menuSide?: "top" | "bottom";
   onAttach?: () => void;
   onProviderSetup?: (instanceId: string, actionId: string) => void;
+  initialValue?: string;
+  initialReferenceTokens?: ComposerReferenceToken[];
 }) {
   const catalog = catalogFixture();
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue);
   const [selection, setSelection] = useState<CanonicalComposerSelection>(
     () => createCanonicalComposerSelection(catalog)!,
   );
-  const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>([]);
+  const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>(initialReferenceTokens);
   return (
     <SharedChatComposer
       value={value}
@@ -266,8 +270,8 @@ describe("SharedChatComposer", () => {
     expect(await screen.findByRole("menu", { name: "Add" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /README.md/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files and more" }));
-    fireEvent.change(screen.getByLabelText("Message chat"), { target: { value: "@" } });
+    cleanup();
+    render(<Harness resourceSearch={resourceSearch} initialValue="@" />);
 
     expect(await screen.findByRole("listbox", { name: "Add" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Files and folders" })).toBeTruthy();
@@ -287,7 +291,7 @@ describe("SharedChatComposer", () => {
   });
 
   it("opens all Project Chat composer menus below the top composer", () => {
-    render(<Harness menuSide="bottom" />);
+    render(<Harness menuSide="bottom" initialValue="/" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     expect(screen.getByRole("listbox", { name: "Models and providers" })
@@ -304,7 +308,6 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("menu", { name: "Permission mode options" }).getAttribute("data-preferred-side"))
       .toBe("bottom");
 
-    fireEvent.change(screen.getByLabelText("Message chat"), { target: { value: "/" } });
     expect(screen.getByRole("listbox", { name: "Skills and commands" }).getAttribute("data-preferred-side"))
       .toBe("bottom");
   });
@@ -445,11 +448,10 @@ describe("SharedChatComposer", () => {
       .toContain("GPT-5.6-Terra");
   });
 
-  it("turns a selected slash entry into a distinct removable invocation token", () => {
-    render(<Harness />);
+  it("turns a selected slash entry into a distinct removable invocation token", async () => {
+    render(<Harness initialValue="/" />);
     const input = screen.getByLabelText("Message chat");
 
-    fireEvent.change(input, { target: { value: "/" } });
     const menu = screen.getByRole("listbox", { name: "Skills and commands" });
     expect(menu).toBeTruthy();
     const review = screen.getByRole("option", { name: /Review/ });
@@ -457,53 +459,69 @@ describe("SharedChatComposer", () => {
     expect(review.querySelector('[data-slot="skill-command-name"]')?.className)
       .toContain("whitespace-nowrap");
     fireEvent.click(review);
-    expect((input as HTMLTextAreaElement).value).toBe("");
-    const token = screen.getByTestId("composer-reference-token-skill-review");
+    await waitFor(() => expect(input.textContent).toBe("/review "));
+    const token = await screen.findByTestId("composer-reference-token-skill-review");
     expect(token.textContent).toContain("/review");
     expect(token.querySelector('[data-slot="composer-reference-token-icon"]')).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Remove skill /review" }));
-    expect(screen.queryByTestId("composer-reference-token-skill-review")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("composer-reference-token-skill-review")).toBeNull());
   });
 
-  it("keeps slash and resource tokens inside the editable prompt flow", () => {
-    render(<Harness />);
-    const input = screen.getByLabelText("Message chat");
+  it("preserves arbitrary text, resource, and skill order inside one editable prompt", () => {
+    render(<Harness
+      initialValue="Inspect [src/index.ts](src-index) with /review please"
+      initialReferenceTokens={[
+        { type: "resource", resource: { kind: "file", id: "src-index", label: "src/index.ts" } },
+        {
+          type: "invocation",
+          label: "Review",
+          invocation: { kind: "skill", descriptorId: "review", invocation: "/review" },
+        },
+      ]}
+    />);
 
-    fireEvent.change(input, { target: { value: "/rev" } });
-    fireEvent.click(screen.getByRole("option", { name: /Review/ }));
-    fireEvent.change(input, { target: { value: "Inspect @ind" } });
-    fireEvent.click(screen.getByRole("option", { name: /src\/index.ts/ }));
-
-    const promptFlow = document.querySelector('[data-slot="prompt-input-content"]');
+    const promptFlow = screen.getByRole("textbox", { name: "Message chat" });
     const skill = screen.getByTestId("composer-reference-token-skill-review");
     const resource = screen.getByTestId("composer-reference-token-file-src-index");
 
     expect(promptFlow).toBeTruthy();
     expect(promptFlow?.contains(skill)).toBe(true);
     expect(promptFlow?.contains(resource)).toBe(true);
-    expect(skill.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(input.compareDocumentPosition(resource) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(promptFlow.textContent).toBe("Inspect src/index.ts with /review please");
+    expect(resource.compareDocumentPosition(skill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(resource.className).not.toContain("border");
+    expect(skill.className).not.toContain("border");
+    expect(screen.getByRole("button", { name: "Remove file src/index.ts" }).className)
+      .toContain("absolute");
+    expect(resource.querySelector('[data-file-kind="code"]')).toBeTruthy();
+    expect(screen.queryByText("How can I help you today?")).toBeNull();
     expect(document.querySelector('[data-slot="composer-context-row"]')).toBeNull();
   });
 
   it("submits selected invocations and resources as structured agent-readable context", () => {
     const onSubmit = vi.fn();
-    render(<Harness onSubmit={onSubmit} />);
+    render(<Harness
+      onSubmit={onSubmit}
+      initialValue="/review Inspect [src/index.ts](src-index)"
+      initialReferenceTokens={[
+        {
+          type: "invocation",
+          label: "Review",
+          invocation: { kind: "skill", descriptorId: "review", invocation: "/review" },
+        },
+        { type: "resource", resource: { kind: "file", id: "src-index", label: "src/index.ts" } },
+      ]}
+    />);
     const input = screen.getByLabelText("Message chat");
 
-    fireEvent.change(input, { target: { value: "/rev" } });
-    fireEvent.click(screen.getByRole("option", { name: /Review/ }));
-    fireEvent.change(input, { target: { value: "Inspect @ind" } });
-    expect(screen.getByRole("listbox", { name: "Add" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("option", { name: /src\/index.ts/ }));
-    expect((input as HTMLTextAreaElement).value).toBe("Inspect ");
+    expect(input.textContent).toBe("/review Inspect src/index.ts");
     expect(screen.getByTestId("composer-reference-token-file-src-index").textContent)
       .toContain("src/index.ts");
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSubmit).toHaveBeenCalledWith({
-      text: "Inspect",
-      agentPrompt: "/review\n\nInspect\n\nContext references:\n- [file] src/index.ts (src-index)",
+      text: "/review Inspect [src/index.ts](src-index)",
+      agentPrompt: "/review Inspect [src/index.ts](src-index)",
       invocations: [{ kind: "skill", descriptorId: "review", invocation: "/review" }],
       resources: [{ kind: "file", id: "src-index", label: "src/index.ts" }],
     });
@@ -513,14 +531,12 @@ describe("SharedChatComposer", () => {
     const resourceSearch = vi.fn(async (query: string) => query === "read"
       ? [{ kind: "file" as const, id: "readme", label: "README.md" }]
       : []);
-    render(<Harness resourceSearch={resourceSearch} />);
+    render(<Harness resourceSearch={resourceSearch} initialValue="Inspect @read" />);
     const input = screen.getByLabelText("Message chat");
-
-    fireEvent.change(input, { target: { value: "Inspect @read" } });
 
     await waitFor(() => expect(resourceSearch).toHaveBeenCalledWith("read"));
     fireEvent.click(await screen.findByRole("option", { name: /README.md/ }));
-    expect((input as HTMLTextAreaElement).value).toBe("Inspect ");
+    await waitFor(() => expect(input.textContent).toBe("Inspect README.md "));
     expect(screen.getByTestId("composer-reference-token-file-readme").textContent)
       .toContain("README.md");
   });
@@ -529,24 +545,22 @@ describe("SharedChatComposer", () => {
     const resourceSearch = vi.fn(async (query: string) => query === ""
       ? [{ kind: "file" as const, id: "readme", label: "README.md" }]
       : []);
-    render(<Harness resourceSearch={resourceSearch} />);
+    render(<Harness resourceSearch={resourceSearch} initialValue="@" />);
     const input = screen.getByLabelText("Message chat");
-
-    fireEvent.change(input, { target: { value: "@" } });
 
     await waitFor(() => expect(resourceSearch).toHaveBeenCalledWith(""));
-    expect(await screen.findByRole("option", { name: /README.md/ })).toBeTruthy();
+    const readme = await screen.findByRole("option", { name: /README.md/ });
+    expect(readme.querySelector('[data-file-kind="document"]')).toBeTruthy();
   });
 
-  it("navigates slash suggestions with arrows and Enter", () => {
-    render(<Harness />);
+  it("navigates slash suggestions with arrows and Enter", async () => {
+    render(<Harness initialValue="/" />);
     const input = screen.getByLabelText("Message chat");
 
-    fireEvent.change(input, { target: { value: "/" } });
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect((input as HTMLTextAreaElement).value).toBe("");
+    await waitFor(() => expect(input.textContent).toBe("/status "));
     expect(screen.getByTestId("composer-reference-token-command-status").textContent)
       .toContain("/status");
   });

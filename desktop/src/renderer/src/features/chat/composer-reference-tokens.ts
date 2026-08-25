@@ -37,9 +37,23 @@ export function addComposerReferenceToken(
     : [...tokens, token];
 }
 
-function formatResourceReference(resource: CanonicalChatResourceReference): string {
-  const identifier = resource.id === resource.label ? "" : ` (${resource.id})`;
-  return `- [${resource.kind}] ${resource.label}${identifier}`;
+function escapeMarkdownLabel(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+}
+
+function encodeMarkdownDestination(value: string): string {
+  return value
+    .replaceAll("%", "%25")
+    .replaceAll(" ", "%20")
+    .replaceAll("(", "%28")
+    .replaceAll(")", "%29")
+    .replaceAll("?", "%3F")
+    .replaceAll("\\", "%5C");
+}
+
+export function serializeComposerReferenceToken(token: ComposerReferenceToken): string {
+  if (token.type === "invocation") return token.invocation.invocation;
+  return `[${escapeMarkdownLabel(token.resource.label)}](${encodeMarkdownDestination(token.resource.id)})`;
 }
 
 export function buildSharedChatComposerSubmission(
@@ -53,17 +67,9 @@ export function buildSharedChatComposerSubmission(
   const resources = tokens.flatMap((token) => (
     token.type === "resource" ? [token.resource] : []
   ));
-  const sections = [
-    invocations.map((invocation) => invocation.invocation).join("\n"),
-    text,
-    resources.length > 0
-      ? `Context references:\n${resources.map(formatResourceReference).join("\n")}`
-      : "",
-  ].filter((section) => section.length > 0);
-
   return {
     text,
-    agentPrompt: sections.join("\n\n"),
+    agentPrompt: text,
     invocations,
     resources,
   };

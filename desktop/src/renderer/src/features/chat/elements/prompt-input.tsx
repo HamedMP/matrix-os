@@ -19,8 +19,7 @@ export function PromptInput({
   controls,
   trailingControls,
   attachments,
-  inlineLeadingContext,
-  inlineTrailingContext,
+  editor,
   canSubmit,
   focusRequestId,
   onTextareaKeyDown,
@@ -37,10 +36,7 @@ export function PromptInput({
   ariaLabel?: string;
   footer?: ReactNode;
   attachments?: ReactNode;
-  // Structured prompt references share the editable text flow so they read as
-  // context, rather than as a detached attachment header.
-  inlineLeadingContext?: ReactNode;
-  inlineTrailingContext?: ReactNode;
+  editor?: ReactNode;
   canSubmit?: boolean;
   // Left side of the bottom row: compact pickers (provider, mode) rendered
   // Codex-style next to the send/stop control. Purely presentational slot.
@@ -54,7 +50,6 @@ export function PromptInput({
   const ref = useRef<HTMLTextAreaElement>(null);
   const submissionReady = canSubmit ?? value.trim().length > 0;
   const submitEnabled = !disabled && submissionReady;
-  const hasInlineContext = Boolean(inlineLeadingContext || inlineTrailingContext);
 
   useEffect(() => {
     if (!focusRequestId || focusRequestId <= 0) return;
@@ -76,40 +71,34 @@ export function PromptInput({
       style={{ background: "var(--bg-surface)" }}
     >
       {attachments}
-      <div
-        data-slot="prompt-input-content"
-        className="flex min-h-10 flex-wrap items-center gap-1.5 px-4 pt-3.5"
-      >
-        {inlineLeadingContext}
-        <textarea
-          ref={ref}
-          autoFocus={autoFocus}
-          disabled={disabled}
-          maxLength={maxLength}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          aria-label={ariaLabel ?? placeholder}
-          rows={1}
-          className={`${hasInlineContext ? "min-w-32 flex-none" : "w-full"} resize-none bg-transparent p-0 text-md outline-none disabled:opacity-60`}
-          style={{
-            color: "var(--text-primary)",
-            maxHeight: 220,
-            maxWidth: "100%",
-            width: hasInlineContext
-              ? `${Math.min(Math.max(value.length + 1, 8), 48)}ch`
-              : "100%",
-          }}
-          onKeyDown={(e) => {
-            if (onTextareaKeyDown?.(e)) return;
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              if (submitEnabled) onSubmit();
-            }
-          }}
-        />
-        {inlineTrailingContext}
-      </div>
+      {editor ?? (
+        <div className="px-4 pt-3.5">
+          <textarea
+            ref={ref}
+            autoFocus={autoFocus}
+            disabled={disabled}
+            maxLength={maxLength}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+            aria-label={ariaLabel ?? placeholder}
+            rows={1}
+            className="w-full resize-none bg-transparent p-0 text-md outline-none disabled:opacity-60"
+            style={{
+              color: "var(--text-primary)",
+              maxHeight: 220,
+              maxWidth: "100%",
+            }}
+            onKeyDown={(e) => {
+              if (onTextareaKeyDown?.(e)) return;
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (submitEnabled) onSubmit();
+              }
+            }}
+          />
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-1">
           {controls}
