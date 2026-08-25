@@ -1,7 +1,10 @@
 import { CanonicalChatSafeErrorSchema } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import type { RequestPrincipal } from "../request-principal.js";
-import type { ChatProviderCatalogService } from "./provider-catalog.js";
+import {
+  ProviderCatalogUnavailableError,
+  type ChatProviderCatalogService,
+} from "./provider-catalog.js";
 
 export function createChatProviderRoutes(options: {
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
@@ -12,14 +15,18 @@ export function createChatProviderRoutes(options: {
     const principal = options.getPrincipal(context);
     try {
       return context.json(await options.catalog.getCatalog(principal));
-    } catch {
-      console.warn("[chat-providers] Provider catalog request failed");
+    } catch (error: unknown) {
+      const retryable = error instanceof ProviderCatalogUnavailableError;
+      console.warn(
+        "[chat-providers] Provider catalog request failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
       return context.json({
         error: CanonicalChatSafeErrorSchema.parse({
           code: "service_unavailable",
           safeMessage: "Provider catalog is temporarily unavailable.",
-          retryable: true,
-          recoveryActions: ["retry"],
+          retryable,
+          ...(retryable ? { recoveryActions: ["retry"] } : {}),
         }),
       }, 503);
     }

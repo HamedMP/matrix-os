@@ -185,6 +185,30 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject([{ id: "provider-default", displayName: "Provider default" }]);
   });
 
+  it("advertises only attachment kinds the Pi adapter forwards", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "pi",
+        displayName: "Pi",
+        kind: "pi",
+        supportedModes: ["default"],
+        defaultModel: undefined,
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    const catalog = await service.getCatalog(principal);
+    const pi = catalog.instances.find((instance) => instance.id === "pi_default")!;
+
+    expect(pi.supports.attachments).toEqual(["structured_ref"]);
+    expect(validateChatProviderSelection({
+      catalog,
+      selection: pi.defaultSelection!,
+      requirements: { attachments: ["image"] },
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+  });
+
   it("rejects duplicate Driver projections instead of choosing one silently", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([
@@ -327,6 +351,7 @@ describe("GET /api/chat-providers", () => {
   });
 
   it("returns a generic service error when catalog projection fails", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const app = new Hono().route("/", createChatProviderRoutes({
       catalog: { getCatalog: async () => {
         throw new Error("postgres://secret-provider-catalog");
@@ -341,9 +366,29 @@ describe("GET /api/chat-providers", () => {
       error: {
         code: "service_unavailable",
         safeMessage: "Provider catalog is temporarily unavailable.",
-        retryable: true,
-        recoveryActions: ["retry"],
+        retryable: false,
       },
+    });
+    expect(warning).toHaveBeenCalledWith(
+      "[chat-providers] Provider catalog request failed:",
+      "Error",
+    );
+    warning.mockRestore();
+  });
+
+  it("marks a known inventory failure as retryable", async () => {
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: { getCatalog: async () => {
+        throw new ProviderCatalogUnavailableError();
+      } },
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers");
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: { code: "service_unavailable", retryable: true },
     });
   });
 });

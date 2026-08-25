@@ -24,6 +24,8 @@ import type { RequestPrincipal } from "../request-principal.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
+const MAX_CODING_DRIVERS = 4;
+const MAX_EFFORTS = 4;
 
 type InstanceDraft = Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">;
 
@@ -64,12 +66,15 @@ function canonicalAvailability(
 }
 
 function codingSupports(provider: AgentProviderSummary): CanonicalProviderSupport {
-  const isCodex = codingDriverKind(provider) === "codex";
+  const driverKind = codingDriverKind(provider);
+  const isCodex = driverKind === "codex";
   return {
     rootChat: true,
     resume: true,
     cancellation: true,
-    attachments: ["file", "image", "structured_ref"],
+    attachments: driverKind === "pi"
+      ? ["structured_ref"]
+      : ["file", "image", "structured_ref"],
     tools: [],
     approvals: isCodex,
     userInput: isCodex,
@@ -164,9 +169,18 @@ function systemOptions(
   runtime: CanonicalProviderDriverKind,
   providers: AgentProviderDescriptor[],
 ): CanonicalProviderOptionDescriptor[] {
-  const efforts = [...new Set(providers
-    .filter((provider) => provider.runtime === runtime)
-    .flatMap((provider) => provider.models.flatMap((model) => model.efforts)))];
+  const efforts: string[] = [];
+  for (const provider of providers) {
+    if (provider.runtime !== runtime) continue;
+    for (const model of provider.models) {
+      for (const effort of model.efforts) {
+        if (!efforts.includes(effort)) efforts.push(effort);
+        if (efforts.length === MAX_EFFORTS) break;
+      }
+      if (efforts.length === MAX_EFFORTS) break;
+    }
+    if (efforts.length === MAX_EFFORTS) break;
+  }
   return efforts.length === 0 ? [] : [{
     id: "effort",
     label: "Reasoning",
@@ -262,15 +276,16 @@ export function createChatProviderCatalogService(options: {
       }
 
       const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
-      const seenCodingDrivers = new Set<CanonicalProviderDriverKind>();
+      const seenCodingDrivers: CanonicalProviderDriverKind[] = [];
       const codingInstances: InstanceDraft[] = [];
       for (const provider of coding) {
         const instance = codingInstance(provider);
         if (instance === null) continue;
-        if (seenCodingDrivers.has(instance.driverKind)) {
+        if (seenCodingDrivers.includes(instance.driverKind)
+          || seenCodingDrivers.length === MAX_CODING_DRIVERS) {
           throw new ProviderCatalogUnavailableError();
         }
-        seenCodingDrivers.add(instance.driverKind);
+        seenCodingDrivers.push(instance.driverKind);
         codingInstances.push(instance);
       }
 
