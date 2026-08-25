@@ -10,6 +10,7 @@ export default function DesktopTaskbar({
   surfaces,
   activeTabId,
   onOpenApps,
+  onOpenFiles,
   launcherOpen,
   onActivate,
   onMinimize,
@@ -18,6 +19,7 @@ export default function DesktopTaskbar({
   surfaces: Record<string, DesktopSurface>;
   activeTabId: string | null;
   onOpenApps: () => void;
+  onOpenFiles: () => void;
   launcherOpen: boolean;
   onActivate: (tabId: string) => void;
   onMinimize: (tabId: string) => void;
@@ -26,6 +28,17 @@ export default function DesktopTaskbar({
     const mode = surfaces[tab.id]?.mode;
     return mode !== undefined && mode !== "closed";
   });
+  const filesTab = runningTabs.find((tab) => tab.kind === "files");
+  const filesSurface = filesTab ? surfaces[filesTab.id] : undefined;
+  const filesActive = Boolean(filesTab && filesSurface && activeTabId === filesTab.id && filesSurface.mode !== "minimized");
+  const otherRunningTabs = runningTabs.filter((tab) => tab.kind !== "files");
+  const filesLabel = !filesTab
+    ? "Open Files"
+    : filesSurface?.mode === "minimized"
+      ? "Restore Files"
+      : filesActive
+        ? "Hide Files to taskbar"
+        : "Focus Files";
   return (
     <nav
       aria-label="Running apps"
@@ -38,23 +51,48 @@ export default function DesktopTaskbar({
         boxShadow: "var(--shadow-2), inset 0 1px 0 color-mix(in srgb, white 72%, transparent)",
       }}
     >
-      <button
-        type="button"
-        aria-label={launcherOpen ? "Close App Launcher" : "Open App Launcher"}
-        aria-pressed={launcherOpen}
-        title="App Launcher"
-        className="flex size-11 shrink-0 items-center justify-center rounded-[13px] bg-[var(--accent)] text-[var(--text-on-accent)] shadow-[var(--shadow-1)] transition-transform hover:-translate-y-0.5"
-        onClick={onOpenApps}
-      >
-        <LayoutGrid size={21} aria-hidden="true" />
-      </button>
-      {runningTabs.length > 0 ? <>
+      <div data-testid="desktop-taskbar-static-apps" className="flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          aria-label={launcherOpen ? "Close App Launcher" : "Open App Launcher"}
+          aria-pressed={launcherOpen}
+          title="App Launcher"
+          className="flex size-11 shrink-0 items-center justify-center rounded-[13px] bg-[var(--accent)] text-[var(--text-on-accent)] shadow-[var(--shadow-1)] transition-transform hover:-translate-y-0.5"
+          onClick={onOpenApps}
+        >
+          <LayoutGrid size={21} aria-hidden="true" />
+        </button>
+        <button
+          data-testid="desktop-taskbar-files"
+          type="button"
+          aria-label={filesLabel}
+          title="Files"
+          data-active={filesActive || undefined}
+          data-minimized={filesSurface?.mode === "minimized" || undefined}
+          className="group relative flex size-11 shrink-0 items-center justify-center rounded-[13px] border border-transparent bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-[var(--shadow-1)] transition-transform hover:-translate-y-0.5 data-[active]:border-[var(--border-default)] data-[active]:text-[var(--accent)] data-[minimized]:opacity-70"
+          onClick={() => {
+            if (!filesTab) onOpenFiles();
+            else if (filesActive) onMinimize(filesTab.id);
+            else onActivate(filesTab.id);
+          }}
+        >
+          <SurfaceIcon tab={{ kind: "files", title: "Files" }} size={21} />
+          {filesTab ? (
+            <span
+              data-taskbar-running-indicator
+              aria-hidden="true"
+              className="absolute -bottom-[6px] left-1/2 size-1 -translate-x-1/2 rounded-full bg-[var(--accent)]"
+            />
+          ) : null}
+        </button>
+      </div>
+      {otherRunningTabs.length > 0 ? <>
         <span className="mx-0.5 h-8 w-px shrink-0" style={{ background: "var(--border-default)" }} />
         <div
           data-testid="desktop-taskbar-running-apps"
           className="flex min-w-0 items-center gap-1.5 overflow-x-auto px-0.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {runningTabs.map((tab) => {
+          {otherRunningTabs.map((tab) => {
           const surface = surfaces[tab.id]!;
           const active = activeTabId === tab.id && surface.mode !== "minimized";
           const label = surface.mode === "minimized"

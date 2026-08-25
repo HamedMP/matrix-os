@@ -472,6 +472,25 @@ describe("native desktop shell", () => {
     expect(dock.querySelectorAll("span.h-8.w-px")).toHaveLength(0);
   });
 
+  it("keeps Files pinned in the static Dock section and marks it when the surface is open", () => {
+    render(<NativeDesktopShell overlayOpen={false} />);
+
+    const dock = screen.getByRole("navigation", { name: "Running apps" });
+    const filesButton = dock.querySelector<HTMLButtonElement>("[data-testid='desktop-taskbar-files']");
+    expect(filesButton).toBeTruthy();
+    expect(filesButton?.querySelector("[data-taskbar-running-indicator]")).toBeNull();
+    expect(dock.querySelector("[data-testid='desktop-taskbar-running-apps']")).toBeNull();
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));
+
+    expect(filesButton?.querySelector("[data-taskbar-running-indicator]")).toBeTruthy();
+    expect(dock.querySelector("[data-testid='desktop-taskbar-running-apps']")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close Files" }));
+    expect(filesButton?.querySelector("[data-taskbar-running-indicator]")).toBeNull();
+    expect(filesButton?.isConnected).toBe(true);
+  });
+
   it("maximizes a window into the tab strip and restores it as a window", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Files" }));

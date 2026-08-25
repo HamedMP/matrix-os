@@ -262,6 +262,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
           surfaces={surfaces}
           activeTabId={activeTabId}
           onOpenApps={toggleApps}
+          onOpenFiles={() => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC))}
           launcherOpen={launcherOpen}
           onActivate={activate}
           onMinimize={minimize}
