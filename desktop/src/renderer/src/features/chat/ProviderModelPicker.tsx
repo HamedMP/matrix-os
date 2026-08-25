@@ -65,6 +65,7 @@ export function ProviderModelPicker({
   unavailableProviderLabel,
   menuSide = "top",
   onSetupAction,
+  onNewChat,
   onChange,
 }: {
   catalog: CanonicalProviderCatalog;
@@ -76,6 +77,7 @@ export function ProviderModelPicker({
     instance: CanonicalProviderInstanceDescriptor,
     action: CanonicalProviderSetupAction,
   ) => void;
+  onNewChat?: () => void;
   onChange: (selection: CanonicalComposerSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -251,9 +253,23 @@ export function ProviderModelPicker({
               />
             </label>
             {instanceLocked ? (
-              <p className="px-2 pt-2 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                Provider Instance is locked after the first Turn.
-              </p>
+              <div className="flex items-center justify-between gap-2 px-2 pt-2 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+                <span>Provider Instance is locked after the first Turn.</span>
+                {onNewChat ? (
+                  <button
+                    type="button"
+                    aria-label="Start a new chat"
+                    className="shrink-0 rounded-md px-2 py-1 font-medium hover:bg-[var(--bg-hover)]"
+                    style={{ color: "var(--text-secondary)" }}
+                    onClick={() => {
+                      setOpen(false);
+                      onNewChat();
+                    }}
+                  >
+                    New chat
+                  </button>
+                ) : null}
+              </div>
             ) : null}
             <div ref={listboxRef} role="listbox" aria-label="Models and providers" className="mt-1 max-h-72 overflow-y-auto">
               {activeInstance ? (

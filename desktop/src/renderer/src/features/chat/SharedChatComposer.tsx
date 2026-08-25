@@ -25,6 +25,12 @@ import {
 
 export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
 
+export function supportsNativeFileAttachments(
+  instance: CanonicalProviderInstanceDescriptor | undefined,
+): boolean {
+  return Boolean(instance?.supports.attachments.some((kind) => kind === "file" || kind === "image"));
+}
+
 function selectedOptionValue(
   selection: CanonicalComposerSelection,
   optionId: string,
@@ -234,6 +240,7 @@ export function SharedChatComposer({
   resourceSearch,
   onAttach,
   onProviderSetup,
+  onNewChat,
   attachments,
   leadingControls,
   footer,
@@ -265,6 +272,7 @@ export function SharedChatComposer({
     instance: CanonicalProviderInstanceDescriptor,
     action: CanonicalProviderSetupAction,
   ) => void;
+  onNewChat?: () => void;
   attachments?: ReactNode;
   leadingControls?: ReactNode;
   footer?: ReactNode;
@@ -299,7 +307,7 @@ export function SharedChatComposer({
     if (suggestionKey === null) setDismissedSuggestionKey(null);
   }, [suggestionKey]);
   const slashEntries = useMemo(() => listCanonicalSlashEntries(instance), [instance]);
-  const canAttach = Boolean(onAttach && (!instance || instance.supports.attachments.length));
+  const canAttach = Boolean(onAttach && supportsNativeFileAttachments(instance));
   const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -537,6 +545,7 @@ export function SharedChatComposer({
               unavailableProviderLabel={unavailableProviderLabel}
               menuSide={menuSide}
               onSetupAction={onProviderSetup}
+              onNewChat={onNewChat}
               onChange={onSelectionChange}
             />
             {selection && !hasEffortOption ? (

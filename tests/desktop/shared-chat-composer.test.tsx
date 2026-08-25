@@ -173,6 +173,7 @@ function Harness({
   onProviderSetup = vi.fn(),
   initialValue = "",
   initialReferenceTokens = [],
+  onNewChat,
 }: {
   locked?: boolean;
   onSubmit?: (submission: SharedChatComposerSubmission) => void;
@@ -182,6 +183,7 @@ function Harness({
   onProviderSetup?: (instanceId: string, actionId: string) => void;
   initialValue?: string;
   initialReferenceTokens?: ComposerReferenceToken[];
+  onNewChat?: () => void;
 }) {
   const catalog = catalogFixture();
   const [value, setValue] = useState(initialValue);
@@ -201,6 +203,7 @@ function Harness({
       selection={selection}
       onSelectionChange={setSelection}
       instanceLocked={locked}
+      onNewChat={onNewChat}
       resources={[
         { kind: "file", id: "src-index", label: "src/index.ts" },
         { kind: "folder", id: "src", label: "src" },
@@ -258,6 +261,34 @@ describe("SharedChatComposer", () => {
     fireEvent.click(screen.getByRole("option", { name: "Files and folders" }));
 
     expect(onAttach).toHaveBeenCalledOnce();
+  });
+
+  it("does not expose the native picker for structured-reference-only harnesses", () => {
+    const catalog = catalogFixture();
+    catalog.instances.push({
+      ...catalog.instances[2]!,
+      id: "pi_default",
+      driverKind: "pi",
+      displayName: "Pi",
+      supports: { ...catalog.instances[2]!.supports, attachments: ["structured_ref"] },
+      defaultSelection: { instanceId: "pi_default", model: "gpt-5.6-sol" },
+    });
+    const selection = createCanonicalComposerSelection(catalog, "pi_default")!;
+    render(
+      <SharedChatComposer
+        value=""
+        onChange={() => undefined}
+        onSubmit={() => undefined}
+        busy={false}
+        catalog={catalog}
+        selection={selection}
+        onSelectionChange={() => undefined}
+        instanceLocked={false}
+        onAttach={() => undefined}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Add files and more" })).toBeNull();
   });
 
   it("uses the same Add palette for @ and the paperclip", async () => {
@@ -458,7 +489,8 @@ describe("SharedChatComposer", () => {
   });
 
   it("keeps model selection available but explains the locked Instance", () => {
-    render(<Harness locked />);
+    const onNewChat = vi.fn();
+    render(<Harness locked onNewChat={onNewChat} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     expect(screen.getByText("Provider Instance is locked after the first Turn.")).toBeTruthy();
@@ -467,6 +499,10 @@ describe("SharedChatComposer", () => {
     fireEvent.click(screen.getByRole("option", { name: /GPT-5.6-Terra/ }));
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("GPT-5.6-Terra");
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+    expect(onNewChat).toHaveBeenCalledOnce();
   });
 
   it("keeps unavailable harness setup reachable after the Instance locks", () => {

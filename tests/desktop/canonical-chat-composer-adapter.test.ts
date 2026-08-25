@@ -8,8 +8,11 @@ import {
   applyCanonicalSelectionToAgentDraft,
   createLegacyGlobalProviderCatalog,
   createLegacyProjectProviderCatalog,
+  filterCatalogForLegacyGlobal,
   filterCatalogForLegacyProject,
   instanceIdForLegacyProvider,
+  legacyGlobalSelectionExecutable,
+  legacyProjectSelectionExecutable,
   permissionModeForAgentDraft,
 } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
 import { createCanonicalComposerSelection } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
@@ -58,13 +61,48 @@ function summaryFixture(): RuntimeSummary {
 }
 
 describe("canonical composer legacy Project adapter", () => {
-  it("fails Global Chat closed while the canonical catalog is loading", () => {
+  it("keeps only the executable legacy Hermes route available while the canonical catalog loads", () => {
     const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
     expect(catalog.instances).toMatchObject([
-      { id: "hermes_default", driverKind: "hermes", availability: "unavailable" },
+      { id: "hermes_default", driverKind: "hermes", availability: "available" },
       { id: "codex_default", driverKind: "codex", availability: "unavailable" },
     ]);
-    expect(createCanonicalComposerSelection(catalog)).toBeNull();
+    expect(createCanonicalComposerSelection(catalog)).toMatchObject({
+      instanceId: "hermes_default",
+      model: "provider-default",
+    });
+  });
+
+  it("only exposes capabilities the legacy Global Hermes route can execute", () => {
+    const project = createLegacyProjectProviderCatalog(summaryFixture());
+    const canonical: CanonicalProviderCatalog = {
+      ...project,
+      instances: [{
+        ...project.instances[0]!,
+        id: "hermes_default",
+        driverKind: "hermes",
+        models: [
+          { ...project.instances[0]!.models[0]!, id: "current", displayName: "Current model" },
+          { ...project.instances[0]!.models[0]!, id: "other", displayName: "Other model" },
+        ],
+        options: project.instances[0]!.options,
+        defaultSelection: { instanceId: "hermes_default", model: "current" },
+      }, ...project.instances],
+    };
+
+    const globalCatalog = filterCatalogForLegacyGlobal(canonical);
+
+    expect(globalCatalog.instances.find((instance) => instance.id === "hermes_default"))
+      .toMatchObject({
+        availability: "available",
+        models: [
+          { id: "current", availability: "available" },
+          { id: "other", availability: "unavailable" },
+        ],
+        options: [{ id: "effort" }],
+      });
+    expect(globalCatalog.instances.find((instance) => instance.driverKind === "codex"))
+      .toMatchObject({ availability: "unavailable", models: [{ availability: "unavailable" }] });
   });
 
   it("projects current coding providers into canonical Instances", () => {
@@ -113,9 +151,31 @@ describe("canonical composer legacy Project adapter", () => {
         availability: "unavailable",
         models: [{ availability: "unavailable" }],
       },
-      { id: "codex_default", availability: "available" },
-      { id: "claude_code_default", availability: "available" },
+      { id: "codex_default", availability: "available", options: [{ id: "effort" }], models: [{ displayName: "Provider default" }] },
+      { id: "claude_code_default", availability: "available", options: [], models: [{ displayName: "Provider default" }] },
     ]);
+  });
+
+  it("blocks legacy dispatch when the selected controls cannot be represented by its request", () => {
+    const summary = summaryFixture();
+    const globalCatalog = filterCatalogForLegacyGlobal(createLegacyGlobalProviderCatalog({ hasProject: true }));
+    const globalSelection = createCanonicalComposerSelection(globalCatalog)!;
+    expect(legacyGlobalSelectionExecutable(globalCatalog, globalSelection)).toBe(true);
+    expect(legacyGlobalSelectionExecutable(globalCatalog, {
+      ...globalSelection,
+      options: [{ id: "effort", value: "high" }],
+    })).toBe(false);
+
+    const projectCatalog = filterCatalogForLegacyProject(
+      createLegacyProjectProviderCatalog(summary),
+      summary,
+    );
+    const projectSelection = createCanonicalComposerSelection(projectCatalog, "codex_default")!;
+    expect(legacyProjectSelectionExecutable(projectCatalog, summary, projectSelection)).toBe(true);
+    expect(legacyProjectSelectionExecutable(projectCatalog, summary, {
+      ...projectSelection,
+      options: [{ id: "effort", value: "high" }],
+    })).toBe(false);
   });
 
   it("does not let a stale legacy summary disable an available canonical Codex Instance", () => {

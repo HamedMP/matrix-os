@@ -53,7 +53,13 @@ function encodeMarkdownDestination(value: string): string {
 
 export function serializeComposerReferenceToken(token: ComposerReferenceToken): string {
   if (token.type === "invocation") return token.invocation.invocation;
-  return `[${escapeMarkdownLabel(token.resource.label)}](${encodeMarkdownDestination(token.resource.id)})`;
+  // Opaque renderer ids are safe token identities, not useful execution
+  // context. Preserve the bounded relative path in the prompt destination so
+  // legacy agents can resolve the selected resource without seeing a fake id.
+  const destination = /^(?:file|folder)_[a-f0-9]{16}$/.test(token.resource.id)
+    ? token.resource.label
+    : token.resource.id;
+  return `[${escapeMarkdownLabel(token.resource.label)}](${encodeMarkdownDestination(destination)})`;
 }
 
 export function buildSharedChatComposerSubmission(

@@ -1,11 +1,36 @@
 import {
   FileBrowseResponseSchema,
   FileSearchResponseSchema,
+  CanonicalChatResourceReferenceSchema,
   type CanonicalChatResourceReference,
 } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
 
 const MAX_RESULTS = 30;
+
+function stablePathHash(value: string): string {
+  let left = 0x811c9dc5;
+  let right = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    left = Math.imul(left ^ code, 0x01000193) >>> 0;
+    right = Math.imul(right ^ code, 0x85ebca6b) >>> 0;
+  }
+  return `${left.toString(16).padStart(8, "0")}${right.toString(16).padStart(8, "0")}`;
+}
+
+export function canonicalResourceReferenceForPath(
+  kind: "file" | "folder",
+  path: string,
+): CanonicalChatResourceReference {
+  const direct = CanonicalChatResourceReferenceSchema.safeParse({ kind, id: path, label: path });
+  if (direct.success) return direct.data;
+  return CanonicalChatResourceReferenceSchema.parse({
+    kind,
+    id: `${kind}_${stablePathHash(path)}`,
+    label: path,
+  });
+}
 
 export async function searchHomeChatResources(
   api: Pick<ApiClient, "get">,
@@ -18,11 +43,7 @@ export async function searchHomeChatResources(
       if (!entry || typeof entry !== "object") return [];
       const { name, type } = entry as { name?: unknown; type?: unknown };
       if (typeof name !== "string" || (type !== "file" && type !== "directory")) return [];
-      return [{
-        kind: type === "directory" ? "folder" as const : "file" as const,
-        id: name,
-        label: name,
-      }];
+      return [canonicalResourceReferenceForPath(type === "directory" ? "folder" : "file", name)];
     });
   }
   const response = await api.get<{ results?: unknown; entries?: unknown }>(
@@ -38,10 +59,14 @@ export async function searchHomeChatResources(
         ? (item as { path: string }).path
         : null;
     if (!path) return [];
-    const kind = item && typeof item === "object" && (item as { kind?: unknown }).kind === "directory"
+    const itemType = item && typeof item === "object"
+      ? (item as { kind?: unknown; type?: unknown }).kind
+        ?? (item as { type?: unknown }).type
+      : undefined;
+    const kind = itemType === "directory"
       ? "folder" as const
       : "file" as const;
-    return [{ kind, id: path, label: path }];
+    return [canonicalResourceReferenceForPath(kind, path)];
   });
 }
 
@@ -57,11 +82,10 @@ export async function searchProjectChatResources(
   const files = query.trim()
     ? FileSearchResponseSchema.parse(response).matches.items
     : FileBrowseResponseSchema.parse(response).entries.items;
-  return files.map((file) => ({
-    kind: file.kind === "directory" ? "folder" as const : "file" as const,
-    id: file.path,
-    label: file.path,
-  }));
+  return files.map((file) => canonicalResourceReferenceForPath(
+    file.kind === "directory" ? "folder" : "file",
+    file.path,
+  ));
 }
 
 export async function searchGlobalChatResources(

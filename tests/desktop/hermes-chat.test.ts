@@ -79,6 +79,23 @@ describe("useHermesChat", () => {
         content: "Can't reach Matrix OS. Check your connection.",
       }),
     ]);
+    expect(useHermesChat.getState().providerInstanceLocked).toBe(false);
+  });
+
+  it("locks the provider only after the Gateway accepts the first Turn", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId!;
+    expect(useHermesChat.getState().providerInstanceLocked).toBe(false);
+
+    useHermesChat.getState().ingest({
+      type: "kernel:init",
+      sessionId: "conversation-one",
+      requestId,
+    });
+
+    expect(useHermesChat.getState().providerInstanceLocked).toBe(true);
+    useHermesChat.getState().newChat();
+    expect(useHermesChat.getState().providerInstanceLocked).toBe(false);
   });
 
   it("returns to idle when abort cannot be sent", () => {

@@ -17,7 +17,11 @@ import {
   type SharedChatComposerSubmission,
 } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
-import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
+import {
+  createLegacyGlobalProviderCatalog,
+  filterCatalogForLegacyGlobal,
+  legacyGlobalSelectionExecutable,
+} from "./canonical-composer-adapter";
 import {
   applyCanonicalComposerPreference,
   createCanonicalComposerSelection,
@@ -55,7 +59,9 @@ export function HermesPane() {
   const conversationContext = useHermesChat((state) => state.conversationContext);
   const contextStatus = useHermesChat((state) => state.contextStatus);
   const contextError = useHermesChat((state) => state.contextError);
+  const providerInstanceLocked = useHermesChat((state) => state.providerInstanceLocked);
   const send = useHermesChat((state) => state.send);
+  const newChat = useHermesChat((state) => state.newChat);
   const abort = useHermesChat((state) => state.abort);
   const updateConversationContext = useHermesChat((state) => state.updateConversationContext);
   const recordRecentHermesConversation = useTabs((state) => state.recordRecentHermesConversation);
@@ -72,7 +78,11 @@ export function HermesPane() {
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const providerCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const canonicalProviderCatalog = useChatProviderCatalog(fallbackCatalog).catalog;
+  const providerCatalog = useMemo(
+    () => filterCatalogForLegacyGlobal(canonicalProviderCatalog),
+    [canonicalProviderCatalog],
+  );
   const runtimeProviderSummary = useCodingAgentWorkspace((state) => state.summary);
   const runtimeProviderStatus = useCodingAgentWorkspace((state) => state.status);
   const refreshRuntimeProviderSummary = useCodingAgentWorkspace((state) => state.refresh);
@@ -126,8 +136,16 @@ export function HermesPane() {
     || !sessionId;
 
   const submit = async (submission: SharedChatComposerSubmission) => {
+    const selectedInstance = providerCatalog.instances.find((candidate) => (
+      candidate.id === canonicalSelection?.instanceId
+    ));
+    const supportsNativeAttachments = selectedInstance?.supports.attachments.some((kind) => (
+      kind === "file" || kind === "image"
+    )) ?? false;
     if (
       uploadingAttachments
+      || !legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
+      || (attachments.items.length > 0 && !supportsNativeAttachments)
       || !canSubmitChatDraft(
         draft,
         status,
@@ -172,13 +190,14 @@ export function HermesPane() {
     if (!api || !sessionId || contextControlsDisabled) return;
     void updateConversationContext(api, sessionId, projectId);
   }, [api, contextControlsDisabled, sessionId, updateConversationContext]);
-  const composerReady = canSubmitChatDraft(
+  const composerReady = legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
+    && canSubmitChatDraft(
     draft,
     status,
     attachments.items.length,
     contextPreventsSend,
     referenceTokens.length,
-  );
+    );
   const resourceSearch = useCallback((query: string) => {
     if (!api) return Promise.resolve([]);
     const projectId = conversationContext?.status === "ready" ? conversationContext.projectId : null;
@@ -228,7 +247,8 @@ export function HermesPane() {
             setCanonicalSelection(selection);
           }}
           onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
-          instanceLocked={!empty}
+          onNewChat={newChat}
+          instanceLocked={providerInstanceLocked}
           resources={projects.map((project) => ({
             kind: "project" as const,
             id: project.slug,

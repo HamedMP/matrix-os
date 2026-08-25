@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSummary, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import {
   formatRelativeTime,
+  buildProjectThreadListModel,
   ProjectThreadList,
   threadRailStatus,
 } from "../../desktop/src/renderer/src/features/project/ProjectThreadList";
@@ -145,7 +146,12 @@ describe("ProjectThreadList status rail", () => {
         projectLabel="Matrix OS"
         summary={summaryFixture()}
         workspace={workspace}
-        createdThreadHandles={[thread({ id: "thread-new", title: "New project chat", projectId: "matrix-os" })]}
+        createdThreadHandles={[thread({
+          id: "thread-new",
+          title: "New project chat",
+          projectId: "matrix-os",
+          updatedAt: "2026-07-15T12:01:00.000Z",
+        })]}
         status="ready"
         error={null}
         selectedThreadId={null}
@@ -157,6 +163,49 @@ describe("ProjectThreadList status rail", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat New project chat" })).toBeTruthy();
+  });
+
+  it("lets authoritative workspace rows replace optimistic creates", () => {
+    const workspace = workspaceFixture();
+    workspace.projectThreads.items = [thread({
+      id: "thread-new",
+      title: "Authoritative title",
+      projectId: "matrix-os",
+      status: "completed",
+      updatedAt: "2026-07-15T12:00:00.000Z",
+    })];
+    const model = buildProjectThreadListModel(
+      workspace,
+      summaryFixture(),
+      "matrix-os",
+      [thread({ id: "thread-new", title: "Optimistic title", projectId: "matrix-os" })],
+    );
+
+    expect(model.projectThreads).toEqual([
+      expect.objectContaining({ id: "thread-new", title: "Authoritative title", status: "completed" }),
+    ]);
+  });
+
+  it("does not resurrect an optimistic row after a newer workspace omits or moves it", () => {
+    const workspace = workspaceFixture();
+    workspace.projectThreads.items = [];
+    workspace.taskThreads.items = [];
+    workspace.updatedAt = "2026-07-15T12:00:00.000Z";
+    const created = thread({
+      id: "thread-new",
+      title: "Optimistic title",
+      projectId: "matrix-os",
+      updatedAt: "2026-07-15T11:59:00.000Z",
+    });
+
+    expect(buildProjectThreadListModel(workspace, summaryFixture(), "matrix-os", [created]).projectThreads)
+      .toEqual([]);
+
+    const movedSummary = summaryFixture();
+    movedSummary.activeThreads.items = [{ ...created, projectId: "another-project" }];
+    workspace.updatedAt = "2026-07-15T11:58:00.000Z";
+    expect(buildProjectThreadListModel(workspace, movedSummary, "matrix-os", [created]).projectThreads)
+      .toEqual([]);
   });
 
   it("renders a status pill and relative timestamp per row, none for archived", () => {

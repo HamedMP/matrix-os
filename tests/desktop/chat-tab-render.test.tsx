@@ -383,7 +383,8 @@ describe("ChatTab", () => {
     expect(screen.getByRole("button", { name: "Build a new feature, app, or tool" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-provider-instance")).toBe("");
+    expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-provider-instance"))
+      .toBe("hermes_default");
     expect(screen.queryByTestId("chat-empty-logo")).toBeNull();
     expect(screen.getByTestId("chat-empty-content").className).toContain("justify-center");
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
@@ -564,7 +565,7 @@ describe("ChatTab", () => {
     ));
   });
 
-  it("changes the draft harness without navigating away from Global Chat", async () => {
+  it("keeps non-Hermes harnesses visible but unavailable on the legacy Global route", async () => {
     const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
     const availableCatalog = {
       ...catalog,
@@ -587,11 +588,10 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Codex harness, Available" }));
-    fireEvent.click(screen.getByRole("option", { name: /Codex · Available/ }));
-
-    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
-      .toContain("Provider default"));
+    const codex = await screen.findByRole("button", { name: "Codex harness, Unavailable" });
+    expect(codex.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
+      .toContain("Current model");
     expect(useTabs.getState().tabs).not.toContainEqual(expect.objectContaining({ kind: "project" }));
   });
 
@@ -655,7 +655,7 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Claude Code harness, Authentication required" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Claude Code harness, Unavailable" }));
     fireEvent.click(await screen.findByRole("button", { name: "Connect Claude" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(

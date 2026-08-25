@@ -36,13 +36,13 @@ export function createLegacyGlobalProviderCatalog({
         id: "hermes_default",
         driverKind: "hermes",
         displayName: "Hermes",
-        availability: "unavailable",
+        availability: "available",
         workspaceRequirement: "none",
         catalogRevision: revision,
         models: [{
           id: "provider-default",
           displayName: "Current model",
-          availability: "unavailable",
+          availability: "available",
           capabilities: ["reasoning", "tools"],
           supportsVision: false,
           supportsToolUse: true,
@@ -58,6 +58,7 @@ export function createLegacyGlobalProviderCatalog({
         skills: [],
         commands: [],
         setupActions: [],
+        defaultSelection: { instanceId: "hermes_default", model: "provider-default" },
         supports: {
           rootChat: true,
           resume: true,
@@ -236,6 +237,46 @@ export function createLegacyProjectProviderCatalog(
   });
 }
 
+function unavailableInstance(
+  instance: CanonicalProviderInstanceDescriptor,
+): CanonicalProviderInstanceDescriptor {
+  const { defaultSelection: _defaultSelection, ...descriptor } = instance;
+  return {
+    ...descriptor,
+    availability: "unavailable",
+    models: instance.models.map((model) => ({ ...model, availability: "unavailable" })),
+  };
+}
+
+/**
+ * The pre-canonical Global Chat websocket always dispatches through Hermes and
+ * carries neither an Instance/model selection nor provider-specific options.
+ * Keep the complete catalog inspectable, but make only the current Hermes
+ * model executable so the selector never promises a route the request omits.
+ */
+export function filterCatalogForLegacyGlobal(
+  catalog: CanonicalProviderCatalog,
+): CanonicalProviderCatalog {
+  const instances = catalog.instances.map((instance) => {
+    if (instance.driverKind !== "hermes") return unavailableInstance(instance);
+    const currentModelId = instance.defaultSelection?.model
+      ?? instance.models.find((model) => model.availability === "available")?.id;
+    return {
+      ...instance,
+      models: instance.models.map((model) => ({
+        ...model,
+        availability: instance.availability === "available" && model.id === currentModelId
+          ? "available" as const
+          : "unavailable" as const,
+      })),
+      ...(instance.availability === "available" && currentModelId
+        ? { defaultSelection: { instanceId: instance.id, model: currentModelId } }
+        : {}),
+    };
+  });
+  return CanonicalProviderCatalogSchema.parse({ ...catalog, instances });
+}
+
 export function filterCatalogForLegacyProject(
   catalog: CanonicalProviderCatalog,
   summary: RuntimeSummary,
@@ -250,17 +291,25 @@ export function filterCatalogForLegacyProject(
   // leave the legacy coding provider in the draft and run the wrong harness.
   const instances = catalog.instances.map((instance) => {
     const driver = catalog.drivers.find((candidate) => candidate.kind === instance.driverKind);
-    if (executableDriverKinds.has(instance.driverKind)
-      || driver?.capabilityClass === "coding_agent") return instance;
-    const { defaultSelection: _defaultSelection, ...descriptor } = instance;
-    return {
-      ...descriptor,
-      availability: "unavailable" as const,
-      models: instance.models.map((model) => ({
-        ...model,
-        availability: "unavailable" as const,
-      })),
-    };
+    if (executableDriverKinds.has(instance.driverKind)) {
+      const provider = providerForDriver(summary, instance.driverKind);
+      const defaultModelId = provider?.defaultModel
+        ?? instance.defaultSelection?.model
+        ?? instance.models.find((model) => model.availability === "available")?.id;
+      const defaultModel = instance.models.find((model) => model.id === defaultModelId)
+        ?? instance.models[0];
+      if (!defaultModel) return unavailableInstance(instance);
+      return {
+        ...instance,
+        models: [{ ...defaultModel, id: defaultModelId ?? defaultModel.id, displayName: "Provider default" }],
+        defaultSelection: {
+          instanceId: instance.id,
+          model: defaultModelId ?? defaultModel.id,
+        },
+      };
+    }
+    if (driver?.capabilityClass === "coding_agent") return instance;
+    return unavailableInstance(instance);
   });
   return {
     ...catalog,
@@ -269,6 +318,48 @@ export function filterCatalogForLegacyProject(
     )),
     instances,
   };
+}
+
+function optionValuesAreDefaults(
+  instance: CanonicalProviderInstanceDescriptor,
+  selection: CanonicalComposerSelection,
+): boolean {
+  return instance.options.every((option) => {
+    const selected = selection.options.find((candidate) => candidate.id === option.id)?.value;
+    return selected === undefined || selected === option.defaultValue;
+  });
+}
+
+export function legacyGlobalSelectionExecutable(
+  catalog: CanonicalProviderCatalog,
+  selection: CanonicalComposerSelection | null,
+): boolean {
+  if (!selection) return false;
+  const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
+  const model = instance?.models.find((candidate) => candidate.id === selection.model);
+  return instance?.driverKind === "hermes"
+    && instance.availability === "available"
+    && model?.availability === "available"
+    && selection.interactionMode === "default"
+    && selection.permissionMode === "supervised"
+    && optionValuesAreDefaults(instance, selection);
+}
+
+export function legacyProjectSelectionExecutable(
+  catalog: CanonicalProviderCatalog,
+  summary: RuntimeSummary,
+  selection: CanonicalComposerSelection | null,
+): boolean {
+  if (!selection) return false;
+  const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
+  const model = instance?.models.find((candidate) => candidate.id === selection.model);
+  return Boolean(
+    instance
+    && providerForDriver(summary, instance.driverKind)
+    && instance.availability === "available"
+    && model?.availability === "available"
+    && optionValuesAreDefaults(instance, selection),
+  );
 }
 
 export function instanceIdForLegacyProvider(

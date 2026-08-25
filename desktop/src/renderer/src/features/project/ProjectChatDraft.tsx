@@ -17,6 +17,7 @@ import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
 import {
   SharedChatComposer,
+  supportsNativeFileAttachments,
   type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "../chat/SharedChatComposer";
@@ -27,6 +28,7 @@ import {
   createLegacyProjectProviderCatalog,
   filterCatalogForLegacyProject,
   instanceIdForLegacyProvider,
+  legacyProjectSelectionExecutable,
   permissionModeForAgentDraft,
 } from "../chat/canonical-composer-adapter";
 import {
@@ -234,11 +236,11 @@ export function ProjectChatDraft({
   const selectedInstance = projectCatalog.instances.find((instance) => (
     instance.id === canonicalSelection?.instanceId
   ));
-  const canonicalBlocked = !canonicalSelection
-    || selectedInstance?.availability !== "available"
-    || !selectedInstance.models.some((model) => (
-      model.id === canonicalSelection.model && model.availability === "available"
-    ));
+  const canonicalBlocked = !legacyProjectSelectionExecutable(
+    projectCatalog,
+    summary,
+    canonicalSelection,
+  );
   const handleProviderSetup = useProviderSetup(summary.providers, refreshSummary);
 
   useEffect(() => {
@@ -264,6 +266,10 @@ export function ProjectChatDraft({
 
   async function submit(submission: SharedChatComposerSubmission) {
     if (canonicalBlocked || submitting || submitInFlightRef.current) return;
+    const selectedInstance = projectCatalog.instances.find((instance) => (
+      instance.id === canonicalSelection?.instanceId
+    ));
+    if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) return;
     let effective = canonicalSelection
       ? applyCanonicalSelectionToAgentDraft(
           summary,

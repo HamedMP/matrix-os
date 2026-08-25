@@ -88,9 +88,24 @@ export function buildProjectThreadListModel(
     : [];
   const otherThreads = grouped ? [...grouped.unlistedTaskThreads] : [];
 
+  const authoritativeWorkspaceIds = new Set([
+    ...projectThreads,
+    ...taskGroups.flatMap((group) => group.threads),
+    ...otherThreads,
+  ].map((thread) => thread.id));
+  const liveThreads = [...summary.activeThreads.items, ...summary.attentionThreads.items];
+  const liveThreadIds = new Set(liveThreads.map((thread) => thread.id));
   const overlay = new Map<string, AgentThreadSummary>();
   for (const thread of createdThreadHandles) {
-    if (thread.projectId === projectId) overlay.set(thread.id, thread);
+    const workspaceIsNewer = workspace
+      ? Date.parse(workspace.updatedAt) >= Date.parse(thread.updatedAt)
+      : false;
+    if (
+      thread.projectId === projectId
+      && !authoritativeWorkspaceIds.has(thread.id)
+      && !liveThreadIds.has(thread.id)
+      && !workspaceIsNewer
+    ) overlay.set(thread.id, thread);
   }
   for (const thread of summary.activeThreads.items) {
     if (thread.projectId === projectId) overlay.set(thread.id, thread);

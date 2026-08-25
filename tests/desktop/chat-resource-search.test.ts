@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  canonicalResourceReferenceForPath,
   searchGlobalChatResources,
   searchHomeChatResources,
   searchProjectChatResources,
@@ -34,7 +35,7 @@ describe("Global Chat resource search", () => {
     await expect(searchGlobalChatResources({ get }, "matrix-os", "main")).resolves.toEqual([
       {
         kind: "file",
-        id: "apps/games/tetris/src/main.tsx",
+        id: expect.stringMatching(/^file_[a-f0-9]{16}$/),
         label: "apps/games/tetris/src/main.tsx",
       },
     ]);
@@ -55,11 +56,31 @@ describe("Global Chat resource search", () => {
     }));
 
     await expect(searchProjectChatResources({ get }, "matrix-os", "main")).resolves.toEqual([
-      { kind: "file", id: "src/main.tsx", label: "src/main.tsx" },
+      { kind: "file", id: expect.stringMatching(/^file_[a-f0-9]{16}$/), label: "src/main.tsx" },
     ]);
     expect(get).toHaveBeenCalledOnce();
     expect(get).toHaveBeenCalledWith(
       "/api/coding-agents/files/search?projectId=matrix-os&query=main&limit=30",
     );
+  });
+
+  it("creates schema-valid opaque ids and preserves directory types", async () => {
+    expect(canonicalResourceReferenceForPath("folder", "src/features/chat"))
+      .toEqual({
+        kind: "folder",
+        id: expect.stringMatching(/^folder_[a-f0-9]{16}$/),
+        label: "src/features/chat",
+      });
+
+    const get = vi.fn(async () => ({
+      results: [{ path: "src/features/chat", type: "directory" }],
+    }));
+    await expect(searchHomeChatResources({ get }, "chat")).resolves.toEqual([
+      {
+        kind: "folder",
+        id: expect.stringMatching(/^folder_[a-f0-9]{16}$/),
+        label: "src/features/chat",
+      },
+    ]);
   });
 });
