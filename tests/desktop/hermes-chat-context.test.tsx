@@ -74,7 +74,8 @@ describe("Hermes chat project context", () => {
       "/api/conversations/conversation-one/context",
       { projectId: "matrix-os" },
     ));
-    expect(await screen.findByRole("button", { name: "Project Matrix OS" })).toBeTruthy();
+    const selectedProject = await screen.findByRole("button", { name: "Project Matrix OS" });
+    expect(selectedProject.textContent).toContain("Matrix OS");
     expect(screen.queryByRole("button", { name: "Repository FinnaAI/matrix-os" })).toBeNull();
   });
 
@@ -104,9 +105,9 @@ describe("Hermes chat project context", () => {
     });
     render(<ChatTab />);
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Reply to Hermes…" }), {
-      target: { value: "continue" },
-    });
+    const composer = screen.getByRole("textbox", { name: "Reply to Hermes…" });
+    composer.textContent = "continue";
+    fireEvent.input(composer);
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("alert").textContent).toContain("project is unavailable");
     expect(screen.getByRole("button", { name: "Choose another project" })).toBeTruthy();

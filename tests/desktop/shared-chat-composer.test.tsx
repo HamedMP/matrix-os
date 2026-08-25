@@ -448,6 +448,22 @@ describe("SharedChatComposer", () => {
       .toContain("GPT-5.6-Terra");
   });
 
+  it("keeps unavailable harness setup reachable after the Instance locks", () => {
+    const onProviderSetup = vi.fn();
+    render(<Harness locked onProviderSetup={onProviderSetup} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    const opencode = screen.getByRole("button", { name: "OpenCode harness, Authentication required" });
+    expect(opencode.getAttribute("aria-disabled")).toBe("false");
+
+    fireEvent.click(opencode);
+    fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
+
+    expect(onProviderSetup).toHaveBeenCalledWith("opencode_default", "opencode_connect");
+    expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
+      .toContain("GPT-5.6-Sol");
+  });
+
   it("turns a selected slash entry into an inline invocation token without an X control", async () => {
     render(<Harness initialValue="/" />);
     const input = screen.getByLabelText("Message chat");
@@ -519,6 +535,10 @@ describe("SharedChatComposer", () => {
     expect(skill.className).not.toContain("border");
     expect(resource.className).toContain("text-md");
     expect(skill.className).toContain("text-md");
+    expect(resource.className).toContain("align-baseline");
+    expect(skill.className).toContain("align-baseline");
+    expect(resource.className).not.toContain("align-[-0.08em]");
+    expect(skill.className).not.toContain("align-[-0.08em]");
     expect(resource.className).not.toContain("text-[0.92em]");
     expect(screen.queryByRole("button", { name: "Remove file src/index.ts" })).toBeNull();
     expect(resource.querySelector('[data-file-kind="code"]')).toBeTruthy();

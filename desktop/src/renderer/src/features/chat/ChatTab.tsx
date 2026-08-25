@@ -190,7 +190,7 @@ export function HermesPane() {
     <ConversationContextPicker
       context={conversationContext}
       disabled={contextControlsDisabled}
-      compact
+      compact={!conversationContext}
       triggerLabel={conversationContext ? undefined : "Choose project for chat"}
       onSelect={updateProjectContext}
       onRemove={() => updateProjectContext(null)}

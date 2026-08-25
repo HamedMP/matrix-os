@@ -316,9 +316,9 @@ async function resolveEligibleProjectWorkingDirectory(
     }
 
     const registryEntry = join(projectsRoot, project.slug);
+    if (realLocalPath === registryEntry) return realLocalPath;
     if (
-      realLocalPath === registryEntry
-      || realLocalPath.startsWith(`${registryEntry}${sep}`)
+      realLocalPath.startsWith(`${registryEntry}${sep}`)
       || registryEntry.startsWith(`${realLocalPath}${sep}`)
     ) {
       return null;

@@ -164,8 +164,10 @@ export function ProviderModelPicker({
                     const instance = catalog.instances.find((candidate) => candidate.driverKind === driver.kind);
                     const unavailable = !instance || instance.availability !== "available";
                     const locked = instanceLocked && instance?.id !== selection?.instanceId;
+                    const setupBrowsable = unavailable
+                      && Boolean(onSetupAction && instance?.setupActions.length);
                     const disabled = !instance
-                      || locked
+                      || (locked && !setupBrowsable)
                       || (unavailable && instance.setupActions.length === 0);
                     const availability = instance ? availabilityLabel(instance) : "Unavailable";
                     const tooltipLabel = unavailable
@@ -194,7 +196,7 @@ export function ProviderModelPicker({
                                 : "transparent",
                             }}
                             onClick={() => {
-                              if (!instance || locked) return;
+                              if (!instance || (locked && !setupBrowsable)) return;
                               setActiveInstanceId(instance.id);
                               setQuery("");
                               window.requestAnimationFrame(() => searchRef.current?.focus());

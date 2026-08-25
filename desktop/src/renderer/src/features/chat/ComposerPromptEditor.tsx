@@ -58,10 +58,10 @@ function ComposerToken({ token }: { token: ComposerReferenceToken }) {
       data-slot="composer-reference-token"
       data-reference-kind={kind}
       data-testid={`composer-reference-token-${kind}-${id}`}
-      className="relative mx-px inline-flex max-w-64 select-none items-center gap-1 align-[-0.08em] text-md leading-relaxed font-medium"
+      className="relative mx-px inline-flex max-w-64 select-none items-baseline gap-1 align-baseline text-md leading-relaxed font-medium"
       style={{ color: "var(--accent)" }}
     >
-      <span data-slot="composer-reference-token-icon" className="inline-flex shrink-0 items-center justify-center">
+      <span data-slot="composer-reference-token-icon" className="inline-flex shrink-0 self-center items-center justify-center">
         {token.type === "invocation"
           ? token.invocation.kind === "skill" ? <Box size={14} aria-hidden /> : <SquareTerminal size={14} aria-hidden />
           : <ComposerResourceGlyph resource={token.resource} />}

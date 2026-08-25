@@ -121,6 +121,35 @@ describe("conversation project context", () => {
       });
   });
 
+  it("resolves a folder project at its owner workspace root", async () => {
+    const localPath = join(homePath, "projects", "matrix-os");
+    const project: ProjectConfig = {
+      id: "proj_matrix_os_folder",
+      slug: "matrix-os",
+      name: "Matrix OS",
+      kind: "folder",
+      localPath,
+      addedAt: "2026-08-18T00:00:00.000Z",
+      updatedAt: "2026-08-18T00:00:00.000Z",
+      ownerScope: { type: "user", id: "user_123" },
+    };
+    await writeProject(project);
+    const resolver = createConversationContextResolver(
+      createProjectManager({ homePath, runCommand: vi.fn() }),
+    );
+
+    await expect(resolver.resolve(project.slug, project.ownerScope)).resolves.toEqual({
+      projection: {
+        projectId: "matrix-os",
+        projectName: "Matrix OS",
+        projectKind: "folder",
+        repositoryLabel: "Matrix OS",
+        status: "ready",
+      },
+      workingDirectory: await realpath(localPath),
+    });
+  });
+
   it("rejects missing, inactive, wrong-owner, and unsafe working contexts", async () => {
     const base: ProjectConfig = {
       id: "proj_unavailable",
