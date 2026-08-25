@@ -319,6 +319,9 @@ export function SharedChatComposer({
     void resourceSearch(query).then((results) => {
       if (!cancelled) setRemoteResources(results.slice(0, 50));
     }).catch(() => {
+      // Keep the client diagnostic coarse so provider, path, and network details
+      // are not exposed through the renderer console.
+      console.warn("Chat resource search failed");
       if (!cancelled) setRemoteResources([]);
     });
     return () => { cancelled = true; };

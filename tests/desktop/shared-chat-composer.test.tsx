@@ -313,6 +313,17 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
   });
 
+  it("records a safe diagnostic when remote resource search fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const resourceSearch = vi.fn(async () => Promise.reject(new Error("private provider details")));
+    render(<Harness resourceSearch={resourceSearch} initialValue="@read" />);
+
+    await waitFor(() => expect(warn).toHaveBeenCalledWith("Chat resource search failed"));
+    expect(screen.queryByRole("option", { name: /private provider details/ })).toBeNull();
+
+    warn.mockRestore();
+  });
+
   it.each([
     { label: "paperclip", initialValue: "", open: () => fireEvent.click(screen.getByRole("button", { name: "Add files and more" })), menu: "Add" },
     { label: "resource mention", initialValue: "@", open: () => undefined, menu: "Add" },
