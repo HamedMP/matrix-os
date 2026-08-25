@@ -16,6 +16,7 @@ export interface ConversationContextPickerProps {
   onRemove: () => void;
   triggerLabel?: string;
   triggerText?: string;
+  compact?: boolean;
 }
 
 function projectKindLabel(project: Project): string {
@@ -41,6 +42,7 @@ export default function ConversationContextPicker({
   onRemove,
   triggerLabel,
   triggerText,
+  compact = false,
 }: ConversationContextPickerProps) {
   const api = useConnection((state) => state.api);
   const projects = useBoard((state) => state.projects);
@@ -95,7 +97,7 @@ export default function ConversationContextPicker({
   const visibleTriggerText = triggerText ?? (kind === "repository"
     ? context?.repositoryLabel ?? (context ? "No repository" : "Choose repository")
     : context?.projectName ?? "Add to project");
-  const TriggerIcon = kind === "repository" ? FolderGit2 : context ? FolderOpen : Plus;
+  const TriggerIcon = compact ? FolderOpen : kind === "repository" ? FolderGit2 : context ? FolderOpen : Plus;
 
   const closeAndRestoreFocus = () => {
     setOpen(false);
@@ -118,8 +120,11 @@ export default function ConversationContextPicker({
         <button
           type="button"
           aria-label={accessibleTriggerLabel}
+          title={compact ? visibleTriggerText : undefined}
           disabled={disabled}
-          className="inline-flex h-7 min-w-0 max-w-[min(18rem,45vw)] items-center gap-1.5 rounded-md px-1.5 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+          className={compact
+            ? "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+            : "inline-flex h-7 min-w-0 max-w-[min(18rem,45vw)] items-center gap-1.5 rounded-md px-1.5 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"}
           style={{ color: "var(--text-secondary)" }}
           onKeyDown={(event) => {
             if (event.key !== "ArrowDown" || disabled) return;
@@ -128,8 +133,8 @@ export default function ConversationContextPicker({
             setOpen(true);
           }}
         >
-          <TriggerIcon size={13} aria-hidden style={{ color: "var(--text-tertiary)" }} />
-          <span className="truncate">{visibleTriggerText}</span>
+          <TriggerIcon size={compact ? 15 : 13} aria-hidden style={{ color: "var(--text-tertiary)" }} />
+          {compact ? null : <span className="truncate">{visibleTriggerText}</span>}
         </button>
       </Popover.Trigger>
       <Popover.Portal>

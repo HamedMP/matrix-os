@@ -18,6 +18,7 @@ const SCREENSHOT_DIR = resolve(__dirname, "../../../desktop/screenshots");
 const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
 const MAT_327_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-327");
 const MAT_348_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-348");
+const MAT_476_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-476");
 const hasBuild = existsSync(DESKTOP_MAIN);
 
 const suite = hasBuild ? describe : describe.skip;
@@ -87,6 +88,7 @@ suite("operator desktop e2e", () => {
     mkdirSync(MAT_322_SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_327_SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_348_SCREENSHOT_DIR, { recursive: true });
+    mkdirSync(MAT_476_SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
     userDataDir = mkdtempSync(join(tmpdir(), "operator-e2e-"));
     app = await _electron.launch({
@@ -209,9 +211,31 @@ suite("operator desktop e2e", () => {
   }, 30_000);
 
   it("starts an agent thread from the project chats composer", async () => {
+    const terminalNavigation = page.locator("aside button", { hasText: "Terminal" }).first();
+    if (!await terminalNavigation.isVisible()) {
+      // The stub device flow signs in without navigating to an external browser.
+      await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
+      await terminalNavigation.waitFor({ timeout: 15_000 });
+    }
     await openMatrixProjectOverview(page);
     await page.getByRole("button", { name: "Chats" }).click({ timeout: 5_000 });
     await page.getByLabel("Message new chat").waitFor({ timeout: 5_000 });
+    await page.setViewportSize({ width: 1280, height: 720 });
+    const providerTrigger = page.getByRole("button", { name: "Choose model and provider" });
+    await providerTrigger.click();
+    const providerPicker = page.locator('[data-slot="provider-model-picker"]');
+    await providerPicker.waitFor();
+    const pickerBox = await providerPicker.boundingBox();
+    if (!pickerBox) throw new Error("Could not measure provider picker");
+    expect(pickerBox.x).toBeGreaterThanOrEqual(0);
+    expect(pickerBox.y).toBeGreaterThanOrEqual(0);
+    expect(pickerBox.x + pickerBox.width).toBeLessThanOrEqual(1280);
+    expect(pickerBox.y + pickerBox.height).toBeLessThanOrEqual(720);
+    expect(await providerPicker.evaluate((element) => (
+      element.closest('[data-slot="shared-chat-composer"]') === null
+    ))).toBe(true);
+    await page.screenshot({ path: join(MAT_476_SCREENSHOT_DIR, "01-project-chat-provider-picker.png") });
+    await providerTrigger.click();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05a-draft-chat.png") });
     await page.getByLabel("Message new chat").fill("fix the failing auth tests");
     await page.getByRole("button", { name: "Send" }).focus();

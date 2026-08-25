@@ -3,6 +3,7 @@ import type {
   CanonicalProviderDriverKind,
   CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
+import * as Popover from "@radix-ui/react-popover";
 import { Bot, ChevronDown, Code2, Cpu, Pi, Search, Sparkles, SquareTerminal } from "lucide-react";
 import { useRef, useState } from "react";
 import {
@@ -74,7 +75,16 @@ export function ProviderModelPicker({
     )) ?? [];
 
   return (
-    <div className="relative shrink-0">
+    <Popover.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) {
+          setActiveInstanceId(selectedInstance?.id ?? catalog.instances[0]?.id ?? "");
+        }
+      }}
+    >
+      <Popover.Trigger asChild>
       <button
         type="button"
         aria-label="Choose model and provider"
@@ -86,22 +96,27 @@ export function ProviderModelPicker({
           : unavailableProviderLabel ?? "Choose model and provider"}
         className="flex h-8 max-w-[12rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         style={{ color: "var(--text-secondary)" }}
-        onClick={() => {
-          setOpen((current) => !current);
-          setActiveInstanceId(selectedInstance?.id ?? catalog.instances[0]?.id ?? "");
-          window.requestAnimationFrame(() => searchRef.current?.focus());
-        }}
       >
         {selectedInstance ? <DriverIcon kind={selectedInstance.driverKind} /> : <Cpu size={15} />}
         <span className="truncate">{selectedModel?.displayName ?? unavailableProviderLabel ?? "Choose model"}</span>
         <ChevronDown size={13} aria-hidden />
       </button>
+      </Popover.Trigger>
       {open ? (
-        <div
-          className="absolute bottom-[calc(100%+10px)] right-0 z-40 flex w-[352px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border shadow-xl"
-          style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
-          data-slot="provider-model-picker"
-        >
+        <Popover.Portal>
+          <Popover.Content
+            side="top"
+            align="end"
+            sideOffset={10}
+            collisionPadding={16}
+            className="z-50 flex w-[352px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border shadow-xl"
+            style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
+            data-slot="provider-model-picker"
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              searchRef.current?.focus();
+            }}
+          >
           <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-r px-1.5 py-2" style={{ borderColor: "var(--border-subtle)" }}>
             {catalog.drivers.map((driver) => {
               const instance = catalog.instances.find((candidate) => candidate.driverKind === driver.kind);
@@ -231,8 +246,9 @@ export function ProviderModelPicker({
               ) : null}
             </div>
           </div>
-        </div>
+          </Popover.Content>
+        </Popover.Portal>
       ) : null}
-    </div>
+    </Popover.Root>
   );
 }

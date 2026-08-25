@@ -55,20 +55,19 @@ describe("Hermes chat project context", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps project-backed context in a dedicated composer strip", async () => {
+  it("moves project context into the composer folder control", async () => {
     const patch = vi.fn().mockResolvedValue({ context: matrixContext });
     useConnection.setState({ api: { patch } as never });
     render(<ChatTab />);
 
-    const contextStrip = screen.getByRole("group", { name: "Conversation context" });
-    expect(contextStrip.closest(".prompt-card")).toBeNull();
-    expect(screen.getByRole("button", { name: "Add to project" })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Conversation context" })).toBeNull();
+    const projectControl = screen.getByRole("button", { name: "Choose project for chat" });
+    expect(projectControl.closest(".prompt-card")).not.toBeNull();
+    expect(projectControl.textContent).toBe("");
     expect(screen.queryByRole("button", { name: /Repository/ })).toBeNull();
-    expect(contextStrip.compareDocumentPosition(screen.getByRole("textbox", { name: "Reply to Hermes…" }))
-      & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(screen.queryByText("main")).toBeNull();
     expect(screen.queryByText("On VPS")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Add to project" }));
+    fireEvent.click(projectControl);
     fireEvent.click(screen.getByRole("option", { name: "Matrix OS, GitHub, FinnaAI/matrix-os" }));
 
     await waitFor(() => expect(patch).toHaveBeenCalledWith(

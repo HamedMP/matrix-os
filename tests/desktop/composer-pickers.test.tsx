@@ -239,7 +239,10 @@ function selectedProviderInstance(): string | null {
 
 async function chooseProvider(label: string) {
   fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-  fireEvent.click(screen.getByRole("option", { name: new RegExp(`${label} · Available`) }));
+  fireEvent.click(screen.getByRole("button", {
+    name: `${label === "Claude" ? "Claude Code" : label} harness, Available`,
+  }));
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(`Provider default.*${label}.*Available`) }));
 }
 
 describe("composer provider/mode pickers", () => {
@@ -253,20 +256,23 @@ describe("composer provider/mode pickers", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders provider and mode pickers inside the draft composer bar with contract defaults", async () => {
+  it("renders provider, effort, and permission controls inside the draft composer bar", async () => {
     mockOperator();
     await openDraftComposer();
 
     const provider = await screen.findByRole("button", { name: "Choose model and provider" });
-    const mode = screen.getByLabelText("Interaction mode") as HTMLSelectElement;
+    const effort = screen.getByRole("button", { name: "Reasoning" });
+    const permission = screen.getByRole("button", { name: "Permission mode" });
     expect(selectedProviderInstance()).toBe("codex_default");
-    expect(mode.value).toBe("default");
-    // The pickers sit inside the floating composer card, Codex-style.
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
+    // The controls sit inside the floating composer card, Codex-style.
     expect(provider.closest(".prompt-card")).not.toBeNull();
-    expect(mode.closest(".prompt-card")).not.toBeNull();
+    expect(effort.closest(".prompt-card")).not.toBeNull();
+    expect(permission.closest(".prompt-card")).not.toBeNull();
     // Draft pickers are editable.
     expect(provider.getAttribute("aria-expanded")).toBe("false");
-    expect(mode.disabled).toBe(false);
+    expect(effort.getAttribute("aria-expanded")).toBe("false");
+    expect(permission.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("defaults the draft provider to the persisted provider preference", async () => {
@@ -274,10 +280,8 @@ describe("composer provider/mode pickers", () => {
     await openDraftComposer();
 
     await screen.findByRole("button", { name: "Choose model and provider" });
-    const mode = screen.getByLabelText("Interaction mode") as HTMLSelectElement;
     await waitFor(() => expect(selectedProviderInstance()).toBe("claude_code_default"));
-    // The mode follows the preferred provider's default mode.
-    await waitFor(() => expect(mode.value).toBe("review"));
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
   });
 
   it("ignores an unready persisted provider when choosing the draft default", async () => {
@@ -293,7 +297,7 @@ describe("composer provider/mode pickers", () => {
 
     await screen.findByRole("button", { name: "Choose model and provider" });
     await waitFor(() => expect(selectedProviderInstance()).toBe("codex_default"));
-    expect((screen.getByLabelText("Interaction mode") as HTMLSelectElement).value).toBe("default");
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
   });
 
   it("uses the preferred non-pi provider sandbox when pi is the runtime default", async () => {
@@ -334,7 +338,7 @@ describe("composer provider/mode pickers", () => {
     });
 
     await waitFor(() => expect(selectedProviderInstance()).toBe("claude_code_default"));
-    await waitFor(() => expect((screen.getByLabelText("Interaction mode") as HTMLSelectElement).value).toBe("review"));
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
   });
 
   it("persists the hydrated provider when a prompt is typed before preferences load", async () => {
@@ -366,7 +370,7 @@ describe("composer provider/mode pickers", () => {
 
     const restored = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
     expect(selectedProviderInstance()).toBe("claude_code_default");
-    expect((screen.getByLabelText("Interaction mode") as HTMLSelectElement).value).toBe("review");
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     fireEvent.keyDown(restored, { key: "Enter" });
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
@@ -401,7 +405,7 @@ describe("composer provider/mode pickers", () => {
 
     const restored = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
     await waitFor(() => expect(selectedProviderInstance()).toBe("claude_code_default"));
-    expect((screen.getByLabelText("Interaction mode") as HTMLSelectElement).value).toBe("review");
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
     expect(restored.value).toBe("Keep my prompt, not the transient provider");
     fireEvent.keyDown(restored, { key: "Enter" });
     await waitFor(() => {
@@ -416,19 +420,18 @@ describe("composer provider/mode pickers", () => {
     });
   });
 
-  it("resets the mode to the new provider's default when the provider changes", async () => {
+  it("uses the new provider's default execution mode without exposing the legacy mode picker", async () => {
     mockOperator();
     await openDraftComposer();
 
-    // Pick a non-default mode first so the reset is observable.
-    fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
     await chooseProvider("Claude");
 
-    const mode = screen.getByLabelText("Interaction mode") as HTMLSelectElement;
     expect(selectedProviderInstance()).toBe("claude_code_default");
-    expect(mode.value).toBe("review");
-    // The new provider's modes replace the old provider's options.
-    expect(Array.from(mode.options).map((option) => option.value)).toEqual(["review", "default"]);
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
+    await waitFor(() => expect(useDraftChat.getState().draftFor("matrix-os")).toMatchObject({
+      providerId: "claude",
+      mode: "review",
+    }));
   });
 
   it("updates the sandbox when switching from pi to a non-pi provider", async () => {
@@ -450,13 +453,12 @@ describe("composer provider/mode pickers", () => {
     });
   });
 
-  it("sends the picked provider and mode with the created thread", async () => {
+  it("sends the picked provider and its default mode with the created thread", async () => {
     const { invoke } = mockOperator();
     await openDraftComposer();
 
     await screen.findByRole("button", { name: "Choose model and provider" });
     await chooseProvider("Claude");
-    fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "default" } });
     const composer = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
     fireEvent.change(composer, { target: { value: "Use the picked provider" } });
     fireEvent.keyDown(composer, { key: "Enter" });
@@ -464,7 +466,7 @@ describe("composer provider/mode pickers", () => {
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
         "runtime:create-thread",
-        expect.objectContaining({ providerId: "claude", mode: "default", prompt: "Use the picked provider" }),
+        expect.objectContaining({ providerId: "claude", mode: "review", prompt: "Use the picked provider" }),
       );
     });
   });
@@ -480,8 +482,9 @@ describe("composer provider/mode pickers", () => {
     expect(provider.closest(".prompt-card")).not.toBeNull();
     fireEvent.click(provider);
     expect(screen.getByText("Provider Instance is locked after the first Turn.")).toBeTruthy();
-    expect(screen.getByRole("option", { name: /Claude · Available/ }).getAttribute("aria-disabled")).toBe("true");
-    expect(screen.getByLabelText("Interaction mode")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Claude Code harness, Available" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText("Interaction mode")).toBeNull();
+    expect(screen.getByRole("button", { name: "Reasoning" })).toBeTruthy();
     expect(composer).toBeTruthy();
   });
 
@@ -494,7 +497,7 @@ describe("composer provider/mode pickers", () => {
     expect(provider.textContent).toBe("removed-provider (unavailable)");
     expect(provider.getAttribute("data-provider-instance")).toBe("");
     fireEvent.click(provider);
-    expect(screen.getByRole("option", { name: /Codex · Available/ }).getAttribute("aria-disabled")).toBe("true");
-    expect(screen.getByRole("option", { name: /Claude · Available/ }).getAttribute("aria-disabled")).toBe("true");
+    expect((screen.getByRole("button", { name: "Codex harness, Available" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Claude Code harness, Available" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

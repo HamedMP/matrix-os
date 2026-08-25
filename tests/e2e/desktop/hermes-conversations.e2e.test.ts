@@ -80,10 +80,6 @@ suite("persistent Hermes Desktop conversations", () => {
     }).click();
     await page.getByText("The canonical Gateway conversation is ready to continue.").waitFor();
     await page.screenshot({ path: join(MAT_322_SCREENSHOT_DIR, "02-active-conversation-wide.png") });
-    await page.getByRole("button", { name: "Resources" }).click();
-    await page.getByRole("complementary", { name: "Resources" }).waitFor();
-    await page.screenshot({ path: join(MAT_322_SCREENSHOT_DIR, "03-resources-wide.png") });
-    await page.getByRole("button", { name: "Close Resources" }).click();
     await expect.poll(() => gateway.state.kernelMessages).toContainEqual({
       type: "switch_session",
       sessionId: "hermes-desktop-index",
@@ -188,12 +184,13 @@ suite("persistent Hermes Desktop conversations", () => {
     }).click();
     await page.getByText("The canonical Gateway conversation is ready to continue.").waitFor();
 
-    await page.getByRole("button", { name: "Add to project" }).click();
+    await page.getByRole("button", { name: "Choose project for chat" }).click();
     await page.getByRole("option", { name: /Matrix OS, GitHub/ }).waitFor();
     await page.screenshot({ path: join(MAT_318_SCREENSHOT_DIR, "01-project-picker.png") });
     await page.getByRole("option", { name: /Matrix OS, GitHub/ }).click();
     await page.getByRole("button", { name: "Project Matrix OS" }).waitFor();
-    await page.getByRole("button", { name: "Repository FinnaAI/matrix-os" }).waitFor();
+    await expect.poll(() => page.getByRole("button", { name: "Project Matrix OS" }).count()).toBe(1);
+    await expect.poll(() => page.getByRole("button", { name: "Choose project for chat" }).count()).toBe(0);
     await page.screenshot({ path: join(MAT_318_SCREENSHOT_DIR, "02-project-selected.png") });
 
     await app.close();
@@ -233,11 +230,11 @@ suite("persistent Hermes Desktop conversations", () => {
     await page.screenshot({ path: join(MAT_318_SCREENSHOT_DIR, "03-project-stale.png") });
 
     await page.getByRole("button", { name: "Remove project context" }).click();
-    await page.getByRole("button", { name: "Add to project" }).waitFor();
+    await page.getByRole("button", { name: "Choose project for chat" }).waitFor();
     await page.screenshot({ path: join(MAT_318_SCREENSHOT_DIR, "04-project-recovered.png") });
 
     gateway.setProjectLifecycle("active");
-    await page.getByRole("button", { name: "Add to project" }).click();
+    await page.getByRole("button", { name: "Choose project for chat" }).click();
     await page.getByRole("option", { name: /Matrix OS, GitHub/ }).click();
     gateway.setKernelResponseDelay(750);
     await composer.fill("Keep this project through the active turn");
@@ -271,7 +268,7 @@ suite("persistent Hermes Desktop conversations", () => {
     await page.getByRole("button", {
       name: "Plan the persistent Desktop conversation experience conversation",
     }).click();
-    await page.getByRole("button", { name: "Add to project" }).waitFor();
+    await page.getByRole("button", { name: "Choose project for chat" }).waitFor();
     await expect.poll(() => page.getByRole("button", { name: "Project Matrix OS" }).count()).toBe(0);
   }, 40_000);
 });

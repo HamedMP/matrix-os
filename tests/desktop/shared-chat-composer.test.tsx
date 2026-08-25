@@ -135,6 +135,15 @@ describe("SharedChatComposer", () => {
       .toBe(false);
   });
 
+  it("renders the model picker outside clipping composer containers", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+
+    expect(screen.getByRole("listbox", { name: "Models and providers" }).closest(".prompt-card"))
+      .toBeNull();
+  });
+
   it("changes effort and permission through in-app menus", () => {
     render(<Harness />);
 

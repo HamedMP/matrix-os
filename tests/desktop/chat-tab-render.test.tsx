@@ -8,13 +8,11 @@ import {
   conversationMessageDisplay,
   sharedConversationResources,
 } from "../../desktop/src/renderer/src/features/chat/ChatResourcesPanel";
-import { useIntegrations } from "../../desktop/src/renderer/src/features/integrations/integrations-store";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads, type AgentThread } from "../../desktop/src/renderer/src/stores/threads";
-import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 function thread(id: string, title: string): AgentThread {
   return {
@@ -61,13 +59,6 @@ describe("ChatTab", () => {
     });
     useThreads.setState({ threads: [], activeThreadId: null });
     useTabs.setState(useTabs.getInitialState(), true);
-    useUi.setState({ requestedSettingsSection: null });
-    useIntegrations.setState({
-      available: [],
-      connections: [],
-      status: "idle",
-      errorMessage: null,
-    });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -369,8 +360,11 @@ describe("ChatTab", () => {
     expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Resources" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Use Codex for a project chat" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Choose project for chat" }).closest(".prompt-card"))
+      .not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Resources" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Use Codex for a project chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add to project" })).toBeNull();
     expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Build a new feature, app, or tool" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
@@ -418,38 +412,6 @@ describe("ChatTab", () => {
     expect(await screen.findByRole("button", { name: "Remove notes.md" })).toBeTruthy();
   });
 
-  it("shows canonical shared files and Gateway-backed connected tools in Resources", () => {
-    useHermesChat.setState({
-      messages: [{
-        id: "m1",
-        role: "user",
-        content: "Review this\n\nAttached files (available on your Matrix computer):\n- ~/temporary/desktop-chat/abc-screen.png (/home/matrix/home/temporary/desktop-chat/abc-screen.png)",
-        timestamp: 1,
-      }],
-    });
-    useIntegrations.setState({
-      status: "ready",
-      connections: [{
-        id: "00000000-0000-4000-8000-000000000001",
-        service: "google_drive",
-        accountLabel: "Design Drive",
-        accountEmail: null,
-        status: "active",
-        connectedAt: "2026-08-16T00:00:00.000Z",
-      }],
-    });
-
-    render(<ChatTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Resources" }));
-
-    const panel = screen.getByRole("complementary", { name: "Resources" });
-    expect(panel.textContent).toContain("Shared with agent");
-    expect(panel.textContent).toContain("screen.png");
-    expect(panel.textContent).not.toContain("/home/matrix");
-    expect(panel.textContent).toContain("Design Drive");
-    expect(panel.textContent).toContain("Agent-created resources are not available from this Gateway yet.");
-  });
-
   it("reduces canonical resource paths to bounded basenames", () => {
     expect(sharedConversationResources([{
       id: "m1",
@@ -476,9 +438,6 @@ describe("ChatTab", () => {
     expect(document.body.textContent).not.toContain("temporary/desktop-chat");
     expect(document.body.textContent).not.toContain("/home/matrix");
 
-    fireEvent.click(screen.getByRole("button", { name: "Resources" }));
-    expect(screen.getByRole("complementary", { name: "Resources" }).textContent)
-      .toContain("final report.pdf");
   });
 
   it("reports malformed attachment-name encoding before using a safe fallback", () => {
@@ -493,32 +452,6 @@ describe("ChatTab", () => {
       "[chat-resources] attachment name decode failed:",
       "URIError",
     );
-  });
-
-  it("states unavailable and failed connected-tool Gateway capabilities explicitly", () => {
-    useIntegrations.setState({ status: "unavailable", connections: [] });
-    const { rerender } = render(<ChatTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Resources" }));
-    expect(screen.getByText("Connected tools are not available from this Gateway.")).toBeTruthy();
-
-    act(() => useIntegrations.setState({ status: "error", connections: [] }));
-    rerender(<ChatTab />);
-    expect(screen.getByText("Connected tools could not be loaded. Try again from Integrations.")).toBeTruthy();
-  });
-
-  it("toggles Resources, closes it with Escape, and routes Connect tool to Integrations", () => {
-    render(<ChatTab />);
-    const trigger = screen.getByRole("button", { name: "Resources" });
-
-    fireEvent.click(trigger);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("complementary", { name: "Resources" })).toBeNull();
-
-    fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("button", { name: "Connect tool" }));
-    expect(useUi.getState().requestedSettingsSection).toBe("integrations");
-    expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
   });
 
   it("previews pasted files horizontally, uploads on Send, and sends Hermes readable paths", async () => {
